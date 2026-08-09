@@ -95,7 +95,7 @@ untouched.
 
 **Checkpoint A5 ACCEPTED by the operator 2026-08-09. Stage 0.5 is DONE. Stage 1 is authorized as NEXT.**
 
-## Stage 1 — Provider, Model & Correlation Plumbing — **IMPLEMENTED 2026-08-09, awaiting Checkpoint B operator acceptance**
+## Stage 1 — Provider, Model & Correlation Plumbing — **DONE (Checkpoint B accepted 2026-08-09)**
 - explicit provider/model configuration compatible with existing per-agent settings;
 - OpenRouter and/or Google AI Studio path with minimal provider abstraction;
 - preserve resilience without contaminating experiment attribution;
@@ -260,10 +260,13 @@ self-verified green (paper-safety, backward compat, new provider path,
 per-agent selection, requested-vs-actual distinguishability, explicit
 fallback attribution, telemetry persistence, prompt versioning, correlation
 sufficiency, safe old-DB migration, deterministic-risk non-regression,
-targeted + full suite green, Stage 2 not started). Awaiting operator
-acceptance before Stage 1 is marked DONE and Stage 2 is authorized.**
+targeted + full suite green, Stage 2 not started).**
 
-## Stage 2 — Thin Read-Only Mission Control API — BLOCKED
+**Checkpoint B ACCEPTED by the operator 2026-08-09** (see
+`docs/CHECKPOINT_B_ACCEPTANCE.md`). **Stage 1 is DONE. Stage 2 is authorized
+as NEXT.**
+
+## Stage 2 — Thin Read-Only Mission Control API — **NEXT (authorized 2026-08-09)**
 Expose only what is needed for UI: account, positions, orders, trades, candidates, agents, PM/risk/deterministic decisions, model/cost, journal source data, learning reports, scheduler/health.
 
 Checkpoint C: complete trading-day reconstruction possible; killing API does not affect trading; schema frozen. STOP.

@@ -17,8 +17,8 @@
   Five targeted regression tests cover all nine sites. Full suite: **1436
   passed, 0 failed**. No schema change; `src/agents/base.py::_execute()`
   untouched. Details: `docs/MILESTONES.md` Stage 0.5.
-- **Stage 1 — Provider, Model & Correlation Plumbing: IMPLEMENTED 2026-08-09,
-  awaiting Checkpoint B operator acceptance.** Branch
+- **Stage 1 — Provider, Model & Correlation Plumbing: DONE. Checkpoint B
+  ACCEPTED 2026-08-09.** Branch
   `claude/stage-1-qamc-integration-m1n0pw`. Explicit per-agent provider
   override (`resolve_provider()` single source of truth in `src/agents/base.py`,
   nine new optional `LLMConfig.<agent>_provider` fields) added OpenRouter
@@ -60,7 +60,7 @@ component/design donors, with TradingView Lightweight Charts. **Forensic
 observability is native — `agent_logs` + `run_id` + `scripts/replay_decision.py`
 — with no external observability service.**
 
-## Stage 1 outcome (implemented, awaiting Checkpoint B acceptance)
+## Stage 1 outcome (DONE, Checkpoint B accepted)
 Provider, Model & Correlation Plumbing implemented on
 `claude/stage-1-qamc-integration-m1n0pw` (see `docs/MILESTONES.md` Stage 1 for
 the full account):
@@ -72,10 +72,9 @@ the full account):
 - add only the correlation identifiers minimally necessary to trace run → decision → order/trade → prompt/model version — done (`decision_id`, one new column on `trades` + `agent_logs`);
 - preserve the hardened retry/deadline/failover behavior in `BaseAgent._execute()` rather than casually refactoring it — done (loop body unchanged; new code is one dispatch branch reusing `_call_openai`).
 
-**Next stage remains BLOCKED**: Stage 2 (Thin Read-Only Mission Control API) does not start until Checkpoint B is accepted by the operator.
-
-Checkpoint B requires paper-trading/risk behavior unchanged, attribution correct,
-and tests green. **STOP at Checkpoint B; do not begin Stage 2.**
+**Checkpoint B ACCEPTED by the operator 2026-08-09** (`docs/CHECKPOINT_B_ACCEPTANCE.md`):
+paper-trading/risk behavior unchanged, attribution correct, tests green.
+**Stage 2 — Thin Read-Only Mission Control API — is AUTHORIZED as NEXT.**
 
 ## Stage 0 / 0.5 outcome (for reference)
 - Baseline suite at Stage 0: **1431 passed, 0 failed, 0 skipped** (hermetic; no
@@ -105,6 +104,7 @@ and tests green. **STOP at Checkpoint B; do not begin Stage 2.**
   its authorized provider/model/correlation scope.
 
 ## Non-goals now
-No dashboard/API/journal implementation, no risk-policy redesign, no live
-trading, no repository restructuring, and no AgentLens integration. Stage 1
-must not expand into Stage 2+ merely because adjacent work is convenient.
+No dashboard UI, journal implementation, risk-policy redesign, live trading,
+repository restructuring, or AgentLens integration. Stage 2 is scoped to the
+thin read-only Mission Control API only; it must not expand into Stage 3+
+(frontend, journal, learning UI) merely because adjacent work is convenient.
