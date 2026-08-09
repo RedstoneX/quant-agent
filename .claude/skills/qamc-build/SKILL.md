@@ -12,11 +12,11 @@ Before coding, read:
 2. `docs/work/ACTIVE.md`;
 3. `docs/OUTCOME.md`;
 4. `docs/decisions/ACTIVE.md`;
-5. only the architecture/source material relevant to the accepted contract.
+5. only the **current/accepted architecture and source material** relevant to the accepted contract.
 
 If `docs/STATE.md` says discovery/reconciliation is active, or `docs/work/ACTIVE.md` is not explicitly accepted for implementation, **STOP. Do not implement. Use `/qamc-discover` instead.**
 
-Do not preload historical governance/audit material.
+Do not preload `docs/reference/`, `docs/history/`, historical audits, or prior proposals. Open a specific reference only when the accepted contract or an implementation question actually needs its evidence.
 
 ## Role
 
@@ -38,7 +38,7 @@ Do not ask the operator to choose libraries, modules, worker topology, tests, da
 
 Use the least expensive mechanism that can reliably do each job:
 - keep architecture, integration, difficult reasoning and final synthesis in the lead;
-- use Explore/focused Haiku subagents for repository search, file discovery, logs, bounded tests and high-volume reading;
+- use Explore/focused inexpensive subagents for repository search, file discovery, logs, bounded tests and high-volume reading;
 - use stronger focused workers for implementation/review that genuinely needs them;
 - use worktree isolation for parallel writers with disjoint ownership;
 - use full agent-team teammates only when sustained peer-to-peer communication materially improves the result.
