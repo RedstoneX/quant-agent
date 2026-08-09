@@ -7,6 +7,8 @@ description: Close an authorized implementation gate with verification, independ
 
 Read `docs/STATE.md` and `docs/WORK.md`.
 
+Gate type comes from the current `STATE.md` / `WORK.md` contract, **not from the stage number**. Inside an authorized multi-stage tranche, intermediate stage boundaries are internal unless the current contract explicitly marks them external.
+
 ## Internal gate
 
 1. Verify the accepted outcome for this slice.
@@ -15,7 +17,7 @@ Read `docs/STATE.md` and `docs/WORK.md`.
 4. Fix verified BLOCKER/IMPORTANT findings and rerun affected checks.
 5. Create a clear commit boundary.
 6. Refresh `docs/PROJECT_COMPASS.md` from authoritative state.
-7. Continue only if `STATE.md` / `WORK.md` authorize it.
+7. Continue when `STATE.md` / `WORK.md` authorize the next slice; do not seek external permission merely because a numbered stage finished.
 
 Do not create a checkpoint/status document merely to narrate evidence already in tests/commits.
 
