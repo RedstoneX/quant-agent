@@ -140,6 +140,7 @@ class AgentLogItem(BaseModel):
     decision_id: str | None = None
     timestamp: str | None = None
     input_summary: str | None = None
+    input_message: str | None = None
     output_summary: str | None = None
     full_response: str | None = None
     model: str | None = None

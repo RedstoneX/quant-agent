@@ -1,0 +1,225 @@
+"""Live (broker-backed) read-only routes for the Mission Control API.
+
+`/health`, `/account`, `/positions`, `/orders` — everything here reads
+either the Alpaca broker (via `src.api.broker_reads`, which never raises
+and never touches a write-capable broker call) or, for `/health`'s
+`db_reachable`/`sessions_logged_today` fields and `/account`'s `history`
+field, the SQLite-backed helpers the other Stage 2 worker exposes from
+`src.api.db_reads`.
+
+GET-only by construction: this router registers nothing but `@router.get`
+handlers. That is a hard project invariant for Stage 2 (verified by an
+automated test) — do not add POST/PUT/PATCH/DELETE routes here.
+
+Every handler is defense-in-depth: the functions it calls
+(`broker_reads.*`) are already designed to never raise, but each handler
+still wraps its body in `try/except Exception` and degrades to a response
+model with `error` set rather than ever letting FastAPI surface an
+unhandled 500 (which could leak an internal stack trace / file path).
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
+
+from src.api.broker_reads import (
+    check_broker_reachable,
+    read_account,
+    read_orders,
+    read_positions,
+)
+from src.api.deps import get_alpaca_paper
+from src.api.schemas import (
+    AccountResponse,
+    DailyPnlPoint,
+    HealthResponse,
+    OrderItem,
+    OrdersResponse,
+    PositionItem,
+    PositionsResponse,
+)
+
+router = APIRouter()
+
+_LAST_RUN_MODES = [
+    "morning", "midday", "close", "evening", "intra_check", "earnings_preprocess",
+]
+
+_ORDER_STATUS_VALUES = {"open", "closed", "all"}
+
+
+def _cache_dir() -> Path:
+    # Same directory scripts/run_if_et_window.sh writes last-run files and
+    # the cross-mode session lock into — see CLAUDE.md "时区" section.
+    return Path(os.path.expanduser("~/.cache/quant-agent"))
+
+
+def _last_run_files() -> dict[str, str | None]:
+    out: dict[str, str | None] = {mode: None for mode in _LAST_RUN_MODES}
+    try:
+        base = _cache_dir()
+        for mode in _LAST_RUN_MODES:
+            try:
+                p = base / f"last-{mode}"
+                if p.exists():
+                    mtime = p.stat().st_mtime
+                    out[mode] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+            except OSError:
+                out[mode] = None
+    except Exception:
+        # Cache dir missing entirely, or some other unexpected OS-level
+        # failure — never raise, just report "nothing known" for every mode.
+        return {mode: None for mode in _LAST_RUN_MODES}
+    return out
+
+
+def _session_lock_active() -> bool | None:
+    try:
+        return os.path.isdir(_cache_dir() / "active-session.lock")
+    except OSError:
+        return None
+
+
+@router.get("/health", response_model=HealthResponse)
+def get_health() -> HealthResponse:
+    try:
+        try:
+            from src.api.db_reads import session_prefixes_logged_on
+            sessions_logged_today = session_prefixes_logged_on()
+            db_reachable = True
+        except Exception:
+            sessions_logged_today = []
+            db_reachable = False
+
+        return HealthResponse(
+            status="ok",
+            db_reachable=db_reachable,
+            broker_reachable=check_broker_reachable(),
+            paper=get_alpaca_paper(),
+            sessions_logged_today=list(sessions_logged_today or []),
+            last_run_files=_last_run_files(),
+            session_lock_active=_session_lock_active(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception:
+        # Outermost guard: even /health itself must never 500. Report the
+        # process as up ("status=ok" — we did respond) but everything else
+        # unknown, rather than leaking a stack trace.
+        return HealthResponse(
+            status="ok",
+            db_reachable=False,
+            broker_reachable=None,
+            paper=None,
+            sessions_logged_today=[],
+            last_run_files={mode: None for mode in _LAST_RUN_MODES},
+            session_lock_active=None,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+@router.get("/account", response_model=AccountResponse)
+def get_account() -> AccountResponse:
+    try:
+        acct = read_account()
+        cash = acct.get("cash")
+        portfolio_value = acct.get("portfolio_value")
+        last_equity = acct.get("last_equity")
+
+        daily_pnl = None
+        daily_pnl_pct = None
+        if portfolio_value is not None and last_equity is not None and last_equity != 0:
+            daily_pnl = portfolio_value - last_equity
+            daily_pnl_pct = daily_pnl / last_equity * 100
+
+        history: list[DailyPnlPoint] = []
+        try:
+            from src.api.db_reads import get_recent_daily_pnl
+            rows = get_recent_daily_pnl(limit=30) or []
+            for row in rows:
+                history.append(DailyPnlPoint(
+                    date=row.get("date"),
+                    total_value=row.get("total_value"),
+                    daily_pnl=row.get("daily_pnl"),
+                    daily_return_pct=row.get("daily_return_pct"),
+                    equity_close=row.get("equity_close"),
+                ))
+        except Exception:
+            history = []
+
+        return AccountResponse(
+            cash=cash,
+            portfolio_value=portfolio_value,
+            last_equity=last_equity,
+            daily_pnl=daily_pnl,
+            daily_pnl_pct=daily_pnl_pct,
+            paper=get_alpaca_paper(),
+            history=history,
+            error=acct.get("error"),
+        )
+    except Exception as exc:
+        return AccountResponse(error=str(exc))
+
+
+@router.get("/positions", response_model=PositionsResponse)
+def get_positions() -> PositionsResponse:
+    try:
+        result = read_positions()
+        items = [
+            PositionItem(
+                symbol=p.get("symbol"),
+                qty=p.get("qty"),
+                avg_entry=p.get("avg_entry"),
+                current_price=p.get("current_price"),
+                market_value=p.get("market_value"),
+                unrealized_pnl=p.get("unrealized_pnl"),
+                unrealized_intraday_pnl=p.get("unrealized_intraday_pnl"),
+                sector=p.get("sector"),
+            )
+            for p in result.get("positions", [])
+        ]
+        return PositionsResponse(positions=items, error=result.get("error"))
+    except Exception as exc:
+        return PositionsResponse(positions=[], error=str(exc))
+
+
+@router.get("/orders", response_model=OrdersResponse)
+def get_orders(
+    status: Literal["open", "closed", "all"] = Query("open"),
+    limit: int = Query(50, ge=1, le=500),
+) -> OrdersResponse:
+    try:
+        if status not in _ORDER_STATUS_VALUES:
+            # Defense in depth: FastAPI's Literal type already rejects
+            # anything else at the request-validation layer, but never let
+            # an unvalidated status string reach the broker call.
+            raise HTTPException(status_code=400, detail=f"invalid status: {status!r}")
+
+        result = read_orders(status=status, limit=limit)
+        items = [
+            OrderItem(
+                id=o.get("id"),
+                symbol=o.get("symbol"),
+                side=o.get("side"),
+                qty=o.get("qty"),
+                order_type=o.get("order_type"),
+                status=o.get("status"),
+                limit_price=o.get("limit_price"),
+                stop_price=o.get("stop_price"),
+                filled_qty=o.get("filled_qty"),
+                filled_avg_price=o.get("filled_avg_price"),
+                submitted_at=o.get("submitted_at"),
+                filled_at=o.get("filled_at"),
+            )
+            for o in result.get("orders", [])
+            if o.get("id") is not None and o.get("symbol") is not None
+        ]
+        return OrdersResponse(orders=items, error=result.get("error"))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return OrdersResponse(orders=[], error=str(exc))
