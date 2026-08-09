@@ -33,4 +33,6 @@ Root `CLAUDE.md` and path-scoped rules remain mandatory. Do not silently widen s
 
 Use targeted checks while implementing and real runtime/visual verification for UI work where available. Use fresh independent review at meaningful gates.
 
-At an external gate, use `/qamc-checkpoint`, push the branch and **STOP** for ChatGPT/operator review. Never merge the implementation PR yourself.
+A numbered stage or implementation slice is **not automatically an external gate**. When `STATE.md` / `WORK.md` authorize a multi-stage tranche, close intermediate slices with `/qamc-checkpoint` as internal gates and continue without asking for permission. Do not STOP solely because a stage number changed.
+
+At an explicitly external gate, use `/qamc-checkpoint`, push the branch and **STOP** for ChatGPT/operator review. Never merge the implementation PR yourself.
