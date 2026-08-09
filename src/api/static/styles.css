@@ -128,7 +128,8 @@ main {
 }
 
 .panel-head-actions { margin-left: auto; }
-.panel-head select {
+.panel-head select,
+.panel-head input[type="search"] {
   background: var(--bg-panel-alt);
   color: var(--text);
   border: 1px solid var(--border);
@@ -136,6 +137,19 @@ main {
   padding: 0.25rem 0.5rem;
   font-size: 0.8rem;
 }
+.panel-head-search { display: flex; gap: 0.4rem; align-items: center; }
+.panel-head input[type="search"] { min-width: 220px; }
+.panel-head button {
+  background: var(--accent);
+  color: var(--bg-panel);
+  border: none;
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.panel-head button:hover { opacity: 0.9; }
 
 .panel-subtitle {
   flex-basis: 100%;
@@ -496,4 +510,6 @@ body.modal-open { overflow: hidden; }
   .modal-overlay { padding: 0; align-items: stretch; }
   .modal { max-width: none; max-height: none; height: 100%; border-radius: 0; }
   .delta-table { display: block; overflow-x: auto; }
+  .panel-head-search { width: 100%; }
+  .panel-head input[type="search"] { min-width: 0; flex: 1; }
 }

@@ -78,6 +78,35 @@
     </div>
   </section>
 
+  <section class="panel panel-wide" id="panel-journal" data-panel>
+    <div class="panel-head">
+      <h2>Journal</h2>
+      <div class="panel-head-actions">
+        <select id="journal-date"><option value="">Loading dates…</option></select>
+      </div>
+      <span class="panel-subtitle">Browse a prior trading day: equity snapshot, evening reflection, runs, trades, and candidates considered.</span>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-wide" id="panel-search" data-panel>
+    <div class="panel-head">
+      <h2>Search</h2>
+      <div class="panel-head-actions panel-head-search">
+        <input type="search" id="search-input" placeholder="Search trade reasoning, agent names, models, summaries…">
+        <button type="button" id="search-btn">Search</button>
+      </div>
+      <span class="panel-subtitle">Forensic search over trade reasoning and agent-call summaries — never accepts or generates SQL, matched terms only.</span>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="state-message">Type a search term above.</div>
+    </div>
+  </section>
+
   <section class="panel panel-wide" id="panel-candidates" data-panel>
     <div class="panel-head">
       <h2>Watchlist Candidates</h2>

@@ -439,12 +439,12 @@ function card(titleText, children, opts = {}) {
   return el("div", { className: `card${opts.broader ? " card-broader" : ""}` }, [head, ...body]);
 }
 
-function evidenceSection(titleText, children) {
+function evidenceSection(titleText, children, emptyText = "Not available for this candidate/run.") {
   const body = children.filter((c) => c !== null && c !== undefined);
   if (!body.length) {
     return el("div", { className: "evidence-section" }, [
       el("div", { className: "evidence-section-title", text: titleText }),
-      el("div", { className: "state-message", text: "Not available for this candidate/run." }),
+      el("div", { className: "state-message", text: emptyText }),
     ]);
   }
   return el("div", { className: "evidence-section" }, [
@@ -1028,6 +1028,329 @@ async function openCandidateDetail(runId, symbol, runDetail) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Journal — Stage 5 prior-day browsing.                                  */
+/*                                                                        */
+/* Reuses the Stage 4 run-detail/candidate-detail modal rather than       */
+/* duplicating it. Loaded on demand (date picker), never auto-polled.     */
+/* ---------------------------------------------------------------------- */
+
+function runsMiniTable(runs, onOpen) {
+  if (!runs.length) {
+    return el("div", { className: "state-message", text: "No runs recorded for this day." });
+  }
+  const rows = runs.map((r) => {
+    const tr = el("tr", { className: "row-clickable", attrs: { tabindex: "0" } }, [
+      el("td", { text: r.run_id }),
+      el("td", { text: r.session_prefix || "—" }),
+      el("td", { text: fmtTime(r.first_timestamp) }),
+      el("td", { text: fmtNum(r.agent_count, 0) }),
+      el("td", { text: fmtMoney(r.total_cost_usd) }),
+    ]);
+    tr.addEventListener("click", () => onOpen(r.run_id));
+    tr.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(r.run_id); }
+    });
+    return tr;
+  });
+  return table(["Run ID", "Session", "First Call", "Agents", "Cost"], rows);
+}
+
+function tradesMiniTable(trades) {
+  if (!trades.length) {
+    return el("div", { className: "state-message", text: "No trades recorded for this day." });
+  }
+  const rows = trades.map((t) =>
+    el("tr", {}, [
+      el("td", { text: fmtTime(t.timestamp) }),
+      el("td", { text: t.symbol }),
+      el("td", {}, [pill(t.action)]),
+      el("td", { text: fmtNum(t.qty) }),
+      el("td", { text: fmtMoney(t.price) }),
+      el("td", {}, [pill(t.fill_status || "unfilled")]),
+      el("td", { text: t.reasoning || "—", title: t.reasoning || "" }),
+    ])
+  );
+  return table(["Time", "Symbol", "Action", "Qty", "Price", "Fill", "Reasoning"], rows);
+}
+
+function jsonBlobList(jsonStr, fields) {
+  if (!jsonStr) return null;
+  let data;
+  try {
+    data = JSON.parse(jsonStr);
+  } catch {
+    return el("div", { className: "state-message error", text: "Could not parse recorded data for this field." });
+  }
+  if (!Array.isArray(data) || !data.length) return null;
+  return el(
+    "ul", { className: "card-list" },
+    data.map((item) => {
+      const parts = fields
+        .filter((f) => item[f] !== undefined && item[f] !== null && item[f] !== "")
+        .map((f) => `${f.replace(/_/g, " ")}: ${item[f]}`);
+      return el("li", { text: parts.length ? parts.join(" · ") : JSON.stringify(item) });
+    })
+  );
+}
+
+function reflectionCard(r) {
+  if (!r) {
+    return el("div", { className: "state-message", text: "No evening reflection recorded for this day yet." });
+  }
+  const body = [];
+  if (r.tomorrow_outlook) body.push(el("p", { className: "card-text", text: `Tomorrow outlook: ${r.tomorrow_outlook}` }));
+  if (r.lessons) body.push(el("p", { className: "card-text", text: `Lessons: ${r.lessons}` }));
+  body.push(kv("Risk rating", r.risk_rating));
+  if (r.tomorrow_bias) body.push(kv("Tomorrow bias", r.tomorrow_bias));
+  if (r.tomorrow_conviction) body.push(kv("Tomorrow conviction", r.tomorrow_conviction));
+  if (r.tomorrow_key_risks) body.push(el("p", { className: "card-text dim", text: `Key risks: ${r.tomorrow_key_risks}` }));
+  if (r.suggested_actions) body.push(el("p", { className: "card-text dim", text: `Suggested actions: ${r.suggested_actions}` }));
+  if (r.sell_decisions_assessment) body.push(el("p", { className: "card-text dim", text: `Sell decisions: ${r.sell_decisions_assessment}` }));
+  const sellGrades = jsonBlobList(r.sell_grades_json, ["symbol", "grade", "reason"]);
+  if (sellGrades) {
+    body.push(el("div", { className: "chain-label", text: "Sell grades" }), sellGrades);
+  }
+  const buyGrades = jsonBlobList(r.buy_grades_json, ["symbol", "grade", "reason"]);
+  if (buyGrades) {
+    body.push(el("div", { className: "chain-label", text: "Buy grades" }), buyGrades);
+  }
+  const missed = jsonBlobList(r.missed_opportunities_json, ["symbol", "miss_category", "move_pct"]);
+  if (missed) {
+    body.push(el("div", { className: "chain-label", text: "Missed opportunities" }), missed);
+  }
+  return card("Evening reflection", body);
+}
+
+/** A journal day's `candidates` are a flat symbol list with no run_id
+ * attached (unlike Stage 4's per-run candidates). Rather than silently
+ * guessing which of the day's runs to attach a click to, resolve it: skip
+ * straight through when there's exactly one run that day, otherwise check
+ * each run's actual candidate list and only auto-open on an unambiguous
+ * single match — a genuine multi-run match asks the operator to pick. */
+async function openJournalCandidate(dayRuns, symbol) {
+  if (!dayRuns.length) return;
+  if (dayRuns.length === 1) {
+    return openCandidateDetail(dayRuns[0].run_id, symbol);
+  }
+  openModal(
+    [el("span", { className: "crumb-current", text: symbol })],
+    el("div", { className: "state-message", text: `Resolving which run considered ${symbol}…` })
+  );
+  try {
+    const results = await Promise.all(
+      dayRuns.map((r) =>
+        fetchJSON(`/runs/${encodeURIComponent(r.run_id)}/candidates`)
+          .then((d) => ({ run: r, has: d.candidates.includes(symbol) }))
+          .catch(() => ({ run: r, has: false }))
+      )
+    );
+    const matches = results.filter((x) => x.has).map((x) => x.run);
+    if (matches.length === 1) {
+      return openCandidateDetail(matches[0].run_id, symbol);
+    }
+    if (matches.length === 0) {
+      showMessage(modalBody, `${symbol} could not be matched to a specific run — the day's runs may have changed since this journal snapshot was read.`, true);
+      return;
+    }
+    modalBreadcrumb.replaceChildren(el("span", { className: "crumb-current", text: `${symbol} — pick a run` }));
+    modalBody.replaceChildren(
+      el("div", {}, [
+        el("div", { className: "state-message", text: `${symbol} was considered in more than one run this day. Pick which one:` }),
+        el(
+          "div", {},
+          matches.map((r) => {
+            const chip = el("button", { className: "candidate-chip", text: r.run_id });
+            chip.type = "button";
+            chip.addEventListener("click", () => openCandidateDetail(r.run_id, symbol));
+            return chip;
+          })
+        ),
+      ])
+    );
+  } catch (err) {
+    showMessage(modalBody, `Could not resolve ${symbol}: ${err.message}`, true);
+  }
+}
+
+function renderJournalDay(date, data) {
+  const wrap = el("div", {});
+
+  const pnl = data.daily_pnl;
+  wrap.appendChild(
+    el("div", { className: "stat-row" }, [
+      el("div", { className: "stat" }, [
+        el("div", { className: "stat-label", text: "Equity close" }),
+        el("div", { className: "stat-value", text: pnl ? fmtMoney(pnl.equity_close) : "—" }),
+      ]),
+      el("div", { className: "stat" }, [
+        el("div", { className: "stat-label", text: "Daily P&L" }),
+        el("div", {
+          className: `stat-value ${pnl ? pnlClass(pnl.daily_pnl) : ""}`,
+          text: pnl ? `${fmtMoney(pnl.daily_pnl)} (${fmtPct(pnl.daily_return_pct)})` : "—",
+        }),
+      ]),
+      el("div", { className: "stat" }, [
+        el("div", { className: "stat-label", text: "Total value" }),
+        el("div", { className: "stat-value", text: pnl ? fmtMoney(pnl.total_value) : "—" }),
+      ]),
+    ])
+  );
+  if (!pnl) {
+    wrap.appendChild(el("div", { className: "state-message", text: "No equity snapshot recorded for this day." }));
+  }
+
+  wrap.appendChild(evidenceSection("Evening reflection", [reflectionCard(data.reflection)]));
+
+  wrap.appendChild(evidenceSection("Runs this day", [runsMiniTable(data.runs, openRunDetail)]));
+
+  wrap.appendChild(evidenceSection("Trades this day", [tradesMiniTable(data.trades)]));
+
+  wrap.appendChild(
+    evidenceSection(
+      "Candidates considered",
+      [
+        data.candidates.length
+          ? el(
+              "div", {},
+              data.candidates.map((sym) => {
+                const chip = el("button", { className: "candidate-chip", text: sym });
+                chip.type = "button";
+                chip.addEventListener("click", () => openJournalCandidate(data.runs, sym));
+                return chip;
+              })
+            )
+          : null,
+      ],
+      "No candidates recorded for this day."
+    )
+  );
+
+  return wrap;
+}
+
+async function loadJournalDay(date) {
+  const body = document.querySelector("#panel-journal [data-body]");
+  if (!date) {
+    showMessage(body, "Pick a date above.");
+    setPanelState("panel-journal", "ok", "ok");
+    return;
+  }
+  showMessage(body, `Loading ${date}…`);
+  try {
+    const res = await fetch(`/journal/${encodeURIComponent(date)}`, { headers: { Accept: "application/json" } });
+    if (res.status === 404) {
+      showMessage(body, `No journal data recorded for ${date}.`);
+      setPanelState("panel-journal", "ok", "ok");
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    body.replaceChildren(renderJournalDay(date, data));
+    setPanelState("panel-journal", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Could not load journal for ${date}: ${err.message}`, true);
+    setPanelState("panel-journal", "error", "unreachable");
+  }
+}
+
+async function loadJournalDates() {
+  const select = document.getElementById("journal-date");
+  try {
+    const data = await fetchJSON("/journal/dates?limit=60");
+    if (!data.dates.length) {
+      select.replaceChildren(el("option", { text: "No journal days yet", attrs: { value: "" } }));
+      showMessage(document.querySelector("#panel-journal [data-body]"), "No journal data recorded yet.");
+      setPanelState("panel-journal", "ok", "ok");
+      return;
+    }
+    select.replaceChildren(
+      ...data.dates.map((d, i) => el("option", { text: d, attrs: { value: d, ...(i === 0 ? { selected: "selected" } : {}) } }))
+    );
+    await loadJournalDay(data.dates[0]);
+  } catch (err) {
+    select.replaceChildren(el("option", { text: "Unavailable", attrs: { value: "" } }));
+    showMessage(document.querySelector("#panel-journal [data-body]"), `Could not load journal dates: ${err.message}`, true);
+    setPanelState("panel-journal", "error", "unreachable");
+  }
+}
+
+document.getElementById("journal-date").addEventListener("change", (e) => loadJournalDay(e.target.value));
+
+/* ---------------------------------------------------------------------- */
+/* Search — Stage 5 forensic search over trades + agent_logs.             */
+/* ---------------------------------------------------------------------- */
+
+function searchHitsTable(hits, kind) {
+  if (!hits.length) return null;
+  if (kind === "trade") {
+    const rows = hits.map((h) => {
+      const tr = el("tr", { className: h.run_id ? "row-clickable" : "", attrs: { tabindex: h.run_id ? "0" : "-1" } }, [
+        el("td", { text: fmtTime(h.timestamp) }),
+        el("td", { text: h.symbol }),
+        el("td", {}, [pill(h.action)]),
+        el("td", { text: h.run_id || "—" }),
+        el("td", { text: h.reasoning || "—", title: h.reasoning || "" }),
+      ]);
+      if (h.run_id) {
+        tr.addEventListener("click", () => openRunDetail(h.run_id));
+        tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openRunDetail(h.run_id); });
+      }
+      return tr;
+    });
+    return table(["Time", "Symbol", "Action", "Run", "Reasoning"], rows);
+  }
+  const rows = hits.map((h) => {
+    const tr = el("tr", { className: h.run_id ? "row-clickable" : "", attrs: { tabindex: h.run_id ? "0" : "-1" } }, [
+      el("td", { text: fmtTime(h.timestamp) }),
+      el("td", { text: h.agent_name }),
+      el("td", { text: h.model || "—" }),
+      el("td", { text: h.run_id || "—" }),
+      el("td", { text: h.output_summary || "—", title: h.output_summary || "" }),
+    ]);
+    if (h.run_id) {
+      tr.addEventListener("click", () => openRunDetail(h.run_id));
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openRunDetail(h.run_id); });
+    }
+    return tr;
+  });
+  return table(["Time", "Agent", "Model", "Run", "Summary"], rows);
+}
+
+async function runSearch() {
+  const body = document.querySelector("#panel-search [data-body]");
+  const q = document.getElementById("search-input").value.trim();
+  if (!q) {
+    showMessage(body, "Type a search term above.");
+    setPanelState("panel-search", "ok", "ok");
+    return;
+  }
+  showMessage(body, `Searching for "${q}"…`);
+  try {
+    const data = await fetchJSON(`/search?q=${encodeURIComponent(q)}&limit=50`);
+    const tradesTable = searchHitsTable(data.trades, "trade");
+    const agentTable = searchHitsTable(data.agent_logs, "agent_log");
+    if (!tradesTable && !agentTable) {
+      showMessage(body, `No matches for "${q}".`);
+      setPanelState("panel-search", "ok", "ok");
+      return;
+    }
+    body.replaceChildren(
+      evidenceSection(`Trade hits (${data.trades.length})`, [tradesTable], `No trades matched "${q}".`),
+      evidenceSection(`Agent-call hits (${data.agent_logs.length})`, [agentTable], `No agent calls matched "${q}".`)
+    );
+    setPanelState("panel-search", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Search failed: ${err.message}`, true);
+    setPanelState("panel-search", "error", "unreachable");
+  }
+}
+
+document.getElementById("search-btn").addEventListener("click", runSearch);
+document.getElementById("search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runSearch();
+});
+
+/* ---------------------------------------------------------------------- */
 /* Orchestration                                                           */
 /* ---------------------------------------------------------------------- */
 
@@ -1044,6 +1367,7 @@ document.getElementById("orders-status").addEventListener("change", loadOrders);
 
 refreshAll();
 loadRuns();
+loadJournalDates();
 setInterval(() => {
   if (!document.hidden) refreshAll();
 }, REFRESH_MS);
