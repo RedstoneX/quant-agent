@@ -32,6 +32,18 @@ GitHub is the durable source of truth. Claude Code sessions are disposable worke
 - Revisit external projects/donors only when their current state is relevant to the active milestone or a prior assumption has become stale.
 - Optional integrations remain effort-bounded; stop and report when a supposedly small integration becomes a new project.
 
+## GitHub self-service and delegation policy
+The operator has given a standing workflow preference for QAMC: **when ChatGPT has a connected GitHub capability that can safely perform an already-authorized repository action, ChatGPT should perform it directly instead of asking the operator to click through GitHub or spending Claude Code usage on GitHub mechanics.**
+
+Examples include repository inspection, branch/commit/PR inspection, bounded documentation/governance edits, branch creation, PR creation or metadata updates, checkpoint verification, and merging an already-reviewed/verified PR when the merge is within the operator's authorized scope.
+
+- Prefer **ChatGPT → GitHub connector** for GitHub-native mechanics that the connector supports.
+- Prefer **Claude Code** for implementation work that genuinely needs a code workspace, command execution, tests, debugging or broad source edits.
+- Do not send the operator manual GitHub instructions for an action ChatGPT can safely complete directly, unless the operator explicitly asks to do it manually.
+- Do not consume Claude Code credits merely to perform GitHub administration that ChatGPT can do itself.
+- This standing preference does **not** authorize destructive, ambiguous or scope-expanding changes. Deleting important branches/data, force-moving refs, altering repository protections/settings, merging unverified implementation, or starting a new milestone still requires the applicable governance/authorization.
+- Within an already-approved bounded task, handle routine GitHub publication mechanics end-to-end where possible: inspect → create/update branch or PR → verify → merge when authorized → report the result.
+
 ## Checkpoint and handoff discipline
 At every STOP checkpoint:
 1. Verify the bounded acceptance criteria.
