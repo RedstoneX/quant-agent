@@ -27,5 +27,15 @@ This fork is the authoritative repository for **Quant Agent Mission Control (QAM
 ## Documentation authority
 GitHub Markdown in this repository is the durable source of truth. Obsidian may index/read it but is not an independent authority.
 
-## Stage 0 restriction
-Until Stage 0 is explicitly accepted, perform inspection, baseline testing and documentation only. Do not add OpenRouter, Mission Control, AgentLens instrumentation, journal code, risk changes or donor UI code.
+## Current stage restriction
+**Stage 0 was accepted 2026-08-09. The authorized stage is now Stage 0.5 —
+the D-1 actual-model attribution hotfix** (`docs/MILESTONES.md`).
+
+Work only within Stage 0.5's declared scope: the nine `insert_agent_log(...)`
+call sites plus targeted tests. Do **not** touch `src/agents/base.py::_execute`,
+the database schema, provider routing or trading behavior, and do not add
+OpenRouter, Mission Control, journal code, risk changes or donor UI code.
+Stage 1 stays blocked until Checkpoint A5 is accepted.
+
+AgentLens is **out of plan** (DECISION #34) — do not instrument, integrate or
+pilot it.

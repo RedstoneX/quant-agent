@@ -11,7 +11,7 @@ One lead Claude session owns architecture compliance, integration, checkpoints a
 - Stage 2/3: API endpoints, native frontend shell and chart integration can parallelize after API contracts freeze.
 - Stage 4: agent visualization and model/cost visualization can parallelize.
 - Stage 5: after journal schema freeze, journal frontend, indexed-search backend and Suggested Investigations can parallelize.
-- Stage 6: AgentLens pilot is naturally isolated and can use a separate worktree/session.
+- *(Stage 6 AgentLens pilot removed from the roadmap 2026-08-09 — DECISION #34.)*
 - Stages 7/8: reduce parallel writes; prompt mutation/risk/operational controls require tighter serialized review.
 
 ## Branch/worktree rule

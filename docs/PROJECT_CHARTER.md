@@ -17,7 +17,10 @@ QAMC surrounds quant-agent with better provider flexibility, a browser-based Mis
 2. **QAMC backend seam** — minimal provider/config/telemetry/correlation enhancements plus a thin read/control API.
 3. **QAMC Mission Control** — native React/Vite/Tailwind web UI using approved donor components and TradingView Lightweight Charts.
 4. **Journal/Search** — native derived presentation/index over canonical quant-agent records.
-5. **AgentLens** — optional forensic observability sidecar; never critical path.
+5. *(Retired 2026-08-09: an optional AgentLens observability sidecar was
+   evaluated and **dropped** — DECISION #34. Forensic observability is served
+   natively by `agent_logs`, `run_id` and `scripts/replay_decision.py`. QAMC
+   has no external observability dependency.)*
 
 ## Success definition
 The experiment can run unattended on Alpaca Paper, expose what each AI agent/PM/risk layer did, show actual execution differences, make model assignment easy, record cost/outcomes, provide a useful daily journal, and remain safe if the UI or observability stack fails.

@@ -29,7 +29,8 @@ iPad portrait: stacked cards/tabs; never shrink critical text into unusability.
 - proposed versus executed visually distinct;
 - agent disagreement easy to spot;
 - costs/models visible but secondary to decisions;
-- raw traces one click deeper, not dumped into daily journal;
+- raw agent prompts/responses (`agent_logs`) one click deeper, not dumped into
+  the daily journal;
 - no fake live data;
 - write controls visually and technically separate from read-only monitoring.
 
