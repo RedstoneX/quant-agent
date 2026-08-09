@@ -1,39 +1,45 @@
-# Mission Control Architecture
+# Mission Control Architecture Boundary
 
-## Decision
-Build a **QAMC-native React/Vite/Tailwind UI** with one QAMC-native data contract. Do not preserve OpenTradex's backend worldview just to reuse its frontend.
+Status: **post-Stage-2 design is provisional during Discovery R1**.
 
-## Core screens
-- Cockpit: equity/P&L, positions, orders/trades, watchlist/candidates, charts, system health.
-- Agents: per-agent role/model/provider/recommendation/confidence/reasoning summary/cost.
-- Decision Chain: PM proposal → AI Risk response → deterministic gate → executed/rejected delta.
-- Journal: calendar/list/daily page and search.
-- Learning: Meta Reflector reports/diffs/history (later stage).
-- Administration: initially read-only; write controls only after explicit milestone.
+This file defines the accepted boundaries around Mission Control. It does **not** freeze the prior Stage 3–5 frontend stack, donor choices, screen layout, or sequencing.
 
-## Data contract philosophy
-Expose simple QAMC resources such as account, positions, orders, trades, agents, decisions, risk, journal, models, learning and health. Mission Control consumes the accepted Stage-2 read-only API and must not become a second trading engine or trading-critical dependency.
+## Accepted foundation
 
-## Stage 2 accepted result (Checkpoint C, 2026-08-09)
-The endpoint contract is implemented and documented in `docs/architecture/MISSION_CONTROL_API.md`:
+- `yebof/quant-agent` remains the authoritative trading engine.
+- The accepted Stage-2 API is the current read-only seam into trading/account/history state; see `MISSION_CONTROL_API.md`.
+- Mission Control is presentation/operator UX and must remain non-critical to trading.
+- Current Mission Control work is read-only; it cannot place/cancel/modify/bypass broker orders.
+- Derived UI/journal/search state must be rebuildable and non-authoritative.
+- The operator must be able to distinguish proposed AI intent, AI Risk intervention, deterministic risk outcome, and what actually executed.
+- Real provider/model/cost/correlation evidence comes from canonical QAMC records rather than a second telemetry store.
 
-- `/health`
-- `/account`
-- `/positions`
-- `/orders`
-- `/trades`
-- `/runs`
-- `/runs/{run_id}`
-- `/decisions/{decision_id}`
-- `/agents`
-- `/agents/{agent_name}`
-- `/reflections`
-- `/candidates`
+## Desired product capabilities
 
-Checkpoint C also closed the deterministic hard-risk reconstruction gap. A forensic `agent_logs` row with sentinel `agent_name="risk_gate"` is written when the deterministic gate blocks every candidate, including both the pre-RM and post-RM-modification paths. This is additive forensic persistence only; deterministic risk/execution semantics are unchanged. Authoritative acceptance record: `docs/CHECKPOINT_C_ACCEPTANCE.md`.
+The current outcome calls for a polished browser/iPad experience that can make the following understandable without raw logs:
+- account/equity/P&L, positions, orders, trades, candidates, and health;
+- specialist agent conclusions and disagreement;
+- Portfolio Manager proposal;
+- AI Risk changes/rejections;
+- deterministic gate result;
+- proposed-versus-executed delta;
+- model/provider/cost/latency/fallback attribution;
+- prior-day journal/forensic history.
 
-## Stages 3–5 coordinated build tranche
-`docs/MISSION_CONTROL_BUILD_TRANCHE.md` authorizes Stages 3–5 as one coordinated engineering tranche with internal stage gates and a single external STOP after Stage 5 / Checkpoint E. Claude Code owns implementation orchestration within the frozen architecture and safety boundaries.
+These are **capabilities**, not a prescribed component hierarchy.
 
-## Donor strategy
-OpenTradex contributes presentation primitives/patterns. Orallexa contributes multi-agent semantics/presentation. TradingView Lightweight Charts owns financial visualization. Donor backend assumptions are discarded.
+## Discovery R1 questions
+
+Claude should independently determine the simplest architecture that reaches the outcome, including:
+- whether the previously proposed frontend stack is still the best fit;
+- whether prior donor research saves work or creates adaptation cost;
+- whether current Stage-2 reads are sufficient or need minimal additional read-side support;
+- how much journal/search functionality belongs in the same implementation tranche;
+- the cleanest responsive information architecture for desktop/iPad;
+- how to verify the interface with real API-backed data and degraded/error states.
+
+Prior UI/donor/journal proposals are preserved under `docs/reference/mission-control/` as **challengeable research input**, not implementation instructions.
+
+## Non-goals during current discovery
+
+No product implementation, writable Mission Control operations, deterministic risk redesign, second trading engine, second authoritative memory system, or live trading.
