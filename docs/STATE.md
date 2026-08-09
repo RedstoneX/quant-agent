@@ -12,7 +12,6 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Discovery R1 and ChatGPT reconciliation are accepted.
 - Stage-4 product direction is **per-candidate fidelity**, while preserving each specialist's real data scope rather than inventing a uniform per-symbol schema.
 - Research evidence remains correlated by `run_id`/natural scope; `decision_id` remains PM → AI Risk → trade correlation.
-- AgentLens remains removed.
 - Default runtime posture remains small Linux VPS/server + private access; avoid distributed infrastructure without demonstrated need.
 
 ## Authorized now
