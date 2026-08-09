@@ -1,74 +1,65 @@
 ---
 name: qamc-build
-description: Execute the currently authorized QAMC implementation stage or tranche. Use when the operator asks to continue/build/implement QAMC.
+description: Implement the currently accepted QAMC work contract. Use only when docs/STATE.md and docs/work/ACTIVE.md explicitly authorize implementation.
 ---
 
-# QAMC authorized build workflow
+# QAMC accepted implementation workflow
 
-## Live repository state
+## Authorization gate
 
-```!
-git branch --show-current
-git status --short
-```
-
-First read:
+Before coding, read:
 1. `docs/STATE.md`;
-2. `docs/ROADMAP.md`;
-3. `docs/decisions/ACTIVE.md`;
-4. only the architecture/UI source documents relevant to the currently authorized work.
+2. `docs/work/ACTIVE.md`;
+3. `docs/OUTCOME.md`;
+4. `docs/decisions/ACTIVE.md`;
+5. only the architecture/source material relevant to the accepted contract.
 
-Do **not** preload historical governance/audit material. Use `docs/history/` only when a specific historical fact is needed.
+If `docs/STATE.md` says discovery/reconciliation is active, or `docs/work/ACTIVE.md` is not explicitly accepted for implementation, **STOP. Do not implement. Use `/qamc-discover` instead.**
+
+Do not preload historical governance/audit material.
 
 ## Role
 
-Act as the engineering lead/orchestrator.
-Own architecture within accepted boundaries, work decomposition, worker choice, integration, tests, debugging, and implementation documentation.
+Act as the engineering lead/orchestrator for the **accepted outcome contract**.
+Own routine implementation architecture inside accepted boundaries, decomposition, worker choice, integration, tests, debugging, and implementation documentation.
 
-Do not ask the operator for routine implementation choices that repository evidence or engineering judgment can resolve.
+Do not reopen settled product decisions casually, but do not treat a discovery proposal as a file-by-file coding recipe. The implementation session owns the engineering details.
+
+## Question routing during implementation
+
+1. Repository fact → investigate.
+2. Routine engineering choice → decide.
+3. Genuine operator product/value decision not covered by the accepted contract → ask **one question at a time**.
+4. Material architecture/safety/governance conflict with the accepted contract → stop and record the issue in `docs/work/ACTIVE.md` for external reconciliation.
+
+Do not ask the operator to choose libraries, modules, worker topology, tests, data structures, or other normal engineering details unless the answer actually changes a product outcome they own.
 
 ## Cost-aware orchestration
 
 Use the least expensive mechanism that can reliably do each job:
-
-1. Keep architecture, integration, difficult reasoning, and final synthesis in the lead.
-2. Use built-in Explore / focused Haiku subagents for repo search, file discovery, logs, bounded test investigation, and high-volume reading where only the conclusion matters.
-3. Use a stronger focused worker for implementation or review that actually needs it.
-4. Use worktree isolation for parallel writers with disjoint ownership.
-5. Use full agent-team teammates only when sustained peer-to-peer communication/self-coordination materially improves the result.
+- keep architecture, integration, difficult reasoning and final synthesis in the lead;
+- use Explore/focused Haiku subagents for repository search, file discovery, logs, bounded tests and high-volume reading;
+- use stronger focused workers for implementation/review that genuinely needs them;
+- use worktree isolation for parallel writers with disjoint ownership;
+- use full agent-team teammates only when sustained peer-to-peer communication materially improves the result.
 
 Do not maximize worker count. Maximize engineering quality per unit of usage.
-Agent teams are optional/experimental; immediately fall back to subagents/worktrees if team machinery is unavailable or creates friction.
 
-## Current tranche behavior
-
-Follow the authorization in `docs/STATE.md`.
-
-For the currently authorized Stage 3–5 Mission Control tranche:
-- Stage 3 and Stage 4 are internal gates, not external STOPs;
-- self-verify each, run relevant targeted checks, perform independent review, and create a clear commit boundary;
-- continue when the internal gate is green;
-- Stage 5 / Checkpoint E is the next external STOP.
-
-Do not start Stage 7+, writable operations, or live trading.
-
-## Data and safety
+## Safety
 
 All root `CLAUDE.md` invariants and path-scoped rules remain mandatory.
-If the authorized UI/journal work genuinely requires new read-side API/read-model support, implement the minimum clean read-side extension while preserving Stage-2 isolation.
-
-Stop and escalate rather than silently widening scope if success requires:
-- deterministic risk/execution changes;
-- write-capable Mission Control endpoints;
-- a new distributed service;
+Stop/escalate rather than silently widening scope if success requires:
+- deterministic risk/execution changes not explicitly accepted;
+- write-capable Mission Control operations not explicitly accepted;
+- a new distributed service without demonstrated need;
 - a broad safety-sensitive canonical-schema redesign;
-- inability to prove a UI value comes from canonical/API-backed state;
-- donor/integration work turning into a separate project.
+- inability to prove UI state comes from honest canonical/API-backed sources;
+- optional donor/integration work becoming a separate project.
 
 ## Verification
 
-Use targeted tests during implementation.
-For UI stages, run the application and perform real visual/runtime verification when tools allow.
-At internal gates, invoke a fresh `qamc-reviewer`; invoke `qamc-ui-reviewer` for UI-heavy gates.
+Use targeted tests while implementing.
+For UI work, run real runtime/visual verification when tools allow.
+Use fresh independent reviewers at meaningful internal gates rather than relying on the author's own assessment.
 
-At the external gate, use `/qamc-checkpoint`.
+At the external gate, use `/qamc-checkpoint`, push the branch and STOP for ChatGPT/operator review. Never merge the implementation PR yourself.
