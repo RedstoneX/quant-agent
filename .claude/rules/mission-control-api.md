@@ -13,4 +13,4 @@ paths:
 - Do not import Mission Control into the trading process.
 - API death/absence must have zero effect on trading or broker protection.
 - Prefer typed response contracts; do not return arbitrary database rows.
-- Additional Stage 4–5 read endpoints/read models are allowed only when they preserve these properties.
+- Add read endpoints/read models only when the current accepted work contract requires them and these isolation properties remain intact.
