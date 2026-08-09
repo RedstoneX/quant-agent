@@ -43,3 +43,10 @@ Limits:
 
 Accepted full suite at Checkpoint C: **1530 passed, 0 failed**.
 Detailed acceptance evidence remains in Git history. The last pre-ultra-lean working-tree snapshot is commit `02e20e6ac1c5c7e65b7f512f76c568328c990e3c`.
+
+Stage 4–5 (specialist evidence, journal, forensic search) are externally
+accepted — full suite **1558 passed, 0 failed**. Per
+`.claude/rules/frontend-verification.md`, every cockpit UI acceptance pass
+must be browser/runtime verified and ships a representative screenshot
+set under `docs/verification/<stage>/`; see `docs/verification/stage-4-5/`
+for this tranche's evidence.
