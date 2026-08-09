@@ -3401,3 +3401,63 @@ def test_reconcile_stop_coverage_skips_shorts_pending_and_covered():
     gaps = pipe._reconcile_stop_coverage()
     assert gaps == []
     pipe.broker.snapshot_protective_stops.assert_called_once_with("MSFT")
+
+
+# === Stage 1 (QAMC provider/model plumbing) — paper/live isolation ===
+
+@patch("src.pipeline.AlpacaBroker")
+@patch("src.pipeline.EarningsDataProvider")
+@patch("src.pipeline.EarningsAnalystAgent")
+@patch("src.pipeline.NewsDataProvider")
+@patch("src.pipeline.NewsAnalystAgent")
+@patch("src.pipeline.MacroAnalystAgent")
+@patch("src.pipeline.MacroDataProvider")
+@patch("src.pipeline.MarketDataProvider")
+@patch("src.pipeline.RiskManagerAgent")
+@patch("src.pipeline.PortfolioManagerAgent")
+@patch("src.pipeline.TechAnalystAgent")
+def test_broker_paper_flag_unaffected_by_new_provider_config(
+    mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
+    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
+    mock_broker_cls, mock_config,
+):
+    """The new explicit-provider config field must have no path into
+    Alpaca paper/live selection — AlpacaBroker(paper=...) must reflect ONLY
+    config.alpaca.paper, regardless of what any agent's provider is set to
+    (a new config knob near AlpacaConfig is exactly the kind of thing that
+    could accidentally get wired into a 'live' foot-gun if handled carelessly)."""
+    mock_config.llm.tech_analyst_provider = "openrouter"
+    mock_config.llm.portfolio_manager_provider = "deepseek"
+    mock_config.alpaca.paper = True
+
+    TradingPipeline(mock_config)
+
+    _, kwargs = mock_broker_cls.call_args
+    assert kwargs.get("paper") is True
+    assert kwargs.get("paper") == mock_config.alpaca.paper
+
+
+@patch("src.pipeline.AlpacaBroker")
+@patch("src.pipeline.EarningsDataProvider")
+@patch("src.pipeline.EarningsAnalystAgent")
+@patch("src.pipeline.NewsDataProvider")
+@patch("src.pipeline.NewsAnalystAgent")
+@patch("src.pipeline.MacroAnalystAgent")
+@patch("src.pipeline.MacroDataProvider")
+@patch("src.pipeline.MarketDataProvider")
+@patch("src.pipeline.RiskManagerAgent")
+@patch("src.pipeline.PortfolioManagerAgent")
+@patch("src.pipeline.TechAnalystAgent")
+def test_broker_paper_flag_false_still_passes_through_unmodified(
+    mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
+    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
+    mock_broker_cls, mock_config,
+):
+    """paper=False (live) must also pass through explicitly — proving the
+    value isn't silently coerced by anything Stage 1 touched."""
+    mock_config.alpaca.paper = False
+
+    TradingPipeline(mock_config)
+
+    _, kwargs = mock_broker_cls.call_args
+    assert kwargs.get("paper") is False

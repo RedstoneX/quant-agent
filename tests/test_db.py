@@ -724,3 +724,150 @@ def test_backfill_equity_close_no_row_for_date(db):
     """[API-lag self-heal] Backfilling a date with no daily_pnl row is a
     no-op, not a crash (e.g. lookback window predates the account's history)."""
     assert db.backfill_equity_close("2020-01-01", 100_000.0) is False
+
+
+# === Stage 1 (QAMC provider/model/correlation plumbing) ===
+
+def test_insert_agent_log_new_columns_roundtrip(db):
+    db.insert_agent_log(
+        agent_name="portfolio_manager",
+        run_id="run-001",
+        input_summary="s",
+        output_summary="o",
+        full_response="{}",
+        model="claude-opus-4-7",
+        tokens_used=100,
+        requested_provider="openai",
+        requested_model="gpt-5.5",
+        actual_provider="anthropic",
+        prompt_version="abc123",
+        latency_s=12.5,
+        status="fallback",
+        finish_reason="end_turn",
+        truncated=False,
+        decision_id="run-001-dec-abc123",
+    )
+    logs = db.get_agent_logs(run_id="run-001")
+    assert len(logs) == 1
+    row = logs[0]
+    assert row["requested_provider"] == "openai"
+    assert row["requested_model"] == "gpt-5.5"
+    assert row["actual_provider"] == "anthropic"
+    assert row["prompt_version"] == "abc123"
+    assert row["latency_s"] == 12.5
+    assert row["status"] == "fallback"
+    assert row["finish_reason"] == "end_turn"
+    assert row["truncated"] == 0
+    assert row["decision_id"] == "run-001-dec-abc123"
+
+
+def test_insert_agent_log_new_columns_default_null_when_omitted(db):
+    """A caller that doesn't pass the Stage 1 kwargs (any pre-Stage-1 caller,
+    or a caller whose result had no attribution) persists NULL, not a
+    fabricated value — per DECISION #12 / the 'unknown stays unknown' rule."""
+    db.insert_agent_log(
+        agent_name="macro_analyst", run_id="run-002", input_summary="s",
+        output_summary="o", full_response="{}", model="m", tokens_used=1,
+    )
+    row = db.get_agent_logs(run_id="run-002")[0]
+    for col in ("requested_provider", "requested_model", "actual_provider",
+                "prompt_version", "latency_s", "status", "finish_reason",
+                "truncated", "decision_id"):
+        assert row[col] is None, f"{col} should default to NULL, got {row[col]!r}"
+
+
+def test_insert_trade_decision_id_roundtrips(db):
+    db.insert_trade(
+        symbol="SPY", action="BUY", qty=1.0, price=500.0,
+        reasoning="x", run_id="run-003", decision_id="run-003-dec-xyz",
+    )
+    trades = db.get_trades(symbol="SPY")
+    assert trades[0]["decision_id"] == "run-003-dec-xyz"
+
+
+def test_insert_trade_decision_id_defaults_null(db):
+    """A trade outside the PM/RM decision chain (e.g. a midday sell, an
+    emergency sell, a cash-sweep order) legitimately carries no decision_id."""
+    db.insert_trade(
+        symbol="SPY", action="SELL", qty=1.0, price=500.0,
+        reasoning="x", run_id="midday-001",
+    )
+    trades = db.get_trades(symbol="SPY")
+    assert trades[0]["decision_id"] is None
+
+
+def test_migration_adds_new_columns_on_legacy_db(tmp_path):
+    """A DB file created with the PRE-Stage-1 agent_logs/trades schema (no
+    new columns at all) must open and migrate safely via _ensure_column —
+    new columns appear, pre-existing rows read back with NULL in them, and
+    nothing about the old rows is touched."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            action TEXT NOT NULL,
+            qty REAL NOT NULL,
+            price REAL NOT NULL,
+            reasoning TEXT,
+            run_id TEXT,
+            timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE agent_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            input_summary TEXT,
+            output_summary TEXT,
+            full_response TEXT,
+            model TEXT,
+            tokens_used INTEGER,
+            timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """)
+    conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id) "
+        "VALUES ('SPY', 'BUY', 1, 500.0, 'legacy row', 'old-run')"
+    )
+    conn.execute(
+        "INSERT INTO agent_logs (agent_name, run_id, input_summary, output_summary, "
+        "full_response, model, tokens_used) "
+        "VALUES ('tech_analyst', 'old-run', 's', 'o', '{}', 'claude-opus-4-6', 10)"
+    )
+    conn.commit()
+    conn.close()
+
+    database = Database(str(db_path))
+    database.initialize()  # runs _migrate() against the pre-existing tables
+    try:
+        trades_cols = {r[1] for r in database.conn.execute("PRAGMA table_info(trades)")}
+        agent_logs_cols = {r[1] for r in database.conn.execute("PRAGMA table_info(agent_logs)")}
+        for col in ("decision_id",):
+            assert col in trades_cols
+        for col in ("requested_provider", "requested_model", "actual_provider",
+                    "prompt_version", "latency_s", "status", "finish_reason",
+                    "truncated", "decision_id"):
+            assert col in agent_logs_cols
+
+        legacy_trade = database.get_trades(symbol="SPY")[0]
+        assert legacy_trade["reasoning"] == "legacy row"
+        assert legacy_trade["decision_id"] is None
+
+        legacy_log = database.get_agent_logs(run_id="old-run")[0]
+        assert legacy_log["model"] == "claude-opus-4-6"
+        assert legacy_log["requested_provider"] is None
+        assert legacy_log["decision_id"] is None
+    finally:
+        database.close()
+
+
+def test_migration_is_idempotent_on_already_migrated_db(db):
+    """Calling initialize() (and therefore _migrate()) again on an
+    already-current-schema DB must not raise or duplicate columns."""
+    db.initialize()
+    db.initialize()
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(agent_logs)")]
+    assert cols.count("decision_id") == 1

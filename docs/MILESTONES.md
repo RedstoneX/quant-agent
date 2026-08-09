@@ -95,7 +95,7 @@ untouched.
 
 **Checkpoint A5 ACCEPTED by the operator 2026-08-09. Stage 0.5 is DONE. Stage 1 is authorized as NEXT.**
 
-## Stage 1 — Provider, Model & Correlation Plumbing — **NEXT (AUTHORIZED 2026-08-09)**
+## Stage 1 — Provider, Model & Correlation Plumbing — **IMPLEMENTED 2026-08-09, awaiting Checkpoint B operator acceptance**
 - explicit provider/model configuration compatible with existing per-agent settings;
 - OpenRouter and/or Google AI Studio path with minimal provider abstraction;
 - preserve resilience without contaminating experiment attribution;
@@ -103,6 +103,165 @@ untouched.
 - stable run/decision/agent/order/trade/prompt-version correlation IDs where minimally necessary.
 
 Checkpoint B: paper run behavior/risk unchanged; attribution correct; tests pass. STOP.
+
+**Implemented 2026-08-09 on branch `claude/stage-1-qamc-integration-m1n0pw`.**
+Orchestrated with four read-only Wave-0 investigation subagents (provider/config
+seam, telemetry/persistence seam, correlation seam, test/safety review), then
+implemented directly by the orchestrator rather than parallel implementation
+workers — `base.py`, `config.py`, `pipeline.py`/`pipeline_stages.py` and
+`db.py` are exactly the shared files the orchestration brief said not to let
+two subagents edit concurrently, and the provider/telemetry/correlation seams
+all intersect in those same files (e.g. `AgentResult` carries both the
+provider-resolution outcome and the telemetry fields), so sequential
+single-owner edits were the safer path. A dedicated Test subagent was not
+needed either: the targeted tests were written directly against the now-fixed
+interfaces immediately after each seam landed.
+
+**A. Provider/model configuration.** `src/agents/base.py` gains
+`resolve_provider(model, explicit_provider)` — a single source of truth
+(explicit override wins; `None`, the default on every existing agent, falls
+through to the unchanged prefix-inference chain `_provider_for()`) — reused by
+`BaseAgent.__init__` (client construction), `AppConfig._check_llm_provider_keys`
+(key validation), and `pipeline.py`'s `_key_for` (agent API-key lookup), closing
+the "three independent bucketing implementations could disagree" risk the
+Wave-0 provider subagent flagged. `LLMConfig` gains nine optional
+`<agent>_provider` fields (mirrors the existing `<agent>_max_tokens` pattern),
+validated against `{anthropic, openai, deepseek, openrouter}` at config load.
+**OpenRouter** is the one new provider added (Google AI Studio was evaluated
+and deliberately deferred — see below): it is OpenAI-wire-compatible, so it
+reuses `_call_openai()` unmodified via a new client-construction branch
+(`base_url=https://openrouter.ai/api/v1`, mirrors the existing DeepSeek
+branch) and a dedicated concurrency semaphore
+(`QUANT_AGENT_MAX_CONCURRENT_OPENROUTER`, default 3 — a distinct
+account/rate-limit domain from the OpenAI relay). OpenRouter is required to be
+**explicit-only**, never prefix-inferred: its "vendor/model" ids (e.g.
+`anthropic/claude-3.5-sonnet`) would otherwise collide with native provider
+prefixes. The cross-provider failover gate
+(`(self._use_openai or self._use_deepseek or self._use_openrouter) and
+self._fallback_api_key`) now also covers OpenRouter primaries.
+`BaseAgent._execute()`'s retry/backoff/deadline/failover **loop body is
+unchanged** — the only new code inside it is one `elif self._use_openrouter:`
+dispatch line reusing the existing `_call_openai` method, per the Stage 0 audit's
+explicit recommendation not to touch that loop. `ApiKeysConfig.openrouter`
+added; "at least one provider key" check extended. **Google AI Studio was
+evaluated at the synthesis gate and deferred**: it would require a genuinely
+new call path (its own SDK, `contents`/`parts` message shape, different usage
+field names, its own empty-content/finish-reason mapping) rather than an
+extension of the existing seam — implementing "one generic mechanism" per the
+prompt's instruction meant picking OpenRouter, which required none of that.
+The `resolve_provider` design accommodates Google later without further
+`base.py` restructuring.
+
+**B. Experimental attribution / telemetry.** `AgentResult` gains six fields,
+all captured at the entry/exit of `_execute()` only — never inside the retry
+loop body: `requested_model`, `requested_provider` (captured before the loop,
+from `self.model`/`self._provider`), `actual_provider` (derived from
+`actual_model` after the loop — `_provider_for(_FALLBACK_MODEL)` correctly
+resolves to `"anthropic"` with no special-casing needed), `used_fallback`
+(`primary_error is not None`), `prompt_version`
+(`sha256(system_prompt)[:12]`), `latency_s` (wall time across the whole call
+including retries). A new `agent_log_kwargs(result)` helper in `base.py` maps
+these onto the nine `insert_agent_log(...)` call sites uniformly
+(`status="fallback"` iff `used_fallback`, else `"success"`; the one exception
+path that already synthesizes an `AgentResult` on a hard failure —
+`evening_analyst`'s except-block in `pipeline.py` — overrides `status="failed"`
+and now also records what model/provider WAS requested even though no call
+ever completed). `tech_analyst`'s documented N-chunks-collapse-to-1-row
+limitation (Stage 0 audit F-3, explicitly out of Stage 1's required scope) got
+a proportionate improvement since the values were already in hand per chunk:
+the merged row now carries `used_fallback`/`truncated` ORed across chunks and
+`latency_s` summed across chunks, rather than silently defaulting to
+"no fallback happened" — the collapse-to-one-row structural limitation itself
+remains, as documented.
+
+**C. Persistence.** Nine new nullable `agent_logs` columns
+(`requested_provider`, `requested_model`, `actual_provider`, `prompt_version`,
+`latency_s`, `status`, `finish_reason`, `truncated`, `decision_id`) and one on
+`trades` (`decision_id`), all added the sanctioned way — `_ensure_column` in
+`src/storage/db.py:_migrate()`, the same idempotent additive mechanism used
+for the prior 18 columns. `finish_reason`/`truncated` were already computed on
+`AgentResult` but never persisted (Stage 0 audit F-2) — persisting them cost
+nothing extra since the values already existed. No new table, no migration
+framework, no external telemetry store. A dedicated test
+(`test_migration_adds_new_columns_on_legacy_db`) builds a literal
+pre-Stage-1-shaped SQLite file by hand and proves `initialize()` migrates it
+safely with pre-existing rows reading back `NULL` in the new columns.
+
+**D. Correlation.** One new identifier, `decision_id`
+(`f"{run_id}-dec-{uuid4().hex[:6]}"`, generated independently of `run_id`
+rather than reusing it verbatim, so it stays correct even if a future change
+ever calls `PortfolioManager.decide()` more than once per run), generated once
+in `DecisionStage.run()` right after a successful PM call, stored on
+`RunContext.decision_id`, and threaded to: the `portfolio_manager` and
+`risk_manager` `agent_logs` rows (`DecisionStage`/`RiskStage`), and every
+`trades` row a run produces — HOLD, SELL/PARTIAL_SELL, and BUY
+(`ExecutionStage`). `run_id` already correlated `agent_logs`↔`trades` at the
+run level (Stage 0 audit — nothing needed there); the genuine gap was
+decision-level, and one column closes it. `src/replay.py` /
+`scripts/replay_decision.py` needed no change — replay operates purely on
+`agent_logs` rows keyed by `agent_name`/`run_id`, never touches `trades`.
+A dedicated end-to-end test
+(`test_morning_session_decision_id_correlates_pm_rm_and_trade`) runs a full
+`TradingPipeline.run_morning()` against a real (`tmp_path`) SQLite DB and
+proves the PM row, the RM row, and the resulting BUY's trade row all share one
+`decision_id`, while research-phase agents (macro/tech/news/earnings, outside
+the PM/RM decision chain) correctly carry `NULL`.
+
+**E. Safety verification.** `RiskRuleEngine.__init__` still takes only
+`RiskConfig` (pinned by a new signature-inspection test,
+`test_invariant_risk_rule_engine_never_reads_llm_or_provider_config`) — no
+code path exists from the new provider/LLM config into deterministic risk
+math. A new invariant test
+(`test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config`) reruns the
+existing hard-risk-breach scenario with `pipeline.config.llm` set to a bare
+string (not even a `MagicMock`) and confirms the gate still blocks correctly —
+if any code path dereferenced `config.llm`/`config.provider`, this would raise
+`AttributeError` instead of gating. Two new tests
+(`test_broker_paper_flag_unaffected_by_new_provider_config`,
+`test_broker_paper_flag_false_still_passes_through_unmodified`) prove
+`AlpacaBroker(paper=...)` reflects only `config.alpaca.paper`, unaffected by
+any agent's provider being set to `openrouter`/`deepseek`, and that `False`
+(live) passes through unmodified too — the "new config knob near
+`AlpacaConfig` becomes a live-trading foot-gun" risk the Wave-0 test/safety
+subagent flagged.
+
+**Tests.** 28 new targeted tests across `tests/test_base_agent.py` (provider
+routing/failover/attribution), `tests/test_config.py` (explicit-provider
+key validation, backward-compat, invalid-provider rejection),
+`tests/test_db.py` (schema roundtrip, legacy-DB migration, idempotent
+re-migration), `tests/test_agent_log_attribution.py` (end-to-end
+decision_id correlation), `tests/test_invariants.py` (hard-risk immunity to
+provider config), and `tests/test_pipeline.py` (paper/live isolation). One
+pre-existing test (`tests/test_cash_sweep.py::test_position_review_hides_vehicle_and_parks_at_end`)
+needed the same fix Stage 0.5 applied once already: its mocked `AgentResult`-like
+`MagicMock` had no explicit values for the new fields `agent_log_kwargs()`
+reads, so SQLite rejected the auto-vivified `MagicMock` objects at bind time —
+fixed by adding explicit field values to the mock, no behavior assertions
+changed. **Full suite: 1464 passed, 0 failed** (1436 baseline + 28 new tests).
+`src/agents/base.py::_execute()`'s retry/backoff/deadline loop body,
+`RiskRuleEngine`, `_filter_hard_risk_decisions`, `PortfolioConstructor`, and
+Alpaca paper/live selection are all unchanged in trading/risk semantics.
+
+**Known limitations preserved, not solved (out of Stage 1's bounded scope):**
+tech_analyst's chunk-collapse structural limitation (Stage 0 audit F-3) still
+means true per-HTTP-call attribution is unavailable for that agent, just less
+lossy than before; the relay attribution ceiling (F-4) is unchanged — QAMC
+still cannot independently verify what model an `OPENAI_BASE_URL` relay
+actually served; Google AI Studio support was evaluated and deferred, not
+built. **D-8** (`.env.example` omits several documented env vars) is
+partially addressed — the two Stage-1-introduced vars (`OPENROUTER_API_KEY`,
+`QUANT_AGENT_MAX_CONCURRENT_OPENROUTER`) plus `DEEPSEEK_API_KEY` are now
+documented there; the pre-existing gap for `OPENAI_BASE_URL`,
+`OPENAI_CA_BUNDLE`, `TELEGRAM_*`, and `QUANT_AGENT_RETRY_DEADLINE_S` remains
+open, unchanged by Stage 1.
+
+**Checkpoint B: implementation-side verification complete, all 15 criteria
+self-verified green (paper-safety, backward compat, new provider path,
+per-agent selection, requested-vs-actual distinguishability, explicit
+fallback attribution, telemetry persistence, prompt versioning, correlation
+sufficiency, safe old-DB migration, deterministic-risk non-regression,
+targeted + full suite green, Stage 2 not started). Awaiting operator
+acceptance before Stage 1 is marked DONE and Stage 2 is authorized.**
 
 ## Stage 2 — Thin Read-Only Mission Control API — BLOCKED
 Expose only what is needed for UI: account, positions, orders, trades, candidates, agents, PM/risk/deterministic decisions, model/cost, journal source data, learning reports, scheduler/health.

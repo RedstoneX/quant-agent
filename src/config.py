@@ -5,13 +5,18 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from src.agents.base import _is_deepseek_model, _is_openai_model
+from src.agents.base import VALID_PROVIDERS, resolve_provider
 
 
 class ApiKeysConfig(BaseModel):
     anthropic: str
     openai: str = ""
     deepseek: str = ""
+    # OpenRouter (Stage 1 QAMC provider/model plumbing) — optional, only
+    # required when an agent's explicit `provider: openrouter` is selected
+    # (enforced in AppConfig._check_llm_provider_keys, not here, since that's
+    # the layer that already knows which agents are configured for it).
+    openrouter: str = ""
     fred: str
     alpaca_key: str
     alpaca_secret: str
@@ -21,9 +26,9 @@ class ApiKeysConfig(BaseModel):
         for field_name in ("alpaca_key", "alpaca_secret", "fred"):
             if not getattr(self, field_name):
                 raise ValueError(f"Required API key '{field_name}' is empty — check your .env file")
-        if not self.anthropic and not self.openai and not self.deepseek:
+        if not self.anthropic and not self.openai and not self.deepseek and not self.openrouter:
             raise ValueError(
-                "At least one of 'anthropic', 'openai', or 'deepseek' API key must be set"
+                "At least one of 'anthropic', 'openai', 'deepseek', or 'openrouter' API key must be set"
             )
         return self
 
@@ -31,6 +36,16 @@ class ApiKeysConfig(BaseModel):
 class AlpacaConfig(BaseModel):
     base_url: str
     paper: bool
+
+
+# The nine agents that carry a per-agent model (and, as of Stage 1, an
+# optional explicit provider). Single list reused by LLMConfig.get_provider
+# and AppConfig._check_llm_provider_keys so the two can't drift apart.
+AGENT_NAMES = (
+    "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+    "portfolio_manager", "risk_manager", "position_reviewer",
+    "evening_analyst", "meta_reflector",
+)
 
 
 class LLMConfig(BaseModel):
@@ -46,6 +61,21 @@ class LLMConfig(BaseModel):
     # because the input (deterministic digest) is dense and the output must
     # cite numbers precisely; a weaker model tends to vibe-reason.
     meta_reflector_model: str = "claude-opus-4-7"
+    # Stage 1: explicit per-agent provider override. `None` (every agent's
+    # default) means "infer from the model-id prefix", exactly as before
+    # Stage 1 — this field is additive-only and changes nothing for a
+    # settings.yaml that doesn't set it. Required (not inferrable) for
+    # OpenRouter, whose "vendor/model" ids collide with native prefixes —
+    # see resolve_provider() in src/agents/base.py.
+    tech_analyst_provider: str | None = None
+    news_analyst_provider: str | None = None
+    macro_analyst_provider: str | None = None
+    earnings_analyst_provider: str | None = None
+    portfolio_manager_provider: str | None = None
+    risk_manager_provider: str | None = None
+    position_reviewer_provider: str | None = None
+    evening_analyst_provider: str | None = None
+    meta_reflector_provider: str | None = None
     # Global fallback — used by any agent without an explicit override below.
     max_tokens: int
     # Per-agent overrides. Each agent emits a different output shape; the PM
@@ -109,6 +139,32 @@ class LLMConfig(BaseModel):
         if override is not None:
             return override
         return self.max_tokens
+
+    def get_provider(self, agent_name: str) -> str | None:
+        """Return the explicit provider override for `agent_name`, or None
+        (meaning "infer from the model-id prefix", the pre-Stage-1 behavior).
+        Unknown agent names also return None."""
+        return getattr(self, f"{agent_name}_provider", None)
+
+    @field_validator(
+        "tech_analyst_provider", "news_analyst_provider", "macro_analyst_provider",
+        "earnings_analyst_provider", "portfolio_manager_provider", "risk_manager_provider",
+        "position_reviewer_provider", "evening_analyst_provider", "meta_reflector_provider",
+    )
+    @classmethod
+    def _provider_is_valid_or_unset(cls, v: str | None) -> str | None:
+        # None = "not set, infer from model prefix" (the default/backward-
+        # compatible case). A typo'd provider string must fail loudly at
+        # config load rather than silently falling through to prefix
+        # inference and picking an unintended provider.
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        if normalized not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid provider {v!r}; must be one of {sorted(VALID_PROVIDERS)} or unset"
+            )
+        return normalized
 
 
 class RiskConfig(BaseModel):
@@ -288,19 +344,30 @@ class AppConfig(BaseModel):
         openai_models = []
         anthropic_models = []
         deepseek_models = []
+        openrouter_models = []
 
-        for field_name, model_name in self.llm.model_dump().items():
-            if not field_name.endswith("_model"):
-                continue
-            # DeepSeek check FIRST: deepseek-* models don't match the OpenAI
-            # prefixes, but bucketing by elimination ("anything not OpenAI is
-            # Anthropic") would otherwise demand the wrong key for them.
-            if _is_deepseek_model(model_name):
-                deepseek_models.append(f"{field_name}={model_name}")
-            elif _is_openai_model(model_name):
-                openai_models.append(f"{field_name}={model_name}")
+        # Bucket by resolve_provider(model, explicit_provider) — the SAME
+        # helper BaseAgent.__init__ uses to pick a client — rather than
+        # re-deriving prefix logic here. An agent with an explicit
+        # `*_provider` override is bucketed by that override, not by
+        # whatever its model string's prefix would otherwise imply; this is
+        # what makes an OpenRouter "vendor/model" id (which would otherwise
+        # mis-bucket as Anthropic) require OPENROUTER_API_KEY instead.
+        for agent_name in AGENT_NAMES:
+            model_name = getattr(self.llm, f"{agent_name}_model")
+            explicit_provider = self.llm.get_provider(agent_name)
+            provider = resolve_provider(model_name, explicit_provider)
+            label = f"{agent_name}_model={model_name}" + (
+                f" (provider={explicit_provider})" if explicit_provider else ""
+            )
+            if provider == "deepseek":
+                deepseek_models.append(label)
+            elif provider == "openrouter":
+                openrouter_models.append(label)
+            elif provider == "openai":
+                openai_models.append(label)
             else:
-                anthropic_models.append(f"{field_name}={model_name}")
+                anthropic_models.append(label)
 
         if openai_models and not self.api_keys.openai:
             selected = ", ".join(openai_models)
@@ -312,6 +379,12 @@ class AppConfig(BaseModel):
             selected = ", ".join(deepseek_models)
             raise ValueError(
                 f"DEEPSEEK_API_KEY is required for selected DeepSeek models: {selected}"
+            )
+
+        if openrouter_models and not self.api_keys.openrouter:
+            selected = ", ".join(openrouter_models)
+            raise ValueError(
+                f"OPENROUTER_API_KEY is required for selected OpenRouter models: {selected}"
             )
 
         if anthropic_models and not self.api_keys.anthropic:

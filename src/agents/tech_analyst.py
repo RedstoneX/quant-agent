@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from src.agents.base import BaseAgent, AgentResult
+from src.agents.base import BaseAgent, AgentResult, _provider_for
 from src.models import TechAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -174,6 +174,21 @@ Current close: {current_price}""")
         chunk_costs: list[float] = []
         any_unknown_cost = False
         last_model = self.model
+        # Stage 1 attribution across the N-chunks-collapse-to-1-row limitation
+        # (Stage 0 audit F-3, still not structurally fixable without a
+        # per-chunk log row — out of Stage 1's bounded scope). requested_model/
+        # requested_provider/prompt_version are constant across chunks (same
+        # agent, same self.model, same system_prompt) so any chunk's value is
+        # correct; used_fallback/truncated are ORed (any chunk falling back or
+        # truncating makes the merged row's attribution non-clean); latency_s
+        # is summed (wall time actually spent across all chunk calls).
+        requested_model = self.model
+        requested_provider = ""
+        prompt_version = ""
+        any_used_fallback = False
+        any_truncated = False
+        total_latency = 0.0
+        last_finish_reason: str | None = None
         for i, chunk in enumerate(chunks, 1):
             chunk_analyses, chunk_result = self._analyze_chunk(
                 chunk, prior_ratings, valuations,
@@ -191,6 +206,12 @@ Current close: {current_price}""")
                 else:
                     chunk_costs.append(chunk_result.cost_usd)
                 last_model = chunk_result.model
+                requested_provider = chunk_result.requested_provider or requested_provider
+                prompt_version = chunk_result.prompt_version or prompt_version
+                any_used_fallback = any_used_fallback or chunk_result.used_fallback
+                any_truncated = any_truncated or chunk_result.truncated
+                total_latency += chunk_result.latency_s
+                last_finish_reason = chunk_result.finish_reason
 
         merged_cost: float | None
         if any_unknown_cost or not chunk_costs:
@@ -206,6 +227,14 @@ Current close: {current_price}""")
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
             cost_usd=merged_cost,
+            finish_reason=last_finish_reason,
+            truncated=any_truncated,
+            requested_model=requested_model,
+            requested_provider=requested_provider,
+            actual_provider=_provider_for(last_model),
+            used_fallback=any_used_fallback,
+            prompt_version=prompt_version,
+            latency_s=total_latency,
         )
         return merged, merged_result
 

@@ -105,6 +105,64 @@ def test_invariant_hard_risk_stage_drops_breaching_buy():
 
 
 # ---------------------------------------------------------------------------
+# Invariant 1b (Stage 1 — QAMC provider/model plumbing): hard risk filtering
+# must be structurally unreachable from provider/LLM config. Garbage or
+# missing `config.llm` must not change, weaken, or crash the hard-risk gate —
+# proving the new explicit-provider/model config Stage 1 added has no path
+# into deterministic risk decisions.
+# ---------------------------------------------------------------------------
+def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
+    """Same scenario as test_invariant_hard_risk_stage_drops_breaching_buy,
+    except `pipeline.config.llm` is a plain string (not even a mock) —
+    if `_filter_hard_risk_decisions` or `RiskRuleEngine.check()` dereferenced
+    `config.llm`/`config.provider` ANYWHERE, this would raise AttributeError
+    instead of gating correctly."""
+    engine = RiskRuleEngine(_risk_config())
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.risk_engine = engine
+    pipeline.config = MagicMock()
+    pipeline.config.trading.universe = ["NVDA"]
+    # Deliberately not a MagicMock — any attribute access raises immediately,
+    # unlike a MagicMock which would silently auto-vivify and mask the bug.
+    pipeline.config.llm = "not-a-config-object-and-has-no-provider-field"
+
+    bad = TradeDecision(
+        action="BUY", symbol="NVDA",
+        allocation_pct=25.0,  # over 15% cap
+        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        reasoning="pathological",
+    )
+    ok = TradeDecision(
+        action="BUY", symbol="AAPL",
+        allocation_pct=5.0,
+        entry_price=180.0, stop_loss=170.0, take_profit=200.0,
+        reasoning="fine",
+    )
+    allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+        [bad, ok], positions=[], total_value=100_000.0, daily_pnl=0,
+        baseline=100_000.0,
+    )
+    allowed_symbols = {d.symbol for d in allowed}
+    assert "NVDA" not in allowed_symbols
+    assert "AAPL" in allowed_symbols
+    assert any("NVDA" in msg for msg in blocked)
+
+
+def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
+    """RiskRuleEngine is constructed from RiskConfig ALONE — no LLMConfig,
+    no provider config — so the explicit provider/model fields Stage 1 added
+    to LLMConfig structurally cannot reach deterministic risk math."""
+    import inspect
+    from src.risk.rules import RiskRuleEngine as _Engine
+    sig = inspect.signature(_Engine.__init__)
+    assert list(sig.parameters) == ["self", "config"], (
+        "RiskRuleEngine must take exactly one config object (RiskConfig); "
+        "widening this to also accept llm/provider config would create a "
+        "path from Stage 1's provider plumbing into hard risk math"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Invariant 2: Non-trading days short-circuit every entry point.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("method_name", [

@@ -1,7 +1,8 @@
 # QAMC Decision Register
 
 Status: **architecture baseline frozen; Stage 0 and Stage 0.5 accepted 2026-08-09;
-Stage 1 is the currently authorized implementation stage.**
+Stage 1 implemented 2026-08-09 on branch `claude/stage-1-qamc-integration-m1n0pw`,
+awaiting Checkpoint B operator acceptance. Stage 2 remains BLOCKED until then.**
 
 1. Project name: **Quant Agent Mission Control (QAMC)**.
 2. `yebof/quant-agent` remains the authoritative trading engine.
@@ -140,8 +141,15 @@ open unless a later governed stage explicitly resolves them.
   the editor treats as STAGE-ONLY (proposals written to `proposed_edits.json`,
   no prompt file modified). Behaviour matches the decision; the flag name does
   not.
-- **D-8.** `.env.example` omits seven documented environment variables that
-  Stage 1 will touch.
+- **D-8 — PARTIALLY ADDRESSED by Stage 1 implementation (2026-08-09, pending
+  Checkpoint B acceptance).** `.env.example` omitted seven documented
+  environment variables. Stage 1 documented the three it introduced/touched
+  (`OPENROUTER_API_KEY`, `QUANT_AGENT_MAX_CONCURRENT_OPENROUTER`, and the
+  pre-existing but previously-undocumented `DEEPSEEK_API_KEY`). The remaining
+  gap (`OPENAI_BASE_URL`, `OPENAI_CA_BUNDLE`, `TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_CHAT_ID`, `QUANT_AGENT_RETRY_DEADLINE_S`) is unchanged — those
+  predate Stage 1 and are outside its bounded provider/telemetry/correlation
+  scope.
 - **D-9 (amends the safety narrative).** `cash_sweep`'s `SWEEP_BUY` reaches the
   broker outside `_filter_hard_risk_decisions`, deliberately and
   deterministically, and is not LLM-reachable. `SAFETY_BOUNDARIES.md` should

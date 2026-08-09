@@ -30,14 +30,20 @@ This fork is the authoritative repository for **Quant Agent Mission Control (QAM
 GitHub Markdown in this repository is the durable source of truth. Obsidian may index/read it but is not an independent authority.
 
 ## Current stage restriction
-**Stage 0 was accepted 2026-08-09. The authorized stage is now Stage 0.5 —
-the D-1 actual-model attribution hotfix** (`docs/MILESTONES.md`).
+**Stage 0 and Stage 0.5 (D-1 actual-model attribution hotfix) are accepted.
+Stage 1 (Provider, Model & Correlation Plumbing) was implemented 2026-08-09
+on branch `claude/stage-1-qamc-integration-m1n0pw` and is awaiting Checkpoint
+B operator acceptance** (`docs/MILESTONES.md`).
 
-Work only within Stage 0.5's declared scope: the nine `insert_agent_log(...)`
-call sites plus targeted tests. Do **not** touch `src/agents/base.py::_execute`,
-the database schema, provider routing or trading behavior, and do not add
-OpenRouter, Mission Control, journal code, risk changes or donor UI code.
-Stage 1 stays blocked until Checkpoint A5 is accepted.
+Stage 1's scope was: explicit per-agent provider/model configuration
+alongside the existing prefix-inference (backward compatible), one new
+inexpensive-provider path (OpenRouter) through the least-invasive seam,
+additive `agent_logs`/`trades` telemetry columns via the existing
+`_ensure_column` mechanism, and a minimal `decision_id` correlation column.
+`src/agents/base.py::_execute()`'s hardened retry/deadline/failover loop body
+was preserved untouched, per Stage 0's explicit recommendation. Stage 2
+(Thin Read-Only Mission Control API, Mission Control, journal code, risk
+changes, donor UI code) stays **BLOCKED** until Checkpoint B is accepted.
 
 AgentLens is **out of plan** (DECISION #34) — do not instrument, integrate or
 pilot it.

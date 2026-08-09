@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +26,16 @@ _OPENAI_PREFIXES = ("gpt-", "o1-", "o3-", "o4-")
 # values above. Verified against api-docs.deepseek.com 2026-06-05.
 _DEEPSEEK_PREFIXES = ("deepseek-",)
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # no /v1, no trailing slash
+
+# OpenRouter: also OpenAI-API-compatible (same chat.completions wire format),
+# reached through the openai SDK with a custom base_url + the OpenRouter key —
+# same shape as the DeepSeek branch above. Unlike OpenAI/DeepSeek/Anthropic,
+# OpenRouter model ids are themselves "vendor/model" strings (e.g.
+# "anthropic/claude-3.5-sonnet", "google/gemini-2.5-pro") that collide with
+# native prefixes and can't be disambiguated by string inspection alone —
+# routing to OpenRouter is therefore EXPLICIT-ONLY (see resolve_provider()
+# below), never inferred from a prefix. Stage 1 (QAMC provider/model plumbing).
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Per-model max-OUTPUT-token ceilings. We clamp client-side because DeepSeek
 # rejects an over-ceiling max_tokens (HTTP 400/422 "Invalid max_tokens value")
@@ -200,6 +211,10 @@ _OPENAI_MAX_CONCURRENT = _int_env("QUANT_AGENT_MAX_CONCURRENT_LLM", 3)
 _OPENAI_LLM_SEMAPHORE = threading.Semaphore(_OPENAI_MAX_CONCURRENT)
 _ANTHROPIC_MAX_CONCURRENT = 4
 _ANTHROPIC_LLM_SEMAPHORE = threading.Semaphore(_ANTHROPIC_MAX_CONCURRENT)
+# OpenRouter is a distinct account/rate-limit domain from the OpenAI relay —
+# it must not share (and be starved by, or starve) the relay's cap.
+_OPENROUTER_MAX_CONCURRENT = _int_env("QUANT_AGENT_MAX_CONCURRENT_OPENROUTER", 3)
+_OPENROUTER_LLM_SEMAPHORE = threading.Semaphore(_OPENROUTER_MAX_CONCURRENT)
 
 
 # finish/stop reasons that mean "output hit a ceiling mid-generation".
@@ -254,6 +269,46 @@ def _is_openai_model(model: str) -> bool:
 
 def _is_deepseek_model(model: str) -> bool:
     return any(model.startswith(p) for p in _DEEPSEEK_PREFIXES)
+
+
+# Providers explicit config / _check_llm_provider_keys / pipeline.py are
+# allowed to name. Anything else is treated as "no explicit override" so a
+# typo can't silently misroute a live agent.
+VALID_PROVIDERS = frozenset({"anthropic", "openai", "deepseek", "openrouter"})
+
+
+def _provider_for(model: str) -> str:
+    """Provider implied by a model-id PREFIX alone (no explicit override).
+    This is the pre-Stage-1 inference chain, unchanged, so every existing
+    config keeps routing exactly as it did before Stage 1."""
+    if _is_openai_model(model):
+        return "openai"
+    if _is_deepseek_model(model):
+        return "deepseek"
+    return "anthropic"
+
+
+def resolve_provider(model: str, explicit_provider: str | None = None) -> str:
+    """Single source of truth for provider selection.
+
+    An explicit provider always wins over prefix inference — required for
+    OpenRouter, whose "vendor/model" ids (e.g. "anthropic/claude-3.5-sonnet")
+    collide with native prefixes and cannot be told apart from the model
+    string alone. When no (valid) explicit provider is given, falls back to
+    the existing prefix chain unchanged, so every pre-Stage-1 config (no
+    `provider` field set) routes identically to before.
+
+    Reused by BaseAgent.__init__ (client construction), AppConfig's
+    per-provider API-key validation, and pipeline.py's agent-key lookup, so
+    those three call sites can never disagree about which provider a given
+    (model, explicit_provider) pair means — a prior triplication risk this
+    helper closes.
+    """
+    if explicit_provider:
+        p = explicit_provider.strip().lower()
+        if p in VALID_PROVIDERS:
+            return p
+    return _provider_for(model)
 
 
 # Cross-provider failover target. When a non-Anthropic primary (OpenAI or
@@ -337,6 +392,19 @@ class AgentResult:
     # now tell a swallowed truncation from a real silence.
     finish_reason: str | None = None
     truncated: bool = False
+    # Stage 1 (QAMC provider/model/correlation plumbing) attribution fields.
+    # requested_* is what THIS call was configured to use; model/actual_provider
+    # is what actually answered (may differ on cross-provider failover — see
+    # used_fallback). Never conflate the two: DECISION #12 forbids counting a
+    # fallback as the requested provider/model.
+    requested_model: str = ""
+    requested_provider: str = ""
+    actual_provider: str = ""
+    used_fallback: bool = False
+    # First 12 hex chars of sha256(system_prompt) — a cheap, stable "did the
+    # prompt text change between two calls" signal, not a semantic version.
+    prompt_version: str = ""
+    latency_s: float = 0.0
 
     # Top-level keys we recognize as "this looks like a real agent output."
     # When the LLM prose includes an extra JSON fragment (self-correction,
@@ -430,13 +498,35 @@ class AgentResult:
         return None
 
 
+def agent_log_kwargs(result: AgentResult) -> dict:
+    """Common Stage 1 telemetry kwargs for Database.insert_agent_log(),
+    derived from an AgentResult. Callers add agent_name/run_id/decision_id
+    and the summary/response fields on top. Centralized so all nine call
+    sites stay consistent instead of re-deriving `status` etc. independently."""
+    return dict(
+        requested_provider=result.requested_provider,
+        requested_model=result.requested_model,
+        actual_provider=result.actual_provider,
+        prompt_version=result.prompt_version,
+        latency_s=result.latency_s,
+        status="fallback" if result.used_fallback else "success",
+        finish_reason=result.finish_reason,
+        truncated=result.truncated,
+    )
+
+
 class BaseAgent(ABC):
     def __init__(self, api_key: str, model: str, max_tokens: int = 4096,
-                 fallback_api_key: str = ""):
+                 fallback_api_key: str = "", provider: str | None = None):
         self.model = model
         self.max_tokens = max_tokens
-        self._use_deepseek = _is_deepseek_model(model)
-        self._use_openai = _is_openai_model(model)
+        # `provider` is the Stage 1 explicit override (config.llm.<agent>_provider);
+        # None (the default for every pre-Stage-1 config) falls through to the
+        # unchanged prefix-inference chain — see resolve_provider().
+        self._provider = resolve_provider(model, provider)
+        self._use_deepseek = self._provider == "deepseek"
+        self._use_openai = self._provider == "openai"
+        self._use_openrouter = self._provider == "openrouter"
         # Anthropic key for failover to Anthropic. Used when the primary is a
         # non-Anthropic provider (OpenAI OR DeepSeek) — a Claude primary's
         # fallback would hit the same provider, so run() no-ops it. Passing it
@@ -454,6 +544,13 @@ class BaseAgent(ABC):
             # OpenAI-compatible endpoint at a custom base_url with the DeepSeek key.
             from openai import OpenAI
             self.client = OpenAI(api_key=api_key, base_url=_DEEPSEEK_BASE_URL,
+                                 timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+        elif self._use_openrouter:
+            # Also OpenAI-API-compatible — identical shape to the DeepSeek
+            # branch above, just a different base_url + key. Reuses
+            # _call_openai() unmodified (see there): zero new call code.
+            from openai import OpenAI
+            self.client = OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
                                  timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
         elif self._use_openai:
             from openai import OpenAI
@@ -518,10 +615,23 @@ class BaseAgent(ABC):
         loop_start = time.monotonic()
         finish_reason: str | None = None
         primary_error: Exception | None = None
+        # Captured once, before the retry loop, so they reflect what THIS call
+        # was CONFIGURED to use regardless of how the loop below resolves —
+        # never mutated by retries/failover (see actual_provider below, which
+        # is derived from actual_model AFTER the loop and can legitimately
+        # differ on fallback).
+        requested_model = self.model
+        requested_provider = self._provider
+        prompt_version = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:12]
         for attempt in range(max_retries):
             try:
                 if self._use_deepseek:
                     raw_text, input_tokens, output_tokens, finish_reason = self._call_deepseek(user_message)
+                elif self._use_openrouter:
+                    # OpenRouter is OpenAI-wire-compatible — reuse _call_openai
+                    # unmodified rather than duplicating the streaming/usage/
+                    # empty-content logic.
+                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(user_message)
                 elif self._use_openai:
                     raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(user_message)
                 else:
@@ -582,7 +692,7 @@ class BaseAgent(ABC):
             # non-Anthropic provider and a fallback key is configured; otherwise
             # re-raise (a Claude primary failing over to Claude is pointless).
             failover = None
-            if (self._use_openai or self._use_deepseek) and self._fallback_api_key:
+            if (self._use_openai or self._use_deepseek or self._use_openrouter) and self._fallback_api_key:
                 failover = self._try_failover(user_message, primary_error)
             if failover is None:
                 raise primary_error
@@ -629,6 +739,14 @@ class BaseAgent(ABC):
             fmt_cost(cost), actual_model,
         )
         logger.info("Agent %s output:\n%s", self.name, raw_text)
+        # actual_provider is derived from actual_model (not self._provider),
+        # so it's correct in BOTH cases: primary success (actual_model ==
+        # self.model, same provider as requested) and failover success
+        # (actual_model == _FALLBACK_MODEL, which _provider_for resolves to
+        # "anthropic" with no special-casing needed).
+        actual_provider = _provider_for(actual_model)
+        used_fallback = primary_error is not None
+        latency_s = time.monotonic() - loop_start
         return AgentResult(
             raw_text=raw_text,
             tokens_used=tokens,
@@ -639,6 +757,12 @@ class BaseAgent(ABC):
             cost_usd=cost,
             finish_reason=finish_reason,
             truncated=truncated,
+            requested_model=requested_model,
+            requested_provider=requested_provider,
+            actual_provider=actual_provider,
+            used_fallback=used_fallback,
+            prompt_version=prompt_version,
+            latency_s=latency_s,
         )
 
     def _anthropic_call(self, client, model: str, user_message: str) -> tuple[str, int, int, str | None]:
@@ -721,9 +845,13 @@ class BaseAgent(ABC):
 
         The semaphore covers create + iteration: for a streamed response the
         request is in flight (and counts against the relay's per-user
-        concurrency cap) until the last chunk is read.
+        concurrency cap) until the last chunk is read. OpenRouter shares this
+        method (OpenAI-wire-compatible) but is a distinct account/rate-limit
+        domain, so it gets its own semaphore rather than contending with the
+        OpenAI relay's cap.
         """
-        with _OPENAI_LLM_SEMAPHORE:
+        semaphore = _OPENROUTER_LLM_SEMAPHORE if self._use_openrouter else _OPENAI_LLM_SEMAPHORE
+        with semaphore:
             stream = self.client.chat.completions.create(
                 model=self.model,
                 max_completion_tokens=self.max_tokens,

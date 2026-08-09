@@ -14,6 +14,7 @@ from src.data.news import NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
+from src.agents.base import agent_log_kwargs
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
@@ -227,32 +228,39 @@ class TradingPipeline:
         self.market = MarketDataProvider()
         self.macro = MacroDataProvider(api_key=config.api_keys.fred)
 
-        def _key_for(model: str) -> str:
-            """Return the right API key based on model name."""
-            from src.agents.base import _is_deepseek_model, _is_openai_model
-            if _is_deepseek_model(model):
-                return config.api_keys.deepseek
-            if _is_openai_model(model):
-                return config.api_keys.openai
-            return config.api_keys.anthropic
+        def _key_for(model: str, explicit_provider: str | None = None) -> str:
+            """Return the right API key based on (explicit provider, else
+            model-name prefix) — the SAME resolve_provider() BaseAgent.__init__
+            uses, so this can never pick a different provider than the client
+            construction it's keying for."""
+            from src.agents.base import resolve_provider
+            provider = resolve_provider(model, explicit_provider)
+            return {
+                "deepseek": config.api_keys.deepseek,
+                "openai": config.api_keys.openai,
+                "openrouter": config.api_keys.openrouter,
+            }.get(provider, config.api_keys.anthropic)
 
         self.tech_analyst = TechAnalystAgent(
-            api_key=_key_for(config.llm.tech_analyst_model),
+            api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
             model=config.llm.tech_analyst_model,
             max_tokens=config.llm.get_max_tokens("tech_analyst"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.tech_analyst_provider,
         )
         self.portfolio_manager = PortfolioManagerAgent(
-            api_key=_key_for(config.llm.portfolio_manager_model),
+            api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),
             model=config.llm.portfolio_manager_model,
             max_tokens=config.llm.get_max_tokens("portfolio_manager"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.portfolio_manager_provider,
         )
         self.risk_manager = RiskManagerAgent(
-            api_key=_key_for(config.llm.risk_manager_model),
+            api_key=_key_for(config.llm.risk_manager_model, config.llm.risk_manager_provider),
             model=config.llm.risk_manager_model,
             max_tokens=config.llm.get_max_tokens("risk_manager"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.risk_manager_provider,
         )
         self.risk_engine = RiskRuleEngine(RiskConfig(
             max_position_pct=config.risk.max_position_pct,
@@ -269,44 +277,50 @@ class TradingPipeline:
             allow_margin=config.risk.allow_margin,
         ))
         self.position_reviewer = PositionReviewerAgent(
-            api_key=_key_for(config.llm.position_reviewer_model),
+            api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
             max_tokens=config.llm.get_max_tokens("position_reviewer"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.position_reviewer_provider,
         )
         self.evening_analyst = EveningAnalystAgent(
-            api_key=_key_for(config.llm.evening_analyst_model),
+            api_key=_key_for(config.llm.evening_analyst_model, config.llm.evening_analyst_provider),
             model=config.llm.evening_analyst_model,
             max_tokens=config.llm.get_max_tokens("evening_analyst"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.evening_analyst_provider,
         )
         self.news_analyst = NewsAnalystAgent(
-            api_key=_key_for(config.llm.news_analyst_model),
+            api_key=_key_for(config.llm.news_analyst_model, config.llm.news_analyst_provider),
             model=config.llm.news_analyst_model,
             max_tokens=config.llm.get_max_tokens("news_analyst"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.news_analyst_provider,
         )
         self.macro_analyst = MacroAnalystAgent(
-            api_key=_key_for(config.llm.macro_analyst_model),
+            api_key=_key_for(config.llm.macro_analyst_model, config.llm.macro_analyst_provider),
             model=config.llm.macro_analyst_model,
             max_tokens=config.llm.get_max_tokens("macro_analyst"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.macro_analyst_provider,
         )
         self.news_provider = NewsDataProvider()
         self.news_store = NewsStore()
         self.macro_store = MacroStore()
         self.tech_store = TechStore()
         self.earnings_analyst = EarningsAnalystAgent(
-            api_key=_key_for(config.llm.earnings_analyst_model),
+            api_key=_key_for(config.llm.earnings_analyst_model, config.llm.earnings_analyst_provider),
             model=config.llm.earnings_analyst_model,
             max_tokens=config.llm.get_max_tokens("earnings_analyst"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.earnings_analyst_provider,
         )
         self.meta_reflector = MetaReflectorAgent(
-            api_key=_key_for(config.llm.meta_reflector_model),
+            api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
             model=config.llm.meta_reflector_model,
             max_tokens=config.llm.get_max_tokens("meta_reflector"),
             fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.meta_reflector_provider,
         )
         self.earnings_provider = EarningsDataProvider()
         self.broker = AlpacaBroker(
@@ -4706,6 +4720,7 @@ class TradingPipeline:
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
                 cost_usd=result.cost_usd,
+                **agent_log_kwargs(result),
             )
             return intel_report
         except Exception as e:
@@ -6111,6 +6126,7 @@ class TradingPipeline:
                 input_tokens=md_result.input_tokens,
                 output_tokens=md_result.output_tokens,
                 cost_usd=md_result.cost_usd,
+                **agent_log_kwargs(md_result),
             )
 
             # Risk check: if daily loss limit breached, force-sell all. Else:
@@ -6298,6 +6314,7 @@ class TradingPipeline:
                     input_tokens=agent_result.input_tokens,
                     output_tokens=agent_result.output_tokens,
                     cost_usd=agent_result.cost_usd,
+                    **agent_log_kwargs(agent_result),
                 )
             except Exception as e:
                 logger.error("Earnings preprocess: log insert failed for %s: %s", sym, e)
@@ -6644,17 +6661,32 @@ class TradingPipeline:
                 thesis_health_context=thesis_health_context,
             )
         except Exception as e:
-            from src.agents.base import AgentResult
+            from src.agents.base import AgentResult, resolve_provider
 
             analysis_error = True
             logger.error("Evening analyst failed: %s", e, exc_info=True)
+            # No call ever completed, so `actual_provider`/model stay unknown
+            # (not fabricated) — but WHAT was requested is known regardless
+            # of the exception, so record that much for attribution.
+            _requested_model = self.config.llm.evening_analyst_model
+            _requested_provider = resolve_provider(
+                _requested_model, self.config.llm.evening_analyst_provider,
+            )
             ev_result = AgentResult(
                 raw_text=f"[exception] {e}",
                 tokens_used=0,
                 model=self.config.llm.evening_analyst_model,
                 user_message="",
+                requested_model=_requested_model,
+                requested_provider=_requested_provider,
             )
 
+        _ev_log_kwargs = agent_log_kwargs(ev_result)
+        if analysis_error:
+            # agent_log_kwargs() derives "fallback"/"success" from
+            # used_fallback, which is False here (no call ever completed) —
+            # override so a hard failure isn't misreported as a success.
+            _ev_log_kwargs["status"] = "failed"
         self.db.insert_agent_log(
             agent_name="evening_analyst", run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
@@ -6670,6 +6702,7 @@ class TradingPipeline:
             input_tokens=ev_result.input_tokens,
             output_tokens=ev_result.output_tokens,
             cost_usd=ev_result.cost_usd,
+            **_ev_log_kwargs,
         )
 
         # True close-to-close ("4pm-to-4pm") P&L. account.last_equity is the
@@ -7052,6 +7085,7 @@ class TradingPipeline:
                     input_tokens=ev_result.input_tokens,
                     output_tokens=ev_result.output_tokens,
                     cost_usd=ev_result.cost_usd,
+                    **agent_log_kwargs(ev_result),
                 )
             except Exception as exc:
                 logger.warning("meta_reflector agent_log insert failed: %s", exc)

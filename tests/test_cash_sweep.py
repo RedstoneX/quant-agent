@@ -352,7 +352,11 @@ def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
         ),
         MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                   input_tokens=1, output_tokens=1, cost_usd=0.0,
-                  model="test-model"),
+                  model="test-model",
+                  requested_provider="anthropic", requested_model="test-model",
+                  actual_provider="anthropic", used_fallback=False,
+                  prompt_version="test-version", latency_s=0.1,
+                  finish_reason=None, truncated=False),
     )
 
     result = p.run_midday()

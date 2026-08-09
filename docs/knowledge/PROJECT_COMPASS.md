@@ -17,7 +17,20 @@
   Five targeted regression tests cover all nine sites. Full suite: **1436
   passed, 0 failed**. No schema change; `src/agents/base.py::_execute()`
   untouched. Details: `docs/MILESTONES.md` Stage 0.5.
-- **Stage 1 — Provider, Model & Correlation Plumbing: NEXT / AUTHORIZED.**
+- **Stage 1 — Provider, Model & Correlation Plumbing: IMPLEMENTED 2026-08-09,
+  awaiting Checkpoint B operator acceptance.** Branch
+  `claude/stage-1-qamc-integration-m1n0pw`. Explicit per-agent provider
+  override (`resolve_provider()` single source of truth in `src/agents/base.py`,
+  nine new optional `LLMConfig.<agent>_provider` fields) added OpenRouter
+  through the least-invasive seam (OpenAI-wire-compatible, reuses
+  `_call_openai` unmodified); `BaseAgent._execute()`'s hardened
+  retry/deadline/failover loop body untouched. `AgentResult` gained
+  requested-vs-actual provider/model, `used_fallback`, `prompt_version`,
+  `latency_s`; nine new nullable `agent_logs` columns + one `trades.decision_id`
+  column via the existing `_ensure_column` mechanism. `decision_id` links a
+  PM proposal's `agent_logs` row through RM's review to the resulting
+  order/trade rows. 28 new targeted tests; full suite **1464 passed, 0
+  failed**. Details: `docs/MILESTONES.md` Stage 1.
 - Live trading: **not authorized**. Alpaca Paper remains the broker boundary.
 - AI development economy/session policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
@@ -47,15 +60,19 @@ component/design donors, with TradingView Lightweight Charts. **Forensic
 observability is native — `agent_logs` + `run_id` + `scripts/replay_decision.py`
 — with no external observability service.**
 
-## Next bounded task — Stage 1 (authorized)
-Implement the governed **Provider, Model & Correlation Plumbing** stage:
+## Stage 1 outcome (implemented, awaiting Checkpoint B acceptance)
+Provider, Model & Correlation Plumbing implemented on
+`claude/stage-1-qamc-integration-m1n0pw` (see `docs/MILESTONES.md` Stage 1 for
+the full account):
 
-- explicit provider/model configuration compatible with existing per-agent settings;
-- OpenRouter and/or Google AI Studio path through the least-invasive provider seam;
-- preserve resilience without silent experimental attribution;
-- persist actual provider/model/tokens/cost/latency/status as required by the frozen contract;
-- add only the correlation identifiers minimally necessary to trace run → decision → order/trade → prompt/model version;
-- preserve the hardened retry/deadline/failover behavior in `BaseAgent._execute()` rather than casually refactoring it.
+- explicit provider/model configuration compatible with existing per-agent settings — done (nine `LLMConfig.<agent>_provider` fields, default `None` = unchanged prefix inference);
+- OpenRouter path through the least-invasive provider seam — done; Google AI Studio evaluated and deferred (would need a genuinely new call path, not an extension of the existing seam);
+- preserve resilience without silent experimental attribution — done (`requested_provider`/`requested_model` always distinct from `actual_provider`/`model`; `used_fallback` explicit);
+- persist actual provider/model/tokens/cost/latency/status as required by the frozen contract — done (nine new nullable `agent_logs` columns via `_ensure_column`);
+- add only the correlation identifiers minimally necessary to trace run → decision → order/trade → prompt/model version — done (`decision_id`, one new column on `trades` + `agent_logs`);
+- preserve the hardened retry/deadline/failover behavior in `BaseAgent._execute()` rather than casually refactoring it — done (loop body unchanged; new code is one dispatch branch reusing `_call_openai`).
+
+**Next stage remains BLOCKED**: Stage 2 (Thin Read-Only Mission Control API) does not start until Checkpoint B is accepted by the operator.
 
 Checkpoint B requires paper-trading/risk behavior unchanged, attribution correct,
 and tests green. **STOP at Checkpoint B; do not begin Stage 2.**
