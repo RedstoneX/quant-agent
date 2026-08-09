@@ -52,17 +52,39 @@ evidence in `docs/STAGE0_BASELINE_AUDIT.md` §9.
   `AgentResult.model` — the actual model — is never persisted. On a
   cross-provider failover the stored record is internally inconsistent. Also
   conflicts with `MODEL_PROVIDER_ARCHITECTURE.md` "Required contract" and
-  `ACCEPTANCE_CRITERIA.md`. *Open: fix as a pre-Stage-1 hotfix, or as the first
-  Stage 1 slice?*
-- **D-2 (affects decision 15 and the Stage 3/4 plan).** Orallexa is an approved
-  donor sourcing two components in `UI_COMPONENT_MAP.md`, but no governed
-  document records its repository, license or commit. A plausible candidate
-  exists but was **not** confirmed and was **not** audited.
-  *Open: name it or drop it.*
-- **D-3 (affects decisions 23–25).** "AgentLens" names at least three unrelated
-  public projects; `docs/architecture/AGENTLENS.md` asserts upstream maturity
-  that cannot be checked against an unidentified target.
-  *Open: pin by SHA, or drop Stage 6.*
+  `ACCEPTANCE_CRITERIA.md`.
+  **Operator direction 2026-08-09 — sequencing decided, fix NOT yet authorized:**
+  D-1 is to be corrected as a **bounded pre-Stage-1 / Stage 0.5 correctness
+  hotfix**, kept separate from the broader Stage 1 provider work. Operator's
+  reason: historical experimental attribution cannot reliably be repaired after
+  the fact, so correct attribution must exist before new experimental trading
+  data is generated. **The hotfix itself remains unauthorized and
+  unimplemented**; see `docs/STAGE0_BASELINE_AUDIT.md` §9A for the exact nine
+  call sites and the two limits a hotfix alone does not remove.
+- **D-2 — RESOLVED 2026-08-09.** Operator identified Orallexa as
+  `alex-jb/orallexa-ai-trading-agent` (MIT); inspected at
+  `794a2ec0ce0b1271b468814eee47c2cd4edde147`. Every proposed presentation
+  concept was verified to exist except a decision-chain view (absent in both
+  donors — remains a native build). It stays an approved donor, **adapted not
+  vendored**. Four adaptation costs recorded in `DONOR_COMPONENTS.md`; the
+  substantive one is a **naming inversion** — Orallexa's `PortfolioManagerCard`
+  carries QAMC's *AI Risk Manager* semantics (approve/reject, scaled position,
+  warnings), not its Portfolio Manager's.
+- **D-3 — RESOLVED 2026-08-09.** Operator identified AgentLens as
+  `tranhoangtu-it/agentlens` (MIT); inspected at
+  `21ab445a91bf2bc2f8b7eb0a2a8fb70468a9047f`. **Stage 0 recommends DROP FROM
+  THE PLAN** — advisory, awaiting operator acceptance; nothing integrated or
+  forked. Grounds: architectural mismatch (it explains deep nested traces;
+  quant-agent runs nine flat single-shot calls), near-total overlap with
+  `agent_logs` + `run_id` + `scripts/replay_decision.py`, weaker search than
+  QAMC can build natively (`LIKE` on `agent_name` only, no FTS), no
+  project/workspace dimension, all remaining work QAMC-side (manual
+  instrumentation into `_execute()`; no redaction in the SDK), dormant
+  single-author upstream (69 commits, 1 author, ~4.5 months idle), and a new
+  server-side LLM-key secret surface. It *is* genuinely non-blocking and
+  operationally light — the objection is fit and cost, not quality.
+  Full reasoning: `docs/architecture/AGENTLENS.md` and
+  `docs/STAGE0_BASELINE_AUDIT.md` §8B/§8C.
 - **D-4 (affects decision 27).** The six per-session systemd units the README
   says the repo ships are absent; only `quant-agent-daily.*` exists, and it
   hardcodes `/home/yebo/quant-agent`.

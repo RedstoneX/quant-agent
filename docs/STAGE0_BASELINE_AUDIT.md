@@ -476,6 +476,12 @@ The one shipped unit also hardcodes `WorkingDirectory=/home/yebo/quant-agent`.
 
 ## 8. Donor & AgentLens feasibility (bounded review)
 
+> **Completion note (2026-08-09, second pass).** The operator supplied the two
+> missing donor identities. Both were inspected at the pinned commits and the
+> sections below are now complete; **D-2 and D-3 are resolved**. See §8A
+> (Orallexa) and §8B (AgentLens) for the pinned inspections, and §8C for the
+> AgentLens KEEP/DROP recommendation.
+
 ### OpenTradex — inspected
 
 `deonmenezes/opentradex` @ **`30b23f5ec3ad59ceecdd0335af2c5513c4137d36`**
@@ -515,29 +521,272 @@ Two honest qualifications:
 performed; it is a published library, and pulling it as a dependency (with its
 attribution obligation) is the whole integration.
 
-### Orallexa — **cannot be inspected: not identified in governed docs (D-2)**
+### Orallexa / AgentLens — see §8A and §8B (identities supplied, D-2/D-3 resolved)
 
-`DONOR_COMPONENTS.md` names Orallexa as "primary multi-agent UI donor" and
-`UI_COMPONENT_MAP.md` sources `AgentCard` and `DisagreementPanel` from it, but
-**no repository, URL, license or commit is recorded anywhere in `docs/`.** A
-web search surfaces a plausible candidate,
-`alex-jb/orallexa-ai-trading-agent` (reachable), whose description matches the
-concepts cited. **This is an inference, not a verified identification**, and
-auditing an unconfirmed repository is exactly the unbounded donor work
-`AGENTS.md` forbids. Requires operator confirmation before any Stage 3/4
-inspection.
+---
 
-### AgentLens — **cannot be assessed: the name is ambiguous (D-3)**
+## 8A. Orallexa — inspected (D-2 RESOLVED)
 
-`docs/architecture/AGENTLENS.md` makes specific commitments about "upstream
-AgentLens" — pilot as-is, defer the fork, "low upstream maturity" — while
-naming no repository. At least **three distinct** GitHub projects use the name
-(`Soufianeazz/agentlens`, `agentkitai/agentlens`, `tranhoangtu-it/agentlens`),
-plus an unrelated Salesforce product. They differ fundamentally (quality
-scoring vs. tamper-evident audit log vs. tool-call tracing). The maturity
-judgement in the architecture doc cannot be verified against any of them, and
-Stage 6 is `OPTIONAL / BLOCKED` regardless. **Recommend deferring** until the
-target is pinned by SHA.
+**Repository:** `alex-jb/orallexa-ai-trading-agent`
+**Pinned commit:** `794a2ec0ce0b1271b468814eee47c2cd4edde147` (2026-07-12,
+"docs: add educational-research / not-financial-advice disclaimer") — the
+current default-branch tip at inspection time.
+**License:** MIT, © 2026 Orallexa Team.
+**Maturity:** 263 commits, 7 distinct authors, active 2026-04 → 2026-07.
+
+Frontend lives entirely in `orallexa-ui/`. Everything below is confined to
+that directory. **Orallexa's Python trading engine, `llm/`, `engine/`,
+`portfolio/`, `rag/`, `markets/`, `models/`, `api_server.py` and memory system
+were deliberately not evaluated for adoption** and are out of scope per the
+task constraint.
+
+### Verdict: **still a useful presentation donor — and better-matched than
+Stage 0's first pass assumed.** The proposed concepts are real, not aspirational.
+
+### Stack reality (matters for DECISION #13)
+
+| | Orallexa UI | QAMC decision |
+|---|---|---|
+| Framework | **Next.js 16 (App Router)** | React + **Vite** |
+| React | 19.2.4 | (unspecified) |
+| Tailwind | 4 | 3/4 |
+| Charts | **`lightweight-charts` ^5.1.0** | TradingView Lightweight Charts ✅ |
+| Tests | Vitest + Testing Library + Playwright | — |
+
+Orallexa is **Next.js, not Vite**. In practice this is a small tax: the
+components are plain `"use client"` React and the only Next-specific imports in
+adoption candidates are `next/image` (in `atoms.tsx` and `decision-card.tsx`).
+`next/navigation`, `next/dynamic` and `next/font` appear only in
+`app/page.tsx` and `app/layout.tsx`, which QAMC would not adopt. It already
+depends on the same charting library QAMC chose, which is a genuine plus.
+
+### Component inventory at the pinned commit
+
+Coupling notation: **`types`** = type-only import from `app/types.ts` (plus a
+few pure helpers such as `decColor` / `displayDec` / `confLabel`);
+**`atoms`** = local presentation primitives; **`fetch`** = the component
+performs its own HTTP call and is therefore *not* pure presentation.
+
+| QAMC concept | Orallexa file | Lines | Coupling | Exists? |
+|---|---|---|---|---|
+| Individual analyst/agent cards + disagreement | `app/components/scenario-panel.tsx` → `PerspectivePanelCard` | 385 (file) | `types`, `atoms`, **`fetch`** | ✅ **yes, strongest match** |
+| Recommendation / confidence presentation | `app/components/decision-card.tsx` → `DecisionCard` | 249 | `types`, `atoms`, `next/image` | ✅ yes |
+| Portfolio Manager presentation | `app/components/portfolio-manager-card.tsx` → `PortfolioManagerCard` | 112 | `types`, `atoms` | ✅ yes (**but see naming inversion**) |
+| Signal-fusion / weighted contribution | `app/components/signal-fusion.tsx` → `SignalFusionCard` | 258 | `types`, `atoms` | ✅ yes |
+| Model scoreboard | `app/components/ml-scoreboard.tsx` → `MLScoreboard` | 218 | `types`, `atoms` | ✅ yes |
+| Token / cost budget | `app/components/token-budget-badge.tsx` → `TokenBudgetBadge` | 108 | `types` only | ✅ yes |
+| Daily intelligence | `app/components/daily-intel.tsx` → `DailyIntelView` | 844 | `types`, `atoms`, 2 sub-components | ✅ yes, but very large |
+| Watchlist / candidates | `app/components/watchlist.tsx` → `WatchlistGrid` | 119 | `types` | ✅ yes |
+| Regime presentation | `app/components/regime-card.tsx` → `RegimeCard` | 140 | `atoms` | ✅ yes |
+| Layout / status primitives | `app/components/atoms.tsx` (`Mod`, `Heading`, `Row`, `GoldRule`, `Toggle`, `CopyBtn`, `DecoFan`, `BrandMark`, `BullIcon`, `CopyImageBtn`) | 194 | `next/image`, `types` | ✅ yes |
+| Error boundary | `app/components/error-boundary.tsx` | 81 | none | ✅ yes |
+| Market strip | `app/components/market-strip.tsx` | 49 | `types` | ✅ yes |
+| **Decision-chain presentation** | — | — | — | ❌ **absent** |
+
+All of the above are live components rendered from `app/page.tsx`; none is dead
+code. Note that `app/components/index.ts` re-exports only 11 symbols — several
+adoption candidates (`PortfolioManagerCard`, `SignalFusionCard`,
+`PerspectivePanelCard`, `RegimeCard`, `TokenBudgetBadge`) are imported directly
+by path, so a reader scanning the barrel file would wrongly conclude they are
+unused.
+
+### The strongest single find: `PerspectivePanelCard`
+
+This is the component QAMC described as "agent cards + disagreement
+visualization", and it genuinely exists. It renders:
+
+- a **consensus banner** (`BULLISH`/`BEARISH`/`NEUTRAL`) with an **agreement %**;
+- a centered **divergence bar** driven by `avg_score`;
+- one **row per analyst role**: icon, role name, bias badge, signed score,
+  free-text `reasoning`, `conviction %`, and a one-line `key_factor`;
+- a **per-role historical accuracy badge** (`62% (18/29)`), gated on ≥3 samples.
+
+The underlying `PerspectiveView` type — `{role, icon, bias, score, conviction,
+reasoning, key_factor}` — maps almost one-to-one onto what QAMC would show for
+`tech_analyst` / `news_analyst` / `macro_analyst` / `earnings_analyst`. The
+accuracy badge is a bonus QAMC could feed from its own calibration data.
+
+**Caveat:** it calls `fetch(\`${API}/api/role-memory\`)` internally
+(`scenario-panel.tsx:292`). Adoption requires lifting that to a prop — a
+mechanical change, but it means the component is not pure presentation as
+shipped. `bias-tracker.tsx` has the same issue; no other candidate does.
+
+### Corrections to prior QAMC documentation
+
+1. **Naming inversion — important.** Orallexa's `PortfolioManagerCard` presents
+   *approve / reject*, `scaled_position_pct`, `reason`, `warnings`, and
+   `original_confidence → adjusted_confidence`. In QAMC's vocabulary those are
+   the **AI Risk Manager's** semantics (`RiskVerdict.approved`,
+   `scale_all_buys`, `reasoning`, `modifications`), not the Portfolio Manager's
+   — QAMC's PM is the *proposer*. Anyone reusing this component should wire it
+   to QAMC's `risk_manager`, and `UI_COMPONENT_MAP.md`'s PM row should say so.
+2. **No decision-chain component exists.** `UI_COMPONENT_MAP.md` already marks
+   `DecisionChain` as "QAMC native + donor patterns"; confirmed — neither
+   Orallexa nor OpenTradex supplies a PM→Risk→Gate→Execution chain view.
+   (OpenTradex's `FlowVisualizer` visualizes *skill graphs*, not a decision
+   chain.) This remains a genuinely native build.
+3. **Two cross-cutting props ride along with every component.** Every candidate
+   takes `t: Record<string,string>` (an i18n dictionary) and most take
+   `zh: boolean` for EN/ZH bilingual rendering. QAMC needs neither, and
+   stripping them touches nearly every line of JSX in an adopted file.
+4. **Adopting a component adopts Orallexa's visual identity.** Styling is
+   inline hex plus Tailwind arbitrary values — gold `#D4AF37`, cream `#F5E6CA`,
+   green `#006B3F`, dark red `#8B0000`, fonts `Poiret_One` / `Josefin_Sans` /
+   `Lato` / `DM_Mono`. There is no theme layer or CSS-variable indirection.
+   QAMC either takes the art-deco look or rewrites every `className`.
+
+### Recommended posture (advisory)
+
+Treat Orallexa as a **pattern and layout donor, adapted — not vendored.**
+The highest-value items, in order: `PerspectivePanelCard` (analyst
+cards + disagreement), `PortfolioManagerCard` (rewired to the AI Risk Manager),
+`TokenBudgetBadge` (108 lines, `types`-only, the cleanest lift in the repo),
+`MLScoreboard`, and the `atoms.tsx` primitives. Skip `daily-intel.tsx` (844
+lines, deeply Orallexa-specific) and anything under `app/page.tsx`.
+
+---
+
+## 8B. AgentLens — inspected (D-3 RESOLVED)
+
+**Repository:** `tranhoangtu-it/agentlens`
+**Pinned commit:** `21ab445a91bf2bc2f8b7eb0a2a8fb70468a9047f` (2026-03-30,
+"chore: bump SDK versions to 1.0.0 for package publishing") — the current
+default-branch tip at inspection time.
+**License:** MIT, © 2026 AgentLens Contributors.
+**Maturity:** 69 commits, **1 author**, all activity between 2026-02-28 and
+2026-03-30. **No commits in the ~4.5 months since.** Positions itself as
+"Chrome DevTools for AI Agents". Ships Python / TypeScript / .NET / Go SDKs,
+a FastAPI server, a React dashboard, a CLI, a VS Code extension and marketing
+site.
+
+### Integration surface
+
+- Python SDK entry points: `agentlens.configure(server_url=…, api_key=…)`,
+  the `@agentlens.trace` decorator, and the `agentlens.span(name, type)`
+  context manager exposing `set_output()`, `set_cost(model, in, out)`,
+  `set_metadata(**kw)` and `log()`. `sdk/agentlens/tracer.py` is 390 lines;
+  `transport.py` is 201.
+- Extension points exist and are clean: `SpanExporter` / `SpanProcessor`
+  protocols, plus an OTel exporter (`exporters/otel.py`) and a
+  `/api/otel/v1/traces` ingest route.
+- A `_NoopSpanContext` makes the disabled path free.
+
+**Instrumentation is manual.** The six shipped auto-integrations are
+`langchain`, `crewai`, `autogen`, `llamaindex`, `google_adk` and `mcp`.
+**quant-agent uses none of them** — it calls the OpenAI and Anthropic SDKs
+directly from `src/agents/base.py`. Instrumenting would therefore mean
+hand-writing spans into `_execute()` and the pipeline stages. `_execute()` is
+precisely the loop §3.6 recommends leaving alone.
+
+### Server, storage, search
+
+- SQLModel/SQLAlchemy over **SQLite (WAL) by default**, Postgres via
+  `DATABASE_URL`. Single Docker container, port 3000, healthcheck,
+  `restart: unless-stopped`. Operationally light — no Redis, no Kafka,
+  no queue. Consistent with DECISION #31.
+- **Search is essentially absent.** `storage.list_traces()` supports exactly
+  one filter — a SQL `LIKE` on `agent_name` (`storage.py:141`). There is **no
+  full-text search** over prompts or responses, and no FTS table anywhere.
+- **There is no project/workspace dimension.** Isolation is per `user_id`
+  ("tenant") only. The dimension `AGENTLENS.md` lists as a deferred fork
+  candidate is confirmed absent.
+- Public API is 8 routes: `/api/health`, `/api/agents`, `/api/traces`,
+  `/api/traces/{id}`, `/api/traces/{id}/spans`, `/api/traces/compare`,
+  `/api/traces/stream`, `/api/otel/v1/traces`.
+- Dashboard: React 19 + Vite + Tailwind 3 + Radix + `@xyflow/react` + dagre +
+  recharts.
+
+### Non-blocking behavior — **verified yes**
+
+Every emit path in `transport.py` spawns a `threading.Thread(daemon=True)`,
+uses `httpx.Timeout(5.0)`, and wraps the call in a blanket
+`except Exception: logger.debug(… "non-fatal" …)`. A dead or slow sidecar
+cannot raise into, or block, the caller. This satisfies
+`ACCEPTANCE_CRITERIA.md` and `SAFETY_BOUNDARIES.md` #5.
+
+Two honest qualifications: daemon threads mean in-flight traces are lost at
+process exit (relevant — quant-agent sessions are short-lived one-shots, not a
+long-running daemon); and `flush_batch()` clears `_batch_queue` *before*
+sending, so a failed POST **silently drops** those traces. There is no durable
+buffer and no retry. Non-blocking is achieved by discarding data.
+
+### Sanitization — feasible, but entirely QAMC-owned
+
+There is **no redaction, scrubbing, masking or PII handling anywhere in the
+SDK** (grep for `redact|scrub|sanitiz|mask|pii|secret` returns one unrelated
+bit-masking helper). QAMC would have to scrub before every `set_output()` /
+`set_metadata()`, or install a QAMC-written `SpanProcessor`. The hook exists;
+the work does not.
+
+### Operational dependencies
+
+Docker + SQLite volume + JWT secret + seeded admin credentials
+(`AGENTLENS_JWT_SECRET`, `AGENTLENS_ADMIN_EMAIL`, `AGENTLENS_ADMIN_PASSWORD`).
+The headline "AI-powered failure analysis" (autopsy) additionally requires a
+**BYO LLM API key stored server-side** — `server/llm_provider.py` makes raw
+HTTP calls to OpenAI/Anthropic/Gemini and `server/crypto.py` exists to encrypt
+the stored keys. That is a new long-lived secret-handling surface, on a
+service whose whole purpose is to hold verbatim prompts and responses.
+
+### Overlap with what quant-agent already has
+
+| Capability | quant-agent today | AgentLens adds |
+|---|---|---|
+| Full prompt per call | `agent_logs.input_message` | — |
+| Full response per call | `agent_logs.full_response` | — |
+| Model + token split + cost | `agent_logs.model / input_tokens / output_tokens / cost_usd` | span-level `set_cost` |
+| Correlation | `run_id` across `agent_logs` **and** `trades` | `trace_id` (LLM side only) |
+| Replay / A-B a prompt change | `src/replay.py` + `scripts/replay_decision.py` — re-runs a stored input through the **current** prompt+model and structurally diffs the decisions | trace *compare* (two recorded traces, no re-execution) |
+| Search over prompts/responses | SQLite — FTS5 available on the existing tables | `LIKE` on `agent_name` only |
+| Nested span tree | n/a — calls are flat | ✅ the core feature |
+| AI failure autopsy | — | ✅ (needs a server-side LLM key) |
+
+**The decisive mismatch.** AgentLens exists to answer "why did the agent pick
+tool A over tool B, and where in a deep call tree did the reasoning break?"
+quant-agent has no such tree: each session is **nine flat, single-shot
+prompt→JSON calls**, each already persisted with its complete input and output,
+joined by `run_id` to the trades they produced. The span hierarchy AgentLens is
+built to visualize barely exists here, and the two things QAMC actually wants
+from observability — full prompt/response inspection and prompt-change
+evaluation — are already covered, the second one *better* (replay re-executes;
+trace-compare only diffs two historical recordings).
+
+---
+
+## 8C. AgentLens recommendation: **DROP FROM THE PLAN**
+
+Recommended for the operator's decision; not acted upon.
+
+Grounds, in order of weight:
+
+1. **Architectural mismatch.** Flat single-shot calls, not a nested agent trace.
+   The product's central value does not apply (§8B).
+2. **Near-total overlap with existing, better-suited capability.**
+   `agent_logs` + `run_id` + `replay_decision.py` already deliver the forensic
+   outcomes Stage 6 was meant to buy.
+3. **Its search is weaker than what QAMC can build natively.** `LIKE` on
+   `agent_name` vs. SQLite FTS5 over prompts and responses in a database QAMC
+   already owns — and Stage 5 is going to build that index anyway.
+4. **Every remaining gap is QAMC-side work.** Manual instrumentation into the
+   one loop we agreed not to touch; a redaction layer that does not exist;
+   trace↔decision linking that has to be written by hand.
+5. **Upstream is dormant and single-author** — 69 commits, one contributor, no
+   activity for ~4.5 months. Piloting it means owning it, which is exactly what
+   DECISION #24 set out to avoid.
+6. **New secret surface for the marquee feature**, on a service that by design
+   stores verbatim prompts and responses.
+
+This is the `AGENTS.md` engineering-effort cap and the `ACCEPTANCE_CRITERIA.md`
+stop rule applying as intended: the integration is not invasive because it is
+badly built — it is genuinely well built and honestly non-blocking — it is
+simply solving a problem QAMC does not have, at a cost QAMC should not pay.
+
+**Fair counter-argument, recorded for balance.** If QAMC later moves toward
+tool-calling or multi-step agents, or wants a span-timeline UI for the morning
+fan-out (`ThreadPoolExecutor` over macro/news/tech/earnings, which *is* a small
+real tree), AgentLens becomes a reasonable fit and the SDK's non-blocking
+design would hold up. Nothing here forecloses revisiting it — dropping Stage 6
+costs nothing that cannot be re-added.
 
 ---
 
@@ -545,9 +794,9 @@ target is pinned by SHA.
 
 | # | Severity | Discrepancy |
 |---|---|---|
-| **D-1** | **High** | **Actual model is never recorded.** All nine agent-log writes persist the configured model while cost is priced from the actual one, so a failover produces a silently-wrong, internally inconsistent record. Contradicts DECISION #12, `MODEL_PROVIDER_ARCHITECTURE.md` and `ACCEPTANCE_CRITERIA.md`. (§3.5 F-1/F-2.) |
-| **D-2** | High | **Orallexa is unidentified.** Named as a primary donor and sourced for two UI components, with no repo/license/commit anywhere in `docs/`. Stage 0's "inspect donor code at current commits" is unsatisfiable for it. |
-| **D-3** | High | **AgentLens is unidentified and the name is ambiguous** across ≥3 unrelated projects; `AGENTLENS.md`'s maturity claims are unverifiable. |
+| **D-1** | **High — OPEN, scheduled** | **Actual model is never recorded.** All nine agent-log writes persist the configured model while cost is priced from the actual one, so a failover produces a silently-wrong, internally inconsistent record. Contradicts DECISION #12, `MODEL_PROVIDER_ARCHITECTURE.md` and `ACCEPTANCE_CRITERIA.md`. (§3.5 F-1/F-2.) **Operator direction 2026-08-09: fix as a bounded Stage 0.5 correctness hotfix, ahead of and separate from Stage 1 — see §9A. Not authorized or implemented in this pass.** |
+| **D-2** | **RESOLVED** | Orallexa identified by the operator as `alex-jb/orallexa-ai-trading-agent` and inspected at `794a2ec0`. Concepts verified to exist; inventory and corrections in **§8A**. Remains an approved presentation donor, adapted rather than vendored. |
+| **D-3** | **RESOLVED** | AgentLens identified by the operator as `tranhoangtu-it/agentlens` and inspected at `21ab445a`. Assessment in **§8B**; recommendation **DROP FROM THE PLAN** in **§8C**. |
 | **D-4** | Medium | **Runtime units are not in the repo.** `README.md:237` says the repo ships `quant-agent@.service`/`.timer`; only `quant-agent-daily.*` exists, and it hardcodes `/home/yebo/quant-agent`. DECISION #27 depends on this operational model. |
 | **D-5** | Medium | **`alpaca.base_url` is dead configuration.** It is read nowhere in `src/`, `main.py` or `tests/` — paper vs. live is decided solely by `alpaca.paper` passed to `TradingClient`. `settings.yaml` presents two knobs where only one is live, against `ACCEPTANCE_CRITERIA.md` "paper/live configuration cannot be casually confused". (Current values agree and the environment is paper.) |
 | **D-6** | Low | **No `upstream` remote configured**, contrary to `UPSTREAM_INTEGRATION.md`. Harmless now (fork is level with upstream) but the policy is unmet. |
@@ -555,6 +804,30 @@ target is pinned by SHA.
 | **D-8** | Low | **`.env.example` is incomplete.** It omits `DEEPSEEK_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_CA_BUNDLE`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `QUANT_AGENT_RETRY_DEADLINE_S`, `QUANT_AGENT_MAX_CONCURRENT_LLM`, all documented in `CLAUDE.md`/`README.md`. Stage 1 touches provider config and will trip over this. |
 | **D-9** | Informational | **"Nothing bypasses the hard risk filter" needs one carve-out.** `cash_sweep` `SWEEP_BUY` reaches the broker outside `_filter_hard_risk_decisions`, deliberately and deterministically. `SAFETY_BOUNDARIES.md` should state it rather than leave it implicit. |
 | **D-10** | Informational | `broker.close_position()` has no caller. |
+
+---
+
+## 9A. Operator direction on D-1 (recorded 2026-08-09 — NOT implemented)
+
+**Decision.** The D-1 actual-model attribution fix is to be treated as a
+**bounded pre-Stage-1 / Stage 0.5 correctness hotfix**, not folded into the
+broader Stage 1 provider work.
+
+**Operator's stated reason.** Historical experimental attribution cannot
+reliably be repaired after the fact, so correct attribution should exist
+*before* new experimental trading data is generated.
+
+**Status: NOT AUTHORIZED in this pass and NOT implemented.** No source file was
+touched. Recorded here and in `DECISIONS.md` so the sequencing is durable.
+
+For reference when it is authorized, the change identified in §3.6 step 1 is
+nine call sites — `model=config.llm.<agent>_model` → `model=<result>.model` at
+`pipeline_stages.py:280, 328, 483, 699` and `pipeline.py:4704, 6109, 6296,
+6654/6668, 7050`. Behaviour-neutral for trading; the value is already computed
+and currently discarded. Two known limits a hotfix alone does not remove:
+`tech_analyst` collapses N chunk calls into one row keeping only the last
+chunk's model (§3.5 F-3), and the relay attribution ceiling (F-4). Both are
+documentation matters, not blockers.
 
 ---
 
@@ -571,8 +844,18 @@ target is pinned by SHA.
 4. **No external dead-man's switch.** Observability is push-on-completion plus
    evening's internal missing-session probe; a host outage or a failed evening
    is invisible. `CLAUDE.md` already flags this; QAMC inherits it.
-5. **Donor identification (D-2/D-3)** blocks Stages 3/4/6 planning fidelity.
+5. ~~**Donor identification (D-2/D-3)** blocks Stages 3/4/6 planning fidelity.~~
+   **Closed 2026-08-09** — both donors identified, pinned and inspected (§8A/§8B).
 6. **Shallow clone** limits historical forensics without `--unshallow`.
+7. **Orallexa donor drift.** The inventory in §8A is pinned to `794a2ec0`, on a
+   repository still under active development (7 authors, last commit ~1 month
+   before inspection). Component paths and props may move before Stage 3/4
+   actually consumes them; re-verify against the pin at adoption time.
+8. **If AgentLens is dropped (§8C), Stage 5's index inherits the forensic
+   burden.** No practical loss — quant-agent's own records are richer — but the
+   "inspect AI trace" affordance in `JOURNAL_AND_SEARCH.md` and the `TraceLink`
+   component in `UI_COMPONENT_MAP.md` then have no backing service and should
+   be re-scoped to link to `agent_logs` instead.
 
 ---
 
@@ -657,25 +940,44 @@ most important thing in this report.
 
 ## 12. Files changed during Stage 0
 
-Documentation only. No source, test, config or script file was modified.
+Documentation only. **No source, test, config or script file was modified in
+either pass.**
 
+*First pass (commit `c987f43`):*
 - `docs/STAGE0_BASELINE_AUDIT.md` (new — this file)
-- `docs/MILESTONES.md` (Stage 0 status)
+- `docs/MILESTONES.md`, `docs/knowledge/PROJECT_COMPASS.md`,
+  `docs/DECISIONS.md`, `docs/DONOR_COMPONENTS.md`,
+  `docs/UPSTREAM_INTEGRATION.md`,
+  `docs/architecture/{SAFETY_BOUNDARIES,MODEL_PROVIDER_ARCHITECTURE,AGENTLENS}.md`
+
+*Second pass — donor completion:*
+- `docs/STAGE0_BASELINE_AUDIT.md` (§8A/§8B/§8C, §9 D-1/D-2/D-3, §9A, §10, §12, §13)
+- `docs/DONOR_COMPONENTS.md` (Orallexa pinned + inventory; AgentLens verdict)
+- `docs/architecture/AGENTLENS.md` (identity, findings, DROP recommendation)
+- `docs/DECISIONS.md` (D-2/D-3 resolved; D-1 sequencing; donor identities)
+- `docs/MILESTONES.md` (Checkpoint A status; Stage 0.5; Stage 6 recommendation)
 - `docs/knowledge/PROJECT_COMPASS.md` (current state)
-- `docs/DECISIONS.md` (discrepancy reconciliation entries, per `DOCUMENTATION_GOVERNANCE.md`)
-- `docs/DONOR_COMPONENTS.md` (exact files/commit for OpenTradex; unidentified-donor flags)
-- `docs/UPSTREAM_INTEGRATION.md` (baseline verification result)
+- `docs/ui/UI_COMPONENT_MAP.md` (donor-source corrections)
 
 ## 13. Checkpoint A acceptance
 
 | Criterion | Status |
 |---|---|
 | Existing behavior unchanged | ✅ no non-doc file modified |
-| Existing tests pass, or every pre-existing failure documented | ✅ 1431 passed, 0 failed, 0 skipped |
+| Existing tests pass, or every pre-existing failure documented | ✅ 1431 passed, 0 failed, 0 skipped (re-run after the donor pass; unchanged) |
 | Integration-seam report completed | ✅ §3.6, §6, §7 |
-| Donor inventory completed | ⚠️ **partial** — OpenTradex inventoried at an exact commit; Orallexa and AgentLens are unidentified in governed documentation (D-2, D-3) and cannot be inspected without operator confirmation |
+| Donor inventory completed | ✅ **complete** — OpenTradex `30b23f5e`, Orallexa `794a2ec0`, AgentLens `21ab445a`, all pinned and inspected; TradingView Lightweight Charts confirmed as a library dependency |
 | No feature code added | ✅ |
 
-**Stage 0 is substantively complete with one bounded exception**: the donor
-inventory cannot be finished for two of four donors until the operator names
-the repositories. STOP for human review.
+**All Checkpoint A acceptance criteria are satisfied.** Stage 0 is complete.
+
+Two items are carried forward as operator decisions, neither of which blocks
+Checkpoint A:
+
+1. **Accept or reject the AgentLens DROP recommendation (§8C).** If accepted,
+   Stage 6 should be struck and the `TraceLink` / "Inspect AI Trace"
+   affordances re-scoped onto `agent_logs`.
+2. **Authorize the Stage 0.5 D-1 hotfix (§9A)** — sequencing is recorded; the
+   change itself is not authorized and has not been made.
+
+**STOPPED. Stage 1 not begun. No recommendation implemented.**

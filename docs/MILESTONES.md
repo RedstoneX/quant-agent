@@ -6,15 +6,20 @@
 - `OPTIONAL` — may be deferred without failing the core project.
 - `DONE` — accepted.
 
-## Stage 0 — Baseline & Integration-Seam Audit — AWAITING CHECKPOINT A REVIEW
+## Stage 0 — Baseline & Integration-Seam Audit — COMPLETE, AWAITING CHECKPOINT A SIGN-OFF
 **No feature implementation.**
 
-Executed 2026-08-09. Full report: **`docs/STAGE0_BASELINE_AUDIT.md`**.
+Executed 2026-08-09 in two passes. Full report: **`docs/STAGE0_BASELINE_AUDIT.md`**.
 Headline results: baseline `6fc3cf14…` verified (fork is level with upstream
 `yebof/quant-agent` main, +1 docs-only commit); baseline suite **1431 passed,
-0 failed, 0 skipped**; 10 discrepancies recorded (D-1 actual-model attribution
-is the material one); donor inventory complete for OpenTradex only — Orallexa
-and AgentLens are unidentified in governed documentation.
+0 failed, 0 skipped**; 10 discrepancies recorded; **all five Checkpoint A
+criteria now satisfied**.
+
+Donor inventory complete — all pinned and inspected:
+`deonmenezes/opentradex` @ `30b23f5e`, `alex-jb/orallexa-ai-trading-agent`
+@ `794a2ec0`, `tranhoangtu-it/agentlens` @ `21ab445a`.
+D-2 and D-3 are **resolved**. Stage 0 recommends **dropping AgentLens**
+(§8C) — advisory, awaiting operator acceptance.
 
 Tasks:
 - record exact upstream/fork commit and upstream remote expectations;
@@ -30,19 +35,33 @@ Tasks:
 - report discrepancies between actual source and frozen docs.
 
 Acceptance checkpoint A:
-- existing behavior unchanged; — **met** (documentation-only changes)
+- existing behavior unchanged; — **met** (documentation-only changes, both passes)
 - existing tests pass or every pre-existing failure is documented; — **met** (1431/1431)
 - integration-seam report completed; — **met**
-- donor inventory completed; — **partially met**; blocked for Orallexa and
-  AgentLens, which no governed document identifies (see D-2 / D-3)
+- donor inventory completed; — **met** (all donors pinned and inspected)
 - no feature code added. — **met**
 
-**STOPPED after Checkpoint A. Awaiting human review.**
+**All Checkpoint A criteria are satisfied. STOPPED. Awaiting human sign-off.**
 
-Operator decisions needed to close Checkpoint A and unblock Stage 1:
-1. Name the Orallexa and AgentLens repositories (or drop them).
-2. Confirm whether the D-1 attribution fix runs as a pre-Stage-1 hotfix or
-   inside Stage 1.
+Two operator decisions are carried forward. Neither blocks Checkpoint A:
+1. Accept or reject the **AgentLens DROP** recommendation (audit §8C). If
+   accepted: strike Stage 6, and re-scope `TraceLink` / "Inspect AI Trace"
+   onto `agent_logs`.
+2. Authorize **Stage 0.5** below. Sequencing is already decided; the change is not.
+
+## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — NOT YET AUTHORIZED
+Bounded correctness fix, deliberately kept **outside** Stage 1.
+
+Operator direction (2026-08-09): historical experimental attribution cannot
+reliably be repaired after the fact, so correct attribution must exist before
+new experimental trading data is generated.
+
+Scope when authorized: persist the model that actually answered, at the nine
+`insert_agent_log(...)` call sites listed in `docs/STAGE0_BASELINE_AUDIT.md`
+§9A. Behaviour-neutral for trading. Does **not** include provider abstraction,
+new schema columns, latency or prompt-version capture — those stay in Stage 1.
+
+**Not authorized and not implemented as of this checkpoint.**
 
 ## Stage 1 — Provider, Model & Correlation Plumbing — BLOCKED
 - explicit provider/model configuration compatible with existing per-agent settings;
@@ -88,7 +107,18 @@ Enhancements after core:
 
 Checkpoint E: journal reconstructable from canonical data; index deletable/rebuildable; useful forensic queries work. STOP.
 
-## Stage 6 — AgentLens Pilot — OPTIONAL / BLOCKED
+## Stage 6 — AgentLens Pilot — OPTIONAL / BLOCKED — **DROP RECOMMENDED**
+
+> **Stage 0 outcome (2026-08-09).** `tranhoangtu-it/agentlens` inspected at
+> `21ab445a`. Recommendation: **DROP FROM THE PLAN** — architectural mismatch
+> (deep-trace tooling vs. nine flat single-shot calls), near-total overlap with
+> `agent_logs` + `run_id` + `scripts/replay_decision.py`, weaker search than
+> QAMC will build in Stage 5, and a dormant single-author upstream. It is
+> genuinely non-blocking and operationally light; the objection is fit and cost.
+> Advisory only — awaiting operator acceptance. See
+> `docs/architecture/AGENTLENS.md` and audit §8B/§8C. The stage text below
+> stands unless and until the drop is accepted.
+
 - integrate upstream AgentLens with minimal/non-blocking instrumentation;
 - redact sensitive fields QAMC-side before transmission;
 - link decision/trade records to trace IDs;

@@ -7,10 +7,11 @@
   docs-only commit; no source divergence.
 - Architecture: frozen baseline documented in `docs/DECISIONS.md`.
 - Feature implementation: **not started**.
-- Stage 0 (Baseline & Integration-Seam Audit): **executed 2026-08-09, stopped at
-  Checkpoint A, awaiting human review**. Report: `docs/STAGE0_BASELINE_AUDIT.md`.
-- Authorized next stage: **none until Checkpoint A is accepted.** Stage 1 remains
-  BLOCKED.
+- Stage 0 (Baseline & Integration-Seam Audit): **COMPLETE 2026-08-09 (two
+  passes). All Checkpoint A criteria satisfied; stopped, awaiting human
+  sign-off.** Report: `docs/STAGE0_BASELINE_AUDIT.md`.
+- Authorized next stage: **none until Checkpoint A is signed off.** Stage 0.5
+  (D-1 hotfix) is scheduled but **not authorized**. Stage 1 remains BLOCKED.
 - Live trading: **not authorized**.
 
 ## Start here
@@ -39,11 +40,25 @@ later as an optional sidecar rather than customizing it upfront.
   `decision_id` on `trades` for decision-level correlation.
 - 10 discrepancies recorded (D-1 … D-10).
 
-## Blocking items before Stage 1
-- **D-1** — every agent-log row records the *configured* model, never the actual
-  one, while cost is priced from the actual one. Contradicts DECISION #12.
-- **D-2 / D-3** — Orallexa and AgentLens are named as donors but identified by no
-  repository, license or commit in any governed document.
+## Donor status (all pinned and inspected)
+| Donor | Repository | Commit | Verdict |
+|---|---|---|---|
+| OpenTradex | `deonmenezes/opentradex` | `30b23f5e` | keep — layout/visual language only |
+| Orallexa | `alex-jb/orallexa-ai-trading-agent` | `794a2ec0` | keep — concepts verified; **adapt, don't vendor** |
+| TradingView Lightweight Charts | `tradingview/lightweight-charts` | library dep | keep |
+| AgentLens | `tranhoangtu-it/agentlens` | `21ab445a` | **DROP recommended** (advisory) |
+
+## Open operator decisions
+1. **Accept or reject the AgentLens DROP** (audit §8C). If accepted: strike
+   Stage 6, re-scope `TraceLink` / "Inspect AI Trace" onto `agent_logs`.
+2. **Authorize Stage 0.5** — the D-1 actual-model attribution hotfix. Sequencing
+   is decided (bounded, pre-Stage-1, separate from provider work); the change
+   itself is not authorized and has not been made.
+3. Sign off Checkpoint A.
+
+## Still-open discrepancies (none blocking Checkpoint A)
+- **D-1** (scheduled as Stage 0.5), **D-4** … **D-10** — see
+  `docs/DECISIONS.md` conflict register. **D-2 and D-3 are resolved.**
 
 ## Non-goals now
 No OpenRouter implementation, no dashboard code, no AgentLens fork, no journal
