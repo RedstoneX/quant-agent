@@ -20,6 +20,20 @@ The operator should be able to understand, without reading raw logs:
 - what happened on prior days through a useful journal and forensic search;
 - whether model/prompt choices appear to add measurable value over time.
 
+## MVP lifecycle principle
+
+QAMC must reach a **solid deployed MVP before dedicated visual polish becomes a project phase**.
+
+Cloud/ephemeral development environments are staging and implementation environments, not the accepted MVP runtime. The MVP is considered operationally complete only after the integrated read-only product is deployed to the intended small Linux VPS/server runtime, verified there, and accepted through layered testing.
+
+The expected sequence is:
+
+**functional foundation → integrated verification → VPS deployment → VPS runtime/browser QA → independent review → operator UAT → MVP accepted → dedicated Mission Control visualization/UX polish → paper-soak progression**.
+
+Engineering and automated/browser QA should remove known functional/runtime defects before operator UAT. Operator UAT is the final product-acceptance gate: it should answer whether the deployed system is genuinely usable for its intended purpose, not serve as the primary bug-finding loop.
+
+TradingView-style charting, donor-dashboard ideas and other visual refinements may be valuable after the MVP foundation is accepted, but they must not displace correctness, observability, safety, forensic completeness or deployability. A dedicated polish phase may improve presentation without redefining or masking an incomplete MVP.
+
 ## Hard outcome constraints
 
 These are not implementation suggestions; they define the safe experiment:
