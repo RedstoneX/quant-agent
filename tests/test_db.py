@@ -346,6 +346,32 @@ def test_prune_agent_logs(db):
     assert names == {"recent_agent"}
 
 
+def test_prune_specialist_evidence(db):
+    """Stage 4 table needs the same retention discipline as agent_logs —
+    old rows dropped, recent rows retained."""
+    db.insert_specialist_evidence(
+        run_id="run-old", agent_name="macro_analyst", kind="analysis",
+        scope="run", evidence_json='{"regime": "risk-on"}',
+    )
+    db.conn.execute(
+        "UPDATE specialist_evidence SET timestamp = datetime('now', '-45 days') "
+        "WHERE run_id = 'run-old'"
+    )
+    db.conn.commit()
+
+    db.insert_specialist_evidence(
+        run_id="run-new", agent_name="tech_analyst", kind="analysis",
+        scope="symbol", symbol="AAPL", evidence_json='{"rating": "buy"}',
+    )
+
+    deleted = db.prune_specialist_evidence(keep_days=30)
+    assert deleted == 1
+
+    rows = db.conn.execute("SELECT run_id FROM specialist_evidence").fetchall()
+    run_ids = {r[0] for r in rows}
+    assert run_ids == {"run-new"}
+
+
 def test_initialize_sets_synchronous_normal_under_wal(db):
     """WAL + synchronous=NORMAL is the trading-appropriate fsync mode:
     WAL synced on every commit, main DB synced only at checkpoint.
@@ -366,6 +392,7 @@ def test_initialize_creates_timestamp_indexes_for_prune(db):
     assert "idx_trades_timestamp" in names
     assert "idx_agent_logs_timestamp" in names
     assert "idx_pending_protection_restores_created_at" in names
+    assert "idx_specialist_evidence_run_id" in names
 
 
 def test_prune_pending_protection_restores_drops_stale_rows(db):
@@ -500,6 +527,10 @@ def test_prune_methods_reject_keep_days_zero_or_negative(db):
         symbol="X", sell_order_id="o0", position_qty_before_sell=1.0,
         specs_json=_json.dumps([{"qty": 1, "stop_price": 1.0}]),
     )
+    db.insert_specialist_evidence(
+        run_id="r0", agent_name="macro_analyst", kind="analysis",
+        scope="run", evidence_json="{}",
+    )
 
     for kd in (0, -1, -365):
         with _pytest.raises(ValueError):
@@ -508,10 +539,13 @@ def test_prune_methods_reject_keep_days_zero_or_negative(db):
             db.prune_agent_logs(keep_days=kd)
         with _pytest.raises(ValueError):
             db.prune_pending_protection_restores(keep_days=kd)
+        with _pytest.raises(ValueError):
+            db.prune_specialist_evidence(keep_days=kd)
 
     # Seeded rows must still be there.
     assert len(db.get_trades(symbol="SPY")) == 1
     assert len(db.get_pending_protection_restores()) == 1
+    assert len(db.execute("SELECT * FROM specialist_evidence").fetchall()) == 1
 
 
 def test_initialize_sets_busy_timeout_pragma(db):

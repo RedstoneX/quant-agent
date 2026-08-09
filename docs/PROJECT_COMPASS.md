@@ -5,11 +5,11 @@
 
 ## 🚦 RIGHT NOW
 
-### 🟢 Stage 4–5 functional-foundation tranche built — finishing integrated verification, then stopping for external review
+### 🛑 Stage 4–5 tranche complete — pushed, STOPPED for external ChatGPT/operator review
 
-Stage 4 (per-candidate specialist evidence + decision chain) and Stage 5 (journal + forensic search) are both implemented — backend and cockpit UI — independently reviewed, tests green, committed and pushed. Claude is now running the final integrated verification pass required before the mandatory external checkpoint.
+Stage 4 (per-candidate specialist evidence + decision chain) and Stage 5 (journal + forensic search) are both implemented — backend and cockpit UI — independently reviewed (twice: backend-only, then the full integrated diff), tests green, committed and pushed. This is the mandatory external gate: Claude is not proceeding further on this branch until ChatGPT/operator review accepts it.
 
-🎯 Stage 3 ✅ → 🧠 Stage 4 build ✅ → 🔎 internal review/fix ✅ → 📚 Stage 5 build ✅ → 🔎 integrated review (now) → 🛑 external ChatGPT/operator checkpoint
+🎯 Stage 3 ✅ → 🧠 Stage 4 build ✅ → 🔎 internal review/fix ✅ → 📚 Stage 5 build ✅ → 🔎 integrated review ✅ → 🛑 external ChatGPT/operator checkpoint (here now)
 
 Claude stops early only for a genuine unresolved product decision, a material architecture/safety/scope conflict, or evidence that invalidates the accepted direction.
 
@@ -25,8 +25,8 @@ Claude stops early only for a genuine unresolved product decision, a material ar
 | ✅ DONE | 2 — Read-only Mission Control API | Separate-process GET-only FastAPI read adapter for health, account, positions, orders, trades, runs, decisions, agents, reflections and candidates; historical SQLite reads are read-only and Mission Control cannot trade. |
 | ✅ DONE | Discovery/Reconciliation R1 | Challenge the post-Stage-2 plan against the real repository, then reconcile the accepted product/data direction before UI implementation. |
 | ✅ DONE | 3 — Browser/iPad Trading Cockpit | Static HTML/CSS/JS UI mounted on the existing FastAPI process at `/ui`; account/equity/P&L sparkline, positions, orders, trades, health, watchlist/expansion candidates, Paper badge, responsive desktop/iPad layout, and honest empty/error/degraded states. |
-| ✅ DONE (internal) | 4 — Specialist evidence + decision chain | Persist validated non-authoritative specialist evidence at each source's real scope; symbol-specific technical/earnings/news evidence plus broader macro/news context; consensus/disagreement that never fabricates alignment; PM proposal → AI Risk → deterministic gate → executed/rejected result with proposed-vs-executed deltas; model/provider/cost/latency/token/fallback evidence. |
-| 🟡 NOW (finishing) | 5 — Journal + forensic search | Prior-day browsing/journal plus read-only search/filtering across historical trades, decisions, agents/models and relevant forensic context without raw-log reading or arbitrary SQL. Backend + UI built; integrated verification in progress before the external checkpoint. |
+| ✅ DONE (pending external accept) | 4 — Specialist evidence + decision chain | Persist validated non-authoritative specialist evidence at each source's real scope; symbol-specific technical/earnings/news evidence plus broader macro/news context; consensus/disagreement that never fabricates alignment; PM proposal → AI Risk → deterministic gate → executed/rejected result with proposed-vs-executed deltas; model/provider/cost/latency/token/fallback evidence. |
+| ✅ DONE (pending external accept) | 5 — Journal + forensic search | Prior-day browsing/journal plus read-only search/filtering across historical trades, decisions, agents/models and relevant forensic context without raw-log reading or arbitrary SQL. Backend + UI built, integrated review passed. |
 | ⬜ PLANNED — NOT YET AUTHORIZED | VPS cutover / deployment hardening | **Immediately after Stage 5 is accepted.** Move the stable trading engine + Mission Control API/UI bundle to the small Linux VPS/server runtime; configure private access, secrets/environment, persistent data paths, process supervision/restart behavior, logs/health checks and basic operational recovery. Because Stage 3 serves the static UI from FastAPI at `/ui`, this should be a deployment cutover rather than a frontend rewrite. |
 | ⬜ PLANNED — NOT YET AUTHORIZED | Deployed-MVP verification + UAT | On the VPS, Claude performs automated/integration/runtime/browser QA across desktop/iPad and meaningful populated/empty/error/degraded states, fixes known functional/runtime defects, then a fresh independent review runs. **Only after those gates does the operator perform final UAT.** UAT decides whether the deployed system is genuinely usable; it should not be the primary bug-finding loop. |
 | ⬜ AFTER MVP ACCEPTANCE | Mission Control visualization / UX polish | Dedicated operating-surface refinement only after the solid deployed MVP is accepted. Revisit TradingView-style charting, donor-dashboard ideas, trade/decision visualizations, navigation, density and desktop/iPad usability. Polish must not substitute for missing functionality, safety, observability or forensic completeness. |
@@ -36,8 +36,8 @@ Claude stops early only for a genuine unresolved product decision, a material ar
 
 - Stage 4 shipped: an additive, non-authoritative `specialist_evidence` table captures already-validated macro/news/tech/earnings/PM/AI-Risk output with natural (run vs symbol) scope; two new read-only endpoints (`/runs/{run_id}/candidates`, `/runs/{run_id}/candidates/{symbol}`) expose it; the cockpit gained its first drill-down UI — Runs → candidates → full evidence, PM→AI Risk→execution chain with a proposed-vs-executed delta, and a disagreement/consensus summary that never fabricates alignment (a reviewer-caught all-neutral-signals bug was fixed before acceptance, with regression tests).
 - Stage 5 shipped: read-only journal (`/journal/dates`, `/journal/{date}`) and forensic search (`/search?q=`, parameterized-SQL-only) endpoints, plus a cockpit Journal panel (date picker, equity snapshot, evening reflection, that day's runs/trades/candidates) and Search panel, both reusing the Stage 4 drill-down modal rather than duplicating it.
-- Two independent review passes ran: one on the Stage 4 backend diff (one IMPORTANT finding fixed), one visual/runtime pass per stage (desktop/iPad/dark-mode screenshots across full-evidence, partial-evidence, RM-modified, rejected-decision, and multi-day journal/search states) — all honest empty/degraded states confirmed, no fabricated data found.
-- Full backend suite: **1557 passed, 0 failed**.
+- Three independent review passes ran: the Stage 4 backend diff (one IMPORTANT finding — consensus falsely reporting "aligned" on all-neutral signals — fixed with regression tests), a visual/runtime pass per stage (desktop/iPad/dark-mode screenshots across full-evidence, partial-evidence, RM-modified, rejected-decision, and multi-day journal/search states, all honest empty/degraded states confirmed), and a final integrated review across the complete backend+frontend diff (PASS, one IMPORTANT completeness gap — `specialist_evidence` had no retention/pruning path unlike every sibling forensic table — fixed with a `prune_specialist_evidence` method wired into the same evening housekeeping pass as `prune_agent_logs`/`prune_trades`, same never-block-on-failure discipline).
+- Full backend suite: **1558 passed, 0 failed**.
 - The current Stage 4–5 tranche is about **functional completeness of the read-only Mission Control**, not hosting migration or dedicated visual polish. Cloud/ephemeral environments are explicitly **staging only**; the intended MVP runtime is the small Linux VPS/server with private access.
 
 ## 🖥️ MVP / VPS CUTOVER
@@ -78,13 +78,11 @@ TradingView-style charts, richer trade markers/indicators, donor-dashboard conce
 
 ## ⏭️ NEXT MOVES
 
-1. 🤖 Claude finishes integrated verification of the complete Stage 4–5 tranche (full suite, fresh independent review of the integrated result, resolve verified findings).
-2. 🖥️ Final desktop/iPad runtime/visual verification across meaningful populated/empty/error/degraded states.
-3. 🛑 Push and stop for ChatGPT/operator external review — the mandatory gate after the complete tranche.
-4. 🖥️ If Stage 5 is accepted, authorize VPS cutover/deployment hardening next.
-5. 🧪 Verify the deployed VPS system through Claude QA/browser testing + independent review, then operator UAT.
-6. ✅ Declare the solid deployed MVP accepted only after UAT passes.
-7. 🎨 Authorize dedicated Mission Control visualization/UX polish after that gate.
+1. 🛑 **Waiting here.** ChatGPT/operator reviews and accepts (or sends back) the pushed Stage 4–5 tranche on `claude/stage-3-implementation-75e6dp`.
+2. 🖥️ If accepted, authorize VPS cutover/deployment hardening next via an updated `STATE.md`/`WORK.md`.
+3. 🧪 Verify the deployed VPS system through Claude QA/browser testing + independent review, then operator UAT.
+4. ✅ Declare the solid deployed MVP accepted only after UAT passes.
+5. 🎨 Authorize dedicated Mission Control visualization/UX polish after that gate.
 
 ## 🚧 BLOCKERS / DECISIONS NEEDED
 

@@ -1116,6 +1116,28 @@ class Database:
             self.conn.commit()
             return cursor.rowcount or 0
 
+    def prune_specialist_evidence(self, keep_days: int = 730) -> int:
+        """Delete specialist_evidence rows older than keep_days. Returns
+        count deleted.
+
+        Stage 4 (QAMC) added this table alongside agent_logs without a
+        retention path — an ordinary trading day inserts a dozen-plus rows
+        (per-symbol tech/earnings, run-scoped macro/news/PM-reasoning/RM-
+        verdict, per-symbol PM-target/proposed-order/RM-modification) with
+        no cap, on what's meant to be a long-running VPS-deployed bot.
+        Default matches prune_agent_logs's 730-day (2 year) retention since
+        this table is forensic-display detail for the same agent calls.
+        """
+        if keep_days <= 0:
+            raise ValueError(f"prune_specialist_evidence: keep_days must be > 0, got {keep_days}")
+        with self._lock:
+            cursor = self.conn.execute(
+                "DELETE FROM specialist_evidence WHERE timestamp < datetime('now', ?)",
+                (f"-{keep_days} days",),
+            )
+            self.conn.commit()
+            return cursor.rowcount or 0
+
     def insert_daily_pnl(self, date: str, total_value: float, daily_pnl: float,
                          daily_return_pct: float, equity_close: float | None = None):
         with self._lock:

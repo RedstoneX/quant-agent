@@ -6812,6 +6812,15 @@ class TradingPipeline:
                 logger.info("Pruned %d trades older than 5 years", pruned_t)
         except Exception as e:
             logger.warning("Trades prune failed: %s", e)
+        # Stage 4 (QAMC): specialist_evidence is forensic display detail for
+        # the same agent calls agent_logs already prunes — same 730-day
+        # retention, same never-block-housekeeping discipline.
+        try:
+            pruned_se = self.db.prune_specialist_evidence(keep_days=730)
+            if pruned_se:
+                logger.info("Pruned %d old specialist_evidence rows", pruned_se)
+        except Exception as e:
+            logger.warning("specialist_evidence prune failed: %s", e)
         # Stale orphaned protection-restore rows accumulate when a
         # sell_order_id becomes unqueryable (broker GC) or position
         # gets liquidated by another path. Drain can't make progress on
