@@ -6,8 +6,15 @@
 - `OPTIONAL` — may be deferred without failing the core project.
 - `DONE` — accepted.
 
-## Stage 0 — Baseline & Integration-Seam Audit — NEXT
+## Stage 0 — Baseline & Integration-Seam Audit — AWAITING CHECKPOINT A REVIEW
 **No feature implementation.**
+
+Executed 2026-08-09. Full report: **`docs/STAGE0_BASELINE_AUDIT.md`**.
+Headline results: baseline `6fc3cf14…` verified (fork is level with upstream
+`yebof/quant-agent` main, +1 docs-only commit); baseline suite **1431 passed,
+0 failed, 0 skipped**; 10 discrepancies recorded (D-1 actual-model attribution
+is the material one); donor inventory complete for OpenTradex only — Orallexa
+and AgentLens are unidentified in governed documentation.
 
 Tasks:
 - record exact upstream/fork commit and upstream remote expectations;
@@ -23,13 +30,19 @@ Tasks:
 - report discrepancies between actual source and frozen docs.
 
 Acceptance checkpoint A:
-- existing behavior unchanged;
-- existing tests pass or every pre-existing failure is documented;
-- integration-seam report completed;
-- donor inventory completed;
-- no feature code added.
+- existing behavior unchanged; — **met** (documentation-only changes)
+- existing tests pass or every pre-existing failure is documented; — **met** (1431/1431)
+- integration-seam report completed; — **met**
+- donor inventory completed; — **partially met**; blocked for Orallexa and
+  AgentLens, which no governed document identifies (see D-2 / D-3)
+- no feature code added. — **met**
 
-**STOP after Checkpoint A for human review.**
+**STOPPED after Checkpoint A. Awaiting human review.**
+
+Operator decisions needed to close Checkpoint A and unblock Stage 1:
+1. Name the Orallexa and AgentLens repositories (or drop them).
+2. Confirm whether the D-1 attribution fix runs as a pre-Stage-1 hotfix or
+   inside Stage 1.
 
 ## Stage 1 — Provider, Model & Correlation Plumbing — BLOCKED
 - explicit provider/model configuration compatible with existing per-agent settings;

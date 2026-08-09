@@ -3,6 +3,16 @@
 ## Role
 AgentLens answers “How did the AI execution unfold?” Mission Control/journal answer “What happened and why does it matter?”
 
+> **Stage 0 finding (D-3): "AgentLens" is not identified.** No governed
+> document records a repository, license or commit. At least three unrelated
+> public GitHub projects use the name (`Soufianeazz/agentlens` — quality
+> scoring / hallucination detection; `agentkitai/agentlens` — tamper-evident
+> hash-chained audit log; `tranhoangtu-it/agentlens` — tool-call tracing),
+> plus an unrelated Salesforce product. They solve materially different
+> problems, so the "low upstream maturity" judgement below cannot be verified
+> against any of them. **Stage 6 should stay deferred until the target is
+> pinned by SHA.** See `docs/STAGE0_BASELINE_AUDIT.md` §8.
+
 ## Current decision
 **Pilot upstream AgentLens first. Do not fork it at project start.**
 

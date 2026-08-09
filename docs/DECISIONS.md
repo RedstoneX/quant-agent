@@ -35,3 +35,52 @@ Status: **architecture baseline frozen; implementation not started**.
 31. No unnecessary infrastructure. SQLite/local existing storage is preferred until evidence requires otherwise.
 32. Licensing is recordkeeping rather than a major architecture selection variable for this private noncommercial experiment; preserve notices/attribution and do not copy unlicensed code.
 33. Optional features have an engineering-effort cap: defer/drop them rather than allowing QAMC to become a bespoke platform.
+
+---
+
+## Stage 0 conflict register (recorded, NOT resolved)
+
+`DOCUMENTATION_GOVERNANCE.md` requires that document/source conflicts be
+recorded here rather than silently resolved. Stage 0 found the following.
+**None is resolved by this entry** — each needs an operator decision. Full
+evidence in `docs/STAGE0_BASELINE_AUDIT.md` §9.
+
+- **D-1 (conflicts with decision 12).** Decision 12 requires that no fallback
+  be silently counted as the requested model. Verified source: all nine
+  `insert_agent_log(...)` sites persist `config.llm.<agent>_model` (requested),
+  while `cost_usd` is computed from the model that actually answered.
+  `AgentResult.model` — the actual model — is never persisted. On a
+  cross-provider failover the stored record is internally inconsistent. Also
+  conflicts with `MODEL_PROVIDER_ARCHITECTURE.md` "Required contract" and
+  `ACCEPTANCE_CRITERIA.md`. *Open: fix as a pre-Stage-1 hotfix, or as the first
+  Stage 1 slice?*
+- **D-2 (affects decision 15 and the Stage 3/4 plan).** Orallexa is an approved
+  donor sourcing two components in `UI_COMPONENT_MAP.md`, but no governed
+  document records its repository, license or commit. A plausible candidate
+  exists but was **not** confirmed and was **not** audited.
+  *Open: name it or drop it.*
+- **D-3 (affects decisions 23–25).** "AgentLens" names at least three unrelated
+  public projects; `docs/architecture/AGENTLENS.md` asserts upstream maturity
+  that cannot be checked against an unidentified target.
+  *Open: pin by SHA, or drop Stage 6.*
+- **D-4 (affects decision 27).** The six per-session systemd units the README
+  says the repo ships are absent; only `quant-agent-daily.*` exists, and it
+  hardcodes `/home/yebo/quant-agent`.
+- **D-5.** `alpaca.base_url` is read nowhere in the codebase; only
+  `alpaca.paper` selects paper vs. live. Two knobs are presented where one is
+  live, against `ACCEPTANCE_CRITERIA.md` "paper/live configuration cannot be
+  casually confused". Current values agree and the environment is paper.
+- **D-6.** No `upstream` remote configured, contrary to
+  `UPSTREAM_INTEGRATION.md`.
+- **D-7 (wording, decision 9).** Decision 9 says "Auto-Evolve disabled
+  initially"; live config is `evolution.enabled: true, dry_run: true`, which
+  the editor treats as STAGE-ONLY (proposals written to `proposed_edits.json`,
+  no prompt file modified). Behaviour matches the decision; the flag name does
+  not.
+- **D-8.** `.env.example` omits seven documented environment variables that
+  Stage 1 will touch.
+- **D-9 (amends the safety narrative).** `cash_sweep`'s `SWEEP_BUY` reaches the
+  broker outside `_filter_hard_risk_decisions`, deliberately and
+  deterministically, and is not LLM-reachable. `SAFETY_BOUNDARIES.md` should
+  state this carve-out explicitly rather than imply a universal gate.
+- **D-10.** `broker.close_position()` has no caller.
