@@ -6,31 +6,32 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 
 ## Accepted
 
-- Stages 0, 0.5, 1 and 2 are accepted.
+- Stages 0, 0.5, 1, 2 and 3 are accepted.
 - Stage 2 delivered the isolated read-only Mission Control API and deterministic `risk_gate` forensic persistence without changing trading/risk semantics.
-- Accepted Stage-2 full-suite result: **1530 passed, 0 failed**.
+- Stage 3 delivered the read-only browser/iPad Trading Cockpit at `/ui`; accepted verification: **1531 passed, 0 failed** plus desktop/iPad runtime review.
 - Discovery R1 and ChatGPT reconciliation are accepted.
-- Product direction for Stage 4 is **per-candidate fidelity from the start**, while preserving each specialist's real data scope rather than inventing a uniform per-symbol schema.
+- Stage-4 product direction is **per-candidate fidelity**, while preserving each specialist's real data scope rather than inventing a uniform per-symbol schema.
 - Research evidence remains correlated by `run_id`/natural scope; `decision_id` remains PM → AI Risk → trade correlation.
 - AgentLens remains removed.
 - Default runtime posture remains small Linux VPS/server + private access; avoid distributed infrastructure without demonstrated need.
 
 ## Authorized now
 
-**Stage 3 only: Trading cockpit.**
+**Remaining read-only Mission Control tranche through Stage 5.**
 
 Current assignment and durable handoff: `docs/WORK.md`.
 
-Claude may implement the Stage-3 cockpit on a dedicated branch using `/qamc-build`, verify it, update the Compass, push, and stop for external review.
+Claude may implement Stage 4, close it as an **internal** checkpoint, and continue directly into Stage 5 in the same engineering session/branch when practical. Numbered stages are implementation slices, not automatic permission boundaries.
+
+Use `/qamc-build`. Stop early only for a genuine operator product/value decision that cannot be resolved from the accepted outcome, a material architecture/safety/scope conflict, or evidence that invalidates the accepted direction.
 
 ## Not authorized now
 
-- Stage 4 specialist-evidence persistence/decision-interface work;
-- Stage 5 journal/search implementation;
 - deterministic trading/risk behavior changes;
 - broker-write Mission Control controls;
-- live trading.
+- live trading;
+- later learning/write-control stages beyond the current read-only Mission Control tranche.
 
 ## Handoff
 
-Stage 3 ends with a pushed branch and **STOP**. ChatGPT/operator review the actual implementation before Stage 4 can be authorized.
+The next mandatory external gate is after the **complete remaining Mission Control tranche (Stage 5)**. At that point Claude verifies the integrated result, pushes, and **STOPS** for ChatGPT/operator review. Stage 4 alone does not require an external stop.
