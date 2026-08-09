@@ -811,7 +811,7 @@ costs nothing that cannot be re-added.
 
 | # | Severity | Discrepancy |
 |---|---|---|
-| **D-1** | **High — OPEN, scheduled** | **Actual model is never recorded.** All nine agent-log writes persist the configured model while cost is priced from the actual one, so a failover produces a silently-wrong, internally inconsistent record. Contradicts DECISION #12, `MODEL_PROVIDER_ARCHITECTURE.md` and `ACCEPTANCE_CRITERIA.md`. (§3.5 F-1/F-2.) **Operator direction 2026-08-09: fix as a bounded Stage 0.5 correctness hotfix, ahead of and separate from Stage 1 — see §9A. Not authorized or implemented in this pass.** |
+| **D-1** | **High — FIXED 2026-08-09, see §9A addendum** | **Actual model is never recorded.** All nine agent-log writes persist the configured model while cost is priced from the actual one, so a failover produces a silently-wrong, internally inconsistent record. Contradicts DECISION #12, `MODEL_PROVIDER_ARCHITECTURE.md` and `ACCEPTANCE_CRITERIA.md`. (§3.5 F-1/F-2.) **Operator direction 2026-08-09: fix as a bounded Stage 0.5 correctness hotfix, ahead of and separate from Stage 1 — see §9A. Implemented on `claude/stage-0-5-attribution-hotfix-nbjkep`, awaiting Checkpoint A5 acceptance.** |
 | **D-2** | **RESOLVED** | Orallexa identified by the operator as `alex-jb/orallexa-ai-trading-agent` and inspected at `794a2ec0`. Concepts verified to exist; inventory and corrections in **§8A**. Remains an approved presentation donor, adapted rather than vendored. |
 | **D-3** | **RESOLVED** | AgentLens identified by the operator as `tranhoangtu-it/agentlens` and inspected at `21ab445a`. Assessment in **§8B**; recommendation **DROP FROM THE PLAN** in **§8C**. |
 | **D-4** | Medium | **Runtime units are not in the repo.** `README.md:237` says the repo ships `quant-agent@.service`/`.timer`; only `quant-agent-daily.*` exists, and it hardcodes `/home/yebo/quant-agent`. DECISION #27 depends on this operational model. |
@@ -845,6 +845,19 @@ and currently discarded. Two known limits a hotfix alone does not remove:
 `tech_analyst` collapses N chunk calls into one row keeping only the last
 chunk's model (§3.5 F-3), and the relay attribution ceiling (F-4). Both are
 documentation matters, not blockers.
+
+**Addendum — implemented 2026-08-09.** All nine call sites changed exactly as
+above, on branch `claude/stage-0-5-attribution-hotfix-nbjkep`. Five targeted
+regression tests added (`tests/test_agent_log_attribution.py`, one per session
+type reaching an `insert_agent_log` call), each confirmed to fail against the
+pre-fix code and pass against the fix. One pre-existing test
+(`tests/test_cash_sweep.py::test_position_review_hides_vehicle_and_parks_at_end`)
+needed a `model=` value added to a bare `MagicMock()` `AgentResult` stub that
+had never set one (harmless pre-fix since `config.llm.position_reviewer_model`
+was read instead). Full suite: 1436 passed (1431 baseline + 5 new), 0 failed.
+No database schema change; `src/agents/base.py::_execute()` untouched. The two
+known limits above are unchanged by this hotfix and remain open. Full record:
+`docs/MILESTONES.md` Stage 0.5. Awaiting operator Checkpoint A5 acceptance.
 
 ---
 
