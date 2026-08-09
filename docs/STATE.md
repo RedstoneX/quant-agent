@@ -2,9 +2,9 @@
 
 Updated: 2026-08-09
 
-This is the single live operational-state document. Git history and checkpoint records preserve history; this file says what is true **now**.
+This is the single live operational-state document. Git history preserves history; this file says what is true **now**.
 
-## Accepted
+## Accepted implementation
 
 - Stage 0 — Baseline & Integration-Seam Audit: DONE / Checkpoint A accepted.
 - Stage 0.5 — Actual-model attribution hotfix: DONE / Checkpoint A5 accepted.
@@ -12,42 +12,43 @@ This is the single live operational-state document. Git history and checkpoint r
 - Stage 2 — Thin Read-Only Mission Control API: DONE / Checkpoint C accepted.
 - Final accepted Stage-2 verification reported: **1530 passed, 0 failed**.
 
-Stage 2 includes:
-- separate FastAPI/uvicorn read-only Mission Control API;
-- broker-live account/positions/orders reads separated from SQLite history reads;
-- independent SQLite `mode=ro` history access;
-- `/health`, `/account`, `/positions`, `/orders`, `/trades`, `/runs`, `/runs/{run_id}`,
-  `/decisions/{decision_id}`, `/agents`, `/agents/{agent_name}`, `/reflections`, `/candidates`;
-- additive `risk_gate` forensic records for complete deterministic hard-risk reconstruction;
-- no change to deterministic trading/risk/execution semantics.
+Stage 2 includes the separate read-only Mission Control API, broker-live/account reads separated from SQLite history reads, independent SQLite `mode=ro` access, accepted account/position/order/trade/run/decision/agent/reflection/candidate resources, and additive `risk_gate` forensic records. Deterministic trading/risk/execution semantics were not changed.
 
-## Currently authorized
+## Current phase
 
-**Mission Control build tranche: Stages 3 → 4 → 5.**
+**Outcome discovery / architecture challenge for Mission Control.**
 
-Claude Code may execute these as one coordinated engineering tranche with internal self-verification/commit boundaries:
+The previously proposed Stage 3–5 product capabilities remain the current candidate scope, but their architecture, sequencing and implementation assumptions are **provisional until Claude Code has independently explored/challenged them and the result is reconciled through GitHub**.
 
-- Stage 3 — Native Cockpit.
-- Stage 4 — AI Decision Interface.
-- Stage 5 — Native Journal & Indexed Search.
+Current work contract: `docs/work/ACTIVE.md`.
 
-The Stage 3 and Stage 4 gates are internal engineering gates for this tranche.
-The next **external STOP** is after Stage 5 / Checkpoint E.
+### Authorized now
 
-Claude must not merge the tranche to `main`; it pushes the branch and hands off for independent ChatGPT/operator review.
+Claude Code may:
+- inspect the actual repository, tests, accepted Stage-0–2 implementation, architecture and donor material;
+- use `/qamc-discover` and focused subagents to investigate efficiently;
+- challenge the current plan against `docs/OUTCOME.md`;
+- ask the operator only genuine product/value questions, **one at a time**;
+- update and push the discovery contract/proposal on a dedicated branch.
 
-## Not authorized
+### Not authorized during discovery
 
-- Stage 6 — removed (AgentLens).
-- Stage 7 — Learning Center: not part of the current tranche.
-- Stage 8 — Writable Operations: not authorized.
-- Stage 9 — Paper Soak & Experiment Analytics: not authorized yet.
-- Live trading: not authorized.
+- Mission Control product implementation;
+- deterministic risk/execution changes;
+- write-capable Mission Control operations;
+- Stage 7+ implementation;
+- live trading.
 
-## Current engineering posture
+Claude must STOP after pushing the discovery result. ChatGPT then independently reviews the actual GitHub findings, reconciles material architecture questions, and the operator accepts/rejects the resulting outcome contract.
 
-- Claude Code is the engineering lead/orchestrator.
-- Use native Claude Code delegation and progressive context loading.
-- Prefer cheap/focused subagents for bounded research/testing; use agent teams only when their coordination capability materially helps.
-- Git is durable project memory. Project auto-memory is disabled.
-- ChatGPT performs the independent external checkpoint review and accepted GitHub merge/sign-off.
+After an accepted discovery/reconciliation result is merged, implementation begins in a **fresh Claude Code session** from GitHub. The implementation session should not require the discovery transcript.
+
+## Engineering posture
+
+- Operator: defines desired outcomes/product preferences and makes final acceptance decisions.
+- Claude Code: engineering/architecture participant during discovery; engineering lead/orchestrator during accepted implementation.
+- ChatGPT: architecture challenger/reconciliation layer, independent checkpoint reviewer, and accepted GitHub merge/sign-off layer.
+- GitHub: durable shared memory and handoff between Claude sessions and between Claude and ChatGPT.
+- Project auto-memory is disabled.
+- Secret reads/writes and dangerous permission modes are repo-controlled; safe routine checks are selectively pre-authorized.
+- Prefer focused inexpensive subagents for bounded work; use agent teams only when their coordination capability materially helps.
