@@ -265,7 +265,7 @@ tr:last-child td { border-bottom: none; }
 .pill-success, .pill-approved, .pill-aligned, .pill-bullish { background: rgba(62, 207, 142, 0.15); color: var(--green); }
 .pill-fallback, .pill-mixed, .pill-modified { background: rgba(255, 180, 84, 0.18); color: var(--amber); }
 .pill-error, .pill-hard_risk_block, .pill-bearish { background: rgba(255, 107, 107, 0.15); color: var(--red); }
-.pill-insufficient_data, .pill-unfilled { background: rgba(139, 152, 165, 0.15); color: var(--text-dim); }
+.pill-insufficient_data, .pill-unfilled, .pill-no_directional_signal { background: rgba(139, 152, 165, 0.15); color: var(--text-dim); }
 
 /* ------------------------------------------------------------------------ */
 /* Runs panel + drill-down rows                                             */

@@ -838,6 +838,10 @@ function proposedVsExecuted(proposed, trade) {
 }
 
 function decisionChain(detail) {
+  // Collected as {title, body} and numbered sequentially at the end (not by
+  // a fixed slot 1-6) — a candidate that skips e.g. the PM target/proposed
+  // order steps (HOLD, or rejected pre-construction) still gets a clean
+  // 1..N sequence instead of a marker jumping straight from 1 to 4.
   const steps = [];
 
   if (detail.pm_reasoning) {
@@ -852,7 +856,7 @@ function decisionChain(detail) {
       continuity_check: "Continuity check", premortem_check: "Pre-mortem check",
     });
     if (chain) body.push(chain);
-    steps.push(chainStep("1", "Portfolio Manager reasoning", body));
+    steps.push({ title: "Portfolio Manager reasoning", body });
   }
 
   if (detail.pm_target) {
@@ -864,7 +868,7 @@ function decisionChain(detail) {
     ];
     if (t.thesis_invalid_if) body.push(el("p", { className: "card-text dim", text: `Invalid if: ${t.thesis_invalid_if}` }));
     if (t.catalyst) body.push(el("p", { className: "card-text", text: `Catalyst override: ${t.catalyst}` }));
-    steps.push(chainStep("2", "Portfolio Manager target", body));
+    steps.push({ title: "Portfolio Manager target", body });
   }
 
   if (detail.pm_proposed_order) {
@@ -880,7 +884,7 @@ function decisionChain(detail) {
       kv("Take profit", fmtMoney(p.take_profit)),
       el("p", { className: "card-text", text: p.reasoning }),
     ];
-    steps.push(chainStep("3", "PM constructed order (pre-review)", body));
+    steps.push({ title: "PM constructed order (pre-review)", body });
   }
 
   if (detail.risk_verdict) {
@@ -912,19 +916,20 @@ function decisionChain(detail) {
     } else {
       body.push(el("div", { className: "state-message", text: "Verdict recorded but could not be read back." }));
     }
-    steps.push(chainStep("4", "AI Risk Manager verdict (run-wide)", body));
+    steps.push({ title: "AI Risk Manager verdict (run-wide)", body });
   }
 
   if (detail.risk_modification) {
     const m = detail.risk_modification;
-    steps.push(
-      chainStep("5", "AI Risk Manager modification (this symbol)", [
+    steps.push({
+      title: "AI Risk Manager modification (this symbol)",
+      body: [
         kv("Field", m.field),
         kv("Original", fmtNum(m.original_value)),
         kv("Modified to", fmtNum(m.new_value)),
         el("p", { className: "card-text", text: m.reason }),
-      ])
-    );
+      ],
+    });
   }
 
   const delta = proposedVsExecuted(detail.pm_proposed_order, detail.trade);
@@ -946,21 +951,25 @@ function decisionChain(detail) {
     ];
     if (t.reasoning) body.push(el("p", { className: "card-text", text: t.reasoning }));
     if (delta) body.push(delta);
-    steps.push(chainStep("6", "Executed trade", body));
+    steps.push({ title: "Executed trade", body });
   } else if (detail.pm_proposed_order) {
-    steps.push(
-      chainStep("6", "Executed trade", [
+    steps.push({
+      title: "Executed trade",
+      body: [
         el("div", { className: "state-message", text: detail.risk_verdict && detail.risk_verdict.verdict && detail.risk_verdict.verdict.approved === false
           ? "No trade — rejected by the AI Risk Manager before execution."
           : "No trade recorded for this candidate this run (proposed but not executed, or a HOLD)." }),
-      ])
-    );
+      ],
+    });
   }
 
   if (!steps.length) {
     return el("div", { className: "state-message", text: "No PM/Risk/execution chain recorded for this candidate this run." });
   }
-  return el("div", { className: "chain-sequence" }, steps);
+  return el(
+    "div", { className: "chain-sequence" },
+    steps.map((s, i) => chainStep(String(i + 1), s.title, s.body))
+  );
 }
 
 function renderCandidateDetail(runId, symbol, detail, runDetail) {
