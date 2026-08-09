@@ -29,14 +29,16 @@ Optimize for **efficient completion**: reduce wall-clock time without wasting mo
 
 At the start of substantial work, identify the dependency graph and critical path. Keep the lead productive on the critical path while dispatching genuinely independent work concurrently.
 
-The operator pre-authorizes autonomous **subagent/worker delegation** inside the accepted work contract. Do not pause merely to ask whether to parallelize with subagents. Claude may choose and combine:
+The operator gives a standing explicit request and authorization to use autonomous delegation inside the accepted work contract, including **creating an agent team whenever Claude's own judgment says peer coordination will materially improve efficient completion**. Do not ask the operator whether to parallelize, how many workers to use, or whether an agent team is warranted; those are Claude's engineering/orchestration decisions.
+
+Claude may choose and combine:
 - fast built-in/focused subagents for repository search, bounded analysis and high-volume reading;
 - `qamc-test-runner` for cheap independent test/check work;
 - stronger isolated general-purpose workers for self-contained implementation/debugging;
 - worktrees or explicit file ownership for parallel writers;
 - an agent team when sustained cross-layer work clearly benefits from peer coordination and independent contexts.
 
-Agent-team creation follows Claude Code's own approval mechanics. If the operator's current prompt explicitly authorizes creating an agent team when warranted, treat that as the request/approval and use a team when the task structure earns it. Otherwise, prefer autonomous subagents rather than interrupting solely to seek a team unless the expected benefit is material.
+If Claude Code requires the operator's request before creating an agent team, this standing instruction records that request: **the operator requests that Claude create and manage an agent team when Claude itself judges one worthwhile, without seeking a separate team-creation decision from the operator.** Claude still decides whether a team is worthwhile and its size/composition.
 
 ### Practical concurrency budget
 
@@ -45,7 +47,7 @@ Agent-team creation follows Claude Code's own approval mechanics. If the operato
 - Clearly separable cross-layer work: usually **2–3 helpers alongside the lead**, with separate ownership/worktrees where needed.
 - Agent teams are available but **not the default**. Start small and use them only when multiple substantial independent workstreams justify the extra context/usage cost. Add another worker only when it is likely to shorten the critical path more than its coordination/context cost.
 
-These are heuristics, not hard caps. Claude may use fewer or more subagents when the task structure clearly justifies it without asking the operator for permission; agent-team spawning still follows the product's approval behavior described above.
+These are heuristics, not hard caps. Claude may use fewer or more workers when the task structure clearly justifies it without asking the operator for permission.
 
 Prefer cheaper workers for bounded search/test/triage and stronger workers where reasoning or implementation complexity warrants it. Reuse or resume an existing worker when that avoids repeated repository/context loading. Do not wait serially for a background worker when other authorized critical-path work can continue.
 
