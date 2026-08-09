@@ -37,7 +37,8 @@ Stage 3 shipped as a static HTML/CSS/JS cockpit (no build step, no framework) mo
 - R1 was approved; `STATE.md`/`WORK.md` authorized **Stage 3 only**.
 - Claude chose the smallest maintainable build: a static HTML/CSS/JS cockpit (no Node/build step, no framework, no new chart library) mounted at `/ui` on the existing FastAPI process. Old React/Tailwind/chart/donor ideas were evaluated and skipped as unnecessary for this stage.
 - Backend full suite still green (**1530 passed, 0 failed**) — no application/runtime behavior touched.
-- Verified with real screenshots at desktop and iPad (portrait + landscape) viewports: populated data, empty state, broker-degraded state, and a hard backend-error state — every panel fails honestly, nothing is faked.
+- Independent fresh review (`qamc-reviewer`) verdict: **PASS**, no blockers. It flagged two follow-ups, both applied: a regression test now pins `/ui`'s GET-only enforcement and absence of path traversal, and this Compass no longer implies committed screenshot artifacts exist (they were scratch evidence from this build session only).
+- Visually verified locally at desktop and iPad (portrait + landscape) viewports against a running server: populated data, empty state, broker-degraded state, and a hard backend-error state — every panel fails honestly, nothing is faked. (Screenshots were inspected during this build session as scratch evidence, not committed to the repo as artifacts; the new `tests/test_api_safety.py` regression test below is what's durably checked going forward.)
 
 ## 🛠️ STAGE 3 — WHAT WAS BUILT
 
@@ -48,7 +49,7 @@ Stage 3 shipped as a static HTML/CSS/JS cockpit (no build step, no framework) mo
 - 👀 watchlist/expansion candidates, explicitly labeled as such (not "every symbol considered")
 - 🧪 obvious Alpaca Paper/Live badge in the header
 - 🖥️ responsive desktop + iPad layout
-- ⚠️ real empty/loading/error/degraded states per panel — verified with screenshots, not assumed
+- ⚠️ real empty/loading/error/degraded states per panel — checked against a running server, not assumed
 - 🚫 no production mock fallback — every number comes from the real Stage-2 API or is shown as unavailable
 
 ## ⏭️ NEXT MOVES

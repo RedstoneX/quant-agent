@@ -305,3 +305,32 @@ def test_server_has_get_only_enforcement_middleware():
     assert client.put("/account").status_code == 405
     assert client.delete("/trades").status_code == 405
     assert client.patch("/positions").status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# 10. Stage 3 cockpit: the `/ui` static mount is covered by the SAME
+#     app-level GET-only middleware as the JSON routes above (it wraps the
+#     whole ASGI app regardless of mount registration order) and cannot be
+#     used to escape `src/api/static/` via path traversal. Pins the
+#     behavior verified by hand during the Stage 3 review so a future
+#     middleware/mount-ordering change or Starlette upgrade can't silently
+#     regress it.
+# ---------------------------------------------------------------------------
+
+
+def test_ui_static_mount_is_get_only_and_has_no_path_traversal():
+    from fastapi.testclient import TestClient
+
+    from src.api.server import app
+
+    client = TestClient(app)
+
+    assert client.post("/ui/app.js").status_code == 405
+    assert client.put("/ui/index.html").status_code == 405
+    assert client.delete("/ui/styles.css").status_code == 405
+
+    get_resp = client.get("/ui/index.html")
+    assert get_resp.status_code == 200
+
+    traversal_resp = client.get("/ui/../server.py")
+    assert traversal_resp.status_code in (403, 404)
