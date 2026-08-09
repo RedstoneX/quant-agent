@@ -1,7 +1,13 @@
-# QAMC Chat / Claude Handoff
+# Deprecated: Chat Handoff
 
-Use this as the minimal bootstrap for a fresh implementation session.
+QAMC no longer uses chat transcripts as durable project handoff.
 
-> Work in `RedstoneX/quant-agent`. This is the QAMC controlled fork of `yebof/quant-agent`. Before doing anything, read root `AGENTS.md`, existing `CLAUDE.md`, and `docs/knowledge/PROJECT_COMPASS.md`, then follow the authority chain defined there. Execute only the currently authorized milestone in `docs/MILESTONES.md`. Do not reopen frozen decisions or implement later stages. Verify repository/branch/HEAD and report any source discrepancy that invalidates the plan. At every checkpoint update the governed documentation and stop when the milestone says STOP.
+Current state and authorization live in Git:
+- `docs/STATE.md`
+- `docs/ROADMAP.md`
+- `docs/decisions/ACTIVE.md`
 
-The prompt deliberately contains little architecture detail. GitHub Markdown is the durable source of truth.
+Claude Code sessions may be resumed when context is healthy, but a new session rehydrates from the repository rather than from handoff prose.
+
+The previous handoff file is preserved at
+`docs/history/legacy/CHAT_HANDOFF_2026-08-09.md`.
