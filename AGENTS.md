@@ -5,10 +5,11 @@ This fork is the authoritative repository for **Quant Agent Mission Control (QAM
 ## Read order before any work
 1. Existing root `CLAUDE.md` — inherited upstream trading invariants and implementation knowledge.
 2. `docs/knowledge/PROJECT_COMPASS.md` — navigation and current project state.
-3. `docs/DECISIONS.md` — frozen decisions; do not reopen them casually.
-4. `docs/MILESTONES.md` — current approved work stage.
-5. The architecture document(s) relevant to the bounded task.
-6. `docs/ACCEPTANCE_CRITERIA.md` before claiming completion.
+3. `docs/knowledge/AI_OPERATING_SYSTEM.md` — model/session/context economy and AI development workflow.
+4. `docs/DECISIONS.md` — frozen decisions; do not reopen them casually.
+5. `docs/MILESTONES.md` — current approved work stage.
+6. The architecture document(s) relevant to the bounded task.
+7. `docs/ACCEPTANCE_CRITERIA.md` before claiming completion.
 
 ## Non-negotiable operating rules
 - `yebof/quant-agent` remains the authoritative trading engine. Do not redesign or replace it.
@@ -20,6 +21,7 @@ This fork is the authoritative repository for **Quant Agent Mission Control (QAM
 - Prefer existing upstream functionality and approved donor components over custom code.
 - No optional integration is entitled to unlimited engineering effort. If a feature requires invasive architecture changes, broad schema migration or substantial bespoke infrastructure, STOP and report the finding.
 - One bounded slice at a time. Verify, test, document, commit, checkpoint.
+- Follow `docs/knowledge/AI_OPERATING_SYSTEM.md` for Claude model choice, fresh-session discipline, context limits and testing economy.
 - Do not implement a later milestone until its prerequisite checkpoint is accepted.
 - Do not introduce Redis, Kafka, Kubernetes, MongoDB, PostgreSQL or other infrastructure unless a demonstrated requirement is approved.
 - Preserve upstream mergeability: isolate QAMC changes, avoid gratuitous rewrites, and document divergence.
