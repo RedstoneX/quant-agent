@@ -266,10 +266,127 @@ targeted + full suite green, Stage 2 not started).**
 `docs/CHECKPOINT_B_ACCEPTANCE.md`). **Stage 1 is DONE. Stage 2 is authorized
 as NEXT.**
 
-## Stage 2 — Thin Read-Only Mission Control API — **NEXT (authorized 2026-08-09)**
+## Stage 2 — Thin Read-Only Mission Control API — **IMPLEMENTED 2026-08-09, awaiting Checkpoint C operator acceptance**
 Expose only what is needed for UI: account, positions, orders, trades, candidates, agents, PM/risk/deterministic decisions, model/cost, journal source data, learning reports, scheduler/health.
 
 Checkpoint C: complete trading-day reconstruction possible; killing API does not affect trading; schema frozen. STOP.
+
+**Implemented 2026-08-09 on branch `claude/stage-2-mission-control-api-4zpx7j`.**
+Orchestrated with four read-only Wave-0 investigation subagents (canonical
+data inventory, API framework/seam, trading-day reconstruction, safety/test
+matrix), then two parallel implementation workers on genuinely disjoint
+files (broker-live reads vs. SQLite-history reads — the greenfield `src/api/`
+package let file ownership split cleanly, unlike Stage 1 where the seams
+intersected in shared files), a parallel static-safety-test worker, and a
+final independent review subagent (no authorship bias) that challenged
+read-only isolation, secret exposure, trading-process independence, and
+contract completeness before sign-off. Full account and endpoint contract:
+`docs/architecture/MISSION_CONTROL_API.md`.
+
+**A. Framework.** FastAPI + uvicorn, added as an *optional* `pyproject.toml`
+`api` extra (`pip install -e '.[api]'`) — a trading-only install pulls in
+neither. Chosen over stdlib `http.server` (no schema/validation) and Flask
+(no native async/schema) because `pydantic>=2.7.0` is already a direct
+dependency and reused directly for response models, and Stage 3's future
+React/Vite frontend gets FastAPI's generated OpenAPI schema as a stable,
+typed contract at zero extra authoring cost. The trading process is a
+synchronous `BlockingScheduler` with no asyncio anywhere, so running an
+async framework in a *separate* process creates no runtime interaction risk.
+
+**B. Isolation architecture.** Two structurally separate read paths, per
+the brief's explicit instruction to keep broker-live reads apart from
+canonical historical SQLite reads: `src/api/broker_reads.py` (the only file
+that constructs `AlpacaBroker`, reusing its two pre-existing read-only
+methods `get_account`/`get_positions` plus one new read-only
+`client.get_orders(...)` wrapper for order listing — implemented inside
+`src/api/` rather than added to `src/execution/broker.py`, so zero
+trading-critical files were touched) and `src/api/db_reads.py` (never
+imports `src.storage.db.Database`; opens its own independent
+`sqlite3.connect(f"file:{path}?mode=ro", uri=True)` connection per call — a
+structural, OS-enforced guarantee that a write attempt fails at the SQLite
+layer, not just by convention; safe under concurrent access because the
+trading process already runs WAL mode for exactly this reason).
+`src/api/server.py` adds two belt-and-suspenders, app-level guarantees on
+top of both routers only ever registering `@router.get(...)`: a
+`GetOnlyMiddleware` rejecting any non-GET/HEAD/OPTIONS request with 405
+before any handler runs, and a global exception handler turning any
+unhandled exception into a plain `{"detail": "internal error"}` 500 rather
+than a leaking traceback. `src/api/deps.py` never hands a full
+`AppConfig`/`ApiKeysConfig` to a route handler — only narrow accessor
+functions — and every response is a typed Pydantic model
+(`src/api/schemas.py`), never a raw `dict(row)` passthrough, so the
+response *shape* structurally has nowhere to carry a secret.
+
+**C. Endpoint contract.** `/health`, `/account`, `/positions`,
+`/orders`, `/trades`, `/runs`, `/runs/{run_id}`, `/decisions/{decision_id}`,
+`/agents`, `/agents/{agent_name}`, `/reflections` — every route maps to a
+pre-existing table/broker method, plus the one narrowly-scoped new read
+helper noted above. No `/candidates` endpoint: the only existing read
+(`TradingPipeline._build_watchlist_candidates`) lives on the 7000+-line
+pipeline object itself, and importing it would pull `src/api/` into the
+trading-execution import graph — deliberately left out rather than
+compromising the isolation boundary Stage 2 exists to establish, and it
+was not in the Stage 2 brief's required data contract either. Full table:
+`docs/architecture/MISSION_CONTROL_API.md`.
+
+**D. Known limitation — documented, not silently patched.** Verified during
+Wave-0 inspection: when the deterministic hard-risk gate blocks *every*
+candidate in a run before it reaches `risk_manager`, no row in any table
+records which rule fired — only an in-memory dict that reaches a log line
+and a Telegram push. Per the brief's schema-discipline instruction ("STOP
+and explain... before introducing broad persistence changes"), Stage 2 does
+not add new persistence to close this; `RunDetailResponse.hard_risk_block_recorded`
+is hardcoded `False` rather than guessed. A partial hard-risk block (some
+candidates blocked, RM still reached for the remainder) is fully
+reconstructable.
+
+**E. Independent review findings.** A fresh subagent given the finished
+implementation (no authorship bias) checked four angles — read-only
+isolation, secret exposure, trading-process independence, contract
+completeness — and returned CONFIRMED SAFE on all four, with one real
+test-coverage gap: `tests/test_api_safety.py`'s write-capable-broker-attribute
+denylist was missing `shift_stops_down`/`replace_stop_loss` (both
+write-capable, neither referenced anywhere in `src/api/` — confirmed before
+and after the fix, so this closed a defense-in-depth gap, not a live
+vulnerability). Fixed directly; no other finding required a code change.
+
+**Tests.** 57 new targeted tests across five files:
+`tests/test_api_safety.py` (30 static/AST-level structural invariants —
+GET-only routes, no write-capable broker attribute referenced anywhere,
+`AlpacaBroker` constructed in exactly one place, no cross-import in either
+direction between `src/api/` and the trading-critical stack, `db_reads.py`'s
+SQL provably `SELECT`/`PRAGMA`-only), `tests/test_api_contract.py`
+(functional endpoint tests against a real seeded SQLite DB plus stubbed
+broker reads, covering every route, 404s, and the
+any-null-cost-means-unknown-total convention), `tests/test_api_no_secrets.py`
+(schema-level field-name blocklist + live sentinel-value sweep across every
+GET route), `tests/test_api_db_concurrency.py` (concurrent trading writes
+against real API reads on the same WAL-mode file — zero writer lock errors,
+passing `PRAGMA integrity_check`; a second test confirms the `mode=ro`
+connection is physically unable to write), `tests/test_api_isolation.py`
+(starts the API as a real separate OS process via `python -m src.api`,
+confirms it answers `/health`, SIGKILLs it, then confirms an ordinary
+trading DB write succeeds identically before and after). **Full suite: 1521
+passed, 0 failed** (1464 baseline + 57 new). No trading-critical file
+(`main.py`, `src/pipeline.py`, `src/pipeline_stages.py`,
+`src/execution/broker.py`'s write methods, `src/risk/*`,
+`src/storage/db.py`'s write methods) was modified; deterministic
+risk/execution semantics and Alpaca paper/live selection are unchanged.
+
+**Checkpoint C: implementation-side verification complete** (API is
+read-only; runs independently of the trading process; trading runs with the
+API absent/dead; API exposes no order-execution capability; no secrets are
+returned; account/positions/orders/trades are represented honestly;
+agent/provider/model/token/cost/latency/status data is available; `run_id`
+and `decision_id` support end-to-end decision reconstruction; PM → Risk →
+deterministic gate → trade/rejection is reconstructable where canonical
+data supports it, with the one documented gap noted above; journal source
+records are available without a second memory system; existing
+learning/reflection records are exposed read-only; old/current SQLite DBs
+remain compatible — no schema change; deterministic risk/execution behavior
+is unchanged; targeted + full suite pass; Stage 3 not started).
+**Awaiting operator acceptance before Stage 2 is marked DONE and Stage 3 is
+authorized.**
 
 ## Stage 3 — QAMC Native Cockpit — BLOCKED
 - React/Vite/Tailwind native frontend;

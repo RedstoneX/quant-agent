@@ -43,10 +43,13 @@ additive `agent_logs`/`trades` telemetry columns via the existing
 `src/agents/base.py::_execute()`'s hardened retry/deadline/failover loop body
 was preserved untouched, per Stage 0's explicit recommendation.
 
-**Stage 2 (Thin Read-Only Mission Control API) is AUTHORIZED as the current
-bounded stage.** Mission Control UI, journal code, risk changes and donor UI
-code remain out of Stage 2's scope and stay BLOCKED behind their own
-prerequisite checkpoints.
+**Stage 2 (Thin Read-Only Mission Control API) is IMPLEMENTED (2026-08-09,
+branch `claude/stage-2-mission-control-api-4zpx7j`), awaiting Checkpoint C
+operator acceptance** (`docs/MILESTONES.md`,
+`docs/architecture/MISSION_CONTROL_API.md`). Mission Control UI, journal
+code, risk changes and donor UI code remain out of Stage 2's scope and stay
+BLOCKED behind their own prerequisite checkpoints; Stage 3 is not authorized
+until Checkpoint C is accepted.
 
 AgentLens is **out of plan** (DECISION #34) — do not instrument, integrate or
 pilot it.

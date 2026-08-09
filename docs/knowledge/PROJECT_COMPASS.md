@@ -31,6 +31,25 @@
   PM proposal's `agent_logs` row through RM's review to the resulting
   order/trade rows. 28 new targeted tests; full suite **1464 passed, 0
   failed**. Details: `docs/MILESTONES.md` Stage 1.
+- **Stage 2 — Thin Read-Only Mission Control API: IMPLEMENTED 2026-08-09,
+  awaiting Checkpoint C operator acceptance.** Branch
+  `claude/stage-2-mission-control-api-4zpx7j`. New `src/api/` package
+  (FastAPI + uvicorn, optional `pyproject.toml` extra) exposes existing
+  canonical state read-only: `/health`, `/account`, `/positions`, `/orders`
+  (broker-live), `/trades`, `/runs`, `/runs/{run_id}`,
+  `/decisions/{decision_id}`, `/agents`, `/agents/{agent_name}`,
+  `/reflections` (SQLite, via a dedicated `mode=ro` connection — never
+  shares `src.storage.db.Database`'s writer connection/lock). No
+  trading-critical file was modified; no schema change. 57 new targeted
+  tests (structural safety, functional contract, no-secrets, DB
+  concurrency, process-kill isolation) plus an independent review pass
+  (fresh subagent, no authorship bias) confirming read-only isolation,
+  secret exposure, trading-process independence, and contract
+  completeness. Full suite **1521 passed, 0 failed**. One genuine
+  reconstruction gap found and documented rather than patched with new
+  persistence: a fully hard-risk-blocked run's rejection reason is not
+  persisted anywhere in canonical storage. Details:
+  `docs/MILESTONES.md` Stage 2, `docs/architecture/MISSION_CONTROL_API.md`.
 - Live trading: **not authorized**. Alpaca Paper remains the broker boundary.
 - AI development economy/session policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
@@ -74,7 +93,43 @@ the full account):
 
 **Checkpoint B ACCEPTED by the operator 2026-08-09** (`docs/CHECKPOINT_B_ACCEPTANCE.md`):
 paper-trading/risk behavior unchanged, attribution correct, tests green.
-**Stage 2 — Thin Read-Only Mission Control API — is AUTHORIZED as NEXT.**
+Stage 2 was then authorized as NEXT and is now implemented — see below.
+
+## Stage 2 outcome (implemented, awaiting Checkpoint C acceptance)
+Thin Read-Only Mission Control API implemented on
+`claude/stage-2-mission-control-api-4zpx7j` (see `docs/MILESTONES.md` Stage 2
+and `docs/architecture/MISSION_CONTROL_API.md` for the full account):
+
+- read-only HTTP API exposing existing canonical state, no new trading
+  engine/memory store/operational dependency — done (`src/api/`, FastAPI +
+  uvicorn, optional install extra);
+- broker-live reads (account/positions/orders) kept structurally separate
+  from canonical SQLite reads — done (`broker_reads.py` vs. `db_reads.py`,
+  never sharing a connection or code path);
+- API cannot place/cancel/modify broker orders — done (GET-only enforced
+  at router + app-middleware level; every write-capable broker method
+  verified absent via AST scan, including the two the independent review
+  found initially missing from the denylist, `shift_stops_down`/
+  `replace_stop_loss` — fixed);
+- API death/absence does not affect trading — done, proven both
+  structurally (no trading-critical file imports `src.api`) and
+  behaviorally (a real separate OS process is started, confirmed live,
+  killed, then an ordinary trading DB write is proven to succeed
+  identically);
+- no secrets in any response — done (narrow non-secret config accessors
+  only, typed Pydantic response models with no secret-shaped field,
+  live sentinel-value sweep across every route);
+- SQLite reads safe under concurrent trading writes — done (dedicated
+  `mode=ro` connection, verified under real concurrent load plus
+  `PRAGMA integrity_check`);
+- one genuine schema gap found, documented rather than silently patched
+  with new persistence — a fully hard-risk-blocked run's rejection reason
+  is not recorded anywhere in canonical storage today.
+
+**Checkpoint C: implementation-side self-verification complete** (see
+`docs/MILESTONES.md` Stage 2 for the full 15-point account). **Awaiting
+operator acceptance before Stage 2 is marked DONE and Stage 3 is
+authorized. STOP at Checkpoint C; Stage 3 has not been started.**
 
 ## Stage 0 / 0.5 outcome (for reference)
 - Baseline suite at Stage 0: **1431 passed, 0 failed, 0 skipped** (hermetic; no
