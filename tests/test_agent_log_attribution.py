@@ -279,6 +279,144 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
         )
 
 
+@patch("src.pipeline.AlpacaBroker")
+@patch("src.pipeline.EarningsDataProvider")
+@patch("src.pipeline.EarningsAnalystAgent")
+@patch("src.pipeline.NewsDataProvider")
+@patch("src.pipeline.NewsAnalystAgent")
+@patch("src.pipeline.MacroAnalystAgent")
+@patch("src.pipeline.MacroDataProvider")
+@patch("src.pipeline.MarketDataProvider")
+@patch("src.pipeline.RiskManagerAgent")
+@patch("src.pipeline.PortfolioManagerAgent")
+@patch("src.pipeline.TechAnalystAgent")
+@patch("src.pipeline_stages.compute_indicators")
+@patch("src.pipeline.compute_indicators")
+def test_morning_session_decision_id_correlates_pm_rm_and_trade(
+    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls,
+    mock_macro_cls, mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
+    mock_broker_cls, tmp_path,
+):
+    """Stage 1 correlation: the portfolio_manager agent_logs row, the
+    risk_manager agent_logs row, and the resulting BUY's trades row must all
+    share one decision_id — the minimal id needed to trace a PM proposal
+    through RM review to the order/trade it produced, end-to-end through a
+    real run_morning() and a real (tmp_path) SQLite DB."""
+    mock_config = _mock_config()
+    mock_config.storage.db_path = str(tmp_path / "test.db")
+
+    mock_ta = MagicMock()
+    spy_analysis = TechAnalysisResult(
+        symbol="SPY", rating="buy", entry_price=507.0,
+        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reasoning_chain=_trc(),
+    )
+    mock_ta.analyze_batch.return_value = (
+        {"SPY": spy_analysis}, _agent_result(_ACTUAL_FAILOVER_MODEL),
+    )
+    mock_ta_cls.return_value = mock_ta
+
+    mock_pm = MagicMock()
+    mock_pm.decide.return_value = (
+        PortfolioDecision(
+            reasoning_chain=_pm_rc(),
+            targets=[TargetPosition(
+                symbol="SPY", target_weight_pct=10.0, conviction="high",
+                thesis="Buy", thesis_invalid_if="",
+            )],
+            portfolio_view="Bullish",
+        ),
+        _agent_result(_ACTUAL_FAILOVER_MODEL),
+    )
+    mock_pm_cls.return_value = mock_pm
+
+    mock_rm = MagicMock()
+    mock_rm.review.return_value = (
+        RiskVerdict(
+            approved=True, modifications=[], reasoning="Approved",
+            reasoning_chain=_risk_rc(),
+        ),
+        _agent_result(_ACTUAL_FAILOVER_MODEL),
+    )
+    mock_rm_cls.return_value = mock_rm
+
+    mock_market = MagicMock()
+    mock_market.get_ohlcv.return_value = [
+        MagicMock(date="2026-04-07", open=503, high=510, low=500, close=507, volume=1000000)
+    ]
+    mock_market_cls.return_value = mock_market
+
+    mock_macro = MagicMock()
+    mock_macro.get_macro_summary.return_value = {
+        "vix": {"current": 18.0, "mean_5d": 17.5, "trend": "falling"},
+        "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2, "inverted": True},
+        "fed_funds_rate": 5.25,
+    }
+    mock_macro_cls.return_value = mock_macro
+
+    mock_broker = MagicMock()
+    mock_broker.is_trading_day.return_value = True
+    mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
+    mock_broker.get_positions.return_value = []
+    mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    mock_broker_cls.return_value = mock_broker
+
+    mock_maa = MagicMock()
+    mock_maa.analyze.return_value = (_macro_stub(), _agent_result(_ACTUAL_FAILOVER_MODEL))
+    mock_maa_cls.return_value = mock_maa
+
+    mock_na = MagicMock()
+    mock_na.analyze.return_value = (
+        NewsIntelligenceReport(
+            macro_narrative=MacroNarrative(
+                last_updated="2026-04-07", era_themes=["AI capex"],
+                current_regime="risk-on, AI-led rally",
+            ),
+            state_changes=[], stock_news={},
+            pm_briefing="Bullish news", market_sentiment="bullish", confidence="medium",
+        ),
+        _agent_result(_ACTUAL_FAILOVER_MODEL),
+    )
+    mock_na_cls.return_value = mock_na
+    mock_ndp = MagicMock()
+    mock_ndp.fetch_news.return_value = []
+    mock_ndp.format_for_prompt.return_value = "No news."
+    mock_ndp_cls.return_value = mock_ndp
+
+    mock_ea = MagicMock()
+    mock_ea.analyze_reports.return_value = []
+    mock_ea_cls.return_value = mock_ea
+    mock_edp = MagicMock()
+    mock_edp.check_and_fetch.return_value = []
+    mock_edp_cls.return_value = mock_edp
+
+    pipeline = TradingPipeline(mock_config)
+    result = pipeline.run_morning()
+
+    assert result["status"] == "executed"
+
+    logs = pipeline.db.get_agent_logs(result["run_id"])
+    pm_row = next(r for r in logs if r["agent_name"] == "portfolio_manager")
+    rm_row = next(r for r in logs if r["agent_name"] == "risk_manager")
+    macro_row = next(r for r in logs if r["agent_name"] == "macro_analyst")
+
+    assert pm_row["decision_id"], "portfolio_manager row must carry a non-empty decision_id"
+    assert pm_row["decision_id"] == rm_row["decision_id"], (
+        "risk_manager's review of THIS PM proposal must share its decision_id"
+    )
+    # Research-phase agents are outside the PM/RM decision chain — their
+    # rows correctly carry no decision_id (NULL, not a fabricated shared id).
+    assert macro_row["decision_id"] is None
+
+    trades = pipeline.db.get_trades(symbol="SPY")
+    assert trades, "expected a trades row for the executed SPY BUY"
+    assert all(t["decision_id"] == pm_row["decision_id"] for t in trades), (
+        "every trades row this run produced must carry the same decision_id "
+        "as the PM proposal / RM review that led to it"
+    )
+
+
 def test_position_reviewer_persists_actual_model_on_failover():
     """midday/close (audit site pipeline.py:6109) must persist
     AgentResult.model, not config.llm.position_reviewer_model."""

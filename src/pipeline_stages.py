@@ -38,6 +38,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from src.agents.base import agent_log_kwargs
 from src.data.technical import compute_indicators
 from src.models import NewsIntelligenceReport, TechAnalysisResult, TechnicalIndicators
 from src.pipeline_context import RunContext
@@ -282,6 +283,7 @@ class MorningResearchStage:
                 input_tokens=ma_result.input_tokens,
                 output_tokens=ma_result.output_tokens,
                 cost_usd=ma_result.cost_usd,
+                **agent_log_kwargs(ma_result),
             )
             ctx.macro_summary = macro_summary
             ctx.macro_analysis = macro_analysis
@@ -330,6 +332,7 @@ class MorningResearchStage:
                     input_tokens=ta_result.input_tokens,
                     output_tokens=ta_result.output_tokens,
                     cost_usd=ta_result.cost_usd,
+                    **agent_log_kwargs(ta_result),
                 )
             logger.info("Technical analysis complete: %d symbols in 1 LLM call", len(analyses))
         except Exception as e:
@@ -474,6 +477,14 @@ class DecisionStage:
                 rc.portfolio_balance[:120], rc.cash_target[:120],
             )
 
+        # Stage 1 (QAMC correlation plumbing): one id per PM call, generated
+        # independently of run_id (not reused verbatim) so it stays correct
+        # even if a future change ever calls decide() more than once per
+        # run. Threaded to the risk_manager agent_logs row (RiskStage) and
+        # every trades row this run's decisions produce (ExecutionStage).
+        decision_id = f"{run_id}-dec-{uuid.uuid4().hex[:6]}"
+        ctx.decision_id = decision_id
+
         pipeline.db.insert_agent_log(
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
@@ -485,6 +496,8 @@ class DecisionStage:
             input_tokens=pm_result.input_tokens,
             output_tokens=pm_result.output_tokens,
             cost_usd=pm_result.cost_usd,
+            decision_id=decision_id,
+            **agent_log_kwargs(pm_result),
         )
 
         if not portfolio_decision:
@@ -701,6 +714,8 @@ class RiskStage:
             input_tokens=rm_result.input_tokens,
             output_tokens=rm_result.output_tokens,
             cost_usd=rm_result.cost_usd,
+            decision_id=ctx.decision_id,
+            **agent_log_kwargs(rm_result),
         )
 
         if not verdict or not verdict.approved:
@@ -756,6 +771,12 @@ class ExecutionStage:
     def run(self, ctx: RunContext) -> list[dict]:
         pipeline = self._pipeline
         run_id = ctx.run_id
+        # Stage 1 (QAMC correlation plumbing): links every trades row this
+        # run produces back to the PM proposal / RM review that led to it.
+        # None on any run that never reached a successful PM call (e.g. an
+        # early-exit before DecisionStage) — trades rows from such a run
+        # simply carry no decision_id, which is correct, not a bug.
+        decision_id = ctx.decision_id
         positions = ctx.positions
         total_value = ctx.total_value
         cash = ctx.cash
@@ -771,6 +792,7 @@ class ExecutionStage:
                 pipeline.db.insert_trade(
                     symbol=d.symbol, action="HOLD", qty=0.0, price=0.0,
                     reasoning=d.reasoning, run_id=run_id,
+                    decision_id=decision_id,
                 )
             except Exception as e:
                 logger.warning("Failed to record HOLD decision for %s: %s", d.symbol, e)
@@ -830,6 +852,7 @@ class ExecutionStage:
                     price=sell_price, reasoning=decision.reasoning, run_id=run_id,
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
+                    decision_id=decision_id,
                 )
                 logger.info(
                     "Executed: %s %s %s @ limit $%.2f",
@@ -1130,6 +1153,7 @@ class ExecutionStage:
                     stop_loss=stop_price, take_profit=decision.take_profit,
                     broker_order_id=None,
                     fill_status="pending_submit",
+                    decision_id=decision_id,
                 )
 
                 try:

@@ -1080,3 +1080,162 @@ def test_llm_semaphore_released_after_success_and_failure(monkeypatch):
         with pytest.raises(Exception):
             ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64).run(data="x")
     assert base_mod._OPENAI_LLM_SEMAPHORE._value == start
+
+
+# === Stage 1 (QAMC provider/model/correlation plumbing) ===
+# OpenRouter provider seam + AgentResult attribution fields.
+
+def test_openrouter_routes_to_openai_sdk_with_base_url():
+    """provider='openrouter' uses the OpenAI SDK pointed at OpenRouter's
+    base_url, NOT Anthropic — same shape as the DeepSeek routing test above."""
+    from src.agents.base import _OPENROUTER_BASE_URL
+    with patch("openai.OpenAI") as oai_cls, patch("anthropic.Anthropic") as anth_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=4096, provider="openrouter")
+        assert agent._use_openrouter is True
+        assert agent._use_openai is False
+        assert agent._use_deepseek is False
+        anth_cls.assert_not_called()
+        _, kwargs = oai_cls.call_args
+        assert kwargs.get("base_url") == _OPENROUTER_BASE_URL == "https://openrouter.ai/api/v1"
+        assert kwargs.get("api_key") == "ork"
+
+
+def test_explicit_provider_field_overrides_prefix_inference():
+    """An OpenRouter 'vendor/model' id like 'anthropic/claude-3.5-sonnet'
+    would NOT match any native prefix and would default to the Anthropic
+    branch by elimination — the explicit provider field must win instead,
+    which is the entire reason OpenRouter needs an explicit field at all."""
+    with patch("openai.OpenAI") as oai_cls, patch("anthropic.Anthropic") as anth_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=4096, provider="openrouter")
+        assert agent._provider == "openrouter"
+        anth_cls.assert_not_called()
+        oai_cls.assert_called_once()
+
+
+def test_provider_unset_preserves_existing_prefix_routing_behavior():
+    """Regression pin: provider=None (the default, and every pre-Stage-1
+    config) must route BYTE-IDENTICAL to before Stage 1 existed — prefix
+    inference alone, for all three pre-existing providers."""
+    with patch("openai.OpenAI"), patch("anthropic.Anthropic"):
+        assert ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64)._provider == "openai"
+        assert ConcreteAgent(api_key="k", model="deepseek-v4-flash", max_tokens=64)._provider == "deepseek"
+        assert ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)._provider == "anthropic"
+        # Explicitly passing provider=None must be identical to omitting it.
+        assert ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64,
+                             provider=None)._provider == "openai"
+
+
+def test_invalid_explicit_provider_falls_back_to_prefix_inference():
+    """resolve_provider() only honors a KNOWN provider name — a typo must
+    not silently misroute (and must not crash construction either)."""
+    from src.agents.base import resolve_provider
+    assert resolve_provider("gpt-5.5", "not-a-real-provider") == "openai"
+    assert resolve_provider("gpt-5.5", "") == "openai"
+    assert resolve_provider("gpt-5.5", None) == "openai"
+    assert resolve_provider("anthropic/claude-3.5-sonnet", "openrouter") == "openrouter"
+    assert resolve_provider("anthropic/claude-3.5-sonnet", "OpenRouter") == "openrouter"  # case-insensitive
+
+
+def test_openrouter_primary_fails_over_to_anthropic(monkeypatch):
+    """OpenRouter primary exhausted → ONE Anthropic failover call succeeds;
+    result carries the fallback model, and requested_provider stays
+    'openrouter' (never silently reported as the fallback's provider)."""
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+    ork = MagicMock()
+    ork.chat.completions.create.side_effect = ConnectionError("openrouter down")
+    anth = MagicMock()
+    anth.messages.create.return_value = _good_anthropic_response()
+    with patch("openai.OpenAI", return_value=ork), patch("anthropic.Anthropic", return_value=anth):
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64,
+                              fallback_api_key="fk", provider="openrouter")
+        result = agent.run(data="x")
+    assert result.raw_text == '{"result": "ok"}'
+    assert result.model == "claude-opus-4-7"
+    assert result.requested_model == "anthropic/claude-3.5-sonnet"
+    assert result.requested_provider == "openrouter"
+    assert result.actual_provider == "anthropic"
+    assert result.used_fallback is True
+    anth.messages.create.assert_called_once()
+
+
+def test_openrouter_primary_no_failover_without_key(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+    ork = MagicMock()
+    ork.chat.completions.create.side_effect = ConnectionError("down")
+    with patch("openai.OpenAI", return_value=ork), patch("anthropic.Anthropic") as A:
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")  # no fallback key
+        with pytest.raises(ConnectionError):
+            agent.run(data="x")
+        A.assert_not_called()
+
+
+def test_openrouter_client_disables_sdk_internal_retries():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                     max_tokens=64, provider="openrouter")
+        assert oai_cls.call_args.kwargs.get("max_retries") == 0
+
+
+def test_openrouter_uses_dedicated_semaphore_not_openai_relay():
+    """OpenRouter is a distinct account/rate-limit domain from the OpenAI
+    relay — it must not contend for the relay's concurrency slots."""
+    from src.agents import base as base_mod
+    openai_start = base_mod._OPENAI_LLM_SEMAPHORE._value
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                     max_tokens=64, provider="openrouter").run(data="x")
+    # The OpenAI relay's semaphore must be untouched by an OpenRouter call.
+    assert base_mod._OPENAI_LLM_SEMAPHORE._value == openai_start
+
+
+def test_agent_result_new_fields_populated_on_primary_success(mock_anthropic):
+    """requested_* mirrors actual_* on a clean primary success; used_fallback
+    False; prompt_version deterministic; latency_s measured."""
+    mock_anthropic.messages.create.return_value.stop_reason = "end_turn"
+    agent = ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)
+    result = agent.run(data="test")
+    assert result.requested_model == "claude-opus-4-7"
+    assert result.requested_provider == "anthropic"
+    assert result.actual_provider == "anthropic"
+    assert result.used_fallback is False
+    assert result.latency_s >= 0.0
+    import hashlib
+    expected = hashlib.sha256(agent.system_prompt.encode("utf-8")).hexdigest()[:12]
+    assert result.prompt_version == expected
+
+
+def test_prompt_version_changes_with_prompt_content(mock_anthropic):
+    """Two agents with different system_prompt text produce different
+    prompt_version hashes; identical text produces identical hashes."""
+    mock_anthropic.messages.create.return_value.stop_reason = "end_turn"
+
+    class OtherPromptAgent(ConcreteAgent):
+        @property
+        def system_prompt(self) -> str:
+            return "A completely different prompt."
+
+    a = ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)
+    b = ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)
+    c = OtherPromptAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)
+    r_a = a.run(data="test")
+    r_b = b.run(data="test")
+    r_c = c.run(data="test")
+    assert r_a.prompt_version == r_b.prompt_version
+    assert r_a.prompt_version != r_c.prompt_version
+
+
+def test_agent_log_kwargs_helper_maps_fallback_status():
+    from src.agents.base import agent_log_kwargs, AgentResult
+    success = AgentResult(raw_text="", tokens_used=0, model="m", used_fallback=False)
+    fallback = AgentResult(raw_text="", tokens_used=0, model="m", used_fallback=True)
+    assert agent_log_kwargs(success)["status"] == "success"
+    assert agent_log_kwargs(fallback)["status"] == "fallback"

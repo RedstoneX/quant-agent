@@ -537,3 +537,169 @@ storage:
     cfg = load_config(config_file)
     assert cfg.api_keys.deepseek == "deepseek-key"
     assert cfg.llm.tech_analyst_model == "deepseek-v4-flash"
+
+
+# === Stage 1 (QAMC provider/model/correlation plumbing) ===
+
+_BASE_YAML = """
+api_keys:
+  anthropic: "anthropic-key"
+  {extra_keys}
+  fred: "fred-key"
+  alpaca_key: "alpaca-key"
+  alpaca_secret: "alpaca-secret"
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  paper: true
+llm:
+  tech_analyst_model: "{model}"
+  {extra_llm}
+  max_tokens: 4096
+risk:
+  max_position_pct: 20
+  max_total_position_pct: 90
+  max_daily_loss_pct: 3
+  max_sector_pct: 40
+  require_stop_loss: true
+trading:
+  universe: ["SPY"]
+  lookback_days: 60
+  schedule:
+    morning: "06:00"
+    midday: "12:00"
+    evening: "16:30"
+storage:
+  db_path: "data/test.db"
+"""
+
+
+def test_load_config_requires_openrouter_key_for_explicit_provider(tmp_path):
+    """An agent with provider: openrouter and no OPENROUTER_API_KEY must fail
+    naming that key — even though the model string alone (an Anthropic-shaped
+    id) would otherwise bucket as Anthropic, which already has a key set."""
+    yaml_content = _BASE_YAML.format(
+        extra_keys="", model="anthropic/claude-3.5-sonnet",
+        extra_llm="tech_analyst_provider: \"openrouter\"",
+    )
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+    from src.config import load_config
+    with pytest.raises(Exception, match="OPENROUTER_API_KEY"):
+        load_config(config_file)
+
+
+def test_load_config_openrouter_only_does_not_require_anthropic(tmp_path):
+    """An OpenRouter-only config (no anthropic/openai/deepseek key), with
+    EVERY agent explicitly routed to openrouter (mirrors
+    test_load_config_allows_openai_only_when_all_models_are_openai above),
+    passes the 'at least one provider key' check and loads clean."""
+    yaml_content = """
+api_keys:
+  anthropic: ""
+  openrouter: "or-key"
+  fred: "fred-key"
+  alpaca_key: "alpaca-key"
+  alpaca_secret: "alpaca-secret"
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  paper: true
+llm:
+  tech_analyst_model: "anthropic/claude-3.5-sonnet"
+  news_analyst_model: "anthropic/claude-3.5-sonnet"
+  macro_analyst_model: "anthropic/claude-3.5-sonnet"
+  earnings_analyst_model: "anthropic/claude-3.5-sonnet"
+  portfolio_manager_model: "anthropic/claude-3.5-sonnet"
+  risk_manager_model: "anthropic/claude-3.5-sonnet"
+  position_reviewer_model: "anthropic/claude-3.5-sonnet"
+  evening_analyst_model: "anthropic/claude-3.5-sonnet"
+  meta_reflector_model: "anthropic/claude-3.5-sonnet"
+  tech_analyst_provider: "openrouter"
+  news_analyst_provider: "openrouter"
+  macro_analyst_provider: "openrouter"
+  earnings_analyst_provider: "openrouter"
+  portfolio_manager_provider: "openrouter"
+  risk_manager_provider: "openrouter"
+  position_reviewer_provider: "openrouter"
+  evening_analyst_provider: "openrouter"
+  meta_reflector_provider: "openrouter"
+  max_tokens: 4096
+risk:
+  max_position_pct: 20
+  max_total_position_pct: 90
+  max_daily_loss_pct: 3
+  max_sector_pct: 40
+  require_stop_loss: true
+trading:
+  universe: ["SPY"]
+  lookback_days: 60
+  schedule:
+    morning: "06:00"
+    midday: "12:00"
+    evening: "16:30"
+storage:
+  db_path: "data/test.db"
+"""
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+    from src.config import load_config
+    cfg = load_config(config_file)
+    assert cfg.api_keys.openrouter == "or-key"
+    assert cfg.llm.tech_analyst_provider == "openrouter"
+
+
+def test_provider_field_omitted_config_loads_identically_to_pre_stage1(tmp_path):
+    """A settings.yaml that predates the `provider` field entirely (today's
+    shape) must still load, with every provider field defaulting to None —
+    the backward-compatible case. Uses the default claude-opus-4-7 model
+    (only anthropic key needed) so no *_provider field is exercised at all."""
+    yaml_content = _BASE_YAML.format(extra_keys="", model="claude-opus-4-7", extra_llm="")
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+    from src.config import load_config
+    cfg = load_config(config_file)
+    assert cfg.llm.tech_analyst_provider is None
+    assert cfg.llm.get_provider("tech_analyst") is None
+
+
+def test_invalid_provider_string_rejected_at_config_load(tmp_path):
+    """A typo'd provider must fail loudly at config load, not silently fall
+    through to prefix inference and pick an unintended provider."""
+    yaml_content = _BASE_YAML.format(
+        extra_keys="", model="gpt-5.5",
+        extra_llm='tech_analyst_provider: "openrooter"',  # typo
+    )
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+    from src.config import load_config
+    with pytest.raises(Exception):
+        load_config(config_file)
+
+
+def test_llm_config_get_provider_unknown_agent_returns_none():
+    from src.config import LLMConfig
+    cfg = LLMConfig(max_tokens=4096, tech_analyst_provider="openrouter")
+    assert cfg.get_provider("tech_analyst") == "openrouter"
+    assert cfg.get_provider("nonexistent_agent") is None
+
+
+def test_check_llm_provider_keys_uses_resolve_provider_not_prefix_alone(tmp_path):
+    """An explicit provider override must be able to DISAGREE with what the
+    model string's prefix would imply, and the key requirement follows the
+    override — proving _check_llm_provider_keys doesn't re-derive its own
+    independent prefix logic (the triplication risk Stage 1 closes)."""
+    from src.config import AppConfig, ApiKeysConfig, AlpacaConfig, LLMConfig, RiskConfig, TradingConfig, ScheduleConfig, StorageConfig
+    # A "gpt-"-prefixed model explicitly routed to openrouter must require
+    # OPENROUTER_API_KEY, not OPENAI_API_KEY.
+    with pytest.raises(Exception, match="OPENROUTER_API_KEY"):
+        AppConfig(
+            api_keys=ApiKeysConfig(anthropic="a", openai="o", fred="f",
+                                   alpaca_key="ak", alpaca_secret="as"),
+            alpaca=AlpacaConfig(base_url="https://paper-api.alpaca.markets", paper=True),
+            llm=LLMConfig(max_tokens=4096, tech_analyst_model="gpt-5.5",
+                         tech_analyst_provider="openrouter"),
+            risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
+                            max_daily_loss_pct=3, max_sector_pct=40, require_stop_loss=True),
+            trading=TradingConfig(universe=["SPY"], lookback_days=60,
+                                  schedule=ScheduleConfig(morning="06:00", midday="12:00", evening="16:30")),
+            storage=StorageConfig(db_path="data/test.db"),
+        )

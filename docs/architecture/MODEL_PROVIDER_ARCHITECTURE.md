@@ -65,3 +65,59 @@ Existing cross-provider failover may be retained for resilience only if the actu
 
 ## Google free-tier use
 A Google AI Studio/Gemini path may be used for inexpensive/free routine agents subject to current quota. Quota exhaustion/failure must be visible, not silently hidden.
+
+## Stage 1 implementation result (2026-08-09)
+
+Implemented on branch `claude/stage-1-qamc-integration-m1n0pw`, following the
+"Recommended seam ordering" above almost exactly. Full account:
+`docs/MILESTONES.md` Stage 1.
+
+- **Attribution (item 1)**: done at Stage 0.5, not Stage 1 (separate hotfix).
+- **Schema (item 2)**: done. Nine nullable `agent_logs` columns
+  (`requested_provider`, `requested_model`, `actual_provider`,
+  `prompt_version`, `latency_s`, `status`, `finish_reason`, `truncated`,
+  `decision_id`) plus `trades.decision_id`, all via `_ensure_column`.
+- **Producer (item 3)**: done. `AgentResult` gained `requested_model`,
+  `requested_provider`, `actual_provider`, `used_fallback`, `prompt_version`,
+  `latency_s` — all captured at the entry/exit of `_execute()`, never inside
+  the retry loop body.
+- **Provider abstraction (item 4)**: implemented narrower than the advisory
+  "Provider strategy object with `build_client()`/`call()`" suggested. A
+  single `resolve_provider(model, explicit_provider)` function in
+  `src/agents/base.py` is the source of truth for provider selection
+  (explicit override wins; unset falls through to the pre-existing prefix
+  chain), reused by `BaseAgent.__init__`, `AppConfig._check_llm_provider_keys`,
+  and `pipeline.py`'s `_key_for`. OpenRouter — the one new provider added —
+  needed no new `_call_*` method at all (OpenAI-wire-compatible, reuses
+  `_call_openai`), so the full strategy-object shape wasn't justified for a
+  single new provider whose call path is identical to an existing one. That
+  shape remains the right one IF Google AI Studio (a genuinely
+  different-shaped call path) is ever added.
+- **Correlation IDs (item 5)**: done, exactly as sized here — one new
+  `decision_id` column, generated once per successful PM call, not a
+  distributed tracing system.
+
+**Required contract**: satisfied. Every field the contract lists (agent,
+requested provider/model, actual provider/model, prompt version,
+input/output tokens, cost, latency, status, run/decision correlation) is now
+captured and persisted, with unknowns staying `NULL` rather than fabricated.
+
+**Experiment integrity**: satisfied. `used_fallback`/`status="fallback"` make
+every failover explicit in the persisted record; `requested_provider` is
+never overwritten by what the fallback actually used.
+
+**Google free-tier use**: evaluated at the Stage 1 synthesis gate and
+deferred, not built. Its SDK/message-shape/usage-field differences make it a
+genuinely new call path rather than an extension of the OpenAI-compatible
+seam OpenRouter used — implementing "one generic mechanism" (per governance)
+meant choosing OpenRouter for Stage 1. `resolve_provider`'s explicit-override
+design accommodates a Google path later without further restructuring.
+
+**Known limits still open, unchanged by Stage 1**: F-3 (tech_analyst's
+per-chunk collapse to one `agent_logs` row) is less lossy than before
+(`used_fallback`/`truncated` now OR across chunks, `latency_s` summed) but the
+structural one-row-per-N-calls limitation itself is not fixed — doing so
+would mean a schema/call-site change disproportionate to Stage 1's bounded
+scope. F-4 (relay attribution ceiling — QAMC cannot independently verify what
+model an `OPENAI_BASE_URL` relay actually served) is unchanged; no amount of
+QAMC-side plumbing raises this ceiling.

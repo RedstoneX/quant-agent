@@ -64,6 +64,14 @@ class RunContext:
     correlation_matrix: dict = field(default_factory=dict)
     daily_pnl: float = 0.0
     macro_target_pct: float | None = None
+    # Stage 1 (QAMC correlation plumbing): set once by DecisionStage right
+    # after a successful PM call. Threaded through to the risk_manager
+    # agent_logs row and every trades row this run produces, so a single id
+    # links "this PM proposal" -> "RM's review of it" -> "the orders/trades
+    # it resulted in" without relying on (run_id, symbol) uniqueness holding
+    # up under future control-flow changes (see DecisionStage.run()). None
+    # when DecisionStage never reached a successful PM call this run.
+    decision_id: str | None = None
 
     # === Populated by execution stage ===
     orders: list[dict] = field(default_factory=list)

@@ -2,6 +2,7 @@ api_keys:
   anthropic: "${ANTHROPIC_API_KEY}"
   openai: "${OPENAI_API_KEY}"
   deepseek: "${DEEPSEEK_API_KEY}"   # optional; required only if any *_model is a deepseek-* id
+  openrouter: "${OPENROUTER_API_KEY}"   # optional; required only if any agent has provider: openrouter
   fred: "${FRED_API_KEY}"
   alpaca_key: "${ALPACA_API_KEY}"
   alpaca_secret: "${ALPACA_SECRET_KEY}"
@@ -36,6 +37,14 @@ llm:
   # + structured QuarterlyMetaReflection output; gpt-5.5 by default.
   meta_reflector_model: "gpt-5.5"
   meta_reflector_max_tokens: 128000
+  # Stage 1 (QAMC): explicit per-agent provider override. Unset/null (the
+  # current posture for every agent above) infers the provider from the
+  # model-id prefix exactly as before — nothing below changes today's
+  # routing. Only needed when a model id's prefix wouldn't identify the
+  # provider correctly, e.g. OpenRouter's "vendor/model" ids. Example:
+  #   tech_analyst_provider: "openrouter"
+  #   tech_analyst_model: "anthropic/claude-3.5-sonnet"
+  # Valid values: anthropic | openai | deepseek | openrouter.
 
 risk:
   max_position_pct: 20

@@ -284,6 +284,32 @@ class Database:
         _ensure_column("agent_logs", "input_tokens", "input_tokens INTEGER")
         _ensure_column("agent_logs", "output_tokens", "output_tokens INTEGER")
         _ensure_column("agent_logs", "cost_usd", "cost_usd REAL")
+        # Stage 1 (QAMC provider/model/correlation plumbing). All nullable —
+        # legacy rows read back as NULL/None, never a fabricated value (per
+        # DECISION #12 / ACCEPTANCE_CRITERIA "unknown stays unknown"). Sourced
+        # from the matching new AgentResult fields (src/agents/base.py); see
+        # docs/architecture/MODEL_PROVIDER_ARCHITECTURE.md "Required contract".
+        _ensure_column("agent_logs", "requested_provider", "requested_provider TEXT")
+        _ensure_column("agent_logs", "requested_model", "requested_model TEXT")
+        # `model` (existing column, corrected Stage 0.5) already holds the
+        # ACTUAL model; actual_provider is its provider, derived the same way.
+        _ensure_column("agent_logs", "actual_provider", "actual_provider TEXT")
+        # sha256(system_prompt)[:12] at call time — a cheap "did the prompt
+        # text change" signal, not a semantic version.
+        _ensure_column("agent_logs", "prompt_version", "prompt_version TEXT")
+        _ensure_column("agent_logs", "latency_s", "latency_s REAL")
+        # 'success' | 'fallback' | 'failed'. NULL for pre-Stage-1 rows.
+        _ensure_column("agent_logs", "status", "status TEXT")
+        # finish_reason/truncated were already computed on AgentResult
+        # (Stage 0 audit F-2: computed but never persisted) — closing that
+        # gap here costs nothing extra since the values already exist.
+        _ensure_column("agent_logs", "finish_reason", "finish_reason TEXT")
+        _ensure_column("agent_logs", "truncated", "truncated INTEGER")
+        # Decision-level correlation (links a portfolio_manager/risk_manager
+        # agent_logs row to the trades row(s) its decision produced). NULL
+        # for every other agent and for all pre-Stage-1 rows.
+        _ensure_column("agent_logs", "decision_id", "decision_id TEXT")
+        _ensure_column("trades", "decision_id", "decision_id TEXT")
         # codex r7 P1 #3: pending_protection_restores table for older DBs
         # that pre-date the orphaned-stop-restore queue. Idempotent.
         try:
@@ -428,7 +454,8 @@ class Database:
                      reasoning: str, run_id: str,
                      stop_loss: float = 0, take_profit: float = 0,
                      broker_order_id: str | None = None,
-                     fill_status: str | None = None) -> int:
+                     fill_status: str | None = None,
+                     decision_id: str | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `fill_status` semantics:
@@ -443,10 +470,10 @@ class Database:
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, "
-                "stop_loss, take_profit, broker_order_id, fill_status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "stop_loss, take_profit, broker_order_id, fill_status, decision_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
-                 stop_loss, take_profit, broker_order_id, fill_status),
+                 stop_loss, take_profit, broker_order_id, fill_status, decision_id),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -832,16 +859,36 @@ class Database:
                          tokens_used: int, input_message: str = "",
                          input_tokens: int | None = None,
                          output_tokens: int | None = None,
-                         cost_usd: float | None = None):
+                         cost_usd: float | None = None,
+                         requested_provider: str | None = None,
+                         requested_model: str | None = None,
+                         actual_provider: str | None = None,
+                         prompt_version: str | None = None,
+                         latency_s: float | None = None,
+                         status: str | None = None,
+                         finish_reason: str | None = None,
+                         truncated: bool | None = None,
+                         decision_id: str | None = None):
+        """`model` remains the ACTUAL responding model (Stage 0.5 contract —
+        unchanged). The Stage 1 kwargs below are additive and all default to
+        None so every pre-Stage-1 caller keeps working unmodified; omitting
+        them persists NULL, never a fabricated value."""
         def _do():
             self.conn.execute(
                 """INSERT INTO agent_logs (agent_name, run_id, input_summary, input_message,
                    output_summary, full_response, model, tokens_used,
-                   input_tokens, output_tokens, cost_usd)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   input_tokens, output_tokens, cost_usd,
+                   requested_provider, requested_model, actual_provider,
+                   prompt_version, latency_s, status, finish_reason, truncated,
+                   decision_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_name, run_id, input_summary, input_message, output_summary,
                  full_response, model, tokens_used,
-                 input_tokens, output_tokens, cost_usd),
+                 input_tokens, output_tokens, cost_usd,
+                 requested_provider, requested_model, actual_provider,
+                 prompt_version, latency_s, status,
+                 finish_reason, None if truncated is None else int(truncated),
+                 decision_id),
             )
             self.conn.commit()
         self._locked_write(_do, label="insert_agent_log")
