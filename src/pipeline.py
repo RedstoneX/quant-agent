@@ -630,6 +630,54 @@ class TradingPipeline:
 
         return allowed_decisions, remaining_violations, blocked_reasons
 
+    def _persist_hard_risk_block(self, ctx: RunContext, reasons: str, *, stage: str) -> None:
+        """Forensic record for a run where the deterministic hard-risk gate
+        blocks EVERY candidate before `risk_manager` is ever called
+        (Stage 2 Checkpoint C reconstruction gap).
+
+        Before this, `RiskStage.run()` returned early with an in-memory
+        `{"status": "hard_risk_block", "reason": ...}` dict above the
+        `pipeline.risk_manager.review(...)` call — the reason reached a log
+        line and a Telegram push, but no row in any table recorded which
+        rule fired. This reuses the existing `agent_logs` table via the
+        existing `insert_agent_log` mechanism: additive only, no schema
+        change, no second risk system, no change to what gets blocked or
+        why.
+
+        `agent_name="risk_gate"` is a deliberately distinct sentinel from
+        the real `"risk_manager"` LLM agent name so this can never be
+        confused with an actual LLM call: `scripts/replay_decision.py`
+        selects rows to replay by exact `agent_name` match and would
+        otherwise try to replay an empty prompt; per-agent cost/roster
+        views (`AGENT_NAMES`-driven) and `Database.agent_names_logged_on`'s
+        dead-man's-switch check are unaffected since neither iterates
+        unknown agent_names. `cost_usd`/`tokens_used` are 0 (known-zero,
+        not unknown — no LLM call happened), not None, so
+        `Database.sum_session_cost`'s any-null-means-unknown convention
+        doesn't corrupt this run's otherwise-known research/PM cost total.
+
+        Never raises — a persistence failure here must never affect the
+        early-return risk decision itself, which has already been made by
+        the time this is called.
+        """
+        try:
+            self.db.insert_agent_log(
+                agent_name="risk_gate", run_id=ctx.run_id,
+                input_summary=f"deterministic hard-risk gate blocked all candidates ({stage})",
+                input_message="",
+                output_summary=f"HARD_RISK_BLOCK: {reasons}",
+                full_response=reasons,
+                model="deterministic",
+                tokens_used=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                decision_id=ctx.decision_id,
+                status="hard_risk_block",
+            )
+        except Exception as exc:
+            logger.warning(
+                "hard_risk_block: failed to persist forensic record for run %s: %s",
+                ctx.run_id, exc,
+            )
+
     _FIELD_ALIASES = {
         "target": "take_profit",
         "tp": "take_profit",
@@ -3778,8 +3826,14 @@ class TradingPipeline:
         is a human decision — edit config/settings.yaml manually after
         reviewing this output. By design, so that the system can't
         casually grow the curated list.
+
+        The aggregation itself is a pure function
+        (`src.watchlist_candidates.build_watchlist_candidates`) — this
+        method is now a thin fetch-then-aggregate wrapper so
+        `src/api/db_reads.py` can compute the identical output from its own
+        read-only `insights` query without importing `TradingPipeline`
+        (Stage 2 Checkpoint C).
         """
-        import json as _json
         try:
             rows = self.db.get_recent_insights(limit=lookback_days + 5)
         except Exception as exc:
@@ -3789,71 +3843,8 @@ class TradingPipeline:
             return []
         if not rows:
             return []
-
-        by_symbol: dict[str, dict] = {}
-        for row in rows[:lookback_days]:
-            row_date = row.get("date") or ""
-            raw = row.get("missed_opportunities_json")
-            if not raw:
-                continue
-            try:
-                items = _json.loads(raw)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(items, list):
-                continue
-            for m in items:
-                if not isinstance(m, dict):
-                    continue
-                rec = (m.get("universe_addition_recommendation") or "no").strip()
-                if rec not in ("add", "watch"):
-                    continue
-                sym = (m.get("symbol") or "").strip().upper()
-                if not sym:
-                    continue
-                bucket = by_symbol.setdefault(sym, {
-                    "symbol": sym,
-                    "add_count": 0,
-                    "watch_count": 0,
-                    "dates": [],
-                    "themes": set(),
-                    "latest_reason": "",
-                    "latest_miss_category": "",
-                })
-                if rec == "add":
-                    bucket["add_count"] += 1
-                else:
-                    bucket["watch_count"] += 1
-                if row_date:
-                    bucket["dates"].append(row_date)
-                theme = (m.get("theme_if_any") or "").strip()
-                if theme:
-                    bucket["themes"].add(theme)
-                # Rows come newest-first from get_recent_insights, so the
-                # first non-empty reason/category we see is the freshest.
-                reason = (m.get("universe_addition_reason") or "").strip()
-                if reason and not bucket["latest_reason"]:
-                    bucket["latest_reason"] = reason[:240]
-                cat = (m.get("miss_category") or "").strip()
-                if cat and not bucket["latest_miss_category"]:
-                    bucket["latest_miss_category"] = cat
-
-        results: list[dict] = []
-        for sym, bucket in by_symbol.items():
-            bucket["themes"] = sorted(bucket["themes"])
-            bucket["total_flags"] = bucket["add_count"] + bucket["watch_count"]
-            # Dates were appended newest-first (rows iteration), but belt
-            # them by sorting desc in case the evening is ever replayed
-            # out of order.
-            bucket["dates"] = sorted(set(bucket["dates"]), reverse=True)
-            results.append(bucket)
-        results.sort(
-            key=lambda b: (
-                -b["add_count"], -b["watch_count"], -b["total_flags"],
-                b["symbol"],
-            ),
-        )
-        return results
+        from src.watchlist_candidates import build_watchlist_candidates
+        return build_watchlist_candidates(rows, lookback_days)
 
     def _build_recent_loss_pits(self, lookback_days: int = 14) -> str:
         """PM L3f memory: repeat failure modes from losing BUYs.

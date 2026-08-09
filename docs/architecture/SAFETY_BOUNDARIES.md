@@ -39,3 +39,37 @@ Two supporting observations from the same pass:
 Also note **D-5**: `alpaca.base_url` is dead configuration — only
 `alpaca.paper` selects paper vs. live. Boundary 1 currently rests on one flag,
 not two.
+
+## Stage 2 verification note (2026-08-09)
+
+Boundaries 5 and 6 (dashboard/API cannot remove protection or issue orders)
+now have a concrete implementation to verify against:
+`src/api/` (see `docs/architecture/MISSION_CONTROL_API.md`).
+
+- **Boundary 6 (cannot issue broker orders directly)** — verified. Every
+  route registered anywhere under `src/api/` is GET-only, enforced twice
+  (each router only defines `@router.get(...)`, plus an app-level
+  `GetOnlyMiddleware` rejecting any other method with 405 before a handler
+  runs). `AlpacaBroker` is constructed in exactly one place
+  (`src/api/broker_reads.py::_get_broker`), and only its two pre-existing
+  read-only methods (`get_account`, `get_positions`) plus a new read-only
+  `client.get_orders(...)` call are ever invoked from `src/api/`. No
+  write-capable broker method (`submit_order`, `cancel_*`,
+  `close_position`, `place_entry_protection`, …) is referenced anywhere in
+  the package — checked at the AST level, not by substring search, in
+  `tests/test_api_safety.py`.
+- **Boundary 5 (dashboard/API failure cannot remove stops or other
+  broker-side protection)** — verified by construction: `src/api/` never
+  calls any stop-management method, so it has no mechanism to remove
+  protection in the first place, and its own failure/death is proven not to
+  affect trading (`tests/test_api_isolation.py` starts the API as a real
+  separate OS process, kills it, and confirms an ordinary trading DB write
+  succeeds identically before and after).
+
+`src/api/db_reads.py` opens its own independent `mode=ro` SQLite connection
+rather than sharing `src.storage.db.Database`'s writer connection/lock —
+verified both structurally (AST scan confirms every `conn.execute(...)`
+call is `SELECT`/`PRAGMA`, no `.commit()` exists in the file) and under
+load (`tests/test_api_db_concurrency.py` runs concurrent trading writes
+against real API reads on the same WAL-mode file and confirms zero writer
+lock errors and a passing `PRAGMA integrity_check`).

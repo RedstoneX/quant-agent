@@ -640,6 +640,7 @@ class RiskStage:
             reasons = "; ".join(dict.fromkeys(blocked_reasons))
             logger.warning("HARD RISK BLOCK (BUY blocked): %s", reasons)
             if not portfolio_decision.decisions:
+                pipeline._persist_hard_risk_block(ctx, reasons, stage="pre_rm")
                 return {"status": "hard_risk_block", "orders": [], "reason": reasons}
             logger.info(
                 "Allowing %d non-blocked orders through after hard risk filter",
@@ -752,6 +753,7 @@ class RiskStage:
                 reasons = "; ".join(dict.fromkeys(blocked_reasons))
                 logger.warning("HARD RISK BLOCK AFTER MODIFICATIONS: %s", reasons)
                 if not portfolio_decision.decisions:
+                    pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
                     return {"status": "hard_risk_block", "orders": [], "reason": reasons}
 
         return None

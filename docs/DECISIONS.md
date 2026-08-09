@@ -1,8 +1,10 @@
 # QAMC Decision Register
 
-Status: **architecture baseline frozen; Stage 0 and Stage 0.5 accepted 2026-08-09;
-Stage 1 implemented 2026-08-09 on branch `claude/stage-1-qamc-integration-m1n0pw`,
-awaiting Checkpoint B operator acceptance. Stage 2 remains BLOCKED until then.**
+Status: **architecture baseline frozen; Stage 0, Stage 0.5 and Stage 1 all
+accepted 2026-08-09 (Stage 1 implemented on branch
+`claude/stage-1-qamc-integration-m1n0pw`; Checkpoint B ACCEPTED by the
+operator, see `docs/CHECKPOINT_B_ACCEPTANCE.md`). Stage 2 — Thin Read-Only
+Mission Control API — is AUTHORIZED as NEXT.**
 
 1. Project name: **Quant Agent Mission Control (QAMC)**.
 2. `yebof/quant-agent` remains the authoritative trading engine.
@@ -81,6 +83,21 @@ awaiting Checkpoint B operator acceptance. Stage 2 remains BLOCKED until then.**
     and relay-verification ceiling remain documented rather than silently
     claimed solved. Stage 1 may now implement only the provider/model/telemetry/
     correlation scope defined in `docs/MILESTONES.md`; Stage 2 remains blocked.
+
+## Decision accepted at Checkpoint B sign-off (2026-08-09)
+
+38. **Checkpoint B is ACCEPTED; Stage 1 is DONE; Stage 2 (Thin Read-Only
+    Mission Control API) is AUTHORIZED as NEXT.** Recorded in
+    `docs/CHECKPOINT_B_ACCEPTANCE.md`. Stage 1 (commit
+    `2bd23512bb0c29943251ad42caaeee4592c367f5`, merged via PR #8) satisfied its
+    governed scope: explicit per-agent provider/model configuration,
+    OpenRouter through the existing OpenAI-compatible seam, telemetry/
+    correlation persistence, deterministic risk/execution and Alpaca
+    paper/live selection unchanged, 28 targeted tests added, full suite 1464
+    passed / 0 failed. Stage 2 must stay a thin, non-critical-path, read-only
+    adapter over existing canonical state — no second trading engine, no
+    second memory store, no operational dependency for trading. Stage 3 and
+    later remain blocked by their own prerequisite checkpoints.
 
 ---
 

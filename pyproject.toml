@@ -38,6 +38,16 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+]
+# Stage 2 (Thin Read-Only Mission Control API) — a separate, optional
+# process from trading. `pip install -e .` alone (trading-only) does not
+# pull these in; only `pip install -e '.[api]'` does. Reuses the `pydantic`
+# already pinned above for response models. See src/api/ and
+# docs/architecture/MISSION_CONTROL_API.md.
+api = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
 ]
 
 [build-system]

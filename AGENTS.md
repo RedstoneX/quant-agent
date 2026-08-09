@@ -30,10 +30,10 @@ This fork is the authoritative repository for **Quant Agent Mission Control (QAM
 GitHub Markdown in this repository is the durable source of truth. Obsidian may index/read it but is not an independent authority.
 
 ## Current stage restriction
-**Stage 0 and Stage 0.5 (D-1 actual-model attribution hotfix) are accepted.
-Stage 1 (Provider, Model & Correlation Plumbing) was implemented 2026-08-09
-on branch `claude/stage-1-qamc-integration-m1n0pw` and is awaiting Checkpoint
-B operator acceptance** (`docs/MILESTONES.md`).
+**Stage 0, Stage 0.5 (D-1 actual-model attribution hotfix) and Stage 1
+(Provider, Model & Correlation Plumbing) are all accepted. Checkpoint B was
+ACCEPTED by the operator 2026-08-09** (`docs/CHECKPOINT_B_ACCEPTANCE.md`,
+`docs/MILESTONES.md`).
 
 Stage 1's scope was: explicit per-agent provider/model configuration
 alongside the existing prefix-inference (backward compatible), one new
@@ -41,9 +41,15 @@ inexpensive-provider path (OpenRouter) through the least-invasive seam,
 additive `agent_logs`/`trades` telemetry columns via the existing
 `_ensure_column` mechanism, and a minimal `decision_id` correlation column.
 `src/agents/base.py::_execute()`'s hardened retry/deadline/failover loop body
-was preserved untouched, per Stage 0's explicit recommendation. Stage 2
-(Thin Read-Only Mission Control API, Mission Control, journal code, risk
-changes, donor UI code) stays **BLOCKED** until Checkpoint B is accepted.
+was preserved untouched, per Stage 0's explicit recommendation.
+
+**Stage 2 (Thin Read-Only Mission Control API) is IMPLEMENTED (2026-08-09,
+branch `claude/stage-2-mission-control-api-4zpx7j`), awaiting Checkpoint C
+operator acceptance** (`docs/MILESTONES.md`,
+`docs/architecture/MISSION_CONTROL_API.md`). Mission Control UI, journal
+code, risk changes and donor UI code remain out of Stage 2's scope and stay
+BLOCKED behind their own prerequisite checkpoints; Stage 3 is not authorized
+until Checkpoint C is accepted.
 
 AgentLens is **out of plan** (DECISION #34) — do not instrument, integrate or
 pilot it.
