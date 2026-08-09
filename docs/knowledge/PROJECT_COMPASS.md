@@ -76,6 +76,7 @@ It will first inspect the real repository and challenge the Mission Control plan
 - ✅ Claude now has repo-controlled permissions, sandboxing and deterministic safety hooks.
 - ✅ A new `/qamc-discover` workflow makes Claude an **architecture/engineering participant before implementation**, not merely a coder.
 - ✅ `/qamc-build` is gated so Claude cannot skip discovery and start building from the old plan.
+- ✅ A repository-wide hygiene pass removed stale status aliases, quarantined old design proposals as reference/history, and repaired contradictory active architecture docs before Discovery R1.
 
 ---
 
@@ -141,4 +142,4 @@ The next unresolved questions should emerge from Claude’s Discovery R1 investi
 **Implementation after that:** Mission Control outcome, architecture and sequence determined by discovery  
 **Live trading:** ❌ Not authorized
 
-_Last refreshed: 2026-08-09 — after the outcome-first Claude workflow redesign._
+_Last refreshed: 2026-08-09 — after the repository-wide hygiene pass before Discovery R1._

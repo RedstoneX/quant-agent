@@ -1,34 +1,37 @@
 # Upstream Integration Policy
 
-Upstream: `yebof/quant-agent`.
-Primary fork: `RedstoneX/quant-agent`.
-Fork baseline at project bootstrap: `6fc3cf14f4e6f9fde5f6c10fbe4a8d51e3d0f4e7`.
+Upstream: `yebof/quant-agent`  
+Primary QAMC fork: `RedstoneX/quant-agent`
 
-**Verified in Stage 0 (2026-08-09).** That SHA is `HEAD~1` in this fork and is
-also the current `main` HEAD of `yebof/quant-agent` — the fork is *level with*
-upstream, not behind it. Total divergence is one commit, `0fd004b`
-(documentation only: 20 files, +598 lines, no change to `src/`, `tests/`,
-`config/`, `scripts/` or `main.py`). Upstream mergeability is unencumbered.
+Bootstrap baseline: `6fc3cf14f4e6f9fde5f6c10fbe4a8d51e3d0f4e7`.
 
-Known policy gap (Stage 0 **D-6**): no `upstream` remote is configured in the
-development environment, contrary to the policy below. Harmless while the fork
-is level with upstream, but unmet.
+As re-verified on 2026-08-09, upstream `main` still points to that baseline. The QAMC fork now intentionally contains accepted QAMC implementation and governance changes beyond it; do **not** use the old “one documentation-only commit of divergence” description.
 
 ## Policy
-- Maintain an `upstream` remote in development environments.
-- Prefer additive modules/adapters over edits deep inside trading logic.
-- When core edits are unavoidable, keep them narrow, tested and documented.
+
+- Treat upstream as the authoritative base project and QAMC as a controlled fork.
+- Compare against current upstream before any sync; never assume upstream has or has not moved from old documentation.
+- Prefer additive modules/adapters over deep changes to trading logic.
+- Keep unavoidable core edits narrow, tested, and easy to review against upstream.
 - Do not reformat/reorganize unrelated upstream code.
-- Record meaningful divergence and merge hazards here.
-- Upstream updates are reviewed/merged deliberately, not auto-synchronized.
+- Upstream updates are reviewed deliberately, never auto-merged into QAMC.
+- Preserve accepted QAMC safety/experiment behavior when evaluating upstream changes.
 
-## QAMC-owned areas (expected, exact paths to be chosen after Stage 0)
-- provider/config extension;
-- telemetry/correlation extension;
-- Mission Control thin API;
-- Mission Control frontend;
-- journal/search read model;
-- *(an AgentLens adapter was planned here; retired 2026-08-09 — DECISION #34.)*
+## Current QAMC-owned surfaces
 
-## Upstream-owned behavior to preserve
-Agent prompts/roles, PM/Risk flow, deterministic rules, order/protection lifecycle, memory/reflection/Meta Reflector, scheduler semantics and canonical trading records unless an explicit accepted decision changes them.
+Accepted QAMC additions include:
+- actual provider/model attribution and correlation plumbing;
+- per-agent provider/model extension including the accepted OpenRouter path;
+- additive forensic persistence needed for hard-risk reconstruction;
+- the separate read-only Mission Control API;
+- Claude-native QAMC repository operating/configuration files.
+
+Mission Control UI/journal/search implementation remains **unaccepted/provisional during Discovery R1**.
+
+## Preserve upstream behavior unless explicitly accepted otherwise
+
+Agent roles/prompts, Portfolio Manager / AI Risk flow, deterministic risk rules, order/protection lifecycle, memory/reflection/Meta Reflector, scheduler semantics, and canonical trading records remain upstream-owned behavior except for narrow QAMC changes already accepted through checkpoints.
+
+## Historical evidence
+
+The Stage-0 baseline/divergence investigation is preserved in `docs/STAGE0_BASELINE_AUDIT.md`. Use that as historical evidence, not as a claim about future upstream state.
