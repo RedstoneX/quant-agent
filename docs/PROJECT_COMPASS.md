@@ -5,11 +5,11 @@
 
 ## 🚦 RIGHT NOW
 
-### 🟡 Stage 3 accepted — Stages 4–5 are one coordinated tranche
+### 🟢 Stage 4 done (internal checkpoint passed) — building Stage 5
 
-The Trading Cockpit is merged and accepted. Claude is authorized to continue through Stage 4 and Stage 5 without returning to me merely because a numbered stage finished.
+Stage 4 (per-candidate specialist evidence + decision chain) is implemented, independently reviewed, one confirmed IMPORTANT finding fixed, tests green, and committed/pushed as an internal checkpoint. Claude is continuing straight into Stage 5 per the standing authorization — no return trip needed for a numbered stage finishing.
 
-🎯 Stage 3 ✅ → 🧠 Stage 4 build → 🔎 internal review/fix → 📚 Stage 5 build → 🔎 integrated review → 🛑 external ChatGPT/operator checkpoint
+🎯 Stage 3 ✅ → 🧠 Stage 4 build ✅ → 🔎 internal review/fix ✅ → 📚 Stage 5 build (now) → 🔎 integrated review → 🛑 external ChatGPT/operator checkpoint
 
 Claude stops early only for a genuine unresolved product decision, a material architecture/safety/scope conflict, or evidence that invalidates the accepted direction.
 
@@ -23,23 +23,22 @@ Claude stops early only for a genuine unresolved product decision, a material ar
 | ✅ DONE | 2 | Isolated read-only Mission Control API |
 | ✅ DONE | Discovery/Reconciliation R1 | Repository challenge and accepted implementation direction |
 | ✅ DONE | 3 | Browser/iPad Trading Cockpit |
-| 🟡 NOW | 4 | Per-candidate specialist evidence + decision chain |
-| 🟡 AUTHORIZED NEXT | 5 | Journal/searchable forensic history |
+| ✅ DONE (internal) | 4 | Per-candidate specialist evidence + decision chain |
+| 🟡 NOW | 5 | Journal/searchable forensic history |
 | ⬜ LATER | — | Learning/write controls and paper-soak analytics only if separately authorized |
 
 ## ✅ WHAT JUST HAPPENED
 
-- Stage 3 is accepted at **1531 passing tests / 0 failures** plus desktop/iPad runtime review.
-- The cockpit remains read-only and uses real Stage-2 API data for account/P&L, positions, orders, trades, health and the watchlist/expansion feed.
-- Stage 4 preserves each specialist's real data scope while adding the accepted per-candidate forensic view.
-- The current build contract treats Stage 4 as an internal checkpoint and continues directly into Stage 5 when green.
+- Stage 4 shipped: a new additive, non-authoritative `specialist_evidence` table captures already-validated macro/news/tech/earnings/PM/AI-Risk output with natural (run vs symbol) scope; two new read-only endpoints (`/runs/{run_id}/candidates`, `/runs/{run_id}/candidates/{symbol}`) expose it; the cockpit gained its first drill-down UI — Runs → candidates → full evidence, PM→AI Risk→execution chain with a proposed-vs-executed delta, and a disagreement/consensus summary that never fabricates alignment (a reviewer-caught all-neutral-signals bug was fixed before acceptance).
+- Independent review ran against the backend diff; the one IMPORTANT finding (consensus falsely reporting "aligned" when every signal was neutral) is fixed with regression tests. A second pass verified the UI visually (desktop/iPad/dark-mode screenshots) across full-evidence, partial-evidence, RM-modified, and rejected-decision candidates.
+- Full backend suite: **1557 passed, 0 failed**.
 
 ## ⏭️ NEXT MOVES
 
-1. 🤖 Claude continues with `/qamc-build` from accepted `main`.
-2. 🧠 Build, test and independently review Stage 4 internally.
-3. 📚 Continue directly into Stage 5 when Stage 4 is green.
-4. 🛑 After integrated Stage-5 verification, push and stop once for ChatGPT/operator external review.
+1. 🤖 Claude builds Stage 5 (journal day-browsing + forensic search) backend and cockpit UI.
+2. 🔎 Fresh independent review of the integrated Stage 4+5 result; fix anything verified.
+3. 🖥️ Desktop/iPad runtime verification across populated/empty/error/degraded states.
+4. 🛑 Push and stop once for ChatGPT/operator external review — the mandatory gate after the complete tranche.
 
 ## 🚧 BLOCKERS / DECISIONS NEEDED
 
