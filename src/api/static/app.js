@@ -396,6 +396,629 @@ function statBlock(label, value) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Runs — Stage 4 per-candidate fidelity drill-down.                      */
+/*                                                                        */
+/* No click-through mechanism existed before Stage 4; this introduces one */
+/* modal-based navigation primitive: Runs panel -> run detail (candidates */
+/* + agent calls) -> candidate detail (evidence / consensus / decision    */
+/* chain). Fetched on demand when opened, never auto-polled — the         */
+/* existing REFRESH_MS cycle below is unchanged.                          */
+/* ---------------------------------------------------------------------- */
+
+function dash(v) {
+  return v === null || v === undefined || v === "" ? "—" : v;
+}
+
+function kv(label, value) {
+  return el("div", { className: "kv-row" }, [
+    el("span", { className: "kv-label", text: label }),
+    el("span", { className: "kv-value", text: dash(value) }),
+  ]);
+}
+
+function chainList(chain, labels) {
+  if (!chain) return null;
+  const items = Object.entries(labels)
+    .filter(([key]) => chain[key])
+    .map(([key, label]) =>
+      el("li", {}, [
+        el("span", { className: "chain-label", text: label }),
+        el("span", { text: chain[key] }),
+      ])
+    );
+  if (!items.length) return null;
+  return el("ul", { className: "chain-list" }, items);
+}
+
+function card(titleText, children, opts = {}) {
+  const head = el("div", { className: "card-head" }, [
+    el("span", { className: "card-title", text: titleText }),
+    ...(opts.broader ? [el("span", { className: "badge-broader", text: "Market-wide" })] : []),
+  ]);
+  const body = children.filter((c) => c !== null && c !== undefined);
+  return el("div", { className: `card${opts.broader ? " card-broader" : ""}` }, [head, ...body]);
+}
+
+function evidenceSection(titleText, children) {
+  const body = children.filter((c) => c !== null && c !== undefined);
+  if (!body.length) {
+    return el("div", { className: "evidence-section" }, [
+      el("div", { className: "evidence-section-title", text: titleText }),
+      el("div", { className: "state-message", text: "Not available for this candidate/run." }),
+    ]);
+  }
+  return el("div", { className: "evidence-section" }, [
+    el("div", { className: "evidence-section-title", text: titleText }),
+    ...body,
+  ]);
+}
+
+/* ---- modal shell ------------------------------------------------------ */
+
+const modalOverlay = document.getElementById("modal-overlay");
+const modalBody = document.getElementById("modal-body");
+const modalBreadcrumb = document.getElementById("modal-breadcrumb");
+const modalCloseBtn = document.getElementById("modal-close");
+
+function crumbLink(text, onClick) {
+  const btn = el("button", { className: "crumb-link", text });
+  btn.type = "button";
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function openModal(breadcrumbNodes, bodyNode) {
+  modalBreadcrumb.replaceChildren(...breadcrumbNodes);
+  modalBody.replaceChildren(bodyNode);
+  modalOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeModal() {
+  modalOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  modalBody.replaceChildren();
+  modalBreadcrumb.replaceChildren();
+}
+
+modalCloseBtn.addEventListener("click", closeModal);
+modalOverlay.addEventListener("click", (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !modalOverlay.hidden) closeModal();
+});
+
+/* ---- Runs panel --------------------------------------------------------*/
+
+async function loadRuns() {
+  const body = document.querySelector("#panel-runs [data-body]");
+  try {
+    const data = await fetchJSON("/runs?limit=20");
+    if (!data.runs.length) {
+      showMessage(body, "No runs recorded yet.");
+      setPanelState("panel-runs", "ok", "ok");
+      return;
+    }
+    const rows = data.runs.map((r) => {
+      const tr = el("tr", { className: "row-clickable", attrs: { tabindex: "0" } }, [
+        el("td", { text: r.run_id }),
+        el("td", { text: r.session_prefix || "—" }),
+        el("td", { text: fmtTime(r.first_timestamp) }),
+        el("td", { text: fmtTime(r.last_timestamp) }),
+        el("td", { text: fmtNum(r.agent_count, 0) }),
+        el("td", { text: r.decision_id ? "yes" : "—" }),
+        el("td", { text: fmtMoney(r.total_cost_usd) }),
+      ]);
+      tr.addEventListener("click", () => openRunDetail(r.run_id));
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openRunDetail(r.run_id); }
+      });
+      return tr;
+    });
+    body.replaceChildren(
+      table(["Run ID", "Session", "First Call", "Last Call", "Agents", "Decision", "Cost"], rows)
+    );
+    setPanelState("panel-runs", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Could not load runs: ${err.message}`, true);
+    setPanelState("panel-runs", "error", "unreachable");
+  }
+}
+
+/* ---- run detail modal -------------------------------------------------- */
+
+function agentLogsTable(agentLogs) {
+  if (!agentLogs.length) {
+    return el("div", { className: "state-message", text: "No agent calls logged for this run." });
+  }
+  const rows = agentLogs.map((a) => {
+    const requested = `${a.requested_provider || "—"} / ${a.requested_model || "—"}`;
+    const actual = `${a.actual_provider || "—"} / ${a.model || "—"}`;
+    const providerChanged = a.requested_provider && a.actual_provider && a.requested_provider !== a.actual_provider;
+    return el("tr", {}, [
+      el("td", { text: a.agent_name }),
+      el("td", { text: requested }),
+      el("td", { className: providerChanged ? "delta-changed" : "", text: actual }),
+      el("td", {}, [pill(a.status || "unknown")]),
+      el("td", { text: fmtMoney(a.cost_usd) }),
+      el("td", { text: a.latency_s !== null && a.latency_s !== undefined ? `${fmtNum(a.latency_s)}s` : "—" }),
+      el("td", { text: fmtNum(a.tokens_used, 0) }),
+    ]);
+  });
+  return table(["Agent", "Requested provider/model", "Actual provider/model", "Status", "Cost", "Latency", "Tokens"], rows);
+}
+
+function renderRunDetail(runId, detail, candidates) {
+  const wrap = el("div", {});
+
+  const summary = el("div", { className: "stat-row" }, [
+    el("div", { className: "stat" }, [
+      el("div", { className: "stat-label", text: "Decision ID" }),
+      el("div", { text: dash(detail.decision_id) }),
+    ]),
+    el("div", { className: "stat" }, [
+      el("div", { className: "stat-label", text: "Total Cost" }),
+      el("div", { text: fmtMoney(detail.total_cost_usd) }),
+    ]),
+    el("div", { className: "stat" }, [
+      el("div", { className: "stat-label", text: "Trades" }),
+      el("div", { text: fmtNum(detail.trades.length, 0) }),
+    ]),
+  ]);
+  if (detail.hard_risk_block_recorded) {
+    summary.appendChild(
+      el("div", { className: "stat" }, [
+        el("div", { className: "stat-label", text: "Deterministic gate" }),
+        el("div", {}, [pill("hard_risk_block")]),
+      ])
+    );
+  }
+  wrap.appendChild(summary);
+
+  wrap.appendChild(
+    evidenceSection("Candidates considered", [
+      candidates.candidates.length
+        ? el(
+            "div",
+            {},
+            candidates.candidates.map((sym) => {
+              const chip = el("button", { className: "candidate-chip", text: sym });
+              chip.type = "button";
+              chip.addEventListener("click", () => openCandidateDetail(runId, sym, detail));
+              return chip;
+            })
+          )
+        : null,
+    ])
+  );
+
+  wrap.appendChild(evidenceSection("Agent calls this run", [agentLogsTable(detail.agent_logs)]));
+
+  return wrap;
+}
+
+async function openRunDetail(runId) {
+  openModal(
+    [el("span", { className: "crumb-current", text: `Run ${runId}` })],
+    el("div", { className: "state-message", text: "Loading run…" })
+  );
+  try {
+    const [detail, candidates] = await Promise.all([
+      fetchJSON(`/runs/${encodeURIComponent(runId)}`),
+      fetchJSON(`/runs/${encodeURIComponent(runId)}/candidates`),
+    ]);
+    modalBreadcrumb.replaceChildren(el("span", { className: "crumb-current", text: `Run ${runId}` }));
+    modalBody.replaceChildren(renderRunDetail(runId, detail, candidates));
+  } catch (err) {
+    showMessage(modalBody, `Could not load run ${runId}: ${err.message}`, true);
+  }
+}
+
+/* ---- candidate detail modal -------------------------------------------- */
+
+function techCard(tech) {
+  if (!tech) return null;
+  const body = [
+    el("div", { className: "kv-row" }, [
+      el("span", { className: "kv-label", text: "Rating" }),
+      el("span", { className: "kv-value" }, [pill(tech.rating)]),
+    ]),
+    kv("Conviction", tech.conviction),
+    kv("Entry", tech.entry_price !== null ? fmtMoney(tech.entry_price) : null),
+    kv("Reference target", tech.reference_target !== null ? fmtMoney(tech.reference_target) : null),
+    kv("Stop loss", tech.stop_loss !== null ? fmtMoney(tech.stop_loss) : null),
+    kv("Risk/Reward", tech.risk_reward !== null && tech.risk_reward !== undefined ? `${tech.risk_reward}x` : null),
+    kv("Signal age (days)", tech.signal_age_days),
+    kv("ATR(14)", tech.atr_14 !== null ? fmtNum(tech.atr_14) : null),
+  ];
+  body.push(el("p", { className: "card-text", text: tech.reasoning }));
+  if (tech.thesis_invalid_if) {
+    body.push(el("p", { className: "card-text dim", text: `Invalid if: ${tech.thesis_invalid_if}` }));
+  }
+  const chain = chainList(tech.reasoning_chain, {
+    trend: "Trend", momentum: "Momentum", volatility: "Volatility",
+    volume: "Volume", support_resistance: "Support/Resistance",
+  });
+  if (chain) body.push(chain);
+  return card("Technical analysis", body);
+}
+
+function earningsRiskFlags(flags) {
+  if (!flags) return [];
+  if (Array.isArray(flags)) return flags;
+  return [...(flags.strategic_risks || []), ...(flags.operational_risks || [])];
+}
+
+function earningsCard(earnings) {
+  if (!earnings) return null;
+  const impl = earnings.investment_implications;
+  const body = [
+    kv("Form", earnings.form_type),
+    kv("Filing date", earnings.filing_date),
+    el("div", { className: "kv-row" }, [
+      el("span", { className: "kv-label", text: "Sentiment" }),
+      el("span", { className: "kv-value" }, [pill(impl.sentiment)]),
+    ]),
+    kv("Conviction", impl.conviction),
+    kv("Data quality", earnings.data_quality),
+  ];
+  body.push(el("p", { className: "card-text", text: impl.key_thesis }));
+  if (impl.bull_case && impl.bull_case !== "not disclosed") {
+    body.push(el("p", { className: "card-text", text: `Bull case: ${impl.bull_case}` }));
+  }
+  if (impl.bear_case && impl.bear_case !== "not disclosed") {
+    body.push(el("p", { className: "card-text", text: `Bear case: ${impl.bear_case}` }));
+  }
+  if (earnings.guidance) {
+    body.push(el("p", { className: "card-text", text: `Guidance: ${earnings.guidance}` }));
+  }
+  if (earnings.management_highlights && earnings.management_highlights.length) {
+    body.push(el("ul", { className: "card-list" }, earnings.management_highlights.map((h) => el("li", { text: h }))));
+  }
+  const flags = earningsRiskFlags(earnings.risk_flags);
+  if (flags.length) {
+    body.push(el("ul", { className: "card-list" }, flags.map((f) => el("li", { text: f }))));
+  }
+  return card("Earnings / filing analysis", body);
+}
+
+function newsSymbolCards(items) {
+  if (!items || !items.length) return null;
+  return el(
+    "div",
+    { className: "card-grid" },
+    items.map((n) =>
+      card(n.headline, [
+        el("div", { className: "kv-row" }, [
+          el("span", { className: "kv-label", text: "Sentiment" }),
+          el("span", { className: "kv-value" }, [pill(n.sentiment)]),
+        ]),
+        kv("Conviction", n.conviction),
+        el("p", { className: "card-text", text: n.impact_summary }),
+      ])
+    )
+  );
+}
+
+function macroContextCard(macro) {
+  if (!macro) return null;
+  const body = [
+    kv("Regime", macro.regime),
+    kv("Equity outlook", macro.equity_outlook),
+    kv("Confidence", macro.confidence),
+  ];
+  if (macro.summary) body.push(el("p", { className: "card-text", text: macro.summary }));
+  if (macro.sector_guidance && macro.sector_guidance.length) {
+    const rows = macro.sector_guidance.map((g) =>
+      el("tr", {}, [
+        el("td", { text: g.sector }),
+        el("td", {}, [pill(g.stance)]),
+        el("td", { text: g.reason }),
+      ])
+    );
+    body.push(table(["Sector", "Stance", "Reason"], rows));
+  }
+  return card("Macro regime context", body, { broader: true });
+}
+
+function newsContextCard(newsCtx) {
+  if (!newsCtx) return null;
+  const body = [
+    kv("Market sentiment", newsCtx.market_sentiment),
+    kv("Confidence", newsCtx.confidence),
+    kv("Current regime", newsCtx.current_regime),
+  ];
+  if (newsCtx.pm_briefing) body.push(el("p", { className: "card-text", text: newsCtx.pm_briefing }));
+  if (newsCtx.era_themes && newsCtx.era_themes.length) {
+    body.push(el("ul", { className: "card-list" }, newsCtx.era_themes.map((t) => el("li", { text: t }))));
+  }
+  if (newsCtx.relevant_state_changes && newsCtx.relevant_state_changes.length) {
+    const rows = newsCtx.relevant_state_changes.map((s) =>
+      el("tr", {}, [
+        el("td", { text: s.event }),
+        el("td", { text: `${s.previous_state} → ${s.new_state}` }),
+        el("td", { text: s.market_impact }),
+      ])
+    );
+    body.push(el("div", { className: "state-message", text: "State changes citing this symbol:" }));
+    body.push(table(["Event", "Transition", "Market impact"], rows));
+  }
+  return card("News / market narrative context", body, { broader: true });
+}
+
+function consensusBlock(consensus) {
+  const body = [
+    el("div", { className: "kv-row" }, [
+      el("span", { className: "kv-label", text: "Agreement" }),
+      el("span", { className: "kv-value" }, [pill(consensus.agreement)]),
+    ]),
+  ];
+  if (consensus.signals.length) {
+    body.push(
+      el("ul", { className: "card-list" }, consensus.signals.map((s) =>
+        el("li", {}, [
+          el("strong", { text: `${s.source}: ` }),
+          pill(s.direction),
+          el("span", { text: ` ${s.detail}` }),
+        ])
+      ))
+    );
+  } else {
+    body.push(el("div", { className: "state-message", text: "No independent signals available to compare." }));
+  }
+  return card("Consensus / disagreement", body);
+}
+
+function chainStep(marker, title, children) {
+  const body = children.filter((c) => c !== null && c !== undefined);
+  return el("div", { className: "chain-step" }, [
+    el("div", { className: "chain-step-marker", text: marker }),
+    el("div", { className: "chain-step-body" }, [
+      el("div", { className: "card-title", text: title }),
+      ...body,
+    ]),
+  ]);
+}
+
+function numsDiffer(a, b) {
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return Math.abs(a - b) > 0.001;
+}
+
+function deltaCell(value, changed, fmt) {
+  return el("td", { className: changed ? "delta-changed" : "", text: value === null || value === undefined ? "—" : fmt(value) });
+}
+
+function proposedVsExecuted(proposed, trade) {
+  if (!proposed && !trade) return null;
+  const rows = [];
+  rows.push(
+    el("tr", {}, [
+      el("td", { text: "Action" }),
+      el("td", { text: dash(proposed && proposed.action) }),
+      el("td", { text: dash(trade && trade.action) }),
+    ])
+  );
+  rows.push(
+    el("tr", {}, [
+      el("td", { text: "Size" }),
+      el("td", { text: proposed ? `${fmtNum(proposed.allocation_pct)}% alloc` : "—" }),
+      el("td", { text: trade && trade.qty !== null ? `${fmtNum(trade.qty)} sh` : "—" }),
+    ])
+  );
+  const entryChanged = numsDiffer(proposed && proposed.entry_price, trade && trade.price);
+  rows.push(
+    el("tr", {}, [
+      el("td", { text: "Entry / Fill price" }),
+      deltaCell(proposed && proposed.entry_price, entryChanged, fmtMoney),
+      deltaCell(trade && trade.price, entryChanged, fmtMoney),
+    ])
+  );
+  const stopChanged = numsDiffer(proposed && proposed.stop_loss, trade && trade.stop_loss);
+  rows.push(
+    el("tr", {}, [
+      el("td", { text: "Stop loss" }),
+      deltaCell(proposed && proposed.stop_loss, stopChanged, fmtMoney),
+      deltaCell(trade && trade.stop_loss, stopChanged, fmtMoney),
+    ])
+  );
+  const tpChanged = numsDiffer(proposed && proposed.take_profit, trade && trade.take_profit);
+  rows.push(
+    el("tr", {}, [
+      el("td", { text: "Take profit" }),
+      deltaCell(proposed && proposed.take_profit, tpChanged, fmtMoney),
+      deltaCell(trade && trade.take_profit, tpChanged, fmtMoney),
+    ])
+  );
+  return el("table", { className: "delta-table" }, [
+    el("thead", {}, [el("tr", {}, [el("th", { text: "" }), el("th", { text: "Proposed (PM)" }), el("th", { text: "Executed (trade)" })])]),
+    el("tbody", {}, rows),
+  ]);
+}
+
+function decisionChain(detail) {
+  const steps = [];
+
+  if (detail.pm_reasoning) {
+    const body = [];
+    if (detail.pm_reasoning.portfolio_view) {
+      body.push(el("p", { className: "card-text", text: detail.pm_reasoning.portfolio_view }));
+    }
+    const chain = chainList(detail.pm_reasoning.reasoning_chain, {
+      macro_filter: "Macro filter", news_check: "News check", earnings_check: "Earnings check",
+      signal_conflicts: "Signal conflicts", sizing_logic: "Sizing logic",
+      portfolio_balance: "Portfolio balance", cash_target: "Cash target",
+      continuity_check: "Continuity check", premortem_check: "Pre-mortem check",
+    });
+    if (chain) body.push(chain);
+    steps.push(chainStep("1", "Portfolio Manager reasoning", body));
+  }
+
+  if (detail.pm_target) {
+    const t = detail.pm_target;
+    const body = [
+      kv("Target weight", `${fmtNum(t.target_weight_pct)}%`),
+      kv("Conviction", t.conviction),
+      el("p", { className: "card-text", text: t.thesis }),
+    ];
+    if (t.thesis_invalid_if) body.push(el("p", { className: "card-text dim", text: `Invalid if: ${t.thesis_invalid_if}` }));
+    if (t.catalyst) body.push(el("p", { className: "card-text", text: `Catalyst override: ${t.catalyst}` }));
+    steps.push(chainStep("2", "Portfolio Manager target", body));
+  }
+
+  if (detail.pm_proposed_order) {
+    const p = detail.pm_proposed_order;
+    const body = [
+      el("div", { className: "kv-row" }, [
+        el("span", { className: "kv-label", text: "Action" }),
+        el("span", { className: "kv-value" }, [pill(p.action)]),
+      ]),
+      kv("Allocation", `${fmtNum(p.allocation_pct)}%`),
+      kv("Entry", fmtMoney(p.entry_price)),
+      kv("Stop loss", fmtMoney(p.stop_loss)),
+      kv("Take profit", fmtMoney(p.take_profit)),
+      el("p", { className: "card-text", text: p.reasoning }),
+    ];
+    steps.push(chainStep("3", "PM constructed order (pre-review)", body));
+  }
+
+  if (detail.risk_verdict) {
+    const v = detail.risk_verdict.verdict;
+    const body = [];
+    if (v) {
+      body.push(
+        el("div", { className: "kv-row" }, [
+          el("span", { className: "kv-label", text: "Verdict" }),
+          el("span", { className: "kv-value" }, [pill(v.approved ? "approved" : "rejected")]),
+        ])
+      );
+      body.push(kv("Reason category", v.reason_category));
+      body.push(kv("Scale all buys", `${fmtNum(v.scale_all_buys)}x`));
+      body.push(el("p", { className: "card-text", text: v.reasoning }));
+      const chain = chainList(v.reasoning_chain, {
+        rr_audit: "R/R audit", signal_fidelity: "Signal fidelity",
+        correlation_check: "Correlation check", event_risk: "Event risk",
+        sizing_sanity: "Sizing sanity", overall: "Overall",
+      });
+      if (chain) body.push(chain);
+      if (v.modifications && v.modifications.length) {
+        body.push(
+          el("ul", { className: "card-list" }, v.modifications.map((m) =>
+            el("li", { text: `${m.symbol}: ${m.field} ${m.original_value} → ${m.new_value} (${m.reason})` })
+          ))
+        );
+      }
+    } else {
+      body.push(el("div", { className: "state-message", text: "Verdict recorded but could not be read back." }));
+    }
+    steps.push(chainStep("4", "AI Risk Manager verdict (run-wide)", body));
+  }
+
+  if (detail.risk_modification) {
+    const m = detail.risk_modification;
+    steps.push(
+      chainStep("5", "AI Risk Manager modification (this symbol)", [
+        kv("Field", m.field),
+        kv("Original", fmtNum(m.original_value)),
+        kv("Modified to", fmtNum(m.new_value)),
+        el("p", { className: "card-text", text: m.reason }),
+      ])
+    );
+  }
+
+  const delta = proposedVsExecuted(detail.pm_proposed_order, detail.trade);
+  if (detail.trade) {
+    const t = detail.trade;
+    const body = [
+      el("div", { className: "kv-row" }, [
+        el("span", { className: "kv-label", text: "Action" }),
+        el("span", { className: "kv-value" }, [pill(t.action)]),
+      ]),
+      kv("Qty", t.qty !== null && t.qty !== undefined ? fmtNum(t.qty) : null),
+      kv("Price", fmtMoney(t.price)),
+      el("div", { className: "kv-row" }, [
+        el("span", { className: "kv-label", text: "Fill status" }),
+        el("span", { className: "kv-value" }, [pill(t.fill_status || "unfilled")]),
+      ]),
+      kv("Broker order id", t.broker_order_id),
+      kv("Timestamp", fmtTime(t.timestamp)),
+    ];
+    if (t.reasoning) body.push(el("p", { className: "card-text", text: t.reasoning }));
+    if (delta) body.push(delta);
+    steps.push(chainStep("6", "Executed trade", body));
+  } else if (detail.pm_proposed_order) {
+    steps.push(
+      chainStep("6", "Executed trade", [
+        el("div", { className: "state-message", text: detail.risk_verdict && detail.risk_verdict.verdict && detail.risk_verdict.verdict.approved === false
+          ? "No trade — rejected by the AI Risk Manager before execution."
+          : "No trade recorded for this candidate this run (proposed but not executed, or a HOLD)." }),
+      ])
+    );
+  }
+
+  if (!steps.length) {
+    return el("div", { className: "state-message", text: "No PM/Risk/execution chain recorded for this candidate this run." });
+  }
+  return el("div", { className: "chain-sequence" }, steps);
+}
+
+function renderCandidateDetail(runId, symbol, detail, runDetail) {
+  const wrap = el("div", {});
+
+  wrap.appendChild(
+    el("div", { className: "stat-row" }, [
+      el("div", { className: "stat" }, [
+        el("div", { className: "stat-label", text: "Decision ID" }),
+        el("div", { text: dash(detail.decision_id) }),
+      ]),
+    ])
+  );
+
+  wrap.appendChild(evidenceSection("Consensus", [consensusBlock(detail.consensus)]));
+
+  wrap.appendChild(
+    evidenceSection("Symbol-specific evidence", [
+      techCard(detail.tech),
+      earningsCard(detail.earnings),
+      newsSymbolCards(detail.news_symbol),
+    ])
+  );
+
+  wrap.appendChild(
+    evidenceSection("Broader context (not symbol-specific)", [
+      macroContextCard(detail.macro_context),
+      newsContextCard(detail.news_context),
+    ])
+  );
+
+  wrap.appendChild(evidenceSection("Decision chain: PM → AI Risk → execution", [decisionChain(detail)]));
+
+  if (runDetail) {
+    wrap.appendChild(evidenceSection("Agent calls this run", [agentLogsTable(runDetail.agent_logs)]));
+  }
+
+  return wrap;
+}
+
+async function openCandidateDetail(runId, symbol, runDetail) {
+  openModal(
+    [
+      crumbLink(`Run ${runId}`, () => openRunDetail(runId)),
+      el("span", { className: "crumb-sep", text: "/" }),
+      el("span", { className: "crumb-current", text: symbol }),
+    ],
+    el("div", { className: "state-message", text: `Loading ${symbol}…` })
+  );
+  try {
+    const detail = await fetchJSON(`/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(symbol)}`);
+    modalBody.replaceChildren(renderCandidateDetail(runId, symbol, detail, runDetail));
+  } catch (err) {
+    showMessage(modalBody, `Could not load ${symbol}: ${err.message}`, true);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
 /* Orchestration                                                           */
 /* ---------------------------------------------------------------------- */
 
@@ -411,6 +1034,7 @@ function refreshAll() {
 document.getElementById("orders-status").addEventListener("change", loadOrders);
 
 refreshAll();
+loadRuns();
 setInterval(() => {
   if (!document.hidden) refreshAll();
 }, REFRESH_MS);

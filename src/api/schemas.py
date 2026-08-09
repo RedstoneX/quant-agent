@@ -15,6 +15,28 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+# Stage 4: reused directly as typed sub-fields of CandidateDetailResponse
+# below. `src/api` importing `src.models` is safe under the Stage 2
+# isolation invariant (tests/test_api_safety.py only forbids
+# src.pipeline / src.pipeline_stages / src.risk / the write-capable
+# Database class) — these are pure Pydantic value objects with no
+# execution/trading behavior. Reusing them (instead of hand-duplicating
+# near-identical shapes) means CandidateDetailResponse can re-hydrate
+# `specialist_evidence.evidence_json` — itself always the
+# `model_dump_json()` of one of these same validated objects, never raw
+# LLM prose — with real type/field validation instead of an untyped dict.
+from src.models import (
+    EarningsAnalysis,
+    MacroAnalysis,
+    NewsIntelligenceReport,
+    ReasoningChain,
+    RiskModification,
+    RiskVerdict,
+    TargetPosition,
+    TechAnalysisResult,
+    TradeDecision,
+)
+
 
 # ---------------------------------------------------------------------------
 # /health
@@ -273,6 +295,161 @@ class MetaPeriodSummary(BaseModel):
 class ReflectionsResponse(BaseModel):
     insights: list[ReflectionItem] = []
     meta_periods: list[MetaPeriodSummary] = []
+
+
+# ---------------------------------------------------------------------------
+# /runs/{run_id}/candidates, /runs/{run_id}/candidates/{symbol}  (Stage 4)
+# ---------------------------------------------------------------------------
+
+class RunCandidatesResponse(BaseModel):
+    run_id: str
+    candidates: list[str] = []
+
+
+class PmReasoning(BaseModel):
+    """Run-scoped PM reasoning_chain + portfolio_view — the "why", separate
+    from the per-symbol `target`/`proposed_order` rows (the "what")."""
+    portfolio_view: str | None = None
+    reasoning_chain: ReasoningChain | None = None
+    timestamp: str | None = None
+
+
+class NewsBroaderContext(BaseModel):
+    """Run/theme-scoped news context — deliberately NOT attributed to the
+    candidate symbol (see ConsensusSummary for the symbol-specific slice
+    of the same NewsIntelligenceReport, extracted separately below)."""
+    market_sentiment: str | None = None
+    confidence: str | None = None
+    pm_briefing: str | None = None
+    era_themes: list[str] = []
+    current_regime: str | None = None
+    # state_changes whose affected_symbols includes this candidate — a real
+    # per-symbol citation the source itself made, not an inference.
+    relevant_state_changes: list[dict] = []
+    timestamp: str | None = None
+
+
+class MacroBroaderContext(BaseModel):
+    """Run-scoped macro regime context. sector_guidance is the FULL list
+    exactly as macro_analyst emitted it — never filtered/attributed to this
+    symbol's sector, since specialist_evidence carries no sector mapping
+    and inventing one here would violate the Stage 4 boundary against
+    manufacturing per-symbol macro conclusions from a run/sector-scoped
+    source."""
+    regime: str | None = None
+    equity_outlook: str | None = None
+    confidence: str | None = None
+    summary: str | None = None
+    sector_guidance: list[dict] = []
+    timestamp: str | None = None
+
+
+class RiskManagerVerdict(BaseModel):
+    """Run-scoped RM verdict — approved/rejected + full reasoning, separate
+    from any per-symbol `risk_modification` row."""
+    verdict: RiskVerdict | None = None
+    timestamp: str | None = None
+
+
+class ConsensusSignal(BaseModel):
+    source: str        # "tech_analyst" | "earnings_analyst" | "news_analyst"
+    direction: str      # "bullish" | "bearish" | "neutral"
+    detail: str = ""
+
+
+class ConsensusSummary(BaseModel):
+    signals: list[ConsensusSignal] = []
+    # "aligned" (>=2 signals, single non-neutral direction) | "mixed"
+    # (signals disagree) | "insufficient_data" (0-1 signals available).
+    # Never invents a signal source that didn't actually fire this run.
+    agreement: str = "insufficient_data"
+
+
+class CandidateDetailResponse(BaseModel):
+    """Stage 4 per-candidate fidelity: everything Mission Control has about
+    one symbol within one run, preserving each source's natural scope
+    (symbol-specific vs broader/run-scoped, clearly separated below) —
+    follows PM proposal -> AI Risk response -> deterministic gate ->
+    executed/rejected result without the client re-parsing raw agent
+    output. requested/actual model+provider+cost+latency for any agent
+    involved remain available via GET /runs/{run_id} (agent_logs), not
+    duplicated here.
+    """
+    run_id: str
+    symbol: str
+    decision_id: str | None = None
+
+    # Symbol-specific specialist evidence — None when that specialist
+    # never covered this symbol this run (never fabricated).
+    tech: TechAnalysisResult | None = None
+    earnings: EarningsAnalysis | None = None
+    # Only the entries from this run's NewsIntelligenceReport.stock_news
+    # that are actually keyed to this symbol.
+    news_symbol: list[dict] = []
+
+    # Broader, explicitly-labeled run-scoped context (never symbol-specific).
+    macro_context: MacroBroaderContext | None = None
+    news_context: NewsBroaderContext | None = None
+
+    # Decision chain: PM intent -> constructed order -> AI Risk modification
+    # -> deterministic outcome (trade, if any reached execution).
+    pm_reasoning: PmReasoning | None = None
+    pm_target: TargetPosition | None = None
+    pm_proposed_order: TradeDecision | None = None
+    risk_verdict: RiskManagerVerdict | None = None
+    risk_modification: RiskModification | None = None
+    trade: TradeItem | None = None
+
+    consensus: ConsensusSummary = ConsensusSummary()
+
+
+# ---------------------------------------------------------------------------
+# /journal/dates, /journal/{date}, /search  (Stage 5)
+# ---------------------------------------------------------------------------
+
+class JournalDatesResponse(BaseModel):
+    dates: list[str] = []
+
+
+class JournalDayResponse(BaseModel):
+    date: str
+    has_data: bool = False
+    daily_pnl: DailyPnlPoint | None = None
+    reflection: ReflectionItem | None = None
+    runs: list[RunSummary] = []
+    trades: list[TradeItem] = []
+    # Union of candidate symbols considered that day (specialist_evidence +
+    # trades) — same natural-scope union as get_run_candidates, just
+    # day-wide instead of per-run.
+    candidates: list[str] = []
+
+
+class SearchTradeHit(BaseModel):
+    kind: str = "trade"
+    id: int
+    symbol: str
+    action: str
+    run_id: str | None = None
+    decision_id: str | None = None
+    timestamp: str | None = None
+    reasoning: str | None = None
+
+
+class SearchAgentLogHit(BaseModel):
+    kind: str = "agent_log"
+    id: int
+    agent_name: str
+    run_id: str | None = None
+    decision_id: str | None = None
+    timestamp: str | None = None
+    model: str | None = None
+    output_summary: str | None = None
+
+
+class SearchResponse(BaseModel):
+    query: str
+    trades: list[SearchTradeHit] = []
+    agent_logs: list[SearchAgentLogHit] = []
 
 
 # ---------------------------------------------------------------------------

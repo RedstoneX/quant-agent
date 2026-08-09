@@ -112,6 +112,47 @@ def test_insert_agent_log(db):
     assert logs[0]["agent_name"] == "tech_analyst"
 
 
+def test_insert_and_query_specialist_evidence(db):
+    """Stage 4: additive, non-authoritative structured-evidence table.
+    Round-trips a run-scoped and a symbol-scoped row, including decision_id
+    correlation for the symbol-scoped one."""
+    run_row_id = db.insert_specialist_evidence(
+        run_id="run-001", agent_name="macro_analyst", kind="analysis",
+        scope="run", evidence_json='{"regime": "risk-on"}',
+    )
+    assert run_row_id
+
+    db.insert_specialist_evidence(
+        run_id="run-001", agent_name="tech_analyst", kind="analysis",
+        scope="symbol", symbol="SPY", evidence_json='{"rating": "buy"}',
+    )
+    db.insert_specialist_evidence(
+        run_id="run-001", agent_name="portfolio_manager", kind="target",
+        scope="symbol", symbol="SPY", decision_id="run-001-dec-abc123",
+        evidence_json='{"target_weight_pct": 10.0}',
+    )
+
+    rows = db.execute(
+        "SELECT * FROM specialist_evidence WHERE run_id = ? ORDER BY id",
+        ("run-001",),
+    ).fetchall()
+    assert len(rows) == 3
+
+    macro_row = rows[0]
+    assert macro_row["agent_name"] == "macro_analyst"
+    assert macro_row["scope"] == "run"
+    assert macro_row["symbol"] is None
+    assert macro_row["decision_id"] is None
+
+    tech_row = rows[1]
+    assert tech_row["scope"] == "symbol"
+    assert tech_row["symbol"] == "SPY"
+    assert tech_row["decision_id"] is None
+
+    target_row = rows[2]
+    assert target_row["decision_id"] == "run-001-dec-abc123"
+
+
 def test_insert_daily_pnl(db):
     db.insert_daily_pnl(
         date="2026-04-07",

@@ -361,6 +361,226 @@ def session_prefixes_logged_on() -> list[str]:
         return []
 
 
+def get_specialist_evidence(
+    run_id: str | None = None,
+    decision_id: str | None = None,
+    symbol: str | None = None,
+    scope: str | None = None,
+    agent_name: str | None = None,
+    kind: str | None = None,
+) -> list[dict]:
+    """SELECT * FROM specialist_evidence with optional AND-ed filters
+    (Stage 4). Same shape/limits-free convention as get_trades — callers
+    scope with run_id/symbol so result sets stay small (one run's worth
+    of specialist calls, at most tens of rows)."""
+    conditions: list[str] = []
+    params: list = []
+    if run_id:
+        conditions.append("run_id = ?")
+        params.append(run_id)
+    if decision_id:
+        conditions.append("decision_id = ?")
+        params.append(decision_id)
+    if symbol:
+        conditions.append("symbol = ?")
+        params.append(symbol)
+    if scope:
+        conditions.append("scope = ?")
+        params.append(scope)
+    if agent_name:
+        conditions.append("agent_name = ?")
+        params.append(agent_name)
+    if kind:
+        conditions.append("kind = ?")
+        params.append(kind)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    conn = None
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            f"SELECT * FROM specialist_evidence {where} ORDER BY id",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.Error:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_run_candidates(run_id: str) -> list[str]:
+    """Distinct symbols "considered" in a run (Stage 4 per-candidate view):
+    the union of every symbol-scoped `specialist_evidence` row and every
+    `trades` row for this run_id. Natural-scope union, not a re-derived
+    universe/watchlist concept (see get_watchlist_candidates, a distinct
+    Stage 2 feature over `insights`, not this table)."""
+    conn = None
+    try:
+        conn = _connect()
+        ev_rows = conn.execute(
+            "SELECT DISTINCT symbol FROM specialist_evidence "
+            "WHERE run_id = ? AND symbol IS NOT NULL",
+            (run_id,),
+        ).fetchall()
+        trade_rows = conn.execute(
+            "SELECT DISTINCT symbol FROM trades WHERE run_id = ?",
+            (run_id,),
+        ).fetchall()
+        symbols = {r[0] for r in ev_rows} | {r[0] for r in trade_rows}
+        return sorted(symbols)
+    except sqlite3.Error:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_journal_dates(limit: int = 60) -> list[str]:
+    """ET trading-day dates with any journal-worthy activity (Stage 5),
+    newest first: the union of `insights.date` (evening reflection ran)
+    and `daily_pnl.date` (an equity snapshot was recorded) — both already
+    ET-day-keyed strings (see `Database.save_evening_snapshot` /
+    `session_date_key`), so no UTC->ET conversion is needed here."""
+    conn = None
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT date FROM insights "
+            "UNION SELECT date FROM daily_pnl "
+            "ORDER BY date DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [r[0] for r in rows]
+    except sqlite3.Error:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_journal_day(date_str: str) -> dict:
+    """Everything Mission Control has about one ET trading day (Stage 5
+    journal): the evening reflection, the equity snapshot, every run's
+    summary, every trade, and the union of candidate symbols considered
+    that day. Read-only aggregation over existing/Stage-4 tables — no new
+    authoritative state. Returns all-empty fields (not an exception) when
+    the date has no data; the route layer decides whether that's a 404."""
+    try:
+        day = date.fromisoformat(date_str)
+    except (TypeError, ValueError):
+        return {
+            "daily_pnl": None, "insights": None, "runs": [],
+            "trades": [], "candidates": [],
+        }
+    conn = None
+    try:
+        conn = _connect()
+        start_utc, end_utc = _et_day_utc_bounds(day)
+
+        daily_pnl_row = conn.execute(
+            "SELECT * FROM daily_pnl WHERE date = ?", (date_str,),
+        ).fetchone()
+        insights_row = conn.execute(
+            "SELECT * FROM insights WHERE date = ?", (date_str,),
+        ).fetchone()
+
+        run_rows = conn.execute(
+            "SELECT run_id, MIN(timestamp) as first_timestamp, "
+            "MAX(timestamp) as last_timestamp, COUNT(*) as agent_count, "
+            "MAX(decision_id) as decision_id FROM agent_logs "
+            "WHERE timestamp >= ? AND timestamp < ? "
+            "GROUP BY run_id ORDER BY MAX(timestamp)",
+            (start_utc, end_utc),
+        ).fetchall()
+        runs: list[dict] = []
+        for r in run_rows:
+            d = dict(r)
+            run_id = d["run_id"] or ""
+            d["session_prefix"] = run_id.rsplit("-", 1)[0] if "-" in run_id else run_id
+            cost_rows = conn.execute(
+                "SELECT cost_usd FROM agent_logs WHERE run_id = ?", (d["run_id"],),
+            ).fetchall()
+            d["total_cost_usd"] = _cost_rows_to_total(cost_rows)
+            runs.append(d)
+
+        trade_rows = conn.execute(
+            "SELECT * FROM trades WHERE timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp",
+            (start_utc, end_utc),
+        ).fetchall()
+        trades = [dict(r) for r in trade_rows]
+
+        candidate_rows = conn.execute(
+            "SELECT DISTINCT symbol FROM specialist_evidence "
+            "WHERE timestamp >= ? AND timestamp < ? AND symbol IS NOT NULL",
+            (start_utc, end_utc),
+        ).fetchall()
+        candidates = sorted({r[0] for r in candidate_rows} | {t["symbol"] for t in trades})
+
+        return {
+            "daily_pnl": dict(daily_pnl_row) if daily_pnl_row is not None else None,
+            "insights": dict(insights_row) if insights_row is not None else None,
+            "runs": runs,
+            "trades": trades,
+            "candidates": candidates,
+        }
+    except sqlite3.Error:
+        return {
+            "daily_pnl": None, "insights": None, "runs": [],
+            "trades": [], "candidates": [],
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _escape_like(term: str) -> str:
+    """Escape SQLite LIKE metacharacters in a user-supplied search term so
+    it's matched literally (paired with `ESCAPE '\\'` below). This is what
+    keeps the search endpoint from ever needing (or accepting) arbitrary
+    SQL — the term is always a bound parameter, never interpolated into
+    the query text; this only prevents a literal `%`/`_` in the SEARCH
+    TERM from acting as an unintended wildcard."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def search(q: str, limit: int = 50) -> dict:
+    """Forensic search (Stage 5) over trades + agent_logs via parameterized
+    `LIKE` matching only — every value is a bound parameter; no query text
+    is ever built from `q`. Returns `{"trades": [...], "agent_logs": [...]}`,
+    each newest-first and independently capped at `limit`."""
+    term = (q or "").strip()
+    if not term:
+        return {"trades": [], "agent_logs": []}
+    like = f"%{_escape_like(term)}%"
+    conn = None
+    try:
+        conn = _connect()
+        trade_rows = conn.execute(
+            "SELECT * FROM trades WHERE symbol LIKE ? ESCAPE '\\' "
+            "OR reasoning LIKE ? ESCAPE '\\' "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (like, like, limit),
+        ).fetchall()
+        agent_rows = conn.execute(
+            "SELECT * FROM agent_logs WHERE agent_name LIKE ? ESCAPE '\\' "
+            "OR model LIKE ? ESCAPE '\\' OR output_summary LIKE ? ESCAPE '\\' "
+            "OR input_summary LIKE ? ESCAPE '\\' "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (like, like, like, like, limit),
+        ).fetchall()
+        return {
+            "trades": [dict(r) for r in trade_rows],
+            "agent_logs": [dict(r) for r in agent_rows],
+        }
+    except sqlite3.Error:
+        return {"trades": [], "agent_logs": []}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def list_meta_periods() -> list[dict]:
     """Existence-only summary of each `data/evolution/{period}/` directory.
 

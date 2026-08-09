@@ -273,6 +273,175 @@ def test_pipeline_morning_run_buy(
 @patch("src.pipeline.TechAnalystAgent")
 @patch("src.pipeline_stages.compute_indicators")
 @patch("src.pipeline.compute_indicators")
+def test_pipeline_morning_run_persists_specialist_evidence(
+    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
+    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
+    mock_broker_cls, mock_config, tmp_path
+):
+    """Stage 4: an ordinary morning run persists already-validated structured
+    evidence into `specialist_evidence` for every specialist + PM + RM, with
+    natural (symbol vs run) scope and correct run_id/decision_id correlation
+    — proving evidence is written from validated model output and can be
+    read back for the correct run/scope, without the API/client ever having
+    to re-parse raw agent_logs.full_response text. Mirrors
+    test_pipeline_morning_run_buy's fixture exactly; only the assertions
+    differ."""
+    import sqlite3
+
+    mock_config.storage.db_path = str(tmp_path / "test.db")
+    mock_config.llm.earnings_analyst_model = "claude-opus-4-6-20250725"
+
+    mock_ta = MagicMock()
+    spy_analysis = TechAnalysisResult(
+        symbol="SPY", rating="buy", entry_price=507.0,
+        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reasoning_chain=_trc(),
+    )
+    mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
+    mock_ta_cls.return_value = mock_ta
+
+    mock_pm = MagicMock()
+    mock_pm.decide.return_value = (PortfolioDecision(
+        reasoning_chain=_pm_rc(),
+        targets=[
+            TargetPosition(
+                symbol="SPY", target_weight_pct=10.0, conviction="high",
+                thesis="Buy", thesis_invalid_if="",
+            )
+        ],
+        portfolio_view="Bullish",
+    ), _mock_agent_result())
+    mock_pm_cls.return_value = mock_pm
+
+    mock_rm = MagicMock()
+    mock_rm.review.return_value = (RiskVerdict(
+        approved=True, modifications=[], reasoning="Approved",
+        reasoning_chain=_risk_rc(),
+    ), _mock_agent_result())
+    mock_rm_cls.return_value = mock_rm
+
+    mock_market = MagicMock()
+    mock_market.get_ohlcv.return_value = [
+        MagicMock(date="2026-04-07", open=503, high=510, low=500, close=507, volume=1000000)
+    ]
+    mock_market_cls.return_value = mock_market
+
+    mock_macro = MagicMock()
+    mock_macro.get_macro_summary.return_value = {
+        "vix": {"current": 18.0, "mean_5d": 17.5, "trend": "falling"},
+        "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2, "inverted": True},
+        "fed_funds_rate": 5.25,
+    }
+    mock_macro_cls.return_value = mock_macro
+
+    mock_broker = MagicMock()
+    mock_broker.is_trading_day.return_value = True
+    mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
+    mock_broker.get_positions.return_value = []
+    mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    mock_broker_cls.return_value = mock_broker
+
+    mock_maa = MagicMock()
+    mock_maa.analyze.return_value = (_macro_stub(regime="risk-on", outlook="bullish"), _mock_agent_result())
+    mock_maa_cls.return_value = mock_maa
+
+    mock_na = MagicMock()
+    mock_na.analyze.return_value = (NewsAnalysisResult(
+        market_sentiment="bullish", confidence="medium",
+        key_events=[], sector_impacts=[], symbol_alerts=[],
+        summary="Bullish news",
+    ), _mock_agent_result())
+    mock_na_cls.return_value = mock_na
+    mock_ndp = MagicMock()
+    mock_ndp.fetch_news.return_value = []
+    mock_ndp.format_for_prompt.return_value = "No news."
+    mock_ndp_cls.return_value = mock_ndp
+
+    mock_ea = MagicMock()
+    mock_ea.analyze_reports.return_value = []
+    mock_ea_cls.return_value = mock_ea
+    mock_edp = MagicMock()
+    mock_edp.check_and_fetch.return_value = []
+    mock_edp_cls.return_value = mock_edp
+
+    pipeline = TradingPipeline(mock_config)
+    result = pipeline.run_morning()
+    assert result["status"] == "executed"
+
+    conn = sqlite3.connect(mock_config.storage.db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT agent_name, kind, scope, symbol, decision_id, evidence_json "
+        "FROM specialist_evidence ORDER BY id"
+    ).fetchall()
+    by_key = {(r["agent_name"], r["kind"], r["symbol"]): r for r in rows}
+
+    # Research-phase evidence: run-scoped, no decision_id (mirrors the
+    # existing agent_logs.decision_id contract — never assigned to
+    # research-phase rows; see docs/WORK.md Stage 4 boundary).
+    macro_row = by_key[("macro_analyst", "analysis", None)]
+    assert macro_row["scope"] == "run"
+    assert macro_row["decision_id"] is None
+    assert json.loads(macro_row["evidence_json"])["regime"] == "risk-on"
+
+    tech_row = by_key[("tech_analyst", "analysis", "SPY")]
+    assert tech_row["scope"] == "symbol"
+    assert tech_row["decision_id"] is None
+    assert json.loads(tech_row["evidence_json"])["rating"] == "buy"
+
+    # Note: this fixture's `mock_na.analyze` stub returns a NewsAnalysisResult
+    # (not the NewsIntelligenceReport the real news pipeline validates), so
+    # news_intel parses as None here — same as the pre-existing
+    # test_pipeline_morning_run_buy fixture, which doesn't assert on news
+    # either. News evidence persistence (run-scoped, same code path as
+    # macro) is covered directly in tests/test_pipeline_stages.py.
+
+    # Decision-phase evidence: correlated to the SAME decision_id the PM/RM
+    # agent_logs rows and the resulting `trades` row carry.
+    decision_id = conn.execute(
+        "SELECT decision_id FROM trades WHERE symbol = 'SPY' LIMIT 1"
+    ).fetchone()[0]
+    assert decision_id, "expected the executed SPY trade to carry a decision_id"
+
+    target_row = by_key[("portfolio_manager", "target", "SPY")]
+    assert target_row["scope"] == "symbol"
+    assert target_row["decision_id"] == decision_id
+    assert json.loads(target_row["evidence_json"])["target_weight_pct"] == 10.0
+
+    proposed_row = by_key[("portfolio_manager", "proposed_order", "SPY")]
+    assert proposed_row["decision_id"] == decision_id
+    assert json.loads(proposed_row["evidence_json"])["action"] == "BUY"
+
+    reasoning_row = by_key[("portfolio_manager", "reasoning", None)]
+    assert reasoning_row["scope"] == "run"
+    assert reasoning_row["decision_id"] == decision_id
+
+    verdict_row = by_key[("risk_manager", "verdict", None)]
+    assert verdict_row["scope"] == "run"
+    assert verdict_row["decision_id"] == decision_id
+    assert json.loads(verdict_row["evidence_json"])["approved"] is True
+
+    # No RiskModification in this fixture (approved untouched) — confirm no
+    # stray modification row was fabricated.
+    assert ("risk_manager", "modification", "SPY") not in by_key
+
+    conn.close()
+
+
+@patch("src.pipeline.AlpacaBroker")
+@patch("src.pipeline.EarningsDataProvider")
+@patch("src.pipeline.EarningsAnalystAgent")
+@patch("src.pipeline.NewsDataProvider")
+@patch("src.pipeline.NewsAnalystAgent")
+@patch("src.pipeline.MacroAnalystAgent")
+@patch("src.pipeline.MacroDataProvider")
+@patch("src.pipeline.MarketDataProvider")
+@patch("src.pipeline.RiskManagerAgent")
+@patch("src.pipeline.PortfolioManagerAgent")
+@patch("src.pipeline.TechAnalystAgent")
+@patch("src.pipeline_stages.compute_indicators")
+@patch("src.pipeline.compute_indicators")
 def test_pipeline_market_order_sizes_from_live_market_price(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
     mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
