@@ -38,17 +38,15 @@
     "enabled": true,
     "failIfUnavailable": false,
     "autoAllowBashIfSandboxed": false,
-    "allowUnsandboxedCommands": false,
     "filesystem": {
       "denyRead": [
         "./.env",
-        "./.env.local",
-        "./.env.production",
-        "./.env.development",
-        "./.env.staging",
-        "./.env.test",
+        "./.env.*",
         "./secrets",
         "./config/credentials.json"
+      ],
+      "allowRead": [
+        "./.env.example"
       ]
     }
   },
