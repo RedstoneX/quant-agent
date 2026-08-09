@@ -192,6 +192,27 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- Stage 4 (QAMC): additive, non-authoritative persistence of the
+            -- already-VALIDATED structured evidence each specialist/decision
+            -- agent produces (never raw LLM prose — see docs/architecture/
+            -- MISSION_CONTROL_API.md). Lets Mission Control show per-candidate
+            -- fidelity without the client ever re-parsing agent_logs.full_response.
+            -- Purely a forensic display cache: losing this table has zero
+            -- effect on trading (nothing here is read by the trading pipeline).
+            CREATE TABLE IF NOT EXISTS specialist_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                decision_id TEXT,               -- set only for PM/RM evidence rows
+                agent_name TEXT NOT NULL,       -- macro_analyst | news_analyst | tech_analyst
+                                                 -- | earnings_analyst | portfolio_manager | risk_manager
+                kind TEXT NOT NULL,             -- analysis | reasoning | target | proposed_order
+                                                 -- | verdict | modification
+                scope TEXT NOT NULL,            -- 'run' (broader/non-symbol-specific) | 'symbol'
+                symbol TEXT,                    -- NULL for scope='run'
+                evidence_json TEXT NOT NULL,    -- model_dump_json() of the validated Pydantic object
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             -- Orphaned protective stops awaiting follow-up restore.
             -- Written by _finalize_protection_after_sell when the lingering
             -- SELL couldn't be cancelled cleanly (or didn't reach terminal
@@ -328,6 +349,27 @@ class Database:
         except Exception as e:
             _log.error("Schema migration failed for pending_protection_restores: %s", e)
 
+        # Stage 4 (QAMC): specialist_evidence table for older DBs that
+        # pre-date it. Idempotent, mirrors the pending_protection_restores
+        # pattern above.
+        try:
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS specialist_evidence (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    decision_id TEXT,
+                    agent_name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    symbol TEXT,
+                    evidence_json TEXT NOT NULL,
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            self.conn.commit()
+        except Exception as e:
+            _log.error("Schema migration failed for specialist_evidence: %s", e)
+
         # Indexes for prune queries. Both prune_trades and prune_agent_logs
         # scan WHERE timestamp < ?. 5-year retention on trades (~10-20k rows
         # before pruning) and 2-year retention on agent_logs (~15-25k rows
@@ -339,6 +381,9 @@ class Database:
             ("trades", "timestamp"),
             ("agent_logs", "timestamp"),
             ("pending_protection_restores", "created_at"),
+            ("specialist_evidence", "run_id"),
+            ("specialist_evidence", "symbol"),
+            ("specialist_evidence", "decision_id"),
         ):
             try:
                 self.conn.execute(
@@ -893,6 +938,31 @@ class Database:
             self.conn.commit()
         self._locked_write(_do, label="insert_agent_log")
 
+    def insert_specialist_evidence(
+        self, *, run_id: str, agent_name: str, kind: str, scope: str,
+        evidence_json: str, symbol: str | None = None,
+        decision_id: str | None = None,
+    ) -> int:
+        """Persist one already-VALIDATED structured evidence row (Stage 4).
+
+        Purely additive/observational — see the table's CREATE comment.
+        Callers (pipeline_stages.py) are expected to wrap this in their own
+        try/except so a persistence hiccup here can never affect the
+        research/decision/risk flow it's recording; this method itself does
+        not swallow errors (matches every other insert_* method's contract),
+        it just never touches trading-critical state.
+        """
+        def _do():
+            cur = self.conn.execute(
+                "INSERT INTO specialist_evidence "
+                "(run_id, decision_id, agent_name, kind, scope, symbol, evidence_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (run_id, decision_id, agent_name, kind, scope, symbol, evidence_json),
+            )
+            self.conn.commit()
+            return cur.lastrowid or 0
+        return self._locked_write(_do, label="insert_specialist_evidence")
+
     def session_prefixes_logged_on(self, trading_day: date | None = None) -> set[str]:
         """Set of session run_id PREFIXES that produced agent_logs on the given
         ET trading day (default today).
@@ -1041,6 +1111,28 @@ class Database:
         with self._lock:
             cursor = self.conn.execute(
                 "DELETE FROM agent_logs WHERE timestamp < datetime('now', ?)",
+                (f"-{keep_days} days",),
+            )
+            self.conn.commit()
+            return cursor.rowcount or 0
+
+    def prune_specialist_evidence(self, keep_days: int = 730) -> int:
+        """Delete specialist_evidence rows older than keep_days. Returns
+        count deleted.
+
+        Stage 4 (QAMC) added this table alongside agent_logs without a
+        retention path — an ordinary trading day inserts a dozen-plus rows
+        (per-symbol tech/earnings, run-scoped macro/news/PM-reasoning/RM-
+        verdict, per-symbol PM-target/proposed-order/RM-modification) with
+        no cap, on what's meant to be a long-running VPS-deployed bot.
+        Default matches prune_agent_logs's 730-day (2 year) retention since
+        this table is forensic-display detail for the same agent calls.
+        """
+        if keep_days <= 0:
+            raise ValueError(f"prune_specialist_evidence: keep_days must be > 0, got {keep_days}")
+        with self._lock:
+            cursor = self.conn.execute(
+                "DELETE FROM specialist_evidence WHERE timestamp < datetime('now', ?)",
                 (f"-{keep_days} days",),
             )
             self.conn.commit()

@@ -7,6 +7,7 @@ MorningResearchStage's parallel fan-out is covered indirectly by the
 existing pipeline integration tests in test_pipeline.py.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 from src.pipeline_context import RunContext
@@ -52,6 +53,25 @@ def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
     pipeline._finalize_pending_protections = _types.MethodType(
         _TP._finalize_pending_protections, pipeline,
     )
+
+
+def test_persist_evidence_never_raises_on_db_failure():
+    """Stage 4: a specialist-evidence write failure must never propagate
+    into the research/decision/risk flow it's forensically recording — it's
+    additive and non-authoritative (docs/architecture/MISSION_CONTROL_API.md,
+    .claude/rules/trading-core.md)."""
+    from src.pipeline_stages import _persist_evidence
+
+    db = MagicMock()
+    db.insert_specialist_evidence.side_effect = RuntimeError("disk full")
+
+    _persist_evidence(
+        db, run_id="run-1", agent_name="macro_analyst", kind="analysis",
+        scope="run", evidence_json="{}",
+    )
+    # No exception raised — that's the assertion. The call was still
+    # attempted (not silently skipped).
+    db.insert_specialist_evidence.assert_called_once()
 
 
 def test_stage_classes_take_pipeline_reference():
@@ -825,6 +845,136 @@ def test_morning_research_stage_populates_ctx_on_success():
     assert result_ctx.news_intel is None
     assert result_ctx.analyses == []
     assert result_ctx.earnings_results == []
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_persists_specialist_evidence(mock_compute_indicators, tmp_path):
+    """Stage 4: MorningResearchStage persists already-validated macro/news/
+    tech evidence into `specialist_evidence` with natural scope (run for
+    macro/news, symbol for tech) and no decision_id (research-phase,
+    generated later in DecisionStage) — read back via a real DB file."""
+    import sqlite3
+
+    from src.agents.base import AgentResult
+    from src.models import (
+        MacroAnalysis,
+        MacroNarrative,
+        MacroPositionGuidance,
+        MacroReasoningChain,
+        NewsIntelligenceReport,
+        TechAnalysisResult,
+    )
+    from src.storage.db import Database
+
+    mock_compute_indicators.return_value = MagicMock()
+
+    ma = MacroAnalysis(
+        reasoning_chain=MacroReasoningChain(
+            volatility_analysis="a", yield_curve_analysis="b",
+            monetary_policy_analysis="c", inflation_labor_credit="d",
+            cross_signal_synthesis="e", sector_implications="f",
+        ),
+        regime="risk-on", confidence="high", equity_outlook="bullish",
+        position_guidance=MacroPositionGuidance(
+            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+        ),
+        summary="z",
+    )
+    news_intel = NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-04-17", era_themes=["AI capex"],
+            current_regime="risk-on expansion",
+        ),
+        pm_briefing="Quiet tape.",
+        market_sentiment="bullish", confidence="medium",
+    )
+    agent_result = AgentResult(raw_text="{}", tokens_used=100, model="test", user_message="x")
+
+    mock_config = MagicMock()
+    mock_config.trading.universe = ["NVDA"]
+    mock_config.trading.lookback_days = 30
+    mock_config.llm.macro_analyst_model = "claude-opus-4-6"
+    mock_config.llm.tech_analyst_model = "claude-opus-4-6"
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = [
+        MagicMock(date="2026-04-17", open=99, high=101, low=98, close=100, volume=1000)
+    ]
+    market.get_valuation_metrics.return_value = {}
+
+    macro_provider = MagicMock()
+    macro_provider.get_macro_summary.return_value = {
+        "vix": {"current": 18.0}, "credit_spread": {"current_bps": 300},
+        "inflation": {"core_cpi_yoy": 3.0}, "unemployment": {"current": 4.2},
+    }
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = {}
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (ma, agent_result)
+
+    tech_agent = MagicMock()
+    tech_agent.analyze_batch.return_value = (
+        {"NVDA": TechAnalysisResult(
+            symbol="NVDA", rating="buy", conviction="high",
+            entry_price=100.0, reference_target=110.0, stop_loss=95.0,
+            reasoning="fresh setup", reasoning_chain=_tech_rc(),
+        )},
+        agent_result,
+    )
+    tech_store = MagicMock()
+    tech_store.load.return_value = {}
+    tech_store.compute_ages.return_value = {}
+
+    db = Database(str(tmp_path / "test.db"))
+    db.initialize()
+    try:
+        stage = MorningResearchStage(
+            config=mock_config,
+            db=db,
+            market=market,
+            macro=macro_provider,
+            news_provider=MagicMock(),
+            news_store=news_store,
+            macro_store=macro_store,
+            tech_store=tech_store,
+            earnings_provider=MagicMock(),
+            macro_analyst=macro_agent,
+            news_analyst=MagicMock(),
+            tech_analyst=tech_agent,
+            earnings_analyst=MagicMock(),
+            has_actionable_signal_fn=lambda *args, **kw: True,
+            run_news_update_fn=lambda run_id, session: news_intel,
+            load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+        )
+        ctx = RunContext.start("morning")
+        ctx.positions = []
+        stage.run(ctx)
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT agent_name, kind, scope, symbol, decision_id, evidence_json "
+            "FROM specialist_evidence ORDER BY id"
+        ).fetchall()
+        by_key = {(r["agent_name"], r["kind"], r["symbol"]): r for r in rows}
+        conn.close()
+
+        macro_row = by_key[("macro_analyst", "analysis", None)]
+        assert macro_row["scope"] == "run" and macro_row["decision_id"] is None
+
+        news_row = by_key[("news_analyst", "analysis", None)]
+        assert news_row["scope"] == "run" and news_row["decision_id"] is None
+        assert json.loads(news_row["evidence_json"])["pm_briefing"] == "Quiet tape."
+
+        tech_row = by_key[("tech_analyst", "analysis", "NVDA")]
+        assert tech_row["scope"] == "symbol" and tech_row["decision_id"] is None
+        assert json.loads(tech_row["evidence_json"])["rating"] == "buy"
+    finally:
+        db.close()
 
 
 @patch("src.pipeline_stages.compute_indicators")

@@ -1,71 +1,80 @@
 # QAMC Current Work
 
-Status: **STAGES 4–5 COORDINATED IMPLEMENTATION AUTHORIZED**
+Status: **STAGE 4–5 EXTERNALLY ACCEPTED — INTEGRATION HOUSEKEEPING ONLY, THEN STOP**
 
 ## Goal
 
-Complete the remaining read-only Mission Control outcome as one coordinated engineering tranche. Use `/qamc-build`.
+Stage 4 (per-candidate specialist evidence + decision chain) and Stage 5
+(journal + forensic search) were built as one coordinated engineering
+tranche, internally reviewed, and pushed as PR #24. **ChatGPT/operator
+external review passed and the tranche is accepted.**
 
-Claude owns routine architecture, decomposition, implementation choices, workers, integration, testing and debugging inside this contract. **Do not stop merely because Stage 4 finishes.** Close Stage 4 as an internal checkpoint and continue into Stage 5 when its checks/review are green.
+The only currently authorized work is **integration housekeeping** on
+`claude/stage-3-implementation-75e6dp` so PR #24 stays mergeable and its
+acceptance evidence is durable:
 
-This tranche remains a **functional-foundation tranche**, not the VPS deployment or dedicated visual-polish phase. Cloud/ephemeral development is staging only; the accepted MVP lifecycle continues after this tranche through VPS deployment, VPS verification, independent review and operator UAT before dedicated dashboard polish is authorized.
+- reconcile the branch with any newer commits on `main` (preserving both
+  the accepted Stage 4–5 implementation and whatever newer
+  lifecycle/source-of-truth documentation exists on `main`);
+- resolve conflicts without overwriting newer authoritative documentation;
+- record the permanent frontend-verification requirement introduced
+  during this housekeeping pass (`.claude/rules/frontend-verification.md`)
+  and its Stage 4–5 acceptance evidence (`docs/verification/stage-4-5/`);
+- rerun the full test suite and confirm the cockpit UI still runs
+  correctly after reconciliation;
+- refresh `STATE.md`/`WORK.md`/`PROJECT_COMPASS.md` only as needed to
+  reflect the accepted state and the current (not-yet-authorized) next
+  gate;
+- push, then **STOP**.
 
-## Stage 4 — specialist evidence + decision understanding
+**Do not begin VPS deployment, deployed-MVP verification/UAT, dedicated
+visualization/UX polish, or any new product work in this pass.** Do not
+merge PR #24 — a human merges after this housekeeping is pushed.
 
-### Required outcome
+## What "accepted" means for this repository
 
-- Persist the already-validated specialist evidence needed for durable forensic display using the smallest additive, non-authoritative projection that preserves each source's natural scope.
-- Expose that evidence through typed GET-only API responses.
-- Per-candidate UI shows available symbol-specific technical/earnings/news evidence plus clearly labeled broader macro/news context where applicable.
-- Show disagreement/consensus without pretending every agent emitted the same kind of signal.
-- Follow the selected symbol through PM proposal → AI Risk response/modification → deterministic gate → executed/rejected result, including proposed-versus-executed delta.
-- Show requested/actual model/provider, fallback, tokens/cost/latency where available.
+- The Stage 4–5 implementation (backend + cockpit UI) is accepted as-is;
+  do not redesign, re-polish, or otherwise rework it during housekeeping.
+- If reconciliation surfaces a genuine conflict between the accepted
+  Stage 4–5 implementation and a newer decision on `main`, resolve it in
+  favor of the newer `main` decision for documentation/process questions,
+  and preserve the accepted implementation for anything Stage 4–5 already
+  delivered and tests still cover. If a conflict can't be resolved that
+  way, stop and record it here rather than guessing.
 
-### Boundaries
+## Frontend verification requirement (new, permanent)
 
-- Never reconstruct canonical structured evidence by parsing raw LLM blobs in the client.
-- Do not assign `decision_id` to research-phase `agent_logs` or change the tested PM/Risk/trade correlation model.
-- Do not invent per-symbol macro conclusions when the source is run/sector scoped.
-- New persistence is observational/non-authoritative and cannot affect trading.
+Added as `.claude/rules/frontend-verification.md`, path-scoped to
+`src/api/static/**/*` and `docs/verification/**/*`: every future cockpit
+UI acceptance pass must be browser/runtime verified by Claude (real
+browser, seeded representative data, actually inspected) before external
+review, with a small representative screenshot set committed to
+`docs/verification/<stage-or-checkpoint>/` alongside a manifest recording
+commit SHA, viewport/scenario, and verification date/time. Routine/
+transient browser-test captures stay out of Git. This rule applies to
+every future frontend change, not only this checkpoint.
 
-### Internal checkpoint
+## Next gate (not yet authorized)
 
-- Tests prove existing research `agent_logs.decision_id` semantics remain unchanged.
-- Tests prove structured evidence is persisted from validated model output and read back for the correct run/natural scope.
-- Verify the decision interface against a real historical or controlled run without requiring raw-log reading.
-- Run appropriate full/targeted checks and fresh independent review; fix verified BLOCKER/IMPORTANT findings.
-- Create a clean commit boundary, refresh the Compass, then **continue to Stage 5 without external approval**.
+If this housekeeping push is merged, the next intended tranche is **VPS
+cutover/deployment hardening**, followed by Claude-run runtime/browser QA
+on the VPS, a fresh independent review, and operator UAT. Only after that
+deployed-MVP gate is accepted should dedicated Mission Control
+visualization/UX polish be authorized. None of that is authorized by this
+document — a subsequent `WORK.md` update must explicitly open it.
 
-## Stage 5 — journal + forensic search
-
-### Required outcome
-
-- Useful prior-day browsing/journal over authoritative or rebuildable derived data.
-- Search/filtering that lets the operator find historical trades, decisions, agents/models and relevant forensic context without reading raw logs.
-- Keep journal/search read-only and non-authoritative; do not create a second trading-memory system.
-- No endpoint accepts or generates arbitrary SQL.
-- Exact journal sections, indexing/search technology and UI structure are engineering choices. Recover old ideas from Git history only when they still earn their place.
-
-### Final acceptance for this tranche
-
-- Integrated Mission Control remains read-only, non-critical to trading and honest about missing/degraded data.
-- Full backend suite remains green; run all applicable frontend/runtime checks.
-- Perform final desktop/iPad runtime/visual verification across meaningful populated/empty/error/degraded states.
-- Perform fresh independent review and resolve verified BLOCKER/IMPORTANT findings.
-- Refresh `docs/PROJECT_COMPASS.md`, commit/push the complete tranche, and **STOP for ChatGPT/operator external review**.
-
-This Stage-5 checkpoint accepts or rejects the **read-only functional foundation**, not the final deployed MVP. If accepted, a later contract should authorize VPS cutover/hardening, followed by Claude-run runtime/browser QA on the VPS, fresh independent review, and operator UAT. Dedicated TradingView/donor-dashboard/visual-polish work should come only after that deployed-MVP gate.
-
-## Hard boundaries for the whole tranche
+## Hard boundaries
 
 - Alpaca **Paper only**.
 - No deterministic trading/risk semantic changes.
 - No broker-write Mission Control operations.
 - No secrets or fake production trading state in client/UI surfaces.
-- No unnecessary distributed infrastructure or broad canonical-schema redesign.
-- Frontend stack, charting, search/index implementation and prior donor projects remain implementation choices, not requirements for this tranche.
-- Do not expand Stage 4–5 into VPS deployment or a dedicated UI-polish project.
+- No VPS/deployment work, no dedicated UI-polish work, in this pass.
+- Claude does not merge PRs, force-push, or push directly to `main`.
 
 ## Escalate early only when necessary
 
-Stop before the final gate only if there is a genuine unresolved operator product/value trade-off, a material architecture/safety/scope conflict, or evidence that invalidates the accepted outcome contract. Routine engineering choices and ordinary implementation problems belong to Claude.
+Stop before pushing only if there is a genuine unresolved operator
+product/value trade-off, a material architecture/safety/scope conflict,
+or evidence that invalidates the accepted Stage 4–5 outcome. Routine
+reconciliation/documentation work belongs to Claude.

@@ -63,6 +63,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
+                       scope: str, evidence_json: str, symbol: str | None = None,
+                       decision_id: str | None = None) -> None:
+    """Best-effort Stage 4 structured-evidence write — NEVER raises.
+
+    Wraps `Database.insert_specialist_evidence` so every call site below can
+    call this unconditionally without its own try/except. A failure here
+    (disk full, lock contention, whatever) is a forensic-display gap, not a
+    reason to mark research/decision data degraded or interrupt the
+    pipeline — see docs/architecture/MISSION_CONTROL_API.md and
+    .claude/rules/trading-core.md's "Logging/forensic persistence failure
+    must never relax a deterministic block" rule.
+    """
+    try:
+        db.insert_specialist_evidence(
+            run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
+            evidence_json=evidence_json, symbol=symbol, decision_id=decision_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s "
+            "scope=%s symbol=%s): %s", agent_name, kind, scope, symbol, e,
+        )
+
+
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     """Apply RiskVerdict.scale_all_buys to BUY decisions.
 
@@ -294,6 +319,11 @@ class MorningResearchStage:
                     macro_analysis.position_guidance.target_invested_pct,
                 )
                 data_status["macro"] = "ok"
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="macro_analyst",
+                    kind="analysis", scope="run",
+                    evidence_json=macro_analysis.model_dump_json(),
+                )
             else:
                 data_status["macro"] = "parse_error"
         except Exception as e:
@@ -307,6 +337,11 @@ class MorningResearchStage:
             if news_intel:
                 logger.info("News briefing: %s", news_intel.pm_briefing[:200])
                 data_status["news"] = "ok"
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="news_analyst",
+                    kind="analysis", scope="run",
+                    evidence_json=news_intel.model_dump_json(),
+                )
             else:
                 data_status["news"] = "parse_error"
         except Exception as e:
@@ -334,6 +369,12 @@ class MorningResearchStage:
                     cost_usd=ta_result.cost_usd,
                     **agent_log_kwargs(ta_result),
                 )
+                for analysis in analyses:
+                    _persist_evidence(
+                        self.db, run_id=ctx.run_id, agent_name="tech_analyst",
+                        kind="analysis", scope="symbol", symbol=analysis.symbol,
+                        evidence_json=analysis.model_dump_json(),
+                    )
             logger.info("Technical analysis complete: %d symbols in 1 LLM call", len(analyses))
         except Exception as e:
             logger.error("Tech analyst failed: %s. Continuing without technical data.", e)
@@ -345,6 +386,19 @@ class MorningResearchStage:
         try:
             _, earnings_results = earnings_future.result()
             data_status["earnings"] = "ok"
+            import json as _json
+            for item in earnings_results:
+                analysis = item.get("analysis") if isinstance(item, dict) else None
+                symbol = item.get("symbol") if isinstance(item, dict) else None
+                if analysis and symbol:
+                    # `analysis` is already validated_model.model_dump() —
+                    # see EarningsAnalystAgent._analyze_new/_load_analysis —
+                    # never re-derived from raw filing text here.
+                    _persist_evidence(
+                        self.db, run_id=ctx.run_id, agent_name="earnings_analyst",
+                        kind="analysis", scope="symbol", symbol=symbol,
+                        evidence_json=_json.dumps(analysis),
+                    )
         except Exception as e:
             logger.error("Earnings check failed: %s. Continuing without earnings.", e)
             data_status["earnings"] = "failed"
@@ -504,6 +558,22 @@ class DecisionStage:
             ctx.portfolio_decision = None
             return ctx
 
+        import json as _json
+        _persist_evidence(
+            pipeline.db, run_id=run_id, agent_name="portfolio_manager",
+            kind="reasoning", scope="run", decision_id=decision_id,
+            evidence_json=_json.dumps({
+                "portfolio_view": portfolio_decision.portfolio_view,
+                "reasoning_chain": portfolio_decision.reasoning_chain.model_dump(),
+            }),
+        )
+        for target in portfolio_decision.targets:
+            _persist_evidence(
+                pipeline.db, run_id=run_id, agent_name="portfolio_manager",
+                kind="target", scope="symbol", symbol=target.symbol,
+                decision_id=decision_id, evidence_json=target.model_dump_json(),
+            )
+
         price_map = {p.symbol: p.current_price for p in positions}
         for target in portfolio_decision.targets:
             sym = target.symbol.strip().upper()
@@ -531,6 +601,17 @@ class DecisionStage:
             sum(1 for d in portfolio_decision.decisions if d.action == "SELL"),
             sum(1 for d in portfolio_decision.decisions if d.action == "HOLD"),
         )
+        # "Proposed" evidence — the constructor's concrete order BEFORE the
+        # AI Risk Manager reviews/modifies it (RiskStage persists the
+        # post-review verdict/modifications separately). Together these let
+        # the UI show a proposed-vs-executed delta per symbol without
+        # re-deriving it from raw agent_logs text.
+        for decision in portfolio_decision.decisions:
+            _persist_evidence(
+                pipeline.db, run_id=run_id, agent_name="portfolio_manager",
+                kind="proposed_order", scope="symbol", symbol=decision.symbol,
+                decision_id=decision_id, evidence_json=decision.model_dump_json(),
+            )
         ctx.portfolio_decision = portfolio_decision
         return ctx
 
@@ -718,6 +799,19 @@ class RiskStage:
             decision_id=ctx.decision_id,
             **agent_log_kwargs(rm_result),
         )
+
+        if verdict:
+            _persist_evidence(
+                pipeline.db, run_id=run_id, agent_name="risk_manager",
+                kind="verdict", scope="run", decision_id=ctx.decision_id,
+                evidence_json=verdict.model_dump_json(),
+            )
+            for mod in verdict.modifications:
+                _persist_evidence(
+                    pipeline.db, run_id=run_id, agent_name="risk_manager",
+                    kind="modification", scope="symbol", symbol=mod.symbol,
+                    decision_id=ctx.decision_id, evidence_json=mod.model_dump_json(),
+                )
 
         if not verdict or not verdict.approved:
             logger.info(
