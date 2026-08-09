@@ -1,36 +1,35 @@
-# QAMC System Architecture
+# QAMC System Architecture — Current Boundaries
 
 ```text
-Browser / iPad
-    |
-    v
-QAMC Mission Control (React/Vite/Tailwind)
-    |
-    | REST + WebSocket/SSE as justified
-    v
-Thin QAMC API / read-model layer
-    |
-    v
+Operator browser / iPad
+        |
+        v
+Mission Control presentation layer
+        |
+        | current read-only seam
+        v
+Accepted Stage-2 API
+        |
+        v
 quant-agent authoritative core
- specialist agents
-       -> Portfolio Manager
-       -> AI Risk Manager
-       -> deterministic risk/sizing/execution gate
-       -> Alpaca Paper
+ specialists → Portfolio Manager → AI Risk Manager
+             → deterministic risk/sizing/execution
+             → Alpaca Paper
 
-quant-agent AI activity --> agent_logs (canonical: prompt, response,
-                            model, tokens, cost; keyed by run_id)
+canonical AI/trade evidence → existing quant-agent storage / agent_logs
 ```
 
-## Authority boundaries
-- **quant-agent** owns trading decisions, scheduling, canonical records, memory/reflection and Meta Reflector.
-- **QAMC API** exposes state and later narrow validated controls. It does not become a second engine.
-- **Mission Control** is presentation/operator UX, never direct broker execution.
-- **Forensic observability is native**: `agent_logs` + `run_id` +
-  `scripts/replay_decision.py`. QAMC has no external observability service
-  (AgentLens was evaluated and dropped — DECISION #34).
+## Authority / failure domains
 
-## Runtime
-Initial production target: a small Linux VPS/server with trading and API/UI as separately restartable services. Preserve upstream systemd model where practical. No Kubernetes/Redis/Kafka/etc. by default.
+- **quant-agent core** owns scheduling, trading decisions, canonical records, memory/reflection, Meta Reflector, deterministic risk/execution, and broker interaction.
+- **Stage-2 API** is a separate read-only adapter. It is not imported by the trading process and can fail without affecting trading.
+- **Mission Control** is operator presentation. Its post-Stage-2 implementation architecture is provisional during Discovery R1.
+- **Forensic observability is native** to QAMC records (`agent_logs`, `run_id` / `decision_id`, trade records, replay tooling); no external observability service is required.
 
-Initial remote access: private/Tailscale preferred. `here.now` may publish frontend previews during development but is not a trading dependency.
+## Runtime posture
+
+The intended permanent runtime remains a small Linux VPS/server with independently restartable trading and read-side/UI processes where useful. Private/Tailscale access is preferred initially. Distributed infrastructure is not a default.
+
+## Scope boundary
+
+This architecture does not authorize writable Mission Control operations or live trading. The previous future Sentinel/live-money concept is preserved under `docs/reference/future/` and is not relevant to current implementation unless explicitly authorized later.
