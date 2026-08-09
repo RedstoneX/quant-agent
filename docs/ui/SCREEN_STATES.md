@@ -15,10 +15,15 @@ Show AI Risk response and deterministic rejection/reduction reason prominently; 
 Show actual Alpaca order/fill and chart marker; preserve proposed→executed delta.
 
 ## E. Journal Day
-Structured thesis/candidates/agents/risk/trades/results/lessons/tomorrow with raw-trace link.
+Structured thesis/candidates/agents/risk/trades/results/lessons/tomorrow with a
+link into that day's `agent_logs` rows by `run_id` (was "raw-trace link";
+re-scoped 2026-08-09 — DECISION #35).
 
 ## F. Learning Proposal
 Meta Reflector evidence, affected agent, before/after prompt diff, historical versions and approve/reject controls (later milestone only).
 
 ## G. Degraded Services
-Dashboard API disconnected; AgentLens down; provider quota/error. The UI must clearly distinguish observability failure from trading-engine failure.
+Dashboard API disconnected; provider quota/error; scheduler session missed. The UI
+must clearly distinguish observability failure from trading-engine failure.
+(The "AgentLens down" state is retired — QAMC has no external observability
+dependency. DECISION #34.)

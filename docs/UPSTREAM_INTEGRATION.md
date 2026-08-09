@@ -28,7 +28,7 @@ is level with upstream, but unmet.
 - Mission Control thin API;
 - Mission Control frontend;
 - journal/search read model;
-- AgentLens adapter.
+- *(an AgentLens adapter was planned here; retired 2026-08-09 — DECISION #34.)*
 
 ## Upstream-owned behavior to preserve
 Agent prompts/roles, PM/Risk flow, deterministic rules, order/protection lifecycle, memory/reflection/Meta Reflector, scheduler semantics and canonical trading records unless an explicit accepted decision changes them.

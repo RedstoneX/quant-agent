@@ -6,20 +6,25 @@
 - `OPTIONAL` — may be deferred without failing the core project.
 - `DONE` — accepted.
 
-## Stage 0 — Baseline & Integration-Seam Audit — COMPLETE, AWAITING CHECKPOINT A SIGN-OFF
-**No feature implementation.**
+## Stage 0 — Baseline & Integration-Seam Audit — **DONE (accepted 2026-08-09)**
+**No feature implementation.** Checkpoint A **ACCEPTED by the operator.**
 
 Executed 2026-08-09 in two passes. Full report: **`docs/STAGE0_BASELINE_AUDIT.md`**.
 Headline results: baseline `6fc3cf14…` verified (fork is level with upstream
 `yebof/quant-agent` main, +1 docs-only commit); baseline suite **1431 passed,
-0 failed, 0 skipped**; 10 discrepancies recorded; **all five Checkpoint A
-criteria now satisfied**.
+0 failed, 0 skipped**; 10 discrepancies recorded; all five Checkpoint A
+criteria satisfied.
 
 Donor inventory complete — all pinned and inspected:
 `deonmenezes/opentradex` @ `30b23f5e`, `alex-jb/orallexa-ai-trading-agent`
-@ `794a2ec0`, `tranhoangtu-it/agentlens` @ `21ab445a`.
-D-2 and D-3 are **resolved**. Stage 0 recommends **dropping AgentLens**
-(§8C) — advisory, awaiting operator acceptance.
+@ `794a2ec0`, `tranhoangtu-it/agentlens` @ `21ab445a`. D-2 and D-3 **resolved**.
+
+**Operator decisions at sign-off (2026-08-09):**
+1. **AgentLens DROP — ACCEPTED.** Stage 6 is removed from the roadmap (see
+   "Retired scope" at the end of this file). Trace affordances re-scoped onto
+   native `agent_logs` / `run_id` / replay.
+2. **Checkpoint A / Stage 0 — ACCEPTED as complete.**
+3. **Stage 0.5 — AUTHORIZED** as the next bounded implementation stage.
 
 Tasks:
 - record exact upstream/fork commit and upstream remote expectations;
@@ -31,7 +36,7 @@ Tasks:
 - map scheduler/systemd deployment;
 - identify least-invasive seams for correlation IDs, provider routing and read-only API;
 - inspect approved donor code at current commits: OpenTradex, Orallexa, TradingView Lightweight Charts; document exact reusable components versus backend-coupled code;
-- assess upstream AgentLens as a pilot only;
+- assess upstream AgentLens as a pilot only; — **done; outcome was DROP, accepted**
 - report discrepancies between actual source and frozen docs.
 
 Acceptance checkpoint A:
@@ -41,29 +46,41 @@ Acceptance checkpoint A:
 - donor inventory completed; — **met** (all donors pinned and inspected)
 - no feature code added. — **met**
 
-**All Checkpoint A criteria are satisfied. STOPPED. Awaiting human sign-off.**
+**All Checkpoint A criteria satisfied and ACCEPTED by the operator 2026-08-09.
+Stage 0 is DONE.**
 
-Two operator decisions are carried forward. Neither blocks Checkpoint A:
-1. Accept or reject the **AgentLens DROP** recommendation (audit §8C). If
-   accepted: strike Stage 6, and re-scope `TraceLink` / "Inspect AI Trace"
-   onto `agent_logs`.
-2. Authorize **Stage 0.5** below. Sequencing is already decided; the change is not.
-
-## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — NOT YET AUTHORIZED
+## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — **NEXT (AUTHORIZED 2026-08-09)**
 Bounded correctness fix, deliberately kept **outside** Stage 1.
 
-Operator direction (2026-08-09): historical experimental attribution cannot
-reliably be repaired after the fact, so correct attribution must exist before
-new experimental trading data is generated.
+Operator direction: historical experimental attribution cannot reliably be
+repaired after the fact, so correct attribution must exist before new
+experimental trading data is generated.
 
-Scope when authorized: persist the model that actually answered, at the nine
+**In scope:** persist the model that actually answered, at the nine
 `insert_agent_log(...)` call sites listed in `docs/STAGE0_BASELINE_AUDIT.md`
-§9A. Behaviour-neutral for trading. Does **not** include provider abstraction,
-new schema columns, latency or prompt-version capture — those stay in Stage 1.
+§9A (`pipeline_stages.py:280, 328, 483, 699`; `pipeline.py:4704, 6109, 6296,
+6654/6668, 7050`). Behaviour-neutral for trading. Add targeted tests proving
+that a cross-provider failover records the failover model, not the configured
+one.
 
-**Not authorized and not implemented as of this checkpoint.**
+**Explicitly out of scope** (these stay in Stage 1): provider abstraction or
+any change to `base.py:_execute()`; new `agent_logs` columns; provider,
+latency, prompt-version, `finish_reason` or `truncated` capture; correlation-ID
+work; OpenRouter.
+
+**Known limits this hotfix does not remove**, to be recorded rather than
+solved: `tech_analyst` collapses N chunk calls into one row keeping only the
+last chunk's model (audit §3.5 F-3), and the relay attribution ceiling (F-4).
+
+Checkpoint A5: trading behavior unchanged; full suite green plus the new
+targeted tests; `agent_logs.model` demonstrably records the actual model; no
+schema change; no `_execute()` change. **STOP.**
+
+**Not implemented on the Stage 0 branch.** Authorized to begin on a separate
+branch.
 
 ## Stage 1 — Provider, Model & Correlation Plumbing — BLOCKED
+**Blocked until Checkpoint A5 (Stage 0.5) is accepted.**
 - explicit provider/model configuration compatible with existing per-agent settings;
 - OpenRouter and/or Google AI Studio path with minimal provider abstraction;
 - preserve resilience without contaminating experiment attribution;
@@ -107,26 +124,9 @@ Enhancements after core:
 
 Checkpoint E: journal reconstructable from canonical data; index deletable/rebuildable; useful forensic queries work. STOP.
 
-## Stage 6 — AgentLens Pilot — OPTIONAL / BLOCKED — **DROP RECOMMENDED**
-
-> **Stage 0 outcome (2026-08-09).** `tranhoangtu-it/agentlens` inspected at
-> `21ab445a`. Recommendation: **DROP FROM THE PLAN** — architectural mismatch
-> (deep-trace tooling vs. nine flat single-shot calls), near-total overlap with
-> `agent_logs` + `run_id` + `scripts/replay_decision.py`, weaker search than
-> QAMC will build in Stage 5, and a dormant single-author upstream. It is
-> genuinely non-blocking and operationally light; the objection is fit and cost.
-> Advisory only — awaiting operator acceptance. See
-> `docs/architecture/AGENTLENS.md` and audit §8B/§8C. The stage text below
-> stands unless and until the drop is accepted.
-
-- integrate upstream AgentLens with minimal/non-blocking instrumentation;
-- redact sensitive fields QAMC-side before transmission;
-- link decision/trade records to trace IDs;
-- deliberately test AgentLens outage.
-
-Do **not** add project/workspace schema or major AgentLens search rewrite at this stage.
-
-Checkpoint F: AgentLens proves useful; trading unaffected when it is down; no representative secrets stored. Decide whether a fork is justified. STOP.
+*(Stage 6 — AgentLens Pilot — **removed from the roadmap 2026-08-09**. See
+"Retired scope" at the end of this file. Stage numbering is left unchanged so
+existing references to Stages 7–9 stay valid.)*
 
 ## Stage 7 — Learning Center — OPTIONAL / BLOCKED
 Expose existing Meta Reflector: reports, evidence, prompt diffs, approve/reject, history/rollback, before/after performance where statistically defensible. Auto-Evolve remains off.
@@ -142,3 +142,49 @@ Checkpoint H: all writes server-validated/audited; protected safety ceilings ina
 Long-running paper stability and measurements: agent/model contribution, cost per decision/trade, prompt-version performance, risk intervention, PM-vs-gate deltas and 30/60/90-day views.
 
 No live-trading milestone exists in this plan.
+
+---
+
+## Retired scope
+
+### Stage 6 — AgentLens Pilot — **REMOVED 2026-08-09**
+
+Removed from the roadmap by operator decision at Stage 0 sign-off. Not
+deferred, not blocked — **out of plan**. Nothing in Stages 1–9 depends on it.
+
+Evaluated at `tranhoangtu-it/agentlens` @ `21ab445a91bf2bc2f8b7eb0a2a8fb70468a9047f`
+(MIT). Full evidence: `docs/STAGE0_BASELINE_AUDIT.md` §8B/§8C and
+`docs/architecture/AGENTLENS.md`.
+
+Reason, in short: it is a well-built, genuinely non-blocking, operationally
+light tool that solves a problem QAMC does not have. It exists to explain deep
+nested agent traces; quant-agent runs nine flat single-shot prompt→JSON calls
+per session, each already persisted with its complete prompt and response.
+`agent_logs` + `run_id` + `scripts/replay_decision.py` cover the forensic need —
+and replay is stronger than trace-compare because it re-executes rather than
+diffing two recordings. Its search is one SQL `LIKE` on `agent_name`, weaker
+than the FTS index Stage 5 builds anyway. Everything left over would be
+QAMC-side work: manual spans inside `base.py:_execute()` (the loop the seam
+analysis says to leave alone) and a redaction layer the SDK does not have.
+Upstream is 69 commits by one author with no activity for ~4.5 months.
+
+**Where its scope went.** The observability outcomes Stage 6 was meant to buy
+are now served natively:
+
+| Retired Stage 6 item | Native replacement |
+|---|---|
+| Trace capture of agent activity | `agent_logs.input_message` + `full_response` (already written per call) |
+| Decision/trade ↔ trace linking | `run_id`, already shared by `agent_logs` and `trades` |
+| Trace search | Stage 5 indexed search over canonical records (SQLite FTS5) |
+| Replay / compare | `src/replay.py` + `scripts/replay_decision.py` |
+| Per-call model/token/cost | `agent_logs` columns; corrected by Stage 0.5, extended in Stage 1 |
+| Outage-resilience testing | moot — nothing external to fail |
+
+**Reconsideration condition (deliberately preserved).** Revisit only if QAMC's
+architecture evolves toward **deeper or tool-calling agent traces** — for
+example multi-step tool-using agents, or a genuine need to visualize a span
+timeline over the morning `ThreadPoolExecutor` fan-out
+(macro/news/tech/earnings). In that case the pinned commit above is the
+starting point, its non-blocking transport design holds up, and re-adding the
+stage costs nothing that was destroyed here. Absent that architectural change,
+this is closed.

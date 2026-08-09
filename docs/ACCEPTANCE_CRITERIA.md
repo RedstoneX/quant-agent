@@ -4,7 +4,7 @@
 - No regression to deterministic hard risk or broker protection.
 - Alpaca environment remains unmistakably paper-only.
 - Upstream tests pass, plus new targeted tests for changed behavior.
-- Trading process remains independent of dashboard and AgentLens availability.
+- Trading process remains independent of dashboard/API availability.
 - No mock/demo data may masquerade as production state.
 - Actual model/provider used is recorded for every LLM invocation relevant to experimentation.
 - New persistence used for UI/search is derived/rebuildable unless explicitly declared canonical.
@@ -18,7 +18,7 @@ If an optional feature requires invasive changes across multiple upstream subsys
 At minimum validate:
 - hard risk still fails closed;
 - dashboard/API shutdown does not stop trading;
-- AgentLens shutdown does not stop trading;
+- no external observability service is on the trading critical path;
 - frontend cannot place/circumvent orders directly;
 - paper/live configuration cannot be casually confused;
 - approved provider changes cannot alter hard safety limits;

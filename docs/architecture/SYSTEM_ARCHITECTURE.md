@@ -18,16 +18,19 @@ quant-agent authoritative core
        -> deterministic risk/sizing/execution gate
        -> Alpaca Paper
 
-quant-agent AI activity --best effort/redacted--> AgentLens (optional sidecar)
+quant-agent AI activity --> agent_logs (canonical: prompt, response,
+                            model, tokens, cost; keyed by run_id)
 ```
 
 ## Authority boundaries
 - **quant-agent** owns trading decisions, scheduling, canonical records, memory/reflection and Meta Reflector.
 - **QAMC API** exposes state and later narrow validated controls. It does not become a second engine.
 - **Mission Control** is presentation/operator UX, never direct broker execution.
-- **AgentLens** is forensic observability only.
+- **Forensic observability is native**: `agent_logs` + `run_id` +
+  `scripts/replay_decision.py`. QAMC has no external observability service
+  (AgentLens was evaluated and dropped — DECISION #34).
 
 ## Runtime
-Initial production target: a small Linux VPS/server with trading, API/UI and optional AgentLens as separately restartable services. Preserve upstream systemd model where practical. No Kubernetes/Redis/Kafka/etc. by default.
+Initial production target: a small Linux VPS/server with trading and API/UI as separately restartable services. Preserve upstream systemd model where practical. No Kubernetes/Redis/Kafka/etc. by default.
 
 Initial remote access: private/Tailscale preferred. `here.now` may publish frontend previews during development but is not a trading dependency.

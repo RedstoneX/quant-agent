@@ -1,6 +1,22 @@
 # Stage 0 — Baseline & Integration-Seam Audit
 
-Status: **complete**. Executed 2026-08-09 against `RedstoneX/quant-agent`.
+Status: **COMPLETE — Checkpoint A ACCEPTED by the operator 2026-08-09.**
+Executed 2026-08-09 against `RedstoneX/quant-agent`.
+
+> **Sign-off (2026-08-09).** The operator accepted all three outstanding items:
+>
+> 1. **Checkpoint A / Stage 0 — ACCEPTED as complete.** Stage 0 is `DONE`.
+> 2. **AgentLens DROP — ACCEPTED.** Stage 6 is removed from the roadmap (not
+>    deferred). Trace affordances re-scoped onto `agent_logs` / `run_id` /
+>    `scripts/replay_decision.py`. Record: `docs/architecture/AGENTLENS.md`;
+>    retired scope: `docs/MILESTONES.md`. Decisions #34 and #35 supersede #23–#25.
+> 3. **Stage 0.5 — AUTHORIZED** as the next bounded implementation stage
+>    (decision #36). It is **not implemented on this branch**; Stage 1 stays
+>    BLOCKED until Checkpoint A5.
+>
+> This document is now a historical record of the audit. Where it describes
+> AgentLens as a live option (§8B, §8C, §10 item 8), read those sections as the
+> evidence behind the accepted drop, not as open questions.
 
 This document is the Checkpoint A deliverable required by `docs/MILESTONES.md`:
 verified source map, baseline test result, integration-seam report, donor
@@ -753,9 +769,10 @@ trace-compare only diffs two historical recordings).
 
 ---
 
-## 8C. AgentLens recommendation: **DROP FROM THE PLAN**
+## 8C. AgentLens recommendation: **DROP FROM THE PLAN** — **ACCEPTED 2026-08-09**
 
-Recommended for the operator's decision; not acted upon.
+Recommended at the donor pass; **accepted by the operator at Stage 0 sign-off**.
+Stage 6 is retired (DECISION #34). Nothing was integrated or forked.
 
 Grounds, in order of weight:
 
@@ -851,11 +868,11 @@ documentation matters, not blockers.
    repository still under active development (7 authors, last commit ~1 month
    before inspection). Component paths and props may move before Stage 3/4
    actually consumes them; re-verify against the pin at adoption time.
-8. **If AgentLens is dropped (§8C), Stage 5's index inherits the forensic
-   burden.** No practical loss — quant-agent's own records are richer — but the
-   "inspect AI trace" affordance in `JOURNAL_AND_SEARCH.md` and the `TraceLink`
-   component in `UI_COMPONENT_MAP.md` then have no backing service and should
-   be re-scoped to link to `agent_logs` instead.
+8. ~~If AgentLens is dropped (§8C), Stage 5's index inherits the forensic
+   burden.~~ **Actioned 2026-08-09** — the drop was accepted; the journal
+   section and the `TraceLink` component were re-scoped onto `agent_logs` /
+   `run_id`. Stage 5's index now carries the forensic burden by design, which
+   is no practical loss since quant-agent's own records are richer.
 
 ---
 
@@ -950,6 +967,18 @@ either pass.**
   `docs/UPSTREAM_INTEGRATION.md`,
   `docs/architecture/{SAFETY_BOUNDARIES,MODEL_PROVIDER_ARCHITECTURE,AGENTLENS}.md`
 
+*Third pass — Stage 0 sign-off (documentation only):*
+- `AGENTS.md` (stage restriction: Stage 0 accepted → Stage 0.5 authorized)
+- `docs/MILESTONES.md` (Stage 0 DONE; Stage 0.5 NEXT; Stage 6 moved to "Retired scope")
+- `docs/DECISIONS.md` (decisions #34–#36; #23–#25 superseded; #20 re-scoped; register status)
+- `docs/architecture/AGENTLENS.md` (rewritten as a closed decision record)
+- `docs/knowledge/PROJECT_COMPASS.md`, `docs/knowledge/WORKSTREAMS.md`
+- `docs/PROJECT_CHARTER.md`, `docs/UPSTREAM_INTEGRATION.md`,
+  `docs/ACCEPTANCE_CRITERIA.md`, `docs/DONOR_COMPONENTS.md`
+- `docs/architecture/{SYSTEM_ARCHITECTURE,SAFETY_BOUNDARIES,JOURNAL_AND_SEARCH}.md`
+- `docs/ui/{UI_COMPONENT_MAP,SCREEN_STATES,UI_VISION}.md`
+- `docs/STAGE0_BASELINE_AUDIT.md` (this sign-off block, §8C, §10, §12, §13)
+
 *Second pass — donor completion:*
 - `docs/STAGE0_BASELINE_AUDIT.md` (§8A/§8B/§8C, §9 D-1/D-2/D-3, §9A, §10, §12, §13)
 - `docs/DONOR_COMPONENTS.md` (Orallexa pinned + inventory; AgentLens verdict)
@@ -969,15 +998,16 @@ either pass.**
 | Donor inventory completed | ✅ **complete** — OpenTradex `30b23f5e`, Orallexa `794a2ec0`, AgentLens `21ab445a`, all pinned and inspected; TradingView Lightweight Charts confirmed as a library dependency |
 | No feature code added | ✅ |
 
-**All Checkpoint A acceptance criteria are satisfied.** Stage 0 is complete.
+**All Checkpoint A acceptance criteria are satisfied, and Checkpoint A was
+ACCEPTED by the operator on 2026-08-09. Stage 0 is DONE.**
 
-Two items are carried forward as operator decisions, neither of which blocks
-Checkpoint A:
+Both carried-forward items were decided at sign-off:
 
-1. **Accept or reject the AgentLens DROP recommendation (§8C).** If accepted,
-   Stage 6 should be struck and the `TraceLink` / "Inspect AI Trace"
-   affordances re-scoped onto `agent_logs`.
-2. **Authorize the Stage 0.5 D-1 hotfix (§9A)** — sequencing is recorded; the
-   change itself is not authorized and has not been made.
+1. **AgentLens DROP — ACCEPTED.** Stage 6 removed from the roadmap; `TraceLink`
+   → `AgentLogLink` and the journal's "Inspect AI Trace" → "Inspect Agent
+   Calls" over `agent_logs`. Decisions #34, #35.
+2. **Stage 0.5 (D-1 hotfix) — AUTHORIZED.** Decision #36. Scoped to the nine
+   `insert_agent_log(...)` call sites plus targeted tests; must not touch
+   `_execute()`, the schema, provider routing or trading behavior.
 
-**STOPPED. Stage 1 not begun. No recommendation implemented.**
+**STOPPED. Stage 0.5 not implemented on this branch. Stage 1 not begun.**

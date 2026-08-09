@@ -10,9 +10,11 @@ This file is the gate against unnecessary custom UI work. Stage 0 must replace b
 > | OpenTradex | `deonmenezes/opentradex` | `30b23f5ec3ad59ceecdd0335af2c5513c4137d36` | MIT | keep — layout/visual donor |
 > | Orallexa | `alex-jb/orallexa-ai-trading-agent` | `794a2ec0ce0b1271b468814eee47c2cd4edde147` | MIT | **keep — concepts verified to exist** |
 > | TradingView Lightweight Charts | `tradingview/lightweight-charts` | n/a (library dependency) | Apache-2.0 | keep |
-> | AgentLens | `tranhoangtu-it/agentlens` | `21ab445a91bf2bc2f8b7eb0a2a8fb70468a9047f` | MIT | **DROP recommended** — see `docs/architecture/AGENTLENS.md` |
+> | ~~AgentLens~~ | `tranhoangtu-it/agentlens` | `21ab445a91bf2bc2f8b7eb0a2a8fb70468a9047f` | MIT | **DROPPED 2026-08-09** — no longer a donor; DECISION #34 |
 >
 > Full evidence: `docs/STAGE0_BASELINE_AUDIT.md` §8, §8A, §8B, §8C.
+> AgentLens was evaluated as an observability sidecar, not a component donor,
+> and is **out of plan**; its record is `docs/architecture/AGENTLENS.md`.
 
 ## OpenTradex — primary trading UI donor
 Repository: `deonmenezes/opentradex` (MIT, © 2026 Deon Menezes).

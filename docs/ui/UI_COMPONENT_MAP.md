@@ -19,9 +19,11 @@ Exact API shapes are Stage 2 work; this is the product contract.
 > - **`DecisionChain`** — confirmed **fully native**. Neither donor has a
 >   PM→Risk→Gate→Execution view. OpenTradex's `FlowVisualizer` draws *skill
 >   graphs*, not decision chains.
-> - **`TraceLink`** — depends on Stage 6, which Stage 0 recommends dropping. If
->   the drop is accepted, re-scope this to deep-link `agent_logs` rows by
->   `run_id` rather than an external trace service.
+> - **`TraceLink` → `AgentLogLink`** — the AgentLens drop was **accepted**
+>   (DECISION #34), so there is no external trace service. Re-scoped to
+>   deep-link a `run_id` to its `agent_logs` rows (full prompt, full response,
+>   model, tokens, cost), with `scripts/replay_decision.py` as the offline
+>   re-execution path.
 > - **OpenTradex caveat** — its `AgentConsole` / `RunsAuditPanel` present
 >   *skill-run* orchestration, not per-analyst recommendations. Its useful
 >   donation is layout and visual language.
@@ -44,7 +46,7 @@ Exact API shapes are Stage 2 work; this is the product contract.
 | JournalCalendar/List | Historical navigation | Journal IA | Read-only |
 | JournalDay | Structured daily explanation | QAMC native | Read-only |
 | SearchFilters | Structured/indexed forensics | QAMC native | Read-only |
-| TraceLink | Deep-link to AgentLens | QAMC native | Read-only |
+| AgentLogLink | Deep-link a `run_id` to its `agent_logs` rows (prompt/response/model/tokens/cost) | QAMC native — replaces the retired `TraceLink` | Read-only |
 | LearningProposal | Meta report/prompt diff | QAMC native | Later write |
 | ModelSelector | Per-agent provider/model choice | QAMC native | Later write |
 | OperationalControls | pause/resume/kill | QAMC native | Final stages |
