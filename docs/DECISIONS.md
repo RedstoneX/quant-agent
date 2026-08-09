@@ -1,7 +1,7 @@
 # QAMC Decision Register
 
-Status: **architecture baseline frozen; Stage 0 accepted 2026-08-09;
-implementation authorized only for Stage 0.5.**
+Status: **architecture baseline frozen; Stage 0 and Stage 0.5 accepted 2026-08-09;
+Stage 1 is the currently authorized implementation stage.**
 
 1. Project name: **Quant Agent Mission Control (QAMC)**.
 2. `yebof/quant-agent` remains the authoritative trading engine.
@@ -68,6 +68,19 @@ implementation authorized only for Stage 0.5.**
     targeted tests; it must not touch `base.py:_execute()`, the database schema,
     provider routing or trading behavior.
 
+## Decision accepted at Stage 0.5 sign-off (2026-08-09)
+
+37. **Checkpoint A5 is ACCEPTED; Stage 0.5 is DONE; Stage 1 is AUTHORIZED as NEXT.**
+    PR #6 (`c0be3dd…`, merged as `94fd2f08…`) corrected all nine existing
+    `insert_agent_log(...)` persistence sites to store `AgentResult.model`, the
+    model that actually answered, instead of the configured/requested model.
+    Five targeted attribution regression tests were added; the full suite was
+    **1436 passed, 0 failed**. `src/agents/base.py::_execute()` and the database
+    schema were unchanged. The known Tech-Analyst multi-chunk attribution limit
+    and relay-verification ceiling remain documented rather than silently
+    claimed solved. Stage 1 may now implement only the provider/model/telemetry/
+    correlation scope defined in `docs/MILESTONES.md`; Stage 2 remains blocked.
+
 ---
 
 ## Stage 0 conflict register
@@ -76,25 +89,19 @@ implementation authorized only for Stage 0.5.**
 recorded here rather than silently resolved. Stage 0 found the following. Full
 evidence in `docs/STAGE0_BASELINE_AUDIT.md` §9.
 
-Status at Stage 0 sign-off (2026-08-09): **D-2 and D-3 resolved**; **D-1
-scheduled as authorized Stage 0.5**; D-4 … D-10 remain open and unassigned.
+Current status (2026-08-09): **D-1, D-2 and D-3 resolved**; D-4 … D-10 remain
+open unless a later governed stage explicitly resolves them.
 
-- **D-1 (conflicts with decision 12).** Decision 12 requires that no fallback
-  be silently counted as the requested model. Verified source: all nine
-  `insert_agent_log(...)` sites persist `config.llm.<agent>_model` (requested),
-  while `cost_usd` is computed from the model that actually answered.
-  `AgentResult.model` — the actual model — is never persisted. On a
-  cross-provider failover the stored record is internally inconsistent. Also
-  conflicts with `MODEL_PROVIDER_ARCHITECTURE.md` "Required contract" and
-  `ACCEPTANCE_CRITERIA.md`.
-  **Operator decision 2026-08-09 — AUTHORIZED as Stage 0.5** (decision #36).
-  D-1 is corrected as a **bounded pre-Stage-1 correctness hotfix**, kept
-  separate from the broader Stage 1 provider work. Operator's reason:
-  historical experimental attribution cannot reliably be repaired after the
-  fact, so correct attribution must exist before new experimental trading data
-  is generated. **Not implemented on the Stage 0 branch**; see
-  `docs/STAGE0_BASELINE_AUDIT.md` §9A for the exact nine call sites and the two
-  limits a hotfix alone does not remove.
+- **D-1 — RESOLVED 2026-08-09 (Stage 0.5 / decision #37).** Decision 12 requires
+  that no fallback be silently counted as the requested model. Stage 0 verified
+  that all nine `insert_agent_log(...)` sites persisted the configured model
+  while `AgentResult.model` carried the actual responder. Stage 0.5 changed all
+  nine sites to persist `AgentResult.model`, added five targeted regression
+  tests covering all nine persistence paths, and passed the full suite
+  (1436/1436). PR #6 merged. Two limits remain explicitly documented: Tech
+  Analyst may collapse multiple chunk calls into one row retaining only the
+  final chunk model, and QAMC cannot independently prove what model an external
+  relay actually served behind a requested model ID.
 - **D-2 — RESOLVED 2026-08-09.** Operator identified Orallexa as
   `alex-jb/orallexa-ai-trading-agent` (MIT); inspected at
   `794a2ec0ce0b1271b468814eee47c2cd4edde147`. Every proposed presentation
