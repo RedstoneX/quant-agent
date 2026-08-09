@@ -1,90 +1,50 @@
 ---
 name: qamc-discover
-description: Explore and challenge the current QAMC architecture against the desired outcome before implementation. Use when the operator asks to design, rethink, challenge, or start a new substantial QAMC outcome.
+description: Challenge a substantial QAMC outcome against the actual repository before implementation.
 ---
 
-# QAMC outcome discovery workflow
+# QAMC discovery workflow
 
-## Start with the outcome, not the old plan
+## Load the minimum
 
-Read:
+Read only:
 1. `docs/OUTCOME.md`;
 2. `docs/STATE.md`;
-3. `docs/work/ACTIVE.md`;
-4. `docs/decisions/ACTIVE.md`.
+3. `docs/WORK.md`.
 
-Then inspect only the **accepted current contracts, source, tests, and specific reference evidence needed** to understand the outcome.
-Do not preload `docs/reference/`, `docs/history/`, the Project Compass, or the whole repository.
-
-Prior Mission Control UI/donor/journal work is under `docs/reference/mission-control/`. It is deliberately **challengeable evidence**, not a build specification. The path-scoped reference rule applies whenever it is opened.
+Then inspect only source, tests and accepted architecture needed to answer the current problem. Read `docs/ROADMAP.md` only when sequencing matters. History/reference material is optional evidence, never authority.
 
 ## Role
 
-Act as a senior engineering/architecture participant, not an implementation worker waiting for instructions.
-Independently explore the repository and challenge the existing plan against the desired outcome.
-Do not preserve a prior architecture merely because it is documented.
-Preserve accepted hard safety/product boundaries unless discovery identifies a reason that genuinely requires external reconsideration.
+Act as an architecture/engineering participant. Inspect the real repository and challenge the prior direction rather than defending it.
 
-**No product implementation is allowed during this workflow.**
+**No product implementation during discovery.**
 
-## Investigate before asking
+Resolve repository facts yourself. Make routine engineering decisions yourself. Ask the operator only genuine product/value questions, one at a time. Put material architecture/safety/scope conflicts into `docs/WORK.md` for ChatGPT reconciliation instead of asking the operator to solve technical choices.
 
-Use repository inspection and focused Explore/subagents for bounded factual discovery while keeping the lead context focused on synthesis.
+## Challenge
 
-Classify unknowns before asking anyone:
+Classify material findings:
+- **KEEP** — already the simplest/best fit;
+- **CHANGE** — right goal, better route exists;
+- **REMOVE** — unnecessary, duplicated, stale or too costly;
+- **ADD** — missing capability required by the outcome.
 
-### A. Repository fact
-Find it from code, tests, Git history, current contracts, or available tooling.
+Challenge architecture and sequencing, accepted Stage-2 data/API suitability, reuse versus custom work, UI/data-flow and forensic-history needs, verification strategy, unnecessary infrastructure, and assumptions inherited from earlier plans. Do not revive old donors/components/stages merely because Git history contains them.
 
-### B. Routine engineering decision
-Decide it using engineering judgment. Record only material choices the implementation session will need.
-
-### C. Operator product decision
-Ask only when the answer depends on operator preference, intended experience, value judgment, or acceptable trade-off.
-
-Ask **one question at a time and wait for the answer**. After each answer, reassess whether another question is actually necessary.
-
-### D. Material architecture / safety / governance issue
-Do not make the operator solve a technical problem. Record the issue, evidence, options, and recommendation under `Architecture consultation` in `docs/work/ACTIVE.md` for ChatGPT reconciliation through GitHub.
-
-## Challenge pass
-
-Classify findings as:
-- **KEEP** — strongest/simple current choice;
-- **CHANGE** — right goal, better architecture/sequencing available;
-- **REMOVE** — unnecessary, obsolete, duplicated, or too costly;
-- **ADD** — missing capability needed for the outcome.
-
-Challenge at least:
-- Stage 3–5 grouping/sequencing;
-- Stage-2 API/data suitability for desired UI/forensics;
-- donor reuse versus native work;
-- frontend/data-flow architecture;
-- journal/search architecture;
-- model/provider/decision observability presentation;
-- runtime/visual verification strategy;
-- whether current Claude-native rules/skills/subagents help or constrain the work;
-- unnecessary infrastructure or bespoke work;
-- assumptions inherited from when Claude Code was treated mainly as a coder.
+Use focused inexpensive subagents for bounded repository search/high-volume reading when useful. Escalate model/worker strength only when the task genuinely needs it.
 
 ## Output
 
-Update `docs/work/ACTIVE.md` with a concise evidence-based discovery result:
+Update `docs/WORK.md` with concise evidence for:
 - repository findings;
 - KEEP / CHANGE / REMOVE / ADD;
 - operator decisions actually obtained;
 - architecture consultation items, if any;
-- proposed implementation **outcome contract**: capabilities, constraints, and verifiable acceptance criteria.
+- a proposed implementation outcome contract with capabilities, constraints and verifiable acceptance conditions.
 
-Do not prescribe worker topology, file-by-file tasks, or a detailed implementation recipe. The fresh implementation session owns those decisions.
+Do not prescribe worker topology or a file-by-file implementation recipe.
 
-## Operator Compass refresh
+Before handoff, refresh `docs/PROJECT_COMPASS.md` from the authoritative files.
 
-Before handoff, refresh `docs/knowledge/PROJECT_COMPASS.md` from authoritative live files.
-Follow `.claude/rules/documentation.md`; keep the Compass plain-English, visual, emoji-landmarked, concise, and focused on what finished / now / next / later / decisions.
-Do not copy the technical discovery report into it.
-
-## Handoff
-
-Commit/push the discovery branch and STOP before implementation.
-The next step is external architecture reconciliation through GitHub by ChatGPT/operator. After that result is accepted and merged, implementation begins in a fresh Claude Code session using `/qamc-build`.
+Commit/push the discovery branch and **STOP before implementation**. ChatGPT/operator reconcile the GitHub result. After accepted merge, implementation starts in a fresh Claude session using `/qamc-build`.
