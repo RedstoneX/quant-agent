@@ -47,4 +47,4 @@ Do not prescribe worker topology or a file-by-file implementation recipe.
 
 Before handoff, refresh `docs/PROJECT_COMPASS.md` from the authoritative files.
 
-Commit/push the discovery branch and **STOP before implementation**. ChatGPT/operator reconcile the GitHub result. After accepted merge, implementation starts in a fresh Claude session using `/qamc-build`.
+Commit/push the discovery branch and **STOP before implementation** so ChatGPT/operator can reconcile the GitHub result. After the accepted result is merged, re-read the accepted `STATE.md` / `WORK.md` and continue with `/qamc-build`. The same coherent Claude session may continue; starting a fresh session is optional and should be used only when context quality actually benefits from it.
