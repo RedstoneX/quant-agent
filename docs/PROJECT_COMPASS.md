@@ -99,4 +99,4 @@ TradingView-style charts, richer trade markers/indicators, donor-dashboard conce
 - 🧱 No unnecessary infrastructure.
 - 🚫 Claude cannot merge its own work, force-push, or push directly to `main`.
 
-_Last refreshed: 2026-08-09 — active project view only; retired/superseded work lives in Git history._
+_Last refreshed: 2026-08-09 18:34 EDT (America/Toronto) — active project view only; retired/superseded work lives in Git history._
