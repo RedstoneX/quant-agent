@@ -32,24 +32,36 @@
   order/trade rows. 28 new targeted tests; full suite **1464 passed, 0
   failed**. Details: `docs/MILESTONES.md` Stage 1.
 - **Stage 2 — Thin Read-Only Mission Control API: IMPLEMENTED 2026-08-09,
-  awaiting Checkpoint C operator acceptance.** Branch
-  `claude/stage-2-mission-control-api-4zpx7j`. New `src/api/` package
-  (FastAPI + uvicorn, optional `pyproject.toml` extra) exposes existing
-  canonical state read-only: `/health`, `/account`, `/positions`, `/orders`
-  (broker-live), `/trades`, `/runs`, `/runs/{run_id}`,
+  Checkpoint C completion slice IMPLEMENTED 2026-08-09, awaiting Checkpoint
+  C operator acceptance.** Branch `claude/stage-2-mission-control-api-4zpx7j`,
+  completion slice on `claude/stage-2-checkpoint-c-fb1ip0`. New `src/api/`
+  package (FastAPI + uvicorn, optional `pyproject.toml` extra) exposes
+  existing canonical state read-only: `/health`, `/account`, `/positions`,
+  `/orders` (broker-live), `/trades`, `/runs`, `/runs/{run_id}`,
   `/decisions/{decision_id}`, `/agents`, `/agents/{agent_name}`,
-  `/reflections` (SQLite, via a dedicated `mode=ro` connection — never
-  shares `src.storage.db.Database`'s writer connection/lock). No
-  trading-critical file was modified; no schema change. 57 new targeted
-  tests (structural safety, functional contract, no-secrets, DB
-  concurrency, process-kill isolation) plus an independent review pass
-  (fresh subagent, no authorship bias) confirming read-only isolation,
-  secret exposure, trading-process independence, and contract
-  completeness. Full suite **1521 passed, 0 failed**. One genuine
-  reconstruction gap found and documented rather than patched with new
-  persistence: a fully hard-risk-blocked run's rejection reason is not
-  persisted anywhere in canonical storage. Details:
-  `docs/MILESTONES.md` Stage 2, `docs/architecture/MISSION_CONTROL_API.md`.
+  `/reflections`, `/candidates` (SQLite, via a dedicated `mode=ro`
+  connection — never shares `src.storage.db.Database`'s writer
+  connection/lock). No trading-critical file was modified; no schema
+  change. 57 Stage 2 targeted tests (structural safety, functional
+  contract, no-secrets, DB concurrency, process-kill isolation) plus an
+  independent review pass (fresh subagent, no authorship bias) confirming
+  read-only isolation, secret exposure, trading-process independence, and
+  contract completeness. Independent ChatGPT review of the
+  implemented-but-unaccepted branch then found two Checkpoint C gaps, both
+  closed in the completion slice: (1) `/candidates` now exists — the
+  existing `TradingPipeline._build_watchlist_candidates` aggregation is a
+  pure function of already-persisted `insights` rows, extracted verbatim
+  into a new zero-dependency `src/watchlist_candidates.py` module imported
+  by both the pipeline (thin wrapper, identical output) and
+  `src/api/db_reads.py` — `TradingPipeline` is still never imported by
+  `src/api/`; (2) a fully hard-risk-blocked run's rejection reason is now
+  persisted as one additive `agent_logs` row (`agent_name="risk_gate"`
+  sentinel, existing table/mechanism, no schema change, no change to hard-risk
+  calculations), surfaced via `RunDetailResponse.hard_risk_block_recorded`
+  (now computed, not hardcoded `False`) and a new
+  `DecisionDetailResponse.hard_risk_block` field. 9 new targeted tests.
+  **Full suite 1530 passed, 0 failed.** Details: `docs/MILESTONES.md`
+  Stage 2, `docs/architecture/MISSION_CONTROL_API.md`.
 - Live trading: **not authorized**. Alpaca Paper remains the broker boundary.
 - AI development economy/session policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
@@ -122,14 +134,49 @@ and `docs/architecture/MISSION_CONTROL_API.md` for the full account):
 - SQLite reads safe under concurrent trading writes — done (dedicated
   `mode=ro` connection, verified under real concurrent load plus
   `PRAGMA integrity_check`);
-- one genuine schema gap found, documented rather than silently patched
-  with new persistence — a fully hard-risk-blocked run's rejection reason
-  is not recorded anywhere in canonical storage today.
+- one genuine schema gap found at original sign-off, documented rather
+  than silently patched with new persistence — a fully hard-risk-blocked
+  run's rejection reason was not recorded anywhere in canonical storage.
+  **Closed in the Checkpoint C completion slice below** via one additive
+  `agent_logs` row, no schema change.
 
-**Checkpoint C: implementation-side self-verification complete** (see
-`docs/MILESTONES.md` Stage 2 for the full 15-point account). **Awaiting
-operator acceptance before Stage 2 is marked DONE and Stage 3 is
-authorized. STOP at Checkpoint C; Stage 3 has not been started.**
+## Checkpoint C completion slice outcome (implemented 2026-08-09)
+Independent ChatGPT review of the implemented-but-unaccepted Stage 2 branch
+found two Checkpoint C gaps, both closed on
+`claude/stage-2-checkpoint-c-fb1ip0` (see `docs/MILESTONES.md` Stage 2 and
+`docs/architecture/MISSION_CONTROL_API.md` "Checkpoint C completion slice"
+for the full account):
+
+- candidates/watchlist API contract gap — closed. The governed milestone
+  text did require candidates; `/candidates` now exists. The existing
+  `TradingPipeline._build_watchlist_candidates` aggregation was a pure
+  function of already-persisted `insights.missed_opportunities_json` rows —
+  extracted verbatim into a new zero-dependency `src/watchlist_candidates.py`
+  module, imported by both the pipeline (now a thin wrapper, identical
+  output, unchanged existing tests) and `src/api/db_reads.py`.
+  `TradingPipeline` is still never imported by `src/api/`; no second
+  candidate-generation engine; no trading decisions recomputed;
+- deterministic hard-risk rejection reconstruction gap — closed. New
+  `TradingPipeline._persist_hard_risk_block` writes one additive
+  `agent_logs` row (`agent_name="risk_gate"` sentinel, distinct from the
+  real `"risk_manager"` LLM agent name) at both `RiskStage.run()`
+  early-return sites, via the existing `insert_agent_log` mechanism — no
+  schema change, no change to hard-risk calculations/limits/eligibility/
+  execution/broker behavior. `cost_usd`/`tokens_used` persist as
+  known-zero, not unknown, preserving `sum_session_cost`'s convention.
+  `RunDetailResponse.hard_risk_block_recorded` is now computed (not
+  hardcoded `False`); `DecisionDetailResponse` gained a `hard_risk_block`
+  field. Backward compatible with old SQLite DBs (zero `risk_gate` rows on
+  a pre-Checkpoint-C DB, unchanged behavior).
+
+9 new targeted tests (4 `tests/test_pipeline_stages.py`, 5
+`tests/test_api_contract.py`). **Full suite: 1530 passed, 0 failed** (1521
+baseline + 9 new). No trading-critical file modified.
+
+**Checkpoint C: implementation-side self-verification complete, including
+the completion slice** (see `docs/MILESTONES.md` Stage 2 for the full
+account). **Awaiting operator acceptance before Stage 2 is marked DONE and
+Stage 3 is authorized. STOP at Checkpoint C; Stage 3 has not been started.**
 
 ## Stage 0 / 0.5 outcome (for reference)
 - Baseline suite at Stage 0: **1431 passed, 0 failed, 0 skipped** (hermetic; no

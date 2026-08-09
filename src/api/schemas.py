@@ -178,12 +178,12 @@ class RunDetailResponse(BaseModel):
     trades: list[TradeItem] = []
     decision_id: str | None = None
     total_cost_usd: float | None = None
-    # Known Stage 2 limitation (see docs/architecture/MISSION_CONTROL_API.md):
-    # when every candidate in this run was blocked by the deterministic
-    # hard-risk gate before reaching risk_manager, no row of any kind
-    # captures which rule fired — this field stays False rather than
-    # fabricating a reason. Not a bug in this endpoint; a genuine upstream
-    # persistence gap flagged, not silently patched, per Stage 2 scope rules.
+    # Stage 2 Checkpoint C: True when this run's `agent_logs` includes the
+    # `agent_name="risk_gate"` forensic row `TradingPipeline._persist_hard_risk_block`
+    # writes when the deterministic hard-risk gate blocked EVERY candidate
+    # before risk_manager was ever called (see docs/architecture/
+    # MISSION_CONTROL_API.md). Computed from `agent_logs`, never fabricated —
+    # a run with no such row (the ordinary case) reports False.
     hard_risk_block_recorded: bool = False
 
 
@@ -191,7 +191,33 @@ class DecisionDetailResponse(BaseModel):
     decision_id: str
     portfolio_manager: AgentLogItem | None = None
     risk_manager: AgentLogItem | None = None
+    # Stage 2 Checkpoint C: populated instead of `risk_manager` when the
+    # deterministic hard-risk gate blocked every candidate for this decision
+    # before risk_manager was ever called — the forensic `agent_name="risk_gate"`
+    # `agent_logs` row (see `RunDetailResponse.hard_risk_block_recorded`).
+    # `None` for every ordinary (RM-reached) decision.
+    hard_risk_block: AgentLogItem | None = None
     trades: list[TradeItem] = []
+
+
+# ---------------------------------------------------------------------------
+# /candidates
+# ---------------------------------------------------------------------------
+
+class CandidateItem(BaseModel):
+    symbol: str
+    add_count: int = 0
+    watch_count: int = 0
+    total_flags: int = 0
+    dates: list[str] = []          # ISO dates flagged, newest first
+    themes: list[str] = []
+    latest_reason: str = ""
+    latest_miss_category: str = ""
+
+
+class CandidatesResponse(BaseModel):
+    candidates: list[CandidateItem] = []
+    lookback_days: int = 30
 
 
 # ---------------------------------------------------------------------------

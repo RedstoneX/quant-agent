@@ -198,6 +198,82 @@ def test_run_detail_404_for_unknown_run(client, seeded_db):
     assert r.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# Stage 2 Checkpoint C — hard-risk-block forensic reconstruction.
+#
+# `TradingPipeline._persist_hard_risk_block` writes an `agent_logs` row with
+# the sentinel `agent_name="risk_gate"` (not the real LLM `"risk_manager"`
+# name) when the deterministic hard-risk gate blocks EVERY candidate before
+# risk_manager is ever called. These tests seed that exact row directly
+# (mirroring what the pipeline now does) and prove `/runs/{run_id}` and
+# `/decisions/{decision_id}` surface it, closing the reconstruction gap
+# `RunDetailResponse.hard_risk_block_recorded` previously always reported
+# as unrecorded (hardcoded False).
+# ---------------------------------------------------------------------------
+
+HARD_BLOCK_RUN_ID = "run-hardblock1"
+HARD_BLOCK_DECISION_ID = f"{HARD_BLOCK_RUN_ID}-dec-000002"
+
+
+@pytest.fixture
+def hard_risk_block_db(tmp_path, monkeypatch):
+    """A run where every candidate was blocked by the deterministic hard-risk
+    gate before risk_manager ever ran: a portfolio_manager row (PM always
+    logs before RiskStage runs) plus the risk_gate forensic sentinel row,
+    no risk_manager row, no trades."""
+    db_path = tmp_path / "hard_risk_block.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_agent_log(
+        agent_name="portfolio_manager", run_id=HARD_BLOCK_RUN_ID,
+        input_summary="pm input", output_summary="pm output",
+        full_response='{"targets": []}', model="gpt-5.5", tokens_used=500,
+        input_message="pm prompt", cost_usd=0.05, decision_id=HARD_BLOCK_DECISION_ID,
+    )
+    db.insert_agent_log(
+        agent_name="risk_gate", run_id=HARD_BLOCK_RUN_ID,
+        input_summary="deterministic hard-risk gate blocked all candidates (pre_rm)",
+        input_message="",
+        output_summary="HARD_RISK_BLOCK: AAPL position would be 25.0% and exceed max 20%",
+        full_response="AAPL position would be 25.0% and exceed max 20%",
+        model="deterministic", tokens_used=0, input_tokens=0, output_tokens=0,
+        cost_usd=0.0, decision_id=HARD_BLOCK_DECISION_ID, status="hard_risk_block",
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+    return db_path
+
+
+def test_run_detail_records_hard_risk_block(client, hard_risk_block_db):
+    r = client.get(f"/runs/{HARD_BLOCK_RUN_ID}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["hard_risk_block_recorded"] is True
+    assert {log["agent_name"] for log in body["agent_logs"]} == {
+        "portfolio_manager", "risk_gate",
+    }
+    gate_log = next(l for l in body["agent_logs"] if l["agent_name"] == "risk_gate")
+    assert gate_log["status"] == "hard_risk_block"
+    assert "exceed max 20%" in gate_log["full_response"]
+    # Known-zero, not unknown: the run's total cost must stay computable
+    # (PM's 0.05 + risk_gate's known 0.0), never nulled out by the
+    # any-unknown-means-unknown convention.
+    assert body["total_cost_usd"] == pytest.approx(0.05)
+    assert body["trades"] == []
+
+
+def test_decision_detail_exposes_hard_risk_block_not_risk_manager(client, hard_risk_block_db):
+    r = client.get(f"/decisions/{HARD_BLOCK_DECISION_ID}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["portfolio_manager"]["agent_name"] == "portfolio_manager"
+    assert body["risk_manager"] is None
+    assert body["hard_risk_block"] is not None
+    assert body["hard_risk_block"]["agent_name"] == "risk_gate"
+    assert body["hard_risk_block"]["status"] == "hard_risk_block"
+    assert body["trades"] == []
+
+
 def test_total_cost_is_none_when_any_call_has_unknown_cost(client, tmp_path, monkeypatch):
     """Matches Database.sum_session_cost's convention: a partial sum that
     looks precise but omits an unpriced call is worse than an honest
@@ -284,6 +360,87 @@ def test_reflections_returns_seeded_insight(client, seeded_db):
     assert body["insights"][0]["date"] == "2026-08-08"
     assert body["insights"][0]["risk_rating"] == "low"
     assert body["meta_periods"] == []  # no data/evolution/ dir in tmp cwd
+
+
+# ---------------------------------------------------------------------------
+# /candidates — Stage 2 Checkpoint C candidates/watchlist API contract gap.
+#
+# Reads the same canonical `insights.missed_opportunities_json` rows
+# `TradingPipeline._build_watchlist_candidates` reads, via the shared pure
+# aggregator in `src.watchlist_candidates` — never imports TradingPipeline.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def candidates_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "candidates.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.save_evening_snapshot(
+        date="2026-08-08", total_value=100_000.0, daily_pnl=500.0, daily_return_pct=0.5,
+        tomorrow_outlook="x", lessons="x", suggested_actions="x", risk_rating="low",
+        missed_opportunities=[
+            {"symbol": "VST", "miss_category": "theme_blindspot",
+             "theme_if_any": "nuclear/power",
+             "universe_addition_recommendation": "add",
+             "universe_addition_reason": "20d $vol $180M; vol_conf 2.1x",
+             "lesson": "x"},
+            {"symbol": "NOISE", "miss_category": "noise_rally",
+             "universe_addition_recommendation": "no", "lesson": "thin volume"},
+        ],
+    )
+    db.save_evening_snapshot(
+        date="2026-08-07", total_value=99_500.0, daily_pnl=-200.0, daily_return_pct=-0.2,
+        tomorrow_outlook="x", lessons="x", suggested_actions="x", risk_rating="low",
+        missed_opportunities=[
+            {"symbol": "VST", "miss_category": "theme_blindspot",
+             "theme_if_any": "nuclear/power",
+             "universe_addition_recommendation": "watch",
+             "universe_addition_reason": "vol_conf 1.6x; 1d conc 45%",
+             "lesson": "x"},
+        ],
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+    return db_path
+
+
+def test_candidates_aggregates_add_and_watch_counts(client, candidates_db):
+    r = client.get("/candidates")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["lookback_days"] == 30
+    assert len(body["candidates"]) == 1  # NOISE's "no" recommendation contributes nothing
+    vst = body["candidates"][0]
+    assert vst["symbol"] == "VST"
+    assert vst["add_count"] == 1
+    assert vst["watch_count"] == 1
+    assert vst["total_flags"] == 2
+    assert vst["themes"] == ["nuclear/power"]
+    assert vst["dates"] == ["2026-08-08", "2026-08-07"]
+    assert "$180M" in vst["latest_reason"]
+
+
+def test_candidates_empty_when_no_insights(client, tmp_path, monkeypatch):
+    db_path = tmp_path / "no_insights.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    r = client.get("/candidates")
+    assert r.status_code == 200
+    assert r.json() == {"candidates": [], "lookback_days": 30}
+
+
+def test_candidates_respects_lookback_days_query_param(client, candidates_db):
+    r = client.get("/candidates?lookback_days=1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["lookback_days"] == 1
+    # Only the newest row (2026-08-08, add) is in the 1-day lookback window.
+    vst = body["candidates"][0]
+    assert vst["add_count"] == 1
+    assert vst["watch_count"] == 0
 
 
 # ---------------------------------------------------------------------------

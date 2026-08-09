@@ -214,7 +214,15 @@ def get_run_detail(run_id: str) -> dict:
 
 
 def get_decision_detail(decision_id: str) -> dict:
-    """The PM/RM agent_logs rows and all trades tied to one decision_id."""
+    """The PM/RM agent_logs rows and all trades tied to one decision_id.
+
+    `hard_risk_block` (Stage 2 Checkpoint C) is the forensic `agent_logs`
+    row `TradingPipeline._persist_hard_risk_block` writes with the
+    sentinel `agent_name="risk_gate"` when the deterministic hard-risk
+    gate blocked every candidate before `risk_manager` was ever called —
+    `risk_manager` stays `None` in exactly that case, since no LLM call
+    happened. It is `None` for every ordinary (RM-reached) decision.
+    """
     conn = None
     try:
         conn = _connect()
@@ -228,6 +236,11 @@ def get_decision_detail(decision_id: str) -> dict:
             "LIMIT 1",
             (decision_id,),
         ).fetchone()
+        hard_risk_block_row = conn.execute(
+            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'risk_gate' "
+            "LIMIT 1",
+            (decision_id,),
+        ).fetchone()
         trades = [
             dict(r)
             for r in conn.execute(
@@ -238,10 +251,14 @@ def get_decision_detail(decision_id: str) -> dict:
         return {
             "portfolio_manager": dict(pm_row) if pm_row is not None else None,
             "risk_manager": dict(rm_row) if rm_row is not None else None,
+            "hard_risk_block": dict(hard_risk_block_row) if hard_risk_block_row is not None else None,
             "trades": trades,
         }
     except sqlite3.Error:
-        return {"portfolio_manager": None, "risk_manager": None, "trades": []}
+        return {
+            "portfolio_manager": None, "risk_manager": None,
+            "hard_risk_block": None, "trades": [],
+        }
     finally:
         if conn is not None:
             conn.close()
@@ -277,6 +294,23 @@ def get_recent_insights(limit: int = 7) -> list[dict]:
     finally:
         if conn is not None:
             conn.close()
+
+
+def get_watchlist_candidates(lookback_days: int = 30) -> list[dict]:
+    """Symbols the evening analyst has repeatedly flagged as `add`/`watch`
+    for universe expansion — same canonical output as
+    `TradingPipeline._build_watchlist_candidates` (Stage 2 Checkpoint C
+    candidates gap).
+
+    Computed from the read-only `get_recent_insights` query above plus the
+    pure aggregator in `src.watchlist_candidates` — `TradingPipeline`/
+    trading-execution code is never imported into `src/api`.
+    """
+    rows = get_recent_insights(limit=lookback_days + 5)
+    if not rows:
+        return []
+    from src.watchlist_candidates import build_watchlist_candidates
+    return build_watchlist_candidates(rows, lookback_days)
 
 
 def get_recent_daily_pnl(limit: int = 30) -> list[dict]:

@@ -23,6 +23,8 @@ from src.api.schemas import (
     AgentLogItem,
     AgentRosterItem,
     AgentsResponse,
+    CandidateItem,
+    CandidatesResponse,
     DecisionDetailResponse,
     MetaPeriodSummary,
     ReflectionItem,
@@ -70,23 +72,32 @@ def get_run_detail(run_id: str) -> RunDetailResponse:
     detail = db_reads.get_run_detail(run_id)
     if not detail["agent_logs"] and not detail["trades"]:
         raise HTTPException(404, "run not found")
+    # Stage 2 Checkpoint C: True iff the forensic "risk_gate" sentinel row
+    # is present — see RunDetailResponse.hard_risk_block_recorded docstring
+    # in src/api/schemas.py. Computed from the already-fetched agent_logs,
+    # never fabricated.
+    hard_risk_block_recorded = any(
+        row.get("agent_name") == "risk_gate" for row in detail["agent_logs"]
+    )
     return RunDetailResponse(
         run_id=run_id,
         agent_logs=[AgentLogItem(**row) for row in detail["agent_logs"]],
         trades=[TradeItem(**row) for row in detail["trades"]],
         decision_id=detail["decision_id"],
         total_cost_usd=detail["total_cost_usd"],
-        # Known Stage 2 limitation — see RunDetailResponse.hard_risk_block_recorded
-        # docstring in src/api/schemas.py: never inferred from an empty trades
-        # list, always hardcoded False.
-        hard_risk_block_recorded=False,
+        hard_risk_block_recorded=hard_risk_block_recorded,
     )
 
 
 @router.get("/decisions/{decision_id}", response_model=DecisionDetailResponse)
 def get_decision_detail(decision_id: str) -> DecisionDetailResponse:
     detail = db_reads.get_decision_detail(decision_id)
-    if detail["portfolio_manager"] is None and detail["risk_manager"] is None and not detail["trades"]:
+    if (
+        detail["portfolio_manager"] is None
+        and detail["risk_manager"] is None
+        and detail["hard_risk_block"] is None
+        and not detail["trades"]
+    ):
         raise HTTPException(404, "decision not found")
     return DecisionDetailResponse(
         decision_id=decision_id,
@@ -100,7 +111,24 @@ def get_decision_detail(decision_id: str) -> DecisionDetailResponse:
             if detail["risk_manager"] is not None
             else None
         ),
+        hard_risk_block=(
+            AgentLogItem(**detail["hard_risk_block"])
+            if detail["hard_risk_block"] is not None
+            else None
+        ),
         trades=[TradeItem(**row) for row in detail["trades"]],
+    )
+
+
+@router.get("/candidates", response_model=CandidatesResponse)
+def get_candidates(lookback_days: int = 30) -> CandidatesResponse:
+    """Symbols the evening analyst has repeatedly flagged as `add`/`watch`
+    for universe expansion — see `src.api.db_reads.get_watchlist_candidates`
+    and `src.watchlist_candidates` (Stage 2 Checkpoint C candidates gap)."""
+    rows = db_reads.get_watchlist_candidates(lookback_days=lookback_days)
+    return CandidatesResponse(
+        candidates=[CandidateItem(**row) for row in rows],
+        lookback_days=lookback_days,
     )
 
 

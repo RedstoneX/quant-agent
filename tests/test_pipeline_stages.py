@@ -554,6 +554,172 @@ def test_risk_stage_delegation_returns_early_exit_dict():
     assert out["status"] == "rejected"
 
 
+# ---------------------------------------------------------------------------
+# Stage 2 Checkpoint C — deterministic hard-risk block forensic persistence.
+#
+# Before this, RiskStage.run() returned early with an in-memory
+# {"status": "hard_risk_block", "reason": ...} dict whenever the
+# deterministic hard-risk gate blocked EVERY candidate before
+# risk_manager ever ran — no row of any kind recorded which rule fired.
+# `TradingPipeline._persist_hard_risk_block` now writes a forensic
+# `agent_logs` row (agent_name="risk_gate") at both early-return sites.
+# ---------------------------------------------------------------------------
+
+def test_persist_hard_risk_block_writes_risk_gate_agent_log():
+    """Unit test of the persistence helper itself: distinct sentinel
+    agent_name (never confused with a real risk_manager LLM call), known-
+    zero (not unknown) cost/tokens, decision_id threaded through, reasons
+    text preserved verbatim."""
+    from src.pipeline import TradingPipeline
+    from src.pipeline_context import RunContext as _RunContext
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = MagicMock()
+    ctx = _RunContext.start("morning")
+    ctx.decision_id = f"{ctx.run_id}-dec-000099"
+
+    TradingPipeline._persist_hard_risk_block(
+        pipeline, ctx, "AAPL position would be 25.0% and exceed max 20%",
+        stage="pre_rm",
+    )
+
+    pipeline.db.insert_agent_log.assert_called_once()
+    kwargs = pipeline.db.insert_agent_log.call_args.kwargs
+    assert kwargs["agent_name"] == "risk_gate"
+    assert kwargs["agent_name"] != "risk_manager"
+    assert kwargs["run_id"] == ctx.run_id
+    assert kwargs["decision_id"] == ctx.decision_id
+    assert kwargs["status"] == "hard_risk_block"
+    assert kwargs["model"] == "deterministic"
+    assert kwargs["cost_usd"] == 0.0  # known-zero, not None/"unknown"
+    assert kwargs["tokens_used"] == 0
+    assert "exceed max 20%" in kwargs["full_response"]
+
+
+def test_persist_hard_risk_block_never_raises_on_db_failure():
+    """A persistence failure must never propagate into the risk decision
+    path — it's forensic-only, additive, and non-critical."""
+    from src.pipeline import TradingPipeline
+    from src.pipeline_context import RunContext as _RunContext
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = MagicMock()
+    pipeline.db.insert_agent_log.side_effect = RuntimeError("disk full")
+    ctx = _RunContext.start("morning")
+
+    TradingPipeline._persist_hard_risk_block(pipeline, ctx, "reason", stage="pre_rm")
+    # No exception raised — that's the assertion.
+
+
+def _risk_stage_pipeline(decisions):
+    """A pipeline stub wired just enough for RiskStage.run() to reach the
+    hard-risk-block early-return path deterministically, mirroring
+    tests/test_bugfixes.py's direct-_filter_hard_risk_decisions style but
+    through the full RiskStage.run() so the persistence call site itself
+    is exercised, not just the helper."""
+    from src.pipeline import TradingPipeline
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = MagicMock()
+    pipeline._sweeper = MagicMock(return_value=None)
+    pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
+    pipeline._clamp_queued_earnings_buys = MagicMock(return_value=decisions)
+    return pipeline
+
+
+def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything():
+    """First early-return site (before risk_manager.review is ever called)."""
+    from src.models import PortfolioDecision
+
+    decisions = [_buy("AAPL", 25)]
+    pipeline = _risk_stage_pipeline(decisions)
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        return_value=([], [], ["AAPL position would be 25.0% and exceed max 20%"]),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.decision_id = f"{ctx.run_id}-dec-000001"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+    )
+
+    stage = RiskStage(pipeline=pipeline)
+    result = stage.run(ctx)
+
+    assert result == {
+        "status": "hard_risk_block", "orders": [],
+        "reason": "AAPL position would be 25.0% and exceed max 20%",
+    }
+    pipeline.db.insert_agent_log.assert_called_once()
+    kwargs = pipeline.db.insert_agent_log.call_args.kwargs
+    assert kwargs["agent_name"] == "risk_gate"
+    assert kwargs["run_id"] == ctx.run_id
+    assert kwargs["decision_id"] == ctx.decision_id
+    assert "exceed max 20%" in kwargs["full_response"]
+
+
+def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_everything():
+    """Second early-return site: RM approves with modifications, the
+    re-filter after applying them blocks everything. risk_manager.review
+    IS reached and logged normally here — the forensic risk_gate row is
+    additive on top of (not instead of) the real risk_manager agent_logs
+    row RiskStage.run() already writes for a reached RM call."""
+    from src.models import PortfolioDecision, RiskVerdict
+
+    first_pass_decisions = [_buy("AAPL", 10)]
+    pipeline = _risk_stage_pipeline(first_pass_decisions)
+    pipeline._apply_risk_modifications = MagicMock(return_value=first_pass_decisions)
+
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
+        modifications=[{
+            "symbol": "AAPL", "field": "allocation_pct",
+            "original_value": 10, "new_value": 5, "reason": "trim sizing",
+        }],
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    # First _filter_hard_risk_decisions call (pre-RM) lets the BUY through;
+    # second call (post-modifications re-filter) blocks everything.
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=[
+            (first_pass_decisions, [], []),
+            ([], [], ["AAPL position would be 25.0% and exceed max 20%"]),
+        ],
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.decision_id = f"{ctx.run_id}-dec-000002"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=first_pass_decisions, portfolio_view="test",
+    )
+
+    stage = RiskStage(pipeline=pipeline)
+    result = stage.run(ctx)
+
+    assert result == {
+        "status": "hard_risk_block", "orders": [],
+        "reason": "AAPL position would be 25.0% and exceed max 20%",
+    }
+    # One real risk_manager agent_logs write (RM was reached) + one
+    # forensic risk_gate write (post-modifications block).
+    assert pipeline.db.insert_agent_log.call_count == 2
+    agent_names = [c.kwargs["agent_name"] for c in pipeline.db.insert_agent_log.call_args_list]
+    assert agent_names == ["risk_manager", "risk_gate"]
+    gate_kwargs = pipeline.db.insert_agent_log.call_args_list[1].kwargs
+    assert gate_kwargs["decision_id"] == ctx.decision_id
+    assert "exceed max 20%" in gate_kwargs["full_response"]
+
+
 def test_decision_stage_delegation_returns_none():
     """Method contract preserved: _decision_stage mutates ctx, returns None."""
     from src.pipeline import TradingPipeline

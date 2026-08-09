@@ -1,7 +1,10 @@
 # Mission Control API — Stage 2 (Thin Read-Only)
 
 Status: **implemented 2026-08-09** on branch
-`claude/stage-2-mission-control-api-4zpx7j`, awaiting Checkpoint C operator
+`claude/stage-2-mission-control-api-4zpx7j`, **Checkpoint C completion slice
+implemented 2026-08-09** on branch `claude/stage-2-checkpoint-c-fb1ip0`
+(candidates endpoint + hard-risk-block forensic reconstruction — see
+"Checkpoint C completion slice" below), awaiting Checkpoint C operator
 acceptance (see `docs/MILESTONES.md` Stage 2 and `docs/CHECKPOINT_C_ACCEPTANCE.md`
 once recorded).
 
@@ -104,47 +107,109 @@ succeeds identically before/after).
 | `GET /agents` | config (static) | roster: name, role, configured model/provider |
 | `GET /agents/{agent_name}` | config + SQLite `agent_logs` | roster entry + recent call history (full prompt/response, tokens, cost, latency, status) |
 | `GET /reflections?limit=` | SQLite `insights` + filesystem | recent evening insights; `meta_periods` is existence-only (`data/evolution/{period}/{digest,reflection,proposed_edits}.json` presence, contents never parsed at this layer) |
+| `GET /candidates?lookback_days=` | SQLite `insights.missed_opportunities_json` | symbols the evening analyst has repeatedly flagged `add`/`watch` for universe expansion — see "Checkpoint C completion slice" below |
 
 Names are drawn directly from Wave-0 canonical-source inspection, not
 invented — every route maps to a pre-existing table/broker method, plus one
 new but narrowly-scoped read helper (`client.get_orders(...)` for
 open/recent orders — no general "list all orders" read existed before).
 
-## Known limitation — deterministic hard-risk gate rejections are not persisted
+## Checkpoint C completion slice (2026-08-09, branch `claude/stage-2-checkpoint-c-fb1ip0`)
+
+Independent ChatGPT review of the implemented-but-unaccepted Stage 2 branch
+found two Checkpoint C gaps. Both are resolved here, additively, without
+reopening the rest of Stage 2's architecture:
+
+**1. Candidates/watchlist API contract gap — resolved via extraction, not a
+second engine.** The governed milestone text ("Expose only what is needed
+for UI: account, positions, orders, trades, **candidates**, ...",
+`docs/MILESTONES.md` Stage 2) did require candidates; the original
+implementation's claim that it "was not in the Stage 2 brief's required
+data contract" was incorrect and has been corrected here rather than
+left standing. Repository inspection found the only existing candidate
+read, `TradingPipeline._build_watchlist_candidates`
+(symbols the evening analyst has repeatedly flagged `add`/`watch` for
+universe expansion, aggregated from `insights.missed_opportunities_json`),
+is a **pure function of already-persisted canonical data** — its only
+dependency is `self.db.get_recent_insights(...)`, no broker, no execution
+state, no other pipeline internals. The aggregation body was extracted
+verbatim into a new zero-dependency module,
+`src/watchlist_candidates.py:build_watchlist_candidates(rows, lookback_days)`
+(stdlib `json` only — no `src.pipeline`, `src.pipeline_stages`, `src.risk`,
+or `src.api` imports in either direction). `TradingPipeline._build_watchlist_candidates`
+is now a thin fetch-then-aggregate wrapper around it (identical output,
+covered by the pre-existing `tests/test_missed_opportunities.py` suite,
+unchanged). `src/api/db_reads.py:get_watchlist_candidates()` calls the
+existing read-only `get_recent_insights()` query and the same pure
+aggregator, then `GET /candidates?lookback_days=` (default 30) serves it.
+`TradingPipeline` is still never imported by `src/api/` — the isolation
+boundary Stage 2 exists to establish is intact; only a genuinely pure
+helper moved to a neutral location both sides can import.
+This is a **derived/rebuildable read** over canonical `insights` rows, not
+a second candidate-generation engine, and recomputes nothing about trading
+decisions.
+
+**2. Deterministic hard-risk rejection reconstruction gap — resolved via
+one additive `agent_logs` row, no schema change.** The original finding
+stands as accurately described below (now historical): when the
+deterministic hard-risk gate blocked every candidate before `risk_manager`
+ever ran, nothing was persisted. `TradingPipeline._persist_hard_risk_block`
+(`src/pipeline.py`) now writes one forensic `agent_logs` row at both
+`RiskStage.run()` early-return sites (`src/pipeline_stages.py`), using the
+*existing* `Database.insert_agent_log` mechanism — no new table, no new
+column, no change to hard-risk calculations, limits, eligibility,
+execution semantics, or broker behavior. The row uses the sentinel
+`agent_name="risk_gate"`, deliberately distinct from the real
+`"risk_manager"` LLM agent name, so it can never be mistaken for (or
+accidentally replayed as) an actual RM call: `scripts/replay_decision.py`
+selects rows by exact `agent_name` match, and the fixed 9-name
+`AGENT_NAMES` roster (`/agents`, `/agents/{agent_name}`) is unaffected
+since it never enumerates `agent_logs` — `"risk_gate"` simply doesn't
+match either. `cost_usd`/`tokens_used` are persisted as known-zero (`0`,
+`0.0`), not `None` — no LLM call happened, so the cost is exactly zero,
+not unknown, which keeps `Database.sum_session_cost`'s any-null-means-
+unknown convention from nulling out an otherwise-fully-priced run's total.
+The call is wrapped so a persistence failure can never affect the
+already-made early-return risk decision.
+
+`RunDetailResponse.hard_risk_block_recorded` is no longer hardcoded
+`False` — `GET /runs/{run_id}` now computes it from whether the fetched
+`agent_logs` includes a `agent_name="risk_gate"` row. `GET
+/decisions/{decision_id}` gained a `hard_risk_block` field (an
+`AgentLogItem | None`, populated instead of `risk_manager` in exactly this
+case) via `db_reads.get_decision_detail()`'s new `agent_name = 'risk_gate'`
+lookup. No existing field, route, or response shape was removed or
+renamed — both additions are backward compatible with old SQLite DBs (the
+`agent_logs` schema is unchanged; a pre-Checkpoint-C DB simply has zero
+`risk_gate` rows and both endpoints behave exactly as before).
+
+Regression tests: `tests/test_pipeline_stages.py` (4 new — the persistence
+helper directly, its failure-swallowing behavior, and both `RiskStage.run()`
+early-return call sites end-to-end) and `tests/test_api_contract.py` (5 new
+— `/candidates` aggregation/empty/lookback-param, and `/runs/{run_id}` +
+`/decisions/{decision_id}` reconstructing a fully-hard-risk-blocked run).
+Full suite: **1530 passed, 0 failed** (1521 baseline + 9 new).
+
+## Known limitation — deterministic hard-risk gate rejections (historical description, resolved above)
 
 Verified during Wave-0 inspection (not assumed): when
 `TradingPipeline._filter_hard_risk_decisions(...)` blocks **every** candidate
 in a run before it ever reaches `risk_manager`, `RiskStage.run()` returns
 early with an in-memory `{"status": "hard_risk_block", "reason": ...}` dict.
 That reason reaches a log line and (via the noise policy) a Telegram push —
-**no row of any kind, in any table, records which hard-risk rule fired.**
-This is a genuine, structural gap in "deterministic accepted/rejected
-decision" reconstruction, not a formatting inconvenience — there is nothing
-to parse from a JSON blob because nothing was ever written.
-
-Per the Stage 2 brief's schema-discipline instruction ("If you discover a
-remaining schema gap, STOP and explain it before introducing broad
-persistence changes"), Stage 2 does **not** add new persistence to close
-this. `RunDetailResponse.hard_risk_block_recorded` is hardcoded `False`
-rather than guessed from an empty trades list. Closing this (if ever wanted)
-would mean persisting `RiskViolation` objects somewhere queryable — a
-schema change squarely outside Stage 2's bounded scope, left for a future
-stage to propose explicitly.
+at Stage 2 sign-off, **no row of any kind, in any table, recorded which
+hard-risk rule fired.** The Checkpoint C completion slice above closes this
+via one additive `agent_logs` row (`agent_name="risk_gate"`); this section
+is retained as an accurate record of the original finding rather than
+deleted.
 
 A **partial** hard-risk block (some candidates blocked, RM still reached for
-the remainder) is fully reconstructable — the RM's `agent_logs.full_response`
-carries its own reasoning, and blocked-vs-allowed is inferable from which
-symbols made it to `trades`.
+the remainder) was, and remains, fully reconstructable — the RM's
+`agent_logs.full_response` carries its own reasoning, and blocked-vs-allowed
+is inferable from which symbols made it to `trades`.
 
-## Deliberately out of Stage 2 scope
+## Stage 2 scope not addressed by the Checkpoint C completion slice
 
-- No `/candidates` or `/watchlist` endpoint. The only existing read
-  (`TradingPipeline._build_watchlist_candidates`) lives on the pipeline
-  object itself (`src/pipeline.py`, 7000+ lines) — importing it would pull
-  `src/api/` into the trading-execution import graph, violating the
-  isolation boundary this stage exists to establish. Not in the Stage 2
-  "Data contract requirements" list either. Left for a future stage to
-  decide how to expose without that coupling.
 - Meta Reflector `digest.json`/`reflection.json`/`proposed_edits.json`
   contents are not parsed or summarized — `/reflections` reports only
   which files exist per period. These are LLM-generated free text meant for
@@ -153,6 +218,12 @@ symbols made it to `trades`.
 - No journal UI, no full-text search index, no NL→SQL. Stage 2 exposes the
   canonical records Stage 5 would derive a journal/search index from; it
   does not build that index.
+- `/candidates` exposes universe-expansion candidates (the only candidate
+  concept with a canonical persisted read). It does not expose an
+  intraday/pre-trade "buy candidates considered this run" concept — no
+  such canonical record exists independent of `agent_logs.full_response`
+  (the PM's own reasoning), which `/runs/{run_id}` and
+  `/decisions/{decision_id}` already surface.
 
 ## Running it
 
