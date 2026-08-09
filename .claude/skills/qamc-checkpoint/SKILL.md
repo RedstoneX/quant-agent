@@ -1,37 +1,32 @@
 ---
 name: qamc-checkpoint
-description: Close a QAMC internal stage gate or external tranche checkpoint with tests, independent review, commit boundary, operator Compass refresh, and correct STOP behavior.
+description: Close an authorized implementation gate with verification, independent review, clean handoff and correct STOP behavior.
 ---
 
 # QAMC checkpoint workflow
 
-Read `docs/STATE.md`, `docs/ROADMAP.md`, and `docs/work/ACTIVE.md` to determine whether this is an internal tranche gate or the external STOP.
-Do not preload the Project Compass while engineering; refresh it at the handoff step from authoritative live state.
+Read `docs/STATE.md` and `docs/WORK.md`.
 
 ## Internal gate
 
-1. Verify that stage's acceptance outcome against the actual implementation.
-2. Run targeted tests/type/build checks appropriate to the changed surface.
-3. For UI work, obtain real runtime/visual evidence where available.
-4. Invoke a fresh `qamc-reviewer`; for UI-heavy work also invoke `qamc-ui-reviewer`.
-5. Fix verified BLOCKER/IMPORTANT findings and rerun affected checks.
-6. Create a clear commit boundary identifying the stage.
-7. Refresh `docs/knowledge/PROJECT_COMPASS.md` so the operator can immediately see what just completed, what is happening now, and what comes next. Follow `.claude/rules/documentation.md`; keep it plain-English, visual, emoji-landmarked and concise.
-8. Do **not** create another governance/checkpoint document merely to narrate work already evidenced by commits/tests.
-9. If the current `docs/STATE.md` authorizes continuation across the gate, continue.
+1. Verify the accepted outcome for this slice.
+2. Run appropriate targeted tests/build/type checks and UI runtime/visual checks where applicable.
+3. Invoke a fresh `qamc-reviewer`.
+4. Fix verified BLOCKER/IMPORTANT findings and rerun affected checks.
+5. Create a clear commit boundary.
+6. Refresh `docs/PROJECT_COMPASS.md` from authoritative state.
+7. Continue only if `STATE.md` / `WORK.md` authorize it.
 
-## External checkpoint / tranche end
+Do not create a checkpoint/status document merely to narrate evidence already in tests/commits.
 
-1. Verify all authorized outcomes.
-2. Run the governed complete backend suite once plus complete frontend build/type/lint/test checks that exist.
-3. Re-check paper-only, deterministic-risk, API read-only, no-secret, and trading-isolation invariants.
-4. Perform fresh-context independent review with `qamc-reviewer` and UI review where applicable.
-5. Fix verified findings and rerun affected checks.
-6. Ensure the branch has clean, auditable stage-boundary commits.
-7. Refresh `docs/knowledge/PROJECT_COMPASS.md` to show **implementation complete / external review pending**. Never mark external acceptance yourself.
-8. Push the implementation branch.
-9. STOP. Do not merge and do not start the next unauthorized stage.
+## External gate
 
-Handoff must report branch, stage-boundary commits, tests/checks, visual verification, architecture choices, independent-review findings/resolutions, and remaining limitations.
+1. Verify the complete authorized outcome.
+2. Run the governed full backend suite plus relevant complete frontend checks.
+3. Re-check paper-only, deterministic-risk, read-only API, no-secret and trading-isolation boundaries.
+4. Perform fresh independent review and resolve verified BLOCKER/IMPORTANT findings.
+5. Ensure clean auditable commits.
+6. Refresh `docs/PROJECT_COMPASS.md` to show external review pending; never self-mark external acceptance.
+7. Push and **STOP**. Do not merge or start unauthorized work.
 
-ChatGPT/operator perform the external acceptance review and merge. `docs/STATE.md` is updated after accepted merge, not by Claude claiming its own external acceptance. The accepted merge/reconciliation should also leave the operator Compass synchronized with the newly accepted state.
+ChatGPT/operator perform external acceptance and accepted merge.
