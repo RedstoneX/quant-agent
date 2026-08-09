@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QAMC Mission Control</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-left">
+    <h1>QAMC <span class="dim">Mission Control</span></h1>
+    <span id="mode-badge" class="badge badge-unknown">MODE UNKNOWN</span>
+  </div>
+  <div class="topbar-right">
+    <span id="health-dot" class="health-dot health-unknown" title="System health"></span>
+    <span id="health-label" class="dim">checking…</span>
+    <span id="last-updated" class="dim last-updated"></span>
+  </div>
+</header>
+
+<main>
+  <section class="panel panel-wide" id="panel-account" data-panel>
+    <div class="panel-head">
+      <h2>Account</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-positions" data-panel>
+    <div class="panel-head">
+      <h2>Positions</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-orders" data-panel>
+    <div class="panel-head">
+      <h2>Orders</h2>
+      <div class="panel-head-actions">
+        <select id="orders-status">
+          <option value="open" selected>Open</option>
+          <option value="closed">Closed</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-wide" id="panel-trades" data-panel>
+    <div class="panel-head">
+      <h2>Recent Trades</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-wide" id="panel-candidates" data-panel>
+    <div class="panel-head">
+      <h2>Watchlist Candidates</h2>
+      <span class="panel-subtitle">Symbols the evening analyst has repeatedly flagged for universe expansion — not every symbol considered during a trading run.</span>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-wide" id="panel-health" data-panel>
+    <div class="panel-head">
+      <h2>System Health</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span>QAMC Mission Control is a read-only view. It cannot place, cancel, or modify orders, and its failure has no effect on trading.</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
