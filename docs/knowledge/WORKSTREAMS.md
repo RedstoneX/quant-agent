@@ -1,18 +1,10 @@
-# Workstreams & Parallelism
+# Deprecated: Workstreams
 
-Parallelism begins only after Stage 0 establishes interfaces.
+The previous workstream file is preserved at
+`docs/history/legacy/WORKSTREAMS_2026-08-09.md`.
 
-## Lead responsibility
-One lead Claude session owns architecture compliance, integration, checkpoints and source-of-truth updates.
+Current work authorization and stage boundaries are defined by:
+- `docs/STATE.md`
+- `docs/ROADMAP.md`
 
-## Safe parallel work after prerequisites
-- Stage 0: parallel **read-only** source inspection (core/provider; risk/execution; persistence/learning; donors), reconciled by lead.
-- Stage 1: provider routing and correlation/telemetry can separate after interface agreement.
-- Stage 2/3: API endpoints, native frontend shell and chart integration can parallelize after API contracts freeze.
-- Stage 4: agent visualization and model/cost visualization can parallelize.
-- Stage 5: after journal schema freeze, journal frontend, indexed-search backend and Suggested Investigations can parallelize.
-- *(Stage 6 AgentLens pilot removed from the roadmap 2026-08-09 — DECISION #34.)*
-- Stages 7/8: reduce parallel writes; prompt mutation/risk/operational controls require tighter serialized review.
-
-## Branch/worktree rule
-Independent subagents must use bounded branches/worktrees when they modify code. No two agents should edit the same integration seam concurrently.
+Claude Code determines the implementation worker topology dynamically using the native `.claude/` operating model.
