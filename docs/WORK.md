@@ -1,46 +1,66 @@
 # QAMC Current Work
 
-Status: **STAGE 3 IMPLEMENTATION AUTHORIZED**
+Status: **STAGES 4–5 COORDINATED IMPLEMENTATION AUTHORIZED**
 
 ## Goal
 
-Build the smallest polished browser/iPad **Trading Cockpit** over the accepted Stage-2 read-only API.
+Complete the remaining read-only Mission Control outcome as one coordinated engineering tranche. Use `/qamc-build`.
 
-Use `/qamc-build`.
+Claude owns routine architecture, decomposition, implementation choices, workers, integration, testing and debugging inside this contract. **Do not stop merely because Stage 4 finishes.** Close Stage 4 as an internal checkpoint and continue into Stage 5 when its checks/review are green.
 
-## Required outcome
+## Stage 4 — specialist evidence + decision understanding
 
-- Real API-backed account/equity/P&L, positions, orders, trades, health, and existing watchlist-candidate feed.
-- Clear Alpaca **Paper** identity.
-- Honest empty/loading/error/degraded states.
-- No production mock fallback.
-- Responsive desktop + representative iPad experience.
-- `/candidates` must be labeled as the watchlist/expansion feed, not as every symbol considered during a trading run.
+### Required outcome
 
-## Boundaries
+- Persist the already-validated specialist evidence needed for durable forensic display using the smallest additive, non-authoritative projection that preserves each source's natural scope.
+- Expose that evidence through typed GET-only API responses.
+- Per-candidate UI shows available symbol-specific technical/earnings/news evidence plus clearly labeled broader macro/news context where applicable.
+- Show disagreement/consensus without pretending every agent emitted the same kind of signal.
+- Follow the selected symbol through PM proposal → AI Risk response/modification → deterministic gate → executed/rejected result, including proposed-versus-executed delta.
+- Show requested/actual model/provider, fallback, tokens/cost/latency where available.
 
-- No trading/risk semantic changes.
+### Boundaries
+
+- Never reconstruct canonical structured evidence by parsing raw LLM blobs in the client.
+- Do not assign `decision_id` to research-phase `agent_logs` or change the tested PM/Risk/trade correlation model.
+- Do not invent per-symbol macro conclusions when the source is run/sector scoped.
+- New persistence is observational/non-authoritative and cannot affect trading.
+
+### Internal checkpoint
+
+- Tests prove existing research `agent_logs.decision_id` semantics remain unchanged.
+- Tests prove structured evidence is persisted from validated model output and read back for the correct run/natural scope.
+- Verify the decision interface against a real historical or controlled run without requiring raw-log reading.
+- Run appropriate full/targeted checks and fresh independent review; fix verified BLOCKER/IMPORTANT findings.
+- Create a clean commit boundary, refresh the Compass, then **continue to Stage 5 without external approval**.
+
+## Stage 5 — journal + forensic search
+
+### Required outcome
+
+- Useful prior-day browsing/journal over authoritative or rebuildable derived data.
+- Search/filtering that lets the operator find historical trades, decisions, agents/models and relevant forensic context without reading raw logs.
+- Keep journal/search read-only and non-authoritative; do not create a second trading-memory system.
+- No endpoint accepts or generates arbitrary SQL.
+- Exact journal sections, indexing/search technology and UI structure are engineering choices. Recover old ideas from Git history only when they still earn their place.
+
+### Final acceptance
+
+- Integrated Mission Control remains read-only, non-critical to trading and honest about missing/degraded data.
+- Full backend suite remains green; run all applicable frontend/runtime checks.
+- Perform final desktop/iPad runtime/visual verification across meaningful populated/empty/error/degraded states.
+- Perform fresh independent review and resolve verified BLOCKER/IMPORTANT findings.
+- Refresh `docs/PROJECT_COMPASS.md`, commit/push the complete tranche, and **STOP for ChatGPT/operator external review**.
+
+## Hard boundaries for the whole tranche
+
+- Alpaca **Paper only**.
+- No deterministic trading/risk semantic changes.
 - No broker-write Mission Control operations.
-- No Stage-4 per-candidate specialist persistence or decision-interface work yet.
-- No Stage-5 journal/search work.
-- Frontend stack, charting library, and old donor projects are implementation choices, not requirements. Choose the smallest maintainable approach that satisfies the outcome.
-- Mission Control remains read-only, non-critical to trading, and safe to fail independently.
 - No secrets or fake production trading state in client/UI surfaces.
+- No unnecessary distributed infrastructure or broad canonical-schema redesign.
+- Frontend stack, charting, search/index implementation and prior donor projects remain implementation choices, not requirements.
 
-## Acceptance
+## Escalate early only when necessary
 
-- Relevant cockpit data is backed by the accepted Stage-2 API and correctly labeled.
-- Running visual verification at desktop and representative iPad viewport.
-- Verify populated plus empty/loading/error/degraded states.
-- Existing backend suite remains green.
-- Run frontend build/lint/type/test checks that apply to the implementation chosen.
-- Refresh `docs/PROJECT_COMPASS.md` before handoff.
-
-## Future accepted direction — not authorized in this build
-
-- Stage 4 will provide per-candidate specialist evidence, preserving native scopes: tech/earnings are naturally symbol-oriented; news mixes symbol and broader context; macro is run/sector-level. Do not fabricate a universal per-symbol agent schema or change existing `decision_id` semantics.
-- Stage 5 remains journal/forensic-search capability to be re-evaluated when Stage 4 is accepted.
-
-## Handoff
-
-Commit and push the Stage-3 implementation branch, record verification evidence concisely, and **STOP**. ChatGPT/operator review the actual GitHub implementation before Stage 4 is authorized.
+Stop before the final gate only if there is a genuine unresolved operator product/value trade-off, a material architecture/safety/scope conflict, or evidence that invalidates the accepted outcome contract. Routine engineering choices and ordinary implementation problems belong to Claude.
