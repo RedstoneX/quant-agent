@@ -49,7 +49,7 @@ Acceptance checkpoint A:
 **All Checkpoint A criteria satisfied and ACCEPTED by the operator 2026-08-09.
 Stage 0 is DONE.**
 
-## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — **IMPLEMENTED, AWAITING CHECKPOINT A5 ACCEPTANCE**
+## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — **DONE (Checkpoint A5 accepted 2026-08-09)**
 Bounded correctness fix, deliberately kept **outside** Stage 1.
 
 Operator direction: historical experimental attribution cannot reliably be
@@ -76,7 +76,7 @@ Checkpoint A5: trading behavior unchanged; full suite green plus the new
 targeted tests; `agent_logs.model` demonstrably records the actual model; no
 schema change; no `_execute()` change. **STOP.**
 
-**Implemented 2026-08-09 on branch `claude/stage-0-5-attribution-hotfix-nbjkep`.**
+**Implemented 2026-08-09 on branch `claude/stage-0-5-attribution-hotfix-nbjkep` and merged by PR #6.**
 All nine call sites changed from `model=config.llm.<agent>_model` to
 `model=<result>.model` (the field `AgentResult.model` already carried,
 previously discarded). One pre-existing test
@@ -91,10 +91,11 @@ covering all nine call sites; each was confirmed to fail against the
 pre-fix code (configured model persisted) and pass against the fix (actual
 `AgentResult.model` persisted). Full suite: **1436 passed, 0 failed** (1431
 baseline + 5 new). No database schema change. `src/agents/base.py::_execute()`
-untouched. Awaiting operator Checkpoint A5 acceptance before Stage 1 unblocks.
+untouched.
 
-## Stage 1 — Provider, Model & Correlation Plumbing — BLOCKED
-**Blocked until Checkpoint A5 (Stage 0.5) is accepted.**
+**Checkpoint A5 ACCEPTED by the operator 2026-08-09. Stage 0.5 is DONE. Stage 1 is authorized as NEXT.**
+
+## Stage 1 — Provider, Model & Correlation Plumbing — **NEXT (AUTHORIZED 2026-08-09)**
 - explicit provider/model configuration compatible with existing per-agent settings;
 - OpenRouter and/or Google AI Studio path with minimal provider abstraction;
 - preserve resilience without contaminating experiment attribution;
