@@ -8,9 +8,9 @@ This file is for coding agents that use `AGENTS.md`. Claude Code uses native `CL
 2. `docs/STATE.md` — current accepted state and authorization.
 3. `docs/work/ACTIVE.md` — current discovery/implementation handoff contract.
 4. `docs/decisions/ACTIVE.md` — operative decisions.
-5. Relevant `docs/architecture/` files only when needed.
+5. Relevant **current/accepted** files under `docs/architecture/` only when needed.
 
-Do not treat `docs/history/` or legacy governance snapshots as current instructions.
+`docs/reference/` and `docs/history/` contain prior proposals/evidence. They are not current instructions or authorization.
 
 ## Current workflow
 
@@ -30,7 +30,6 @@ Substantial work is discovery-first:
 - Mission Control/API/journal/search/UI must remain non-critical and cannot directly execute broker writes during read-only phases.
 - No secrets or fake production state.
 - Derived search/journal state must be rebuildable.
-- AgentLens is out of plan.
 - No unnecessary infrastructure.
 - Preserve upstream mergeability.
 
