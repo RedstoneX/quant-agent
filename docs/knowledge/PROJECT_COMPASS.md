@@ -12,15 +12,20 @@
 - Stage 1 remains **BLOCKED** until Checkpoint A5 (Stage 0.5) is accepted.
 - Feature implementation: **not started** beyond the authorized Stage 0.5 scope.
 - Live trading: **not authorized**.
+- AI development economy/session policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
 ## Start here
 1. `/AGENTS.md`
 2. `/CLAUDE.md` (upstream invariants)
-3. `/docs/DECISIONS.md`
-4. `/docs/MILESTONES.md`
-5. `/docs/ACCEPTANCE_CRITERIA.md`
-6. `/docs/STAGE0_BASELINE_AUDIT.md` (verified source map, seams, discrepancies)
-7. Architecture document(s) relevant to the task.
+3. `/docs/knowledge/AI_OPERATING_SYSTEM.md` (model/session/context economy)
+4. `/docs/DECISIONS.md`
+5. `/docs/MILESTONES.md`
+6. `/docs/ACCEPTANCE_CRITERIA.md`
+7. `/docs/STAGE0_BASELINE_AUDIT.md` (verified source map, seams, discrepancies)
+8. Architecture document(s) relevant to the task.
+
+## AI execution policy headline
+Use **Sonnet by default for implementation**, reserve **Opus** for architecture/audit, difficult debugging, high-risk decisions and major independent reviews, and use Haiku only for genuinely mechanical/simple work. Start a **fresh Claude Code session for each bounded milestone/slice**, rehydrate from GitHub rather than old transcripts, use targeted tests while developing, and run the full suite at governed checkpoints. If context/usage balloons, STOP and split the work rather than carrying a long session forward. Full policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
 ## Current architectural headline
 Keep quant-agent intact. Add minimal provider/telemetry/API seams. Build a
