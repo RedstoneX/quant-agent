@@ -12,7 +12,7 @@ Read only:
 2. `docs/STATE.md`;
 3. `docs/WORK.md`.
 
-Then inspect only source, tests and accepted architecture needed to answer the current problem. Read `docs/ROADMAP.md` only when sequencing matters. History/reference material is optional evidence, never authority.
+Then inspect only source, tests and accepted architecture needed to answer the current problem. Use targeted Git history only when current evidence is insufficient.
 
 ## Role
 
@@ -30,7 +30,7 @@ Classify material findings:
 - **REMOVE** — unnecessary, duplicated, stale or too costly;
 - **ADD** — missing capability required by the outcome.
 
-Challenge architecture and sequencing, accepted Stage-2 data/API suitability, reuse versus custom work, UI/data-flow and forensic-history needs, verification strategy, unnecessary infrastructure, and assumptions inherited from earlier plans. Do not revive old donors/components/stages merely because Git history contains them.
+Challenge architecture/sequencing, accepted Stage-2 data/API suitability, reuse versus custom work, UI/data-flow and forensic-history needs, verification strategy, unnecessary infrastructure, and assumptions inherited from earlier plans. Do not revive old donors/components/stages merely because Git history contains them.
 
 Use focused inexpensive subagents for bounded repository search/high-volume reading when useful. Escalate model/worker strength only when the task genuinely needs it.
 

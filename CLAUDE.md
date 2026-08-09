@@ -10,14 +10,15 @@ For substantial work:
 - use `/qamc-discover` when discovery/architecture challenge is authorized;
 - use `/qamc-build` only when `docs/STATE.md` and `docs/WORK.md` explicitly authorize implementation.
 
-Load only what the task needs. Do **not** preload the whole repository, `docs/PROJECT_COMPASS.md`, `docs/history/`, or `docs/reference/`.
+Load only what the task needs. Do **not** preload the whole repository or `docs/PROJECT_COMPASS.md`. Use Git history only for specific evidence needed by the current task.
 
 Current machine-facing authority is intentionally small:
 - `docs/OUTCOME.md` — desired result and hard product constraints;
 - `docs/STATE.md` — accepted state and current authorization;
 - `docs/WORK.md` — the one current work/handoff contract;
-- `docs/ROADMAP.md` — sequencing only, when relevant;
 - relevant accepted contracts under `docs/architecture/`.
+
+Any `docs/FUTURE_*` file is conceptual only and never implementation authorization.
 
 ## Hard boundaries
 
@@ -47,4 +48,4 @@ Git is durable QAMC memory. Project auto-memory is disabled. A new Claude sessio
 
 Use dedicated branches. Never force-push, push implementation directly to `main`, or merge a PR from Claude Code. Discovery/implementation handoffs must be committed and pushed before external review.
 
-Do not create new handoff/status/governance documents. `STATE.md` owns current authorization, `WORK.md` owns the current handoff, `ROADMAP.md` owns sequencing, and `PROJECT_COMPASS.md` is a human-only projection.
+Do not create new handoff/status/governance documents. `STATE.md` owns current authorization, `WORK.md` owns the current handoff, and `PROJECT_COMPASS.md` is a human-only projection.

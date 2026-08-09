@@ -15,7 +15,7 @@ Read:
 
 If `STATE.md` or `WORK.md` does not explicitly authorize implementation, **STOP and use `/qamc-discover` instead**.
 
-Do not preload history/reference material.
+Use Git history only for targeted evidence when current contracts/code are insufficient.
 
 ## Role
 
@@ -31,6 +31,6 @@ Root `CLAUDE.md` and path-scoped rules remain mandatory. Do not silently widen s
 
 ## Verification / handoff
 
-Use targeted checks while implementing and real runtime/visual verification for UI work where available. Use fresh independent reviewers at meaningful gates.
+Use targeted checks while implementing and real runtime/visual verification for UI work where available. Use fresh independent review at meaningful gates.
 
 At an external gate, use `/qamc-checkpoint`, push the branch and **STOP** for ChatGPT/operator review. Never merge the implementation PR yourself.

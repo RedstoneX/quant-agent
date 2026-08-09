@@ -12,7 +12,7 @@
 8. Meta Reflector changes remain human-approved while protected risk behavior stays outside automatic evolution.
 9. Any future writable risk configuration requires explicit authorization, server validation, bounded ranges and auditability.
 
-## Verified implementation caveats that matter
+## Verified caveats that matter
 
 - `cash_sweep` `SWEEP_BUY` intentionally bypasses the shared hard-risk gate. It is deterministic, config-fixed and treated as cash-equivalent; its own bounds govern it.
 - The shared deterministic gate runs before AI Risk and again after AI-applied modifications; AI cannot loosen a hard limit.
@@ -20,4 +20,4 @@
 - `alpaca.paper` is the effective paper/live selector; `alpaca.base_url` is not a second live-safety switch.
 - The accepted Stage-2 API is separate-process, GET-only/read-only, uses independent SQLite `mode=ro` history reads, and has no trading-process dependency.
 
-Historical verification details are under `docs/history/` and Git history. Current authorization is always controlled by `docs/STATE.md` + `docs/WORK.md`.
+Detailed verification remains in Git history. The last pre-ultra-lean working-tree snapshot is commit `02e20e6ac1c5c7e65b7f512f76c568328c990e3c`. Current authorization is always controlled by `docs/STATE.md` + `docs/WORK.md`.

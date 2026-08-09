@@ -2,8 +2,6 @@
 
 Status: **ACCEPTED / Checkpoint C — 2026-08-09**.
 
-## Purpose / isolation
-
 `src/api/` is a separate-process, read-only adapter over existing quant-agent state. It is not a trading engine, memory system or trading dependency.
 
 - Trading code does not depend on `src.api`; API failure has zero trading impact.
@@ -14,35 +12,15 @@ Status: **ACCEPTED / Checkpoint C — 2026-08-09**.
 - Typed responses must not expose credential-bearing configuration.
 - Mission Control cannot bypass deterministic risk/execution.
 
-## Accepted endpoints
+Accepted endpoints: `/health`, `/account`, `/positions`, `/orders`, `/trades`, `/runs`, `/runs/{run_id}`, `/decisions/{decision_id}`, `/agents`, `/agents/{agent_name}`, `/reflections`, `/candidates`.
 
-| Route | Meaning |
-|---|---|
-| `/health` | API/DB/broker/session health |
-| `/account` | broker-live account + historical daily P&L |
-| `/positions` | broker-live positions |
-| `/orders` | broker-live read-only orders |
-| `/trades` | canonical trades |
-| `/runs` | run summaries from `agent_logs` |
-| `/runs/{run_id}` | run reconstruction |
-| `/decisions/{decision_id}` | PM → AI Risk/hard-risk → trade reconstruction |
-| `/agents` | configured agent roster/model/provider |
-| `/agents/{agent_name}` | configuration + recent canonical call history |
-| `/reflections` | recent insights + Meta artifact presence |
-| `/candidates` | rebuildable watchlist/universe-expansion candidates from persisted insights |
+When the deterministic gate blocks every candidate, the pipeline writes one additive forensic `agent_logs` row with `agent_name="risk_gate"`. It is not an LLM agent and does not alter risk calculations, eligibility, execution or broker behavior. Run/decision reads use it to reconstruct full hard-risk blocks; old databases simply lack pre-change rows.
 
-## Hard-risk forensics
-
-When the deterministic gate blocks every candidate, the pipeline writes one additive forensic `agent_logs` row with `agent_name="risk_gate"`. It is not an LLM agent and does not alter risk calculations, eligibility, execution or broker behavior.
-
-`/runs/{run_id}` and `/decisions/{decision_id}` use that record to reconstruct full hard-risk blocks. Old databases remain compatible and simply lack pre-change rows.
-
-## Limits
-
-- No API writes.
-- No authoritative UI/journal/search storage.
-- `/reflections` does not parse Meta Reflector free text.
+Limits:
+- no API writes;
+- no authoritative UI/journal/search storage;
+- `/reflections` does not parse Meta Reflector free text;
 - `/candidates` exposes the existing persisted watch/universe-expansion concept, not a new intraday candidate engine.
 
 Accepted full suite at Checkpoint C: **1530 passed, 0 failed**.
-Historical evidence: `docs/history/CHECKPOINT_C_ACCEPTANCE.md`, `docs/history/STAGE0_BASELINE_AUDIT.md`, and Git history.
+Detailed acceptance evidence remains in Git history. The last pre-ultra-lean working-tree snapshot is commit `02e20e6ac1c5c7e65b7f512f76c568328c990e3c`.

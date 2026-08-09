@@ -8,7 +8,7 @@ paths:
 `docs/PROJECT_COMPASS.md` is a human-facing projection, never machine authority.
 
 When refreshing it:
-- derive status from `OUTCOME.md`, `STATE.md`, `WORK.md` and `ROADMAP.md`;
+- derive current status from `OUTCOME.md`, `STATE.md` and `WORK.md`;
 - keep it plain-English, visual and easy to scan;
 - preserve the core sections RIGHT NOW, PROJECT MAP, WHAT JUST HAPPENED, NEXT MOVES, BLOCKERS / DECISIONS, SAFETY;
 - use ✅ DONE, 🟡 NOW, ⏸ HELD, ⬜ LATER, ❌ REMOVED consistently;

@@ -5,13 +5,13 @@ description: Close an authorized implementation gate with verification, independ
 
 # QAMC checkpoint workflow
 
-Read `docs/STATE.md` and `docs/WORK.md`. Use `docs/ROADMAP.md` only if needed to identify the next gate.
+Read `docs/STATE.md` and `docs/WORK.md`.
 
 ## Internal gate
 
 1. Verify the accepted outcome for this slice.
 2. Run appropriate targeted tests/build/type checks and UI runtime/visual checks where applicable.
-3. Invoke a fresh `qamc-reviewer`; use `qamc-ui-reviewer` for UI-heavy work.
+3. Invoke a fresh `qamc-reviewer`.
 4. Fix verified BLOCKER/IMPORTANT findings and rerun affected checks.
 5. Create a clear commit boundary.
 6. Refresh `docs/PROJECT_COMPASS.md` from authoritative state.
