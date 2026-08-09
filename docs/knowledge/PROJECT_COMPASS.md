@@ -7,23 +7,18 @@
 - Repository: `RedstoneX/quant-agent`, controlled fork of `yebof/quant-agent`.
 - Bootstrap baseline: upstream commit `6fc3cf14f4e6f9fde5f6c10fbe4a8d51e3d0f4e7`
   — **verified in Stage 0**. The fork is level with upstream `main` plus
-  documentation-only commits; no source divergence.
+  QAMC changes under governed checkpoints.
 - **Stage 0 — Baseline & Integration-Seam Audit: DONE. Checkpoint A ACCEPTED
   2026-08-09.** Report: `docs/STAGE0_BASELINE_AUDIT.md`.
-- **Stage 0.5 — D-1 Actual-Model Attribution Hotfix: IMPLEMENTED 2026-08-09 on
-  branch `claude/stage-0-5-attribution-hotfix-nbjkep`, awaiting operator
-  Checkpoint A5 acceptance.** All nine `insert_agent_log(...)` call sites
-  (`pipeline_stages.py:280,328,483,699`; `pipeline.py:4704,6109,6296,
-  6654/6668,7050`) now persist `AgentResult.model` (the model that actually
-  answered, including cross-provider failover) instead of
-  `config.llm.<agent>_model` (the configured/requested model). Five targeted
-  regression tests added (`tests/test_agent_log_attribution.py`), one per
-  session type, covering all nine sites; each fails pre-fix and passes
-  post-fix. Full suite: 1436 passed, 0 failed. No schema change; `base.py::
-  _execute()` untouched. Details: `docs/MILESTONES.md` Stage 0.5.
-- Stage 1 remains **BLOCKED** until Checkpoint A5 (Stage 0.5) is accepted.
-- Feature implementation: **not started** beyond the authorized Stage 0.5 scope.
-- Live trading: **not authorized**.
+- **Stage 0.5 — D-1 Actual-Model Attribution Hotfix: DONE. Checkpoint A5
+  ACCEPTED 2026-08-09.** PR #6 merged. All nine `insert_agent_log(...)` call
+  sites now persist `AgentResult.model` (the model that actually answered,
+  including cross-provider failover) instead of the configured/requested model.
+  Five targeted regression tests cover all nine sites. Full suite: **1436
+  passed, 0 failed**. No schema change; `src/agents/base.py::_execute()`
+  untouched. Details: `docs/MILESTONES.md` Stage 0.5.
+- **Stage 1 — Provider, Model & Correlation Plumbing: NEXT / AUTHORIZED.**
+- Live trading: **not authorized**. Alpaca Paper remains the broker boundary.
 - AI development economy/session policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
 ## Start here
@@ -39,6 +34,12 @@
 ## AI execution policy headline
 Use **Sonnet by default for implementation**, reserve **Opus** for architecture/audit, difficult debugging, high-risk decisions and major independent reviews, and use Haiku only for genuinely mechanical/simple work. Start a **fresh Claude Code session for each bounded milestone/slice**, rehydrate from GitHub rather than old transcripts, use targeted tests while developing, and run the full suite at governed checkpoints. If context/usage balloons, STOP and split the work rather than carrying a long session forward. Full policy: `docs/knowledge/AI_OPERATING_SYSTEM.md`.
 
+For stages with genuinely independent work packages, the primary Claude Code
+session may act as the **orchestrator** and delegate bounded work to subagents in
+parallel. The orchestrator owns interface decisions, integration, conflict
+resolution, final tests and the checkpoint report. Do not let multiple workers
+edit the same files concurrently merely to increase parallelism.
+
 ## Current architectural headline
 Keep quant-agent intact. Add minimal provider/telemetry/API seams. Build a
 QAMC-native React dashboard using OpenTradex and Orallexa as selective
@@ -46,26 +47,30 @@ component/design donors, with TradingView Lightweight Charts. **Forensic
 observability is native — `agent_logs` + `run_id` + `scripts/replay_decision.py`
 — with no external observability service.**
 
-## Next bounded task — Stage 0.5 — IMPLEMENTED, awaiting Checkpoint A5 acceptance
-Persisted the model that **actually answered** at the nine `insert_agent_log(...)`
-call sites listed in `docs/STAGE0_BASELINE_AUDIT.md` §9A, plus targeted tests
-proving a cross-provider failover records the failover model. Behaviour-neutral
-for trading. See `docs/MILESTONES.md` Stage 0.5 for the implementation record.
+## Next bounded task — Stage 1 (authorized)
+Implement the governed **Provider, Model & Correlation Plumbing** stage:
 
-**Out of scope, do not touch:** `src/agents/base.py::_execute`, the database
-schema, provider routing, correlation IDs, latency/prompt-version capture,
-OpenRouter — all Stage 1. None were touched.
+- explicit provider/model configuration compatible with existing per-agent settings;
+- OpenRouter and/or Google AI Studio path through the least-invasive provider seam;
+- preserve resilience without silent experimental attribution;
+- persist actual provider/model/tokens/cost/latency/status as required by the frozen contract;
+- add only the correlation identifiers minimally necessary to trace run → decision → order/trade → prompt/model version;
+- preserve the hardened retry/deadline/failover behavior in `BaseAgent._execute()` rather than casually refactoring it.
 
-## Stage 0 outcome (for reference)
-- Baseline suite: **1431 passed, 0 failed, 0 skipped** (hermetic; no network,
-  no API keys). Container setup requires a venv — system pip cannot build `ta`.
+Checkpoint B requires paper-trading/risk behavior unchanged, attribution correct,
+and tests green. **STOP at Checkpoint B; do not begin Stage 2.**
+
+## Stage 0 / 0.5 outcome (for reference)
+- Baseline suite at Stage 0: **1431 passed, 0 failed, 0 skipped** (hermetic; no
+  network, no API keys). Container setup requires a venv — system pip cannot
+  build `ta`.
+- Stage 0.5 suite: **1436 passed, 0 failed** after five new attribution tests.
 - Decision chain, Alpaca lifecycle, persistence, reflection/Meta and scheduler
   mapped in the audit report.
-- Integration seams identified and **not implemented**, cheapest first:
-  actual-model attribution (Stage 0.5), additive `agent_logs` columns via the
-  existing `_ensure_column` migration, provider strategy *below* `_execute()`,
-  `decision_id` on `trades` for decision-level correlation.
-- 10 discrepancies recorded (D-1 … D-10).
+- Integration seams identified, cheapest first: actual-model attribution
+  (**completed Stage 0.5**), additive `agent_logs` columns via existing
+  `_ensure_column`, provider strategy below the hardened execution loop, and a
+  minimal decision-level correlation addition where needed.
 
 ## Donor status (all pinned and inspected)
 | Donor | Repository | Commit | Verdict |
@@ -76,14 +81,13 @@ OpenRouter — all Stage 1. None were touched.
 | ~~AgentLens~~ | `tranhoangtu-it/agentlens` | `21ab445a` | **DROPPED — out of plan** (DECISION #34) |
 
 ## Discrepancy status
-- **D-1** — authorized as Stage 0.5.
-- **D-2, D-3** — resolved at Stage 0 sign-off.
-- **D-4 … D-10** — open and unassigned; see the `docs/DECISIONS.md` conflict
-  register. None blocks Stage 0.5.
+- **D-1 — RESOLVED by Stage 0.5; Checkpoint A5 accepted.**
+- **D-2, D-3 — resolved at Stage 0 sign-off.**
+- **D-4 … D-10** remain in the conflict register unless explicitly resolved by
+  a governed stage. Stage 1 may address only those that naturally fall inside
+  its authorized provider/model/correlation scope.
 
 ## Non-goals now
-No OpenRouter implementation, no dashboard code, no journal code, no risk
-changes, no schema changes and no repository restructuring. AgentLens is out of
-plan — do not instrument, integrate or pilot it (reconsideration condition in
-`docs/architecture/AGENTLENS.md`). Stage 0 recommendations beyond Stage 0.5
-remain advisory and must not be implemented without explicit authorization.
+No dashboard/API/journal implementation, no risk-policy redesign, no live
+trading, no repository restructuring, and no AgentLens integration. Stage 1
+must not expand into Stage 2+ merely because adjacent work is convenient.
