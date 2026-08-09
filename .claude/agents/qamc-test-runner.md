@@ -3,7 +3,7 @@ name: qamc-test-runner
 description: Cheap bounded QAMC test worker. Use proactively to run targeted tests/checks, inspect failures, and return a concise diagnosis without editing implementation files.
 tools: Read, Grep, Glob, Bash
 model: haiku
-permissionMode: plan
+permissionMode: default
 effort: low
 maxTurns: 14
 ---
