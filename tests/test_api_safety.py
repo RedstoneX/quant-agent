@@ -68,6 +68,13 @@ _FORBIDDEN_BROKER_ATTRS = {
     "place_entry_protection",
     "_restore_stop_orders",
     "_finalize_pending_protections",
+    # Independent Stage 2 review (2026-08-09): both write-capable (cancel +
+    # resubmit a stop order) and originally missing from this denylist —
+    # neither is referenced anywhere in src/api/ today, but a future
+    # "current effective stop" read handler could call one of these without
+    # this test catching it.
+    "shift_stops_down",
+    "replace_stop_loss",
 }
 
 
