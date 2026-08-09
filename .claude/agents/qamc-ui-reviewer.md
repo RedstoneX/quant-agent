@@ -21,5 +21,5 @@ Check what is relevant to the accepted outcome, including:
 - console/runtime errors where inspectable;
 - whether visual choices obscure operational state.
 
-Do not enforce old reference wireframes/component maps merely because they exist under `docs/reference/`.
+Do not enforce superseded historical wireframes/component maps merely because Git history contains them.
 Do not edit the implementation. Return BLOCKER / IMPORTANT / MINOR findings and PASS / HOLD.
