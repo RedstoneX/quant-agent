@@ -351,7 +351,8 @@ def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
             actions=[], overall_assessment="stable", risk_level="low",
         ),
         MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0),
+                  input_tokens=1, output_tokens=1, cost_usd=0.0,
+                  model="test-model"),
     )
 
     result = p.run_midday()

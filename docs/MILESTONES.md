@@ -49,7 +49,7 @@ Acceptance checkpoint A:
 **All Checkpoint A criteria satisfied and ACCEPTED by the operator 2026-08-09.
 Stage 0 is DONE.**
 
-## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — **NEXT (AUTHORIZED 2026-08-09)**
+## Stage 0.5 — D-1 Actual-Model Attribution Hotfix — **IMPLEMENTED, AWAITING CHECKPOINT A5 ACCEPTANCE**
 Bounded correctness fix, deliberately kept **outside** Stage 1.
 
 Operator direction: historical experimental attribution cannot reliably be
@@ -76,8 +76,22 @@ Checkpoint A5: trading behavior unchanged; full suite green plus the new
 targeted tests; `agent_logs.model` demonstrably records the actual model; no
 schema change; no `_execute()` change. **STOP.**
 
-**Not implemented on the Stage 0 branch.** Authorized to begin on a separate
-branch.
+**Implemented 2026-08-09 on branch `claude/stage-0-5-attribution-hotfix-nbjkep`.**
+All nine call sites changed from `model=config.llm.<agent>_model` to
+`model=<result>.model` (the field `AgentResult.model` already carried,
+previously discarded). One pre-existing test
+(`tests/test_cash_sweep.py::test_position_review_hides_vehicle_and_parks_at_end`)
+mocked its `AgentResult` with a bare `MagicMock()` that had no `.model` set —
+harmless before the fix (the code read `config.llm.position_reviewer_model`
+instead) but would fail to bind to SQLite once the real field is read; fixed
+by adding `model="test-model"` to that mock, no behavior assertions changed.
+Five new targeted regression tests added in
+`tests/test_agent_log_attribution.py`, one per session type, together
+covering all nine call sites; each was confirmed to fail against the
+pre-fix code (configured model persisted) and pass against the fix (actual
+`AgentResult.model` persisted). Full suite: **1436 passed, 0 failed** (1431
+baseline + 5 new). No database schema change. `src/agents/base.py::_execute()`
+untouched. Awaiting operator Checkpoint A5 acceptance before Stage 1 unblocks.
 
 ## Stage 1 — Provider, Model & Correlation Plumbing — BLOCKED
 **Blocked until Checkpoint A5 (Stage 0.5) is accepted.**

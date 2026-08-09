@@ -10,8 +10,17 @@
   documentation-only commits; no source divergence.
 - **Stage 0 — Baseline & Integration-Seam Audit: DONE. Checkpoint A ACCEPTED
   2026-08-09.** Report: `docs/STAGE0_BASELINE_AUDIT.md`.
-- **Authorized next stage: Stage 0.5 — D-1 Actual-Model Attribution Hotfix.**
-  Not implemented on the Stage 0 branch; begin on a separate branch.
+- **Stage 0.5 — D-1 Actual-Model Attribution Hotfix: IMPLEMENTED 2026-08-09 on
+  branch `claude/stage-0-5-attribution-hotfix-nbjkep`, awaiting operator
+  Checkpoint A5 acceptance.** All nine `insert_agent_log(...)` call sites
+  (`pipeline_stages.py:280,328,483,699`; `pipeline.py:4704,6109,6296,
+  6654/6668,7050`) now persist `AgentResult.model` (the model that actually
+  answered, including cross-provider failover) instead of
+  `config.llm.<agent>_model` (the configured/requested model). Five targeted
+  regression tests added (`tests/test_agent_log_attribution.py`), one per
+  session type, covering all nine sites; each fails pre-fix and passes
+  post-fix. Full suite: 1436 passed, 0 failed. No schema change; `base.py::
+  _execute()` untouched. Details: `docs/MILESTONES.md` Stage 0.5.
 - Stage 1 remains **BLOCKED** until Checkpoint A5 (Stage 0.5) is accepted.
 - Feature implementation: **not started** beyond the authorized Stage 0.5 scope.
 - Live trading: **not authorized**.
@@ -37,15 +46,15 @@ component/design donors, with TradingView Lightweight Charts. **Forensic
 observability is native — `agent_logs` + `run_id` + `scripts/replay_decision.py`
 — with no external observability service.**
 
-## Next bounded task — Stage 0.5 (authorized)
-Persist the model that **actually answered** at the nine `insert_agent_log(...)`
+## Next bounded task — Stage 0.5 — IMPLEMENTED, awaiting Checkpoint A5 acceptance
+Persisted the model that **actually answered** at the nine `insert_agent_log(...)`
 call sites listed in `docs/STAGE0_BASELINE_AUDIT.md` §9A, plus targeted tests
 proving a cross-provider failover records the failover model. Behaviour-neutral
-for trading.
+for trading. See `docs/MILESTONES.md` Stage 0.5 for the implementation record.
 
 **Out of scope, do not touch:** `src/agents/base.py::_execute`, the database
 schema, provider routing, correlation IDs, latency/prompt-version capture,
-OpenRouter — all Stage 1.
+OpenRouter — all Stage 1. None were touched.
 
 ## Stage 0 outcome (for reference)
 - Baseline suite: **1431 passed, 0 failed, 0 skipped** (hermetic; no network,
