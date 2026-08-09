@@ -1,17 +1,15 @@
 # 🧭 QAMC Project Compass
 
 > [!note] 👀 **Human dashboard — for me, not the agents**
-> This is the fast, plain-English view. Machine authority is `OUTCOME.md` + `STATE.md` + `WORK.md` + relevant accepted architecture contracts.
+> Fast plain-English project view. Machine authority is `OUTCOME.md` + `STATE.md` + `WORK.md` + relevant accepted architecture contracts.
 
 ## 🚦 RIGHT NOW
 
-### 🟡 Mission Control architecture discovery / challenge
+### 🟢 R1 approved — **Stage 3 Trading Cockpit is authorized**
 
-Claude Code is **not implementing Mission Control yet**. It first inspects the real repository and challenges the post-Stage-2 direction against the outcome.
+Claude Discovery R1 ✅ → ChatGPT reconciliation ✅ → my approval ✅ → 🛠️ **Stage 3 build next**
 
-🎯 outcome → 🔎 Claude discovery → 👤 genuine product decisions only → 🏗️ ChatGPT architecture reconciliation → ✅ accepted contract → 🛠️ fresh Claude implementation session
-
-> [!important] ⛔ No Mission Control implementation is currently authorized.
+Stage 3 is intentionally narrow: build the browser/iPad cockpit on the existing read-only Stage-2 API. **Stage 4 and Stage 5 are still blocked.**
 
 ## 🗺️ PROJECT MAP
 
@@ -21,48 +19,57 @@ Claude Code is **not implementing Mission Control yet**. It first inspects the r
 | ✅ DONE | 0.5 | Actual-model attribution |
 | ✅ DONE | 1 | Provider/model/correlation plumbing |
 | ✅ DONE | 2 | Isolated read-only Mission Control API |
-| 🟡 NOW | Discovery R1 | Challenge Mission Control before coding |
-| ⏸ HELD | 3 candidate | Trading cockpit/dashboard capability |
-| ⏸ HELD | 4 candidate | AI decision understanding/decision chain |
-| ⏸ HELD | 5 candidate | Journal/searchable forensic history |
+| ✅ DONE | Discovery R1 | Claude challenged the post-Stage-2 plan |
+| ✅ DONE | Reconciliation R1 | ChatGPT independently checked/tightened it; operator approved |
+| 🟢 NOW | 3 | Trading cockpit/dashboard |
+| ⏸ HELD | 4 | Per-candidate specialist evidence + decision chain |
+| ⏸ HELD | 5 | Journal/searchable forensic history |
 | ❌ REMOVED | 6 | AgentLens |
 | ⬜ LATER | 7–9 | Learning/write controls/paper-soak analytics only if later authorized |
 
-Stages 3–5 are candidate groupings, **not frozen architecture**. Discovery may simplify, regroup or remove them.
-
 ## ✅ WHAT JUST HAPPENED
 
-- Stages 0–2 are accepted; Stage 2 finished at **1530 passing tests, 0 failures**.
-- Claude Code now uses progressive disclosure rather than a governance packet.
-- GitHub is durable project memory; Claude project auto-memory is disabled.
-- Repo permissions/sandbox/hooks protect secrets, publication and paper-mode boundaries.
-- The ultra-lean pass removed duplicate decision/acceptance/status/roadmap systems and superseded working-tree archives.
-- Fresh discovery now starts from only **OUTCOME + STATE + WORK**; code/contracts are opened only when needed.
+- Stage 2 remains accepted at **1530 passing tests, 0 failures**.
+- Discovery confirmed the Stage-2 API is a good read-only foundation.
+- I chose **per-candidate fidelity from the start** for the later Stage-4 decision interface.
+- ChatGPT corrected the data model so each specialist keeps its real scope instead of being forced into fake identical per-symbol cards.
+- `/candidates` is explicitly treated as the watchlist/expansion feed, not every symbol considered during a run.
+- Old frontend stacks, chart libraries, donor projects, and historical Journal/Search details are not frozen requirements.
+- R1 is approved. `STATE.md` and `WORK.md` now authorize **Stage 3 only**.
+
+## 🛠️ STAGE 3 — WHAT CLAUDE BUILDS NOW
+
+- 📈 account/equity/P&L
+- 📦 positions
+- 🧾 orders + trades
+- ❤️ system health
+- 👀 watchlist/expansion candidates, honestly labeled
+- 🧪 obvious Alpaca Paper identity
+- 🖥️ polished desktop + iPad layout
+- ⚠️ real empty/loading/error/degraded states
+- 🚫 no production mock fallback
+
+Claude chooses the smallest maintainable frontend implementation. The old React/Tailwind/chart/donor ideas are options, not mandates.
 
 ## ⏭️ NEXT MOVES
 
-1. **Claude — Discovery R1:** run `/qamc-discover`, inspect the actual repo, challenge KEEP / CHANGE / REMOVE / ADD, and push/STOP.
-2. **ChatGPT — architecture reconciliation:** review the actual GitHub discovery branch.
-3. **Me — product acceptance:** accept/reject genuine product direction/trade-offs.
-4. **Claude — implementation:** only after accepted merge, start a fresh Claude session and run `/qamc-build`.
-
-## 🧠 WHO DECIDES WHAT
-
-- 👤 **Me:** outcome, product experience, priorities/trade-offs, final acceptance.
-- 🤖 **Claude Code:** repository discovery, engineering/architecture judgment, implementation orchestration/testing.
-- 🏗️ **ChatGPT:** architecture challenge/reconciliation, independent review, GitHub governance/integration.
-- 🗃️ **GitHub:** durable shared memory/handoff.
+1. 🤖 **Fresh Claude Code session from `main`** → run `/qamc-build`.
+2. 🛠️ Claude builds and verifies Stage 3 on a dedicated branch.
+3. 🛑 Claude pushes and **STOPS**.
+4. 🏗️ ChatGPT independently reviews the actual implementation.
+5. 👤 I accept/reject before Stage 4 can begin.
 
 ## 🚧 BLOCKERS / DECISIONS NEEDED
 
-**None from the operator right now.**
+**None right now.** Stage 3 has a complete accepted work contract.
 
 ## 🛡️ SAFETY
 
-- 🧪 Alpaca Paper only; no live-money trading authorized.
-- 🔒 Deterministic Python risk/execution is final authority.
-- 🖥️ Mission Control remains non-critical and currently read-only.
+- 🧪 Alpaca Paper only.
+- 🔒 Deterministic Python/broker protections remain final authority.
+- 🖥️ Mission Control remains read-only and non-critical to trading.
 - 🗝️ Secrets stay out of Git/client surfaces.
-- 🧱 No unnecessary distributed infrastructure.
+- 🧱 No unnecessary infrastructure.
+- 🚫 Claude cannot merge its own implementation or push directly to `main`.
 
-_Last refreshed: 2026-08-09 — ultra-lean repository/context pass._
+_Last refreshed: 2026-08-09 — R1 approved; Stage 3 authorized._

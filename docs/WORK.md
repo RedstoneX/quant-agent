@@ -1,37 +1,46 @@
 # QAMC Current Work
 
-Status: **DISCOVERY / ARCHITECTURE CHALLENGE**
+Status: **STAGE 3 IMPLEMENTATION AUTHORIZED**
 
 ## Goal
 
-Re-evaluate the post-Stage-2 Mission Control direction against `docs/OUTCOME.md` and the actual repository before any implementation.
+Build the smallest polished browser/iPad **Trading Cockpit** over the accepted Stage-2 read-only API.
 
-Use `/qamc-discover`. No product implementation is authorized in this work phase.
+Use `/qamc-build`.
 
-## Required discovery result
+## Required outcome
 
-Replace the placeholders below with concise evidence. Keep the result at capability/constraint/acceptance level, not a file-by-file build recipe.
+- Real API-backed account/equity/P&L, positions, orders, trades, health, and existing watchlist-candidate feed.
+- Clear Alpaca **Paper** identity.
+- Honest empty/loading/error/degraded states.
+- No production mock fallback.
+- Responsive desktop + representative iPad experience.
+- `/candidates` must be labeled as the watchlist/expansion feed, not as every symbol considered during a trading run.
 
-### Repository findings
+## Boundaries
 
-_Pending._
+- No trading/risk semantic changes.
+- No broker-write Mission Control operations.
+- No Stage-4 per-candidate specialist persistence or decision-interface work yet.
+- No Stage-5 journal/search work.
+- Frontend stack, charting library, and old donor projects are implementation choices, not requirements. Choose the smallest maintainable approach that satisfies the outcome.
+- Mission Control remains read-only, non-critical to trading, and safe to fail independently.
+- No secrets or fake production trading state in client/UI surfaces.
 
-### KEEP / CHANGE / REMOVE / ADD
+## Acceptance
 
-_Pending._
+- Relevant cockpit data is backed by the accepted Stage-2 API and correctly labeled.
+- Running visual verification at desktop and representative iPad viewport.
+- Verify populated plus empty/loading/error/degraded states.
+- Existing backend suite remains green.
+- Run frontend build/lint/type/test checks that apply to the implementation chosen.
+- Refresh `docs/PROJECT_COMPASS.md` before handoff.
 
-### Operator product decisions
+## Future accepted direction — not authorized in this build
 
-_Pending. Record only genuine product/value decisions actually obtained from the operator._
-
-### Architecture consultation
-
-_Pending. Record only material architecture/safety/scope issues needing external reconciliation._
-
-### Proposed implementation outcome contract
-
-_Pending. State capabilities, constraints and verifiable acceptance conditions._
+- Stage 4 will provide per-candidate specialist evidence, preserving native scopes: tech/earnings are naturally symbol-oriented; news mixes symbol and broader context; macro is run/sector-level. Do not fabricate a universal per-symbol agent schema or change existing `decision_id` semantics.
+- Stage 5 remains journal/forensic-search capability to be re-evaluated when Stage 4 is accepted.
 
 ## Handoff
 
-When discovery is complete, commit/push the discovery branch and **STOP before implementation**. ChatGPT/operator review the actual GitHub result. An accepted result is merged before a fresh Claude implementation session starts.
+Commit and push the Stage-3 implementation branch, record verification evidence concisely, and **STOP**. ChatGPT/operator review the actual GitHub implementation before Stage 4 is authorized.
