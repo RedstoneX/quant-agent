@@ -4,11 +4,11 @@ This fork is the authoritative repository for **Quant Agent Mission Control (QAM
 
 ## Read order before any work
 1. Existing root `CLAUDE.md` — inherited upstream trading invariants and implementation knowledge.
-2. `docs/knowledge/PROJECT_COMPASS.md` — navigation and current project state.
-3. `docs/knowledge/AI_OPERATING_SYSTEM.md` — model/session/context economy and AI development workflow.
-4. `docs/DECISIONS.md` — frozen decisions; do not reopen them casually.
-5. `docs/MILESTONES.md` — stage definitions and acceptance criteria.
-6. Any current explicit authorization/acceptance record relevant to the task. For the active Mission Control UI tranche, read `docs/CHECKPOINT_C_ACCEPTANCE.md` and `docs/MISSION_CONTROL_BUILD_TRANCHE.md`.
+2. Current explicit acceptance/authorization records relevant to the task. For the active Mission Control UI tranche, read `docs/CHECKPOINT_C_ACCEPTANCE.md` and `docs/MISSION_CONTROL_BUILD_TRANCHE.md` **before older navigation/status documents**, because they supersede temporary Stage-2/3/4/5 wording that has not yet been fully reconciled everywhere.
+3. `docs/knowledge/PROJECT_COMPASS.md` — navigation and project history/current-state detail.
+4. `docs/knowledge/AI_OPERATING_SYSTEM.md` — model/session/context economy and AI development workflow.
+5. `docs/DECISIONS.md` — frozen decisions; do not reopen them casually.
+6. `docs/MILESTONES.md` — stage definitions and acceptance criteria.
 7. The architecture document(s) relevant to the authorized work.
 8. `docs/ACCEPTANCE_CRITERIA.md` before claiming completion.
 
