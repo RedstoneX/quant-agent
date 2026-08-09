@@ -1,8 +1,12 @@
 """FastAPI app wiring for the Mission Control API.
 
 This module owns the ONLY place the two route modules are assembled into a
-running app. It adds two structural, app-level safety guarantees on top of
-what each router already does individually:
+running app. It also mounts the Stage 3 cockpit (`src/api/static/`) — a
+static HTML/CSS/JS bundle with no build step and no server-side rendering,
+so it carries none of the read/write risk the JSON routes below are guarded
+against; it only ever calls this same GET-only API from the browser. It
+adds two structural, app-level safety guarantees on top of what each router
+already does individually:
 
 1. **GET-only enforcement, at the app level.** A middleware rejects any
    request whose method is not GET/HEAD/OPTIONS with 405 before it can reach
@@ -27,13 +31,17 @@ or `db_reads.py` imports `src.pipeline`, `src.pipeline_stages`,
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.routes_history import router as history_router
 from src.api.routes_live import router as live_router
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +72,12 @@ def create_app() -> FastAPI:
     app.add_middleware(_GetOnlyMiddleware)
     app.include_router(live_router, tags=["live"])
     app.include_router(history_router, tags=["history"])
+
+    if _STATIC_DIR.is_dir():
+        # Stage 3 cockpit — static assets only, no templating/server state.
+        # Mounted last and under its own path so it never shadows the JSON
+        # routes above or the `/` service-meta route below.
+        app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="ui")
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception):
