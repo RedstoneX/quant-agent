@@ -359,9 +359,13 @@ class ConsensusSignal(BaseModel):
 
 class ConsensusSummary(BaseModel):
     signals: list[ConsensusSignal] = []
-    # "aligned" (>=2 signals, single non-neutral direction) | "mixed"
-    # (signals disagree) | "insufficient_data" (0-1 signals available).
-    # Never invents a signal source that didn't actually fire this run.
+    # "aligned" (>=2 signals, exactly one non-neutral direction among them)
+    # | "mixed" (non-neutral signals disagree) | "no_directional_signal"
+    # (>=2 signals fired but every one was neutral — NOT the same as
+    # "aligned"; nobody actually committed to a direction) |
+    # "insufficient_data" (0-1 signals available). Never invents a signal
+    # source that didn't actually fire this run, and never reports
+    # "aligned" for a degenerate all-neutral case.
     agreement: str = "insufficient_data"
 
 

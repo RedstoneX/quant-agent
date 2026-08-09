@@ -210,7 +210,17 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
         agreement = "insufficient_data"
     else:
         directions = {s.direction for s in signals if s.direction != "neutral"}
-        agreement = "aligned" if len(directions) <= 1 else "mixed"
+        if not directions:
+            # >=2 signals fired but every one was "neutral" — a real,
+            # common state (nobody committed to a direction), not
+            # agreement. Reporting "aligned" here would claim consensus
+            # that doesn't exist (Stage 4 boundary: never pretend every
+            # agent emitted the same kind of signal).
+            agreement = "no_directional_signal"
+        elif len(directions) == 1:
+            agreement = "aligned"
+        else:
+            agreement = "mixed"
 
     return CandidateDetailResponse(
         run_id=run_id, symbol=symbol, decision_id=decision_id,

@@ -204,6 +204,101 @@ def test_candidate_detail_assembles_full_chain(client, seeded_evidence_db):
     assert body["consensus"]["agreement"] == "aligned"
 
 
+def test_candidate_detail_consensus_all_neutral_is_not_reported_as_aligned(client, tmp_path, monkeypatch):
+    """Regression: >=2 signals firing but every one neutral must NOT be
+    reported as "aligned" — that would claim consensus that doesn't
+    exist. See ConsensusSummary.agreement docstring."""
+    db_path = tmp_path / "quant_agent_test.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_trade(
+        symbol="AAPL", action="HOLD", qty=0, price=150.0,
+        reasoning="no signal", run_id=RUN_ID,
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="tech_analyst", kind="analysis", scope="symbol",
+        symbol="AAPL",
+        evidence_json=json.dumps({
+            "symbol": "AAPL", "rating": "neutral", "conviction": "low",
+            "reasoning_chain": _tech_reasoning_chain(),
+            "reasoning": "No clear trend either way.",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="news_analyst", kind="analysis", scope="run",
+        evidence_json=json.dumps({
+            "macro_narrative": {
+                "last_updated": "2026-08-08", "era_themes": ["AI capex"],
+                "current_regime": "risk-on expansion",
+            },
+            "stock_news": {
+                "AAPL": [{
+                    "headline": "AAPL trades in line with sector",
+                    "sentiment": "neutral", "conviction": "low",
+                    "impact_summary": "no notable move",
+                }],
+            },
+            "pm_briefing": "Quiet tape.",
+            "market_sentiment": "neutral", "confidence": "low",
+        }),
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    r = client.get(f"/runs/{RUN_ID}/candidates/AAPL")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["consensus"]["signals"]) == 2
+    assert {s["direction"] for s in body["consensus"]["signals"]} == {"neutral"}
+    assert body["consensus"]["agreement"] == "no_directional_signal"
+    assert body["consensus"]["agreement"] != "aligned"
+
+
+def test_candidate_detail_shows_rejected_verdict_and_modification_delta(client, tmp_path, monkeypatch):
+    """Rejected RM verdict + a per-symbol modification must surface
+    correctly, and the proposed-order-vs-executed(trade) delta must be
+    visible (no trade row here since the decision was rejected)."""
+    db_path = tmp_path / "quant_agent_test.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="portfolio_manager", kind="proposed_order",
+        scope="symbol", symbol="AAPL", decision_id=DECISION_ID,
+        evidence_json=json.dumps({
+            "action": "BUY", "symbol": "AAPL", "allocation_pct": 15.0,
+            "entry_price": 150.0, "stop_loss": 140.0, "take_profit": 170.0,
+            "reasoning": "constructed order",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="risk_manager", kind="modification",
+        scope="symbol", symbol="AAPL", decision_id=DECISION_ID,
+        evidence_json=json.dumps({
+            "symbol": "AAPL", "field": "allocation_pct",
+            "original_value": 15.0, "new_value": 5.0, "reason": "oversized",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        decision_id=DECISION_ID,
+        evidence_json=json.dumps({
+            "approved": False, "reasoning_chain": _risk_reasoning_chain(),
+            "reasoning": "Rejected — correlation risk too high after modification.",
+        }),
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    r = client.get(f"/runs/{RUN_ID}/candidates/AAPL")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["risk_verdict"]["verdict"]["approved"] is False
+    assert body["risk_modification"]["original_value"] == 15.0
+    assert body["risk_modification"]["new_value"] == 5.0
+    assert body["pm_proposed_order"]["allocation_pct"] == 15.0
+    assert body["trade"] is None  # rejected — never executed, never fabricated
+
+
 def test_candidate_detail_404_for_symbol_never_considered(client, seeded_evidence_db):
     r = client.get(f"/runs/{RUN_ID}/candidates/TSLA")
     assert r.status_code == 404
