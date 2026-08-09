@@ -11,4 +11,4 @@ paths:
 - Do not create a second trading-memory system.
 - Prefer the existing SQLite/local-storage architecture.
 - Canonical schema changes require a demonstrated need; use the project's additive/idempotent migration pattern when a governed change is necessary.
-- Stage 5 may add a rebuildable read/search index, but its loss must not affect trading.
+- Any later read/search index must be explicitly required by the accepted work contract and its loss must have zero effect on trading.
