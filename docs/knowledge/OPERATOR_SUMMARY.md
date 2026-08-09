@@ -1,18 +1,18 @@
 # QAMC Operator Summary
 
-QAMC is a private autonomous Alpaca paper-trading experiment built around `yebof/quant-agent`.
+The live human-readable project dashboard is now:
 
-Current position:
-- Stages 0–2 are accepted.
-- Stages 3–5 are authorized as one coordinated Mission Control build tranche.
-- The next external review is after Stage 5 / Checkpoint E.
-- Stage 6 is removed.
-- Stages 7–9 and all writable/live operations are not currently authorized.
+**`docs/knowledge/PROJECT_COMPASS.md`**
 
-For details:
-- `docs/STATE.md`
-- `docs/ROADMAP.md`
-- `docs/README.md`
+Use the Compass for the fast operator view of:
+- what is complete;
+- what is happening now;
+- what comes next;
+- what is held/later;
+- current blockers or decisions;
+- safety status.
 
-The previous long operator summary is preserved at
+This file remains only as a compatibility pointer so QAMC does not maintain two competing operator dashboards.
+
+The previous long-form operator explanation is preserved unchanged at:
 `docs/history/legacy/OPERATOR_SUMMARY_2026-08-09.md`.

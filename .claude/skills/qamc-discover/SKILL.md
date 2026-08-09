@@ -14,7 +14,7 @@ Read:
 4. `docs/decisions/ACTIVE.md`.
 
 Then inspect only the source, tests, architecture, donor/UI material, and history needed to understand the current outcome.
-Do not preload `docs/history/` or the entire repository.
+Do not preload `docs/history/`, the Project Compass, or the entire repository. The Compass is an operator-facing projection and is refreshed only at handoff.
 
 ## Role
 
@@ -77,6 +77,13 @@ Update `docs/work/ACTIVE.md` with a concise evidence-based discovery result:
 - a proposed implementation **outcome contract**: capabilities, constraints, and verifiable acceptance criteria.
 
 Do not prescribe worker topology, file-by-file tasks, or detailed implementation steps. The fresh implementation session owns those decisions.
+
+## Operator Compass refresh
+
+Before handoff, refresh `docs/knowledge/PROJECT_COMPASS.md` from the authoritative live files.
+Follow the presentation contract in `.claude/rules/documentation.md` and the embedded Compass maintenance note.
+The Compass must make the new position obvious to the operator at a glance: what just finished, what is happening now, what is next, what remains held/later, and any product decision awaiting them.
+Do not copy the technical discovery report into the Compass.
 
 ## Handoff
 

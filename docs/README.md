@@ -2,7 +2,13 @@
 
 QAMC documentation is organized for **progressive disclosure**. Do not load everything.
 
-## Live documents
+## 👀 Operator view
+
+- `knowledge/PROJECT_COMPASS.md` — the single human-readable project dashboard: what is done, what is happening now, what comes next, what is held/later, blockers/decisions, and safety status.
+
+The Compass is a **projection**, not a second authority. Claude refreshes it at meaningful discovery/build/checkpoint handoffs from the live machine-facing files below.
+
+## Live machine-facing documents
 
 - `OUTCOME.md` — desired product/experiment result. Start here for substantial new work.
 - `STATE.md` — what is accepted/authorized now.
@@ -12,6 +18,7 @@ QAMC documentation is organized for **progressive disclosure**. Do not load ever
 - `ACCEPTANCE_CRITERIA.md` — global safety/completion criteria for implementation.
 
 `PROJECT_CHARTER.md` is retained as a compatibility pointer to `OUTCOME.md`; do not maintain a second competing statement of the project objective.
+`knowledge/OPERATOR_SUMMARY.md` is retained as a compatibility pointer to the Project Compass; do not maintain a second operator dashboard.
 
 ## Architecture — read only when relevant
 
@@ -32,10 +39,10 @@ UI source/donor references:
 
 Claude-specific behavior uses native project primitives:
 - root `CLAUDE.md` — small always-on contract;
-- `.claude/rules/` — path-scoped rules;
-- `.claude/skills/qamc-discover` — outcome exploration/architecture challenge;
+- `.claude/rules/` — path-scoped rules, including the operator Compass presentation contract;
+- `.claude/skills/qamc-discover` — outcome exploration/architecture challenge + discovery handoff Compass refresh;
 - `.claude/skills/qamc-build` — accepted implementation only;
-- `.claude/skills/qamc-checkpoint` — implementation gate closure;
+- `.claude/skills/qamc-checkpoint` — implementation gate closure + Compass refresh;
 - `.claude/agents/` — isolated reviewers/test workers;
 - `.claude/settings.json` + hooks — permissions, sandboxing and deterministic guardrails.
 
