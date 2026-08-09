@@ -1,5 +1,8 @@
 # QAMC Project Compass
 
+## Plain-English operator view
+![[OPERATOR_SUMMARY]]
+
 ## Current state
 - Repository: `RedstoneX/quant-agent`, controlled fork of `yebof/quant-agent`.
 - Bootstrap baseline: upstream commit `6fc3cf14f4e6f9fde5f6c10fbe4a8d51e3d0f4e7`
