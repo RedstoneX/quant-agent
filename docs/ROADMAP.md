@@ -1,16 +1,17 @@
 # QAMC Roadmap
 
-This is the concise active roadmap. Historical milestone narratives are preserved under `docs/history/legacy/`.
+This is the concise active product roadmap. `docs/OUTCOME.md` defines the desired result; `docs/work/ACTIVE.md` contains the current discovery/implementation contract. Historical milestone narratives are preserved under `docs/history/legacy/`.
 
-| Stage | Outcome | Gate | Status |
+| Phase / Stage | Outcome | Gate | Status |
 |---|---|---|---|
 | 0 | Baseline & integration-seam audit | A | DONE |
 | 0.5 | Actual-model attribution hotfix | A5 | DONE |
 | 1 | Provider/model/correlation plumbing | B | DONE |
 | 2 | Thin read-only Mission Control API | C | DONE |
-| 3 | QAMC Native Cockpit | D (internal in current tranche) | AUTHORIZED |
-| 4 | AI Decision Interface | internal tranche gate | AUTHORIZED |
-| 5 | Native Journal & Indexed Search | E (external STOP) | AUTHORIZED |
+| Discovery R1 | Claude independently challenges the Mission Control plan against the outcome and actual repo | architecture reconciliation | **ACTIVE** |
+| 3 | Native cockpit capability | internal candidate gate | PROVISIONAL / HELD |
+| 4 | AI decision-understanding capability | internal candidate gate | PROVISIONAL / HELD |
+| 5 | Journal & forensic search capability | E candidate external gate | PROVISIONAL / HELD |
 | 6 | AgentLens pilot | — | REMOVED |
 | 7 | Learning Center | G | OPTIONAL / NOT AUTHORIZED |
 | 8 | Writable Operations | H | OPTIONAL / NOT AUTHORIZED |
@@ -18,46 +19,41 @@ This is the concise active roadmap. Historical milestone narratives are preserve
 
 There is no live-trading implementation milestone in the active plan.
 
-## Stage 3 — Native Cockpit
+## Discovery R1 — current work
 
-Outcome:
-- QAMC-native React/Vite/Tailwind frontend;
-- TradingView Lightweight Charts;
-- real API-backed account/P&L, positions, orders, trades, candidates, health;
-- responsive browser/iPad experience;
+Claude Code must explore the actual repository and challenge whether the existing Stage 3–5 architecture and sequencing are the best path to `docs/OUTCOME.md`.
+
+The prior Stage 3–5 plan is evidence and a starting hypothesis, not an instruction to preserve.
+
+Discovery should produce a concise KEEP / CHANGE / REMOVE / ADD proposal and an outcome/acceptance contract in `docs/work/ACTIVE.md`, then STOP for ChatGPT/operator reconciliation before any product implementation.
+
+## Candidate Mission Control capabilities
+
+These outcomes remain desired unless discovery produces a better grouping/sequencing:
+
+### Native cockpit
+- polished QAMC-native browser/iPad Mission Control;
+- real account/P&L, positions, orders, trades, candidates and health;
+- useful financial visualization;
 - no production mock trading state;
 - frontend failure has zero trading impact.
 
-Gate D is an internal self-verification/commit boundary in the current Stage 3–5 tranche.
-
-## Stage 4 — AI Decision Interface
-
-Outcome:
-- specialist agent role/provider/model/recommendation/confidence/reasoning/cost;
+### AI decision understanding
+- specialist role/provider/model/recommendation/confidence/reasoning/cost;
 - disagreement/consensus;
-- PM proposal → AI Risk response → deterministic gate → execution/rejection;
-- proposed → executed delta;
-- native agent-call drill-down;
-- one candidate/decision understandable end-to-end without raw logs.
+- PM proposal → AI Risk → deterministic gate → execution/rejection;
+- proposed-versus-executed delta;
+- one decision understandable end-to-end without raw logs.
 
-This is an internal self-verification/commit boundary in the current tranche.
-
-## Stage 5 — Native Journal & Indexed Search
-
-Outcome:
-- calendar/list/structured daily journal derived from canonical QAMC records;
-- required daily sections from `docs/architecture/JOURNAL_AND_SEARCH.md`;
-- rebuildable server-side structured/full-text search/read model;
+### Journal & forensic search
+- useful calendar/list/daily journal from canonical QAMC records;
+- rebuildable structured/full-text search/read model;
 - useful forensic queries;
 - no arbitrary LLM-generated SQL;
 - no second authoritative memory system.
 
-**Checkpoint E is the next external STOP.**
+## After discovery
 
-## Later
+If the reconciled GitHub contract is accepted, implementation starts from a fresh Claude Code session. Claude then owns decomposition, orchestration, implementation and self-verification inside the accepted outcome contract.
 
-Stage 7 may expose existing Meta Reflector reports/diffs/history/rollback.
-Stage 8 may add tightly validated/audited operator writes only after the read-only system is mature.
-Stage 9 performs long-running paper stability and experiment analytics.
-
-None of those later stages are part of the current authorization.
+The implementation gate structure itself may be adjusted by the discovery/reconciliation result; the next external acceptance point must still be explicit in `docs/STATE.md` before coding begins.

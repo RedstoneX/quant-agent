@@ -2,8 +2,7 @@
 """Deterministic QAMC Claude Code guardrails.
 
 This is intentionally small. It blocks only operations that are never part of the
-current Claude implementation workflow; judgment-heavy rules remain in project
-instructions/review.
+current Claude workflow; judgment-heavy rules remain in project instructions/review.
 """
 
 from __future__ import annotations
@@ -18,6 +17,12 @@ from pathlib import Path
 def deny(reason: str) -> None:
     print(reason, file=sys.stderr)
     raise SystemExit(2)
+
+
+def _mentions_secret_env(command: str) -> bool:
+    """Best-effort shell guard; the sandbox provides the OS-level read boundary."""
+    scrubbed = command.lower().replace(".env.example", "")
+    return bool(re.search(r"(?<![a-z0-9_])\.env(?:\.[a-z0-9_.-]+)?(?:\b|$)", scrubbed))
 
 
 def bash_guard(command: str) -> None:
@@ -37,14 +42,25 @@ def bash_guard(command: str) -> None:
     if re.search(r"\bgit\s+push\b[^\n]*(?:\s|:)(?:refs/heads/)?(?:main|master)(?:\s|$)", lowered):
         deny("QAMC guard: direct push to main/master is not allowed.")
 
+    # Read/Edit permissions plus sandbox denyRead are authoritative; this catches obvious
+    # shell attempts too, while still allowing the committed non-secret .env.example.
+    if _mentions_secret_env(command):
+        deny("QAMC guard: secret-bearing .env files are not available to Claude Code.")
+
 
 def write_guard(tool_name: str, tool_input: dict) -> None:
     raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
     path = str(Path(raw_path)).replace("\\", "/")
     base = os.path.basename(path)
 
-    if base == ".env":
-        deny("QAMC guard: Claude Code must not write the secret-bearing .env file.")
+    if base == ".env" or (base.startswith(".env.") and base != ".env.example"):
+        deny("QAMC guard: Claude Code must not write secret-bearing environment files.")
+
+    if "/secrets/" in f"/{path.strip('/')}/" or path.endswith("/secrets"):
+        deny("QAMC guard: Claude Code must not write secret files.")
+
+    if path.endswith("/config/credentials.json") or path == "config/credentials.json":
+        deny("QAMC guard: Claude Code must not write credential files.")
 
     if path.endswith("/config/settings.yaml") or path.endswith("config/settings.yaml"):
         new_text = ""

@@ -5,16 +5,21 @@ The trading engine is authoritative; Mission Control surrounds it and must never
 
 ## Start here
 
-For implementation work, read `docs/STATE.md` first. Then read only the architecture or product documents relevant to the task.
-Do **not** pre-read `docs/history/`, legacy governance snapshots, or the whole repository.
+Read `docs/STATE.md` first.
+
+For substantial new work, the repository has two distinct phases:
+- **Discovery / architecture challenge:** use `/qamc-discover`.
+- **Accepted implementation:** use `/qamc-build` only when `docs/STATE.md` and `docs/work/ACTIVE.md` explicitly authorize implementation.
 
 Useful live documents:
-- `docs/STATE.md` — current accepted state and current authorization.
-- `docs/ROADMAP.md` — active roadmap and gate structure.
-- `docs/decisions/ACTIVE.md` — active architecture/product decisions.
+- `docs/OUTCOME.md` — the result the product must achieve.
+- `docs/STATE.md` — what is accepted and what is authorized now.
+- `docs/work/ACTIVE.md` — the single current discovery/implementation handoff contract.
+- `docs/ROADMAP.md` — concise product roadmap/gates.
+- `docs/decisions/ACTIVE.md` — operative decisions.
 - `docs/architecture/` — detailed contracts, read on demand.
-- `docs/DONOR_COMPONENTS.md` and `docs/ui/UI_COMPONENT_MAP.md` — UI donor/product mapping when working on Mission Control.
 
+Do not pre-read `docs/history/`, legacy governance snapshots, or the whole repository.
 Historical material is evidence, not current authority.
 
 ## Non-negotiable product boundaries
@@ -24,74 +29,82 @@ Historical material is evidence, not current authority.
 - Specialist agents → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution remains the authoritative decision chain.
 - Deterministic Python and broker protections own final safety/execution eligibility.
 - Risk-system failure must fail closed.
-- Mission Control, its API reads, journal, search, and UI must be non-critical to trading.
+- Mission Control/API/journal/search/UI must be non-critical to trading.
 - Mission Control cannot place, cancel, modify, or bypass broker orders unless a future explicitly accepted write stage says otherwise.
 - No secrets in API responses or client bundles.
 - No production mock/demo state masquerading as real system state.
 - Derived UI/search/journal indexes are rebuildable and non-authoritative.
-- No Redis, Kafka, Kubernetes, MongoDB, PostgreSQL, or similar infrastructure without an accepted demonstrated need.
+- No unnecessary distributed infrastructure.
 - AgentLens is out of plan.
-- Preserve upstream mergeability; avoid gratuitous rewrites of the trading core.
+- Preserve upstream mergeability; avoid gratuitous trading-core rewrites.
 
-Path-specific safety rules under `.claude/rules/` add detail only when relevant files are opened.
+Path-specific safety rules under `.claude/rules/` load additional detail only when relevant.
 
-## How to work
+## How to think
 
-You are the engineering lead for authorized implementation work. Own routine implementation decisions, decomposition, integration, testing, and debugging inside the accepted boundaries.
+Claude Code is an engineering and architecture participant, not merely a coder.
 
-- Delegate **outcomes**, not implementation recipes.
-- Do not ask the operator to decide routine engineering details that can be resolved from the repository or your judgment.
-- Prefer safe parallelism over serial work when interfaces/file ownership are clean.
-- Keep the lead context focused on architecture, integration, difficult decisions, and synthesis.
-- Use built-in Explore or focused Haiku subagents for repository search, log/test investigation, and other bounded work where only the conclusion matters.
-- Use a stronger focused worker for implementation/review when the task actually needs it.
+For substantial new outcomes:
+- start from `docs/OUTCOME.md`, not from an assumption that the existing plan is correct;
+- explore the actual repository before proposing or implementing;
+- challenge existing architecture when a simpler/safer/better route exists;
+- delegate **outcomes**, not implementation recipes;
+- keep the lead context focused on synthesis, architecture, integration, and difficult reasoning.
+
+### Question routing
+
+Do not turn the operator into the technical architect.
+
+1. Repository fact → investigate it yourself.
+2. Routine engineering choice → decide it yourself.
+3. Genuine operator product preference/value trade-off → ask **one question at a time**, wait for the answer, then reassess.
+4. Material architecture/safety/governance issue needing independent reconciliation → record it in `docs/work/ACTIVE.md` for ChatGPT review through GitHub.
+
+Do not ask questions merely because asking is cheaper than investigating.
+
+## Cost-aware orchestration
+
+- Use built-in Explore or focused Haiku subagents for high-volume reading, repository search, logs, and bounded test investigation.
+- Use a stronger focused worker when implementation/review actually needs it.
 - Use worktree isolation for parallel writers.
-- Use full agent teams only when workers genuinely need peer-to-peer communication or sustained independent ownership; they are higher-cost and experimental, not a default.
-- If an orchestration feature is unavailable or creates friction, fall back immediately to simpler subagents/sessions rather than debugging the orchestration framework.
+- Use full agent teams only when workers genuinely need peer-to-peer communication or sustained independent ownership.
+- If experimental orchestration creates friction, fall back immediately to simpler supported delegation.
+- Optimize engineering quality per unit of usage, not worker count.
 
-Project auto-memory is intentionally disabled. Durable project knowledge belongs in Git, not in one Claude environment.
-
-A subscription usage reset is not a context reset. Resume a coherent session after reset if its context remains healthy.
-Split or compact because the **context** is unhealthy, not merely because the plan allowance paused.
+Project auto-memory is intentionally disabled. Durable QAMC knowledge belongs in Git.
+A subscription usage reset is not a context reset; compact/split because context is unhealthy, not because allowance paused.
 
 ## Native project workflows
 
-- Use `/qamc-build` for the currently authorized implementation tranche.
-- Use `/qamc-checkpoint` when closing an internal or external gate.
-- Use the `qamc-reviewer` subagent for fresh-context independent review.
-- Use the `qamc-test-runner` subagent for bounded test execution/investigation.
-- Use the `qamc-ui-reviewer` subagent for UI/runtime review where browser/rendering tools are available.
+- `/qamc-discover` — explore/challenge a substantial outcome; **no implementation**; GitHub handoff afterward.
+- `/qamc-build` — implement only an accepted/authorized work contract.
+- `/qamc-checkpoint` — close an internal or external implementation gate.
+- `qamc-reviewer` — fresh-context independent implementation review.
+- `qamc-test-runner` — bounded low-cost test execution/investigation.
+- `qamc-ui-reviewer` — independent UI/runtime review when rendering tools exist.
 
 ## Git and publication
 
-- Start implementation from current accepted `main` on a dedicated branch.
+- Use dedicated branches for discovery and implementation.
 - Never force-push.
 - Never push implementation directly to `main`.
-- Never merge a PR from Claude Code. ChatGPT/operator governance handles accepted merges.
-- Create clear commit boundaries at meaningful internal gates.
-- Do not spend implementation-model usage on GitHub administration that can be handled after handoff.
+- Never merge a PR from Claude Code; ChatGPT/operator governance handles accepted merges.
+- Discovery must be committed/pushed before architecture reconciliation.
+- Implementation must be committed/pushed before external acceptance.
+- GitHub is the handoff between Claude sessions and between Claude and ChatGPT.
 
-Project hooks enforce a small set of these publication/live-safety boundaries deterministically.
+Project settings/hooks enforce a small set of secret/publication/live-safety boundaries mechanically.
 
 ## Testing
 
-- During implementation, run the smallest targeted tests/checks that exercise changed behavior.
-- Run broader tests when integration risk justifies them.
-- Run the governed full Python suite at the external tranche/checkpoint handoff.
-- UI work requires runtime/visual verification in addition to unit/type/build tests.
+- During implementation, run the smallest targeted checks that exercise changed behavior.
+- Run broader tests when integration risk warrants them.
+- Run the governed full Python suite at external implementation handoff.
+- UI work requires runtime/visual verification as well as build/type/test checks.
 - Never weaken safety verification to save tokens.
-
-## Common backend commands
-
-```bash
-pytest tests/ -q
-python -m src.api
-```
-
-The API dependency is optional (`pip install -e '.[api]'`).
 
 ## Reference material
 
 The previous large upstream/QAMC `CLAUDE.md` is preserved at
-`docs/reference/UPSTREAM_CLAUDE_2026-08-09.md` for deep implementation history.
-Read only the relevant section when a trading-core task genuinely requires it; do not load it by default.
+`docs/reference/UPSTREAM_CLAUDE_2026-08-09.md`.
+Read only relevant portions when a trading-core task genuinely requires that history.

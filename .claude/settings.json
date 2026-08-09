@@ -1,5 +1,55 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "autoMemoryEnabled": false,
+  "permissions": {
+    "allow": [
+      "Bash(pytest tests/ -q)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(npm run build)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm test)",
+      "Bash(git status --short)",
+      "Bash(git diff --stat)",
+      "Bash(git diff --name-only)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./.env.staging)",
+      "Read(./.env.test)",
+      "Read(./secrets/**)",
+      "Read(./config/credentials.json)",
+      "Edit(./.env)",
+      "Edit(./.env.local)",
+      "Edit(./.env.production)",
+      "Edit(./.env.development)",
+      "Edit(./.env.staging)",
+      "Edit(./.env.test)",
+      "Edit(./secrets/**)",
+      "Edit(./config/credentials.json)"
+    ],
+    "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable"
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "autoAllowBashIfSandboxed": false,
+    "filesystem": {
+      "denyRead": [
+        "./.env",
+        "./.env.*",
+        "./secrets",
+        "./config/credentials.json"
+      ],
+      "allowRead": [
+        "./.env.example"
+      ]
+    }
+  },
   "hooks": {
     "PreToolUse": [
       {
