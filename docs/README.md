@@ -1,54 +1,62 @@
 # QAMC Documentation Map
 
-QAMC documentation is organized for **progressive disclosure**. Do not load everything.
+QAMC uses **progressive disclosure**. Availability in Git does not mean “load this into context.”
 
 ## 👀 Operator view
 
-- `knowledge/PROJECT_COMPASS.md` — the single human-readable project dashboard: what is done, what is happening now, what comes next, what is held/later, blockers/decisions, and safety status.
+- `knowledge/PROJECT_COMPASS.md` — the single human-readable dashboard for what is done, happening now, next, held/later, blockers/decisions, and safety.
 
-The Compass is a **projection**, not a second authority. Claude refreshes it at meaningful discovery/build/checkpoint handoffs from the live machine-facing files below.
+The Compass is a projection. Machine-facing authority below wins if anything disagrees.
 
-## Live machine-facing documents
+## ✅ Current authority
 
-- `OUTCOME.md` — desired product/experiment result. Start here for substantial new work.
-- `STATE.md` — what is accepted/authorized now.
-- `work/ACTIVE.md` — single current discovery/implementation handoff contract.
-- `ROADMAP.md` — concise product roadmap/gates.
-- `decisions/ACTIVE.md` — decisions that currently govern the system.
-- `ACCEPTANCE_CRITERIA.md` — global safety/completion criteria for implementation.
+Read only what the task needs:
 
-`PROJECT_CHARTER.md` is retained as a compatibility pointer to `OUTCOME.md`; do not maintain a second competing statement of the project objective.
-`knowledge/OPERATOR_SUMMARY.md` is retained as a compatibility pointer to the Project Compass; do not maintain a second operator dashboard.
+- `OUTCOME.md` — desired product/experiment result.
+- `STATE.md` — accepted state and current authorization.
+- `work/ACTIVE.md` — the single current discovery/implementation handoff.
+- `ROADMAP.md` — concise active roadmap/gates.
+- `decisions/ACTIVE.md` — operative decisions.
+- `ACCEPTANCE_CRITERIA.md` — global implementation/checkpoint criteria.
 
-## Architecture — read only when relevant
+## 🏗️ Accepted / current technical contracts
 
-`architecture/` contains detailed contracts:
-- `SYSTEM_ARCHITECTURE.md`
-- `SAFETY_BOUNDARIES.md`
-- `MODEL_PROVIDER_ARCHITECTURE.md`
-- `MISSION_CONTROL.md`
-- `MISSION_CONTROL_API.md`
-- `JOURNAL_AND_SEARCH.md`
-- `LIVE_TRADING.md` (future architecture only; not an implementation authorization)
+- `architecture/SAFETY_BOUNDARIES.md` — safety invariants and verified carve-outs.
+- `architecture/MODEL_PROVIDER_ARCHITECTURE.md` — accepted provider/attribution contract from Stages 0.5–1.
+- `architecture/MISSION_CONTROL_API.md` — accepted Stage-2 read-only API contract.
+- `architecture/SYSTEM_ARCHITECTURE.md` — current authority/failure-domain boundaries.
+- `architecture/MISSION_CONTROL.md` — Mission Control boundaries and **provisional** post-Stage-2 design questions during Discovery R1.
 
-UI source/donor references:
-- `DONOR_COMPONENTS.md`
-- `ui/UI_COMPONENT_MAP.md`
+## 📚 On-demand reference — not authority
 
-## Claude Code operating model
+Prior proposals/research are preserved because they may still save engineering work, but they are not implementation instructions:
 
-Claude-specific behavior uses native project primitives:
-- root `CLAUDE.md` — small always-on contract;
-- `.claude/rules/` — path-scoped rules, including the operator Compass presentation contract;
-- `.claude/skills/qamc-discover` — outcome exploration/architecture challenge + discovery handoff Compass refresh;
-- `.claude/skills/qamc-build` — accepted implementation only;
-- `.claude/skills/qamc-checkpoint` — implementation gate closure + Compass refresh;
-- `.claude/agents/` — isolated reviewers/test workers;
-- `.claude/settings.json` + hooks — permissions, sandboxing and deterministic guardrails.
+- `reference/mission-control/` — prior UI vision, screen states, component map, donor research, and journal/search proposal.
+- `reference/future/` — future conceptual architecture such as Sentinel/live trading; **not authorized work**.
+- `reference/UPSTREAM_CLAUDE_2026-08-09.md` — previous large Claude instruction/reference file; read only relevant portions.
+- `history/legacy/` — superseded governance, plans, operator summaries, AgentLens research, and other historical snapshots.
 
-## Historical evidence
+A path-scoped Claude rule automatically marks `reference/` and `history/` content as evidence only when opened.
 
-Checkpoint reports, audits, previous governance systems, and superseded state summaries are evidence, not current instructions unless a live document explicitly links to them.
+`CHECKPOINT_*_ACCEPTANCE.md` and `STAGE0_BASELINE_AUDIT.md` remain audit evidence in place because active technical contracts legitimately cite them.
 
-The pre-redesign governance snapshots are preserved under `history/legacy/`.
-Existing checkpoint acceptance files remain audit records.
+## 🔗 Historical compatibility indexes
+
+- `DECISIONS.md` — points old numbered-decision references to the preserved historical ledger.
+- `MILESTONES.md` — points old milestone references to the preserved historical narrative.
+
+These two tiny shims remain only to keep older audit links intelligible. Do not update them as live project state.
+
+## 🤖 Claude Code control plane
+
+- root `CLAUDE.md` — small always-on project contract.
+- `.claude/rules/` — path-scoped constraints, including reference-material and Compass rules.
+- `.claude/skills/qamc-discover` — outcome exploration / architecture challenge.
+- `.claude/skills/qamc-build` — accepted implementation only.
+- `.claude/skills/qamc-checkpoint` — gate closure and Compass refresh.
+- `.claude/agents/` — isolated reviewers/test workers.
+- `.claude/settings.json` + hooks — permissions, sandboxing, secret protection, and deterministic guardrails.
+
+## Rule of thumb
+
+**Outcome/state/work/decisions tell Claude what is true. Accepted architecture tells Claude what has already been proven. Reference/history tells Claude what we once considered.**
