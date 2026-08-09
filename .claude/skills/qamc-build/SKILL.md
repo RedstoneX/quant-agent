@@ -23,11 +23,30 @@ Own routine implementation architecture, decomposition, worker choice, integrati
 
 Investigate repository facts; decide routine engineering choices; ask the operator only genuine product/value questions; stop and record material contract/safety conflicts in `docs/WORK.md` for external reconciliation.
 
-Use the least expensive reliable mechanism: focused inexpensive workers for bounded reading/tests, stronger isolated workers only when needed, worktrees for parallel writers, full agent teams only when peer coordination materially helps.
+## Orchestration priority
+
+Optimize primarily for **elapsed completion time**, subject to correctness, safety and avoiding counterproductive coordination overhead. Token/model cost is secondary to wall-clock efficiency for authorized QAMC engineering work.
+
+At the start of substantial work, identify the dependency graph and critical path. Keep the lead productive on the critical path while dispatching independent work concurrently.
+
+The operator pre-authorizes autonomous delegation inside the accepted work contract. Do not pause merely to ask whether to parallelize. Claude may choose and combine:
+- fast built-in/focused subagents for repository search, bounded analysis and high-volume reading;
+- `qamc-test-runner` for independent test/check work;
+- stronger isolated general-purpose workers for self-contained implementation/debugging;
+- worktrees or explicit file ownership for parallel writers;
+- an agent team when sustained cross-layer work benefits from peer coordination and independent contexts.
+
+Choose worker count dynamically from actual task independence; do **not** spawn workers just to hit a number. For team-style work, roughly **3–5 teammates** is the normal starting range when there are enough independent workstreams; use fewer for tightly coupled work and scale only when additional concurrency materially shortens the critical path. Ordinary background subagents may be used more broadly for genuinely independent tasks within Claude Code's runtime limits.
+
+Avoid concurrent writers on the same files. Prefer separate modules/worktrees/ownership boundaries, then integrate centrally. Reuse or resume an existing worker when that avoids repeated repository/context loading. Do not wait serially for a background worker when other authorized critical-path work can continue.
+
+Permanent custom agents are for recurring roles that earn their maintenance cost; use temporary task-specialized workers for one-off needs rather than growing the repository control plane.
 
 ## Safety
 
 Root `CLAUDE.md` and path-scoped rules remain mandatory. Do not silently widen scope into trading/risk changes, broker-write Mission Control operations, distributed infrastructure, broad canonical-schema redesign, fake UI data, or optional integrations that become separate projects.
+
+Parallel workers and teammates inherit the same QAMC safety boundaries. Parallelism never authorizes scope that the lead itself does not have.
 
 ## Verification / handoff
 
