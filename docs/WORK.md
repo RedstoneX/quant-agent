@@ -1,80 +1,82 @@
 # QAMC Current Work
 
-Status: **STAGE 4–5 EXTERNALLY ACCEPTED — INTEGRATION HOUSEKEEPING ONLY, THEN STOP**
+Status: **VPS DEPLOYMENT / HARDENING AUTHORIZED — BUILD, VERIFY, PUSH, STOP**
 
 ## Goal
 
-Stage 4 (per-candidate specialist evidence + decision chain) and Stage 5
-(journal + forensic search) were built as one coordinated engineering
-tranche, internally reviewed, and pushed as PR #24. **ChatGPT/operator
-external review passed and the tranche is accepted.**
+Move the accepted QAMC paper-trading engine + read-only Mission Control bundle from cloud/ephemeral staging into the intended small Linux VPS runtime, harden the operational deployment, verify the deployed system there, and produce a bounded branch/checkpoint for independent review.
 
-The only currently authorized work is **integration housekeeping** on
-`claude/stage-3-implementation-75e6dp` so PR #24 stays mergeable and its
-acceptance evidence is durable:
+This is a deployment tranche, not a redesign. Preserve the accepted trading engine, read-only Mission Control boundary and Stage 4–5 behavior unless a real deployment defect requires a narrowly-scoped fix.
 
-- reconcile the branch with any newer commits on `main` (preserving both
-  the accepted Stage 4–5 implementation and whatever newer
-  lifecycle/source-of-truth documentation exists on `main`);
-- resolve conflicts without overwriting newer authoritative documentation;
-- record the permanent frontend-verification requirement introduced
-  during this housekeeping pass (`.claude/rules/frontend-verification.md`)
-  and its Stage 4–5 acceptance evidence (`docs/verification/stage-4-5/`);
-- rerun the full test suite and confirm the cockpit UI still runs
-  correctly after reconciliation;
-- refresh `STATE.md`/`WORK.md`/`PROJECT_COMPASS.md` only as needed to
-  reflect the accepted state and the current (not-yet-authorized) next
-  gate;
-- push, then **STOP**.
+## Deployment target
 
-**Do not begin VPS deployment, deployed-MVP verification/UAT, dedicated
-visualization/UX polish, or any new product work in this pass.** Do not
-merge PR #24 — a human merges after this housekeeping is pushed.
+- Provider: OVH VPS.
+- Hostname: `vps-37b5f875.vps.ovh.us`.
+- IPv4: `135.148.120.105`.
+- OS: Ubuntu 24.04.
+- Storage: 100 GB; no additional storage purchased.
+- Automated daily OVH backup: active.
+- Current plan: $14.50/month, no commitment.
+- Operator is currently working entirely from an iPad; do not require a desktop/laptop merely to bootstrap or operate this tranche.
 
-## What "accepted" means for this repository
+## SSH bootstrap prerequisite
 
-- The Stage 4–5 implementation (backend + cockpit UI) is accepted as-is;
-  do not redesign, re-polish, or otherwise rework it during housekeeping.
-- If reconciliation surfaces a genuine conflict between the accepted
-  Stage 4–5 implementation and a newer decision on `main`, resolve it in
-  favor of the newer `main` decision for documentation/process questions,
-  and preserve the accepted implementation for anything Stage 4–5 already
-  delivered and tests still cover. If a conflict can't be resolved that
-  way, stop and record it here rather than guessing.
+Claude Code is currently running in Anthropic's cloud environment. Use that environment for the initial disposable SSH bootstrap credential:
 
-## Frontend verification requirement (new, permanent)
+1. Generate a disposable Ed25519 keypair in the Claude cloud environment.
+2. Keep the private key only in that environment. Never place it in chat, GitHub, repository files, logs intended for commit, or client/UI artifacts.
+3. Give the operator only the public key, then stop for the operator to install it in OVH from the iPad.
+4. After operator confirmation, verify SSH access before doing deployment work.
+5. Establish the persistent VPS access/runtime arrangement appropriate to the accepted architecture.
+6. Before checkpoint handoff, remove/revoke the disposable bootstrap credential once it is no longer needed and verify that revocation did not break the intended persistent access path.
 
-Added as `.claude/rules/frontend-verification.md`, path-scoped to
-`src/api/static/**/*` and `docs/verification/**/*`: every future cockpit
-UI acceptance pass must be browser/runtime verified by Claude (real
-browser, seeded representative data, actually inspected) before external
-review, with a small representative screenshot set committed to
-`docs/verification/<stage-or-checkpoint>/` alongside a manifest recording
-commit SHA, viewport/scenario, and verification date/time. Routine/
-transient browser-test captures stay out of Git. This rule applies to
-every future frontend change, not only this checkpoint.
+Do not expose or commit secrets.
 
-## Next gate (not yet authorized)
+## Authorized engineering scope
 
-If this housekeeping push is merged, the next intended tranche is **VPS
-cutover/deployment hardening**, followed by Claude-run runtime/browser QA
-on the VPS, a fresh independent review, and operator UAT. Only after that
-deployed-MVP gate is accepted should dedicated Mission Control
-visualization/UX polish be authorized. None of that is authorized by this
-document — a subsequent `WORK.md` update must explicitly open it.
+Claude owns repository-level deployment planning and may choose the simplest safe implementation details after inspecting the actual codebase. The outcome must establish, as appropriate to this repository:
+
+- reproducible deployment of the accepted `quant-agent` engine and Mission Control API/UI bundle to the VPS;
+- Python/runtime/system dependencies needed on Ubuntu 24.04;
+- secrets/environment configuration outside Git and client surfaces;
+- durable application/data paths and permissions;
+- process supervision and restart-on-failure/reboot behavior for the trading engine and Mission Control as separate operational components where required by the accepted non-critical read-side boundary;
+- private operator access rather than unnecessary public exposure;
+- logs, health checks and basic operational recovery sufficient to distinguish trading-engine failure from Mission Control failure;
+- backup/recovery handling consistent with the existing OVH daily backup and the application's persisted artifacts;
+- evidence that Mission Control failure still has zero effect on deterministic trading/risk/broker protections.
+
+Claude may add deployment scripts/configuration/documentation where genuinely useful. Avoid unnecessary infrastructure, distributed services, containerization or reverse-proxy complexity unless the repository/runtime evidence justifies them.
+
+## Verification and acceptance evidence
+
+Before handoff, Claude must:
+
+- run the full applicable automated test suite in the deployed/runtime context;
+- exercise the deployed engine/API/UI paths and health behavior on the VPS;
+- browser/runtime verify the cockpit using the permanent frontend-verification rule, including representative desktop and iPad-sized scenarios and honest populated/empty/error/degraded states relevant to this deployment;
+- verify restart/reboot recovery and persistent data behavior;
+- verify Mission Control can fail/restart independently without weakening or stopping the trading engine's deterministic protections;
+- verify no secret material entered Git or committed evidence;
+- remove/revoke the disposable SSH bootstrap credential when persistent access is established;
+- update `STATE.md`, `WORK.md` and the human `PROJECT_COMPASS.md` only as needed for the checkpoint;
+- commit and push the bounded deployment branch, then **STOP** with a concise checkpoint report for ChatGPT/operator review.
+
+Operator UAT happens only after fresh independent review of the pushed result. Claude must not declare the deployed MVP accepted on its own.
 
 ## Hard boundaries
 
 - Alpaca **Paper only**.
-- No deterministic trading/risk semantic changes.
+- No deterministic trading/risk semantic redesign.
 - No broker-write Mission Control operations.
-- No secrets or fake production trading state in client/UI surfaces.
-- No VPS/deployment work, no dedicated UI-polish work, in this pass.
-- Claude does not merge PRs, force-push, or push directly to `main`.
+- No secrets or fake production trading state in client/UI surfaces or Git.
+- Mission Control remains read-only and non-critical to trading.
+- Do not start dedicated dashboard visualization/UX polish.
+- Do not start later learning/write-control work.
+- Claude does not merge PRs, force-push, or push implementation directly to `main`.
 
-## Escalate early only when necessary
+## Engineering authority and escalation
 
-Stop before pushing only if there is a genuine unresolved operator
-product/value trade-off, a material architecture/safety/scope conflict,
-or evidence that invalidates the accepted Stage 4–5 outcome. Routine
-reconciliation/documentation work belongs to Claude.
+Within this contract Claude should act as engineering lead: inspect the repository, select implementation architecture, choose subagents/workers and maximize safe parallelism without asking the operator to make routine technical decisions.
+
+Escalate only for a genuine operator product/value trade-off, a material conflict with accepted architecture/safety/scope, or an external-access decision that cannot be safely inferred. Otherwise implement, verify, integrate, push and stop at the checkpoint.
