@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-09
+Updated: 2026-08-10
 
 This file says what is accepted and authorized **now**. Git history preserves prior state and discovery evidence.
 
@@ -14,26 +14,37 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Stage 5 delivered read-only journal and parameterized forensic search. Stage 4–5 passed external ChatGPT/operator review with **1558 passed, 0 failed** plus committed browser/runtime evidence.
 - PR #24 is merged into `main` as merge commit `105cc91a14faebd8a981061b3098eb181b306dda`.
 - The permanent frontend-verification requirement under `.claude/rules/frontend-verification.md` remains accepted.
-- Cloud/ephemeral development environments are staging only. The QAMC MVP is not operationally accepted until the integrated product is deployed to the intended VPS/server runtime, verified there, independently reviewed, and accepted through operator UAT.
-- Dedicated Mission Control visualization/UX polish remains after that deployed-MVP gate.
+- VPS deployment/hardening tranche completed and independently reviewed.
+- Development environment established separately under `/home/dev` with Claude Code installed for on-demand development use.
+
+## Current operating model
+
+- `ubuntu` = OVH administration / recovery account.
+- `qamc` = QAMC runtime account only.
+- `dev` = development and agent workspace only.
+
+Development and runtime environments remain intentionally separate.
 
 ## Authorized now
 
-**VPS cutover / deployment hardening and deployed-runtime verification** are authorized as the next bounded engineering tranche. See `docs/WORK.md` for the exact contract.
+The deployed MVP checkpoint is complete. Future engineering must continue from the accepted repository state and preserve:
 
-Claude may investigate the repository and choose implementation details, subagents and safe parallelism inside that contract. The tranche ends with a pushed branch and checkpoint report for independent ChatGPT review; Claude does not merge its own work.
+- Alpaca Paper-only operation.
+- Deterministic trading/risk protections.
+- Mission Control read-only, non-critical boundary.
+- Secrets outside Git/client surfaces.
 
 ## Not authorized now
 
 - deterministic trading/risk behavior changes;
 - broker-write Mission Control controls;
 - live trading;
-- dedicated TradingView/donor-dashboard/visual-polish work;
-- later learning/write-control stages;
-- any product expansion unrelated to deployment, runtime hardening or the deployed-MVP verification gate.
+- dedicated dashboard visualization/visual-polish work until separately authorized;
+- later learning/write-control stages without authorization;
+- unnecessary infrastructure expansion.
 
 ## Handoff
 
-The immediate path is: establish secure temporary SSH bootstrap access from Claude's cloud environment, deploy/harden the accepted QAMC bundle to the OVH VPS, verify runtime/browser behavior there, push the bounded implementation branch, then **STOP** for fresh independent review and operator UAT.
+Claude Code should operate from the `/home/dev` development environment when engineering work is required. Runtime changes belong to `/home/qamc` and require explicit authorization.
 
-Operator UAT and MVP acceptance happen after that external review. Dedicated visualization/UX polish is not authorized until the deployed MVP is accepted.
+Operator UAT and future acceptance gates remain separate from implementation work.
