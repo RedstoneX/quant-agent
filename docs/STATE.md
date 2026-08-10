@@ -34,6 +34,16 @@ Claude may investigate the repository and choose implementation details, subagen
 
 ## Handoff
 
-The immediate path is: establish secure temporary SSH bootstrap access from Claude's cloud environment, deploy/harden the accepted QAMC bundle to the OVH VPS, verify runtime/browser behavior there, push the bounded implementation branch, then **STOP** for fresh independent review and operator UAT.
+**Operational correction (2026-08-10):** Anthropic's cloud environment could not open outbound SSH (raw TCP/22 blocked there). Claude Code now runs through a Mac-hosted SSH connection directly to the OVH VPS as user `qamc`. The disposable-cloud-bootstrap-key plan in the original handoff wording never happened; `authorized_keys` on the VPS was checked and already contained exactly one key (`qamc-vps-deploy-20260809`, the persistent Mac-hosted key) — no leftover bootstrap credential existed to revoke.
 
-Operator UAT and MVP acceptance happen after that external review. Dedicated visualization/UX polish is not authorized until the deployed MVP is accepted.
+Progress this tranche (branch `claude/vps-deployment-hardening-q3f7k2`):
+- Python env bootstrapped on the VPS without root (`python3 -m venv --without-pip` + `get-pip.py`; the `qamc` user has no working sudo in this session — `sudo -n` fails, no NOPASSWD rule). `pip install -e '.[api,dev]'` succeeded.
+- Full test suite run in the deployed venv: **1558 passed, 0 failed** — matches the accepted baseline.
+- Mission Control API/UI deployed as a supervised `systemd --user` service (`quant-agent-api.service`, `Restart=always`), bound to `127.0.0.1:8800` only (no public exposure; matches `.env.example`'s documented private-networking intent). Verified: `/health` and `/ui` return 200, `db_reachable: true`, graceful `broker_reachable: false` degradation with placeholder keys, kill -9 crash-recovery within `RestartSec=5`, survives logout via `loginctl enable-linger qamc` (already `Linger=yes`) + unit `enable`.
+- systemd `--user` timer/service units installed for all six trading modes (`earnings_preprocess/morning/intra_check/midday/close/evening`, every-30-min self-gated per `scripts/run_if_et_window.sh`) plus the daily P&L export — installed via `daemon-reload` but deliberately left **disabled**, not started.
+
+Two items remain genuinely blocked on operator action and were not worked around:
+1. **No API secrets exist anywhere on the VPS.** `.env` is currently the unmodified `.env.example` template (placeholder values only, `chmod 600`). Real `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` / `FRED_API_KEY` must reach the VPS via a channel other than chat (e.g. `scp`/`sftp` straight to `/home/qamc/quant-agent/.env`, or edit the file directly over SSH) before the trading timers can be enabled or "exercise the deployed engine" verification can run for real.
+2. **No root available** for `sudo apt-get install` of the shared libraries (`libatk-1.0.so.0` and others) headless Chromium needs for full visual/screenshot browser verification per `.claude/rules/frontend-verification.md`. HTTP-level runtime verification (`/health`, `/ui`, restart/crash recovery) is done; pixel-level desktop/iPad screenshot verification is not.
+
+The tranche therefore stops here as a **bounded, honest checkpoint** — infra deployed and verified where root/secrets were not required; live-trading and full visual verification remain open. Operator UAT and MVP acceptance still happen only after independent review, and only once the two blockers above are cleared and re-verified. Dedicated visualization/UX polish is not authorized until the deployed MVP is accepted.

@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **VPS DEPLOYMENT / HARDENING AUTHORIZED — BUILD, VERIFY, PUSH, STOP**
+Status: **VPS DEPLOYMENT / HARDENING — INFRA DEPLOYED, PARTIAL VERIFICATION, BLOCKED ON SECRETS + ROOT — STOPPED FOR OPERATOR INPUT**
 
 ## Goal
 
@@ -19,16 +19,17 @@ This is a deployment tranche, not a redesign. Preserve the accepted trading engi
 - Current plan: $14.50/month, no commitment.
 - Operator is currently working entirely from an iPad; do not require a desktop/laptop merely to bootstrap or operate this tranche.
 
-## SSH bootstrap prerequisite
+## SSH bootstrap prerequisite (superseded — see STATE.md operational correction)
 
-Claude Code is currently running in Anthropic's cloud environment. Use that environment for the initial disposable SSH bootstrap credential:
+The cloud-bootstrap plan below did not happen: Anthropic's cloud environment could not open outbound TCP/22. Claude Code instead runs through a Mac-hosted SSH connection straight to the OVH VPS as `qamc`, using a persistent Ed25519 key the operator installed directly. On connecting, `authorized_keys` was checked and contained exactly one key (`qamc-vps-deploy-20260809`) — no disposable bootstrap credential was present to revoke. `qamc` is in the `sudo` group but has no working non-interactive sudo in this session (no cached auth, no NOPASSWD rule) — see the "Blocked" section below for what that constrains.
 
-1. Generate a disposable Ed25519 keypair in the Claude cloud environment.
-2. Keep the private key only in that environment. Never place it in chat, GitHub, repository files, logs intended for commit, or client/UI artifacts.
-3. Give the operator only the public key, then stop for the operator to install it in OVH from the iPad.
-4. After operator confirmation, verify SSH access before doing deployment work.
-5. Establish the persistent VPS access/runtime arrangement appropriate to the accepted architecture.
-6. Before checkpoint handoff, remove/revoke the disposable bootstrap credential once it is no longer needed and verify that revocation did not break the intended persistent access path.
+Original plan, kept for reference only:
+1. ~~Generate a disposable Ed25519 keypair in the Claude cloud environment.~~
+2. ~~Keep the private key only in that environment...~~
+3. ~~Give the operator only the public key...~~
+4. ~~After operator confirmation, verify SSH access...~~
+5. Establish the persistent VPS access/runtime arrangement appropriate to the accepted architecture. — **done**, via the operator's own Mac-hosted key.
+6. ~~Before checkpoint handoff, remove/revoke the disposable bootstrap credential...~~ — **moot**, none existed.
 
 Do not expose or commit secrets.
 
@@ -63,6 +64,21 @@ Before handoff, Claude must:
 - commit and push the bounded deployment branch, then **STOP** with a concise checkpoint report for ChatGPT/operator review.
 
 Operator UAT happens only after fresh independent review of the pushed result. Claude must not declare the deployed MVP accepted on its own.
+
+## Checkpoint status — 2026-08-10
+
+**Done and verified** on branch `claude/vps-deployment-hardening-q3f7k2`:
+- venv + deps installed on the VPS without root (`venv --without-pip` + `get-pip.py`, since `python3.12-venv` isn't installed and there's no sudo path to install it).
+- Full test suite in the deployed venv: 1558 passed, 0 failed.
+- `quant-agent-api.service` (Mission Control API/UI, `127.0.0.1:8800`, `Restart=always`) installed, enabled, and running under `systemd --user` with `loginctl enable-linger qamc` set for logout/reboot persistence. Verified via HTTP: `/health` 200 with correct graceful `broker_reachable:false` degradation on placeholder keys, `/ui` 200, kill-9 crash-recovery within 5s.
+- All six trading-mode timer/service pairs + the daily P&L export pair installed (`daemon-reload`'d) but **left disabled** — starting them against placeholder `.env` values would just burn real LLM/broker retry budget on guaranteed-401 calls with no verification value.
+- Confirmed independence: restarting/crashing the API service does not touch the (disabled) trading timers — separate systemd units, no dependency edges.
+
+**Blocked, needs operator action, not worked around:**
+1. `.env` on the VPS is still the placeholder template (`chmod 600`). Real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`ALPACA_API_KEY`/`ALPACA_SECRET_KEY`/`FRED_API_KEY` (and optionally `TELEGRAM_*`, `HEALTHCHECKS_URL`) need to land on the VPS via `scp`/`sftp`/direct edit — not chat. Until then the trading timers stay disabled and "exercise the deployed engine" can't be meaningfully run.
+2. Headless Chromium (installed via `pip install playwright` + `playwright install chromium`, no root needed for the download) fails to launch — missing shared libs (`libatk-1.0.so.0` etc.) that require `sudo apt-get install`. Full desktop/iPad screenshot verification per `.claude/rules/frontend-verification.md` is blocked on one interactive sudo command; HTTP-level runtime verification of `/health` and `/ui` was completed instead.
+
+Neither blocker was inferred or bypassed. Reboot-persistence is inferred from `Linger=yes` + unit `enable` (a symlink under `default.target.wants`), not from an actual reboot — a real reboot wasn't taken without asking, since it wasn't necessary to establish that inference and rebooting someone else's live VPS isn't a call to make silently.
 
 ## Hard boundaries
 
