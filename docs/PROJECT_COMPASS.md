@@ -3,6 +3,26 @@
 > [!note] 👀 **Human dashboard — for me, not the agents**
 > Fast plain-English project view. Machine authority is `OUTCOME.md` + `STATE.md` + `WORK.md` + relevant accepted architecture contracts.
 
+## QAMC meaning and origin
+
+QAMC = Quant Agent Mission Control.
+
+QAMC is the operator-facing Mission Control layer built around the open-source quant-agent project from GitHub.
+
+quant-agent is the underlying autonomous AI-assisted trading engine and provides the foundation:
+- agent framework
+- execution workflow
+- risk controls
+- memory/journaling
+- paper-trading infrastructure
+
+QAMC is the Mission Control/operator layer:
+- dashboard
+- agent visibility
+- decision inspection
+- journal and forensic review
+- charts and future visualization
+
 ## 🚦 RIGHT NOW
 
 ### 🖥️ VPS deployment / hardening — infra deployed, stopped on two blockers
