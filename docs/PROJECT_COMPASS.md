@@ -25,20 +25,20 @@ QAMC is the Mission Control/operator layer:
 
 ## 🚦 RIGHT NOW
 
-### 🖥️ VPS deployment / hardening — infra deployed, stopped on two blockers
+### 🔐 Credential architecture built — stopped on one bundled operator action
 
 Stage 4–5 is accepted and PR #24 is merged into `main` as `105cc91a14faebd8a981061b3098eb181b306dda`.
 
-The Mission Control API/UI is live and supervised on the VPS (`127.0.0.1:8800`, restarts on crash/reboot); the full test suite passes there (1558/0); the trading-schedule timers are installed but intentionally left off. Claude stopped and pushed branch `claude/vps-deployment-hardening-q3f7k2` because two things only the operator can supply are missing — see Blockers below.
+The Mission Control API/UI is live and supervised on the VPS (`127.0.0.1:8800`, restarts on crash/reboot); the full test suite passes there (1558/0); the trading-schedule timers are installed but intentionally left off. All 9 agents now route through OpenRouter. A credential-injecting proxy (so real secrets never touch `qamc` or `dev`) is built, empirically tested, and pushed — but not yet provisioned with real values. Claude stopped and pushed branch `claude/vps-deployment-hardening-q3f7k2` because the remaining steps require operator-only actions — see Blockers below.
 
 Dedicated dashboard visualization/UX polish remains **after** deployed-MVP acceptance.
 
 ## 📌 WHAT JUST HAPPENED
 
-- The planned "disposable cloud SSH key" bootstrap never happened — Anthropic's cloud sandbox couldn't reach outbound TCP/22. Claude Code connected instead through a Mac-hosted SSH session straight to the VPS; that was already the only key present, so there was nothing to revoke.
-- Claude bootstrapped Python on the VPS without root, deployed and supervised the Mission Control API/UI under `systemd --user`, and ran the full test suite there (1558 passed).
-- Trading timers are installed but not started — real API keys were never placed on the VPS, and starting them against placeholder keys would just burn retry budget for no verification value.
-- Full desktop/iPad screenshot verification is blocked one `sudo apt-get install` away (headless Chromium is missing shared libraries); Claude verified `/health` and `/ui` over HTTP instead and did not fake the screenshot pass.
+- Screenshot blocker (below, previously open) is **resolved**: operator installed the missing Chromium shared libraries; full desktop/iPad screenshot verification completed against the live UI with real, non-fabricated evidence.
+- All 9 agents migrated to route through OpenRouter instead of direct Anthropic/OpenAI (config-only change, verified against the live `resolve_provider()` logic).
+- OneCLI (a candidate open-source credential gateway) was investigated directly from its own source/install script, not assumed: it unconditionally requires Docker+Postgres with no lighter mode, and `dev` has neither Docker nor sudo. Claude rejected installing the product but implemented its underlying pattern as a minimal, empirically-tested proxy instead — see `docs/architecture/CREDENTIAL_PROXY.md`.
+- Zero trading/agent/risk code was touched this slice; full 1558-test suite re-confirmed clean.
 
 ## 🗺️ PROJECT MAP
 
@@ -73,20 +73,21 @@ The operator should not be used as the routine technical architect. Claude owns 
 
 ## ⏭️ NEXT MOVES
 
-1. Operator places real secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `FRED_API_KEY`, optionally `TELEGRAM_*`/`HEALTHCHECKS_URL`) into `/home/qamc/quant-agent/.env` on the VPS directly (scp/sftp/edit-over-SSH) — not through chat.
-2. Operator runs one `sudo apt-get install` for headless-Chromium's missing shared libraries (exact package list in `docs/WORK.md`'s checkpoint section) so full desktop/iPad screenshot verification can complete.
-3. Claude enables the trading timers, re-runs full runtime verification (real engine + real broker/LLM calls, live screenshots), refreshes this checkpoint, pushes.
+1. Operator runs the bundled provisioning steps in `ops/credential-proxy/README.md` (one `sudo` script + real secrets entered directly, never through chat) — see Blockers below.
+2. Whoever holds `qamc` access adds 3 `Environment=` lines to `quant-agent-api.service` and restarts it (`dev` cannot write into `/home/qamc`).
+3. Claude re-verifies `/health` shows `broker_reachable:true`, confirms real OpenRouter/Alpaca/FRED calls succeed, then decides on enabling trading timers, refreshes this checkpoint, pushes.
 4. ChatGPT independently reviews the pushed deployment result; operator UAT follows only after that review.
 5. If UAT passes, accept the deployed MVP; only then authorize dedicated visual polish.
 
 ## 🚧 BLOCKERS / DECISIONS NEEDED
 
-Two operator-only actions, neither a product/architecture decision:
-1. Real API secrets need to reach the VPS `.env` file directly — Claude will not accept or type secrets through chat.
-2. One interactive `sudo apt-get install` for headless-browser system libraries — Claude has no working sudo in this session (no cached auth, no NOPASSWD rule).
+One bundled operator-only action set, not a product/architecture decision (full exact commands in `ops/credential-proxy/README.md`):
+1. Provision the dedicated `credproxy` account + CA + service (`sudo bash ops/credential-proxy/setup.sh`) — `dev` has no sudo.
+2. Enter the four real credential values directly into `credproxy`'s vault — operator only, never through chat.
+3. Add the proxy's 3 env vars to `quant-agent-api.service` and restart it — needs `qamc` access, which `dev` does not have.
 
 ## 🛡️ SAFETY
 
 Paper-only, deterministic risk/broker protections untouched, Mission Control stayed read-only/non-critical this tranche — none of this work touched `src/agents`, `src/risk`, or execution/broker code. The Mission Control API is bound to `127.0.0.1` only; nothing is publicly exposed.
 
-_Last refreshed: 2026-08-10 01:15 UTC — active project view only; retired/superseded work lives in Git history._
+_Last refreshed: 2026-08-11 22:15 UTC — active project view only; retired/superseded work lives in Git history._
