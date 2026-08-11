@@ -42,6 +42,38 @@ Path-scoped rules add detail only when relevant files are touched.
 
 Do not turn the operator into the technical architect.
 
+## Architectural authority boundary — HARD RULE
+
+Claude has broad autonomy to implement, debug, test, refactor, and make routine engineering decisions **inside the currently accepted architecture and authorized work**.
+
+Claude does **not** have authority to independently introduce, replace, or build significant architecture, infrastructure, services, platforms, frameworks, security systems, credential systems, databases, proxies, orchestration layers, or other durable components that are not already explicitly authorized.
+
+If an approved component is unavailable, unsuitable, blocked, unexpectedly heavy, incompatible, or otherwise creates a fork in the architectural path: **STOP AND ASK.** Do not interpret a blocker as permission to build an alternative.
+
+In particular, never respond to “the approved product/tool cannot be installed or does not work as expected” by building an in-house equivalent without explicit architectural approval.
+
+Permission is required before any change that would:
+- introduce a new persistent service or daemon;
+- introduce a new infrastructure dependency;
+- replace an approved external/open-source component;
+- create a custom implementation of functionality that an existing product was intended to provide;
+- materially increase long-term maintenance burden;
+- create a new security-sensitive component;
+- change account, network, or trust boundaries;
+- materially alter the accepted architecture;
+- consume substantial engineering time because the original approach encountered a roadblock.
+
+At such a fork, report concisely:
+1. what was discovered;
+2. why the authorized path is blocked or unattractive;
+3. the viable alternatives;
+4. the recommended choice;
+5. the engineering and maintenance consequences.
+
+Then wait for architectural approval.
+
+**Default rule: optimize autonomously within the architecture; never autonomously redesign the architecture.** When uncertain whether something is a routine implementation choice or an architectural decision, treat it as architectural and ask.
+
 ## Claude Code execution discipline
 
 For substantial work with a measurable end state, prefer **outcome-driven execution** over chains of micro-prompts:
