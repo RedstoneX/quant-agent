@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-10
+Updated: 2026-08-11
 
 This file says what is accepted and authorized **now**. Git history preserves prior state and discovery evidence.
 
@@ -14,37 +14,38 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Stage 5 delivered read-only journal and parameterized forensic search. Stage 4–5 passed external ChatGPT/operator review with **1558 passed, 0 failed** plus committed browser/runtime evidence.
 - PR #24 is merged into `main` as merge commit `105cc91a14faebd8a981061b3098eb181b306dda`.
 - The permanent frontend-verification requirement under `.claude/rules/frontend-verification.md` remains accepted.
-- VPS deployment/hardening tranche completed and independently reviewed.
-- Development environment established separately under `/home/dev` with Claude Code installed for on-demand development use.
+- The OVH VPS runtime architecture remains: `ubuntu` = administration/recovery, `qamc` = isolated QAMC runtime, `dev` = development/Claude Code workspace.
+- Mission Control/API is deployed under `qamc`, private/read-only, and trading timers remain disabled pending commissioning.
+- OpenRouter routing for all 9 agents is accepted: explicit provider `openrouter`, model `openai/gpt-5.5`, with no model diversification. This uses the already-accepted provider seam.
+- The architectural-authority hard rule in `CLAUDE.md` is accepted: Claude may act autonomously inside accepted architecture but must stop at material architectural forks rather than invent replacements.
 
-## Current operating model
+## Explicitly not accepted
 
-- `ubuntu` = OVH administration / recovery account.
-- `qamc` = QAMC runtime account only.
-- `dev` = development and agent workspace only.
+Commit `2207b0b74287101ea65ce79782081e51a27420ba` contains a custom credential-proxy implementation created after OneCLI installation was found to require Docker/root access. That custom proxy, its service, its credential architecture, and its supporting `CREDENTIAL_PROXY.md` are **not accepted QAMC architecture** and must not be provisioned, hardened, extended, deployed, or treated as the current credential solution.
 
-Development and runtime environments remain intentionally separate.
+Useful empirical compatibility evidence from that work may be consulted (for example QAMC transport behavior across `httpx`, `requests`, and `urllib`), but the home-grown gateway itself is rejected.
 
 ## Authorized now
 
-The deployed MVP checkpoint is complete. Future engineering must continue from the accepted repository state and preserve:
+**Commission QAMC into a real, verified Alpaca Paper deployment using OpenRouter and the upstream-maintained OneCLI product, if OneCLI proves viable in the actual VPS/runtime context.** See `docs/WORK.md` for the active work contract.
 
-- Alpaca Paper-only operation.
-- Deterministic trading/risk protections.
-- Mission Control read-only, non-critical boundary.
-- Secrets outside Git/client surfaces.
+Claude may investigate, implement, test, fix, and continue autonomously inside this accepted direction. A requirement for operator-entered secrets or privileged `sudo` is a valid stop boundary. If upstream OneCLI itself proves materially unsuitable, Claude must stop and report the architectural fork; it may not build a substitute credential system.
 
 ## Not authorized now
 
+- live trading;
 - deterministic trading/risk behavior changes;
 - broker-write Mission Control controls;
-- live trading;
-- dedicated dashboard visualization/visual-polish work until separately authorized;
+- public exposure of QAMC or OneCLI services;
+- collapsing `dev` / `qamc` account isolation;
+- enabling trading timers before commissioning verification makes that appropriate;
+- custom credential gateways/proxies/vaults or other durable replacements for OneCLI without separate architectural approval;
+- dedicated dashboard visualization/visual-polish work until the deployed MVP is accepted;
 - later learning/write-control stages without authorization;
-- unnecessary infrastructure expansion.
+- unnecessary infrastructure expansion beyond what the approved upstream OneCLI deployment actually requires.
 
 ## Handoff
 
-Claude Code should operate from the `/home/dev` development environment when engineering work is required. Runtime changes belong to `/home/qamc` and require explicit authorization.
+Claude Code operates from `/home/dev/projects/quant-agent` for engineering work. Runtime changes under `/home/qamc` must preserve the accepted account boundary. Real secrets must never pass through chat or Git.
 
-Operator UAT and future acceptance gates remain separate from implementation work.
+The next engineering action is to integrate and validate upstream OneCLI against the deployed QAMC runtime, stopping only for genuine operator-only secret entry, required privilege, or a material architectural incompatibility.

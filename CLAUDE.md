@@ -42,6 +42,56 @@ Path-scoped rules add detail only when relevant files are touched.
 
 Do not turn the operator into the technical architect.
 
+## Architectural authority boundary — HARD RULE
+
+Claude has broad autonomy to implement, debug, test, refactor, and make routine engineering decisions **inside the currently accepted architecture and authorized work**.
+
+Claude does **not** have authority to independently introduce, replace, or build significant architecture, infrastructure, services, platforms, frameworks, security systems, credential systems, databases, proxies, orchestration layers, or other durable components that are not already explicitly authorized.
+
+If an approved component is unavailable, unsuitable, blocked, unexpectedly heavy, incompatible, or otherwise creates a fork in the architectural path: **STOP AND ASK.** Do not interpret a blocker as permission to build an alternative.
+
+In particular, never respond to “the approved product/tool cannot be installed or does not work as expected” by building an in-house equivalent without explicit architectural approval.
+
+Permission is required before any change that would:
+- introduce a new persistent service or daemon;
+- introduce a new infrastructure dependency;
+- replace an approved external/open-source component;
+- create a custom implementation of functionality that an existing product was intended to provide;
+- materially increase long-term maintenance burden;
+- create a new security-sensitive component;
+- change account, network, or trust boundaries;
+- materially alter the accepted architecture;
+- consume substantial engineering time because the original approach encountered a roadblock.
+
+At such a fork, report concisely:
+1. what was discovered;
+2. why the authorized path is blocked or unattractive;
+3. the viable alternatives;
+4. the recommended choice;
+5. the engineering and maintenance consequences.
+
+Then wait for architectural approval.
+
+**Default rule: optimize autonomously within the architecture; never autonomously redesign the architecture.** When uncertain whether something is a routine implementation choice or an architectural decision, treat it as architectural and ask.
+
+## Claude Code execution discipline
+
+For substantial work with a measurable end state, prefer **outcome-driven execution** over chains of micro-prompts:
+
+- Use `/goal <verifiable completion condition>` when the installed Claude Code version supports it. State the end state, hard boundaries, and a check Claude can actually run; do not prescribe every implementation step.
+- Give Claude a verification loop before implementation. Prefer tests, health checks, builds, screenshots, or other deterministic pass/fail evidence. Completion means showing the evidence, not asserting that the work looks done.
+- `/goal` controls persistence across turns; permission/autonomy modes control tool approvals. Treat them as separate concerns. Never weaken QAMC safety boundaries merely to remove approval friction.
+- Use `/plan` or discovery mode when architecture or authorization is unresolved; once implementation is authorized, avoid repeatedly returning to planning for routine engineering choices.
+- Protect the main context aggressively. Use subagents for file-heavy investigation and fresh-context/adversarial verification; use `/btw` for disposable side questions; use targeted `/compact` when continuity matters; use `/clear` between unrelated tasks or after repeated failed/corrected approaches.
+- Use worktree isolation for parallel edits that could collide. Use `/batch` only for genuinely large, decomposable work; do not invoke parallelism for its own sake.
+- Prefer concise `CLAUDE.md` rules that apply broadly. Put conditional domain knowledge and repeatable workflows in skills so they load on demand; use hooks for invariants that must happen every time rather than relying on advisory prose.
+- Prefer CLI tools for external systems when available; they are usually more context-efficient than manually narrating or scraping equivalent state.
+- Use background/session tools (`/background`/`/bg`, tasks, resume/continue) when they improve continuity without weakening reviewability.
+- Do not assume Claude Code command availability or semantics from memory. The CLI evolves; before relying on a command-specific workflow, verify the installed version/help or current official Claude Code documentation.
+- Stop for the operator only when required by credentials, unavailable privilege, an explicit product/value decision, or a material architecture/safety conflict. Bundle operator-only actions into one concise intervention whenever safe.
+
+The governing principle is: **state the desired verified outcome and hard boundaries; give Claude enough autonomy to choose the engineering path, while keeping context clean and verification objective.**
+
 ## Git and continuity
 
 Git is durable QAMC memory. Project auto-memory is disabled. A new Claude session rehydrates from the repository, not from old chat transcripts. A usage reset is not a context reset.
