@@ -46,16 +46,19 @@ Do not turn the operator into the technical architect.
 
 For substantial work with a measurable end state, prefer **outcome-driven execution** over chains of micro-prompts:
 
-- Use `/goal <verifiable completion condition>` when the installed Claude Code version supports it. The goal should describe the end state, not prescribe every implementation step. Let Claude investigate, implement, test, correct failures, and continue until the condition is satisfied or a genuine operator-only boundary is reached.
+- Use `/goal <verifiable completion condition>` when the installed Claude Code version supports it. State the end state, hard boundaries, and a check Claude can actually run; do not prescribe every implementation step.
+- Give Claude a verification loop before implementation. Prefer tests, health checks, builds, screenshots, or other deterministic pass/fail evidence. Completion means showing the evidence, not asserting that the work looks done.
 - `/goal` controls persistence across turns; permission/autonomy modes control tool approvals. Treat them as separate concerns. Never weaken QAMC safety boundaries merely to remove approval friction.
 - Use `/plan` or discovery mode when architecture or authorization is unresolved; once implementation is authorized, avoid repeatedly returning to planning for routine engineering choices.
-- Use subagents for independent investigation or implementation when they materially reduce serial work. Use worktree isolation for parallel edits that could collide. Use `/batch` only for genuinely large, decomposable work; do not invoke parallelism for its own sake.
-- Use background/session tools (`/background`/`/bg`, tasks, resume/continue) when they improve continuity without weakening reviewability. Side questions should not derail the main execution objective.
-- Prefer project skills/rules/hooks for durable QAMC procedures instead of copying long operational prompts into every session.
+- Protect the main context aggressively. Use subagents for file-heavy investigation and fresh-context/adversarial verification; use `/btw` for disposable side questions; use targeted `/compact` when continuity matters; use `/clear` between unrelated tasks or after repeated failed/corrected approaches.
+- Use worktree isolation for parallel edits that could collide. Use `/batch` only for genuinely large, decomposable work; do not invoke parallelism for its own sake.
+- Prefer concise `CLAUDE.md` rules that apply broadly. Put conditional domain knowledge and repeatable workflows in skills so they load on demand; use hooks for invariants that must happen every time rather than relying on advisory prose.
+- Prefer CLI tools for external systems when available; they are usually more context-efficient than manually narrating or scraping equivalent state.
+- Use background/session tools (`/background`/`/bg`, tasks, resume/continue) when they improve continuity without weakening reviewability.
 - Do not assume Claude Code command availability or semantics from memory. The CLI evolves; before relying on a command-specific workflow, verify the installed version/help or current official Claude Code documentation.
 - Stop for the operator only when required by credentials, unavailable privilege, an explicit product/value decision, or a material architecture/safety conflict. Bundle operator-only actions into one concise intervention whenever safe.
 
-The governing principle is: **state the desired verified outcome and hard boundaries; give Claude enough autonomy to choose the engineering path.**
+The governing principle is: **state the desired verified outcome and hard boundaries; give Claude enough autonomy to choose the engineering path, while keeping context clean and verification objective.**
 
 ## Git and continuity
 
