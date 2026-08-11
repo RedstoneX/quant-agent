@@ -42,6 +42,21 @@ Path-scoped rules add detail only when relevant files are touched.
 
 Do not turn the operator into the technical architect.
 
+## Claude Code execution discipline
+
+For substantial work with a measurable end state, prefer **outcome-driven execution** over chains of micro-prompts:
+
+- Use `/goal <verifiable completion condition>` when the installed Claude Code version supports it. The goal should describe the end state, not prescribe every implementation step. Let Claude investigate, implement, test, correct failures, and continue until the condition is satisfied or a genuine operator-only boundary is reached.
+- `/goal` controls persistence across turns; permission/autonomy modes control tool approvals. Treat them as separate concerns. Never weaken QAMC safety boundaries merely to remove approval friction.
+- Use `/plan` or discovery mode when architecture or authorization is unresolved; once implementation is authorized, avoid repeatedly returning to planning for routine engineering choices.
+- Use subagents for independent investigation or implementation when they materially reduce serial work. Use worktree isolation for parallel edits that could collide. Use `/batch` only for genuinely large, decomposable work; do not invoke parallelism for its own sake.
+- Use background/session tools (`/background`/`/bg`, tasks, resume/continue) when they improve continuity without weakening reviewability. Side questions should not derail the main execution objective.
+- Prefer project skills/rules/hooks for durable QAMC procedures instead of copying long operational prompts into every session.
+- Do not assume Claude Code command availability or semantics from memory. The CLI evolves; before relying on a command-specific workflow, verify the installed version/help or current official Claude Code documentation.
+- Stop for the operator only when required by credentials, unavailable privilege, an explicit product/value decision, or a material architecture/safety conflict. Bundle operator-only actions into one concise intervention whenever safe.
+
+The governing principle is: **state the desired verified outcome and hard boundaries; give Claude enough autonomy to choose the engineering path.**
+
 ## Git and continuity
 
 Git is durable QAMC memory. Project auto-memory is disabled. A new Claude session rehydrates from the repository, not from old chat transcripts. A usage reset is not a context reset.
