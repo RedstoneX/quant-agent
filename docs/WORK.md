@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **VPS DEPLOYMENT / HARDENING — INFRA DEPLOYED, PARTIAL VERIFICATION, BLOCKED ON SECRETS + ROOT — STOPPED FOR OPERATOR INPUT**
+Status: **VPS DEPLOYMENT / HARDENING — INFRA DEPLOYED, CREDENTIAL-PROXY REVERTED PER NEW HARD RULE, BLOCKED ON ARCHITECTURAL FORK — STOPPED FOR OPERATOR DECISION**
 
 ## Goal
 
@@ -99,6 +99,32 @@ This slice ran from the `dev` account (Claude Code's own development environment
 3. Adding three lines (`HTTPS_PROXY` with the generated auth token embedded, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`) to `/home/qamc/quant-agent/.env` — the project's existing single source of truth for secrets, covering both `quant-agent-api.service` and the (still-disabled) trading engine's `.env`-sourcing path — then restarting `quant-agent-api.service`. `dev` cannot write into `/home/qamc`, so this needs whoever has `qamc` access.
 
 None of the four real credentials exist anywhere `dev` can reach at any point in this slice, before or after.
+
+## Checkpoint status — 2026-08-11, later (custom proxy reverted per new HARD RULE)
+
+`CLAUDE.md` was updated by the operator (commit `7b51efd`, on top of this branch) with a HARD architectural-authority rule: Claude may implement freely inside accepted architecture, but may not independently introduce a substitute service/proxy/vault/gateway/database when an approved external product is blocked, unsuitable, or heavy — that is a stop-and-ask fork requiring approval, not license to build an alternative.
+
+Applying that rule to the prior slice's `ops/credential-proxy/` (a working, independently-reviewed custom proxy built after OneCLI's Docker requirement blocked the real product):
+
+**Done this slice:**
+- Reconciled the branch to the operator's new rule (fast-forward merge, no conflicts).
+- Re-verified OneCLI's install requirement directly against upstream today, not trusted from the prior session's notes: the actual install script (`onecli.sh/install`) still unconditionally requires `docker`, a running Docker daemon, and `docker compose`, and deploys PostgreSQL via Docker Compose with no non-Docker path. Re-confirmed live, on this same `dev` account: no `docker`, no passwordless `sudo`, no `psql`. The blocker is real and current, not stale.
+- Reverted `ops/credential-proxy/` in full (gateway, systemd unit, setup script, operator runbook) and its `.env.example` pointer comment. Zero `src/` involvement either way, so no functional revert was needed there.
+- Retained the empirical, mechanism-independent findings from that slice — which env vars each of QAMC's three HTTP stacks (`httpx`/`requests`/`urllib`) actually need for CA trust and how each library's credential injection works — in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`, since those facts hold regardless of which credential-delivery mechanism is eventually approved.
+- Updated `STATE.md` and `PROJECT_COMPASS.md` to reflect the reversion and the open fork.
+
+**Stopping here — this is a genuine architectural fork, not a routine implementation choice:**
+
+OneCLI (the only product-track option investigated so far) cannot be installed from `dev`'s current privileges under any of its documented install paths. The real choices are:
+1. An operator (or anyone with VPS sudo) installs Docker + Docker Compose on the VPS, after which Claude can provision real OneCLI through its normal documented install path and proceed with a straightforward, product-backed credential-delivery integration.
+2. OneCLI is pointed at an external managed Postgres instead of its Docker-bundled one — this avoids needing Docker specifically, but introduces a new externally-hosted infrastructure dependency, which the new HARD RULE also treats as requiring approval, not a routine choice.
+3. Some other approach the operator prefers, including deciding the custom-proxy pattern actually was acceptable for this specific case and re-authorizing it explicitly (its code still exists in Git history at `2207b0b` if so).
+
+Recommendation: option 1 (sudo-provisioned Docker, then real OneCLI) is the smallest deviation from "use the real upstream product" — it needs one interactive `sudo apt-get install docker.io docker-compose-plugin`-class command from someone with VPS privileges, after which the credential-delivery mechanism becomes the actual maintained OneCLI product instead of anything custom, with a normal upgrade/security path going forward. It also matches the empirical evidence already gathered (both header- and query-param-based injection are proven compatible with QAMC's actual HTTP stacks).
+
+Engineering/maintenance consequence of option 1: adds Docker as a VPS-level dependency (disk/memory footprint, an additional daemon to keep patched) purely to host OneCLI's own Postgres + dashboard; QAMC's own trading engine and Mission Control gain no new dependency. Consequence of option 2: avoids the Docker footprint but adds a network dependency on a third-party managed database and its own availability/cost/data-residency considerations.
+
+No further engineering proceeds on credential delivery until the operator picks a direction. Trading timers remain disabled; OpenRouter routing (already-accepted, config-only) is untouched by this reversion.
 
 ## Hard boundaries
 

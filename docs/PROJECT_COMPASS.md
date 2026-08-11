@@ -29,7 +29,7 @@ QAMC is the Mission Control/operator layer:
 
 Stage 4–5 is accepted and PR #24 is merged into `main` as `105cc91a14faebd8a981061b3098eb181b306dda`.
 
-The Mission Control API/UI is live and supervised on the VPS (`127.0.0.1:8800`, restarts on crash/reboot); the full test suite passes there (1558/0); the trading-schedule timers are installed but intentionally left off. All 9 agents now route through OpenRouter. A credential-injecting proxy (so real secrets never touch `qamc` or `dev`) is built, empirically tested, and pushed — but not yet provisioned with real values. Claude stopped and pushed branch `claude/vps-deployment-hardening-q3f7k2` because the remaining steps require operator-only actions — see Blockers below.
+The Mission Control API/UI is live and supervised on the VPS (`127.0.0.1:8800`, restarts on crash/reboot); the full test suite passes there (1558/0); the trading-schedule timers are installed but intentionally left off. All 9 agents now route through OpenRouter. A custom credential-injecting proxy was built in an earlier slice as a substitute for blocked-on-Docker OneCLI, then reverted after a new architectural-authority rule ruled that kind of substitution out. No credential-delivery mechanism currently exists. Claude stopped and pushed branch `claude/vps-deployment-hardening-q3f7k2` because the path forward is an architectural fork needing an operator decision — see Blockers below.
 
 Dedicated dashboard visualization/UX polish remains **after** deployed-MVP acceptance.
 
@@ -37,7 +37,8 @@ Dedicated dashboard visualization/UX polish remains **after** deployed-MVP accep
 
 - Screenshot blocker (below, previously open) is **resolved**: operator installed the missing Chromium shared libraries; full desktop/iPad screenshot verification completed against the live UI with real, non-fabricated evidence.
 - All 9 agents migrated to route through OpenRouter instead of direct Anthropic/OpenAI (config-only change, verified against the live `resolve_provider()` logic).
-- OneCLI (a candidate open-source credential gateway) was investigated directly from its own source/install script, not assumed: it unconditionally requires Docker+Postgres with no lighter mode, and `dev` has neither Docker nor sudo. Claude rejected installing the product but implemented its underlying pattern as a minimal, empirically-tested proxy instead — see `docs/architecture/CREDENTIAL_PROXY.md`.
+- `CLAUDE.md` gained a HARD architectural-authority rule: a blocked approved product is a stop-and-ask fork, not license to build a substitute. Under that rule, the custom credential-proxy built in the prior slice was reverted in full.
+- OneCLI's Docker+Compose+Postgres requirement was re-verified directly against upstream today (not trusted secondhand) and reproduced live on `dev`: still blocked, no Docker, no sudo. The reusable empirical findings (which env vars each HTTP stack needs) were kept — see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
 - Zero trading/agent/risk code was touched this slice; full 1558-test suite re-confirmed clean.
 
 ## 🗺️ PROJECT MAP
@@ -73,18 +74,24 @@ The operator should not be used as the routine technical architect. Claude owns 
 
 ## ⏭️ NEXT MOVES
 
-1. Operator runs the bundled provisioning steps in `ops/credential-proxy/README.md` (one `sudo` script + real secrets entered directly, never through chat) — see Blockers below.
-2. Whoever holds `qamc` access adds 3 `Environment=` lines to `quant-agent-api.service` and restarts it (`dev` cannot write into `/home/qamc`).
+1. Operator decides how real OneCLI gets provisioned on the VPS (see Blockers below) — this is an architectural fork, not a routine engineering choice, per `CLAUDE.md`'s architectural-authority HARD RULE.
+2. Once a path is approved and OneCLI is actually running, wire `qamc`'s `.env` to it and add real secrets — operator only, never through chat.
 3. Claude re-verifies `/health` shows `broker_reachable:true`, confirms real OpenRouter/Alpaca/FRED calls succeed, then decides on enabling trading timers, refreshes this checkpoint, pushes.
 4. ChatGPT independently reviews the pushed deployment result; operator UAT follows only after that review.
 5. If UAT passes, accept the deployed MVP; only then authorize dedicated visual polish.
 
 ## 🚧 BLOCKERS / DECISIONS NEEDED
 
-One bundled operator-only action set, not a product/architecture decision (full exact commands in `ops/credential-proxy/README.md`):
-1. Provision the dedicated `credproxy` account + CA + service (`sudo bash ops/credential-proxy/setup.sh`) — `dev` has no sudo.
-2. Enter the four real credential values directly into `credproxy`'s vault — operator only, never through chat.
-3. Add the proxy's 3 env vars to `quant-agent-api.service` and restart it — needs `qamc` access, which `dev` does not have.
+**Architectural fork — needs operator decision, not a routine engineering choice:**
+
+A prior slice built a custom credential-injecting proxy after finding OneCLI's installer requires Docker. That custom proxy has been reverted — `CLAUDE.md` now has a HARD rule that a blocked approved product must stop-and-ask, not get replaced with an in-house substitute. Re-verified today, directly against upstream: OneCLI's install still unconditionally requires Docker + Docker Compose + PostgreSQL, and `dev` still has no Docker and no passwordless sudo. See `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the evidence.
+
+Real options, needing an operator decision:
+1. Operator (or someone with sudo) installs Docker on the VPS, then Claude provisions real OneCLI through its normal install path.
+2. OneCLI is pointed at an external managed Postgres instead of Docker's bundled one — itself a new infrastructure dependency needing approval.
+3. Some other approach the operator prefers.
+
+No credential-delivery mechanism currently exists. The four real secrets remain fully blocked until this is decided.
 
 ## 🛡️ SAFETY
 
