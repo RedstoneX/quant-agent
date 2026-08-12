@@ -142,6 +142,18 @@ This pass never touched `sudo` membership, Docker, OneCLI, or anything under `co
 
 No real credentials exist anywhere in this chain yet. Recommended next step (not yet executed): create a QAMC agent/gateway token in OneCLI's dashboard/API and configure routes for `openrouter.ai`, `paper-api.alpaca.markets`, `data.alpaca.markets`, `api.stlouisfed.org` — all still no real secret values required, since routes can be scaffolded with placeholder/pending credential slots the same way the reverted custom-proxy work validated the HTTP-stack compatibility in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`. Entering the four real values into OneCLI's vault remains a separate, later, operator-only step.
 
+## Checkpoint status — 2026-08-12, later still (OpenRouter integration point determined and proven — zero code changes)
+
+Operator created Custom Secret "OpenRouter - QAMC" (host `openrouter.ai`) in OneCLI's dashboard and assigned it to the Default Agent — real key entry happened only there, never through `dev` or chat. Determined and proved the integration mechanism, not assumed:
+
+- Queried the live instance's own `GET /api/container-config` (documented API, `dev` reachable since it's on `127.0.0.1`) to get the exact env vars OneCLI expects a consuming process to set, rather than guessing from product marketing. One correction applied: it returns `host.docker.internal` as the proxy host, which only resolves inside a Docker container — QAMC's trading engine/Mission Control are bare `qamc` processes, so `127.0.0.1` is the correct host (confirmed the gateway is also bound there directly).
+- **Empirically proved** credential injection rather than trusting the mechanism description: sent an obviously-fake `Authorization: Bearer` value to `openrouter.ai/api/v1/auth/key` (an endpoint that validates the key) both directly (`401`) and through the OneCLI gateway with CA trust (`200`) — the only variable changed was the routing path, proving the gateway substitutes the real key server-side. Response bodies were discarded (`-o /dev/null`) both times; the real key and any account metadata were never read.
+- Full detail and the corrected env-var values in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+**Zero `src/` or `config/` changes required.** `src/agents/base.py`'s OpenRouter branch already constructs its OpenAI SDK client without a custom `http_client`, so it already inherits `httpx`'s default environment-driven proxy/CA behavior — the exact mechanism OneCLI needs. `_OPENROUTER_BASE_URL` and `config/settings.yaml`'s provider/model fields are unrelated to credential delivery and stay untouched. The only change made: a documentation-only pointer added to `.env.example` (placeholder values only, no real token) explaining the two env vars (`HTTPS_PROXY`, `SSL_CERT_FILE`) whoever has `qamc` access needs to add to `/home/qamc/quant-agent/.env` — `dev` cannot apply that directly (`dev` cannot write into `/home/qamc`), and the live agent token/CA cert should be fetched fresh by whoever applies it (`curl http://127.0.0.1:10254/api/container-config` from `qamc` or `ubuntu`) rather than relayed through chat.
+
+Trading timers, Alpaca, and FRED routes are unchanged — out of scope for this pass per the operator's explicit "do not create another credential entry."
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.
