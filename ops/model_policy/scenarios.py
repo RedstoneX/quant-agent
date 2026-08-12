@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, Callable
 
 from src.models import (
@@ -56,6 +57,33 @@ class Check:
     detail: str = ""
 
 
+def production_max_tokens(agent: str) -> int:
+    """The `max_tokens` this agent actually runs with, read from settings.yaml.
+
+    Hardcoding a benchmark-local ceiling here was a real bug, not a
+    simplification. The first sweep capped the risk-manager scenario at
+    16,000 while production allows 128,000, and two candidates were scored
+    0.00 for "unparseable RiskVerdict" when their reasoning was in fact
+    correct — they had simply spent the smaller budget on reasoning tokens
+    and been cut off mid-JSON. `deepseek-v4-flash-0731` reported output
+    tokens of exactly 16,000, which is the cap, not a coincidence.
+
+    Reading the real value keeps the harness honest and self-maintaining: a
+    model is now judged under the conditions it would actually run in, and
+    retuning an agent's budget in settings.yaml retunes the benchmark too.
+    """
+    import yaml
+
+    settings = Path(__file__).resolve().parents[2] / "config" / "settings.yaml"
+    llm = (yaml.safe_load(settings.read_text()) or {}).get("llm") or {}
+    value = llm.get(f"{agent}_max_tokens")
+    if not isinstance(value, int) or value <= 0:
+        value = llm.get("max_tokens")
+    if not isinstance(value, int) or value <= 0:
+        raise RuntimeError(f"no usable max_tokens for {agent} in {settings}")
+    return value
+
+
 @dataclass
 class Scenario:
     """A benchmark case: build an agent, run it, grade the output.
@@ -68,7 +96,6 @@ class Scenario:
     key: str
     role: str                      # which config/settings.yaml agent this informs
     agent_path: str                # "module:ClassName"
-    max_tokens: int
     invoke: Callable[[Any], Any]   # (agent) -> parsed output (or None)
     grade: Callable[[Any], list[Check]]
     description: str
@@ -76,6 +103,10 @@ class Scenario:
     # batch, which is far too expensive to run against every candidate but
     # is the decisive latency measurement for the finalists.
     default: bool = True
+
+    @property
+    def max_tokens(self) -> int:
+        return production_max_tokens(self.role)
 
 
 def _bars(
@@ -817,7 +848,6 @@ SCENARIOS: list[Scenario] = [
         key="tech_batch",
         role="tech_analyst",
         agent_path="src.agents.tech_analyst:TechAnalystAgent",
-        max_tokens=32000,
         invoke=_tech_invoke,
         grade=_tech_grade,
         description="3-symbol batch: uptrend, downtrend, rangebound. Grades "
@@ -827,7 +857,6 @@ SCENARIOS: list[Scenario] = [
         key="macro_stress",
         role="macro_analyst",
         agent_path="src.agents.macro_analyst:MacroAnalystAgent",
-        max_tokens=16000,
         invoke=_macro_invoke,
         grade=_macro_grade,
         description="Stressed macro tape (VIX p88, spreads +63bps). Grades "
@@ -837,7 +866,6 @@ SCENARIOS: list[Scenario] = [
         key="news_intel",
         role="news_analyst",
         agent_path="src.agents.news_analyst:NewsAnalystAgent",
-        max_tokens=16000,
         invoke=_news_invoke,
         grade=_news_grade,
         description="7 mixed headlines. Grades structured extraction and "
@@ -847,7 +875,6 @@ SCENARIOS: list[Scenario] = [
         key="pm_constrained",
         role="portfolio_manager",
         agent_path="src.agents.portfolio_manager:PortfolioManagerAgent",
-        max_tokens=32000,
         invoke=_pm_invoke,
         grade=_pm_grade,
         description="Risk-off macro, 5.7% cash, margin OFF. Grades funding "
@@ -857,7 +884,6 @@ SCENARIOS: list[Scenario] = [
         key="risk_rr_breach",
         role="risk_manager",
         agent_path="src.agents.risk_manager:RiskManagerAgent",
-        max_tokens=16000,
         invoke=_risk_invoke,
         grade=_risk_grade,
         description="Plan contains a 0.42R BUY at 18% of book. Grades whether "
@@ -867,7 +893,6 @@ SCENARIOS: list[Scenario] = [
         key="tech_batch_full",
         role="tech_analyst",
         agent_path="src.agents.tech_analyst:TechAnalystAgent",
-        max_tokens=128000,
         invoke=_tech_full_invoke,
         grade=_tech_full_grade,
         default=False,
@@ -879,7 +904,6 @@ SCENARIOS: list[Scenario] = [
         key="midday_exit",
         role="position_reviewer",
         agent_path="src.agents.position_reviewer:PositionReviewerAgent",
-        max_tokens=16000,
         invoke=_review_invoke,
         grade=_review_grade,
         description="One broken thesis pinned to its stop, one working "

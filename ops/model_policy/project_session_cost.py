@@ -76,13 +76,14 @@ class Load:
 # tech_analyst dominates and deserves its own note: the universe is 101
 # symbols, `_CHUNK_SIZE = 25`, so `analyze_batch` issues 5 calls per morning
 # session, each carrying 25 symbols x `_BARS_PER_SYMBOL = 20` bars plus
-# indicators. The benchmark measured a 3-symbol batch; input scales close to
-# linearly in symbols, so the per-call figure below is that measurement
-# scaled to 25 symbols. This is the single biggest lever in the projection
-# and the single biggest source of its error bar.
+# indicators. Its per-call tokens are MEASURED at that real chunk size by
+# the `tech_batch_full` scenario (33,328 in / 9,960 out, mean of two runs)
+# rather than extrapolated from the 3-symbol case — this row is over half
+# the projection, so it is the one worth measuring properly.
 DAILY_LOAD = [
-    Load("tech_analyst",      5.0, 26_000, 6_000,
-         "measured per-symbol x 25/chunk; 5 chunks structural (101 symbols / _CHUNK_SIZE)"),
+    Load("tech_analyst",      5.0, 33_328, 9_960,
+         "measured at production chunk size (tech_batch_full); 5 chunks "
+         "structural (101 symbols / _CHUNK_SIZE=25)"),
     Load("news_analyst",      1.0,  6_000, 2_500, "measured"),
     Load("macro_analyst",     1.0,  4_500, 2_500, "measured"),
     Load("earnings_analyst",  1.5,  8_000, 2_500,

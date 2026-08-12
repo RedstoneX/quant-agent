@@ -438,15 +438,42 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.report:
-        merged: list[Trial] = []
+        # Later files SUPERSEDE earlier ones for any (model, scenario) pair
+        # they cover. That is what makes a targeted re-run reproducible: when
+        # a harness bug is found that distorted only some pairs — as happened
+        # with the benchmark-local `max_tokens` cap that scored two deepseek
+        # rows 0.00 for being cut off mid-JSON — the fix is to re-run those
+        # pairs and list the correction file last, not to silently average a
+        # known-bad trial in with its replacement.
+        by_pair: dict[tuple[str, str], list[Trial]] = {}
+        order: list[tuple[str, str]] = []
         sources = []
+        superseded: list[str] = []
         for path in args.report:
             doc = json.loads(Path(path).read_text())
             sources.append({"path": path, "generated_at": doc.get("generated_at")})
-            merged.extend(Trial(**t) for t in doc["trials"])
+            seen_here: set[tuple[str, str]] = set()
+            for raw in doc["trials"]:
+                trial = Trial(**raw)
+                key = (trial.model, trial.scenario)
+                if key not in seen_here and key in by_pair:
+                    superseded.append(f"{trial.model}|{trial.scenario} <- {path}")
+                    by_pair[key] = []
+                seen_here.add(key)
+                if key not in by_pair:
+                    by_pair[key] = []
+                    order.append(key)
+                by_pair[key].append(trial)
+        merged: list[Trial] = [t for key in order for t in by_pair[key]]
+        if superseded:
+            print(f"superseded {len(superseded)} pair(s) by a later file:",
+                  file=sys.stderr)
+            for s in superseded:
+                print(f"  {s}", file=sys.stderr)
         report = {
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "merged_from": sources,
+            "superseded_pairs": superseded,
             "baseline": BASELINE_MODEL,
             "scenarios": {s.key: {"role": s.role, "description": s.description}
                           for s in SCENARIOS},

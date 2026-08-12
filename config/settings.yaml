@@ -16,11 +16,11 @@ llm:
   # See docs/architecture/MODEL_ROUTING_POLICY.md for the evidence.
   # Reproduce with: python ops/model_policy/benchmark_models.py --from-onecli
   #
-  # Selected from 144 graded trials (12 models x 6 scenarios x 2 repeats,
-  # 2026-08-12) run through these very agent classes and prompts. Only two
-  # models scored a perfect mean AND a perfect worst run:
-  # `openai/gpt-5.5` and `google/gemini-2.5-flash-lite` — at 83x the cost
-  # for the former. No seat showed a measurable benefit from a more
+  # Selected from 148 graded trials (2026-08-12) run through these very
+  # agent classes and prompts. Three models scored a perfect mean AND a
+  # perfect worst run; this one won on latency and cost, being 83x cheaper
+  # than the `openai/gpt-5.5` baseline and 5-10x faster per call than the
+  # other perfect scorer. No seat showed a measurable benefit from a more
   # expensive model, so none is assigned one.
   #
   # The per-seat structure is kept even though every seat currently

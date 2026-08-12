@@ -58,37 +58,61 @@ Explicit per-agent model mapping in `config/settings.yaml`. Nothing else.
 
 ## Evidence
 
-`ops/model_policy/benchmark_models.py`, 144 graded trials on 2026-08-12:
-12 models x 6 scenarios x 2 repeats, driven through the **real** agent
-classes with the **real** prompts, graded by deterministic assertions.
-Raw results in `ops/model_policy/results/`.
+`ops/model_policy/benchmark_models.py`, 148 graded trials on 2026-08-12:
+12 models x 6 scenarios x 2 repeats, plus a production-scale tech batch and
+two corrective re-runs, driven through the **real** agent classes with the
+**real** prompts and graded by deterministic assertions. Raw results in
+`ops/model_policy/results/`; reproduce the table with:
 
-Quality is the weighted mean of a scenario's graded checks (0–1). `$/sweep`
-is the measured token cost of one pass over all six scenarios.
+```
+python ops/model_policy/benchmark_models.py --report \
+  ops/model_policy/results/sweep-a.json \
+  ops/model_policy/results/sweep-b.json \
+  ops/model_policy/results/rerun-capfix-flash.json \
+  ops/model_policy/results/rerun-capfix-pro.json \
+  ops/model_policy/results/sweep-tech-full.json
+```
+
+Quality is the weighted mean of a scenario's graded checks (0–1).
 
 | model | mean | worst run | $/sweep |
 |---|---|---|---|
-| **`google/gemini-2.5-flash-lite`** | **1.00** | **1.00** | **$0.0079** |
+| **`google/gemini-2.5-flash-lite`** | **1.00** | **1.00** | **$0.0152** † |
+| `deepseek/deepseek-v4-pro-0813` | 1.00 | 1.00 | $0.0646 |
 | `openai/gpt-5.5` *(baseline)* | 1.00 | 1.00 | $0.6547 |
 | `z-ai/glm-5.2` | 0.97 | 0.65 | $0.0605 |
 | `qwen/qwen3.7-max` | 0.97 | 0.65 | $0.2029 |
 | `qwen/qwen3-235b-a22b-2507` | 0.95 | 0.85 | $0.0064 |
-| `deepseek/deepseek-v4-pro-0813` | 0.92 | 0.00 | $0.0661 |
+| `deepseek/deepseek-v4-flash-0731` | 0.91 | 0.45 | $0.0193 † |
 | `qwen/qwen3.7-plus` | 0.85 | 0.20 | $0.0760 |
 | `openai/gpt-5.6-luna` | 0.80 | 0.00 | $0.0102 |
 | `minimax/minimax-m3` | 0.78 | 0.00 | $0.0492 |
-| `deepseek/deepseek-v4-flash-0731` | 0.78 | 0.00 | $0.0120 |
 | `qwen/qwen3.7-flash` | 0.74 | 0.00 | $0.0055 |
 | `openai/gpt-5-nano` | 0.63 | 0.00 | $0.0242 |
 
-Exactly two models scored a perfect mean **and** a perfect worst run. One
-costs 83x the other.
+† These two rows include the expensive 25-symbol `tech_batch_full`
+scenario, which the other ten did not run. On the common six scenarios
+`gemini-2.5-flash-lite` cost **$0.0079** — the figure comparable to the
+baseline's $0.6547, i.e. **83x cheaper**.
+
+Three models scored a perfect mean **and** a perfect worst run. The choice
+between them was made on latency and cost, both of which favour the
+selected model decisively — see the next two sections.
 
 **`worst run` is the column that matters.** A mean hides the failure mode
 that actually hurts: a model that alternates between excellent and
 unparseable averages respectably and silences a session every other day.
-Six of twelve candidates have a 0.00 in there — a run that produced nothing
-the pipeline could use.
+Four of twelve candidates have a 0.00 in there — a run that produced
+nothing the pipeline could use.
+
+### Why not `deepseek-v4-pro-0813`, which also scored 1.00/1.00
+
+Latency, and cost. It answered in **104–246s** per call across the
+scenarios, against 3–22s for the selected model. `tech_analyst` alone
+issues five sequential calls per morning against a 1200s session kill (see
+below), and PM and RM still have to run after them. It is also 4x more
+expensive on the common scenarios. It is a genuinely capable model here —
+it simply loses on the two axes that were left after quality tied.
 
 ### What the failures actually were
 
@@ -251,6 +275,13 @@ prices.
 5. **Scenarios are synthetic**, chosen so the correct answer follows from
    arithmetic the prompt already states. They test rule application, not
    market judgement, and no benchmark of this kind predicts P&L.
-6. **A benchmark-local `max_tokens` cap distorted 3 of 144 trials** before
-   it was found and fixed; scenarios now read the production value from
-   `settings.yaml`. See the note in `scenarios.py:production_max_tokens`.
+6. **A benchmark-local `max_tokens` cap distorted 3 trials** before it was
+   found and fixed; scenarios now read the production value from
+   `settings.yaml` (see `scenarios.py:production_max_tokens`). The affected
+   pairs were re-run and fold in via the report merge, which supersedes an
+   earlier file's pair with a later one. The correction mattered:
+   `deepseek-v4-flash-0731` went 0.00 → 1.00 at the risk seat and
+   `deepseek-v4-pro-0813` went 0.50 → 1.00 at the midday seat, the latter
+   moving it into the perfect-score group. Neither changed the selection,
+   but a table that had kept the original numbers would have been wrong
+   about both.

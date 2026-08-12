@@ -1,0 +1,240 @@
+{
+  "generated_at": "2026-08-12T21:47:16Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "tech_batch_full": {
+      "role": "tech_analyst",
+      "description": "One PRODUCTION-scale 25-symbol chunk (1 of the 5 a morning issues). Measures the session's longest pole against the 1200s wrapper kill, plus coverage at scale."
+    }
+  },
+  "pricing_used": {
+    "google/gemini-2.5-flash-lite": {
+      "input": 0.09999999999999999,
+      "output": 0.39999999999999997
+    },
+    "deepseek/deepseek-v4-flash-0731": {
+      "input": 0.08,
+      "output": 0.18
+    }
+  },
+  "trials": [
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "tech_batch_full",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_25_returned",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "25/25 returned, missing=[]"
+        },
+        {
+          "name": "atr_stop_discipline_at_scale",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "0 symbol(s) with an out-of-band stop: []"
+        },
+        {
+          "name": "thesis_invalid_if_discipline_at_scale",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "0 symbol(s) wrong: []"
+        }
+      ],
+      "input_tokens": 33328,
+      "output_tokens": 9598,
+      "cost_usd": 0.007172,
+      "latency_s": 21.6,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"SPY\",\n    \"rating\": \"buy\",\n    \"conviction\": \"high\",\n    \"entry_price\": 66.45,\n    \"reference_target\": 70.00,\n    \"stop_loss\": 64.73,\n    \"thesis_invalid_if\": \"Price closes below MA20 (62.5) on above-average volume\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price 66.45 is above MA20 (62.5), MA50 (53.5), MA200 (44.5). MA20 and MA50 are rising, indicating a strong uptrend.\",\n      \"momentum\": \"RSI is 63.5, suggesting bullish momentum without being overbought. MACD (1.8) is above its signal line (1.35) with a positive histogram (0.45), confirming bullish momentum.\",\n      \"volatility\": \"Price is near the upper Bollinger Band (63.94), with ATR stable at 0.72. This indicates continued upward momentum within a defined range, not extreme volatility.\",\n      \"volume\": \"Volume change is +5.0%, which is moderately confirming the recent price increase, though not exceptionally strong.\",\n      \"support_resistance\": \"Nearest support is MA20 at 62.5, followed by MA50 at 53.5. Resistance is the upper Bollinger Band at 63.94, with the next round level target at 70.00.\"\n    },\n    \"reasoning\": \"Strong bullish trend and momentum indicators (RSI, MACD) support a buy signal. The price is above all key MAs and MACD is bullishly aligned. Stop placed below MA20 for safety.\"\n  },\n  {\n    \"symbol\": \"QQQ\",\n    \"rating\": \"sell\",\n    \"conviction\": \"high\",\n    \"entry_price\": 34.42,\n    \"reference_target\": 31.00,\n    \"stop_loss\": 36.17,\n    \"thesis_invalid_if\": \"Price closes a",
+      "actual_model": "google/gemini-2.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "tech_batch_full",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_25_returned",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "25/25 returned, missing=[]"
+        },
+        {
+          "name": "atr_stop_discipline_at_scale",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "0 symbol(s) with an out-of-band stop: []"
+        },
+        {
+          "name": "thesis_invalid_if_discipline_at_scale",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "0 symbol(s) wrong: []"
+        }
+      ],
+      "input_tokens": 33328,
+      "output_tokens": 10322,
+      "cost_usd": 0.007461599999999999,
+      "latency_s": 21.54,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"SPY\",\n    \"rating\": \"buy\",\n    \"conviction\": \"high\",\n    \"entry_price\": 66.45,\n    \"reference_target\": 71.00,\n    \"stop_loss\": 64.73,\n    \"thesis_invalid_if\": \"Price closes below MA20 (62.5) on above-average volume\",\n    \"reasoning_chain\": {\n      \"trend\": \"SPY (66.45) is above MA20 (62.5), MA50 (53.5), and MA200 (44.5). All MAs are rising, indicating a strong uptrend.\",\n      \"momentum\": \"RSI is 63.5, showing strong upward momentum without being overbought. MACD line (1.8) is above its signal line (1.35) with a positive histogram (0.45), confirming bullish momentum.\",\n      \"volatility\": \"Price is currently near the upper Bollinger Band (63.94), suggesting strength. ATR (0.72) is stable, indicating consistent volatility. The recent price action is above the middle band, supporting the uptrend.\",\n      \"volume\": \"Recent volume change is +5.0%, confirming the upward price movement as volume has been increasing on up days.\",\n      \"support_resistance\": \"Key support levels include the MA20 ($62.5) and MA50 ($53.5). Resistance can be seen at the upper Bollinger Band ($63.94) and round numbers beyond that. The current price is near the top of the recent price range.\"\n    },\n    \"reasoning\": \"Strong uptrend, bullish momentum confirmed by RSI and MACD, and volume supporting the move indicate a high conviction buy. Entry at current price with a stop below 2*ATR from current price, targeting a new high.\"\n  },\n  {\n    \"symbol\": \"QQQ\",\n    \"rating\": \"sell\",\n",
+      "actual_model": "google/gemini-2.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "tech_batch_full",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_25_returned",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "25/25 returned, missing=[]"
+        },
+        {
+          "name": "atr_stop_discipline_at_scale",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "0 symbol(s) with an out-of-band stop: []"
+        },
+        {
+          "name": "thesis_invalid_if_discipline_at_scale",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "0 symbol(s) wrong: []"
+        }
+      ],
+      "input_tokens": 23369,
+      "output_tokens": 36353,
+      "cost_usd": 0.00841306,
+      "latency_s": 293.7,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"SPY\",\n    \"rating\": \"buy\",\n    \"conviction\": \"medium\",\n    \"entry_price\": 66.45,\n    \"reference_target\": 71.0,\n    \"stop_loss\": 64.30,\n    \"thesis_invalid_if\": \"Closes below 64.45 recent swing low on above-average volume\",\n    \"reasoning_chain\": {\n      \"trend\": \"Uptrend: price 66.45 is above MA20 62.5, MA50 53.5, and MA200 44.5; MAs are stacked bullish. However price is +6.3% above MA20 and above the upper Bollinger band, so this is a continuation buy rather than a fresh base breakout.\",\n      \"momentum\": \"RSI 63.5 is bullish but not overbought. MACD 1.8 is above signal 1.35 with histogram +0.45, so momentum is positive and intact.\",\n      \"volatility\": \"ATR 0.72 is stable, but price sitting above upper band 63.94 flags short-term extension. Stop at 64.30 is 2.99*ATR below entry and below the recent swing low.\",\n      \"volume\": \"Vol% +5% is mildly above average and does not strongly confirm or reject the move.\",\n      \"support_resistance\": \"Support is MA20 62.5 and the 64.45 swing low; resistance is the 67.25 recent high, then the 71.00 round-number target.\"\n    },\n    \"reasoning\": \"The trend/momentum stack is bullish, but the entry is extended above the upper band; buy with medium conviction and a structural stop below the swing low.\"\n  },\n  {\n    \"symbol\": \"QQQ\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"medium\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "tech_batch_full",
+      "role": "tech_analyst",
+      "ok": false,
+      "quality": 0.45,
+      "checks": [
+        {
+          "name": "all_25_returned",
+          "weight": 0.55,
+          "passed": false,
+          "detail": "0/25 returned, missing=['AAPL', 'AMD', 'AMZN', 'AVGO', 'CRM', 'DIA']"
+        },
+        {
+          "name": "atr_stop_discipline_at_scale",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "0 symbol(s) with an out-of-band stop: []"
+        },
+        {
+          "name": "thesis_invalid_if_discipline_at_scale",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "0 symbol(s) wrong: []"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 420.0,
+      "error": "TrialTimeout: exceeded 420s trial deadline",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google/gemini-2.5-flash-lite|tech_batch_full": {
+        "model": "google/gemini-2.5-flash-lite",
+        "scenario": "tech_batch_full",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.007317,
+        "latency_mean": 21.57,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-flash-0731|tech_batch_full": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "tech_batch_full",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.725,
+        "quality_min": 0.45,
+        "cost_mean": 0.008413,
+        "latency_mean": 356.85,
+        "errors": [
+          "TrialTimeout: exceeded 420s trial deadline"
+        ],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "google/gemini-2.5-flash-lite": {
+        "scenarios": {
+          "tech_batch_full": {
+            "model": "google/gemini-2.5-flash-lite",
+            "scenario": "tech_batch_full",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.007317,
+            "latency_mean": 21.57,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_total": 0.007317,
+        "quality_per_dollar": 136.67
+      },
+      "deepseek/deepseek-v4-flash-0731": {
+        "scenarios": {
+          "tech_batch_full": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "tech_batch_full",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.725,
+            "quality_min": 0.45,
+            "cost_mean": 0.008413,
+            "latency_mean": 356.85,
+            "errors": [
+              "TrialTimeout: exceeded 420s trial deadline"
+            ],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.725,
+        "quality_worst": 0.725,
+        "quality_worst_run": 0.45,
+        "cost_total": 0.008413,
+        "quality_per_dollar": 86.18
+      }
+    }
+  }
+}

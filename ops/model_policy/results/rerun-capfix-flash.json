@@ -1,0 +1,153 @@
+{
+  "generated_at": "2026-08-12T21:56:02Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "risk_rr_breach": {
+      "role": "risk_manager",
+      "description": "Plan contains a 0.42R BUY at 18% of book. Grades whether the last LLM gate catches and names it."
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4-flash-0731": {
+      "input": 0.08,
+      "output": 0.18
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "risk_rr_breach",
+      "role": "risk_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "RiskVerdict validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "catches_rr_breach",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "approved=False mu_mods=0 scale_all_buys=1.0"
+        },
+        {
+          "name": "names_offender_in_rr_audit",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "rr_audit='The MU BUY has R/R = (120.50 - 118.00) / (118.00 - 112.00) = 2.50 / 6.00 = 0.42, catastrophically below the 1.'"
+        },
+        {
+          "name": "reason_category_not_clean",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "reason_category=rr_fail"
+        }
+      ],
+      "input_tokens": 3819,
+      "output_tokens": 6800,
+      "cost_usd": 0.00152952,
+      "latency_s": 331.47,
+      "error": "",
+      "sample_output": "```json\n{\n  \"approved\": false,\n  \"reasoning_chain\": {\n    \"rr_audit\": \"The MU BUY has R/R = (120.50 - 118.00) / (118.00 - 112.00) = 2.50 / 6.00 = 0.42, catastrophically below the 1.5 floor, and no material catalyst is named in signal_conflicts to override the math \u2014 the target of $120.50 sits just +2.1% above entry while the stop is -5.1% below, an inverted reward/risk profile. XLU is sound at 2.25R (5.40/2.40) and the XLE full-close is unobjectionable, but the largest proposed BUY is the worst-disciplined trade in the plan.\",\n    \"signal_fidelity\": \"No Tech Analyst signals were supplied in this packet, so I cannot cross-check MU's rating directly; however the binding constraint here is the arithmetic \u2014 a 0.42 R/R BUY is negative-expectancy regardless of the underlying rating, and 'memory cycle turning' is a directional thesis, not a hard named catalyst (earnings/policy/news).\",\n    \"correlation_check\": \"MU (semiconductors/memory) stacks directly onto the existing NVDA position; post-trade Technology exposure would be roughly 43.2% (NVDA) + 18% (MU) = ~61% of the book, far above the 40% max_sector_pct hard cap and an extreme single-theme (AI/memory) cluster. The engine reported no violation only because it did not recompute cumulative sector weight after this delta \u2014 this is a hard-rule breach the check missed.\",\n    \"event_risk\": \"PM states no earnings within 3 sessions and none are flagged for MU, so there is no event window violation; but this also means the 0.42 R/R trade",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "risk_rr_breach",
+      "role": "risk_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "RiskVerdict validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "catches_rr_breach",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "approved=False mu_mods=0 scale_all_buys=1.0"
+        },
+        {
+          "name": "names_offender_in_rr_audit",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "rr_audit=\"MU BUY has R/R = (120.5 - 118.0) / (118.0 - 112.0) = 2.5 / 6.0 = 0.42, far below the 1.5 minimum, and 'memory \""
+        },
+        {
+          "name": "reason_category_not_clean",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "reason_category=rr_fail"
+        }
+      ],
+      "input_tokens": 3898,
+      "output_tokens": 12873,
+      "cost_usd": 0.00262898,
+      "latency_s": 172.55,
+      "error": "",
+      "sample_output": "{\n  \"approved\": false,\n  \"reasoning_chain\": {\n    \"rr_audit\": \"MU BUY has R/R = (120.5 - 118.0) / (118.0 - 112.0) = 2.5 / 6.0 = 0.42, far below the 1.5 minimum, and 'memory cycle turning' is a thesis, not a named catalyst. XLU is a clean 2.25R and XLE full exit is fine.\",\n    \"signal_fidelity\": \"Tech signals and news intelligence were not provided, so I cannot independently verify signal alignment; regardless, no signal should justify an 18% position with a 0.42R payoff profile.\",\n    \"correlation_check\": \"Adding MU to the existing NVDA position creates a concentrated semiconductor/memory cluster. Post-trade technology exposure would be roughly 43.2% NVDA + 18.0% MU = 61.2% of equity, far above the 40% sector cap.\",\n    \"event_risk\": \"No earnings/FOMC event was flagged inside the 3-day window, so event risk is not the primary concern here.\",\n    \"sizing_sanity\": \"Sizing is not disciplined: an 18% position on a 0.42R trade is aggressive in the wrong dimension. PM's stated 12% cash target also appears inconsistent because executing both BUYs would drop cash to about 7.4% of equity.\",\n    \"overall\": \"Rejecting the plan. The engine did not catch the post-trade sector-cap violation, and the MU BUY has unacceptable R/R. This is not a simple trim situation because any meaningful MU BUY adds to a tech sector already above the 40% cap. XLU is reasonable and can be resubmitted with a more balanced, de-concentrated plan.\"\n  },\n  \"modifications\": [],\n  \"scale_all_buys\": 1.0,\n  \"reason_ca",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4-flash-0731|risk_rr_breach": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "risk_rr_breach",
+        "role": "risk_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.002079,
+        "latency_mean": 252.01,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4-flash-0731": {
+        "scenarios": {
+          "risk_rr_breach": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "risk_rr_breach",
+            "role": "risk_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.002079,
+            "latency_mean": 252.01,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_total": 0.002079,
+        "quality_per_dollar": 481.0
+      }
+    }
+  }
+}
