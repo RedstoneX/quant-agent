@@ -180,9 +180,13 @@ Operator applied both fixes above. Re-verification found a **third** gap, again 
 
 `dev` never read, logged, or held any real credential value at any point across the three-round diagnosis — only status-code comparisons and non-value metadata (host/path patterns, injection field *names*, grant lists). All three fixes were applied by the operator directly in OneCLI; `dev` diagnosed each with a reproducible test and made none of the credential-routing edits itself. Full detail in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
 
-**Next step (not yet done):** add `HTTPS_PROXY`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` to `/home/qamc/quant-agent/.env` (operator-only, `dev` cannot write into `/home/qamc`; values should be fetched fresh from OneCLI rather than relayed through chat), restart `quant-agent-api.service`, and check `/health` for `broker_reachable` flipping true — the objective signal the whole chain is live. Trading timers remain disabled regardless.
-
 Trading timers, Alpaca, and FRED routes are unchanged — out of scope for this pass per the operator's explicit "do not create another credential entry."
+
+## Checkpoint status — 2026-08-12, later still (runtime wiring is the one remaining bounded task)
+
+Re-confirmed, not assumed: `dev` still cannot write into `/home/qamc` (`touch` → `permission denied`) and has no access to `qamc`'s `systemd --user` D-Bus session (`systemctl --user -M qamc@` → `permission denied`). Both are genuinely `dev`-cannot-perform-safely, not a preference. Captured a baseline from `dev` over loopback (no filesystem access needed — Mission Control's port is reachable regardless of which account owns the process): `/health` currently reports `broker_reachable: false`.
+
+The exact minimal runtime change — three `.env` lines, no code, no new secrets, existing placeholders untouched — is now written as `ops/onecli/README.md` step 4, so it isn't duplicated here. Applying it and restarting `quant-agent-api.service` is the one remaining bounded task; `dev` cannot execute it. `broker_reachable` flipping to `true` on `/health` is the objective completion signal — `dev` can verify that independently once applied, without needing `/home/qamc` access.
 
 ## Hard boundaries
 

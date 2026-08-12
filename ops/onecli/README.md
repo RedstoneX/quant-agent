@@ -46,9 +46,36 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:10255
 
 Both should respond (2xx/3xx/401, not connection-refused). Confirm neither port is reachable from outside the VPS — e.g. `sudo ss -tlnp | grep -E '10254|10255'` should show `127.0.0.1:10254`/`127.0.0.1:10255`, not `0.0.0.0` or the public IP.
 
-## What happens after this
+## 4. Wire `qamc` to the gateway and restart Mission Control
 
-Once OneCLI is confirmed running and private, engineering work continues from `dev`: creating a QAMC agent identity and gateway access token in OneCLI (no real trading/LLM secrets needed for that — it's OneCLI's own scaffolding), configuring routes for `openrouter.ai`, `paper-api.alpaca.markets`, `data.alpaca.markets`, and `api.stlouisfed.org`, and wiring `qamc`'s `.env` to the gateway. Entering the four real credential values into OneCLI's own vault remains a separate, later, operator-only step — never through chat, never through `dev`.
+By this point OneCLI is running, all four Custom Secrets exist and are granted to the Default Agent (dashboard steps — see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the exact per-provider configuration), and credential delivery has been verified working. This step is the only thing left: point `qamc`'s existing placeholder credentials at the gateway. `dev` cannot do this — no write access to `/home/qamc`, no access to `qamc`'s `systemd --user` session.
+
+Run as `qamc` (or `ubuntu` via `sudo -u qamc -i`):
+
+```bash
+curl -s http://127.0.0.1:10254/api/container-config   # fetch fresh — don't reuse an old copy
+```
+
+From that response: save the `caCertificate` PEM to a local file (e.g. `/home/qamc/quant-agent/onecli-gateway-ca.pem`), and add three lines to the existing `/home/qamc/quant-agent/.env` — do **not** touch `OPENROUTER_API_KEY`/`ALPACA_API_KEY`/`ALPACA_SECRET_KEY`/`FRED_API_KEY`, which stay exactly the placeholders they already are:
+
+```
+HTTPS_PROXY=http://x:<agent-token-from-the-response-above>@127.0.0.1:10255
+SSL_CERT_FILE=/home/qamc/quant-agent/onecli-gateway-ca.pem
+REQUESTS_CA_BUNDLE=/home/qamc/quant-agent/onecli-gateway-ca.pem
+```
+
+(Use `127.0.0.1`, not the `host.docker.internal` the response itself shows — that only resolves inside a Docker container, not for `qamc`'s bare processes.)
+
+Then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart quant-agent-api.service
+systemctl --user status quant-agent-api.service --no-pager
+curl -s http://127.0.0.1:8800/health
+```
+
+`/health` should still return `200` with `db_reachable: true`; `broker_reachable` should flip from `false` to `true` — the objective signal the whole chain is live. No other service needs restarting: the trading engine isn't a persistent process, it sources `.env` fresh on each scheduled invocation (`scripts/run_if_et_window.sh`), and its timers remain installed-but-disabled regardless of this step. **This step alone does not enable trading** — enabling the timers is a separate, later, explicit decision.
 
 ## Rollback
 
