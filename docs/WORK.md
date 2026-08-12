@@ -165,6 +165,23 @@ Every verification request's response body was discarded (`-o /dev/null`); only 
 
 **Zero `src/` or `config/` changes required.** `src/agents/base.py`'s OpenRouter branch already constructs its OpenAI SDK client without a custom `http_client`, so it already inherits `httpx`'s default environment-driven proxy/CA behavior — the exact mechanism OneCLI needs. `_OPENROUTER_BASE_URL` and `config/settings.yaml`'s provider/model fields are unrelated to credential delivery and stay untouched. The only change made: a documentation-only pointer added to `.env.example` (placeholder values only, no real token) explaining the two env vars (`HTTPS_PROXY`, `SSL_CERT_FILE`) whoever has `qamc` access needs to add to `/home/qamc/quant-agent/.env` — `dev` cannot apply that directly (`dev` cannot write into `/home/qamc`), and the live agent token/CA cert should be fetched fresh by whoever applies it (`curl http://127.0.0.1:10254/api/container-config` from `qamc` or `ubuntu`) rather than relayed through chat.
 
+## Checkpoint status — 2026-08-12, later still (all four credentials verified working end-to-end through OneCLI)
+
+Operator applied both fixes above. Re-verification found a **third** gap, again diagnosed from live metadata rather than guessed: both Alpaca secrets had `injectionConfig.valueFormat: "Bearer {value}"` — correct for OpenRouter's OAuth-style `Authorization` header, wrong for Alpaca's `APCA-API-KEY-ID`/`APCA-API-SECRET-KEY`, which need the raw value with no prefix (FRED's param format, `"{value}"`, was the tell — it's correctly unprefixed). The gateway was sending `APCA-API-KEY-ID: Bearer <real-key>`, which Alpaca correctly rejects. Operator corrected `valueFormat` to plain `{value}` on both.
+
+**Final verification — all four now succeed through the gateway with fake placeholder credentials, and fail the same way direct (no gateway) as they did throughout this whole investigation:**
+
+| Target | Direct | Through gateway |
+|---|---|---|
+| OpenRouter | `401` | `200` |
+| Alpaca trading (`paper-api.alpaca.markets`) | `401` | `200` |
+| Alpaca data (`data.alpaca.markets`) | `401` | `200` |
+| FRED | `400` | `200` |
+
+`dev` never read, logged, or held any real credential value at any point across the three-round diagnosis — only status-code comparisons and non-value metadata (host/path patterns, injection field *names*, grant lists). All three fixes were applied by the operator directly in OneCLI; `dev` diagnosed each with a reproducible test and made none of the credential-routing edits itself. Full detail in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+**Next step (not yet done):** add `HTTPS_PROXY`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` to `/home/qamc/quant-agent/.env` (operator-only, `dev` cannot write into `/home/qamc`; values should be fetched fresh from OneCLI rather than relayed through chat), restart `quant-agent-api.service`, and check `/health` for `broker_reachable` flipping true — the objective signal the whole chain is live. Trading timers remain disabled regardless.
+
 Trading timers, Alpaca, and FRED routes are unchanged — out of scope for this pass per the operator's explicit "do not create another credential entry."
 
 ## Hard boundaries

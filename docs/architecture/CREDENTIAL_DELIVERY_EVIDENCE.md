@@ -38,3 +38,20 @@ One correction needed versus that endpoint's raw output: it returns `host.docker
 2. **Both Alpaca secrets are scoped to `paper-api.alpaca.markets` only; QAMC also calls `data.alpaca.markets`** (`StockHistoricalDataClient`, a different host for market/historical data, independent of the paper/live trading host). Confirmed via the same fake-header gateway test against `data.alpaca.markets/v2/stocks/AAPL/trades/latest`: `401`, would-be-unauthenticated either way since no secret's `hostPattern` matches that host. OneCLI's `hostPattern` supports a leading-subdomain wildcard (confirmed in its API docs): `*.alpaca.markets` would cover both hosts in one pattern. **Fix: widen the existing two Alpaca secrets' `hostPattern` from `paper-api.alpaca.markets` to `*.alpaca.markets` — an edit to the existing entries, not a new secret.**
 
 Once both are applied, the required `qamc` `.env` additions (beyond what's already needed for OpenRouter) are just one more variable — `REQUESTS_CA_BUNDLE` pointed at the same CA file as `SSL_CERT_FILE`, since `requests` (Alpaca's transport) does not honor `SSL_CERT_FILE`. No FRED-specific env var is needed beyond what OpenRouter already requires (`urllib` honors `HTTPS_PROXY`/`SSL_CERT_FILE`, already covered).
+
+## Resolution: all four credentials confirmed working end-to-end (2026-08-12)
+
+The operator applied both fixes above (grants + widened `hostPattern`), and re-verification found a **third** gap, also empirically diagnosed rather than guessed: `GET /api/secrets` showed both Alpaca secrets with `injectionConfig.valueFormat: "Bearer {value}"` — the OAuth-style prefix correct for OpenRouter's `Authorization` header, but wrong for Alpaca's `APCA-API-KEY-ID`/`APCA-API-SECRET-KEY`, which must carry the raw key/secret with no scheme prefix (compare FRED's query-param `paramFormat: "{value}"`, correctly unprefixed). The gateway was injecting `APCA-API-KEY-ID: Bearer <real-key>`, which Alpaca correctly rejects as malformed — explaining the persistent `401` even after the first two fixes. The operator corrected `valueFormat` to plain `{value}` on both Alpaca secrets.
+
+Final verification, same method as throughout (fake placeholder credentials sent by the client; only HTTP status compared; every response body discarded): with the gateway removed from the path, all four still fail exactly as an unconfigured/placeholder credential should. Through the gateway, all four now succeed:
+
+| Target | Direct (no gateway) | Through OneCLI gateway |
+|---|---|---|
+| OpenRouter (`/api/v1/auth/key`) | `401` | `200` |
+| Alpaca trading (`paper-api.alpaca.markets/v2/account`) | `401` | `200` |
+| Alpaca data (`data.alpaca.markets/v2/stocks/AAPL/trades/latest`) | `401` | `200` |
+| FRED (`api.stlouisfed.org/fred/series/observations`) | `400` | `200` |
+
+The real credential values were never read, logged, or held by `dev` at any point in this whole investigation — only gateway-vs-direct status-code comparisons and non-value metadata (`hostPattern`, `pathPattern`, `injectionConfig` field *names*, grant lists). The three fixes (grant to Default Agent, `*.alpaca.markets` host wildcard, plain `{value}` format) were all applied by the operator directly in OneCLI's dashboard — `dev` diagnosed each with a reproducible test but made none of the actual credential-routing edits.
+
+**Remaining work is exactly what was already documented above:** add `HTTPS_PROXY`, `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE` to `/home/qamc/quant-agent/.env` (values fetched fresh from `GET /api/container-config` by whoever has `qamc` access, not relayed through chat), then verify `qamc`'s actual runtime (Mission Control `/health`, then the trading engine) picks up real, working credentials through the same mechanism just proven here.
