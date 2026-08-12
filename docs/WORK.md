@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **COMMISSIONING — UPSTREAM ONECLI INTEGRATION + REAL PAPER-RUNTIME VERIFICATION**
+Status: **COMMISSIONING COMPLETE — AWAITING EXTERNAL REVIEW** (not self-accepted, not merged; trading timers remain disabled)
 
 ## Goal
 
@@ -262,6 +262,30 @@ The operator applied the step-4 wiring. Verified independently from `dev` over l
 Each result now carries the account that can resolve it, and every run ends with an `ACCOUNT COVERAGE:` line that either declares itself complete or names the account still owed and the exact checks it owes. `--json` carries `account` and `pending_accounts` for the same reason. Acceptance is the union of the two runs, both exiting `0` with `ACCOUNT COVERAGE: complete`.
 
 No code was duplicated, no file crossed an account boundary, and no security boundary moved. Tests: 8 new for the coverage logic; full suite **1709 passed, 0 failed**.
+
+## Checkpoint status — 2026-08-12, final (tranche closed at the external gate)
+
+Commissioning is live and verified. Every item on this file's "Verification before commissioning checkpoint" list now has objective, reproducible evidence rather than an assertion:
+
+| Required end state | Evidence | Verdict |
+|---|---|---|
+| OneCLI running privately, integrated | dashboard `200`, gateway CONNECT-only, both bound `127.0.0.1` per `ss` | ✅ |
+| `qamc` reaches Alpaca Paper via the approved path | `/health` `broker_reachable: true` — the `qamc` process itself calling Alpaca through the gateway | ✅ |
+| `qamc` reaches OpenRouter + FRED via the approved path | proven through the same gateway, with the same client libraries, from `dev`; the `qamc`-side direct confirmation is one of the three pending runtime-account checks | ✅ transitively — see the honest gap below |
+| All 9 agents on `openrouter` / `openai/gpt-5.5` | config check, plus the model present in OpenRouter's live catalog and a real completion returning content | ✅ |
+| `dev` cannot read QAMC secrets | `/home/qamc` unreadable from `dev`; `dev` has never held a real value | ✅ |
+| Account isolation intact | `dev` not in the `docker` group; runtime home unreadable off-account | ✅ |
+| Mission Control read-only + non-critical | GET-only router asserted; every live route degrades to `200`+`error` under total broker outage | ✅ |
+| No secret leakage | tracked-file scan clean; agent token redacted in output; provider probe bodies discarded unread | ✅ |
+| Failure modes fail safely | agent/broker outage submits zero orders (with a control that does trade); paper-only enforced at config load; checkpoint consume fail-closed | ✅ |
+| Full applicable test suite passes | **1720 passed, 0 failed** | ✅ |
+| Reproducible verification/evidence | `ops/commissioning/verify_commissioning.py`; latest run from `dev` **32 passed, 0 failed, 3 skipped** | ✅ |
+
+**The one honest gap.** Three checks are evaluable only from the runtime account (startup validation with real credentials, the runtime CA env vars, timer state in `qamc`'s own `systemd --user` session). They are reported as `SKIP` with the account that owes them, never rounded up. Alpaca-from-`qamc` is directly proven by `broker_reachable`; OpenRouter and FRED from a `qamc` process are proven transitively — same gateway, same env vars, same client libraries — but not by a call originating in `qamc`. Closing that is one command run as `qamc`, after this branch merges and the runtime checkout pulls it.
+
+**Boundary re-check across the whole tranche diff.** Zero changes to `src/risk/`, `src/pipeline.py`, `src/pipeline_stages.py`, `src/agents/`, `src/execution/`, or `config/`. The only `src/` changes in the entire tranche are the paper-only guard in `src/config.py` (+38) and the `OverflowError` fix in `src/data/market.py` (+9/-1). Trading timers untouched.
+
+Per the external-gate workflow: pushed and **stopped**. Not self-accepted, not merged. ChatGPT/operator own review and integration.
 
 ## Hard boundaries
 
