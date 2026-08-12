@@ -81,16 +81,15 @@ LOOPBACK = "127.0.0.1"
 # config, including one edited in place on the runtime host.
 EXPECTED_PROVIDER = "openrouter"
 EXPECTED_ROUTING: dict[str, str] = {
-    # Filled in by the model-routing tranche; see MODEL_ROUTING_POLICY.md.
-    "tech_analyst":      "openai/gpt-5.5",
-    "news_analyst":      "openai/gpt-5.5",
-    "macro_analyst":     "openai/gpt-5.5",
-    "earnings_analyst":  "openai/gpt-5.5",
-    "portfolio_manager": "openai/gpt-5.5",
-    "risk_manager":      "openai/gpt-5.5",
-    "position_reviewer": "openai/gpt-5.5",
-    "evening_analyst":   "openai/gpt-5.5",
-    "meta_reflector":    "openai/gpt-5.5",
+    "tech_analyst":      "google/gemini-2.5-flash-lite",
+    "news_analyst":      "google/gemini-2.5-flash-lite",
+    "macro_analyst":     "google/gemini-2.5-flash-lite",
+    "earnings_analyst":  "google/gemini-2.5-flash-lite",
+    "portfolio_manager": "google/gemini-2.5-flash-lite",
+    "risk_manager":      "google/gemini-2.5-flash-lite",
+    "position_reviewer": "google/gemini-2.5-flash-lite",
+    "evening_analyst":   "google/gemini-2.5-flash-lite",
+    "meta_reflector":    "google/gemini-2.5-flash-lite",
 }
 
 # Obviously-fake credential. Its only job is to be rejected by a direct

@@ -137,23 +137,16 @@ _PRICING_PINNED: dict[str, dict[str, float]] = {
 # Note on caching: OpenRouter quotes a discounted `input_cache_read` rate for
 # several of these. This flat table has no cache-tier column, so rows are the
 # UNCACHED rate — cost is over-estimated on cache-heavy runs, never under.
+# Only models the accepted policy actually routes to, plus the baseline the
+# cost reduction is measured against. Rows for models nothing uses go stale
+# unnoticed and make verify_pricing.py noisy; the on-demand catalog resolver
+# below covers anything an operator wants to experiment with.
 _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
-    # Commissioning baseline (retained: it is what the cost reduction is
-    # measured against, and pricing it is what makes that measurable).
-    "openai/gpt-5.5":                  {"input": 5.000, "output": 30.000},
-    # Decision seats.
-    "deepseek/deepseek-v4-pro-0813":   {"input": 0.435, "output":  0.870},
-    "qwen/qwen3.7-max":                {"input": 1.475, "output":  4.425},
-    "z-ai/glm-5.2":                    {"input": 0.490, "output":  1.540},
-    # Specialist seats.
-    "qwen/qwen3.7-flash":              {"input": 0.030, "output":  0.130},
-    "qwen/qwen3.7-plus":               {"input": 0.320, "output":  1.280},
-    "deepseek/deepseek-v4-flash-0731": {"input": 0.080, "output":  0.180},
-    "openai/gpt-5.6-luna":             {"input": 0.100, "output":  0.600},
-    "openai/gpt-5-nano":               {"input": 0.050, "output":  0.400},
+    # Every agent seat (docs/architecture/MODEL_ROUTING_POLICY.md).
     "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
-    "minimax/minimax-m3":              {"input": 0.300, "output":  1.200},
-    "qwen/qwen3-235b-a22b-2507":       {"input": 0.090, "output":  0.550},
+    # Commissioning baseline. Retained because it is what the cost reduction
+    # is measured against, and pricing it is what makes that measurable.
+    "openai/gpt-5.5":                  {"input": 5.000, "output": 30.000},
 }
 
 # Active PRICING — populated below from cache or fallback at module

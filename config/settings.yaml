@@ -12,22 +12,42 @@ alpaca:
   paper: true
 
 llm:
+  # === Accepted model routing policy ===
+  # See docs/architecture/MODEL_ROUTING_POLICY.md for the evidence.
+  # Reproduce with: python ops/model_policy/benchmark_models.py --from-onecli
+  #
+  # Selected from 144 graded trials (12 models x 6 scenarios x 2 repeats,
+  # 2026-08-12) run through these very agent classes and prompts. Only two
+  # models scored a perfect mean AND a perfect worst run:
+  # `openai/gpt-5.5` and `google/gemini-2.5-flash-lite` — at 83x the cost
+  # for the former. No seat showed a measurable benefit from a more
+  # expensive model, so none is assigned one.
+  #
+  # The per-seat structure is kept even though every seat currently
+  # resolves to the same model: it is what lets one seat diverge later as
+  # a config edit rather than a plumbing change, and it is what
+  # `ops/commissioning/verify_commissioning.py` pins against.
+  #
+  # `provider` MUST stay explicit on every seat. OpenRouter's
+  # "vendor/model" ids collide with native prefixes, so resolve_provider()
+  # cannot infer them — an unset provider routes to Anthropic and fails on
+  # the first call of the session (src/agents/base.py).
   tech_analyst_provider: "openrouter"
-  tech_analyst_model: "openai/gpt-5.5"
+  tech_analyst_model: "google/gemini-2.5-flash-lite"
   news_analyst_provider: "openrouter"
-  news_analyst_model: "openai/gpt-5.5"
+  news_analyst_model: "google/gemini-2.5-flash-lite"
   macro_analyst_provider: "openrouter"
-  macro_analyst_model: "openai/gpt-5.5"
+  macro_analyst_model: "google/gemini-2.5-flash-lite"
   earnings_analyst_provider: "openrouter"
-  earnings_analyst_model: "openai/gpt-5.5"
+  earnings_analyst_model: "google/gemini-2.5-flash-lite"
   portfolio_manager_provider: "openrouter"
-  portfolio_manager_model: "openai/gpt-5.5"
+  portfolio_manager_model: "google/gemini-2.5-flash-lite"
   risk_manager_provider: "openrouter"
-  risk_manager_model: "openai/gpt-5.5"
+  risk_manager_model: "google/gemini-2.5-flash-lite"
   position_reviewer_provider: "openrouter"
-  position_reviewer_model: "openai/gpt-5.5"
+  position_reviewer_model: "google/gemini-2.5-flash-lite"
   evening_analyst_provider: "openrouter"
-  evening_analyst_model: "openai/gpt-5.5"
+  evening_analyst_model: "google/gemini-2.5-flash-lite"
   # Global fallback — any per-agent override below takes precedence.
   max_tokens: 128000
   # Per-agent caps. Set generously so no agent silently truncates: PM and
@@ -42,9 +62,12 @@ llm:
   position_reviewer_max_tokens: 128000
   evening_analyst_max_tokens: 128000
   # Meta-reflector runs once per quarter (--mode meta). Dense digest input
-  # + structured QuarterlyMetaReflection output; gpt-5.5 by default.
+  # + structured QuarterlyMetaReflection output. No benchmark scenario
+  # covers it (see MODEL_ROUTING_POLICY.md "Known limitations") — assigned
+  # by analogy to the portfolio_manager seat, whose output shape it most
+  # resembles and which measured 1.00/1.00.
   meta_reflector_provider: "openrouter"
-  meta_reflector_model: "openai/gpt-5.5"
+  meta_reflector_model: "google/gemini-2.5-flash-lite"
   meta_reflector_max_tokens: 128000
   # Stage 1 (QAMC): explicit per-agent provider override. Unset/null (the
   # current posture for every agent above) infers the provider from the
