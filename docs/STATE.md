@@ -14,7 +14,15 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - OpenRouter transport is commissioned. The current all-agent `openai/gpt-5.5` mapping is the commissioning **baseline**, not the final cost-optimized model policy.
 - Alpaca Paper-only is enforced in code.
 - PR #27 is externally reviewed and merged into `main` as `63cca1a1445757b63376d9816cccf48d4d1b0c58`.
-- Trading timers remain disabled.
+- Trading timers remain disabled during engineering/verification so scheduled paper-trading runs cannot start prematurely.
+
+## ChatGPT GitHub integration role — reconstitution rule
+
+When QAMC is being managed from ChatGPT, **ChatGPT owns GitHub review/integration and should use the connected GitHub plugin directly** for repository reads/writes, PR creation/review, merges, and routine GitHub administration whenever that connector supports the action.
+
+Do **not** send routine GitHub work to the operator, Claude, Codex/Work mode, or another environment merely because a generic file/code handoff is offered. Use another path only when the GitHub connector genuinely lacks the required capability or the operator explicitly requests it.
+
+Claude does not merge its own work. The operator should not be asked to perform routine GitHub housekeeping that ChatGPT can perform through the connector.
 
 ## Authorized now
 
@@ -28,10 +36,15 @@ The intended direction is explicit and auditable model selection: inexpensive ca
 
 Claude may research current OpenRouter model availability/pricing, benchmark candidates, implement within the existing provider/model seam, test, debug and make routine engineering choices without operator involvement.
 
+## Timer activation rule
+
+Timer activation is **not a separate architecture or product-design problem**. The timers simply start QAMC's scheduled autonomous Alpaca Paper runs.
+
+Keep them off during engineering and external review. After the final tranche is accepted and the operator authorizes the paper-soak start, enabling the timers is a routine deployment action. Claude should verify they remain off while work is incomplete, but should not repeatedly analyze or escalate timer activation as a separate decision.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**; no live trading.
-- Trading timers stay disabled until this tranche passes external review.
 - No deterministic trading/risk semantic redesign.
 - No broker-write Mission Control controls.
 - No public exposure of QAMC or OneCLI.
