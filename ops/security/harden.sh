@@ -86,9 +86,14 @@ fi
 
 # Order matters: the allow rules must exist before default-deny + enable, so an
 # already-idempotent re-run is also safe — ufw itself no-ops on duplicate rules.
+# Port 22/tcp by number (not the 'OpenSSH' app profile) so this doesn't depend
+# on /etc/ufw/applications.d/openssh-server being registered — if that profile
+# were ever missing, 'ufw allow OpenSSH' would error under set -e and abort
+# *before* ufw enable ever ran, which is safe, but a raw port rule removes the
+# dependency entirely rather than relying on that failure path.
 run ufw default deny incoming
 run ufw default allow outgoing
-run ufw allow OpenSSH
+run ufw allow 22/tcp comment 'preserve existing SSH access'
 run ufw allow in on tailscale0
 run ufw --force enable
 
