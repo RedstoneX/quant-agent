@@ -625,6 +625,67 @@ def check_mission_control(ctx: Ctx) -> None:
         ctx.add(group, name, status, detail)
 
 
+RUNTIME_ACCOUNT = "qamc"
+RUNTIME_HOME = Path("/home/qamc")
+
+
+def check_isolation(ctx: Ctx) -> None:
+    """The account boundary the credential architecture rests on.
+
+    Two checklist items in `docs/WORK.md` live here: "`dev` cannot read the
+    real QAMC credentials", and the isolation premise behind never adding
+    `qamc`/`dev` to the `docker` group (which is root-equivalent on this
+    host and would collapse the separation those accounts exist to create).
+    """
+    group = "isolation"
+    import getpass
+
+    try:
+        account = getpass.getuser()
+    except Exception as exc:
+        ctx.add(group, "identify account", SKIP, f"{type(exc).__name__}: {exc}")
+        return
+    ctx.add(group, "running account", PASS, f"this check is running as {account!r}")
+
+    if account == RUNTIME_ACCOUNT:
+        ctx.add(group, "runtime credentials are unreadable off-account", SKIP,
+                f"running AS {RUNTIME_ACCOUNT} — read access to its own home is "
+                "expected; run from `dev` to check the boundary")
+    else:
+        try:
+            list(RUNTIME_HOME.iterdir())
+        except PermissionError:
+            ctx.add(group, "runtime credentials are unreadable off-account", PASS,
+                    f"{RUNTIME_HOME} is not readable from {account!r}")
+        except FileNotFoundError:
+            ctx.add(group, "runtime credentials are unreadable off-account", SKIP,
+                    f"{RUNTIME_HOME} does not exist on this host")
+        except Exception as exc:
+            ctx.add(group, "runtime credentials are unreadable off-account", SKIP,
+                    f"{type(exc).__name__}: {exc}")
+        else:
+            ctx.add(group, "runtime credentials are unreadable off-account", FAIL,
+                    f"{account!r} can list {RUNTIME_HOME} — the account boundary "
+                    "that keeps real credentials away from the dev workspace is "
+                    "not holding")
+
+    # Docker-group membership is root-equivalent on this host.
+    try:
+        proc = subprocess.run(["id", "-nG"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        ctx.add(group, "account is not in the docker group", SKIP, f"`id` failed: {exc}")
+    else:
+        groups = proc.stdout.split()
+        in_docker = "docker" in groups
+        ctx.add(
+            group, "account is not in the docker group",
+            FAIL if in_docker else PASS,
+            f"{account!r} is in the docker group — that is root-equivalent and "
+            "collapses the isolation this account exists to provide" if in_docker
+            else f"{account!r} has no docker-socket access",
+        )
+
+
 def check_safety(ctx: Ctx) -> None:
     """Repo-side safety invariants that hold regardless of account."""
     group = "safety"
@@ -799,6 +860,7 @@ GROUPS: dict[str, Callable[[Ctx], None]] = {
     "wiring": check_wiring,
     "providers": check_providers,
     "mission-control": check_mission_control,
+    "isolation": check_isolation,
     "safety": check_safety,
 }
 
