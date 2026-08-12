@@ -157,7 +157,14 @@ class MarketDataProvider:
             # parse shifts the date on any TZ east of UTC (SG host: +1 day off).
             from datetime import datetime as _dtt, timezone as _tz
             ex_date = _dtt.fromtimestamp(float(ex_ts), tz=_tz.utc).date()
-        except (TypeError, ValueError, OSError):
+        except (TypeError, ValueError, OSError, OverflowError):
+            # OverflowError is NOT a ValueError subclass: an absurd epoch
+            # (e.g. milliseconds mistaken for seconds) raises "timestamp out
+            # of range for platform time_t" and escaped this guard, breaking
+            # the method's own "returns {} on anything unusable" contract.
+            # The one current caller wraps this call, so the observed effect
+            # was a warning + skipped symbol rather than a failed session —
+            # but the contract is what the next caller will rely on.
             return {}
         try:
             amount = round(float(amount), 4)
