@@ -117,6 +117,18 @@ Wrote the exact, minimal command set for that as `ops/onecli/README.md` (a runbo
 
 Zero `src/` changes this slice. Trading timers untouched (still disabled). All 9 agents still OpenRouter/`openai/gpt-5.5` per `config/settings.yaml` on `main` — not touched.
 
+## Checkpoint status — 2026-08-12, later (VPS security hardening applied and verified — OneCLI commissioning resumes)
+
+A side branch (`claude/vps-security-hardening-t8m3qz`) produced `ops/security/vps-hardening-plan.md` and an idempotent `ops/security/harden.sh` from a `ubuntu`-produced host audit, reviewed and approved, dry-run reviewed, then applied by `ubuntu`. Verified live from `dev` afterward, not just taken on report:
+
+- `uptime` showed ~2 minutes and `uname -r` showed `6.8.0-137-generic` (the previously-staged kernel) — the pending reboot completed and the new kernel is running.
+- `fail2ban` active, started at boot time.
+- Tailscale connected, same tailnet as before; no subnet router or exit node configured (unchanged from the audit — never in scope for this pass).
+- `/var/run/reboot-required` no longer present.
+- UFW's own active/deny-incoming state and the `btop`/`iftop` install weren't independently checkable from `dev` without root, but were confirmed by the operator and are consistent with everything that was checkable.
+
+This pass never touched `sudo` membership, Docker, OneCLI, or anything under `config/`, `src/`, or QAMC's runtime — confirmed via `git diff --stat` on the hardening branch before it was pushed. OneCLI commissioning resumes from exactly where it stopped: waiting on the bundled `ubuntu` action in `ops/onecli/README.md` (Docker install + bringing up OneCLI's own compose stack). Nothing about that step changed.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.

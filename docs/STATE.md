@@ -18,6 +18,7 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Mission Control/API is deployed under `qamc`, private/read-only, and trading timers remain disabled pending commissioning.
 - OpenRouter routing for all 9 agents is accepted: explicit provider `openrouter`, model `openai/gpt-5.5`, with no model diversification. This uses the already-accepted provider seam.
 - The architectural-authority hard rule in `CLAUDE.md` is accepted: Claude may act autonomously inside accepted architecture but must stop at material architectural forks rather than invent replacements.
+- VPS baseline security hardening is complete and verified: UFW active with a deny-incoming default (SSH and the `tailscale0` interface explicitly allowed), fail2ban's `sshd` jail active, the previously-staged kernel update applied via a completed reboot, Tailscale confirmed connected with no subnet router or exit node configured, `btop`/`iftop` installed as lightweight operator inspection tools. See `ops/security/vps-hardening-plan.md`.
 
 ## Explicitly not accepted
 

@@ -129,6 +129,10 @@ Current status:
 
 Dedicated dashboard visualization/UX polish remains **after deployed-MVP acceptance**.
 
+### 🔒 VPS security hardening complete
+
+Baseline host security hardening is done and verified: UFW active (deny-incoming by default, SSH and Tailscale explicitly allowed), fail2ban protecting SSH from brute-force attempts, kernel updated via a completed reboot, Tailscale connectivity confirmed, `btop`/`iftop` installed for lightweight operator inspection. No subnet router or exit node was configured — out of scope for this pass. Detail in `ops/security/vps-hardening-plan.md`.
+
 ## 🗺️ PROJECT MAP
 
 | Status | Stage / milestone | Result |
