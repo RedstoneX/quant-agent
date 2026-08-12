@@ -262,3 +262,92 @@ def test_json_output_is_machine_readable(monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["failed"] == 0
     assert payload["results"][0]["name"] == "synthetic"
+
+
+# --- --live preflight gating ---------------------------------------------
+#
+# The preflight group makes authenticated calls with real credentials and
+# spends money on one LLM completion. It must therefore be genuinely
+# opt-in: every path that could run it without `--live` is pinned here.
+
+
+def _ctx(**kwargs):
+    return vc.Ctx(**kwargs)
+
+
+def test_preflight_is_skipped_unless_live_is_requested():
+    ctx = _ctx(allow_network=True, live=False, proxy="http://x:t@127.0.0.1:10255")
+    vc.check_preflight(ctx)
+    assert [r.status for r in ctx.results] == [vc.SKIP]
+    assert "--live" in ctx.results[0].detail
+
+
+def test_preflight_is_skipped_with_no_network_even_when_live():
+    ctx = _ctx(allow_network=False, live=True, proxy="http://x:t@127.0.0.1:10255")
+    vc.check_preflight(ctx)
+    assert [r.status for r in ctx.results] == [vc.SKIP]
+
+
+def test_preflight_is_skipped_when_no_gateway_wiring_resolved():
+    """Without the gateway there are no credentials to call with — running
+    anyway would hit the providers unauthenticated and report noise."""
+    ctx = _ctx(allow_network=True, live=True, proxy=None)
+    vc.check_preflight(ctx)
+    assert [r.status for r in ctx.results] == [vc.SKIP]
+
+
+def test_live_flag_defaults_off_on_the_context():
+    assert vc.Ctx().live is False
+
+
+def test_main_does_not_enable_live_by_default(monkeypatch):
+    """A bare invocation must never spend money or make authenticated calls."""
+    seen = {}
+    monkeypatch.setitem(
+        vc.GROUPS, "preflight",
+        lambda ctx: seen.update(live=ctx.live),
+    )
+    vc.main(["--group", "preflight", "--no-network"])
+    assert seen == {"live": False}
+
+
+def test_main_passes_the_live_flag_through(monkeypatch):
+    seen = {}
+    monkeypatch.setitem(
+        vc.GROUPS, "preflight",
+        lambda ctx: seen.update(live=ctx.live),
+    )
+    vc.main(["--group", "preflight", "--no-network", "--live"])
+    assert seen == {"live": True}
+
+
+# --- credential selection for the preflight -------------------------------
+
+def test_preflight_credentials_fall_back_to_a_placeholder(monkeypatch):
+    """On `dev` the credential env vars are deliberately empty, so
+    get_config() raises. The gateway substitutes the real value anyway, so
+    a placeholder still exercises the true end-to-end path."""
+    import src.api.deps as deps
+
+    def _raise():
+        raise ValueError("Required API key 'alpaca_key' is empty — check your .env file")
+
+    monkeypatch.setattr(deps, "get_config", _raise)
+    assert vc._credentials_for_preflight() == (vc.PREFLIGHT_PLACEHOLDER,) * 4
+
+
+def test_preflight_prefers_the_runtime_configuration(monkeypatch):
+    """From the runtime account the preflight must prove the EXACT
+    production path, not an approximation of it."""
+    import src.api.deps as deps
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(deps, "get_config", lambda: SimpleNamespace(
+        api_keys=SimpleNamespace(
+            openrouter="or-value", alpaca_key="ak-value",
+            alpaca_secret="as-value", fred="fred-value",
+        ),
+    ))
+    assert vc._credentials_for_preflight() == (
+        "or-value", "ak-value", "as-value", "fred-value",
+    )

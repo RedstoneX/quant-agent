@@ -8,6 +8,7 @@ than a re-derived sequence of ad-hoc `curl` invocations.
 
     python ops/commissioning/verify_commissioning.py            # all groups
     python ops/commissioning/verify_commissioning.py --from-onecli
+    python ops/commissioning/verify_commissioning.py --live      # + real reads
     python ops/commissioning/verify_commissioning.py --group config --json
 
 Exit code is 0 when nothing FAILed and 1 otherwise. SKIP never fails the
@@ -18,14 +19,20 @@ and gets progressively more complete as it moves closer to the runtime.
 
 ## Secret discipline
 
-This script is read-only and never prints a credential. The provider
-checks deliberately send an obviously-fake placeholder credential and
-compare only HTTP **status codes** between a direct call and a
-gateway-routed call — the same discipline used throughout the manual
+This script is read-only and never prints a credential, and it never
+submits, modifies, or cancels an order.
+
+The `providers` group deliberately sends an obviously-fake placeholder
+credential and compares only HTTP **status codes** between a direct call
+and a gateway-routed call — the same discipline used throughout the manual
 commissioning evidence in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
-Response bodies are never read (every request is streamed and closed), so
-neither a real injected credential nor any account data ever enters this
-process's memory, its output, or a log.
+Its response bodies are never read (every request is streamed and closed),
+so no injected credential or account data enters this process at all.
+
+The opt-in `preflight` group (`--live`) necessarily *does* read responses —
+proving the configured model answers, or that a bar series parses, means
+looking at the answer. It reports shape and verdicts only: never a
+credential, never an account balance.
 
 ## Why each provider is probed with a different HTTP library
 
@@ -73,6 +80,11 @@ EXPECTED_MODEL = "openai/gpt-5.5"
 # substituted a real value server-side.
 FAKE_CREDENTIAL = "qamc-commissioning-probe-not-a-real-key"
 
+# Stand-in used by the live preflight when this account holds no runtime
+# credentials (i.e. on `dev`). The gateway substitutes the real value, so
+# the call still exercises the true end-to-end path.
+PREFLIGHT_PLACEHOLDER = "placeholder-managed-by-onecli"
+
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
 
@@ -92,6 +104,7 @@ class Ctx:
     ca_bundle: str | None = None
     proxy_source: str = "unset"
     allow_network: bool = True
+    live: bool = False
     results: list[Result] = field(default_factory=list)
 
     def add(self, group: str, name: str, status: str, detail: str = "") -> Result:
@@ -625,6 +638,227 @@ def check_mission_control(ctx: Ctx) -> None:
         ctx.add(group, name, status, detail)
 
 
+def _credentials_for_preflight() -> tuple[str, str, str, str]:
+    """(openrouter, alpaca_key, alpaca_secret, fred) for the live preflight.
+
+    Prefer the runtime's real configuration when it loads, so the preflight
+    proves the exact production path rather than an approximation of it. On
+    `dev` — where the credential env vars are deliberately empty — fall back
+    to a placeholder: the gateway substitutes the real value either way, so
+    the calls still exercise the true end-to-end path.
+    """
+    try:
+        from src.api.deps import get_config
+
+        keys = get_config().api_keys
+        return keys.openrouter, keys.alpaca_key, keys.alpaca_secret, keys.fred
+    except Exception:
+        return (PREFLIGHT_PLACEHOLDER,) * 4
+
+
+def check_preflight(ctx: Ctx) -> None:
+    """End-to-end provider preflight through QAMC's OWN client code.
+
+    The `providers` group proves the gateway *injects* a credential at the
+    HTTP level. That is necessary but not sufficient: it would still pass
+    with a misspelled or retired model id, a token budget that yields no
+    content, a market-data host QAMC can reach but not parse, or a FRED
+    series that no longer resolves. This group answers the question the
+    operator actually has — "will the pipeline work when commissioned?" —
+    by constructing the same `openai`, `alpaca-py` and `fredapi` clients
+    the trading engine builds and completing one real read with each.
+
+    Opt-in (`--live`) because it makes authenticated calls with the real
+    credentials and spends a trivial amount on one LLM completion. Every
+    call here is read-only; no order is ever submitted.
+    """
+    group = "preflight"
+    if not ctx.allow_network:
+        ctx.add(group, "live provider preflight", SKIP, "--no-network")
+        return
+    if not ctx.live:
+        ctx.add(group, "live provider preflight", SKIP,
+                "not requested — pass --live to complete one real read per provider")
+        return
+    if not ctx.proxy:
+        ctx.add(group, "live provider preflight", SKIP, "no gateway wiring resolved")
+        return
+
+    sys.path.insert(0, str(PROJECT_ROOT))
+    openrouter_key, alpaca_key, alpaca_secret, fred_key = _credentials_for_preflight()
+
+    # The SDKs read proxy/CA settings from the environment at request time,
+    # which is exactly how the commissioned runtime supplies them. Set them
+    # for this process so a pre-wiring run from `dev` exercises the same
+    # path; a run from the wired runtime just re-affirms what is already set.
+    os.environ["HTTPS_PROXY"] = ctx.proxy
+    os.environ["https_proxy"] = ctx.proxy
+    if ctx.ca_bundle:
+        os.environ["SSL_CERT_FILE"] = ctx.ca_bundle
+        os.environ["REQUESTS_CA_BUNDLE"] = ctx.ca_bundle
+
+    _preflight_openrouter(ctx, group, openrouter_key)
+    _preflight_alpaca(ctx, group, alpaca_key, alpaca_secret)
+    _preflight_fred(ctx, group, fred_key)
+
+
+def _preflight_openrouter(ctx: Ctx, group: str, api_key: str) -> None:
+    # 1. Is the configured model id real and currently offered? A typo or a
+    #    retired id passes every credential-level check and then fails on
+    #    the first agent call of the first live session.
+    try:
+        import httpx
+
+        with httpx.Client(timeout=30.0, proxy=ctx.proxy,
+                          verify=ctx.ca_bundle or True, trust_env=False) as client:
+            resp = client.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            catalog = resp.json().get("data", []) if resp.status_code == 200 else []
+    except Exception as exc:
+        ctx.add(group, "openrouter model is available", SKIP,
+                f"model catalog unreadable: {type(exc).__name__}: {exc}")
+    else:
+        ids = {m.get("id") for m in catalog}
+        if not ids:
+            ctx.add(group, "openrouter model is available", SKIP,
+                    "model catalog came back empty")
+        elif EXPECTED_MODEL in ids:
+            ctx.add(group, "openrouter model is available", PASS,
+                    f"{EXPECTED_MODEL!r} is offered ({len(ids)} models in catalog)")
+        else:
+            ctx.add(group, "openrouter model is available", FAIL,
+                    f"{EXPECTED_MODEL!r} is NOT in OpenRouter's catalog of "
+                    f"{len(ids)} models — every agent would fail on its first call")
+
+    # 2. A real completion through the same client `src/agents/base.py`
+    #    builds. `max_tokens` is generous on purpose: gpt-5.5 spends budget
+    #    on reasoning before emitting content, and a starved budget returns
+    #    finish_reason='length' with nothing usable — which the agent layer
+    #    correctly treats as an empty-response error and retries into.
+    try:
+        from openai import OpenAI
+
+        from src.agents.base import _OPENROUTER_BASE_URL
+
+        client = OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
+                        timeout=120.0, max_retries=0)
+        completion = client.chat.completions.create(
+            model=EXPECTED_MODEL,
+            messages=[{"role": "user", "content": "Reply with exactly: ok"}],
+            max_tokens=512,
+        )
+    except Exception as exc:
+        ctx.add(group, "openrouter completes a call", FAIL,
+                f"{type(exc).__name__}: {str(exc)[:300]}")
+        return
+
+    choice = completion.choices[0] if completion.choices else None
+    content = (getattr(getattr(choice, "message", None), "content", "") or "").strip()
+    finish = getattr(choice, "finish_reason", None)
+    if not content:
+        ctx.add(group, "openrouter completes a call", FAIL,
+                f"model answered with no content (finish_reason={finish!r}) — "
+                "every agent call would raise LLMEmptyResponseError and burn "
+                "its retry budget")
+    else:
+        ctx.add(group, "openrouter completes a call", PASS,
+                f"served by {completion.model!r}, finish_reason={finish!r}, "
+                f"{len(content)} chars returned")
+
+
+def _preflight_alpaca(ctx: Ctx, group: str, key: str, secret: str) -> None:
+    try:
+        from src.execution.broker import AlpacaBroker
+
+        broker = AlpacaBroker(api_key=key, secret_key=secret, paper=True)
+    except Exception as exc:
+        ctx.add(group, "alpaca client constructs", FAIL,
+                f"{type(exc).__name__}: {str(exc)[:300]}")
+        return
+
+    # The strongest available paper-only evidence: not what config claims,
+    # but which host the SDK will actually talk to.
+    endpoint = str(getattr(broker.client, "_base_url", "")) or "unknown"
+    ctx.add(group, "alpaca endpoint is paper",
+            PASS if "PAPER" in endpoint.upper() else FAIL,
+            f"SDK resolved endpoint: {endpoint}")
+
+    try:
+        account = broker.get_account()
+    except Exception as exc:
+        ctx.add(group, "alpaca account reachable", FAIL,
+                f"get_account failed: {type(exc).__name__}: {str(exc)[:300]}")
+    else:
+        # Shape only — a verification tool has no business printing balances.
+        expected = {"cash", "portfolio_value", "last_equity"}
+        missing = expected - set(account)
+        numeric = all(isinstance(v, float) for v in account.values())
+        ctx.add(group, "alpaca account reachable",
+                PASS if not missing and numeric else FAIL,
+                "account snapshot returned with all expected numeric fields"
+                if not missing and numeric
+                else f"missing={sorted(missing)} all_numeric={numeric}")
+
+    try:
+        bars = broker.get_bars("SPY", lookback_days=10)
+    except Exception as exc:
+        ctx.add(group, "alpaca market data", FAIL, f"{type(exc).__name__}: {exc}")
+    else:
+        # get_bars swallows its own errors and returns [], so an empty result
+        # is the failure signal here — not an exception.
+        ctx.add(group, "alpaca market data",
+                PASS if bars else FAIL,
+                f"{len(bars)} daily bars for SPY from data.alpaca.markets" if bars
+                else "no bars returned — the market-data host is not usable "
+                     "(check the *.alpaca.markets host scope in OneCLI)")
+
+    try:
+        price = broker.get_latest_price("SPY")
+    except Exception as exc:
+        ctx.add(group, "alpaca live quote", FAIL, f"{type(exc).__name__}: {exc}")
+    else:
+        ctx.add(group, "alpaca live quote",
+                PASS if price and price > 0 else FAIL,
+                "a positive price was returned" if price and price > 0
+                else f"no usable price ({price!r}) — order sizing depends on this")
+
+    try:
+        # Consulted on every session entry; a failure here reads as "market
+        # closed" and silently skips the whole session.
+        broker.is_trading_day()
+    except Exception as exc:
+        ctx.add(group, "alpaca trading calendar", FAIL, f"{type(exc).__name__}: {exc}")
+    else:
+        ctx.add(group, "alpaca trading calendar", PASS,
+                "calendar lookup succeeded (a failure here reads as "
+                "market-closed and skips the session)")
+
+
+def _preflight_fred(ctx: Ctx, group: str, api_key: str) -> None:
+    try:
+        from src.data.macro import MacroDataProvider
+
+        vix = MacroDataProvider(api_key=api_key).get_vix()
+    except Exception as exc:
+        ctx.add(group, "fred series fetch", FAIL,
+                f"{type(exc).__name__}: {str(exc)[:300]}")
+        return
+
+    # `_safe_get_series` degrades to an empty series on failure, which
+    # surfaces as `current: None` — so None is the failure signal, not a raise.
+    current = vix.get("current")
+    if isinstance(current, float):
+        ctx.add(group, "fred series fetch", PASS,
+                f"VIXCLS returned an observation, staleness_days="
+                f"{vix.get('staleness_days')}")
+    else:
+        ctx.add(group, "fred series fetch", FAIL,
+                "VIXCLS returned no observation — macro analysis would run "
+                "blind with regime detection seeing None freshness")
+
+
 RUNTIME_ACCOUNT = "qamc"
 RUNTIME_HOME = Path("/home/qamc")
 
@@ -860,6 +1094,7 @@ GROUPS: dict[str, Callable[[Ctx], None]] = {
     "wiring": check_wiring,
     "providers": check_providers,
     "mission-control": check_mission_control,
+    "preflight": check_preflight,
     "isolation": check_isolation,
     "safety": check_safety,
 }
@@ -910,13 +1145,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-network", action="store_true",
                         help="skip every outbound check")
+    parser.add_argument(
+        "--live", action="store_true",
+        help="also complete one real read per provider through QAMC's own "
+             "clients (authenticated; costs a trivial amount for one LLM call)",
+    )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
 
-    ctx = Ctx(allow_network=not args.no_network)
+    ctx = Ctx(allow_network=not args.no_network, live=args.live)
     selected = args.group or list(GROUPS)
 
-    if not args.no_network and ({"wiring", "providers"} & set(selected)):
+    if not args.no_network and ({"wiring", "providers", "preflight"} & set(selected)):
         resolve_wiring(ctx, args.from_onecli)
 
     for name in GROUPS:
