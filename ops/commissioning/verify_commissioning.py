@@ -94,6 +94,15 @@ class Result:
     name: str
     status: str
     detail: str = ""
+    resolved_by: str | None = None
+    """Account that CAN evaluate this check, when the current one cannot.
+
+    Acceptance is legitimately split across accounts — that is the account
+    boundary working, not a limitation to route around. Recording which
+    account resolves each SKIP is what lets an operator tell a partial run
+    from a complete one instead of reading a green summary as full
+    coverage.
+    """
 
 
 @dataclass
@@ -107,8 +116,9 @@ class Ctx:
     live: bool = False
     results: list[Result] = field(default_factory=list)
 
-    def add(self, group: str, name: str, status: str, detail: str = "") -> Result:
-        r = Result(group, name, status, detail)
+    def add(self, group: str, name: str, status: str, detail: str = "",
+            resolved_by: str | None = None) -> Result:
+        r = Result(group, name, status, detail, resolved_by)
         self.results.append(r)
         return r
 
@@ -457,7 +467,8 @@ def check_config(ctx: Ctx) -> None:
         if is_missing_credentials_error(exc):
             ctx.add(group, "config loads and validates", SKIP,
                     "credential env vars are empty in this account — expected on "
-                    "`dev`; re-run as the runtime account to check startup validation")
+                    "`dev`; re-run as the runtime account to check startup validation",
+                    resolved_by=RUNTIME_ACCOUNT)
         else:
             # A config that will not load is the single most important early
             # failure: the trading process would die the same way at startup.
@@ -574,7 +585,8 @@ def check_wiring(ctx: Ctx) -> None:
     else:
         ctx.add(group, "runtime CA env vars set", SKIP,
                 "wiring was resolved from OneCLI, not from this process's "
-                "environment — run this as the runtime account to check them")
+                "environment — run this as the runtime account to check them",
+                resolved_by=RUNTIME_ACCOUNT)
 
 
 def check_providers(ctx: Ctx) -> None:
@@ -860,6 +872,7 @@ def _preflight_fred(ctx: Ctx, group: str, api_key: str) -> None:
 
 
 RUNTIME_ACCOUNT = "qamc"
+DEV_ACCOUNT = "dev"
 RUNTIME_HOME = Path("/home/qamc")
 
 
@@ -884,7 +897,8 @@ def check_isolation(ctx: Ctx) -> None:
     if account == RUNTIME_ACCOUNT:
         ctx.add(group, "runtime credentials are unreadable off-account", SKIP,
                 f"running AS {RUNTIME_ACCOUNT} — read access to its own home is "
-                "expected; run from `dev` to check the boundary")
+                "expected; run from `dev` to check the boundary",
+                resolved_by=DEV_ACCOUNT)
     else:
         try:
             list(RUNTIME_HOME.iterdir())
@@ -941,11 +955,13 @@ def check_safety(ctx: Ctx) -> None:
     units = _systemctl("list-unit-files", "quant-agent*")
     if units is None or units.returncode != 0:
         ctx.add(group, "trading timers disabled", SKIP,
-                "no access to a systemd --user session (run as the runtime account)")
+                "no access to a systemd --user session (run as the runtime account)",
+                resolved_by=RUNTIME_ACCOUNT)
     elif not units.stdout.strip():
         ctx.add(group, "trading timers disabled", SKIP,
                 "this account has no quant-agent systemd units — run as the "
-                "runtime account to check timer state")
+                "runtime account to check timer state",
+                resolved_by=RUNTIME_ACCOUNT)
     else:
         timers = _systemctl("list-timers", "--all", "quant-agent*")
         enabled = [
@@ -1102,7 +1118,34 @@ GROUPS: dict[str, Callable[[Ctx], None]] = {
 _ICON = {PASS: "PASS", FAIL: "FAIL", SKIP: "SKIP", WARN: "WARN"}
 
 
-def render(results: list[Result]) -> str:
+def coverage_note(results: list[Result], account: str) -> str:
+    """Say plainly whether this run was complete, and what completes it.
+
+    Full acceptance spans two accounts by design: the runtime account owns
+    the checks that need real credentials, its own systemd session and its
+    environment, while the isolation check is only meaningful from OFF the
+    runtime account — run there, it proves nothing. Without this note an
+    operator reads a green single-account summary as full coverage, which
+    is exactly the misreading the split invites.
+    """
+    pending: dict[str, list[str]] = {}
+    for r in results:
+        if r.status == SKIP and r.resolved_by and r.resolved_by != account:
+            pending.setdefault(r.resolved_by, []).append(f"{r.group}/{r.name}")
+    if not pending:
+        return (
+            f"ACCOUNT COVERAGE: complete from {account!r} — no check is waiting "
+            "on another account."
+        )
+    out = [f"ACCOUNT COVERAGE: partial. Run from {account!r}; "
+           f"{sum(len(v) for v in pending.values())} check(s) need another account:"]
+    for who in sorted(pending):
+        out.append(f"  as {who}: {', '.join(sorted(pending[who]))}")
+    out.append("Acceptance is the union of both runs — see ops/onecli/README.md step 4e.")
+    return "\n".join(out)
+
+
+def render(results: list[Result], account: str = "?") -> str:
     lines: list[str] = []
     current = None
     for r in results:
@@ -1127,6 +1170,8 @@ def render(results: list[Result]) -> str:
         )
     else:
         lines.append("COMMISSIONING ACCEPTANCE: FAIL")
+    lines.append("")
+    lines.append(coverage_note(results, account))
     return "\n".join(lines)
 
 
@@ -1163,14 +1208,25 @@ def main(argv: list[str] | None = None) -> int:
         if name in selected:
             GROUPS[name](ctx)
 
+    import getpass
+    try:
+        account = getpass.getuser()
+    except Exception:
+        account = "?"
+
     if args.json:
         print(json.dumps(
-            {"results": [r.__dict__ for r in ctx.results],
-             "failed": sum(1 for r in ctx.results if r.status == FAIL)},
+            {"account": account,
+             "results": [r.__dict__ for r in ctx.results],
+             "failed": sum(1 for r in ctx.results if r.status == FAIL),
+             "pending_accounts": sorted({
+                 r.resolved_by for r in ctx.results
+                 if r.status == SKIP and r.resolved_by and r.resolved_by != account
+             })},
             indent=2,
         ))
     else:
-        print(render(ctx.results))
+        print(render(ctx.results, account))
 
     return 1 if any(r.status == FAIL for r in ctx.results) else 0
 

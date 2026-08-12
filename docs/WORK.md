@@ -251,6 +251,18 @@ Full acceptance run against the current deployment: **28 PASS, 1 FAIL, 3 SKIP.**
 
 Full suite **1701 passed, 0 failed** (1561 baseline + 140 new tests). Source changes this pass: the `OverflowError` fix and one comment in `main.py` noting that its live-trading warning is now unreachable behind the paper-only guard (kept deliberately, so it already exists if that guard is ever lifted).
 
+## Checkpoint status — 2026-08-12, later still (commissioning live; acceptance workflow made reproducible)
+
+The operator applied the step-4 wiring. Verified independently from `dev` over loopback, not taken on report: `/health` now returns `broker_reachable: true` alongside `db_reachable: true` and `paper: true`. A full acceptance run from `dev` is **32 passed, 0 failed, 3 skipped**.
+
+**The reported problem — `ops/commissioning` missing from `/home/qamc/quant-agent` — is not an architecture problem and needed no code moved.** `git ls-tree origin/main` shows zero files under `ops/commissioning`: the runtime checkout is on `main`, and the tooling landed on a Claude branch that has not been merged. The runtime gets it the same way it gets every other file — `git pull` once the branch lands through the normal review path. Copying it across accounts by hand was rejected on two grounds: it would place an untracked, silently divergent copy inside the runtime (an acceptance tool is only worth trusting if it is the reviewed version), and it would breach the `dev`/runtime separation the whole credential architecture rests on. Confirmed the script carries no dev-only dependency — stdlib plus `yaml`, with `httpx`/`openai`/`alpaca-py`/`fredapi` reached only through guarded imports that degrade to `SKIP` — so it runs under the runtime's own virtualenv unchanged.
+
+**What genuinely needed fixing was the workflow's honesty about the account split.** Acceptance cannot be one command, and that is the boundary working rather than a limitation: three checks are evaluable only from `qamc` (startup validation with real credentials, the runtime CA env vars, timer state in its own `systemd --user` session), and the isolation check — "the runtime's credentials are unreadable off-account" — proves nothing when run as the account that owns them. No single login can evaluate all four. Previously a single-account run printed `COMMISSIONING ACCEPTANCE: PASS` with no indication it was partial, which invites reading one green summary as full coverage.
+
+Each result now carries the account that can resolve it, and every run ends with an `ACCOUNT COVERAGE:` line that either declares itself complete or names the account still owed and the exact checks it owes. `--json` carries `account` and `pending_accounts` for the same reason. Acceptance is the union of the two runs, both exiting `0` with `ACCOUNT COVERAGE: complete`.
+
+No code was duplicated, no file crossed an account boundary, and no security boundary moved. Tests: 8 new for the coverage logic; full suite **1709 passed, 0 failed**.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.

@@ -351,3 +351,93 @@ def test_preflight_prefers_the_runtime_configuration(monkeypatch):
     assert vc._credentials_for_preflight() == (
         "or-value", "ak-value", "as-value", "fred-value",
     )
+
+
+# --- account coverage -----------------------------------------------------
+#
+# Full acceptance spans two accounts by design: the runtime account owns the
+# checks needing real credentials, its own systemd session and its
+# environment; the isolation check is only meaningful from OFF the runtime
+# account. A single-account run is therefore PARTIAL, and must say so — an
+# operator reading a green summary as full coverage is exactly the
+# misreading the split invites.
+
+
+def _r(group, name, status, resolved_by=None):
+    return vc.Result(group=group, name=name, status=status, detail="",
+                     resolved_by=resolved_by)
+
+
+def test_coverage_is_complete_when_nothing_waits_on_another_account():
+    note = vc.coverage_note([_r("config", "a", vc.PASS)], "qamc")
+    assert note.startswith("ACCOUNT COVERAGE: complete")
+    assert "'qamc'" in note
+
+
+def test_coverage_names_the_account_that_resolves_each_pending_check():
+    results = [
+        _r("config", "config loads and validates", vc.SKIP, resolved_by="qamc"),
+        _r("safety", "trading timers disabled", vc.SKIP, resolved_by="qamc"),
+        _r("gateway", "onecli gateway listening", vc.PASS),
+    ]
+    note = vc.coverage_note(results, "dev")
+    assert "partial" in note
+    assert "2 check(s) need another account" in note
+    assert "as qamc:" in note
+    assert "config/config loads and validates" in note
+    assert "safety/trading timers disabled" in note
+
+
+def test_coverage_ignores_checks_this_account_already_resolved():
+    """A SKIP tagged with the CURRENT account is not pending — it skipped
+    for some other reason and must not be reported as waiting on itself."""
+    results = [_r("isolation", "runtime credentials are unreadable off-account",
+                  vc.SKIP, resolved_by="dev")]
+    assert vc.coverage_note(results, "dev").startswith("ACCOUNT COVERAGE: complete")
+
+
+def test_coverage_reports_the_isolation_check_as_pending_from_the_runtime():
+    """Run from `qamc`, the isolation check proves nothing — it needs an
+    account that should NOT be able to read the runtime's home."""
+    results = [_r("isolation", "runtime credentials are unreadable off-account",
+                  vc.SKIP, resolved_by="dev")]
+    note = vc.coverage_note(results, "qamc")
+    assert "as dev:" in note
+
+
+def test_coverage_groups_multiple_pending_accounts():
+    results = [
+        _r("safety", "trading timers disabled", vc.SKIP, resolved_by="qamc"),
+        _r("isolation", "unreadable off-account", vc.SKIP, resolved_by="dev"),
+    ]
+    note = vc.coverage_note(results, "ubuntu")
+    assert "as dev:" in note and "as qamc:" in note
+
+
+def test_coverage_ignores_untagged_skips():
+    """`--no-network` skips are not account-bound and must not be reported
+    as waiting on another login."""
+    results = [_r("providers", "credential injection", vc.SKIP)]
+    assert vc.coverage_note(results, "dev").startswith("ACCOUNT COVERAGE: complete")
+
+
+def test_render_appends_the_coverage_note(capsys):
+    out = vc.render([_r("safety", "trading timers disabled", vc.SKIP,
+                        resolved_by="qamc")], account="dev")
+    assert "COMMISSIONING ACCEPTANCE" in out
+    assert "ACCOUNT COVERAGE: partial" in out
+
+
+def test_json_output_carries_the_account_and_pending_list(monkeypatch, capsys):
+    import json
+
+    monkeypatch.setitem(
+        vc.GROUPS, "safety",
+        lambda ctx: ctx.add("safety", "trading timers disabled", vc.SKIP,
+                            "no session", resolved_by="qamc"),
+    )
+    vc.main(["--group", "safety", "--no-network", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 0
+    assert payload["account"]
+    assert payload["pending_accounts"] == ["qamc"] or payload["account"] == "qamc"

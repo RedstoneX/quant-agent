@@ -135,13 +135,31 @@ curl -s http://127.0.0.1:8800/health
 
 Expected: `200` with `"db_reachable":true`, `"paper":true`, and `"broker_reachable":true` — the flip from `false` to `true` is the objective signal that the whole credential chain is live.
 
-Then the full acceptance check, which covers the entire commissioning checklist in `docs/WORK.md` and exits non-zero on any failure:
+Then the full acceptance check. It covers the entire commissioning checklist in `docs/WORK.md` and exits non-zero on any failure.
+
+**Acceptance runs on two accounts, and that is deliberate — it is the account boundary, not a limitation.** Three checks can only be evaluated from the runtime account (startup validation with real credentials, the runtime CA environment variables, and trading-timer state, which lives in `qamc`'s own `systemd --user` session). One check is only *meaningful* from a non-runtime account: "the runtime's credentials are unreadable off-account" proves nothing when run as the account that owns them. No single login can evaluate all four. Acceptance is the **union of both runs**.
 
 ```bash
+# 1. runtime account — the three runtime-only checks
+sudo -u qamc -i
 cd /home/qamc/quant-agent && python3 ops/commissioning/verify_commissioning.py --live
+
+# 2. dev account — the isolation check
+cd /home/dev/projects/quant-agent && .venv/bin/python ops/commissioning/verify_commissioning.py --live
 ```
 
-Expected: every check `PASS`, ending in `COMMISSIONING ACCEPTANCE: PASS`, exit code `0`. `--live` additionally completes one real read per provider through QAMC's own clients. If anything fails, its line names the reason and where to fix it.
+Expected from each: `COMMISSIONING ACCEPTANCE: PASS` and exit code `0`, followed by an `ACCOUNT COVERAGE:` line. Accept only when **both** runs exit `0` and each reports `ACCOUNT COVERAGE: complete` — a partial run names the account still needed and the checks it owes, so a green summary from one login is never mistaken for full coverage. `--live` additionally completes one real read per provider through QAMC's own clients.
+
+### The tool is not in the runtime checkout yet
+
+`ops/commissioning/` is tracked in this repository, so the runtime gets it exactly the way it gets every other file — by updating its checkout. If `verify_commissioning.py` is missing under `/home/qamc/quant-agent`, that checkout is simply on a commit that predates it (the tooling landed on a Claude branch and reaches `main` through the normal review/merge path).
+
+```bash
+sudo -u qamc -i
+cd /home/qamc/quant-agent && git pull && ls ops/commissioning/verify_commissioning.py
+```
+
+Do **not** copy the file across accounts by hand. That would put an untracked, silently divergent copy inside the runtime — the acceptance tool is only worth trusting if it is the reviewed version, and a hand-placed copy also breaches the `dev`/runtime separation the whole credential architecture rests on. The script needs no dev-only dependency: it uses the standard library plus `yaml`, and reaches for `httpx`/`openai`/`alpaca-py`/`fredapi` only inside guarded imports that degrade to `SKIP`, so it runs under the runtime's own virtualenv unchanged.
 
 ### If `broker_reachable` is still `false`
 
