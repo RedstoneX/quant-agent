@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 This file says what is accepted and authorized **now**. Git history preserves prior state and discovery evidence.
 
@@ -20,6 +20,8 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - The architectural-authority hard rule in `CLAUDE.md` is accepted: Claude may act autonomously inside accepted architecture but must stop at material architectural forks rather than invent replacements.
 - VPS baseline security hardening is complete and verified: UFW active with a deny-incoming default (SSH and the `tailscale0` interface explicitly allowed), fail2ban's `sshd` jail active, the previously-staged kernel update applied via a completed reboot, Tailscale confirmed connected with no subnet router or exit node configured, `btop`/`iftop` installed as lightweight operator inspection tools. See `ops/security/vps-hardening-plan.md`.
 - OneCLI credential gateway commissioning is complete: all four real credentials (OpenRouter, Alpaca Key ID, Alpaca Secret, FRED) are stored in OneCLI and verified working end-to-end through the gateway. Zero `src/`/`config/` changes were required. See `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the accepted architecture and injection configuration per provider.
+- Commissioning acceptance is automated: `ops/commissioning/verify_commissioning.py` executes the whole "Verification before commissioning checkpoint" list from `docs/WORK.md` as one read-only, exit-code-bearing command. It is the acceptance evidence run — the manual `curl` sequences it replaces should not be re-derived by hand.
+- `Alpaca Paper only` is now enforced in code, not only in prose: `AlpacaConfig` fails closed at config load on a non-paper `paper` flag or `base_url`. Removing that guard is the act of authorizing live trading and requires a reviewed change with its own commit.
 
 ## Explicitly not accepted
 
@@ -52,4 +54,4 @@ Claude Code operates from `/home/dev/projects/quant-agent` for engineering work.
 
 Upstream OneCLI is installed, running privately on the VPS, and commissioned: all four real credentials are stored in it and verified working end-to-end (see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the accepted architecture and per-provider configuration). `dev` has never held or seen a real credential value.
 
-The next engineering action is to wire `qamc`'s `.env` (`HTTPS_PROXY`/`SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`, pointed at the OneCLI gateway) — operator-only, since `dev` cannot write into `/home/qamc` — then verify `broker_reachable` flips true on the live `/health` endpoint. Trading timers remain disabled until commissioning evidence makes activation appropriate.
+The next engineering action is to wire `qamc`'s `.env` (`HTTPS_PROXY`/`SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`, pointed at the OneCLI gateway) — operator-only, since `dev` cannot write into `/home/qamc` — then run `python ops/commissioning/verify_commissioning.py` as `qamc`, which checks that `broker_reachable` flipped true along with every other acceptance criterion in one pass. Trading timers remain disabled until that evidence is reviewed and activation is appropriate.

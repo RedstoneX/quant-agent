@@ -203,6 +203,28 @@ Also ran, as routine verification rather than a separate task: full test suite f
 
 No trading logic, dashboard/visualization work, or `qamc`-side changes — stayed strictly within Mission Control's existing read-only, non-critical boundary per `.claude/rules/mission-control-api.md`.
 
+## Checkpoint status — 2026-08-12, later still (acceptance automated; four commissioning-adjacent gaps closed)
+
+Re-confirmed first, not assumed: `/health` still reports `broker_reachable: false`, and `dev` still cannot write into `/home/qamc`. The operator-only runtime wiring (step 4 of `ops/onecli/README.md`) is unchanged and remains the single blocker. Everything below is work that did **not** depend on it.
+
+**1. The commissioning checklist above is now executable, not prose.** `ops/commissioning/verify_commissioning.py` runs every criterion in "Verification before commissioning checkpoint" as one read-only command with a real exit code, from `dev`, `qamc`, or `ubuntu`. Design points that matter for trusting its verdicts:
+- Each provider is probed through the **same HTTP stack its real caller uses** (OpenRouter/`httpx`, Alpaca/`requests`, FRED/`urllib`). Probing all three with one convenient library would verify a transport QAMC never uses, and would miss exactly the `requests`-ignores-`SSL_CERT_FILE` class of misconfiguration this file already records.
+- Credential injection is proven by **difference**, not by an absolute status code: the same fake placeholder credential must be rejected direct and accepted through the gateway. Both legs succeeding is a FAIL (either the endpoint doesn't validate credentials, or a real key leaked client-side), never a pass.
+- `SKIP` is first-class and never fails the run, so a check that genuinely can't be evaluated from the current account says so. The trading-timer check `SKIP`s when the account has no `quant-agent` systemd units at all — "looked in the wrong place and found nothing" is not evidence that the runtime's timers are off.
+- No credential reaches stdout: response bodies are streamed and discarded unread, and the gateway agent token is redacted.
+
+Run live this pass, it reproduced the manual evidence table exactly (OpenRouter `401`→`200`, Alpaca trading `401`→`200`, Alpaca data `401`→`200`, FRED `400`→`200`), confirmed OneCLI and Mission Control loopback-only, and correctly reported `broker_reachable` FAIL for the pending wiring. The three-round manual diagnosis is now a one-command regression check.
+
+**2. `Alpaca Paper only` is enforced in code.** It was prose in three governance files with zero code enforcement: `alpaca.paper` is the real switch (`alpaca-py` turns it into the endpoint choice), so one token in `settings.yaml` could have pointed the whole decision chain at a live account with nothing to notice. `AlpacaConfig` now fails closed on `paper != true` and on a non-paper `base_url` (which nothing reads today, so a live value there would have misled every future reader rather than actually trading live). Deliberately no env-var escape hatch — authorizing live trading should be a reviewed code change, and deleting the guard's tests *is* that decision, in the open. No behavior change for the accepted config.
+
+**3. Two real coverage gaps on the credential-dependent read paths.** `src/api/broker_reads.py` — the module a gateway outage hits first, whose whole job is to degrade to an `error` field instead of a 500 — was at **28%** line coverage, because the route tests rightly stub it out. Now 97%. `get_latest_price` / `get_bars` / `open_buy_notional` in `src/execution/broker.py` were entirely uncovered; they are the paths that hit `data.alpaca.markets`, the separate host that needed the `*.alpaca.markets` wildcard fix. Module 70% → 83%. One assumption was corrected by the tests rather than asserted: an order object whose every attribute access raises is *not* skipped by `read_orders` — it degrades to a row of nulls, because `_order_to_dict` guards each field individually and never raises as a whole.
+
+**4. The trading-engine half of "OneCLI failure must not create a path to unauthorized trading."** Previously only the Mission Control half was covered. Five tests now drive a real morning run with agents unavailable — PM, AI Risk Manager, all nine at once (the true gateway-down shape), and broker-down-with-credentials-fine — asserting no order is submitted, plus a control case that *does* trade so the others cannot pass vacuously. Observed and pinned for the record: an agent outage propagates out of `run_morning()` rather than returning a structured error result. That is fail-closed and is existing accepted behavior, so it was pinned, not changed.
+
+Zero `src/` changes except the paper-only guard in `src/config.py`. No trading/risk semantics, no dashboard work, no `qamc`-side changes, no new services or dependencies. Full suite **1659 passed, 0 failed** (1561 baseline + 98 new tests).
+
+Engineering note for the next session: `dev` had no `pip`/`ensurepip` (PEP 668, no sudo), so the venv is bootstrapped via `get-pip.py --user --break-system-packages` + `virtualenv` into `~/.local`. Nothing system-wide was changed.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.
