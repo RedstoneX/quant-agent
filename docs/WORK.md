@@ -14,7 +14,7 @@ The current `openai/gpt-5.5` mapping for all agents is the commissioning baselin
 
 From current `main`, ensure the merged commissioning tooling reaches the runtime checkout and run the acceptance command from both required account contexts as documented in `ops/onecli/README.md` step 4e.
 
-Proceed only if the combined evidence is complete and clean. Trading timers remain disabled.
+Proceed only if the combined evidence is complete and clean.
 
 ### 2. Determine the best current model policy
 
@@ -58,10 +58,16 @@ Before stopping:
 - OneCLI/private/account-isolation boundaries remain intact;
 - Mission Control remains read-only;
 - no secrets leak;
-- trading timers remain disabled;
+- scheduled trading remains inactive during engineering/review;
 - model-routing evidence is reproducible and concise.
 
 Commit and push a dedicated Claude branch, then stop for ChatGPT external review. Claude must not merge its own work.
+
+## Timer handling
+
+The trading timers are only the scheduler for autonomous Alpaca Paper runs. **Do not treat timer activation as a separate design, architecture, or research decision.**
+
+Keep scheduled trading inactive while this work is incomplete. After ChatGPT's external review accepts the final tranche and the operator authorizes paper-soak start, enabling the timers is a routine deployment action. Do not spend engineering time repeatedly revisiting this point.
 
 ## Autonomy
 
@@ -78,7 +84,6 @@ Bundle any operator-only intervention into one concise request.
 ## Hard boundaries
 
 - Alpaca **Paper only**; no live trading.
-- Trading timers remain disabled until external review approves activation.
 - Preserve Specialist Agents → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution.
 - No deterministic risk/execution semantic redesign.
 - No broker-write Mission Control controls.
