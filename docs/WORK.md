@@ -102,6 +102,21 @@ Before asking to enable trading timers, establish objective evidence that:
 
 Trading timers remain disabled until this commissioning evidence is reviewed and activation is appropriate.
 
+## Checkpoint status — 2026-08-12 (OneCLI host-provisioning requirements determined — stopped for `ubuntu` action)
+
+Rehydrated from current `main` (PR #26 merged), not from the old deployment branch. Preserved the empirical `httpx`/`requests`/`urllib` proxy-compatibility findings from the rejected `2207b0b` work in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` (trimmed to evidence only — the rejection rationale now lives in this file and `STATE.md`, not duplicated).
+
+Investigated upstream OneCLI's actual current requirements directly against its source, not from stale notes:
+- Install script (`onecli.sh/install`) unconditionally requires Docker + Compose + a running daemon.
+- The upstream `docker/docker-compose.yml` itself: two services (`postgres:18-alpine`, `ghcr.io/onecli/onecli:latest`), both bind `127.0.0.1` only by default (`ONECLI_BIND_HOST`), no `.env` file strictly required (all vars have working defaults), dashboard on `10254`, gateway on `10255`.
+- `dev` (verified live, this account): no `docker`, no passwordless `sudo`. Per the accepted account-isolation model, `qamc`/`dev` should not be added to the `docker` group either — that grants root-equivalent host access, which would defeat the isolation those accounts exist to provide. So the entire Docker install *and* bringing up OneCLI's stack needs to run as `ubuntu`, not just the Docker install step.
+
+Wrote the exact, minimal command set for that as `ops/onecli/README.md` (a runbook, not custom code — every command either installs Docker via its own official apt repository or runs the upstream OneCLI repo's own `docker-compose.yml` unmodified).
+
+**Stopping here for the bundled `ubuntu` action** (operator-only boundary #1 — privileged host provisioning): install Docker Engine + Compose plugin, then bring up OneCLI's own compose stack. Exact commands in `ops/onecli/README.md`. No real trading/LLM secrets are needed for this step. Once confirmed running and private, the next `dev`-side work is creating a QAMC agent/gateway token in OneCLI and wiring routes for OpenRouter/Alpaca/FRED (still no real secret values needed for that) — entering the four real values remains a later, separate, operator-only step.
+
+Zero `src/` changes this slice. Trading timers untouched (still disabled). All 9 agents still OpenRouter/`openai/gpt-5.5` per `config/settings.yaml` on `main` — not touched.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.
