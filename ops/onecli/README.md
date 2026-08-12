@@ -50,38 +50,102 @@ Both should respond (2xx/3xx/401, not connection-refused). Confirm neither port 
 
 By this point OneCLI is running, all four Custom Secrets exist and are granted to the Default Agent (dashboard steps — see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the exact per-provider configuration), and credential delivery has been verified working. This step is the only thing left: point `qamc`'s existing placeholder credentials at the gateway. `dev` cannot do this — no write access to `/home/qamc`, no access to `qamc`'s `systemd --user` session.
 
-Run as `qamc` (or `ubuntu` via `sudo -u qamc -i`):
+Everything below runs **as `qamc`**. Open the session with:
 
 ```bash
-curl -s http://127.0.0.1:10254/api/container-config   # fetch fresh — don't reuse an old copy
+sudo -u qamc -i
 ```
 
-From that response: save the `caCertificate` PEM to a local file (e.g. `/home/qamc/quant-agent/onecli-gateway-ca.pem`), and add three lines to the existing `/home/qamc/quant-agent/.env` — do **not** touch `OPENROUTER_API_KEY`/`ALPACA_API_KEY`/`ALPACA_SECRET_KEY`/`FRED_API_KEY`, which stay exactly the placeholders they already are:
+### Files this step changes
+
+| Path | Change |
+|---|---|
+| `/home/qamc/quant-agent/onecli-gateway-ca.pem` | created (gateway CA, mode `600`) |
+| `/home/qamc/quant-agent/.env` | 3 lines added |
+
+Nothing else. The four provider credentials in `.env` (`OPENROUTER_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `FRED_API_KEY`) **stay exactly the placeholders they already are** — the real values live only in OneCLI. No systemd unit files change; no timer is enabled.
+
+### 4a. Write the CA certificate
+
+```bash
+cd /home/qamc/quant-agent
+curl -s http://127.0.0.1:10254/api/container-config \
+  | python3 -c 'import json,sys; sys.stdout.write(json.load(sys.stdin)["caCertificate"])' \
+  > onecli-gateway-ca.pem
+chmod 600 onecli-gateway-ca.pem
+head -1 onecli-gateway-ca.pem
+```
+
+Expected output:
 
 ```
-HTTPS_PROXY=http://x:<agent-token-from-the-response-above>@127.0.0.1:10255
+-----BEGIN CERTIFICATE-----
+```
+
+If it prints nothing, OneCLI is not answering — stop and check `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:10254` (expect `200`).
+
+### 4b. Print the three lines to add
+
+```bash
+curl -s http://127.0.0.1:10254/api/container-config | python3 -c '
+import json, sys
+p = json.load(sys.stdin)["env"]["HTTPS_PROXY"].replace("host.docker.internal", "127.0.0.1")
+ca = "/home/qamc/quant-agent/onecli-gateway-ca.pem"
+print(f"HTTPS_PROXY={p}\nSSL_CERT_FILE={ca}\nREQUESTS_CA_BUNDLE={ca}")'
+```
+
+Expected output — three lines, with a real `aoc_…` token in place of `<token>`:
+
+```
+HTTPS_PROXY=http://x:<token>@127.0.0.1:10255
 SSL_CERT_FILE=/home/qamc/quant-agent/onecli-gateway-ca.pem
 REQUESTS_CA_BUNDLE=/home/qamc/quant-agent/onecli-gateway-ca.pem
 ```
 
-(Use `127.0.0.1`, not the `host.docker.internal` the response itself shows — that only resolves inside a Docker container, not for `qamc`'s bare processes.)
+Two things to confirm before continuing: the host reads `127.0.0.1` (**not** `host.docker.internal`, which resolves only inside a container, not for `qamc`'s bare processes), and both CA lines are present (`requests`, Alpaca's transport, does not honor `SSL_CERT_FILE` — it needs `REQUESTS_CA_BUNDLE`).
 
-Then:
+### 4c. Append them to `.env`
+
+Append those three lines to `/home/qamc/quant-agent/.env`, editing nothing else. Then confirm the file is intact:
+
+```bash
+grep -cE '^(HTTPS_PROXY|SSL_CERT_FILE|REQUESTS_CA_BUNDLE)=' .env
+grep -E '^(OPENROUTER_API_KEY|ALPACA_API_KEY|ALPACA_SECRET_KEY|FRED_API_KEY)=' .env
+```
+
+Expected: `3`, followed by the four credential lines still showing their **placeholder** values.
+
+### 4d. Restart Mission Control
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user restart quant-agent-api.service
 systemctl --user status quant-agent-api.service --no-pager
+```
+
+Expected: `Active: active (running)`.
+
+Only this service restarts. The trading engine is not a persistent process — it sources `.env` fresh on each scheduled invocation (`scripts/run_if_et_window.sh`), and its timers stay installed-but-disabled either way. **This step does not enable trading.**
+
+### 4e. Verify
+
+```bash
 curl -s http://127.0.0.1:8800/health
 ```
 
-Then run the acceptance check from the same account — it verifies the whole commissioning checklist (`docs/WORK.md`) in one command and exits non-zero on any failure:
+Expected: `200` with `"db_reachable":true`, `"paper":true`, and `"broker_reachable":true` — the flip from `false` to `true` is the objective signal that the whole credential chain is live.
+
+Then the full acceptance check, which covers the entire commissioning checklist in `docs/WORK.md` and exits non-zero on any failure:
 
 ```bash
-python ops/commissioning/verify_commissioning.py
+cd /home/qamc/quant-agent && python3 ops/commissioning/verify_commissioning.py --live
 ```
 
-`/health` should still return `200` with `db_reachable: true`; `broker_reachable` should flip from `false` to `true` — the objective signal the whole chain is live. No other service needs restarting: the trading engine isn't a persistent process, it sources `.env` fresh on each scheduled invocation (`scripts/run_if_et_window.sh`), and its timers remain installed-but-disabled regardless of this step. **This step alone does not enable trading** — enabling the timers is a separate, later, explicit decision.
+Expected: every check `PASS`, ending in `COMMISSIONING ACCEPTANCE: PASS`, exit code `0`. `--live` additionally completes one real read per provider through QAMC's own clients. If anything fails, its line names the reason and where to fix it.
+
+### If `broker_reachable` is still `false`
+
+Run the verifier anyway — it distinguishes the causes. Most likely: `.env` not saved, the service restarted before the file was written, or `host.docker.internal` left in the proxy line.
 
 ## Rollback
 
