@@ -2,59 +2,48 @@
 
 Updated: 2026-08-12
 
-This file says what is accepted and authorized **now**. Git history preserves prior state and discovery evidence.
+This file says what is accepted and authorized **now**. Git history preserves prior detail.
 
 ## Accepted
 
 - Stages 0, 0.5, 1, 2, 3, 4 and 5 are accepted.
-- Stage 2 delivered the isolated read-only Mission Control API and deterministic `risk_gate` forensic persistence without changing trading/risk semantics.
-- Stage 3 delivered the read-only browser/iPad Trading Cockpit at `/ui`; accepted verification: **1531 passed, 0 failed** plus desktop/iPad runtime review.
-- Discovery R1 and ChatGPT reconciliation are accepted.
-- Stage 4 delivered per-candidate specialist evidence + decision-chain drill-down while preserving each specialist's real data scope and existing `decision_id` semantics.
-- Stage 5 delivered read-only journal and parameterized forensic search. Stage 4–5 passed external ChatGPT/operator review with **1558 passed, 0 failed** plus committed browser/runtime evidence.
-- PR #24 is merged into `main` as merge commit `105cc91a14faebd8a981061b3098eb181b306dda`.
-- The permanent frontend-verification requirement under `.claude/rules/frontend-verification.md` remains accepted.
-- The OVH VPS runtime architecture remains: `ubuntu` = administration/recovery, `qamc` = isolated QAMC runtime, `dev` = development/Claude Code workspace.
-- Mission Control/API is deployed under `qamc`, private/read-only, and trading timers remain disabled.
-- OpenRouter routing for all 9 agents is accepted: explicit provider `openrouter`, model `openai/gpt-5.5`, with no model diversification. This uses the already-accepted provider seam.
-- The architectural-authority hard rule in `CLAUDE.md` is accepted: Claude may act autonomously inside accepted architecture but must stop at material architectural forks rather than invent replacements.
-- VPS baseline security hardening is complete and verified: UFW active with a deny-incoming default (SSH and the `tailscale0` interface explicitly allowed), fail2ban's `sshd` jail active, the previously-staged kernel update applied via a completed reboot, Tailscale confirmed connected with no subnet router or exit node configured, `btop`/`iftop` installed as lightweight operator inspection tools. See `ops/security/vps-hardening-plan.md`.
-- OneCLI credential gateway commissioning is complete: all four real credentials (OpenRouter, Alpaca Key ID, Alpaca Secret, FRED) are stored in OneCLI and verified working end-to-end through the gateway. Zero `src/`/`config/` changes were required. See `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the accepted architecture and injection configuration per provider.
-- Commissioning acceptance is automated: `ops/commissioning/verify_commissioning.py` executes the whole "Verification before commissioning checkpoint" list from `docs/WORK.md` as one read-only, exit-code-bearing command. It is the acceptance evidence run — the manual `curl` sequences it replaces should not be re-derived by hand.
-- **Runtime commissioning is complete and verified live: `/health` reports `broker_reachable: true`** with `db_reachable: true` and `paper: true`. The OneCLI gateway wiring in `/home/qamc/quant-agent/.env` is applied and `quant-agent-api.service` is healthy. Trading timers remain disabled — enabling them is a separate, explicit decision.
-- Acceptance verification spans two accounts by design, and the union of the two runs is the acceptance record. Three checks are evaluable only from `qamc` (startup validation with real credentials, the runtime CA env vars, trading-timer state); the isolation check is only meaningful from a non-runtime account. Each run prints an `ACCOUNT COVERAGE:` line naming what it still owes, so a green single-account summary is never mistaken for full coverage. Exact commands: `ops/onecli/README.md` step 4e.
-- The provider chain is verified end-to-end. `verify_commissioning.py --live` builds the same `openai`/`alpaca-py`/`fredapi` clients the trading engine builds and completes one real read with each; all nine checks pass, including `openai/gpt-5.5` being present in OpenRouter's live catalog, a real completion, the Alpaca SDK's **resolved** endpoint being the paper one, working market data on `data.alpaca.markets`, and a live FRED observation.
-- `Alpaca Paper only` is now enforced in code, not only in prose: `AlpacaConfig` fails closed at config load on a non-paper `paper` flag or `base_url`. Removing that guard is the act of authorizing live trading and requires a reviewed change with its own commit.
-
-## Explicitly not accepted
-
-Commit `2207b0b74287101ea65ce79782081e51a27420ba` contains a custom credential-proxy implementation created after OneCLI installation was found to require Docker/root access. That custom proxy, its service, its credential architecture, and its supporting `CREDENTIAL_PROXY.md` are **not accepted QAMC architecture** and must not be provisioned, hardened, extended, deployed, or treated as the current credential solution.
-
-Useful empirical compatibility evidence from that work may be consulted (for example QAMC transport behavior across `httpx`, `requests`, and `urllib`), but the home-grown gateway itself is rejected.
+- Mission Control/API and browser cockpit are deployed under `qamc`, private, read-only and non-critical to trading.
+- The OVH account boundary remains: `ubuntu` = administration/recovery, `qamc` = runtime, `dev` = development/Claude Code.
+- VPS baseline hardening and upstream OneCLI credential-gateway deployment are complete.
+- QAMC can reach Alpaca Paper through the approved OneCLI path; `/health` reports `broker_reachable: true`, `db_reachable: true`, `paper: true`.
+- OpenRouter transport is commissioned. The current all-agent `openai/gpt-5.5` mapping is the commissioning **baseline**, not the final cost-optimized model policy.
+- Alpaca Paper-only is enforced in code.
+- PR #27 is externally reviewed and merged into `main` as `63cca1a1445757b63376d9816cccf48d4d1b0c58`.
+- Trading timers remain disabled.
 
 ## Authorized now
 
-**Commission QAMC into a real, verified Alpaca Paper deployment using OpenRouter and the upstream-maintained OneCLI product, if OneCLI proves viable in the actual VPS/runtime context.** See `docs/WORK.md` for the active work contract.
+Claude is authorized to complete the sequence in `docs/WORK.md` autonomously:
 
-Claude may investigate, implement, test, fix, and continue autonomously inside this accepted direction. A requirement for operator-entered secrets or privileged `sudo` is a valid stop boundary. If upstream OneCLI itself proves materially unsuitable, Claude must stop and report the architectural fork; it may not build a substitute credential system.
+1. close the final runtime-account commissioning checks after the merged tooling reaches `/home/qamc/quant-agent`;
+2. research and implement a **cost-optimized, multi-model OpenRouter policy** for QAMC;
+3. validate quality, cost, safety and full regression evidence before returning for external review.
 
-## Not authorized now
+The intended direction is explicit and auditable model selection: inexpensive capable models (including current Qwen/DeepSeek candidates where evidence supports them) for routine specialist work, stronger models only where their additional reasoning quality justifies the cost. Per-agent mapping and bounded complexity/escalation rules are authorized when measurable and reviewable. Silent or opaque model switching is not.
 
-- live trading;
-- deterministic trading/risk behavior changes;
-- broker-write Mission Control controls;
-- public exposure of QAMC or OneCLI services;
-- collapsing `dev` / `qamc` account isolation;
-- enabling trading timers before commissioning verification makes that appropriate;
-- custom credential gateways/proxies/vaults or other durable replacements for OneCLI without separate architectural approval;
-- dedicated dashboard visualization/visual-polish work until the deployed MVP is accepted;
-- later learning/write-control stages without authorization;
-- unnecessary infrastructure expansion beyond what the approved upstream OneCLI deployment actually requires.
+Claude may research current OpenRouter model availability/pricing, benchmark candidates, implement within the existing provider/model seam, test, debug and make routine engineering choices without operator involvement.
+
+## Hard boundaries
+
+- Alpaca **Paper only**; no live trading.
+- Trading timers stay disabled until this tranche passes external review.
+- No deterministic trading/risk semantic redesign.
+- No broker-write Mission Control controls.
+- No public exposure of QAMC or OneCLI.
+- Do not collapse `dev` / `qamc` / `ubuntu` boundaries.
+- No replacement credential gateway/vault/proxy.
+- No new durable routing platform or unnecessary infrastructure; use the existing QAMC/OpenRouter seams.
+- No secrets in Git, chat, logs, screenshots or client evidence.
+- No silent model fallback or unrecorded model choice.
+- Claude does not merge its own PR or push implementation directly to `main`.
 
 ## Handoff
 
-Claude Code operates from `/home/dev/projects/quant-agent` for engineering work. Runtime changes under `/home/qamc` must preserve the accepted account boundary. Real secrets must never pass through chat or Git.
+Claude Code works from `/home/dev/projects/quant-agent`. Runtime changes under `/home/qamc` must preserve account isolation.
 
-Upstream OneCLI is installed, running privately on the VPS, and commissioned: all four real credentials are stored in it and verified working end-to-end (see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the accepted architecture and per-provider configuration). `dev` has never held or seen a real credential value.
-
-The runtime wiring is applied and verified: `/health` reports `broker_reachable: true`. The remaining step before acceptance sign-off is to capture both halves of the acceptance run (`ops/onecli/README.md` step 4e) — one from `qamc`, one from `dev` — and confirm each exits `0` with `ACCOUNT COVERAGE: complete`. `ops/commissioning/` reaches the runtime checkout through the normal review/merge path, never by copying files between accounts. Trading timers remain disabled until that evidence is reviewed and activation is appropriate.
+Proceed through `docs/WORK.md` until the verified finish line or a genuine operator-only boundary: required privilege, required secret entry, or a material architecture/product conflict.
