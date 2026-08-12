@@ -129,6 +129,24 @@ Current status:
 
 Dedicated dashboard visualization/UX polish remains **after deployed-MVP acceptance**.
 
+### 🔒 VPS security hardening complete
+
+Baseline host security hardening is done and verified: UFW active (deny-incoming by default, SSH and Tailscale explicitly allowed), fail2ban protecting SSH from brute-force attempts, kernel updated via a completed reboot, Tailscale connectivity confirmed, `btop`/`iftop` installed for lightweight operator inspection. No subnet router or exit node was configured — out of scope for this pass. Detail in `ops/security/vps-hardening-plan.md`.
+
+### 🔑 OneCLI credential gateway commissioned
+
+OneCLI (the accepted credential-management product) is installed under Docker on the VPS, running private-only (`127.0.0.1`), with `dev` confirmed unable to reach Docker or `qamc`'s files directly. All four real credentials (OpenRouter, Alpaca Key ID + Secret, FRED) are stored in OneCLI and verified working end-to-end — QAMC never holds a real value, only placeholders. See `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+### 🟢 Runtime commissioning is live — external review pending
+
+The runtime is wired to the gateway and working. `/health` reports `broker_reachable: true` (plus `db_reachable: true`, `paper: true`) — the objective signal that the whole credential chain is live, verified independently rather than taken on report.
+
+In plain English: **the trading system can now actually talk to its broker, its AI provider and its economic-data source, and it does so without ever holding a real password itself.** It is not trading — the schedule timers are still switched off, deliberately.
+
+Acceptance is checked by one reproducible command rather than a remembered sequence of manual steps (`ops/commissioning/verify_commissioning.py`). It runs on two accounts by design — a few checks are only meaningful from the runtime account, one is only meaningful from *outside* it — and each run says plainly what it still owes the other. Latest run from `dev`: **32 passed, 0 failed, 3 skipped** (all three skips are the runtime-account half).
+
+This tranche is **awaiting external review**. It has not been self-accepted and has not been merged.
+
 ## 🗺️ PROJECT MAP
 
 | Status | Stage / milestone | Result |
@@ -138,6 +156,7 @@ Dedicated dashboard visualization/UX polish remains **after deployed-MVP accepta
 | ✅ DONE | 3 | Browser/iPad Trading Cockpit at `/ui`; accepted verification completed. |
 | ✅ DONE | 4–5 | Specialist evidence + decision chain, journal + forensic search; accepted verification completed. PR #24 merged. |
 | ✅ DONE | VPS deployment / hardening | OVH deployment completed. Runtime separated from development environment. |
+| 🟨 EXTERNAL REVIEW PENDING | OneCLI commissioning | Runtime wired to the credential gateway; `broker_reachable: true`; reproducible acceptance tooling + evidence complete. Awaiting ChatGPT/operator review and merge. |
 | 🟨 NEXT GATE | Operator UAT | Validate deployed MVP usability before acceptance. |
 | ⬜ AFTER MVP ACCEPTANCE | Mission Control visualization / UX polish | TradingView-style charting, richer visualizations/navigation/density and desktop/iPad refinement without changing safety architecture. |
 | ⬜ LATER | Learning/write controls + paper-soak analytics | Separate future authorization only. |
@@ -171,18 +190,22 @@ The deployed system remains Alpaca Paper-only, preserves deterministic risk/brok
 
 ## ⏭️ NEXT MOVES
 
-1. Supply the required real API secrets directly to the runtime environment outside chat/Git.
-2. Install the remaining headless-browser OS libraries required for full screenshot verification.
-3. Complete deployed runtime/browser verification and operator UAT.
-4. Only after MVP acceptance, authorize dedicated visualization/UX polish.
-5. Keep development work under `dev`; keep runtime under `qamc`.
+1. External review and merge of the commissioning branch (ChatGPT/operator).
+2. Run the runtime-account half of the acceptance check so the evidence covers both accounts.
+3. Decide separately whether to switch the trading timers on — commissioning does not imply that.
+4. Install the remaining headless-browser OS libraries required for full screenshot verification.
+5. Complete operator UAT of the deployed MVP.
+6. Only after MVP acceptance, authorize dedicated visualization/UX polish.
+7. Keep development work under `dev`; keep runtime under `qamc`.
 
 ## 🚧 BLOCKERS / DECISIONS NEEDED
 
 Current blockers:
-- Real API secrets must be supplied directly to the VPS before real paper-trading verification.
+- The commissioning branch needs external review and merge; the runtime checkout picks up the acceptance tooling by `git pull` afterwards.
 - Full browser screenshot verification requires the remaining OS package installation.
 
-No product or architecture decision is currently blocked.
+Resolved since the last refresh: real API secrets are now held in OneCLI and delivered to the runtime at the network layer, so the "supply secrets to the VPS" blocker is closed.
 
-_Last refreshed: 2026-08-09 22:28 EDT (America/Toronto) — active project view only; retired/superseded work lives in Git history._
+One decision is waiting, and it is deliberately **not** a Claude decision: whether the commissioning evidence justifies switching the trading timers on. No architecture decision is blocked.
+
+_Last refreshed: 2026-08-12 (America/Toronto) — active project view only; retired/superseded work lives in Git history._

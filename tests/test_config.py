@@ -703,3 +703,61 @@ def test_check_llm_provider_keys_uses_resolve_provider_not_prefix_alone(tmp_path
                                   schedule=ScheduleConfig(morning="06:00", midday="12:00", evening="16:30")),
             storage=StorageConfig(db_path="data/test.db"),
         )
+
+
+# --- Alpaca paper-only guard ---------------------------------------------
+#
+# "Alpaca Paper only; live trading is not authorized" is a hard boundary in
+# CLAUDE.md / docs/STATE.md / docs/WORK.md. Before this guard existed it was
+# prose only: `paper: false` in settings.yaml would have pointed the whole
+# decision chain at a live brokerage account with nothing to notice. These
+# tests are the enforcement's regression net — if one of them ever has to be
+# deleted, that deletion is the authorization decision, in the open.
+
+
+def test_paper_false_is_rejected_at_config_load():
+    from src.config import AlpacaConfig
+    with pytest.raises(Exception, match="live trading is not authorized"):
+        AlpacaConfig(base_url="https://paper-api.alpaca.markets", paper=False)
+
+
+def test_live_base_url_is_rejected_even_when_paper_is_true():
+    """A live `base_url` alongside `paper: true` is a contradiction.
+
+    Nothing reads `base_url` today, so this combination would not actually
+    trade live — but it would tell every future reader (and the next person
+    wiring a client from config) that live is the configured venue. Reject
+    the disagreement rather than leaving a misleading field in place.
+    """
+    from src.config import AlpacaConfig
+    with pytest.raises(Exception, match="paper-api.alpaca.markets"):
+        AlpacaConfig(base_url="https://api.alpaca.markets", paper=True)
+
+
+def test_paper_config_still_loads_unchanged():
+    from src.config import AlpacaConfig
+    cfg = AlpacaConfig(base_url="https://paper-api.alpaca.markets", paper=True)
+    assert cfg.paper is True
+
+
+def test_shipped_settings_yaml_is_paper_only():
+    """The config the deployment actually runs must satisfy the guard."""
+    from pathlib import Path as _Path
+    import yaml as _yaml
+    raw = _yaml.safe_load(
+        (_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
+    )
+    assert raw["alpaca"]["paper"] is True
+    assert "paper-api.alpaca.markets" in raw["alpaca"]["base_url"]
+
+
+def test_full_config_load_rejects_live_trading(tmp_path):
+    """End-to-end through load_config(), not just the sub-model."""
+    from src.config import load_config
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(
+        _BASE_YAML.format(extra_keys="", model="claude-opus-4-7", extra_llm="")
+        .replace("paper: true", "paper: false")
+    )
+    with pytest.raises(Exception, match="live trading is not authorized"):
+        load_config(config_file)

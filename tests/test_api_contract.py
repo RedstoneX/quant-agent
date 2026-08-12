@@ -33,6 +33,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+import src.api.broker_reads as broker_reads
 import src.api.db_reads as db_reads
 import src.api.deps as deps
 import src.api.routes_live as routes_live
@@ -526,3 +527,41 @@ def test_health_never_crashes_when_db_path_is_bogus(client, monkeypatch):
     assert body["status"] == "ok"
     assert body["db_reachable"] is False
     assert body["sessions_logged_today"] == []
+
+
+# ---------------------------------------------------------------------------
+# check_broker_reachable() failure paths — these are what a credential-gateway
+# outage (or an unwired/unconfigured proxy) actually looks like at runtime,
+# and had no direct test coverage: only the "healthy" path (stub_broker's
+# `check_broker_reachable: lambda: True`) was previously exercised.
+# ---------------------------------------------------------------------------
+
+def test_check_broker_reachable_returns_none_when_credentials_missing(monkeypatch):
+    monkeypatch.setattr(broker_reads, "get_alpaca_credentials", lambda: ("", ""))
+    assert broker_reads.check_broker_reachable() is None
+
+
+def test_check_broker_reachable_returns_false_when_get_account_raises(monkeypatch):
+    class _BrokenBroker:
+        def get_account(self):
+            raise ConnectionError("simulated credential-gateway outage")
+
+    monkeypatch.setattr(broker_reads, "get_alpaca_credentials", lambda: ("placeholder-key", "placeholder-secret"))
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _BrokenBroker())
+    assert broker_reads.check_broker_reachable() is False
+
+
+def test_health_never_crashes_when_broker_check_raises_unexpectedly(client, seeded_db, monkeypatch):
+    """Defense in depth: check_broker_reachable() is documented to never
+    raise (see broker_reads.py's module docstring), but /health's outermost
+    guard should still hold even if that invariant is ever violated by a
+    future change — proving `broker_reachable: None` beats a 500."""
+    def _boom():
+        raise RuntimeError("should never happen, but /health must survive it anyway")
+
+    monkeypatch.setattr(routes_live, "check_broker_reachable", _boom)
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["broker_reachable"] is None

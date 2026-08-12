@@ -194,3 +194,111 @@ def test_get_sector_performance(mock_download):
     # Each sector should show ~2% gain
     for sector, pct in perf.items():
         assert abs(pct - 2.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# get_upcoming_ex_dividend
+#
+# Feeds the midday ex-div stop adjustment: stops are lowered by the dividend
+# amount so the ex-div price gap doesn't trigger them for a non-thesis
+# reason. It was entirely untested, including its documented audit-round-2
+# timezone fix — and both failure directions are real. A wrong DATE adjusts
+# stops on the wrong day (or not at all); a wrong AMOUNT moves a protective
+# stop by the wrong distance. Returning {} is always the safe answer.
+# ---------------------------------------------------------------------------
+
+# 2026-08-13 00:00 UTC — the shape yfinance uses for exDividendDate.
+_EX_DIV_EPOCH = 1786579200
+
+
+def _ticker_info(**fields):
+    ticker = MagicMock()
+    ticker.info = fields
+    return ticker
+
+
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_returns_date_and_amount(mock_ticker):
+    mock_ticker.return_value = _ticker_info(
+        exDividendDate=_EX_DIV_EPOCH, lastDividendValue=0.25,
+    )
+    out = MarketDataProvider().get_upcoming_ex_dividend("AAPL")
+    assert out == {"date": date(2026, 8, 13), "amount": 0.25}
+
+
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_date_is_the_same_in_any_host_timezone(mock_ticker, monkeypatch):
+    """audit round 2: exDividendDate is a UTC-midnight epoch, so a
+    host-local parse shifted the date by a day on any TZ east of UTC (the
+    SG-host case). CLAUDE.md's invariant is that any host TZ must produce
+    the same data — assert it rather than trusting the comment."""
+    import time as _time
+
+    mock_ticker.return_value = _ticker_info(
+        exDividendDate=_EX_DIV_EPOCH, lastDividendValue=0.25,
+    )
+    seen = set()
+    for tz in ("UTC", "Asia/Singapore", "America/Los_Angeles", "Pacific/Kiritimati"):
+        monkeypatch.setenv("TZ", tz)
+        _time.tzset()
+        seen.add(MarketDataProvider().get_upcoming_ex_dividend("AAPL")["date"])
+    monkeypatch.delenv("TZ", raising=False)
+    _time.tzset()
+    assert seen == {date(2026, 8, 13)}
+
+
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_falls_back_to_a_quarter_of_the_annual_rate(mock_ticker):
+    """Most US large-caps pay quarterly; annual/4 is the documented
+    estimate when no concrete last-event value is published."""
+    mock_ticker.return_value = _ticker_info(
+        exDividendDate=_EX_DIV_EPOCH, trailingAnnualDividendRate=1.0,
+    )
+    assert MarketDataProvider().get_upcoming_ex_dividend("AAPL")["amount"] == 0.25
+
+
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_rounds_the_amount_to_four_places(mock_ticker):
+    mock_ticker.return_value = _ticker_info(
+        exDividendDate=_EX_DIV_EPOCH, trailingAnnualDividendRate=1.0 / 3,
+    )
+    assert MarketDataProvider().get_upcoming_ex_dividend("AAPL")["amount"] == 0.0833
+
+
+@pytest.mark.parametrize("info", [
+    {},                                                   # nothing published
+    {"exDividendDate": _EX_DIV_EPOCH},                    # no amount anywhere
+    {"lastDividendValue": 0.25},                          # no date
+    {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": 0},      # zero payout
+    {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": -1.0},   # negative
+    {"exDividendDate": "not-an-epoch", "lastDividendValue": 0.25},  # unparseable
+    {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": "junk"}, # unparseable
+    {"exDividendDate": 1e30, "lastDividendValue": 0.25},   # out of range
+])
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_returns_empty_on_anything_unusable(mock_ticker, info):
+    """No adjustment is always safer than a wrong one — every unusable
+    shape must degrade to {}, never to a partial or guessed answer."""
+    mock_ticker.return_value = _ticker_info(**info)
+    assert MarketDataProvider().get_upcoming_ex_dividend("AAPL") == {}
+
+
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_returns_empty_when_yfinance_raises(mock_ticker):
+    mock_ticker.side_effect = ConnectionError("yfinance down")
+    assert MarketDataProvider().get_upcoming_ex_dividend("AAPL") == {}
+
+
+@patch("src.data.market._VALUATION_TIMEOUT_S", 0.1)
+@patch("src.data.market.yf.Ticker")
+def test_ex_dividend_returns_empty_when_the_lookup_hangs(mock_ticker):
+    """yfinance `.info` has no upper bound of its own; the per-symbol
+    ceiling is what keeps one stuck socket from eating the session window."""
+    import time as _time
+
+    def _hang(symbol):
+        _time.sleep(5)
+        return MagicMock(info={})
+
+    mock_ticker.side_effect = _hang
+    assert MarketDataProvider().get_upcoming_ex_dividend("AAPL") == {}

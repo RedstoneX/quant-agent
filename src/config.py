@@ -33,9 +33,47 @@ class ApiKeysConfig(BaseModel):
         return self
 
 
+# Alpaca's paper-trading host. `base_url` is declarative today — no code path
+# reads it (the real switch is the `paper` flag below, which alpaca-py turns
+# into an endpoint choice) — so the validator's job is to stop the two from
+# disagreeing and giving a reader a false impression of which venue is in use.
+_ALPACA_PAPER_HOST = "paper-api.alpaca.markets"
+
+
 class AlpacaConfig(BaseModel):
     base_url: str
     paper: bool
+
+    @model_validator(mode="after")
+    def _enforce_paper_only(self):
+        """Fail closed unless this is a paper account.
+
+        "Alpaca **Paper only**; live trading is not authorized" is a hard
+        boundary in CLAUDE.md, docs/STATE.md and docs/WORK.md, but until now
+        it lived entirely in prose: flipping `paper: false` in settings.yaml
+        would have silently pointed the whole decision chain at a live
+        brokerage account with no test, guard, or log to notice. A one-token
+        config edit should not be able to do that.
+
+        This is deliberately a hard failure with no env-var escape hatch. If
+        live trading is ever authorized, removing this guard should be a
+        reviewed code change in its own commit — the same deliberate,
+        auditable act that authorizing it is.
+        """
+        if self.paper is not True:
+            raise ValueError(
+                "alpaca.paper must be true — live trading is not authorized "
+                "(see the hard boundaries in CLAUDE.md / docs/STATE.md). "
+                "Enabling live trading requires removing this guard in a "
+                "reviewed change, not a settings.yaml edit."
+            )
+        host = self.base_url.strip().lower()
+        if host and _ALPACA_PAPER_HOST not in host:
+            raise ValueError(
+                f"alpaca.base_url must point at {_ALPACA_PAPER_HOST} while "
+                f"paper-only is in force; got {self.base_url!r}"
+            )
+        return self
 
 
 # The nine agents that carry a per-agent model (and, as of Stage 1, an

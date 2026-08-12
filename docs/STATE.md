@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 This file says what is accepted and authorized **now**. Git history preserves prior state and discovery evidence.
 
@@ -15,9 +15,16 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - PR #24 is merged into `main` as merge commit `105cc91a14faebd8a981061b3098eb181b306dda`.
 - The permanent frontend-verification requirement under `.claude/rules/frontend-verification.md` remains accepted.
 - The OVH VPS runtime architecture remains: `ubuntu` = administration/recovery, `qamc` = isolated QAMC runtime, `dev` = development/Claude Code workspace.
-- Mission Control/API is deployed under `qamc`, private/read-only, and trading timers remain disabled pending commissioning.
+- Mission Control/API is deployed under `qamc`, private/read-only, and trading timers remain disabled.
 - OpenRouter routing for all 9 agents is accepted: explicit provider `openrouter`, model `openai/gpt-5.5`, with no model diversification. This uses the already-accepted provider seam.
 - The architectural-authority hard rule in `CLAUDE.md` is accepted: Claude may act autonomously inside accepted architecture but must stop at material architectural forks rather than invent replacements.
+- VPS baseline security hardening is complete and verified: UFW active with a deny-incoming default (SSH and the `tailscale0` interface explicitly allowed), fail2ban's `sshd` jail active, the previously-staged kernel update applied via a completed reboot, Tailscale confirmed connected with no subnet router or exit node configured, `btop`/`iftop` installed as lightweight operator inspection tools. See `ops/security/vps-hardening-plan.md`.
+- OneCLI credential gateway commissioning is complete: all four real credentials (OpenRouter, Alpaca Key ID, Alpaca Secret, FRED) are stored in OneCLI and verified working end-to-end through the gateway. Zero `src/`/`config/` changes were required. See `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the accepted architecture and injection configuration per provider.
+- Commissioning acceptance is automated: `ops/commissioning/verify_commissioning.py` executes the whole "Verification before commissioning checkpoint" list from `docs/WORK.md` as one read-only, exit-code-bearing command. It is the acceptance evidence run — the manual `curl` sequences it replaces should not be re-derived by hand.
+- **Runtime commissioning is complete and verified live: `/health` reports `broker_reachable: true`** with `db_reachable: true` and `paper: true`. The OneCLI gateway wiring in `/home/qamc/quant-agent/.env` is applied and `quant-agent-api.service` is healthy. Trading timers remain disabled — enabling them is a separate, explicit decision.
+- Acceptance verification spans two accounts by design, and the union of the two runs is the acceptance record. Three checks are evaluable only from `qamc` (startup validation with real credentials, the runtime CA env vars, trading-timer state); the isolation check is only meaningful from a non-runtime account. Each run prints an `ACCOUNT COVERAGE:` line naming what it still owes, so a green single-account summary is never mistaken for full coverage. Exact commands: `ops/onecli/README.md` step 4e.
+- The provider chain is verified end-to-end. `verify_commissioning.py --live` builds the same `openai`/`alpaca-py`/`fredapi` clients the trading engine builds and completes one real read with each; all nine checks pass, including `openai/gpt-5.5` being present in OpenRouter's live catalog, a real completion, the Alpaca SDK's **resolved** endpoint being the paper one, working market data on `data.alpaca.markets`, and a live FRED observation.
+- `Alpaca Paper only` is now enforced in code, not only in prose: `AlpacaConfig` fails closed at config load on a non-paper `paper` flag or `base_url`. Removing that guard is the act of authorizing live trading and requires a reviewed change with its own commit.
 
 ## Explicitly not accepted
 
@@ -48,4 +55,6 @@ Claude may investigate, implement, test, fix, and continue autonomously inside t
 
 Claude Code operates from `/home/dev/projects/quant-agent` for engineering work. Runtime changes under `/home/qamc` must preserve the accepted account boundary. Real secrets must never pass through chat or Git.
 
-The next engineering action is to integrate and validate upstream OneCLI against the deployed QAMC runtime, stopping only for genuine operator-only secret entry, required privilege, or a material architectural incompatibility.
+Upstream OneCLI is installed, running privately on the VPS, and commissioned: all four real credentials are stored in it and verified working end-to-end (see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the accepted architecture and per-provider configuration). `dev` has never held or seen a real credential value.
+
+The runtime wiring is applied and verified: `/health` reports `broker_reachable: true`. The remaining step before acceptance sign-off is to capture both halves of the acceptance run (`ops/onecli/README.md` step 4e) — one from `qamc`, one from `dev` — and confirm each exits `0` with `ACCOUNT COVERAGE: complete`. `ops/commissioning/` reaches the runtime checkout through the normal review/merge path, never by copying files between accounts. Trading timers remain disabled until that evidence is reviewed and activation is appropriate.

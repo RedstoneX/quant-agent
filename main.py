@@ -108,6 +108,13 @@ def main():
         # the order list itself, but a launchd one-off run is the dangerous
         # case (no Telegram, no live tail) where a misconfigured config
         # could silently flip paper → live with no human-visible signal.
+        #
+        # UNREACHABLE under QAMC's current governance: `AlpacaConfig` now
+        # fails closed on a non-paper config, so `load_config` above raises
+        # before this point (see src/config.py::_enforce_paper_only). Kept
+        # deliberately — if live trading is ever authorized and that guard is
+        # lifted, this warning must already be here rather than needing to be
+        # remembered in the same change.
         if not config.alpaca.paper:
             logger.warning(
                 "LIVE TRADING ENABLED (alpaca.paper=false). Real-money orders "
