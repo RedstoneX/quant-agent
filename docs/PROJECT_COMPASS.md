@@ -78,19 +78,13 @@ Claude is now authorized to benchmark current low-cost/high-capability models �
 
 The goal is **decision quality per dollar**, not simply the cheapest tokens.
 
-### ⏱️ What “trading timers” means
+### ⏱️ Trading timers
 
-The trading timers are simply the **automatic schedule that starts QAMC’s trading sessions** without a person launching them manually.
+The trading timers are simply the **automatic schedule that starts QAMC’s Alpaca Paper sessions**.
 
-They are currently **OFF**. That means the system can be tested and verified, but it will not automatically begin its scheduled paper-trading runs.
+They stay **OFF while engineering and external review are incomplete**. There is no separate timer design or decision matrix to solve.
 
-**Authority is explicit:**
-
-- Claude may test the system but may **not** enable the timers.
-- ChatGPT performs the technical readiness review.
-- **The operator makes the final decision to activate automated paper trading.**
-
-Timer activation is therefore a final operational go/no-go decision, not an AI architecture decision.
+Once the final tranche passes ChatGPT technical review and the operator authorizes the paper-soak start, turning the timers on is a **routine deployment step**.
 
 ---
 
@@ -106,7 +100,7 @@ Timer activation is therefore a final operational go/no-go decision, not an AI a
 | ✅ DONE | OneCLI commissioning | Credential gateway integrated; Alpaca Paper connectivity verified; PR #27 merged. |
 | 🟨 ACTIVE | Cost-optimized model routing | Benchmark and implement auditable Qwen/DeepSeek/strong-model routing through OpenRouter. |
 | ⬜ NEXT GATE | Technical readiness review | ChatGPT independently reviews routing, commissioning and safety evidence. |
-| ⬜ OPERATOR DECISION | Enable paper-trading timers | Operator decides whether autonomous scheduled paper trading may begin. |
+| ⬜ FINAL ACTIVATION | Start scheduled paper trading | After acceptance, enable the existing timers as a routine deployment action. |
 | ⬜ AFTER MVP ACCEPTANCE | Mission Control visualization / UX polish | Richer charts and presentation without changing safety architecture. |
 | ⬜ LATER | Learning/write controls + paper-soak analytics | Separate future authorization. |
 
@@ -124,13 +118,13 @@ Timer activation is therefore a final operational go/no-go decision, not an AI a
 1. Claude finishes the current cost-optimized model-routing work and verification.
 2. Claude pushes the completed branch and stops at the external gate.
 3. ChatGPT independently reviews the evidence and integrates accepted work.
-4. If technically ready, the operator decides whether to switch on automated **paper-trading** timers.
-5. After deployed MVP acceptance, proceed to dedicated Mission Control visualization/UX polish and paper-soak evaluation.
+4. After acceptance and operator authorization, enable scheduled **paper trading** as a routine deployment step.
+5. Proceed to Mission Control visualization/UX polish and paper-soak evaluation.
 
 ## 🚧 CURRENT BLOCKERS / DECISIONS
 
 No operator blocker is currently active while Claude works on model routing.
 
-The next meaningful human decision is **whether to activate automated Alpaca Paper trading after technical review**. Claude cannot make that decision.
+No separate timer decision is pending; timer activation follows successful final review and paper-soak authorization.
 
-_Last refreshed: 2026-08-12 15:41 EDT (America/Toronto) — active project view only; retired/superseded detail lives in Git history._
+_Last refreshed: 2026-08-12 15:45 EDT (America/Toronto) — active project view only; retired/superseded detail lives in Git history._
