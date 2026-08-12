@@ -75,6 +75,12 @@ systemctl --user status quant-agent-api.service --no-pager
 curl -s http://127.0.0.1:8800/health
 ```
 
+Then run the acceptance check from the same account — it verifies the whole commissioning checklist (`docs/WORK.md`) in one command and exits non-zero on any failure:
+
+```bash
+python ops/commissioning/verify_commissioning.py
+```
+
 `/health` should still return `200` with `db_reachable: true`; `broker_reachable` should flip from `false` to `true` — the objective signal the whole chain is live. No other service needs restarting: the trading engine isn't a persistent process, it sources `.env` fresh on each scheduled invocation (`scripts/run_if_et_window.sh`), and its timers remain installed-but-disabled regardless of this step. **This step alone does not enable trading** — enabling the timers is a separate, later, explicit decision.
 
 ## Rollback
