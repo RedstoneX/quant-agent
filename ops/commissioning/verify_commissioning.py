@@ -398,8 +398,15 @@ def check_config(ctx: Ctx) -> None:
     # independent of whether this account can resolve the credential env
     # vars — so they are read from the raw YAML and stay checkable from any
     # account, including `dev`.
+    #
+    # `_config_path()` is relative by default, so resolve it against the repo
+    # root rather than the caller's cwd — the operator runs this from a
+    # runbook, not necessarily from the project directory.
+    settings = _config_path()
+    if not settings.is_absolute():
+        settings = PROJECT_ROOT / settings
     try:
-        raw = yaml.safe_load(_config_path().read_text()) or {}
+        raw = yaml.safe_load(settings.read_text()) or {}
     except Exception as exc:
         ctx.add(group, "settings.yaml readable", FAIL, f"{type(exc).__name__}: {exc}")
         return
@@ -428,6 +435,9 @@ def check_config(ctx: Ctx) -> None:
     )
 
     # Full validation — what the trading process itself does at startup.
+    # `deps.get_config()` is lru_cached and resolves the same relative path,
+    # so point it at the file already resolved above before its first call.
+    os.environ.setdefault("QUANT_AGENT_API_CONFIG", str(settings))
     try:
         cfg = get_config()
     except Exception as exc:
@@ -665,9 +675,19 @@ def check_safety(ctx: Ctx) -> None:
         )
 
     # No credential material committed to the repository.
+    #
+    # `tests/` is excluded deliberately. Key-SHAPED strings are legitimate
+    # and necessary there — a test proving "this value is not a recognizable
+    # placeholder" has to use something that looks like a real key, and the
+    # repo already carries such a fixture in tests/test_base_agent.py. Left
+    # in scope, this check would be permanently red on synthetic data, which
+    # trains a reader to ignore it — strictly worse than a narrower check
+    # that stays meaningful everywhere a real leak would actually land.
     try:
         proc = subprocess.run(
-            ["git", "grep", "-nIE", r"(sk-or-v1-[A-Za-z0-9]{16,}|PK[A-Z0-9]{16,})"],
+            ["git", "grep", "-nIE",
+             r"(sk-or-v1-[A-Za-z0-9]{16,}|PK[A-Z0-9]{16,})",
+             "--", ":(exclude)tests/"],
             cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=60,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -679,7 +699,8 @@ def check_safety(ctx: Ctx) -> None:
             group, "no secrets committed",
             FAIL if hits else PASS,
             f"{len(hits)} match(es) in tracked files — review immediately" if hits
-            else "no live-credential patterns in tracked files",
+            else "no live-credential patterns in tracked files (tests/ excluded — "
+                 "synthetic key-shaped fixtures live there by design)",
         )
 
     # Mission Control must never gain a write route.
