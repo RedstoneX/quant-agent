@@ -133,6 +133,10 @@ Dedicated dashboard visualization/UX polish remains **after deployed-MVP accepta
 
 Baseline host security hardening is done and verified: UFW active (deny-incoming by default, SSH and Tailscale explicitly allowed), fail2ban protecting SSH from brute-force attempts, kernel updated via a completed reboot, Tailscale connectivity confirmed, `btop`/`iftop` installed for lightweight operator inspection. No subnet router or exit node was configured — out of scope for this pass. Detail in `ops/security/vps-hardening-plan.md`.
 
+### 🔑 Upstream OneCLI live, private, empty
+
+OneCLI (the accepted credential-management product) is installed under Docker on the VPS and running: dashboard and gateway both verified reachable only on `127.0.0.1`, `dev` confirmed unable to reach Docker or `qamc`'s files directly. No real credentials exist in it yet — next step is scaffolding routes/agent tokens, then a separate operator-only step to enter real secret values.
+
 ## 🗺️ PROJECT MAP
 
 | Status | Stage / milestone | Result |

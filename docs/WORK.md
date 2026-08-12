@@ -129,6 +129,19 @@ A side branch (`claude/vps-security-hardening-t8m3qz`) produced `ops/security/vp
 
 This pass never touched `sudo` membership, Docker, OneCLI, or anything under `config/`, `src/`, or QAMC's runtime — confirmed via `git diff --stat` on the hardening branch before it was pushed. OneCLI commissioning resumes from exactly where it stopped: waiting on the bundled `ubuntu` action in `ops/onecli/README.md` (Docker install + bringing up OneCLI's own compose stack). Nothing about that step changed.
 
+## Checkpoint status — 2026-08-12, later still (OneCLI live and privately bound — verified, not executed)
+
+`ubuntu` completed the bundled action from `ops/onecli/README.md`. Verified from `dev` with read-only, non-privileged checks only (no system changes made this pass):
+
+- Docker installed and running (`docker --version` → 29.7.2).
+- Process listing (no Docker socket access needed) shows two `containerd-shim` instances, a `postgres` process tree, and `onecli-gateway --port 10255 --data-dir /app/data` — matching the upstream compose file's two services exactly.
+- `curl 127.0.0.1:10254` → `200` (dashboard up). `curl 127.0.0.1:10255` → `400` (expected: it's a CONNECT-based forward proxy, not a web server — a plain GET correctly gets rejected).
+- Both ports bound `127.0.0.1` only (`ss -tln`) — not `0.0.0.0`, not the public IP.
+- Isolation confirmed, not just assumed: `dev` is **not** in the `docker` group (`docker ps` → `permission denied while trying to connect to the docker API`), and still cannot read `/home/qamc`. `dev`'s own shell environment has no stray `HTTPS_PROXY`/credential values. `config/settings.yaml` on this branch is unchanged (still OpenRouter/`openai/gpt-5.5` throughout).
+- Firewall (`ufw status`) isn't independently checkable from `dev` without root — relying on the prior hardening checkpoint's verification plus this pass's confirmation that nothing about that changed.
+
+No real credentials exist anywhere in this chain yet. Recommended next step (not yet executed): create a QAMC agent/gateway token in OneCLI's dashboard/API and configure routes for `openrouter.ai`, `paper-api.alpaca.markets`, `data.alpaca.markets`, `api.stlouisfed.org` — all still no real secret values required, since routes can be scaffolded with placeholder/pending credential slots the same way the reverted custom-proxy work validated the HTTP-stack compatibility in `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`. Entering the four real values into OneCLI's vault remains a separate, later, operator-only step.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.

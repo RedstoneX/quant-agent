@@ -49,4 +49,6 @@ Claude may investigate, implement, test, fix, and continue autonomously inside t
 
 Claude Code operates from `/home/dev/projects/quant-agent` for engineering work. Runtime changes under `/home/qamc` must preserve the accepted account boundary. Real secrets must never pass through chat or Git.
 
-The next engineering action is to integrate and validate upstream OneCLI against the deployed QAMC runtime, stopping only for genuine operator-only secret entry, required privilege, or a material architectural incompatibility.
+**Update 2026-08-12:** upstream OneCLI is now installed and running on the VPS — `ubuntu` completed the Docker install + `docker compose up` from `ops/onecli/README.md`. Verified live from `dev` without touching anything: two containers running (`postgres:18-alpine`, `onecli`), both `10254` (dashboard, HTTP 200) and `10255` (gateway) bound to `127.0.0.1` only, `dev` is not in the `docker` group and gets `permission denied` querying the Docker socket directly (isolation intact), `dev` still cannot read `/home/qamc`. No real credentials exist anywhere yet — the vault is empty and unconfigured.
+
+The next engineering action is to create a QAMC agent/gateway token in OneCLI and wire routes for OpenRouter/Alpaca/FRED (no real secret values needed for that), then hand off real-secret entry as a separate operator-only step, stopping only for genuine operator-only secret entry, required privilege, or a material architectural incompatibility.
