@@ -70,10 +70,28 @@ MISSION_CONTROL_PORT = int(os.environ.get("QUANT_AGENT_API_PORT", "8800"))
 
 LOOPBACK = "127.0.0.1"
 
-# The accepted routing posture for this tranche (docs/STATE.md): every agent
-# explicitly on OpenRouter, one model, no diversification.
+# The accepted routing posture (docs/architecture/MODEL_ROUTING_POLICY.md):
+# every agent explicitly on OpenRouter, each seat pinned to the model the
+# benchmark selected for it.
+#
+# This map is deliberately a SEPARATE copy of the policy from
+# `config/settings.yaml`, not a read of it. The check's whole value is
+# proving that what is deployed equals what was reviewed — a verifier that
+# sourced its expectations from the file it is verifying would pass on any
+# config, including one edited in place on the runtime host.
 EXPECTED_PROVIDER = "openrouter"
-EXPECTED_MODEL = "openai/gpt-5.5"
+EXPECTED_ROUTING: dict[str, str] = {
+    # Filled in by the model-routing tranche; see MODEL_ROUTING_POLICY.md.
+    "tech_analyst":      "openai/gpt-5.5",
+    "news_analyst":      "openai/gpt-5.5",
+    "macro_analyst":     "openai/gpt-5.5",
+    "earnings_analyst":  "openai/gpt-5.5",
+    "portfolio_manager": "openai/gpt-5.5",
+    "risk_manager":      "openai/gpt-5.5",
+    "position_reviewer": "openai/gpt-5.5",
+    "evening_analyst":   "openai/gpt-5.5",
+    "meta_reflector":    "openai/gpt-5.5",
+}
 
 # Obviously-fake credential. Its only job is to be rejected by a direct
 # call, so that a 2xx through the gateway can only mean the gateway
@@ -176,21 +194,47 @@ def classify_injection(direct_status: int | None, gateway_status: int | None) ->
 
 
 def check_agent_routing(roster: Iterable[dict]) -> tuple[str, str]:
-    """Verify every agent is pinned to the accepted provider/model pair."""
+    """Verify every agent is pinned to the model the accepted policy gives it.
+
+    Per-seat rather than one global model: the policy routes specialists to
+    cheap models and the decision seats to stronger ones, so "everything on
+    one id" is no longer the correct posture — and a check that only asserted
+    "provider is openrouter" would let any model through, including one the
+    benchmark rejected.
+    """
     wrong: list[str] = []
-    count = 0
+    unknown: list[str] = []
+    seen: set[str] = set()
     for entry in roster:
-        count += 1
-        name = entry.get("agent_name")
+        name = (entry.get("agent_name") or "").strip()
         provider = (entry.get("configured_provider") or "").strip().lower()
         model = (entry.get("configured_model") or "").strip()
-        if provider != EXPECTED_PROVIDER or model != EXPECTED_MODEL:
-            wrong.append(f"{name}={provider or 'inferred'}/{model or 'unset'}")
-    if count == 0:
+        seen.add(name)
+        expected = EXPECTED_ROUTING.get(name)
+        if expected is None:
+            unknown.append(f"{name}={provider or 'inferred'}/{model or 'unset'}")
+            continue
+        if provider != EXPECTED_PROVIDER or model != expected:
+            wrong.append(
+                f"{name}={provider or 'inferred'}/{model or 'unset'} "
+                f"(expected {EXPECTED_PROVIDER}/{expected})"
+            )
+    if not seen:
         return FAIL, "agent roster is empty"
-    if wrong:
-        return FAIL, f"{len(wrong)}/{count} agent(s) off the accepted routing: {', '.join(wrong)}"
-    return PASS, f"all {count} agents on {EXPECTED_PROVIDER}/{EXPECTED_MODEL}"
+    missing = sorted(set(EXPECTED_ROUTING) - seen)
+    problems = wrong + [f"unknown agent {u}" for u in unknown]
+    if missing:
+        problems.append(f"absent from roster: {', '.join(missing)}")
+    if problems:
+        return FAIL, (
+            f"{len(problems)} routing deviation(s) from the accepted policy: "
+            + "; ".join(problems)
+        )
+    distinct = sorted(set(EXPECTED_ROUTING.values()))
+    return PASS, (
+        f"all {len(seen)} agents on {EXPECTED_PROVIDER}, per-seat models match "
+        f"the accepted policy ({len(distinct)} distinct: {', '.join(distinct)})"
+    )
 
 
 def looks_like_placeholder(value: str) -> bool:
@@ -733,20 +777,30 @@ def _preflight_openrouter(ctx: Ctx, group: str, api_key: str) -> None:
                 f"model catalog unreadable: {type(exc).__name__}: {exc}")
     else:
         ids = {m.get("id") for m in catalog}
+        policy_models = sorted(set(EXPECTED_ROUTING.values()))
         if not ids:
-            ctx.add(group, "openrouter model is available", SKIP,
+            ctx.add(group, "openrouter models are available", SKIP,
                     "model catalog came back empty")
-        elif EXPECTED_MODEL in ids:
-            ctx.add(group, "openrouter model is available", PASS,
-                    f"{EXPECTED_MODEL!r} is offered ({len(ids)} models in catalog)")
         else:
-            ctx.add(group, "openrouter model is available", FAIL,
-                    f"{EXPECTED_MODEL!r} is NOT in OpenRouter's catalog of "
-                    f"{len(ids)} models — every agent would fail on its first call")
+            absent = [m for m in policy_models if m not in ids]
+            if absent:
+                ctx.add(group, "openrouter models are available", FAIL,
+                        f"{', '.join(absent)} NOT in OpenRouter's catalog of "
+                        f"{len(ids)} models — the agents on those seats would "
+                        "fail on their first call")
+            else:
+                ctx.add(group, "openrouter models are available", PASS,
+                        f"all {len(policy_models)} policy models are offered "
+                        f"({len(ids)} models in catalog)")
 
-    # 2. A real completion through the same client `src/agents/base.py`
-    #    builds. `max_tokens` is generous on purpose: gpt-5.5 spends budget
-    #    on reasoning before emitting content, and a starved budget returns
+    # 2. A real completion per DISTINCT policy model, through the same client
+    #    `src/agents/base.py` builds. Every model in the policy is exercised,
+    #    not just one: "the credential chain works" and "this specific model
+    #    answers" are different claims, and a seat whose model has been
+    #    retired or gated fails on its first live session otherwise.
+    #
+    #    `max_tokens` is generous on purpose: reasoning models spend budget
+    #    before emitting content, and a starved budget returns
     #    finish_reason='length' with nothing usable — which the agent layer
     #    correctly treats as an empty-response error and retries into.
     try:
@@ -756,28 +810,46 @@ def _preflight_openrouter(ctx: Ctx, group: str, api_key: str) -> None:
 
         client = OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
                         timeout=120.0, max_retries=0)
-        completion = client.chat.completions.create(
-            model=EXPECTED_MODEL,
-            messages=[{"role": "user", "content": "Reply with exactly: ok"}],
-            max_tokens=512,
-        )
     except Exception as exc:
         ctx.add(group, "openrouter completes a call", FAIL,
-                f"{type(exc).__name__}: {str(exc)[:300]}")
+                f"client construction failed: {type(exc).__name__}: {str(exc)[:240]}")
         return
 
-    choice = completion.choices[0] if completion.choices else None
-    content = (getattr(getattr(choice, "message", None), "content", "") or "").strip()
-    finish = getattr(choice, "finish_reason", None)
-    if not content:
-        ctx.add(group, "openrouter completes a call", FAIL,
-                f"model answered with no content (finish_reason={finish!r}) — "
-                "every agent call would raise LLMEmptyResponseError and burn "
-                "its retry budget")
-    else:
-        ctx.add(group, "openrouter completes a call", PASS,
-                f"served by {completion.model!r}, finish_reason={finish!r}, "
-                f"{len(content)} chars returned")
+    for model in sorted(set(EXPECTED_ROUTING.values())):
+        label = f"openrouter completes a call ({model})"
+        try:
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "Reply with exactly: ok"}],
+                max_tokens=512,
+            )
+        except Exception as exc:
+            ctx.add(group, label, FAIL, f"{type(exc).__name__}: {str(exc)[:300]}")
+            continue
+
+        choice = completion.choices[0] if completion.choices else None
+        content = (getattr(getattr(choice, "message", None), "content", "") or "").strip()
+        finish = getattr(choice, "finish_reason", None)
+        if not content:
+            ctx.add(group, label, FAIL,
+                    f"model answered with no content (finish_reason={finish!r}) — "
+                    "every agent call would raise LLMEmptyResponseError and burn "
+                    "its retry budget")
+            continue
+        # `completion.model` is what OpenRouter says actually served the
+        # request. A mismatch means the id was aliased to something else,
+        # which breaks the attribution contract in
+        # docs/architecture/MODEL_PROVIDER_ARCHITECTURE.md.
+        served = getattr(completion, "model", "") or ""
+        if served and served != model:
+            ctx.add(group, label, WARN,
+                    f"requested {model!r} but OpenRouter served {served!r} — "
+                    "agent_logs would attribute output to a model that did not "
+                    "produce it")
+        else:
+            ctx.add(group, label, PASS,
+                    f"served by {served or model!r}, finish_reason={finish!r}, "
+                    f"{len(content)} chars returned")
 
 
 def _preflight_alpaca(ctx: Ctx, group: str, key: str, secret: str) -> None:
