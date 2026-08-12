@@ -225,6 +225,32 @@ Zero `src/` changes except the paper-only guard in `src/config.py`. No trading/r
 
 Engineering note for the next session: `dev` had no `pip`/`ensurepip` (PEP 668, no sudo), so the venv is bootstrapped via `get-pip.py --user --break-system-packages` + `virtualenv` into `~/.local`. Nothing system-wide was changed.
 
+## Checkpoint status — 2026-08-12, later still (provider chain proven end-to-end; Mission Control degradation fully covered)
+
+Re-confirmed first: `/health` still `broker_reachable: false`, `/home/qamc` still unwritable from `dev`. The operator-only wiring is unchanged and remains the single blocker.
+
+**1. The provider chain is now proven working end-to-end — before commissioning.** The `providers` group proved the gateway *injects* a credential at the HTTP level. That is necessary but not sufficient: it would still pass with a misspelled or retired model id, a market-data host QAMC can reach but not parse, or a FRED series that no longer resolves — none of which surface until the first live session. The new opt-in `preflight` group (`--live`) builds the same `openai` / `alpaca-py` / `fredapi` clients the trading engine builds and completes one real read with each. Run live this pass, **all 9 checks pass**:
+
+| Check | Result |
+|---|---|
+| `openai/gpt-5.5` in OpenRouter's live catalog | present (410 models) |
+| real completion via `BaseAgent`'s client construction | served, `finish_reason='stop'` |
+| Alpaca SDK's **resolved** endpoint | `BaseURL.TRADING_PAPER` |
+| `get_account()` | all expected numeric fields |
+| `get_bars('SPY')` / `get_latest_price('SPY')` | 7 bars / positive quote |
+| `is_trading_day()` | succeeds |
+| `MacroDataProvider.get_vix()` | VIXCLS observation, `staleness_days=1` |
+
+The resolved-endpoint check is worth calling out: it is stronger evidence of paper-only than config claiming `paper: true`, because it is the host the SDK will actually talk to. Opt-in because it makes authenticated calls and spends a trivial amount on one completion; every gate that could run it accidentally is pinned by a test. Read-only throughout — no order is ever submitted, and it reports shape and verdicts only, never a credential or a balance.
+
+**2. Mission Control's degradation contract is fully covered (76% → 100%).** `routes_live.py`'s docstring states that no handler may ever surface an unhandled 500. The healthy-path contract was tested; this half was not — and it is the half that matters now that a credential gateway sits in the dependency chain and Mission Control is the surface the operator watches when it misbehaves. 20 tests, including the summary invariant: with every broker read raising at once, all four live routes still answer `200`. Two cross-layer behaviours were pinned that neither layer documents alone — a null-id/null-symbol order row is dropped at the *route* layer (which is what actually produces "malformed orders are omitted" end to end, given `broker_reads` degrades rather than skips), and `/orders`' status guard is unreachable through HTTP because FastAPI's `Literal` rejects first, so it is tested by direct call.
+
+**3. One real defect found and fixed.** `MarketDataProvider.get_upcoming_ex_dividend` — which feeds the midday ex-div stop adjustment and had **no tests at all** — caught `(TypeError, ValueError, OSError)` around its epoch parse. `OverflowError` is not a `ValueError` subclass, so an absurd `exDividendDate` (milliseconds mistaken for seconds) escaped a guard whose entire job is to return `{}` on anything unusable. Stated honestly: the one current caller already wraps the call and skips the symbol, so today's effect was noise rather than a failed session — the contract is what the next caller will rely on. Now covered by 14 tests, one of which asserts the audit-round-2 timezone fix rather than trusting its comment (the same UTC-midnight epoch parsed under UTC/Singapore/Los Angeles/Kiritimati must yield one identical date).
+
+Full acceptance run against the current deployment: **28 PASS, 1 FAIL, 3 SKIP.** The single FAIL is `broker_reachable` — the operator-only wiring. The three SKIPs are only checkable from the runtime account (startup validation, runtime CA env vars, timer state) and the acceptance run picks them up automatically when run there.
+
+Full suite **1701 passed, 0 failed** (1561 baseline + 140 new tests). Source changes this pass: the `OverflowError` fix and one comment in `main.py` noting that its live-trading warning is now unreachable behind the paper-only guard (kept deliberately, so it already exists if that guard is ever lifted).
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.
