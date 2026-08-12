@@ -188,6 +188,21 @@ Re-confirmed, not assumed: `dev` still cannot write into `/home/qamc` (`touch` �
 
 The exact minimal runtime change — three `.env` lines, no code, no new secrets, existing placeholders untouched — is now written as `ops/onecli/README.md` step 4, so it isn't duplicated here. Applying it and restarting `quant-agent-api.service` is the one remaining bounded task; `dev` cannot execute it. `broker_reachable` flipping to `true` on `/health` is the objective completion signal — `dev` can verify that independently once applied, without needing `/home/qamc` access.
 
+Re-checked again this pass: unchanged (`broker_reachable` still `false`, `/home/qamc` still `permission denied`). Still waiting on the same operator action — no new blocker, nothing to re-diagnose.
+
+## Checkpoint status — 2026-08-12, later still (non-dashboard parallel work: test coverage for a real pre-trading checklist gap)
+
+While the runtime-wiring step above waits on the operator, closed a real, previously-untested item from this file's own "Verification before commissioning checkpoint" list: *"failure of OneCLI or Mission Control fails safely and does not create a path to unauthorized live trading."* This was previously true by code inspection only — `check_broker_reachable()` (`src/api/broker_reads.py`) and `/health`'s outer exception guard (`src/api/routes_live.py`) both already fail safely by design, but had no direct test exercising their failure paths; only the "healthy" path was covered (`test_api_contract.py`'s `stub_broker` fixture hardcodes `check_broker_reachable: lambda: True`).
+
+Added three tests to `tests/test_api_contract.py`, following the file's existing monkeypatch conventions exactly (patching at each module's own import namespace, per its documented convention):
+- `check_broker_reachable()` returns `None` when credentials are empty (not configured, distinct from configured-but-down).
+- `check_broker_reachable()` returns `False`, not an exception, when `get_account()` raises (simulates a credential-gateway outage — directly relevant to the OneCLI dependency just added).
+- `/health` still returns `200` with `broker_reachable: None` even if `check_broker_reachable()` itself raised unexpectedly (defense-in-depth for the outer guard, in case a future change ever broke that function's own never-raise invariant).
+
+Also ran, as routine verification rather than a separate task: full test suite fresh from a clean venv (`1561 passed, 0 failed` — the accepted `1558` baseline plus these 3 new tests, no regressions), and a repo-wide + full-branch-history scan for accidentally-committed secret material (clean — the one pattern match is a pre-existing synthetic test fixture in `tests/test_base_agent.py`, not a real credential).
+
+No trading logic, dashboard/visualization work, or `qamc`-side changes — stayed strictly within Mission Control's existing read-only, non-critical boundary per `.claude/rules/mission-control-api.md`.
+
 ## Hard boundaries
 
 - Alpaca **Paper only**.
