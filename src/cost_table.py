@@ -8,6 +8,12 @@ input/output token counts returned by each provider, and by
   0. `_PRICING_PINNED` — verified-official rates for models where LiteLLM is
      KNOWN-STALE (currently DeepSeek). Structurally immune to cache refresh
      (`_apply_litellm_data` only iterates `_PRICING_FALLBACK` keys).
+  0b. `_PRICING_OPENROUTER` — the models `config/settings.yaml` routes to
+     OpenRouter, at OpenRouter's own published rates. Same structural
+     immunity as `_PRICING_PINNED`, and for the same reason: LiteLLM prices
+     the *vendor's direct* API, which is not what QAMC pays for
+     OpenRouter-routed traffic, and it does not carry OpenRouter's
+     `vendor/model` ids at all.
   1. `data/pricing_cache.json` — fetched from LiteLLM upstream JSON.
      Refreshed automatically every 24h via `refresh_pricing()` (also
      callable on-demand via `scripts/refresh_pricing.py`).
@@ -15,6 +21,10 @@ input/output token counts returned by each provider, and by
      network is unreachable AND no cache exists. **Verified against
      LiteLLM 2026-05-13** (gpt-5.5 / claude-opus-4-8 re-verified
      2026-06-05); numbers below are LiteLLM's snapshots at those dates.
+  3. OpenRouter's live `/api/v1/models` catalog — on-demand, for a
+     `vendor/model` id that is NOT in the pinned table (i.e. an operator
+     experimenting with a model the policy has not adopted). Cached to
+     `data/openrouter_pricing_cache.json` on the same 24h discipline.
 
 On-demand resolution: `estimate_cost()` for a model in NEITHER the cache
 nor `_PRICING_FALLBACK` triggers a one-time lookup against the LiteLLM
@@ -59,6 +69,12 @@ _CACHE_PATH = Path("data/pricing_cache.json")
 _CACHE_MAX_AGE_SECONDS = 24 * 3600  # auto-refresh after 24h
 _FETCH_TIMEOUT_S = 10.0
 
+# === OpenRouter catalog — authoritative for what OpenRouter-routed calls cost ===
+# Public endpoint, no key required (the commissioning preflight reads it the
+# same way). Only consulted for `vendor/model` ids the pinned table lacks.
+_OPENROUTER_PRICING_URL = "https://openrouter.ai/api/v1/models"
+_OPENROUTER_CACHE_PATH = Path("data/openrouter_pricing_cache.json")
+
 # === Hardcoded baseline (last manual sync 2026-05-13 from LiteLLM) ===
 # Used only when cache file is missing AND network fetch fails on
 # first run. Verified-correct as of the sync date; later changes
@@ -101,10 +117,51 @@ _PRICING_PINNED: dict[str, dict[str, float]] = {
     "deepseek-reasoner":   {"input": 0.14,  "output": 0.28},   # legacy alias -> v4-flash
 }
 
+# === OpenRouter-routed models — OpenRouter's OWN published rates ===
+# Every agent in config/settings.yaml runs `provider: openrouter`, so the
+# rate that matters is OpenRouter's, not the vendor's direct API price. Two
+# reasons this table has to exist rather than leaning on LiteLLM:
+#
+#   1. LiteLLM keys these as bare vendor ids ("gpt-5.5"), so an OpenRouter id
+#      ("openai/gpt-5.5") missed every lookup and `estimate_cost` returned
+#      None — the commissioned baseline was logging "$?.??" for EVERY agent
+#      call, i.e. the deployment had no cost telemetry at all.
+#   2. Where LiteLLM does carry a matching model, its rate is the vendor's
+#      direct price. That is the wrong number for routed traffic.
+#
+# Rates are USD per 1M tokens, read from OpenRouter's /api/v1/models catalog
+# on 2026-08-12 and reproducible with:
+#     python ops/model_policy/verify_pricing.py
+# which re-reads the catalog and fails if any row here has drifted.
+#
+# Note on caching: OpenRouter quotes a discounted `input_cache_read` rate for
+# several of these. This flat table has no cache-tier column, so rows are the
+# UNCACHED rate — cost is over-estimated on cache-heavy runs, never under.
+_PRICING_OPENROUTER: dict[str, dict[str, float]] = {
+    # Commissioning baseline (retained: it is what the cost reduction is
+    # measured against, and pricing it is what makes that measurable).
+    "openai/gpt-5.5":                  {"input": 5.000, "output": 30.000},
+    # Decision seats.
+    "deepseek/deepseek-v4-pro-0813":   {"input": 0.435, "output":  0.870},
+    "qwen/qwen3.7-max":                {"input": 1.475, "output":  4.425},
+    "z-ai/glm-5.2":                    {"input": 0.490, "output":  1.540},
+    # Specialist seats.
+    "qwen/qwen3.7-flash":              {"input": 0.030, "output":  0.130},
+    "qwen/qwen3.7-plus":               {"input": 0.320, "output":  1.280},
+    "deepseek/deepseek-v4-flash-0731": {"input": 0.080, "output":  0.180},
+    "openai/gpt-5.6-luna":             {"input": 0.100, "output":  0.600},
+    "openai/gpt-5-nano":               {"input": 0.050, "output":  0.400},
+    "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
+    "minimax/minimax-m3":              {"input": 0.300, "output":  1.200},
+    "qwen/qwen3-235b-a22b-2507":       {"input": 0.090, "output":  0.550},
+}
+
 # Active PRICING — populated below from cache or fallback at module
 # import time. Mutated in-place by refresh_pricing() so callers
 # that imported the name `PRICING` see the latest values.
-PRICING: dict[str, dict[str, float]] = {**_PRICING_FALLBACK, **_PRICING_PINNED}
+PRICING: dict[str, dict[str, float]] = {
+    **_PRICING_FALLBACK, **_PRICING_PINNED, **_PRICING_OPENROUTER,
+}
 
 
 def _rates_from_entry(entry: object) -> dict[str, float] | None:
@@ -301,6 +358,134 @@ def _litellm_entry(data: dict, model: str) -> dict[str, float] | None:
     return None
 
 
+def _read_openrouter_cache() -> dict[str, dict[str, float]] | None:
+    """Cached OpenRouter rate map, or None if missing/unreadable."""
+    if not _OPENROUTER_CACHE_PATH.exists():
+        return None
+    try:
+        data = json.loads(_OPENROUTER_CACHE_PATH.read_text())
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _fetch_openrouter_pricing() -> dict[str, dict[str, float]] | None:
+    """Fetch OpenRouter's catalog and cache a {model: rates} map.
+
+    Only the id + the two rates are kept — the full catalog is ~2MB of
+    descriptions and capability flags we have no use for, and a fat cache
+    file is a fat thing to parse on every cold start.
+
+    Never raises: pricing is telemetry, and telemetry must not be able to
+    take a trading session down.
+    """
+    try:
+        import requests
+        resp = requests.get(_OPENROUTER_PRICING_URL, timeout=_FETCH_TIMEOUT_S)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        logger.warning("pricing fetch from OpenRouter failed: %s", exc)
+        return None
+
+    rates: dict[str, dict[str, float]] = {}
+    for entry in (payload.get("data") or []) if isinstance(payload, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        model_id = entry.get("id")
+        pricing = entry.get("pricing")
+        if not isinstance(model_id, str) or not isinstance(pricing, dict):
+            continue
+        try:
+            # OpenRouter quotes per-TOKEN as strings; convert to per-MILLION.
+            in_rate = float(pricing.get("prompt")) * 1_000_000
+            out_rate = float(pricing.get("completion")) * 1_000_000
+        except (TypeError, ValueError):
+            continue
+        # Same discipline as the LiteLLM path: a non-positive rate for a
+        # model we'd actually run would silently zero out cost reporting.
+        # OpenRouter's `:free` tiers legitimately quote 0 — excluding them
+        # here means they render "$?.??" rather than a confident "$0.00"
+        # that gets summed into daily totals.
+        if in_rate <= 0 or out_rate <= 0:
+            continue
+        rates[model_id] = {"input": in_rate, "output": out_rate}
+
+    if not rates:
+        logger.warning("OpenRouter catalog parsed to zero priced models — ignoring")
+        return None
+    try:
+        _OPENROUTER_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = _OPENROUTER_CACHE_PATH.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(rates))
+        os.replace(str(tmp_path), str(_OPENROUTER_CACHE_PATH))
+    except Exception as exc:
+        logger.warning("OpenRouter pricing cache write failed: %s", exc)
+    return rates
+
+
+def _openrouter_cache_is_fresh() -> bool:
+    if not _OPENROUTER_CACHE_PATH.exists():
+        return False
+    age = time.time() - _OPENROUTER_CACHE_PATH.stat().st_mtime
+    return age < _CACHE_MAX_AGE_SECONDS
+
+
+def _memoise(model: str, rates: dict, source: str) -> dict[str, float]:
+    PRICING[model] = {"input": float(rates["input"]), "output": float(rates["output"])}
+    logger.info(
+        "Resolved pricing for %s from %s: in=$%.3f/M out=$%.3f/M",
+        model, source, PRICING[model]["input"], PRICING[model]["output"],
+    )
+    return PRICING[model]
+
+
+def _valid_rates(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("input"), (int, float))
+        and isinstance(value.get("output"), (int, float))
+        and not isinstance(value.get("input"), bool)
+        and not isinstance(value.get("output"), bool)
+        and value["input"] > 0
+        and value["output"] > 0
+    )
+
+
+def _resolve_openrouter_model(model: str) -> dict[str, float] | None:
+    """Price a `vendor/model` id from OpenRouter's catalog.
+
+    Reached only for ids NOT in `_PRICING_OPENROUTER` — i.e. a model an
+    operator has configured but the accepted policy has not adopted.
+
+    A FRESH cache is trusted outright. A stale one is not: it is kept only
+    as the last resort if the refetch fails, because serving a rate that
+    aged out of correctness is how a cost report becomes confidently wrong,
+    and "wrong" is worse than the honest "$?.??" this returns instead.
+    """
+    cached = _read_openrouter_cache() or {}
+    if _openrouter_cache_is_fresh():
+        rates = cached.get(model)
+        return _memoise(model, rates, "cached OpenRouter catalog") if _valid_rates(rates) else None
+
+    fetched = _fetch_openrouter_pricing()
+    if fetched is not None:
+        rates = fetched.get(model)
+        return _memoise(model, rates, "live OpenRouter catalog") if _valid_rates(rates) else None
+
+    # Catalog unreachable. A stale entry beats no cost at all, and it is not
+    # memoised as authoritative — the next process retries the fetch.
+    rates = cached.get(model)
+    if _valid_rates(rates):
+        logger.warning(
+            "OpenRouter catalog unreachable — pricing %s from a STALE cache "
+            "(older than %dh); cost may be inaccurate",
+            model, _CACHE_MAX_AGE_SECONDS // 3600,
+        )
+        return _memoise(model, rates, "stale OpenRouter cache")
+    return None
+
+
 def _resolve_unknown_model(model: str) -> dict[str, float] | None:
     """First-use pricing lookup for a model not already in PRICING.
 
@@ -312,9 +497,21 @@ def _resolve_unknown_model(model: str) -> dict[str, float] | None:
     a dataset we DID read is memoised into _UNKNOWN_MODELS. A failure caused
     purely by the dataset being unreachable is NOT memoised (retried later).
     Returns the rate dict, or None when the model can't be priced.
+
+    A `vendor/model` id goes to OpenRouter's catalog FIRST. LiteLLM does not
+    key models that way, so asking it about "qwen/qwen3.7-flash" can only
+    ever miss — and worse, `_litellm_entry`'s "openai/<id>" probe could match
+    an unrelated row for an id that happens to collide. OpenRouter is also
+    the only source that is definitionally right about routed traffic.
     """
     if not model or model in _UNKNOWN_MODELS:
         return None
+
+    if "/" in model:
+        rates = _resolve_openrouter_model(model)
+        if rates is not None:
+            return rates
+
     saw_dataset = False
     # 1. Local cache (full LiteLLM JSON written by refresh_pricing) — no network.
     cached = _read_cache_dataset()
