@@ -145,8 +145,10 @@ sudo -u qamc -i
 cd /home/qamc/quant-agent && python3 ops/commissioning/verify_commissioning.py --live
 
 # 2. dev account — the isolation check
-cd /home/dev/projects/quant-agent && .venv/bin/python ops/commissioning/verify_commissioning.py --live
+cd /home/dev/projects/quant-agent && .venv/bin/python ops/commissioning/verify_commissioning.py --live --from-onecli
 ```
+
+`--from-onecli` is required on the `dev` run and only there. The wiring checks read `HTTPS_PROXY` from the process environment, which is exactly right on the runtime account — that env IS the thing being verified — but `dev` deliberately has no such wiring, so without the flag the run FAILs on `gateway proxy configured` for the wrong reason. With it, `dev` resolves the gateway from the live OneCLI instance for the duration of the run, and the check that would have been a false alarm correctly reports SKIP with `as qamc` against it.
 
 Expected from each: `COMMISSIONING ACCEPTANCE: PASS` and exit code `0`, followed by an `ACCOUNT COVERAGE:` line. Accept only when **both** runs exit `0` and each reports `ACCOUNT COVERAGE: complete` — a partial run names the account still needed and the checks it owes, so a green summary from one login is never mistaken for full coverage. `--live` additionally completes one real read per provider through QAMC's own clients.
 
