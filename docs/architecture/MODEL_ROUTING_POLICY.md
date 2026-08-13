@@ -263,6 +263,13 @@ prices.
    RM seat — so the evidence was followed. **This is the top item for
    external review**, and the per-seat structure makes a split a one-line
    change.
+
+   The agent-audit tranche took the half of this that does not need a model
+   change: RM now reads the primary evidence before PM's narrative, is told
+   that PM pre-calibrates against its own past verdicts, and is told that it
+   shares PM's model. See `DECISION_CHAIN_AUDIT.md` (F5). That reduces the
+   *behavioural* coupling; it does nothing about the shared blind spot,
+   which still needs this decision.
 2. **Three seats are assigned by analogy**, not measurement:
    `earnings_analyst`, `evening_analyst`, `meta_reflector`. Their nearest
    measured analogues both scored 1.00/1.00, but that is an inference.

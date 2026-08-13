@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-12
+Updated: 2026-08-14
 
 This file says what is accepted and authorized **now**. Git history preserves prior detail.
 
@@ -26,24 +26,31 @@ Claude does not merge its own work. The operator should not be asked to perform 
 
 ## At the external gate
 
-The routing tranche is implemented and pushed on `claude/cost-optimized-model-routing-h4k2vn`. It awaits ChatGPT external review; Claude does not merge it.
+Both open tranches are reconciled onto current `main` and pushed on
+`claude/qamc-routing-and-agent-audit-reconcile`. They await ChatGPT external review; Claude does not merge them.
 
-What it delivered:
+**1. Cost-optimized model routing** (previously stranded on `claude/cost-optimized-model-routing-h4k2vn`, five commits behind `main`, now merged in whole — only `docs/WORK.md` conflicted and `main`'s newer timer-activation position was preserved):
 
 1. Per-seat model policy through the existing `config/settings.yaml` seam — no routing infrastructure added. Evidence and limitations: `docs/architecture/MODEL_ROUTING_POLICY.md`.
 2. Working cost telemetry. Under the baseline, `estimate_cost` could not price an OpenRouter `vendor/model` id at all, so every call persisted `cost_usd = NULL` and every session rendered `$?.??`.
 3. Projected LLM spend of **$72.10 → $1.13 per month** (98.4%) at measured-equal quality on 148 graded trials.
 
-Two items are **not** closed and are the operator's:
+**2. The deferred agent-audit findings.** The 2026-08-13 adversarial audit landed its text-only findings in `57f5b2d` and held five back for external architectural review. All five are resolved — three as fixes (the AI Risk Manager's missing drawdown/position-age evidence; PM/RM independence, as an information change only; premortem observability) and two as recorded decisions to retain (earnings valuation data stays out of a cached filing read; the veto hierarchy and every sizing threshold are unchanged). Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
 
-- **OpenRouter credit is nearly exhausted** ($10 granted, $7.96 used, $2.04 left). At `max_tokens: 128000` the baseline model reserves $3.84 per call, so as commissioned no agent call could start — every one returns a non-retryable 402. The new policy reserves $0.05 per call, but credit must still be topped up before any live session.
+No deterministic risk or execution semantics changed in either tranche.
+
+One item is **not** closed and is the operator's:
+
 - The `qamc`-account half of commissioning acceptance still needs running; `dev` cannot `sudo`.
+
+**Cleared since the routing branch was written:** OpenRouter credit. That branch recorded $10 granted / $7.96 used / $2.04 left against a baseline model reserving $3.84 per call at `max_tokens: 128000` — as commissioned, no agent call could have started (non-retryable 402). `/api/v1/credits` now reports **$25 granted, $8.02 used, $16.98 remaining**. The blocker is gone on both policies; the routing policy's economics argument is unchanged.
 
 ## Not authorized without a new contract
 
 - Enabling trading timers.
-- Merging the routing branch.
+- Merging this branch.
 - Any second provider or fallback model (deliberately not added — see the policy doc).
+- Splitting the Portfolio Manager and AI Risk Manager onto different models. It is a one-line config change and the open question in `docs/WORK.md`, but it trades measured quality for independence and is the reviewer's call, not Claude's.
 
 ## Timer activation rule
 

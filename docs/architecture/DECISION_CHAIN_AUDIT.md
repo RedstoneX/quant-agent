@@ -1,0 +1,314 @@
+# Decision-Chain Agent Audit — Findings and Decisions
+
+Status: **proposed by the agent-audit tranche — pending external review**.
+
+Covers the five findings the 2026-08-13 adversarial audit of the nine agent
+prompts deferred as "behaviour or data flow, hold for external architectural
+review". The audit's text-only findings (F1, F2, F3, F7a, F9, F10) landed
+earlier in `57f5b2d` and are pinned by
+`tests/test_prompt_audit_2026_08_13.py`; they are not revisited here.
+
+Read alongside `SAFETY_BOUNDARIES.md`, which is unchanged by this tranche,
+and `MODEL_ROUTING_POLICY.md`, whose shared-model limitation F5 responds to.
+
+## What did and did not change
+
+| | |
+|---|---|
+| **Fixed** | F6 (risk evidence completeness), F5 (PM/RM independence — RM's *information*), F4 (premortem observability), F7b's detector, F8 (prior provenance) |
+| **Intentionally retained** | F5's veto hierarchy, F4's permissive schema, F7b's decision not to route price data, every sizing threshold under F8 |
+| **Unproven until paper trading** | whether better-informed RM review changes verdicts for the better; whether the inherited long bias is right for this account; whether the `pm_audit_step_missing` advisory ever fires in practice |
+
+**No deterministic risk or execution semantics changed.** No threshold moved,
+no gate was added or removed, no schema became stricter, Alpaca stays
+Paper-only, and every failure path added degrades to "evidence unavailable",
+never to a benign-looking value. The one new engine advisory is non-blocking
+and rides the seam `data_degraded` and `correlation_coverage_gap` already use.
+
+---
+
+## F6 — The Risk Manager could not audit two of the rules it owns
+
+**Finding.** `config/prompts/risk_manager.md` makes RM the reviewer of PM's
+holding discipline and of the system-drawdown halving rule.
+`RiskManagerAgent.build_user_message` passed the inputs for neither.
+`Position` (`src/models.py`) carries no entry date, and `in_drawdown` was
+computed in `DecisionStage` as a local, handed to PM, and discarded.
+
+**Why it mattered.** PM's tiered holding discipline turns on `days_held`: a
+position held under 5 days is in a protection period where only three named
+triggers permit a SELL, and "the Tech rating dropped" is explicitly not one
+of them. Without the age, every SELL looked equally legitimate to RM. The
+drawdown rule is worse: `in_drawdown=true` requires **every new BUY halved**,
+and *no deterministic code enforces it* — `src/risk/rules.py` never sees the
+flag. RM was the only possible check on that rule and was blind to it. A PM
+that quietly skipped the halving during a losing stretch would have been
+approved by a reviewer with no way to know.
+
+**Decision.** Route the evidence. This is plumbing an existing measurement to
+an existing consumer, not new authority: RM's remit already covered these
+rules and its prompt already claimed the inputs.
+
+**Change made.**
+- `src/agents/risk_manager.py` — positions render `held: Nd` plus the
+  discipline tier; the Account block renders `rolling_5d_pct` /
+  `rolling_20d_pct` / `in_drawdown` and, when true, states what PM was
+  required to do about it.
+- `src/pipeline_context.py` — `position_history` and `recent_performance`
+  added to `RunContext`.
+- `src/pipeline_stages.py` — `DecisionStage` publishes both to ctx so RM
+  audits PM against the **same snapshot PM sized from**, not one taken
+  minutes later. `RiskStage` rebuilds them when ctx is empty, which is the
+  RC2 resume lane (there `DecisionStage` never runs at all).
+- `config/prompts/risk_manager.md` — checklist items 7 and 8, and the
+  "Inputs you read" section now matches what the renderer sends.
+
+**Evidence/tests.** `tests/test_agent_audit_2026_08_14.py::test_f6_*` — nine
+tests covering the three tiers, the unknown-age path, drawdown true/false,
+the ctx hand-off, the resume-lane rebuild, and a rebuild that raises.
+
+**Remaining uncertainty.** Whether RM *acts* on the new evidence is a model
+behaviour question no unit test answers. The observable to watch in paper
+trading is whether `sizing_sanity` and `signal_fidelity` findings ever cite a
+`held:` tier or `in_drawdown`. If they never do after a drawdown session, the
+evidence is arriving and being ignored, which is a different and larger
+problem than the one fixed here.
+
+---
+
+## F5 — The independent gate was reading PM's story first
+
+**Finding.** PM's `reasoning_chain` was the **first** block in RM's user
+message, before the account, the positions, the Tech signals, the news and
+the macro data. RM also had no idea that PM calibrates its sizing against
+RM's own past verdicts, nor that the two now run the same model.
+
+**Why it mattered.** Three distinct couplings, one direction:
+
+1. *Ordering.* RM met PM's case for the plan before a single primary number,
+   then graded the narrative for internal consistency — which a coherent
+   narrative passes whether or not the book is sound.
+2. *The calibration loop.* PM reads RM's last 5 verdicts and their
+   `reason_category` tags and pre-adjusts before RM sees anything: two
+   `oversized` tags cut its base allocations 25%. So a conservative-looking
+   plan may be PM anchoring on RM's history rather than expressing
+   conviction, and a run of `clean` verdicts is evidence **about the loop**,
+   not about the plans. RM was never told the loop existed.
+3. *Shared model.* The accepted routing policy puts both seats on
+   `google/gemini-2.5-flash-lite`. Whatever blind spot produced the plan is
+   one the reviewer shares.
+
+**Decision.** Change what RM **knows**, never what it **may do**. Reorder the
+evidence, label PM's chain as claims, and disclose both couplings to RM.
+Leave every threshold alone.
+
+**Change made.**
+- `src/agents/risk_manager.py` — block order is now `proposed trades →
+  account/market facts → PM's claims → the deterministic engine's findings →
+  verdict`. RM forms its own read from primary data first, and the last input
+  before the verdict is the one PM did not author. The chain is headed "PM's
+  CLAIMS about its own plan, not evidence" with an instruction to verify
+  cited numbers against the blocks above and to say so where it cannot. An
+  entirely absent chain now renders as a stated finding rather than an empty
+  string.
+- `config/prompts/risk_manager.md` — a leading "Your independence" section
+  disclosing the calibration loop and the shared model.
+
+**Intentionally retained.** The veto hierarchy — "veto is nuclear", prefer
+`modifications`, `approved: false` only for an incoherent chain / ≥ 5 mods /
+a missed hard rule. The audit flagged this as framing disagreement as nearly
+forbidden. It stays, for a stated reason: a rejection kills the whole plan
+and PM learns only a one-word `reason_category`, whereas `modifications`
+are surgical and carry a per-symbol reason. Loosening the threshold changes
+trading behaviour, and that is a paper-trading question, not a prompt edit.
+The prompt now says "independence does not mean disagreeing more often" and
+"`clean` on a genuinely clean plan is the correct verdict", because the
+failure mode of the opposite instruction is a veto layer that manufactures
+objections. Pinned by `test_f5_veto_hierarchy_is_unchanged`.
+
+**Evidence/tests.** `test_f5_*` — six tests, including an explicit assertion
+on the *ordering* of the five section headers.
+
+**Remaining uncertainty, and it is the largest in this document.** Ordering
+and disclosure are the cheap, safe half of independence. They do not make the
+gate structurally independent: it is still the same model reading a
+correlated input set, and no unit test can show that reordering the prompt
+changed a verdict. The genuinely independent option — a different model at
+the RM seat — was measured and rejected on quality
+(`MODEL_ROUTING_POLICY.md`, "Known limitations"): every alternative scored
+worse at that seat, so splitting would trade measured quality for
+hypothetical independence. That trade is a live decision for the reviewer,
+not a settled one, and it is a one-line config change if taken. The
+paper-trading observable is the `reason_category` distribution: an RM whose
+verdicts are essentially always `clean` while PM's plans vary is not
+reviewing.
+
+---
+
+## F4 — A mandatory audit step could disappear in silence
+
+**Finding.** `premortem_check` and `continuity_check` are MANDATORY in
+`config/prompts/portfolio_manager.md` and default to `""` in
+`ReasoningChain` (`src/models.py`). PM skipping the red-team step therefore
+produced a clean parse, a clean log line and a clean verdict. Compounding it,
+RM's renderer emitted **seven** of the nine fields — and the two it omitted
+were exactly the two that can be empty.
+
+**Why it mattered.** The pre-mortem is the only step that argues against
+today's book. Its whole purpose is to catch a systematic directional bias
+that a forward-only chain cannot see — which is also F8's subject. The one
+reviewer positioned to notice it was missing was the one not being shown it.
+Nothing else in the system looked.
+
+**Decision.** Make the omission loud, at the observability layer. Do **not**
+make the schema strict.
+
+**Change made.**
+- `src/agents/risk_manager.py` — all nine fields render; an empty mandatory
+  field renders as an explicit `[MISSING — ... Treat the audit step as NOT
+  PERFORMED]` line rather than being omitted. An omitted section reads as
+  "PM had nothing to say"; a marker reads as "the step did not happen".
+- `src/pipeline_stages.py` — `RiskStage` raises a `pm_audit_step_missing`
+  advisory, which RM's prompt already obliges it to answer in the matching
+  `reasoning_chain` field. `DecisionStage`'s operator-facing log line now
+  carries all nine fields.
+- `config/prompts/portfolio_manager.md` / `risk_manager.md` — both ends
+  describe the mechanism.
+
+**Intentionally retained.** The permissive schema. `min_length=1` on the two
+fields is the obvious fix and would break replay of every pre-2026-06 log,
+which carries neither. Enforcement belongs in observability, not in making
+historical data unparseable. Pinned by
+`test_f4_schema_stays_backward_compatible`.
+
+**Evidence/tests.** `test_f4_*` — seven tests: the `[MISSING]` render for
+each field, all nine present, the advisory raised on omission and *not*
+raised on a complete chain, the schema's backward compatibility, and the
+nine-field log line.
+
+**Remaining uncertainty.** The advisory is non-blocking by design, so a PM
+that skips the step and an RM that shrugs at the advisory still produce a
+tradeable plan. Whether it needs teeth depends on how often it fires, which
+is a paper-trading measurement. The right escalation, if the rate is high,
+is a deterministic policy decision for the reviewer — not something to add
+speculatively now.
+
+---
+
+## F7b — Earnings valuation data: retained, not routed
+
+**Finding.** `earnings_analyst` is graded on `valuation_context` and that
+column drives its sentiment rubric, but `build_user_message` passes filing
+text plus `symbol` / `form_type` / `filing_date` and nothing else. The 2026-08-13
+tranche fixed the prompt (the field is now filing-grounded, with
+`[UNSOURCED:no_market_data]`) and explicitly deferred the data-flow half:
+should the real multiples — which exist, and already feed `tech_analyst` —
+be routed here?
+
+**Decision. No.** Two reasons, both structural rather than aesthetic:
+
+1. **The artifact is cached for the life of the filing.** `_save_analysis`
+   writes the analysis to disk once and `_load_analysis` re-serves it
+   unchanged for weeks. A price-derived figure written on the filing date is
+   stale the next morning and keeps arriving at PM as though current. The
+   conditional reading the prompt now asks for ("the Services mix shift is
+   doing the margin work; a deceleration below +10% removes it") stays true
+   exactly as long as the filing does.
+2. **The multiples are already read at the seat where they are fresh.**
+   `trailing_pe` / `forward_pe` / `ps_ratio` are fetched each session by
+   `MorningResearchStage` and passed to `tech_analyst`. Routing them into a
+   cached fundamentals read would duplicate the data at the one seat that
+   cannot keep it current — and would couple the earnings load to the tech
+   fan-out it currently runs in parallel with.
+
+**Change made.** No data flow. Instead:
+- `src/agents/earnings_analyst.py` — `_flag_unsourced_valuation_claims`
+  logs a warning when `valuation_context` asserts anything requiring a share
+  price (P/E, PEG, EV/EBITDA, market cap, "trading at", "Nx forward
+  earnings"). It runs on `source="cache"` too, because an invented multiple
+  written before the prompt was corrected keeps reaching PM until something
+  can see it. Leverage and coverage ratios are deliberately **not** matched —
+  a 10-Q does disclose "net debt 2.1x EBITDA", and a detector that punished
+  real filing numbers would push the agent away from citing them.
+- `src/models.py` — the schema comment defined `valuation_context` as "is the
+  market pricing this fairly given the above?", the exact question the seat
+  cannot answer, left contradicting the prompt that had just been corrected.
+- `config/prompts/earnings_analyst.md` — records why price data is withheld,
+  so a later editor reads the gap as a decision rather than an oversight.
+
+**Evidence/tests.** `test_f7b_*` — twelve cases: seven price-derived phrasings
+detected, four filing-grounded statements not flagged, cache-path coverage,
+and a guard that detection never rejects the analysis (a text heuristic must
+not cost the only fundamentals read for that name).
+
+**Remaining uncertainty.** The detector is a regex over prose and will not
+catch a model that asserts a multiple in words it does not match. It is a
+tripwire, not a proof. If paper-trading logs show it firing regularly, the
+prompt is not holding and the answer is a prompt fix, not a wider regex.
+
+---
+
+## F8 — Three behavioural priors were stated as standing truths
+
+**Finding.** `config/prompts/portfolio_manager.md` carries three rules
+derived from a specific measured window: the deployment-gap rule ("the single
+largest P&L drag"), the over-caution diagnosis ("under-owning confirmed
+leaders cost ~8pts vs SPY") and the momentum-leader starter sleeve. All three
+trace to forensics on the **predecessor account over Apr–Jul 2026**
+(`df66ab2`, `d821ab6`). All three read as general truths about markets. All
+three push the book structurally long.
+
+**Why it mattered.** The measurements are real — that is exactly what makes
+them persuasive. But Apr–Jul 2026 was one window, one account and one regime
+in which being more invested paid; the same method in a regime that punished
+exposure would have produced the opposite rule with equal confidence. **This
+account has never traded.** The priors were inherited, not earned here, and a
+model given them as facts has no way to weigh them against the account's own
+record when that record starts to exist.
+
+**Decision.** Keep all three and make them auditable. They are the best
+evidence available for an account with no history of its own; deleting them
+would substitute no evidence for imperfect evidence. What changes is that
+they now say what they are.
+
+**Change made.** `config/prompts/portfolio_manager.md`:
+- a "Where the behavioural priors below come from" table naming the claim,
+  the window and the sample behind each;
+- a `[PRIOR]` tag at each use site, so a reader who reaches the rule without
+  reading the table still sees it;
+- an explicit precedence rule — when PMFacts carries this account's own
+  outcomes (`closed_trades_30d`, non-null rolling returns), size from those
+  and say so; while it reports `[UNSOURCED:no_calibration]`, act on the prior
+  but name it as one; `meta_reflector` re-derives these quarterly from the
+  account's own record, and when its findings disagree, the account wins;
+- a note that none of the three ever overrides a hard rule;
+- a narrowing of the pre-mortem framing: knowing which arm you under-write
+  says which one to write properly, not which one is right, and "a red-team
+  that always concludes 'size up' is not a red-team".
+
+**Intentionally retained.** Every sizing threshold, the sleeve's 5% cap, the
+deployment-gap procedure. Making a prior explicit is a statement about its
+evidence, not a decision to act on it differently. Pinned by
+`test_f8_no_sizing_threshold_moved`.
+
+**Evidence/tests.** `test_f8_*` — seven tests covering the provenance block,
+each named prior, the use-site tags, the precedence rule and the unchanged
+thresholds.
+
+**Remaining uncertainty.** This is the finding most dependent on paper
+trading and the one this tranche can least resolve. Whether the long bias is
+correct **for this account in this regime** is unknowable until the account
+has its own closed trades; the change makes the question askable and the
+answer auditable, nothing more. The observable is whether PM's
+`reasoning_chain` starts citing this account's measured `win_rate_30d_pct`
+instead of the inherited prior once `closed_trades_30d` is non-trivial. If it
+keeps citing the prior after real data exists, the precedence rule is not
+working and the priors should be cut rather than annotated.
+
+---
+
+## Cost
+
+Zero. Every finding was resolved by reading the repository and its history;
+no model was called, no benchmark was re-run, and no OpenRouter credit was
+consumed by this tranche.
