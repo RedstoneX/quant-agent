@@ -663,7 +663,12 @@ class EarningsReasoningChain(BaseModel):
     growth_trajectory: str = Field(min_length=1)         # YoY / QoQ direction, momentum, inflection
     strategic_risks: str = Field(min_length=1)           # biggest strategic bets and their execution risk
     management_execution: str = Field(min_length=1)      # is management doing what they said? any pivots?
-    valuation_context: str = Field(min_length=1)         # is the market pricing this fairly given the above?
+    # NOT "is the market pricing this fairly" — the agent is given filing text
+    # and nothing else (no share price, no market cap, no multiple), so it
+    # cannot answer that and inventing an answer is what it used to do. Reads
+    # "how conditional is the story": what must keep holding for the disclosed
+    # trajectory to justify any premium. See config/prompts/earnings_analyst.md.
+    valuation_context: str = Field(min_length=1)
 
 
 class EarningsInvestmentImplications(BaseModel):

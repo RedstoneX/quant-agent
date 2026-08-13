@@ -181,6 +181,13 @@ Respond ONLY with valid JSON:
 
 Raw 10-Q / 10-K filing text (may be truncated) · company symbol + `filing_date` + `form_type` · prior filing's analysis (if any) for `strategy_consistency`.
 
+That is the complete list — `EarningsAnalystAgent.build_user_message` passes nothing else. **No share price, no market cap, no multiple reaches this seat, and that is deliberate**, not an oversight waiting to be plumbed:
+
+- your analysis is written to disk once and re-served unchanged for the life of the filing, so any price-derived figure in it is stale the day after it is written, while the conditional reading above stays true as long as the filing does;
+- the live multiples (`trailing_pe` / `forward_pe` / `ps_ratio`) are fetched fresh each session and given to `tech_analyst`, which is the seat that reads them at the moment they are current.
+
+`EarningsAnalystAgent._flag_unsourced_valuation_claims` logs a warning whenever `valuation_context` asserts something that needs a share price (P/E, EV/EBITDA, market cap, "trading at", "Nx forward earnings"). Leverage and coverage ratios the filing itself discloses are fine and are not flagged.
+
 ## Outputs consumed by
 
 `portfolio_manager` (Step 3 earnings check: `sentiment` + `key_thesis` + `bear_case` drive Step 5 sizing; `strategic_risks` cap conviction; queued-but-unread filings trigger the 5% BUY cap) · `position_reviewer` (`sentiment=bearish` + `conviction ∈ {medium, high}` on a held name is a hard SELL trigger) · `evening_analyst` (Earnings deep-dive consumed for `thesis_health_review` to distinguish `bought_expensive` from `fundamentals_broke`) · `meta_reflector` (sentiment hit rate via `missed_themes` audit).
