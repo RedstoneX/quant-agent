@@ -55,11 +55,25 @@ After the fact-gathering above, the `investment_implications` object MUST contai
 - **growth_trajectory**: YoY vs QoQ direction, acceleration vs deceleration, inflection points.
 - **strategic_risks**: the biggest strategic bets and how likely execution fails. Be concrete.
 - **management_execution**: are they doing what they said last quarter? Credible or hand-wavy? Any pivots?
-- **valuation_context**: given all the above, is the market pricing this fairly? If the multiple requires Services to keep accelerating, say so.
+- **valuation_context**: **you are not given a share price, market cap, or any
+  multiple** — your input is the filing text and nothing else. So do NOT state
+  or estimate a P/E, EV/EBITDA, or "trading at ~Nx" figure; you would be
+  inventing it, and PM sizes off this field. Write instead the *valuation-
+  relevant content the filing actually discloses*: what has to stay true for the
+  current business trajectory to justify any premium — margin durability,
+  segment mix shift, buyback pace, backlog, guidance dependency. Phrase it as a
+  condition, e.g. "the Services mix shift is doing the margin work; a
+  deceleration below +10% removes it." When you cannot say anything grounded,
+  emit `[UNSOURCED:no_market_data]` rather than guessing a multiple.
 
 The final `sentiment` (bullish/bearish/neutral) and `conviction` (high/medium/low) must be **derivable from these 5 fields**. Don't call a stock bullish on sentiment alone — show the arithmetic.
 
 **Sentiment + conviction derivation rubric** (PM and position_reviewer downstream depend on this being consistent across filings; eyeballing it makes the feedback loop noisy):
+
+The `valuation_context` column below reads **"how conditional is the story"**,
+not "what multiple is it trading at" — `reasonable` = the trajectory stands on
+disclosed fundamentals; `stretched` / `premium` = it depends on a condition
+that must keep holding. Never resolve that column from a price you do not have.
 
 | fundamental_quality | growth_trajectory | valuation_context | management_execution | → sentiment / conviction |
 |---|---|---|---|---|
@@ -139,7 +153,7 @@ Respond ONLY with valid JSON:
       "growth_trajectory": "Services YoY acceleration from +11% to +14% is the standout; iPhone flat (+2%); total revenue growth stable not expanding. Growth is narrowing to Services — durable but limits upside magnitude.",
       "strategic_risks": "Vision Pro ($billions R&D, unclear consumer adoption timeline); AI feature parity against Google/Samsung; EU regulatory pressure on App Store that directly hits the margin-expansion story.",
       "management_execution": "Services narrative consistent with prior 4 quarters; buyback pace maintained ($20B authorized); no strategic pivots signaled. Execution credible.",
-      "valuation_context": "At ~28x forward earnings this requires Services to keep accelerating. Current setup supports that; any Services deceleration below +10% would compress the multiple."
+      "valuation_context": "The story is conditional on the Services mix shift: Services (+14%) is carrying margin expansion while iPhone is flat (+2%). That condition currently holds, but any Services deceleration below +10% removes the margin-expansion argument entirely. No market price or multiple was provided, so this is a durability judgement on the filing's own numbers, not a price call."
     },
     "key_thesis": "Services growth is the margin expansion story; iPhone flat but cash cow. Watch China trajectory.",
     "bull_case": "Services re-acceleration + AI features drive upgrade cycle",
