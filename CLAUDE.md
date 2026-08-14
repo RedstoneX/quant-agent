@@ -98,4 +98,6 @@ Git is durable QAMC memory. Project auto-memory is disabled. A new Claude sessio
 
 Use dedicated branches. Never force-push, push implementation directly to `main`, or merge a PR from Claude Code. Discovery/implementation handoffs must be committed and pushed before external review.
 
+Treat a blocked or rejected GitHub write as a **safety signal**, not permission to improvise around it. Before choosing any alternate Git/GitHub operation, verify the current branch/ref, expected base and head SHA, PR state, relevant history, and the protection or API reason for the rejection. Then use only a safe forward operation consistent with that verified state; never bypass protection with force updates or speculative alternate writes.
+
 Do not create new handoff/status/governance documents. `STATE.md` owns current authorization, `WORK.md` owns the current handoff, and `PROJECT_COMPASS.md` is a human-only projection.
