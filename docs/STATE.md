@@ -11,10 +11,40 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - The OVH account boundary remains: `ubuntu` = administration/recovery, `qamc` = runtime, `dev` = development/Claude Code.
 - VPS baseline hardening and upstream OneCLI credential-gateway deployment are complete.
 - QAMC can reach Alpaca Paper through the approved OneCLI path; `/health` reports `broker_reachable: true`, `db_reachable: true`, `paper: true`.
-- OpenRouter transport is commissioned. The all-agent `openai/gpt-5.5` mapping was the commissioning **baseline**; the cost-optimized replacement is proposed in `docs/architecture/MODEL_ROUTING_POLICY.md` and awaits external review.
 - Alpaca Paper-only is enforced in code.
-- PR #27 is externally reviewed and merged into `main` as `63cca1a1445757b63376d9816cccf48d4d1b0c58`.
-- Trading timers remain disabled during engineering/verification so scheduled paper-trading runs cannot start prematurely.
+- Trading timers remain disabled until runtime acceptance is complete and the operator authorizes the paper-soak start.
+- PR #30 is externally reviewed and merged into `main` as `7b78f72ecfc900e166af2207a6f2a8473c277131`.
+
+### Accepted model policy
+
+- OpenRouter transport remains the model-provider path.
+- The all-agent `openai/gpt-5.5` map was a commissioning baseline and is retired.
+- Eight seats run `google/gemini-2.5-flash-lite`.
+- `risk_manager` runs `qwen/qwen3-235b-a22b-2507`, held apart from the Portfolio Manager after a current-branch RM benchmark found equal measured seat quality and independence became the tie-breaker.
+- Three seats (`earnings_analyst`, `evening_analyst`, `meta_reflector`) remain assigned by analogy rather than direct seat measurement; this is a known limitation, not hidden evidence.
+- Cost telemetry now prices OpenRouter-routed `vendor/model` ids from OpenRouter rather than falling through to direct-provider LiteLLM pricing.
+- Projected LLM spend is approximately **$72.10 → $1.14/month** under the measured workload assumptions.
+- Full contract and evidence: `docs/architecture/MODEL_ROUTING_POLICY.md`.
+
+### Accepted decision-chain audit
+
+- F6: the AI Risk Manager receives the position-age and drawdown evidence needed to audit the rules it already owned.
+- F5: RM reads primary evidence before PM's narrative, PM's chain is explicitly treated as claims rather than evidence, the calibration loop is disclosed, and PM/RM now use different models at measured-equal RM quality.
+- F4: missing mandatory PM audit steps are made observable through explicit rendering and a non-blocking advisory; backward-compatible schemas are retained.
+- F7b: price-derived valuation data is intentionally not routed into the cached earnings artifact; unsourced valuation claims are detected and logged instead.
+- F8: inherited Apr–Jul 2026 behavioural priors are retained with provenance and lose precedence to this account's own evidence once available.
+- **No deterministic risk or execution semantics changed.** No threshold moved, no deterministic gate was removed, and Alpaca remains Paper-only.
+- Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
+
+## Current remaining work
+
+One privileged runtime acceptance step remains. It is operational, not an architecture or PR blocker:
+
+- synchronize `/home/qamc/quant-agent` to accepted `main`;
+- run the `qamc`-account half of `ops/commissioning/verify_commissioning.py --live`;
+- accept only `COMMISSIONING ACCEPTANCE: PASS`, exit `0`, with `ACCOUNT COVERAGE: complete`.
+
+`dev` cannot perform this step because entering the `qamc` account requires sudo/password privilege. The exact command is in `docs/WORK.md` and `ops/onecli/README.md` step 4e.
 
 ## ChatGPT GitHub integration role — reconstitution rule
 
@@ -24,54 +54,22 @@ Do **not** send routine GitHub work to the operator, Claude, Codex/Work mode, or
 
 Claude does not merge its own work. The operator should not be asked to perform routine GitHub housekeeping that ChatGPT can perform through the connector.
 
-## At the external gate
-
-Both open tranches are reconciled onto current `main` and pushed on
-`claude/qamc-routing-and-agent-audit-reconcile`. They await ChatGPT external review; Claude does not merge them.
-
-**1. Cost-optimized model routing** (previously stranded on `claude/cost-optimized-model-routing-h4k2vn`, five commits behind `main`, now merged in whole — only `docs/WORK.md` conflicted and `main`'s newer timer-activation position was preserved):
-
-1. Per-seat model policy through the existing `config/settings.yaml` seam — no routing infrastructure added. Eight seats on `google/gemini-2.5-flash-lite`; `risk_manager` on `qwen/qwen3-235b-a22b-2507`, held apart from the Portfolio Manager for decision-chain independence at measured-equal quality. Evidence and limitations: `docs/architecture/MODEL_ROUTING_POLICY.md`.
-2. Working cost telemetry. Under the baseline, `estimate_cost` could not price an OpenRouter `vendor/model` id at all, so every call persisted `cost_usd = NULL` and every session rendered `$?.??`.
-3. Projected LLM spend of **$72.10 → $1.14 per month** (98.4%) at measured-equal quality on 148 graded trials plus a 30-trial RM re-run.
-
-**2. The deferred agent-audit findings.** The 2026-08-13 adversarial audit landed its text-only findings in `57f5b2d` and held five back for external architectural review. All five are resolved — three as fixes (the AI Risk Manager's missing drawdown/position-age evidence; PM/RM independence, as an information change only; premortem observability) and two as recorded decisions to retain (earnings valuation data stays out of a cached filing read; the veto hierarchy and every sizing threshold are unchanged). Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
-
-No deterministic risk or execution semantics changed in either tranche.
-
-One item is **not** closed and is the operator's:
-
-- The `qamc`-account half of commissioning acceptance still needs running; `dev` cannot `sudo`.
-
-**Cleared since the routing branch was written:** OpenRouter credit. That branch recorded $10 granted / $7.96 used / $2.04 left against a baseline model reserving $3.84 per call at `max_tokens: 128000` — as commissioned, no agent call could have started (non-retryable 402). `/api/v1/credits` now reports **$25 granted, $8.02 used, $16.98 remaining**. The blocker is gone on both policies; the routing policy's economics argument is unchanged.
-
 ## Not authorized without a new contract
 
-- Enabling trading timers.
-- Merging this branch.
-- Any second provider or fallback model (deliberately not added — see the policy doc).
-- Promoting `qwen/qwen3-235b-a22b-2507` to any seat other than `risk_manager`. It is measured only there; `tests/test_model_routing_policy.py` blocks an unmeasured decision-seat promotion, and the specialist seats have no such guard beyond review.
-
-**Resolved, was previously listed here:** splitting PM and the AI Risk Manager onto different models. It was reserved to the reviewer on the premise that it traded measured quality for independence. PR #30's review established that premise was false — the "every alternative scored worse at the RM seat" claim had read a whole-sweep aggregate as a per-seat result — and supplied the decision rule. The re-measurement found a four-way quality tie, so the trade did not exist and the split was taken. Reversing it is one line in `config/settings.yaml` plus one in `verify_commissioning.py::EXPECTED_ROUTING`.
+- Any live-broker trading.
+- Any second model provider or silent fallback model.
+- Promoting `qwen/qwen3-235b-a22b-2507` to another seat without seat-specific evidence where the decision is safety-relevant.
+- Deterministic risk/execution semantic redesign.
+- Broker-write Mission Control controls.
+- Public exposure of QAMC or OneCLI.
+- Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
+- Replacing upstream OneCLI or adding a new durable routing platform without a new architectural decision.
 
 ## Timer activation rule
 
 Timer activation is **not a separate architecture or product-design problem**. The timers simply start QAMC's scheduled autonomous Alpaca Paper runs.
 
-Keep them off during engineering and external review. After the final tranche is accepted and the operator authorizes the paper-soak start, enabling the timers is a routine deployment action. Claude should verify they remain off while work is incomplete, but should not repeatedly analyze or escalate timer activation as a separate decision.
-
-## Hard boundaries
-
-- Alpaca **Paper only**; no live trading.
-- No deterministic trading/risk semantic redesign.
-- No broker-write Mission Control controls.
-- No public exposure of QAMC or OneCLI.
-- Do not collapse `dev` / `qamc` / `ubuntu` boundaries.
-- No replacement credential gateway/vault/proxy.
-- No new durable routing platform or unnecessary infrastructure; use the existing QAMC/OpenRouter seams.
-- No secrets in Git, chat, logs, screenshots or client evidence.
-- No silent model fallback or unrecorded model choice.
-- Claude does not merge its own PR or push implementation directly to `main`.
+Keep them off until the remaining runtime acceptance passes. After that, enabling them requires the operator's explicit authorization to begin the paper soak, but no new architecture review.
 
 ## Handoff
 
