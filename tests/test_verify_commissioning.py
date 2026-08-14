@@ -234,6 +234,115 @@ def test_health_fails_on_a_degraded_status_field():
     assert _verdicts(status="degraded")["api responds"][0] == vc.FAIL
 
 
+# --- enabled_timer_units: parse the STATE column, not the line ------------
+#
+# `systemctl --user list-unit-files` prints three columns:
+#
+#     UNIT FILE                 STATE     PRESET
+#     quant-agent-morning.timer disabled  enabled
+#
+# The check used to substring-search the whole line for "enabled", so the
+# PRESET column matched and a correctly disabled timer was reported as
+# enabled — a false FAIL on a safety gate during runtime acceptance.
+
+
+def test_disabled_timer_with_enabled_preset_is_not_reported_as_enabled():
+    """THE regression. `disabled enabled` is a DISABLED timer whose vendor
+    preset happens to be `enabled`; only the STATE column decides."""
+    assert vc.enabled_timer_units("quant-agent-morning.timer disabled enabled") == []
+
+
+def test_all_disabled_timers_with_enabled_presets_are_clean():
+    """The shape the runtime actually prints once every timer is masked off:
+    several units, each `disabled`, each with an `enabled` preset."""
+    stdout = "\n".join([
+        "quant-agent-morning.timer disabled enabled",
+        "quant-agent-midday.timer disabled enabled",
+        "quant-agent-close.timer disabled enabled",
+        "quant-agent-evening.timer disabled enabled",
+    ])
+    assert vc.enabled_timer_units(stdout) == []
+
+
+def test_genuinely_enabled_timer_is_still_caught():
+    """The fix must not blind the gate it was protecting."""
+    stdout = "\n".join([
+        "quant-agent-morning.timer enabled  enabled",
+        "quant-agent-midday.timer  disabled enabled",
+    ])
+    assert vc.enabled_timer_units(stdout) == ["quant-agent-morning.timer"]
+
+
+def test_enabled_runtime_counts_as_enabled():
+    """`enabled-runtime` is a transient enable — it still starts the timer."""
+    assert vc.enabled_timer_units(
+        "quant-agent-morning.timer enabled-runtime enabled"
+    ) == ["quant-agent-morning.timer"]
+
+
+@pytest.mark.parametrize("state", ["disabled", "masked", "masked-runtime", "bad"])
+def test_states_that_cannot_start_a_timer_are_clean(state: str):
+    assert vc.enabled_timer_units(f"quant-agent-morning.timer {state} enabled") == []
+
+
+@pytest.mark.parametrize("state", ["static", "indirect", "linked", "alias", "wobbly"])
+def test_unrecognized_or_ambiguous_states_fail_closed(state: str):
+    """A safety gate must not round an unreadable state up to "off".
+
+    `static`/`indirect`/`linked`/`alias` are real systemd states this script
+    does not vouch for, and `wobbly` stands for a future systemd value that
+    does not exist yet. All of them are surfaced for a human rather than
+    silently cleared.
+    """
+    assert vc.enabled_timer_units(f"quant-agent-morning.timer {state} enabled") == [
+        "quant-agent-morning.timer"
+    ]
+
+
+def test_missing_state_column_fails_closed():
+    """Truncated output must not read as evidence that the timer is off."""
+    assert vc.enabled_timer_units("quant-agent-morning.timer") == [
+        "quant-agent-morning.timer"
+    ]
+
+
+def test_non_timer_units_are_ignored():
+    """`quant-agent*` also matches the API service and the trading services.
+    Only `.timer` units schedule a session."""
+    stdout = "\n".join([
+        "quant-agent-api.service enabled enabled",
+        "quant-agent-morning.timer disabled enabled",
+    ])
+    assert vc.enabled_timer_units(stdout) == []
+
+
+def test_a_legend_header_is_not_mistaken_for_a_unit():
+    """`--no-legend` is passed, but a header must be inert if it ever appears
+    — "UNIT FILE" does not end in `.timer`."""
+    stdout = "\n".join([
+        "UNIT FILE                 STATE    PRESET",
+        "quant-agent-morning.timer disabled enabled",
+        "",
+        "1 unit files listed.",
+    ])
+    assert vc.enabled_timer_units(stdout) == []
+
+
+def test_empty_and_blank_output_yields_no_enabled_timers():
+    """Reaching this helper at all means units WERE found (check_safety SKIPs
+    otherwise), so empty input is a parse edge, not an account-boundary one."""
+    assert vc.enabled_timer_units("") == []
+    assert vc.enabled_timer_units("\n  \n") == []
+
+
+def test_column_alignment_padding_does_not_affect_the_verdict():
+    """systemd pads columns to align them; splitting on runs of whitespace
+    must give the same answer as single spaces."""
+    assert vc.enabled_timer_units(
+        "quant-agent-morning.timer      disabled        enabled"
+    ) == []
+
+
 # --- is_missing_credentials_error: the dev-vs-runtime distinction ---------
 
 def test_missing_credentials_error_is_recognized():

@@ -307,6 +307,58 @@ def parse_health(payload: dict) -> list[tuple[str, str, str]]:
     return out
 
 
+# Unit-file STATE values that mean "this timer will not be started by
+# systemd on its own". Anything NOT in this set — including a value this
+# script does not recognise — is treated as enabled, because the check it
+# feeds is a safety gate and an unreadable state is not evidence of safety.
+#
+# `static` and `indirect` are deliberately absent. `static` units have no
+# [Install] section and cannot be enabled directly, and `indirect` means
+# disabled-but-pullable-by-another-unit; for a TRADING timer both are worth
+# a human look rather than a silent pass.
+_TIMER_STATES_NOT_ENABLED = frozenset({
+    "disabled",
+    "masked",
+    "masked-runtime",
+    "bad",
+    "not-found",
+})
+
+
+def enabled_timer_units(list_unit_files_stdout: str) -> list[str]:
+    """Timer units that `systemctl --user list-unit-files` reports as enabled.
+
+    Parses the STATE **column**, not the line. `list-unit-files` emits three
+    whitespace-separated columns — UNIT FILE, STATE, PRESET — so a correctly
+    disabled timer whose vendor preset is `enabled` prints:
+
+        quant-agent-morning.timer disabled enabled
+
+    A substring search for "enabled" matches that line and reports a disabled
+    timer as enabled. That is the bug this function exists to prevent: it
+    turned a clean runtime into a FAIL during commissioning acceptance and,
+    being a false alarm on a safety gate, is exactly the kind of noise that
+    teaches an operator to skim past the gate.
+
+    Fail-closed in the other direction too. A line whose STATE column is
+    missing or unrecognised is RETURNED as enabled rather than dropped —
+    "this script could not read the state" must never render as "the timer
+    is off". Only the states in `_TIMER_STATES_NOT_ENABLED` clear it.
+
+    Expects `--no-legend` output (the caller passes it). A header line
+    survives harmlessly: "UNIT FILE" does not end in `.timer`.
+    """
+    enabled: list[str] = []
+    for line in (list_unit_files_stdout or "").splitlines():
+        fields = line.split()
+        if not fields or not fields[0].endswith(".timer"):
+            continue
+        state = fields[1].lower() if len(fields) > 1 else ""
+        if state not in _TIMER_STATES_NOT_ENABLED:
+            enabled.append(fields[0])
+    return enabled
+
+
 # --------------------------------------------------------------------------
 # Network probes — each streams and closes, never reading a response body
 # --------------------------------------------------------------------------
@@ -1039,17 +1091,16 @@ def check_safety(ctx: Ctx) -> None:
                 resolved_by=RUNTIME_ACCOUNT)
     else:
         timers = _systemctl("list-timers", "--all", "quant-agent*")
-        enabled = [
-            ln for ln in units.stdout.splitlines()
-            if ".timer" in ln and " enabled" in ln
-        ]
+        enabled = enabled_timer_units(units.stdout)
         active = [
             ln for ln in ((timers.stdout if timers else "") or "").splitlines()
             if "quant-agent" in ln and " n/a " not in ln
         ]
         problems = []
         if enabled:
-            problems.append(f"{len(enabled)} timer unit(s) enabled")
+            problems.append(
+                f"{len(enabled)} timer unit(s) enabled: {', '.join(sorted(enabled))}"
+            )
         if active:
             problems.append(f"{len(active)} timer(s) scheduled")
         ctx.add(
