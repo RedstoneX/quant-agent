@@ -38,13 +38,16 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 
 ## Current remaining work
 
-One privileged runtime acceptance step remains. It is operational, not an architecture or PR blocker:
+One privileged runtime acceptance step remains. It is operational, not an architecture or PR blocker.
 
-- synchronize `/home/qamc/quant-agent` to accepted `main`;
-- run the `qamc`-account half of `ops/commissioning/verify_commissioning.py --live`;
-- accept only `COMMISSIONING ACCEPTANCE: PASS`, exit `0`, with `ACCOUNT COVERAGE: complete`.
+The runtime checkout is now synchronized to accepted `main`. The first `qamc` acceptance attempt proved that Mission Control and the broker credential chain remained live, but the verifier was invoked with system Python, without the interactive shell exporting `.env`, and without the `systemd --user` bus variables that `sudo -u qamc -i` failed to populate. Those are invocation issues; the corrected command is canonical in `docs/WORK.md` and `ops/onecli/README.md` step 4e.
 
-`dev` cannot perform this step because entering the `qamc` account requires sudo/password privilege. The exact command is in `docs/WORK.md` and `ops/onecli/README.md` step 4e.
+Full commissioning acceptance is explicitly **cross-account evidence**:
+
+- the `dev` half is already green and proves the runtime credentials are unreadable off-account;
+- the `qamc` half must exit `0` with zero FAIL results and verify startup config, real runtime wiring, provider preflight, and timer state.
+
+A single-account verifier run may correctly report `ACCOUNT COVERAGE: partial`; that is not itself a failure. No single login can prove both sides of the account boundary. Acceptance is the union of the two green runs.
 
 ## ChatGPT GitHub integration role — reconstitution rule
 
