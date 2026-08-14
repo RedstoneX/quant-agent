@@ -473,6 +473,11 @@ class DecisionStage:
             )
 
         position_history = pipeline._build_position_history(positions)
+        # Publish both to ctx so RiskStage audits PM against the SAME holding
+        # ages and drawdown state PM sized from, instead of a second snapshot
+        # taken minutes later (2026-08-13 agent audit).
+        ctx.position_history = position_history
+        ctx.recent_performance = recent_performance
         weekly_narrative = pipeline._build_weekly_narrative()
         macro_trajectory = pipeline._build_macro_trajectory()
         active_state_changes = pipeline._build_active_state_changes()
@@ -523,12 +528,19 @@ class DecisionStage:
 
         if portfolio_decision and portfolio_decision.reasoning_chain:
             rc = portfolio_decision.reasoning_chain
+            # All NINE fields. This line logged seven, and the two it omitted
+            # were the two the schema lets default to "" — so the operator-
+            # facing log could not distinguish "PM red-teamed its book" from
+            # "PM skipped the step" (2026-08-13 agent audit).
             logger.info(
                 "PM Reasoning Chain:\n  Macro: %s\n  News: %s\n  Earnings: %s\n  "
-                "Conflicts: %s\n  Sizing: %s\n  Balance: %s\n  Cash: %s",
+                "Conflicts: %s\n  Sizing: %s\n  Balance: %s\n  Cash: %s\n  "
+                "Continuity: %s\n  Pre-mortem: %s",
                 rc.macro_filter[:120], rc.news_check[:120], rc.earnings_check[:120],
                 rc.signal_conflicts[:120], rc.sizing_logic[:120],
                 rc.portfolio_balance[:120], rc.cash_target[:120],
+                rc.continuity_check[:120] or "[MISSING]",
+                rc.premortem_check[:120] or "[MISSING]",
             )
 
         # Stage 1 (QAMC correlation plumbing): one id per PM call, generated
@@ -766,11 +778,85 @@ class RiskStage:
                 sum(1 for d in portfolio_decision.decisions if d.action == "BUY"),
             )
 
+        # 2026-08-13 agent audit — "premortem/observability". `premortem_check`
+        # and `continuity_check` are MANDATORY in portfolio_manager.md but
+        # default to "" in ReasoningChain, so PM skipping the two disconfirming
+        # steps produced a clean parse, a clean log line and a clean verdict.
+        # The step could vanish and nothing in the system would say so.
+        #
+        # The schema stays permissive on purpose (pre-2026-06 logs carry
+        # neither field and replay must keep parsing them — see
+        # src/models.py::ReasoningChain), so the observability lands here as an
+        # ADVISORY, the same non-blocking seam `data_degraded` and
+        # `correlation_coverage_gap` already use. No order is blocked by it;
+        # RM's prompt requires every advisory to be answered in the matching
+        # reasoning_chain field, which is what makes the omission visible.
+        rc_now = portfolio_decision.reasoning_chain
+        if rc_now is not None:
+            missing_audit_steps = [
+                name for name, value in (
+                    ("premortem_check", rc_now.premortem_check),
+                    ("continuity_check", rc_now.continuity_check),
+                )
+                if not (value or "").strip()
+            ]
+            if missing_audit_steps:
+                from src.risk.rules import RiskViolation as _RV
+                rule_violations.append(_RV(
+                    rule="pm_audit_step_missing",
+                    message=(
+                        f"PM returned no {' and no '.join(missing_audit_steps)} — "
+                        f"mandatory in its prompt, optional in the schema, so this "
+                        f"raised no parse error. The disconfirming/red-team step of "
+                        f"today's plan was NOT performed. Weigh the plan as unaudited "
+                        f"in that respect and address it in "
+                        f"`reasoning_chain.overall`."
+                    ),
+                    value=float(len(missing_audit_steps)),
+                    limit=0.0,
+                ))
+                logger.warning(
+                    "PM reasoning chain missing mandatory audit step(s): %s "
+                    "(run_id=%s) — surfaced to RM as a pm_audit_step_missing advisory",
+                    ", ".join(missing_audit_steps), run_id,
+                )
+
         # Sweep-adjusted cash: parked T-bill value counts as cash for RM,
         # consistent with the PM's view and the hard filter's credit.
         rm_cash = ctx.cash
         if isinstance(sweeper, CashSweeper):
             rm_cash = ctx.cash + sweeper.parked_value(ctx.positions)
+
+        # Holding ages + system-drawdown state for the RM audit (2026-08-13
+        # agent audit). Normally DecisionStage already published both. On the
+        # RC2 resume lane it never ran, so rebuild rather than let RM silently
+        # lose the evidence for two of the rules its prompt makes it own. Both
+        # builders are local DB reads with no LLM call and no broker call; a
+        # failure degrades to "not provided" in the prompt, never to a wrong
+        # value that reads as "no drawdown".
+        rm_position_history = ctx.position_history
+        rm_recent_performance = ctx.recent_performance
+        if not rm_position_history:
+            try:
+                rm_position_history = pipeline._build_position_history(rm_positions)
+                ctx.position_history = rm_position_history
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "RiskStage: position history rebuild failed — RM will see "
+                    "holding ages as unknown: %s", e,
+                )
+                rm_position_history = {}
+        if not rm_recent_performance:
+            try:
+                rm_recent_performance = pipeline._compute_recent_performance(last_equity)
+                ctx.recent_performance = rm_recent_performance
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "RiskStage: recent-performance rebuild failed — RM cannot "
+                    "audit the drawdown-halve rule this run: %s", e,
+                )
+                rm_recent_performance = {}
+
         verdict, rm_result = pipeline.risk_manager.review(
             portfolio_decision=portfolio_decision,
             positions=rm_positions,
@@ -783,6 +869,8 @@ class RiskStage:
             # ran blind — no equity, no cash, no weights.
             total_value=total_value,
             cash=rm_cash,
+            position_history=rm_position_history,
+            recent_performance=rm_recent_performance,
         )
 
         pipeline.db.insert_agent_log(

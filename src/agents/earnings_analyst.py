@@ -20,6 +20,38 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "earnings_analyst.md"
 
+# 2026-08-13 agent audit — "earnings reasoning quality". `build_user_message`
+# passes filing text plus symbol / form_type / filing_date. No share price, no
+# market cap, no multiple. The prompt now says so explicitly and asks for
+# `[UNSOURCED:no_market_data]` when nothing grounded can be said — but a prompt
+# rule with no detector is a rule nobody can tell was broken, and the worked
+# example that shipped for months invented "~28x forward earnings" while PM
+# sized off that field.
+#
+# These patterns match claims that REQUIRE a share price to compute, so a
+# filing alone cannot support them. Deliberately NOT included: leverage and
+# coverage ratios ("net debt 2.1x EBITDA", "3.4x interest coverage"), which
+# 10-Q/10-K text does disclose and which the agent may legitimately cite.
+_PRICE_DERIVED_CLAIM_PATTERNS = (
+    (r"\bP\s*/\s*E\b", "P/E"),
+    (r"\bPE\s+(?:ratio|multiple)\b", "PE ratio"),
+    (r"\bPEG\b", "PEG"),
+    (r"\bP\s*/\s*S\b", "P/S"),
+    (r"\bP\s*/\s*B\b", "P/B"),
+    (r"\bEV\s*/\s*(?:EBITDA|EBIT|sales|revenue)\b", "EV/x"),
+    (r"\bprice[-\s]to[-\s](?:earnings|sales|book)\b", "price-to-x"),
+    (r"\bmarket\s+cap(?:italization)?\b", "market cap"),
+    (r"\bshare\s+price\b", "share price"),
+    (r"\bstock\s+price\b", "stock price"),
+    (r"\btrading\s+at\b", "trading at"),
+    (r"\d+(?:\.\d+)?\s*x\s+(?:forward\s+|trailing\s+|fwd\s+|ntm\s+)?"
+     r"(?:earnings|sales|revenue|book|free\s+cash\s+flow|fcf)\b", "Nx earnings/sales"),
+)
+_PRICE_DERIVED_CLAIM_RE = tuple(
+    (re.compile(pattern, re.IGNORECASE), label)
+    for pattern, label in _PRICE_DERIVED_CLAIM_PATTERNS
+)
+
 
 class EarningsAnalystAgent(BaseAgent):
     @property
@@ -251,4 +283,35 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
             )
             return None
 
+        self._flag_unsourced_valuation_claims(report, analysis, source)
         return analysis
+
+    @staticmethod
+    def _flag_unsourced_valuation_claims(
+        report: EarningsReport, analysis: EarningsAnalysis, source: str
+    ) -> list[str]:
+        """Log any price-derived valuation claim in `valuation_context`.
+
+        Advisory only — it never rejects the analysis. The claim is a sentence
+        inside an otherwise sound filing read, and this is a text heuristic; a
+        false positive must not cost the whole analysis, which is the only
+        fundamentals input PM and position_reviewer get for that name.
+
+        Runs for `source="cache"` too: analyses are written to disk once and
+        re-served for the life of the filing, so an invented multiple written
+        before the prompt was corrected keeps arriving at PM until someone can
+        see it. Returns the matched labels so tests and callers can assert on
+        them.
+        """
+        text = analysis.investment_implications.reasoning_chain.valuation_context or ""
+        matched = [label for rx, label in _PRICE_DERIVED_CLAIM_RE if rx.search(text)]
+        if matched:
+            logger.warning(
+                "earnings: %s analysis for %s %s asserts price-derived valuation "
+                "(%s) in valuation_context, but the agent was given filing text "
+                "only — no price, market cap or multiple. The figure is not "
+                "grounded in its input; PM sizes off this field. Text: %r",
+                source, report.symbol, report.form_type,
+                ", ".join(matched), text[:220],
+            )
+        return matched

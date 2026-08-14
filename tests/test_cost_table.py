@@ -548,3 +548,268 @@ def test_deepseek_pinned_survives_cache_refresh(tmp_path, monkeypatch, _restore_
     )
     cost_table.refresh_pricing(force=True)
     assert cost_table.PRICING["deepseek-chat"] == {"input": 0.14, "output": 0.28}  # pin held
+
+
+# --------------------------------------------------------------------------
+# OpenRouter-routed pricing (the commissioned posture: every agent is on
+# `provider: openrouter`, so every model id is a "vendor/model" string)
+# --------------------------------------------------------------------------
+
+
+def test_openrouter_ids_are_priced_not_unknown():
+    """THE commissioning gap: `estimate_cost("openai/gpt-5.5", ...)` returned
+    None, so a deployment where every agent runs on OpenRouter logged
+    "$?.??" for every single call — i.e. no cost telemetry at all."""
+    cost = estimate_cost("openai/gpt-5.5", 1_000_000, 1_000_000)
+    assert cost is not None
+    assert abs(cost - (5.0 + 30.0)) < 1e-9
+
+
+def test_openrouter_policy_models_are_all_priced():
+    """Every model the accepted policy can route to must price offline —
+    cost reporting cannot depend on reaching a catalog mid-session."""
+    from src.cost_table import _PRICING_OPENROUTER
+    for model in _PRICING_OPENROUTER:
+        assert estimate_cost(model, 1000, 1000) is not None, model
+
+
+def test_openrouter_rates_beat_litellm_for_routed_traffic(monkeypatch, _restore_pricing):
+    """LiteLLM prices the vendor's DIRECT API. For OpenRouter-routed traffic
+    that is the wrong number, so a cache refresh must not be able to move a
+    pinned OpenRouter row."""
+    from src import cost_table
+    monkeypatch.setattr(
+        cost_table, "_fetch_litellm_dataset",
+        lambda: {"openai/gpt-5.5": {"input_cost_per_token": 99e-6,
+                                    "output_cost_per_token": 99e-6}},
+    )
+    cost_table.refresh_pricing(force=True)
+    assert cost_table.PRICING["openai/gpt-5.5"] == {"input": 5.0, "output": 30.0}
+
+
+def test_unpinned_openrouter_id_resolves_from_catalog_cache(tmp_path, monkeypatch, _restore_pricing):
+    """An operator experimenting with a model the policy hasn't adopted still
+    gets a real cost — from OpenRouter's catalog, without a network call."""
+    from src import cost_table
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    cache.write_text(_json_mod.dumps({"acme/experimental-1": {"input": 2.0, "output": 8.0}}))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+
+    def _boom():
+        raise AssertionError("cache hit must not trigger a network fetch")
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", _boom)
+
+    cost = cost_table.estimate_cost("acme/experimental-1", 1_000_000, 1_000_000)
+    assert cost == 10.0
+
+
+def test_openrouter_free_tier_rates_are_not_priced_as_zero(tmp_path, monkeypatch, _restore_pricing):
+    """OpenRouter's `:free` tiers quote 0/0. Accepting that would log a
+    confident $0.00 into daily totals; honest answer is "$?.??"."""
+    from src import cost_table
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent-litellm.json")
+    monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", lambda: None)
+
+    class _Resp:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"data": [
+                {"id": "vendor/free-model:free",
+                 "pricing": {"prompt": "0", "completion": "0"}},
+                {"id": "vendor/paid-model",
+                 "pricing": {"prompt": "0.000001", "completion": "0.000004"}},
+            ]}
+
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+
+    assert cost_table.estimate_cost("vendor/free-model:free", 1_000, 1_000) is None
+    assert cost_table.estimate_cost("vendor/paid-model", 1_000_000, 0) == 1.0
+
+
+def test_openrouter_fetch_failure_never_raises(tmp_path, monkeypatch, _restore_pricing):
+    """Pricing is telemetry. An unreachable catalog must degrade to "$?.??",
+    never take a trading session down."""
+    from src import cost_table
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent-litellm.json")
+    monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", lambda: None)
+
+    import requests
+
+    def _explode(*a, **k):
+        raise requests.ConnectionError("network down")
+    monkeypatch.setattr(requests, "get", _explode)
+
+    assert cost_table.estimate_cost("vendor/whatever", 1_000, 1_000) is None
+    assert fmt_cost(None) == "$?.??"
+
+
+def test_openrouter_stale_cache_is_refreshed_not_trusted(tmp_path, monkeypatch, _restore_pricing):
+    """A stale entry must lose to a live fetch. Serving an aged-out rate is
+    how a cost report becomes confidently wrong."""
+    import os as _os
+    import time as _time
+    from src import cost_table
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    cache.write_text(_json_mod.dumps({"acme/drifted": {"input": 1.0, "output": 1.0}}))
+    old = _time.time() - (cost_table._CACHE_MAX_AGE_SECONDS + 60)
+    _os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(
+        cost_table, "_fetch_openrouter_pricing",
+        lambda: {"acme/drifted": {"input": 3.0, "output": 9.0}},
+    )
+    assert cost_table.estimate_cost("acme/drifted", 1_000_000, 0) == 3.0
+
+
+def test_openrouter_stale_cache_is_last_resort_when_catalog_is_down(tmp_path, monkeypatch, _restore_pricing):
+    """...but a stale rate still beats no cost at all when the catalog is
+    unreachable, and it is logged as stale rather than passed off as fresh."""
+    import os as _os
+    import time as _time
+    from src import cost_table
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    cache.write_text(_json_mod.dumps({"acme/drifted": {"input": 1.0, "output": 1.0}}))
+    old = _time.time() - (cost_table._CACHE_MAX_AGE_SECONDS + 60)
+    _os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+    assert cost_table.estimate_cost("acme/drifted", 1_000_000, 0) == 1.0
+
+
+# === PR #30 blocker 3 — an OpenRouter id must never be priced by LiteLLM ===
+#
+# `_resolve_unknown_model` used to try OpenRouter for a "vendor/model" id and,
+# on a miss, FALL THROUGH to the LiteLLM path. That path probes `<id>`,
+# `openai/<id>` and `anthropic/<id>`, so a colliding row would price routed
+# traffic at the vendor's DIRECT API rate. The result is not a missing number
+# — it is a confidently wrong one, which is the failure this module rejects
+# everywhere else (see the stale-cache tests above).
+
+
+def test_openrouter_id_never_falls_through_to_a_colliding_litellm_row(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """THE blocker. OpenRouter's catalog is readable and does not list the
+    model; LiteLLM carries a row under the very same key. The cost must stay
+    unknown rather than silently become the direct-provider price."""
+    from src import cost_table
+
+    or_cache = tmp_path / "openrouter_pricing_cache.json"
+    or_cache.write_text(_json_mod.dumps({"acme/something-else": {"input": 1.0, "output": 2.0}}))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", or_cache)
+
+    # LiteLLM has an exact-key collision at a completely different rate.
+    litellm_cache = tmp_path / "pricing_cache.json"
+    litellm_cache.write_text(_json_mod.dumps({
+        "acme/routed-model": {"input_cost_per_token": 99e-6,
+                              "output_cost_per_token": 99e-6},
+    }))
+    monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
+
+    assert cost_table.estimate_cost("acme/routed-model", 1_000_000, 1_000_000) is None, (
+        "an OpenRouter id OpenRouter cannot price must render '$?.??', never "
+        "LiteLLM's direct-provider rate for a colliding key"
+    )
+    assert "acme/routed-model" not in cost_table.PRICING
+
+
+def test_openrouter_id_ignores_the_provider_prefixed_litellm_probe(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """The subtler collision: `_litellm_entry` also probes `openai/<id>`, so
+    a LiteLLM row at `openai/acme/routed-2` would have matched an id that has
+    nothing to do with OpenAI."""
+    from src import cost_table
+
+    or_cache = tmp_path / "openrouter_pricing_cache.json"
+    or_cache.write_text(_json_mod.dumps({"acme/other": {"input": 1.0, "output": 2.0}}))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", or_cache)
+
+    litellm_cache = tmp_path / "pricing_cache.json"
+    litellm_cache.write_text(_json_mod.dumps({
+        "openai/acme/routed-2": {"input_cost_per_token": 42e-6,
+                                 "output_cost_per_token": 42e-6},
+    }))
+    monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
+
+    assert cost_table.estimate_cost("acme/routed-2", 1_000_000, 1_000_000) is None
+
+
+def test_openrouter_id_miss_never_reaches_the_litellm_path_at_all(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """Not just "the answer is None" — the LiteLLM lookup must not even run.
+    A fall-through that happened to miss today would still be a live bug the
+    day LiteLLM adds a colliding row."""
+    from src import cost_table
+
+    or_cache = tmp_path / "openrouter_pricing_cache.json"
+    or_cache.write_text(_json_mod.dumps({"acme/other": {"input": 1.0, "output": 2.0}}))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", or_cache)
+
+    def _boom():
+        raise AssertionError("an OpenRouter id must not consult LiteLLM")
+    monkeypatch.setattr(cost_table, "_read_cache_dataset", _boom)
+    monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", _boom)
+
+    assert cost_table.estimate_cost("acme/absent-3", 100, 50) is None
+
+
+def test_openrouter_id_miss_is_memoised_when_the_catalog_was_read(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """A catalog we DID read and that lacks the model is a permanent answer —
+    memoise it so every subsequent call is a set lookup, matching the
+    `saw_dataset` discipline on the LiteLLM path."""
+    from src import cost_table
+
+    or_cache = tmp_path / "openrouter_pricing_cache.json"
+    or_cache.write_text(_json_mod.dumps({"acme/other": {"input": 1.0, "output": 2.0}}))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", or_cache)
+
+    assert cost_table.estimate_cost("acme/ghost-4", 100, 50) is None
+    assert "acme/ghost-4" in cost_table._UNKNOWN_MODELS
+
+    def _boom():
+        raise AssertionError("memoised miss must not re-read the catalog")
+    monkeypatch.setattr(cost_table, "_read_openrouter_cache", _boom)
+    assert cost_table.estimate_cost("acme/ghost-4", 100, 50) is None
+
+
+def test_openrouter_id_miss_is_not_memoised_when_the_catalog_is_unreachable(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """No cache and no network is a TRANSIENT failure. Memoising it would
+    strand the model at '$?.??' for the life of the process even after
+    connectivity returns."""
+    from src import cost_table
+
+    monkeypatch.setattr(
+        cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent-openrouter.json",
+    )
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+    monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent-litellm.json")
+    monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", lambda: None)
+
+    assert cost_table.estimate_cost("acme/transient-5", 100, 50) is None
+    assert "acme/transient-5" not in cost_table._UNKNOWN_MODELS
+
+
+def test_bare_vendor_ids_still_resolve_through_litellm(tmp_path, monkeypatch, _restore_pricing):
+    """The fix is scoped to ids containing '/'. A bare id — the Anthropic and
+    legacy rows — must still resolve from LiteLLM exactly as before."""
+    from src import cost_table
+
+    litellm_cache = tmp_path / "pricing_cache.json"
+    litellm_cache.write_text(_json_mod.dumps({
+        "bare-model-6": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6},
+    }))
+    monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
+    assert cost_table.estimate_cost("bare-model-6", 1_000_000, 1_000_000) == 35.0

@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-12
+Updated: 2026-08-14
 
 This file says what is accepted and authorized **now**. Git history preserves prior detail.
 
@@ -11,7 +11,7 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - The OVH account boundary remains: `ubuntu` = administration/recovery, `qamc` = runtime, `dev` = development/Claude Code.
 - VPS baseline hardening and upstream OneCLI credential-gateway deployment are complete.
 - QAMC can reach Alpaca Paper through the approved OneCLI path; `/health` reports `broker_reachable: true`, `db_reachable: true`, `paper: true`.
-- OpenRouter transport is commissioned. The current all-agent `openai/gpt-5.5` mapping is the commissioning **baseline**, not the final cost-optimized model policy.
+- OpenRouter transport is commissioned. The all-agent `openai/gpt-5.5` mapping was the commissioning **baseline**; the cost-optimized replacement is proposed in `docs/architecture/MODEL_ROUTING_POLICY.md` and awaits external review.
 - Alpaca Paper-only is enforced in code.
 - PR #27 is externally reviewed and merged into `main` as `63cca1a1445757b63376d9816cccf48d4d1b0c58`.
 - Trading timers remain disabled during engineering/verification so scheduled paper-trading runs cannot start prematurely.
@@ -24,17 +24,35 @@ Do **not** send routine GitHub work to the operator, Claude, Codex/Work mode, or
 
 Claude does not merge its own work. The operator should not be asked to perform routine GitHub housekeeping that ChatGPT can perform through the connector.
 
-## Authorized now
+## At the external gate
 
-Claude is authorized to complete the sequence in `docs/WORK.md` autonomously:
+Both open tranches are reconciled onto current `main` and pushed on
+`claude/qamc-routing-and-agent-audit-reconcile`. They await ChatGPT external review; Claude does not merge them.
 
-1. close the final runtime-account commissioning checks after the merged tooling reaches `/home/qamc/quant-agent`;
-2. research and implement a **cost-optimized, multi-model OpenRouter policy** for QAMC;
-3. validate quality, cost, safety and full regression evidence before returning for external review.
+**1. Cost-optimized model routing** (previously stranded on `claude/cost-optimized-model-routing-h4k2vn`, five commits behind `main`, now merged in whole — only `docs/WORK.md` conflicted and `main`'s newer timer-activation position was preserved):
 
-The intended direction is explicit and auditable model selection: inexpensive capable models (including current Qwen/DeepSeek candidates where evidence supports them) for routine specialist work, stronger models only where their additional reasoning quality justifies the cost. Per-agent mapping and bounded complexity/escalation rules are authorized when measurable and reviewable. Silent or opaque model switching is not.
+1. Per-seat model policy through the existing `config/settings.yaml` seam — no routing infrastructure added. Eight seats on `google/gemini-2.5-flash-lite`; `risk_manager` on `qwen/qwen3-235b-a22b-2507`, held apart from the Portfolio Manager for decision-chain independence at measured-equal quality. Evidence and limitations: `docs/architecture/MODEL_ROUTING_POLICY.md`.
+2. Working cost telemetry. Under the baseline, `estimate_cost` could not price an OpenRouter `vendor/model` id at all, so every call persisted `cost_usd = NULL` and every session rendered `$?.??`.
+3. Projected LLM spend of **$72.10 → $1.14 per month** (98.4%) at measured-equal quality on 148 graded trials plus a 30-trial RM re-run.
 
-Claude may research current OpenRouter model availability/pricing, benchmark candidates, implement within the existing provider/model seam, test, debug and make routine engineering choices without operator involvement.
+**2. The deferred agent-audit findings.** The 2026-08-13 adversarial audit landed its text-only findings in `57f5b2d` and held five back for external architectural review. All five are resolved — three as fixes (the AI Risk Manager's missing drawdown/position-age evidence; PM/RM independence, as an information change only; premortem observability) and two as recorded decisions to retain (earnings valuation data stays out of a cached filing read; the veto hierarchy and every sizing threshold are unchanged). Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
+
+No deterministic risk or execution semantics changed in either tranche.
+
+One item is **not** closed and is the operator's:
+
+- The `qamc`-account half of commissioning acceptance still needs running; `dev` cannot `sudo`.
+
+**Cleared since the routing branch was written:** OpenRouter credit. That branch recorded $10 granted / $7.96 used / $2.04 left against a baseline model reserving $3.84 per call at `max_tokens: 128000` — as commissioned, no agent call could have started (non-retryable 402). `/api/v1/credits` now reports **$25 granted, $8.02 used, $16.98 remaining**. The blocker is gone on both policies; the routing policy's economics argument is unchanged.
+
+## Not authorized without a new contract
+
+- Enabling trading timers.
+- Merging this branch.
+- Any second provider or fallback model (deliberately not added — see the policy doc).
+- Promoting `qwen/qwen3-235b-a22b-2507` to any seat other than `risk_manager`. It is measured only there; `tests/test_model_routing_policy.py` blocks an unmeasured decision-seat promotion, and the specialist seats have no such guard beyond review.
+
+**Resolved, was previously listed here:** splitting PM and the AI Risk Manager onto different models. It was reserved to the reviewer on the premise that it traded measured quality for independence. PR #30's review established that premise was false — the "every alternative scored worse at the RM seat" claim had read a whole-sweep aggregate as a per-seat result — and supplied the decision rule. The re-measurement found a four-way quality tie, so the trade did not exist and the split was taken. Reversing it is one line in `config/settings.yaml` plus one in `verify_commissioning.py::EXPECTED_ROUTING`.
 
 ## Timer activation rule
 

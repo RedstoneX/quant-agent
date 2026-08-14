@@ -1,14 +1,19 @@
 """Regression guards for the safe prompt-cleanup tranche of the
 2026-08-13 adversarial agent/prompt audit.
 
-Scope note: the audit surfaced more than this branch implements. Findings
-that alter behaviour or data flow — PM/RM independence (F5), the AI Risk
-Manager's missing drawdown / position-age evidence (F6), routing valuation
-metrics to earnings_analyst (F7b), the inherited long bias (F8), and
-enforcing `premortem_check` (F4) — are deliberately NOT implemented here
-and are held for external architectural review. This file guards only the
-text-level corrections, all of which leave deterministic thresholds,
-schemas, role boundaries and fail-closed semantics untouched.
+Scope note: the audit surfaced more than this file's branch implemented.
+This file guards only the text-level corrections, all of which leave
+deterministic thresholds, schemas, role boundaries and fail-closed
+semantics untouched.
+
+The five findings held back here for external architectural review —
+PM/RM independence (F5), the AI Risk Manager's missing drawdown /
+position-age evidence (F6), routing valuation metrics to earnings_analyst
+(F7b), the inherited long bias (F8) and enforcing `premortem_check` (F4)
+— were taken up in the following tranche and are pinned by
+`tests/test_agent_audit_2026_08_14.py`. Two of the five were resolved as
+"retain, and record why": F7b (price data stays out of a cached filing
+read) and the veto hierarchy under F5.
 
 Each test pins one finding so a future prompt edit — human, or the
 meta_reflector's auto-evolve path — cannot silently reintroduce it.

@@ -1,0 +1,141 @@
+{
+  "generated_at": "2026-08-12T21:57:32Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "midday_exit": {
+      "role": "position_reviewer",
+      "description": "One broken thesis pinned to its stop, one working winner. Grades the exit path in both directions."
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4-pro-0813": {
+      "input": 0.435,
+      "output": 0.87
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4-pro-0813",
+      "scenario": "midday_exit",
+      "role": "position_reviewer",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PositionReview validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "acts_on_broken_thesis",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "AMD action=SELL (stop 0.25xATR away, -12% thesis progress in 21d)"
+        },
+        {
+          "name": "does_not_cut_the_winner",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "NVDA action=TRAIL_STOP (1.8x pace, 11% above stop)"
+        }
+      ],
+      "input_tokens": 5023,
+      "output_tokens": 10581,
+      "cost_usd": 0.011390474999999999,
+      "latency_s": 184.68,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_continuity_check\": \"Regime is risk_off with bearish outlook, VIX 27.4, HY OAS 412bps, target_invested 55%. The book is ~81% invested and concentrated in two semiconductor names, which is too aggressive for this regime and supports reducing the weakest position.\",\n    \"thesis_progress_check\": \"AMD: thesis_progress -12%, pace 0.00\u00d7, 21 days held, only 0.4% from stop \u2014 thesis is stalled/negative. NVDA: progress 62%, pace 1.80\u00d7, to_target 9.4%, 34 days held \u2014 ahead of schedule and trending.\",\n    \"thesis_integrity_check\": \"No session news, earnings, or tech trail changes available. Entry theses are unavailable, so I will not invent a `thesis_invalid_if` condition. The identifiable hard trigger is `correlation cluster breach`: AMD + NVDA are both semiconductor/tech and represent 81.1% of book in risk_off. AMD is the weakest by thesis_progress.\",\n    \"winners_discipline_check\": \"NVDA is a mature winner (+15.4%, 34 days) with pace 1.80\u00d7 and no parabolic signal; don't trim the winner, but raising the hard stop to lock in gains is appropriate. AMD is a stalled loser, not protected by the fresh-winner rule.\",\n    \"session_disposition_check\": \"Midday session with patient disposition. The correlation cluster breach is structural and won't be resolved by waiting; reducing it now is defensible. AMD is near its broker stop, but proximity to stop is not the trigger \u2014 the cluster breach is.\",\n    \"execution_rationale\": \"SELL AMD full on correlation cluster ",
+      "actual_model": "deepseek/deepseek-v4-pro-0813",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro-0813",
+      "scenario": "midday_exit",
+      "role": "position_reviewer",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PositionReview validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "acts_on_broken_thesis",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "AMD action=SELL (stop 0.25xATR away, -12% thesis progress in 21d)"
+        },
+        {
+          "name": "does_not_cut_the_winner",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "NVDA action=TRAIL_STOP (1.8x pace, 11% above stop)"
+        }
+      ],
+      "input_tokens": 5023,
+      "output_tokens": 8705,
+      "cost_usd": 0.009758355,
+      "latency_s": 136.56,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_continuity_check\": \"Regime is risk_off/bearish with target invested 55%. VIX 27.4 and HY OAS 412bps confirm risk aversion. The book is currently 81% invested in two semiconductor names, so the macro backdrop no longer supports the existing concentrated long exposure. This is a portfolio-level continuity break, not stock-specific panic.\",\n    \"thesis_progress_check\": \"AMD: thesis_progress -12%, pace 0.00\u00d7 after 21 days, to_target 24.6%, to_stop 0.4% (0.25 ATR) \u2014 stalled/broken setup and the weakest name in the book. NVDA: progress 62%, pace 1.80\u00d7, to_target 9.4%, to_stop 11.2% (5.3 ATR) \u2014 healthy and ahead of schedule.\",\n    \"thesis_integrity_check\": \"Entry theses unavailable for both, so integrity is judged from metrics and portfolio structure. AMD has negative progress and is pinned to its stop in a risk-off tape; there is no realistic way to call that thesis intact. NVDA metrics remain intact with no named thesis_invalid_if, no HIGH-conviction bearish state_change, and no bearish earnings. The integrity issue is concentrated semiconductor cluster risk.\",\n    \"winners_discipline_check\": \"NVDA is +15.4% and technically carries drift/concentration characteristics, but it is not parabolic. It is a mature winner at 34 days held and pace 1.80\u00d7, not a fresh/fast winner protected by the no-tightening rule. A protective trail is appropriate; a panic sell is not. AMD is not a winner \u2014 it is a broken loser sitting on its stop.\",\n    \"session_disposi",
+      "actual_model": "deepseek/deepseek-v4-pro-0813",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4-pro-0813|midday_exit": {
+        "model": "deepseek/deepseek-v4-pro-0813",
+        "scenario": "midday_exit",
+        "role": "position_reviewer",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.010574,
+        "latency_mean": 160.62,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4-pro-0813": {
+        "scenarios": {
+          "midday_exit": {
+            "model": "deepseek/deepseek-v4-pro-0813",
+            "scenario": "midday_exit",
+            "role": "position_reviewer",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.010574,
+            "latency_mean": 160.62,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_total": 0.010574,
+        "quality_per_dollar": 94.57
+      }
+    }
+  }
+}

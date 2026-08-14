@@ -45,6 +45,15 @@ class RiskManagerAgent(BaseAgent):
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses", []) or []
         total_value: float | None = kwargs.get("total_value")
         cash: float | None = kwargs.get("cash")
+        # 2026-08-13 agent audit — "risk evidence completeness". RM's prompt
+        # claims it enforces PM's holding-discipline and drawdown-halve rules,
+        # but neither input reached it: Position carries no entry date, and
+        # `in_drawdown` lived only in PM's facts block. Both are optional so
+        # every existing call site keeps working; absent, the sections render
+        # as "not provided" rather than silently reading as "no drawdown" /
+        # "no position is young".
+        position_history: dict = kwargs.get("position_history") or {}
+        recent_performance: dict = kwargs.get("recent_performance") or {}
 
         # audit round 2 #6: allocation_pct has TWO meanings — %-of-portfolio
         # for BUY vs %-of-current-position for SELL (100 = full close,
@@ -90,7 +99,40 @@ class RiskManagerAgent(BaseAgent):
                 f"overstate true %-of-equity): ${approx_book:,.0f}\n"
             )
         else:
-            account_section = ""
+            # No equity and no positions — the drawdown line below still needs
+            # a header to hang off, so open the section anyway.
+            account_section = "## Account\n"
+
+        # System-drawdown state. PM's sizing formula multiplies every new BUY
+        # by 0.5 when `in_drawdown` is true; without this block RM had no way
+        # to tell whether that halving happened, so a PM that skipped it was
+        # unauditable. Rendered inside the Account section because it is a
+        # property of the account, not of any one name.
+        if recent_performance:
+            r5 = recent_performance.get("rolling_5d_pct")
+            r20 = recent_performance.get("rolling_20d_pct")
+            in_dd = bool(recent_performance.get("in_drawdown"))
+            trailing = recent_performance.get("trailing_days")
+            sample_bit = (
+                f", {trailing} trailing sessions" if trailing is not None else ""
+            )
+            account_section += (
+                f"- System performance: 5d {_fmt_or_na(r5, '%')} | "
+                f"20d {_fmt_or_na(r20, '%')} | "
+                f"in_drawdown={str(in_dd).lower()}{sample_bit}\n"
+            )
+            if in_dd:
+                account_section += (
+                    "  ⚠️ in_drawdown=true — PM's sizing rule REQUIRES every new "
+                    "BUY halved (×0.5) and the halving named in `sizing_logic`. "
+                    "Verify it against the proposed sizes; this rule has no "
+                    "deterministic enforcement, so you are the only check.\n"
+                )
+        else:
+            account_section += (
+                "- System performance: not provided "
+                "(cannot audit the drawdown-halve rule this run)\n"
+            )
 
         def _fmt_position(p: Position) -> str:
             weight_bit = ""
@@ -99,10 +141,23 @@ class RiskManagerAgent(BaseAgent):
                     f" | Value: ${p.market_value:,.0f} "
                     f"({p.market_value / denom * 100:.1f}% of book)"
                 )
+            # days_held drives PM's tiered holding discipline (<5d protection
+            # period, 5-15d maturity, >15d). RM has to see the tier to tell a
+            # disciplined exit from a day-3 panic sell.
+            hist = position_history.get(p.symbol) or {}
+            days = hist.get("days_held")
+            if days is None:
+                age_bit = " | held: unknown"
+            elif days < 5:
+                age_bit = f" | held: {days}d (<5d PROTECTED — SELL needs a named trigger)"
+            elif days <= 15:
+                age_bit = f" | held: {days}d (5-15d maturity)"
+            else:
+                age_bit = f" | held: {days}d (>15d)"
             return (
                 f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | "
                 f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f}"
-                f"{weight_bit} | Sector: {p.sector}"
+                f"{weight_bit}{age_bit} | Sector: {p.sector}"
             )
 
         positions_text = "\n".join(
@@ -123,20 +178,62 @@ class RiskManagerAgent(BaseAgent):
         else:
             fed_funds = fed_funds_obj.get("current")
 
-        # PM reasoning chain (if available)
+        # PM reasoning chain (if available).
+        #
+        # 2026-08-13 agent audit — two findings land here.
+        #
+        # "risk evidence completeness": risk_manager.md tells RM it reads a
+        # NINE-field chain and names `continuity_check` / `premortem_check`
+        # explicitly. This renderer emitted seven. The two it dropped are the
+        # two the schema defaults to "" (ReasoningChain, src/models.py), i.e.
+        # exactly the two that can go missing without any parse error — so the
+        # only reviewer positioned to notice was the one not being shown them.
+        #
+        # "premortem/observability": an absent field is rendered as an explicit
+        # [MISSING] line rather than omitted. A silently absent section reads
+        # to RM as "PM had nothing to say"; a [MISSING] marker reads as "the
+        # mandatory step did not happen", which is a finding RM can act on.
         rc = portfolio_decision.reasoning_chain
         if rc:
-            reasoning_section = f"""## PM Reasoning Chain (audit this for logic errors)
-- Macro filter: {rc.macro_filter}
-- News check: {rc.news_check}
-- Earnings check: {rc.earnings_check}
-- Signal conflicts: {rc.signal_conflicts}
-- Sizing logic: {rc.sizing_logic}
-- Portfolio balance: {rc.portfolio_balance}
-- Cash target: {rc.cash_target}
-"""
+            def _field(label: str, value: str, *, mandatory_prompt_only: bool = False) -> str:
+                text = (value or "").strip()
+                if text:
+                    return f"- {label}: {text}"
+                if mandatory_prompt_only:
+                    return (
+                        f"- {label}: [MISSING — this field is MANDATORY in PM's "
+                        f"prompt but optional in the schema, so PM returning it "
+                        f"empty raises no parse error. Treat the audit step as "
+                        f"NOT PERFORMED and say so in `reasoning_chain.overall`.]"
+                    )
+                return f"- {label}: [EMPTY]"
+
+            reasoning_section = "\n".join([
+                "## PM Reasoning Chain — PM's CLAIMS about its own plan, not evidence",
+                "",
+                "Audit these against the blocks above. Where a claim cites a number,",
+                "check it against the Account / Positions / Tech / Macro data you were",
+                "given; where you cannot check it, say so rather than accepting it.",
+                "",
+                _field("Macro filter", rc.macro_filter),
+                _field("News check", rc.news_check),
+                _field("Earnings check", rc.earnings_check),
+                _field("Signal conflicts", rc.signal_conflicts),
+                _field("Sizing logic", rc.sizing_logic),
+                _field("Portfolio balance", rc.portfolio_balance),
+                _field("Cash target", rc.cash_target),
+                _field("Continuity check", rc.continuity_check,
+                       mandatory_prompt_only=True),
+                _field("Pre-mortem check", rc.premortem_check,
+                       mandatory_prompt_only=True),
+                "",
+            ])
         else:
-            reasoning_section = ""
+            reasoning_section = (
+                "## PM Reasoning Chain\n"
+                "(not provided — PM emitted no audit trail at all. Its plan is "
+                "unaudited by construction; weigh that in your verdict.)\n"
+            )
 
         # Tech Analyst Signals — lets RM audit PM's fidelity AND enforce R/R discipline.
         if tech_analyses:
@@ -208,12 +305,25 @@ Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
         else:
             earnings_section = ""
 
-        return f"""{reasoning_section}## Proposed Trades
+        # 2026-08-13 agent audit — "PM/Risk independence". PM's reasoning chain
+        # used to be the FIRST thing in this message, so RM read PM's case for
+        # the plan before it saw a single primary number and then graded the
+        # story rather than the book. The blocks are now ordered
+        #
+        #   what PM proposes -> the account/market facts -> PM's claims about
+        #   them -> the deterministic engine's findings -> verdict
+        #
+        # so RM forms its own read from primary data first, and the last input
+        # before the verdict is the one input PM did not author. Nothing was
+        # added to or removed from what RM may DO about a disagreement — no
+        # threshold moved; only the order in which it learns things.
+        return f"""## Proposed Trades
 {decisions_text}
 
 Portfolio View: {portfolio_decision.portfolio_view}
 
-{account_section}## Current Positions
+{account_section}
+## Current Positions
 {positions_text}
 
 {tech_section}
@@ -226,6 +336,7 @@ Portfolio View: {portfolio_decision.portfolio_view}
 - 2Y-10Y Spread: {_fmt_or_na(treasury.get('spread_2_10'), '%')} (inverted: {_fmt_or_na(treasury.get('inverted'))})
 - Fed Funds Rate: {_fmt_or_na(fed_funds, '%')}
 
+{reasoning_section}
 ## Hard Risk Rule Check Results
 {violations_text}
 
@@ -237,10 +348,17 @@ Review these proposed trades and provide your verdict as JSON."""
                news_intel: NewsIntelligenceReport | None = None,
                earnings_analyses: list[dict] | None = None,
                total_value: float | None = None,
-               cash: float | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
+               cash: float | None = None,
+               position_history: dict | None = None,
+               recent_performance: dict | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
+        # 2026-08-13 audit: position_history / recent_performance are optional
+        # for the same reason — they carry the `days_held` and `in_drawdown`
+        # evidence RM needs to audit PM's holding-discipline and drawdown-halve
+        # rules, and their absence is rendered explicitly rather than assumed
+        # benign.
         result = self.run(
             portfolio_decision=portfolio_decision,
             positions=positions,
@@ -251,6 +369,8 @@ Review these proposed trades and provide your verdict as JSON."""
             earnings_analyses=earnings_analyses or [],
             total_value=total_value,
             cash=cash,
+            position_history=position_history or {},
+            recent_performance=recent_performance or {},
         )
         parsed = result.parse_json()
         if parsed is None:

@@ -92,20 +92,18 @@ def test_injection_skips_when_a_leg_is_unevaluable():
     assert vc.classify_injection(401, None)[0] == vc.SKIP
 
 
-# --- check_agent_routing: all 9 agents pinned to the accepted pair --------
+# --- check_agent_routing: every seat on the model the policy gives it -----
 
 def _roster(**overrides):
-    names = [
-        "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
-        "portfolio_manager", "risk_manager", "position_reviewer",
-        "evening_analyst", "meta_reflector",
-    ]
+    """A roster that matches EXPECTED_ROUTING exactly — built FROM the policy
+    map so these tests keep testing the check rather than a frozen copy of
+    whichever models the policy happened to name when they were written."""
     out = []
-    for name in names:
+    for name, model in vc.EXPECTED_ROUTING.items():
         entry = {
             "agent_name": name,
             "configured_provider": vc.EXPECTED_PROVIDER,
-            "configured_model": vc.EXPECTED_MODEL,
+            "configured_model": model,
         }
         entry.update(overrides.get(name, {}))
         out.append(entry)
@@ -116,6 +114,31 @@ def test_routing_passes_when_all_nine_agents_match():
     status, detail = vc.check_agent_routing(_roster())
     assert status == vc.PASS
     assert "all 9 agents" in detail
+
+
+def test_routing_fails_when_a_seat_runs_another_seats_model():
+    """The per-seat check's reason for existing: under a multi-model policy,
+    "provider is openrouter and the model is one we use" is true of a
+    mis-wired seat too. Swapping a specialist's cheap model onto the risk
+    manager must fail."""
+    specialists = [
+        m for a, m in vc.EXPECTED_ROUTING.items()
+        if m != vc.EXPECTED_ROUTING["risk_manager"]
+    ]
+    if not specialists:  # a single-model policy has nothing to swap
+        pytest.skip("policy currently routes every seat to one model")
+    status, detail = vc.check_agent_routing(
+        _roster(risk_manager={"configured_model": specialists[0]})
+    )
+    assert status == vc.FAIL
+    assert "risk_manager" in detail
+
+
+def test_routing_fails_when_a_seat_is_missing_from_the_roster():
+    roster = [e for e in _roster() if e["agent_name"] != "meta_reflector"]
+    status, detail = vc.check_agent_routing(roster)
+    assert status == vc.FAIL
+    assert "meta_reflector" in detail
 
 
 def test_routing_fails_on_a_single_drifted_model():

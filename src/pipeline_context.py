@@ -60,6 +60,17 @@ class RunContext:
     data_status: dict[str, str] = field(default_factory=dict)
 
     # === Populated by the decision stage ===
+    # Memory layers built for PM that the RiskStage also needs. Before the
+    # 2026-08-13 agent audit these were DecisionStage locals, so the AI Risk
+    # Manager was told (in its prompt) to enforce PM's holding-discipline and
+    # drawdown-halve rules while receiving neither `days_held` nor
+    # `in_drawdown`. RiskStage rebuilds them when they are absent, which is
+    # the RC2 resume lane — there DecisionStage never runs at all.
+    #   position_history:   {symbol: {entry_date, days_held, ...}}
+    #   recent_performance: {rolling_5d_pct, rolling_20d_pct, in_drawdown, trailing_days}
+    position_history: dict = field(default_factory=dict)
+    recent_performance: dict = field(default_factory=dict)
+
     portfolio_decision: "PortfolioDecision | None" = None
     correlation_matrix: dict = field(default_factory=dict)
     daily_pnl: float = 0.0

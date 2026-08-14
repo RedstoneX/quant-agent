@@ -4,6 +4,8 @@ Status: **Stages 0.5 / 1 accepted — 2026-08-09**.
 
 QAMC supports per-agent model/provider experimentation without changing trading logic or silently corrupting experimental attribution.
 
+The per-agent models this seam currently carries, and the benchmark evidence behind them, live in `MODEL_ROUTING_POLICY.md`. That policy is expressed entirely through the seam described here; it added no routing machinery.
+
 - Model/provider configuration is backend-owned.
 - Provider resolution remains centralized below the agent layer.
 - OpenRouter support uses the existing provider seam.
