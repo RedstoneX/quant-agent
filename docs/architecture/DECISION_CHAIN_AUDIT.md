@@ -1,6 +1,6 @@
 # Decision-Chain Agent Audit — Findings and Decisions
 
-Status: **proposed by the agent-audit tranche — pending external review**.
+Status: **accepted — externally reviewed and merged via PR #30 on 2026-08-14**.
 
 Covers the five findings the 2026-08-13 adversarial audit of the nine agent
 prompts deferred as "behaviour or data flow, hold for external architectural

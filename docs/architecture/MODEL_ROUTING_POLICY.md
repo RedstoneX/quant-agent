@@ -1,6 +1,6 @@
 # Model Routing Policy — Accepted Contract
 
-Status: **proposed by the cost-optimized routing tranche — pending external review**.
+Status: **accepted — externally reviewed and merged via PR #30 on 2026-08-14**.
 
 Supersedes the commissioning baseline recorded in `docs/STATE.md` ("every
 agent on `openai/gpt-5.5`"), which was a deliberate single-variable posture
