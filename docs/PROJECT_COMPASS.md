@@ -11,80 +11,60 @@
 
 Specialist AI agents examine the market from different angles, a Portfolio Manager combines their evidence, an AI Risk Manager challenges the plan, and deterministic Python safety rules decide what is actually allowed to execute.
 
-The experiment is trying to answer one question:
+The experiment is trying to answer:
 
 > **Does inexpensive modern AI add measurable out-of-sample trading value beyond ordinary deterministic signals?**
 
 For now it trades **fake money only through Alpaca Paper Trading**.
 
-### 🧠 How the intelligence works
+### 🧠 Intelligence + safety
 
 - Specialist agents handle technical, news, macro, earnings and other focused analysis.
 - The Portfolio Manager synthesizes their evidence into a proposed plan.
 - The AI Risk Manager independently reviews that proposal.
 - Deterministic Python risk/execution remains the final safety authority.
-- The system records which model answered, its evidence, costs, decisions and eventual outcome so the process can be inspected rather than trusted blindly.
+- QAMC records model/provider, evidence, costs, decisions and outcomes so the process can be inspected rather than trusted blindly.
+- Live-money trading is **not authorized**.
 
 ### 📊 Mission Control
 
-The browser/iPad cockpit provides a read-only operating view of:
+The browser/iPad cockpit is already at the minimum useful level for paper soak. It provides read-only visibility into account state, positions/orders/trades, agent evidence, PM/RM decisions, model usage, journal/forensics and system/broker health.
 
-- account value, cash, positions, orders and trades;
-- specialist-agent evidence and disagreement;
-- Portfolio Manager and Risk Manager decisions;
-- model/provider usage and cost;
-- journal, search and decision forensics;
-- system and broker health.
-
-Mission Control is **not** allowed to become a second trading authority.
-
-### 📔 Reflection and learning
-
-QAMC records the trading story so prior decisions can be reconstructed and evaluated. Reflection may later suggest prompt/strategy improvements, but AI is not allowed to rewrite deterministic safety rules on its own.
-
-### 🛡️ Safety
-
-The AI gets to **think**; it does not get unrestricted trading authority.
-
-Deterministic controls remain responsible for position size, cash, exposure, loss limits, stops and order eligibility. Failure should **fail closed rather than trade anyway**.
-
-**Live-money trading is not authorized.**
+It does not need to be visually finished before paper trading starts.
 
 ---
 
 ## 🚦 RIGHT NOW
 
-### ✅ VPS + security + credential commissioning complete
+### 🟨 Final gate: one corrected runtime verifier rerun
 
-QAMC is deployed on the OVH Ubuntu VPS with separated accounts:
+The major engineering work is complete:
 
-- `ubuntu` = privileged administration/recovery
-- `qamc` = isolated runtime
-- `dev` = development / Claude Code
+- stages 0–5 accepted and deployed;
+- OVH runtime/security/account isolation complete;
+- OneCLI credential delivery complete;
+- Alpaca Paper, market data and FRED connectivity verified;
+- Mission Control private/read-only and deployed;
+- cost-optimized model routing accepted;
+- decision-chain/agent audit accepted;
+- all seven trading timers directly confirmed **disabled**.
 
-Mission Control is private and read-only. VPS baseline hardening is complete. Upstream OneCLI is running privately and holds the real OpenRouter, Alpaca and FRED credentials; QAMC itself uses placeholders rather than storing the real values in project files.
+The latest runtime verifier was **36 PASS / 1 FAIL / 1 SKIP**. The only failure was a verifier bug: systemd printed `disabled enabled` (STATE=disabled, PRESET=enabled), and the old parser searched the whole line for `enabled`.
 
-The deployed runtime can reach **Alpaca Paper** through the approved credential path. `/health` reports `broker_reachable: true`, `db_reachable: true`, and `paper: true`.
+PR #33 fixed that bug and is merged to `main` as `aa52f5f9fd5912914a1640f74bdab84d1e30cd51`.
 
-PR #27 — the OneCLI/runtime commissioning tranche — was independently reviewed and merged into `main` on 2026-08-12.
+**What remains before trading:** pull current `main` into the `qamc` runtime and rerun the live commissioning verifier. If it exits 0 with zero FAIL results, commissioning is complete by combining that runtime evidence with the already-green `dev` isolation evidence.
 
-### 🧠 Active work: cost-optimized AI routing
+### ▶️ Paper-trading priority is now explicit
 
-The temporary commissioning baseline routed all nine agents through OpenRouter to `openai/gpt-5.5`.
+The operator has authorized the Alpaca Paper soak once commissioning passes.
 
-That is **not the intended final paper-trading model policy**.
+That means:
 
-Claude is now authorized to benchmark current low-cost/high-capability models — including Qwen and DeepSeek candidates — and build an explicit, auditable routing policy that uses inexpensive models for routine work and stronger models only where their added reasoning quality justifies the cost.
-
-The goal is **decision quality per dollar**, not simply the cheapest tokens.
-
-### ⏱️ Trading timers
-
-The trading timers are simply the **automatic schedule that starts QAMC’s Alpaca Paper sessions**.
-
-They stay **OFF while engineering and external review are incomplete**. There is no separate timer design or decision matrix to solve.
-
-Once the final tranche passes ChatGPT technical review and the operator authorizes the paper-soak start, turning the timers on is a **routine deployment step**.
+- **do not wait for more agent/intelligence work;**
+- **do not wait for more model benchmarking;**
+- **do not wait for dashboard polish;**
+- start collecting real paper-trading evidence first, then improve the system from what it actually does.
 
 ---
 
@@ -93,16 +73,17 @@ Once the final tranche passes ChatGPT technical review and the operator authoriz
 | Status | Stage / milestone | Result |
 |---|---|---|
 | ✅ DONE | 0–2 | Trading-engine audit, provider/model plumbing, isolated read-only Mission Control API. |
-| ✅ DONE | Discovery/Reconciliation R1 | Architecture/data direction independently challenged and accepted. |
 | ✅ DONE | 3 | Browser/iPad Trading Cockpit. |
 | ✅ DONE | 4–5 | Specialist evidence, decision chain, journal and forensic search. |
 | ✅ DONE | VPS deployment / hardening | Runtime deployed and separated from development. |
-| ✅ DONE | OneCLI commissioning | Credential gateway integrated; Alpaca Paper connectivity verified; PR #27 merged. |
-| 🟨 ACTIVE | Cost-optimized model routing | Benchmark and implement auditable Qwen/DeepSeek/strong-model routing through OpenRouter. |
-| ⬜ NEXT GATE | Technical readiness review | ChatGPT independently reviews routing, commissioning and safety evidence. |
-| ⬜ FINAL ACTIVATION | Start scheduled paper trading | After acceptance, enable the existing timers as a routine deployment action. |
-| ⬜ AFTER MVP ACCEPTANCE | Mission Control visualization / UX polish | Richer charts and presentation without changing safety architecture. |
-| ⬜ LATER | Learning/write controls + paper-soak analytics | Separate future authorization. |
+| ✅ DONE | OneCLI commissioning | Private credential gateway; Alpaca Paper/OpenRouter/FRED path verified. |
+| ✅ DONE | Model routing | 8 seats on Gemini 2.5 Flash Lite; Risk Manager on Qwen3 235B via OpenRouter. |
+| ✅ DONE | Decision-chain audit | PM/RM evidence flow, auditability and inherited priors reviewed without changing deterministic safety semantics. |
+| ✅ DONE | Timer-parser defect | PR #33 merged; false commissioning FAIL corrected. |
+| 🟨 NOW | Final runtime acceptance rerun | One corrected `qamc` verifier run against current `main`. |
+| ⬜ NEXT | Start scheduled Alpaca Paper soak | Already operator-authorized once the runtime gate is green. |
+| ⬜ AFTER START | Observe and evaluate | Watch positions, reasoning, vetoes, fills, costs, missed opportunities and operator usability. |
+| ⬜ ITERATE | Intelligence/code/dashboard improvements | Driven by soak evidence rather than pre-soak speculation. |
 
 ## 🖥️ DEPLOYMENT
 
@@ -115,16 +96,14 @@ Once the final tranche passes ChatGPT technical review and the operator authoriz
 
 ## ⏭️ NEXT MOVES
 
-1. Claude finishes the current cost-optimized model-routing work and verification.
-2. Claude pushes the completed branch and stops at the external gate.
-3. ChatGPT independently reviews the evidence and integrates accepted work.
-4. After acceptance and operator authorization, enable scheduled **paper trading** as a routine deployment step.
-5. Proceed to Mission Control visualization/UX polish and paper-soak evaluation.
+1. Run the corrected commissioning verifier once on the real `qamc` runtime.
+2. If zero FAIL / exit 0, accept commissioning and begin the already-authorized Alpaca Paper soak.
+3. Use the first real paper sessions to decide what agent, reasoning, code and dashboard work deserves attention next.
 
 ## 🚧 CURRENT BLOCKERS / DECISIONS
 
-No operator blocker is currently active while Claude works on model routing.
+**No architecture, model-routing, agent-intelligence or dashboard blocker remains.**
 
-No separate timer decision is pending; timer activation follows successful final review and paper-soak authorization.
+The only current gate is the corrected runtime acceptance rerun. Paper-soak authorization is already recorded and does not need to be asked again after a green result.
 
-_Last refreshed: 2026-08-12 15:45 EDT (America/Toronto) — active project view only; retired/superseded detail lives in Git history._
+_Last refreshed: 2026-08-14 EDT (America/Toronto) — active project view only; retired/superseded detail lives in Git history._
