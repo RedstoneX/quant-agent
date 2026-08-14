@@ -115,10 +115,12 @@ than the baseline and 5-10x faster per call than the other perfect scorer,
 which matters because sessions are wall-clock bounded.
 
 **The tranche was authorized to reserve stronger models for seats that
-demonstrably benefit. On quality, no seat did** — no candidate outscored the
-selected model anywhere. `risk_manager` diverges for a different reason
-entirely, and only after quality had already tied: it is the gate over PM,
-and the tie was spent on not sharing PM's blind spots.
+demonstrably benefit. On measured quality, no measured seat did** — no
+candidate outscored the selected model on a measured seat. Three seats are
+assigned by analogy rather than direct measurement and remain an explicit
+known limitation. `risk_manager` diverges for a different reason entirely,
+and only after quality had already tied: it is the gate over PM, and the tie
+was spent on not sharing PM's blind spots.
 
 It also fixed cost telemetry, which did not previously work: `estimate_cost`
 could not price an OpenRouter `vendor/model` id — LiteLLM keys models by bare
@@ -168,7 +170,7 @@ No threshold moved, no gate was added or removed, no schema became stricter,
 and every failure path added degrades to "evidence unavailable" rather than
 to a benign-looking value.
 
-## Operator item — one, and it is no longer blocking
+## Operator item — post-merge deployment acceptance, not a PR blocker
 
 ### Run the `qamc`-account half of commissioning acceptance
 
@@ -178,34 +180,43 @@ password, so Claude cannot open a `qamc` session. Three checks can only be
 evaluated there: config startup validation with real credentials, the runtime
 CA environment variables, and trading-timer state.
 
+**Timing matters:** do not switch the runtime checkout to an unmerged review
+branch. This acceptance run happens only after PR #30 is externally accepted
+and merged. Then synchronize the runtime checkout to accepted `main` and run
+the canonical verifier as `qamc`:
+
 ```bash
 sudo -u qamc -i
 ```
 
 ```bash
-cd /home/qamc/quant-agent && git fetch && git checkout claude/qamc-routing-and-agent-audit-reconcile && git pull && python3 ops/commissioning/verify_commissioning.py --live
+cd /home/qamc/quant-agent
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+python3 ops/commissioning/verify_commissioning.py --live
 ```
 
 Expect `COMMISSIONING ACCEPTANCE: PASS`, exit 0, and
 `ACCOUNT COVERAGE: complete`. The `--live` preflight makes one real call per
 distinct policy model — now **two** models, still a fraction of a cent.
 
-Note the checkout step: the runtime must be on this branch for the routing
-check to pass, since the expected per-seat map names both new models.
+The `dev` half remains the second half of the canonical step 4e acceptance
+and uses `--from-onecli`; do not copy the verifier across accounts by hand.
 
 ### Resolved since the routing branch was written: OpenRouter credit
 
 That branch recorded a hard blocker — $10 granted, $7.96 used, $2.04 left,
 against a baseline model that reserves $3.84 per call at `max_tokens: 128000`,
-meaning **as commissioned no agent call could have started** (402,
-non-retryable, no failover, session dead at the first agent). Commissioning
-missed it because the preflight uses `max_tokens=512`.
+meaning **at that time the commissioned baseline could not have started an
+agent call** (402, non-retryable, no failover, session dead at the first
+agent). Commissioning missed it because the preflight uses `max_tokens=512`.
 
-`/api/v1/credits` now reports **$25 granted, $8.02 used — $16.98 remaining**.
-The account has been topped up and the blocker is cleared on both policies.
-The routing policy still reduces the reservation per call from $3.84 to $0.05
-and projected spend 63x, so the economics argument is unchanged; it is simply
-no longer an availability argument.
+The account was subsequently topped up and the blocker is cleared. The
+routing policy still reduces the reservation per call from $3.84 to about
+$0.05 and projected spend 63x, so the economics argument is unchanged; the
+architecture docs intentionally avoid treating a transient balance as a
+standing design fact.
 
 ## Verification status
 
@@ -221,7 +232,7 @@ no longer an availability argument.
 | Mission Control | remains read-only |
 | Secrets | none in tracked files |
 | Model spend, this round | **$0.2168** — 30-trial RM re-run ($0.1570), one smoke trial ($0.0008), and the `--live` acceptance preflights |
-| OpenRouter balance | $25.00 granted, $8.24 used — **$16.76 remaining** |
+| OpenRouter balance at the last review-time check | **$16.76 remaining** |
 
 The zero-skip line is itself a signal:
 `test_routing_fails_when_a_seat_runs_another_seats_model` had been skipping
