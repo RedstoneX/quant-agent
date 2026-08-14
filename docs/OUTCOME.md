@@ -6,7 +6,7 @@ This file states the result QAMC is trying to achieve. It is intentionally less 
 
 Build a small, understandable autonomous AI-assisted **Alpaca paper-trading experiment** that can determine whether inexpensive modern AI models add measurable out-of-sample trading value beyond deterministic market signals.
 
-The system should run largely unattended while giving the operator a polished browser/iPad Mission Control that makes the trading process understandable rather than opaque.
+The system should run largely unattended while giving the operator a browser/iPad Mission Control that makes the trading process understandable rather than opaque.
 
 The operator should be able to understand, without reading raw logs:
 - current account/equity/P&L/positions/orders/trades and system health;
@@ -22,33 +22,33 @@ The operator should be able to understand, without reading raw logs:
 
 ## MVP lifecycle principle
 
-QAMC must reach a **solid deployed MVP before dedicated visual polish becomes a project phase**.
-
-Cloud/ephemeral development environments are staging and implementation environments, not the accepted MVP runtime. The MVP is considered operationally complete only after the integrated read-only product is deployed to the intended small Linux VPS/server runtime, verified there, and accepted through layered testing.
+QAMC should reach a safe, observable deployed baseline and then **start the Alpaca Paper experiment promptly**. Paper-soak evidence is not the reward after polish; it is the evidence needed to decide what should be improved next.
 
 The expected sequence is:
 
-**functional foundation → integrated verification → VPS deployment → VPS runtime/browser QA → independent review → operator UAT → MVP accepted → dedicated Mission Control visualization/UX polish → paper-soak progression**.
+**functional foundation → integrated verification → VPS deployment → runtime commissioning → paper-soak start → observe/evaluate real sessions → iterative agent/code/dashboard improvement**.
 
-Engineering and automated/browser QA should remove known functional/runtime defects before operator UAT. Operator UAT is the final product-acceptance gate: it should answer whether the deployed system is genuinely usable for its intended purpose, not serve as the primary bug-finding loop.
+Before soak start, the product needs enough observability to understand account state, decisions, execution, health and history. It does **not** need every desirable reasoning refinement, benchmark, chart or UX improvement.
 
-TradingView-style charting, donor-dashboard ideas and other visual refinements may be valuable after the MVP foundation is accepted, but they must not displace correctness, observability, safety, forensic completeness or deployability. A dedicated polish phase may improve presentation without redefining or masking an incomplete MVP.
+After soak start, engineering should use observed trading behaviour and operator experience to prioritize work: weak evidence, poor decisions, excessive vetoes, execution problems, missing telemetry, confusing Mission Control views, missed opportunities, model cost/latency and measurable out-of-sample performance.
+
+Dedicated visual polish remains valuable, but it must not delay a safe paper experiment once the minimum useful cockpit and commissioning gates are satisfied. Likewise, agent/prompt/model improvements can continue during the soak rather than being treated as prerequisites to collecting real evidence.
 
 ## Hard outcome constraints
 
 These are not implementation suggestions; they define the safe experiment:
-- Alpaca **Paper only** until a separate future authorization.
-- `yebof/quant-agent` remains the authoritative trading engine unless the operator explicitly changes that project premise.
+- Alpaca **Paper only** until a separate future authorization;
+- `yebof/quant-agent` remains the authoritative trading engine unless the operator explicitly changes that project premise;
 - deterministic Python and broker protections remain final safety/execution authority and fail closed;
 - Mission Control/read-side failure must not stop trading or weaken broker protection;
 - UI/search/journal state must not become a second authoritative trading-memory system;
 - no secrets or fake production trading state exposed to the UI;
-- keep the experiment small enough to understand, operate, and evaluate rather than turning it into a bespoke platform.
+- keep the experiment small enough to understand, operate and evaluate rather than turning it into a bespoke platform.
 
 ## Design freedom
 
-Everything else is challengeable during discovery.
+Everything else is challengeable during discovery and post-soak iteration.
 
-Existing architecture, donor choices, stage boundaries, data presentation, component structure, sequencing, and implementation techniques are prior proposals—not instructions to preserve merely because they already exist in Git.
+Existing architecture, donor choices, stage boundaries, data presentation, component structure, sequencing and implementation techniques are prior proposals—not instructions to preserve merely because they already exist in Git.
 
-Claude Code is expected to inspect the actual repository and challenge whether those choices still provide the simplest, safest and most effective path to this outcome. Material changes to accepted safety/product boundaries still require reconciliation and approval before implementation.
+Claude Code is expected to inspect the actual repository and challenge whether those choices still provide the simplest, safest and most effective path to the outcome. Material changes to accepted safety/product boundaries still require reconciliation and approval before implementation.
