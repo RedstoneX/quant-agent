@@ -16,16 +16,18 @@ llm:
   # See docs/architecture/MODEL_ROUTING_POLICY.md for the evidence.
   # Reproduce with: python ops/model_policy/benchmark_models.py --from-onecli
   #
-  # Selected from 148 graded trials (2026-08-12) run through these very
-  # agent classes and prompts. Three models scored a perfect mean AND a
-  # perfect worst run; this one won on latency and cost, being 83x cheaper
-  # than the `openai/gpt-5.5` baseline and 5-10x faster per call than the
-  # other perfect scorer. No seat showed a measurable benefit from a more
-  # expensive model, so none is assigned one.
+  # Eight shared seats were selected from 148 graded trials (2026-08-12)
+  # run through these very agent classes and prompts. Three models scored a
+  # perfect mean AND a perfect worst run across the measured sweep;
+  # gemini-2.5-flash-lite won those shared seats on latency and cost, being
+  # 83x cheaper than the `openai/gpt-5.5` baseline and 5-10x faster per call
+  # than the other perfect scorer. The Risk Manager was re-measured
+  # separately on the current branch and diverges below at equal measured
+  # seat quality to preserve PM/RM model independence.
   #
-  # The per-seat structure is kept even though every seat currently
-  # resolves to the same model: it is what lets one seat diverge later as
-  # a config edit rather than a plumbing change, and it is what
+  # The per-seat structure is now exercised: eight seats resolve to Gemini
+  # and Risk Manager resolves to Qwen. That keeps future seat changes a config
+  # edit rather than a plumbing change, and it is what
   # `ops/commissioning/verify_commissioning.py` pins against.
   #
   # `provider` MUST stay explicit on every seat. OpenRouter's
@@ -92,11 +94,11 @@ llm:
   meta_reflector_provider: "openrouter"
   meta_reflector_model: "google/gemini-2.5-flash-lite"
   meta_reflector_max_tokens: 128000
-  # Stage 1 (QAMC): explicit per-agent provider override. Unset/null (the
-  # current posture for every agent above) infers the provider from the
-  # model-id prefix exactly as before — nothing below changes today's
-  # routing. Only needed when a model id's prefix wouldn't identify the
-  # provider correctly, e.g. OpenRouter's "vendor/model" ids. Example:
+  # Stage 1 (QAMC): explicit per-agent provider override. Unset/null still
+  # infers the provider from the model-id prefix exactly as before, but the
+  # accepted OpenRouter policy above does NOT rely on inference: every seat
+  # pins `provider: openrouter` because OpenRouter's "vendor/model" ids would
+  # otherwise be ambiguous. Example of the general seam:
   #   tech_analyst_provider: "openrouter"
   #   tech_analyst_model: "anthropic/claude-3.5-sonnet"
   # Valid values: anthropic | openai | deepseek | openrouter.
