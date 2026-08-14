@@ -14,7 +14,6 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Alpaca Paper-only is enforced in code.
 - Cost-optimized model routing and the decision-chain audit are accepted on `main`.
 - PR #33 fixed the commissioning timer-state false positive and merged to `main` as `aa52f5f9fd5912914a1640f74bdab84d1e30cd51`.
-- The seven trading timers were directly inspected on the runtime account and confirmed disabled before activation.
 
 ### Runtime commissioning accepted
 
@@ -29,11 +28,27 @@ The final privileged `qamc` live verifier run against current `main` passed on 2
 - OpenRouter completions for both accepted policy models PASS
 - Alpaca Paper account/data/quote/calendar PASS
 - FRED PASS
-- trading timers disabled PASS
+- trading timers disabled PASS before activation
 - no committed secrets PASS
 - Mission Control read-only PASS
 
-The remaining `qamc` SKIP is the intentionally off-account isolation check. The already-green `dev` commissioning run proves that boundary. **Full commissioning acceptance is the union of those two green account runs and is now complete.**
+The remaining `qamc` SKIP is the intentionally off-account isolation check. The already-green `dev` commissioning run proves that boundary. **Full commissioning acceptance is the union of those two green account runs and is complete.**
+
+### Alpaca Paper soak activated
+
+On 2026-08-14 the operator activated all seven existing `qamc` user timers after commissioning acceptance:
+
+- `quant-agent-morning.timer`
+- `quant-agent-midday.timer`
+- `quant-agent-intra_check.timer`
+- `quant-agent-close.timer`
+- `quant-agent-evening.timer`
+- `quant-agent-earnings_preprocess.timer`
+- `quant-agent-daily.timer`
+
+Systemd reported all seven as `enabled`. The six trading-stage timers are scheduled every 30 minutes and self-gate to their intended ET windows. Their first scheduled post-activation tick was **2026-08-14 18:30 UTC / 14:30 ET**. The daily P&L CSV export is scheduled for **Mon–Fri 09:00 America/New_York**.
+
+This marks the start of the authorized **Alpaca Paper soak**. It does **not** authorize live-money trading.
 
 ## Accepted model policy
 
@@ -54,15 +69,22 @@ The remaining `qamc` SKIP is the intentionally off-account isolation check. The 
 - **No deterministic risk or execution semantics changed.** Alpaca remains Paper-only.
 - Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
 
-## Current product priority: begin the Alpaca Paper soak
+## Current product priority: observe the paper soak
 
-The operator explicitly authorized scheduled Alpaca Paper trading once commissioning passed. That condition is now satisfied.
+The immediate product goal is now to observe what QAMC actually does under scheduled Alpaca Paper operation and use real evidence to drive the next tranche.
 
-Therefore:
+Prioritize:
 
-- paper-soak activation is the immediate routine deployment action;
-- no additional agent/prompt/model/dashboard work is a prerequisite;
-- post-start improvements should be driven by actual positions, reasoning, vetoes, fills, costs, missed opportunities, performance and Mission Control usability.
+- positions selected and rejected;
+- specialist disagreement and evidence quality;
+- PM/RM reasoning and vetoes;
+- deterministic blocks;
+- order/fill behaviour;
+- cost/latency/model attribution;
+- missed opportunities and performance;
+- Mission Control usability during real sessions.
+
+No additional agent/prompt/model/dashboard polish is a prerequisite to the running soak.
 
 ## ChatGPT GitHub integration role
 
@@ -80,4 +102,4 @@ ChatGPT owns GitHub review/integration and should use the connected GitHub plugi
 
 ## Handoff
 
-Proceed through `docs/WORK.md` to paper-soak activation. After activation, use observed soak evidence to drive the next improvement tranche.
+Paper soak is active. Use observed soak evidence to choose and scope the next improvement tranche.
