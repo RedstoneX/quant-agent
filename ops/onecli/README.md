@@ -48,7 +48,7 @@ Both should respond (2xx/3xx/401, not connection-refused). Confirm neither port 
 
 ## 4. Wire `qamc` to the gateway and restart Mission Control
 
-By this point OneCLI is running, all four Custom Secrets exist and are granted to the Default Agent (dashboard steps — see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` for the exact per-provider configuration), and credential delivery has been verified working. This step is the only thing left: point `qamc`'s existing placeholder credentials at the gateway. `dev` cannot do this — no write access to `/home/qamc`, no access to `qamc`'s `systemd --user` session.
+On a fresh deployment, this step points `qamc`'s existing placeholder credentials at the gateway. On the current accepted QAMC deployment the wiring already exists; do **not** append duplicate lines to `.env`. The instructions remain here as the canonical rebuild/recovery procedure. `dev` cannot perform this work — it has no write access to `/home/qamc` and no access to `qamc`'s `systemd --user` session.
 
 Everything below runs **as `qamc`**. Open the session with:
 
@@ -117,7 +117,12 @@ Expected: `3`, followed by the four credential lines still showing their **place
 
 ### 4d. Restart Mission Control
 
+A shell entered through `sudo -u qamc -i` may not receive the environment variables needed to address `qamc`'s lingering `systemd --user` bus. Set them explicitly; this does not change any service configuration:
+
 ```bash
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
 systemctl --user daemon-reload
 systemctl --user restart quant-agent-api.service
 systemctl --user status quant-agent-api.service --no-pager
@@ -133,35 +138,62 @@ Only this service restarts. The trading engine is not a persistent process — i
 curl -s http://127.0.0.1:8800/health
 ```
 
-Expected: `200` with `"db_reachable":true`, `"paper":true`, and `"broker_reachable":true` — the flip from `false` to `true` is the objective signal that the whole credential chain is live.
+Expected: `200` with `"db_reachable":true`, `"paper":true`, and `"broker_reachable":true` — `broker_reachable:true` is the objective signal that the whole credential chain is live.
 
-Then the full acceptance check. It covers the entire commissioning checklist in `docs/WORK.md` and exits non-zero on any failure.
+Then run the full acceptance check. It covers the commissioning checklist and exits non-zero on any failure.
 
-**Acceptance runs on two accounts, and that is deliberate — it is the account boundary, not a limitation.** Three checks can only be evaluated from the runtime account (startup validation with real credentials, the runtime CA environment variables, and trading-timer state, which lives in `qamc`'s own `systemd --user` session). One check is only *meaningful* from a non-runtime account: "the runtime's credentials are unreadable off-account" proves nothing when run as the account that owns them. No single login can evaluate all four. Acceptance is the **union of both runs**.
+**Acceptance runs on two accounts, and that is deliberate — it is the account boundary, not a limitation.** Three checks can only be evaluated from the runtime account (startup validation with real credentials, the runtime CA environment variables, and trading-timer state, which lives in `qamc`'s own `systemd --user` session). One check is only meaningful from a non-runtime account: "the runtime's credentials are unreadable off-account" proves nothing when run as the account that owns them. No single login can evaluate all four. Acceptance is the **union of both runs**.
 
-```bash
-# 1. runtime account — the three runtime-only checks
-sudo -u qamc -i
-cd /home/qamc/quant-agent && python3 ops/commissioning/verify_commissioning.py --live
+#### Runtime half — as `qamc`
 
-# 2. dev account — the isolation check
-cd /home/dev/projects/quant-agent && .venv/bin/python ops/commissioning/verify_commissioning.py --live --from-onecli
-```
-
-`--from-onecli` is required on the `dev` run and only there. The wiring checks read `HTTPS_PROXY` from the process environment, which is exactly right on the runtime account — that env IS the thing being verified — but `dev` deliberately has no such wiring, so without the flag the run FAILs on `gateway proxy configured` for the wrong reason. With it, `dev` resolves the gateway from the live OneCLI instance for the duration of the run, and the check that would have been a false alarm correctly reports SKIP with `as qamc` against it.
-
-Expected from each: `COMMISSIONING ACCEPTANCE: PASS` and exit code `0`, followed by an `ACCOUNT COVERAGE:` line. Accept only when **both** runs exit `0` and each reports `ACCOUNT COVERAGE: complete` — a partial run names the account still needed and the checks it owes, so a green summary from one login is never mistaken for full coverage. `--live` additionally completes one real read per provider through QAMC's own clients.
-
-### The tool is not in the runtime checkout yet
-
-`ops/commissioning/` is tracked in this repository, so the runtime gets it exactly the way it gets every other file — by updating its checkout. If `verify_commissioning.py` is missing under `/home/qamc/quant-agent`, that checkout is simply on a commit that predates it (the tooling landed on a Claude branch and reaches `main` through the normal review/merge path).
+The service and scheduled trading wrapper read `.env`, but an interactive shell does not automatically export it. The verifier must inspect the actual runtime wiring, so load `.env` into this shell without printing its values and use QAMC's runtime virtualenv rather than system Python:
 
 ```bash
-sudo -u qamc -i
-cd /home/qamc/quant-agent && git pull && ls ops/commissioning/verify_commissioning.py
+cd /home/qamc/quant-agent
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+set -a
+. ./.env
+set +a
+
+.venv/bin/python ops/commissioning/verify_commissioning.py --live
 ```
 
-Do **not** copy the file across accounts by hand. That would put an untracked, silently divergent copy inside the runtime — the acceptance tool is only worth trusting if it is the reviewed version, and a hand-placed copy also breaches the `dev`/runtime separation the whole credential architecture rests on. The script needs no dev-only dependency: it uses the standard library plus `yaml`, and reaches for `httpx`/`openai`/`alpaca-py`/`fredapi` only inside guarded imports that degrade to `SKIP`, so it runs under the runtime's own virtualenv unchanged.
+Do **not** use `--from-onecli` on the runtime half. That flag creates temporary wiring for a non-runtime account and would bypass the very environment this run is supposed to verify.
+
+#### Development/isolation half — as `dev`
+
+```bash
+cd /home/dev/projects/quant-agent
+.venv/bin/python ops/commissioning/verify_commissioning.py --live --from-onecli
+```
+
+`--from-onecli` is required on the `dev` run and only there. `dev` deliberately has no runtime proxy/CA environment, so the flag supplies a temporary wiring copy for provider checks while still allowing the off-account isolation check to prove that `/home/qamc` is unreadable.
+
+#### How to read the two results
+
+Each run must exit `0` with **zero FAIL results**. A run may legitimately say `COMMISSIONING ACCEPTANCE: PASS (with skipped/warned checks — review them before accepting)` and `ACCOUNT COVERAGE: partial` because checks assigned to the other account are intentionally SKIPped.
+
+Do **not** require either single-account run to say `ACCOUNT COVERAGE: complete`; that is impossible by design. The `qamc` run must defer only the off-account isolation check to `dev`, and the `dev` run must defer the runtime-only checks to `qamc`. Full commissioning acceptance is the **union of the two green runs**.
+
+`--live` additionally completes real read-only provider calls through QAMC's own clients; the LLM portion makes one tiny completion per distinct policy model.
+
+### If the verifier is missing from a runtime checkout
+
+`ops/commissioning/` is tracked in this repository, so the runtime gets it exactly the way it gets every other reviewed file — by updating its checkout to accepted `main`.
+
+```bash
+sudo -u qamc -i
+cd /home/qamc/quant-agent
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+ls ops/commissioning/verify_commissioning.py
+```
+
+Do **not** copy the file across accounts by hand. That would put an untracked, silently divergent copy inside the runtime and breach the `dev`/runtime separation the acceptance tool is meant to verify. Run the tool with the runtime's existing `.venv/bin/python`, not system `python3`.
 
 ### If `broker_reachable` is still `false`
 
@@ -173,4 +205,4 @@ Run the verifier anyway — it distinguishes the causes. Most likely: `.env` not
 cd /opt/onecli && sudo docker compose -f docker/docker-compose.yml down
 ```
 
-Removes the containers; `pgdata`/`app-data` volumes persist unless `-v` is added. QAMC itself is untouched by this — nothing in `qamc`'s `.env` points at OneCLI until the later wiring step above happens.
+Removes the containers; `pgdata`/`app-data` volumes persist unless `-v` is added. QAMC itself is untouched by this — nothing in `qamc`'s `.env` points at OneCLI until the wiring step above happens.

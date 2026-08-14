@@ -16,7 +16,7 @@ Close the one remaining privileged runtime acceptance step against accepted `mai
 - OpenRouter `vendor/model` pricing no longer falls through to LiteLLM direct-provider rates.
 - The deferred agent-audit findings F4/F5/F6/F7b/F8 are accepted.
 - Full suite at the reviewed implementation head: **1829 passed, 0 skipped**.
-- `dev` commissioning acceptance passed with live OpenRouter preflight for both policy models.
+- The `dev` commissioning half already passed with live OpenRouter preflight for both policy models and proved the off-account isolation boundary.
 - `verify_pricing.py` passed for all pinned OpenRouter rates.
 - Alpaca remains Paper-only; Mission Control remains read-only; trading timers remain disabled.
 - No deterministic risk or execution semantics changed.
@@ -27,37 +27,38 @@ Architecture/evidence:
 
 ## Remaining operator-only step
 
-The `qamc` runtime account must be updated to accepted `main` and run its half of commissioning acceptance. `dev` cannot do this because sudo requires the operator password.
+The `qamc` runtime account is now synchronized to accepted `main`. The first runtime acceptance attempt on 2026-08-14 exposed three **invocation/environment issues**, not architecture defects:
 
-Run as the operator:
+1. `python3` used the system interpreter, which does not carry QAMC's runtime dependencies (`pydantic` missing). Use `.venv/bin/python`.
+2. A `sudo -u qamc -i` shell did not populate the `systemd --user` bus environment. Export `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` before `systemctl --user`.
+3. `.env` is read by the service/trading launcher but is not automatically exported into an interactive verification shell. Export it before running the verifier so the runtime wiring check inspects the actual `HTTPS_PROXY`, `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE` values.
 
-```bash
-sudo -u qamc -i
-```
-
-Then, as `qamc`:
+From the existing `qamc` shell:
 
 ```bash
 cd /home/qamc/quant-agent
-git fetch origin
-git checkout main
-git pull --ff-only origin main
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+set -a
+. ./.env
+set +a
+
+systemctl --user daemon-reload
 systemctl --user restart quant-agent-api.service
-python3 ops/commissioning/verify_commissioning.py --live
+systemctl --user status quant-agent-api.service --no-pager
+
+.venv/bin/python ops/commissioning/verify_commissioning.py --live
 ```
 
-Accept only if the verifier ends with:
+The `qamc` run must exit `0` with **zero FAIL results**. It will still report the off-account isolation check as `SKIP` / `ACCOUNT COVERAGE: partial`, because that check is intentionally only meaningful from `dev`. That is expected. **Full commissioning acceptance is the union of the already-green `dev` run and this green `qamc` run; no single-account run can report complete cross-account coverage by itself.**
 
-```text
-COMMISSIONING ACCEPTANCE: PASS
-ACCOUNT COVERAGE: complete
-```
+Do not use `--from-onecli` on the `qamc` run: runtime acceptance must verify the environment actually used by QAMC, not a temporary wiring copy fetched from OneCLI.
 
-and exits `0`.
+If `systemctl --user` still cannot reach the bus after the two exports above, stop and report that exact error; do not redesign architecture.
 
-The live preflight makes one real call per distinct policy model — currently two. Do not switch the runtime checkout to an old Claude/review branch and do not copy the verifier across accounts by hand.
-
-If the verifier fails, capture the failing check names and output only; do not redesign architecture in response to an operational failure.
+If the verifier fails after this corrected invocation, capture the failing check names and output only.
 
 ## After runtime acceptance
 
