@@ -17,35 +17,21 @@ Live-money trading is **not authorized**.
 
 ## 🚦 RIGHT NOW
 
-### ✅ Commissioning complete
+### ▶️ Alpaca Paper soak is ACTIVE
 
-The final `qamc` runtime verifier passed on 2026-08-14:
+Commissioning is complete and accepted:
 
-- **37 PASS / 0 FAIL / 0 WARN / 1 expected SKIP**
-- `COMMISSIONING ACCEPTANCE: PASS`
-- `EXIT=0`
+- **37 PASS / 0 FAIL / EXIT=0** on the final `qamc` runtime run;
+- prior green `dev` run proves the complementary isolation boundary;
+- OneCLI, Alpaca Paper, FRED, both policy models, Mission Control and safety checks are green.
 
-The one SKIP is intentionally proved from `dev`; that earlier `dev` run is already green. Cross-account commissioning is therefore complete.
+On 2026-08-14 the operator enabled all seven existing QAMC user timers. Systemd confirmed all seven as `enabled`.
 
-Also verified green:
+The six trading-stage timers run every 30 minutes and self-gate to their ET windows. Their first scheduled post-activation tick was **18:30 UTC / 2:30 PM ET** on Friday, 2026-08-14. The daily P&L export runs **Mon–Fri at 9:00 AM ET**.
 
-- OVH deployment/security/account isolation;
-- OneCLI credential delivery;
-- Alpaca **Paper** account, market data, quote and calendar;
-- FRED;
-- both accepted OpenRouter policy models;
-- Mission Control DB, broker and paper-mode health;
-- all seven trading timers disabled before activation;
-- no committed secrets;
-- Mission Control read-only.
+**The project has crossed from pre-launch engineering into live paper-soak observation.**
 
-### ▶️ NOW: start the Alpaca Paper soak
-
-The operator already authorized paper trading once commissioning passed. That condition is satisfied.
-
-**There is no remaining architecture, model, agent-intelligence or dashboard prerequisite.**
-
-The immediate action is to enable the existing scheduled paper-trading timers and verify their schedule/health. Then QAMC should start collecting real paper-trading evidence.
+No further agent/model/dashboard work is required before QAMC begins making scheduled paper-trading decisions.
 
 ---
 
@@ -61,15 +47,15 @@ The immediate action is to enable the existing scheduled paper-trading timers an
 | ✅ DONE | Model routing | 8 seats on Gemini 2.5 Flash Lite; Risk Manager on Qwen3 235B via OpenRouter. |
 | ✅ DONE | Decision-chain audit | PM/RM evidence flow and auditability reviewed without changing deterministic safety semantics. |
 | ✅ DONE | Runtime commissioning | 37 PASS / 0 FAIL / EXIT 0, combined with prior green dev isolation evidence. |
-| 🟨 NOW | Activate scheduled Alpaca Paper soak | Operator-authorized; enable existing timers and verify schedule/health. |
-| ⬜ AFTER START | Observe and evaluate | Positions, reasoning, vetoes, fills, costs, missed opportunities and usability. |
+| ✅ ACTIVE | Scheduled Alpaca Paper soak | All seven timers enabled; autonomous paper schedule armed. |
+| 🟨 NOW | Observe and evaluate | Positions, reasoning, vetoes, deterministic blocks, fills, costs, missed opportunities and usability. |
 | ⬜ ITERATE | Intelligence/code/dashboard improvements | Driven by soak evidence, not pre-soak speculation. |
 
 ## 📊 Mission Control
 
 The current browser/iPad cockpit is sufficient for initial soak observation. It already shows account/position/order state, agent evidence, PM/RM decisions, model usage, journal/forensics and system/broker health.
 
-Visual polish can proceed **after** paper trading starts.
+Visual polish can proceed after the running soak tells us what actually needs improvement.
 
 ## 🖥️ DEPLOYMENT
 
@@ -81,12 +67,12 @@ Visual polish can proceed **after** paper trading starts.
 
 ## ⏭️ NEXT MOVES
 
-1. Enable the existing QAMC paper-trading timers under `qamc`.
-2. Verify the next scheduled runs and that Alpaca remains Paper-only/healthy.
-3. Observe the first real paper sessions and use that evidence to choose the next improvement tranche.
+1. Observe the first scheduled paper sessions and confirm the expected decision/run records appear.
+2. Review positions, rejected candidates, PM/RM reasoning, deterministic blocks, orders/fills and costs.
+3. Use that evidence to select the next intelligence/code/dashboard improvement tranche.
 
 ## 🚧 CURRENT BLOCKERS
 
-**None.** Commissioning is accepted and the paper soak is authorized.
+**None.** The paper soak is running. A session may legitimately produce no trade; use the recorded decision chain to distinguish intentional restraint from a defect.
 
 _Last refreshed: 2026-08-14 EDT (America/Toronto) — active project view only; retired detail lives in Git history._

@@ -1,12 +1,10 @@
 # QAMC Current Work
 
-Status: **PAPER SOAK ACTIVATION**
+Status: **ALPACA PAPER SOAK ACTIVE — OBSERVE AND EVALUATE**
 
 ## Goal
 
-Enable the existing scheduled **Alpaca Paper** timers, verify the schedule and runtime health, then begin observing real paper-trading behaviour. Do not insert another intelligence/model/dashboard tranche before soak start unless activation itself exposes a genuine blocker.
-
-The operator has already authorized the paper soak.
+Observe scheduled **Alpaca Paper** operation and use actual trading evidence to decide what deserves improvement next. Do not insert speculative intelligence/model/dashboard work ahead of evidence from the running soak unless operation exposes a genuine defect.
 
 ## Commissioning is closed
 
@@ -16,46 +14,46 @@ The final `qamc` live commissioning run against current `main` passed on 2026-08
 - `COMMISSIONING ACCEPTANCE: PASS`
 - `EXIT=0`
 
-The single SKIP is the intentionally `dev`-only off-account credential-isolation check. The earlier green `dev` run already proves that boundary. Full commissioning is therefore accepted by union of the two account runs.
+The single SKIP is the intentionally `dev`-only off-account credential-isolation check. The earlier green `dev` run already proves that boundary. Full commissioning is accepted by union of the two account runs.
 
-Also closed:
+## Paper soak activation complete
 
-- stages 0–5 accepted/deployed;
-- Mission Control private/read-only and sufficient for initial soak observability;
-- OneCLI credential path green;
-- Alpaca Paper account/data/quote/calendar green;
-- FRED green;
-- both accepted OpenRouter policy models complete live calls;
-- runtime DB/paper/broker health green;
-- all seven trading timers confirmed disabled before activation;
-- PR #33 timer-state parser fix merged and verified;
-- deterministic risk/execution semantics unchanged.
+On 2026-08-14 the operator enabled all seven existing `qamc` user timers. Systemd confirmed all seven `enabled` and scheduled:
+
+- six trading-stage timers check every 30 minutes and self-gate to their intended ET windows;
+- their first scheduled post-activation tick was **18:30 UTC / 14:30 ET** on 2026-08-14;
+- `quant-agent-daily.timer` is the P&L CSV export and is scheduled **Mon–Fri 09:00 America/New_York**.
+
+This is the authorized Alpaca **Paper** soak. Live trading remains prohibited.
 
 ## Immediate work
 
-Activate the existing QAMC trading timers under the `qamc` user and verify:
+Observe and validate the first real paper sessions through the existing runtime and Mission Control. Prioritize evidence about:
 
-1. the intended timer units are enabled and scheduled;
-2. Alpaca remains Paper-only;
-3. Mission Control and broker health remain green;
-4. no unrelated service or public exposure is introduced.
+1. positions selected, rejected or missed;
+2. specialist conclusions and disagreement;
+3. Portfolio Manager synthesis;
+4. AI Risk Manager changes/vetoes;
+5. deterministic Python blocks and sizing;
+6. orders, fills and exits;
+7. model/provider attribution, latency and cost;
+8. P&L/performance and missed opportunities;
+9. runtime failures or recovery behaviour;
+10. Mission Control usability during actual operation.
 
-Activation is routine deployment under the already-recorded operator authorization, not a new architecture/product gate.
+Do not interpret "no trade" as a defect by itself; inspect the recorded candidate/decision/risk evidence first.
 
-## After activation
+## Deferred until evidence justifies it
 
-Use actual soak evidence to prioritize the next work:
+Unless the running soak exposes a blocker, do **not** prioritize:
 
-- positions selected and rejected;
-- specialist disagreement and evidence quality;
-- PM/RM reasoning and vetoes;
-- deterministic blocks;
-- order/fill behaviour;
-- cost/latency/model attribution;
-- missed opportunities and performance;
-- Mission Control usability during real sessions.
+- more model benchmarking;
+- more agent/prompt intelligence work;
+- additional decision-chain redesign;
+- richer dashboard charts or visual polish;
+- speculative feature expansion.
 
-Do **not** prioritize speculative polish over observed failures or learning from the soak.
+These are valid post-start improvements, but their priority should come from observed soak evidence.
 
 ## Hard boundaries
 
