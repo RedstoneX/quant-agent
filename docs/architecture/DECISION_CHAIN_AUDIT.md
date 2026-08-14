@@ -9,7 +9,8 @@ earlier in `57f5b2d` and are pinned by
 `tests/test_prompt_audit_2026_08_13.py`; they are not revisited here.
 
 Read alongside `SAFETY_BOUNDARIES.md`, which is unchanged by this tranche,
-and `MODEL_ROUTING_POLICY.md`, whose shared-model limitation F5 responds to.
+and `MODEL_ROUTING_POLICY.md`, whose PM/RM routing decision intersects with
+F5.
 
 ## What did and did not change
 
@@ -345,6 +346,11 @@ working and the priors should be cut rather than annotated.
 
 ## Cost
 
-Zero. Every finding was resolved by reading the repository and its history;
-no model was called, no benchmark was re-run, and no OpenRouter credit was
-consumed by this tranche.
+The initial agent-audit findings were resolved by repository/history review
+without paid model calls. PR #30's external review then exposed that the RM
+model-independence rationale relied on stale and misread benchmark evidence,
+so the RM seat was re-measured on the current branch: 30 trials costing
+**$0.157**. The broader re-review round, including the smoke trial and live
+commissioning preflights, consumed **$0.2168** in model spend; `docs/WORK.md`
+records that operational accounting. No paid run was used to justify F4,
+F6, F7b, or F8 themselves.
