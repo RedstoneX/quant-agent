@@ -15,9 +15,9 @@ and `MODEL_ROUTING_POLICY.md`, whose shared-model limitation F5 responds to.
 
 | | |
 |---|---|
-| **Fixed** | F6 (risk evidence completeness), F5 (PM/RM independence — RM's *information*), F4 (premortem observability), F7b's detector, F8 (prior provenance) |
+| **Fixed** | F6 (risk evidence completeness), F5 (PM/RM independence — RM's *information*, and after PR #30's review the *model split* too), F4 (premortem observability), F7b's detector, F8 (prior provenance) |
 | **Intentionally retained** | F5's veto hierarchy, F4's permissive schema, F7b's decision not to route price data, every sizing threshold under F8 |
-| **Unproven until paper trading** | whether better-informed RM review changes verdicts for the better; whether the inherited long bias is right for this account; whether the `pm_audit_step_missing` advisory ever fires in practice |
+| **Unproven until paper trading** | whether better-informed and now model-independent RM review changes verdicts for the better; whether the inherited long bias is right for this account; whether the `pm_audit_step_missing` advisory ever fires in practice |
 
 **No deterministic risk or execution semantics changed.** No threshold moved,
 no gate was added or removed, no schema became stricter, Alpaca stays
@@ -81,7 +81,7 @@ problem than the one fixed here.
 **Finding.** PM's `reasoning_chain` was the **first** block in RM's user
 message, before the account, the positions, the Tech signals, the news and
 the macro data. RM also had no idea that PM calibrates its sizing against
-RM's own past verdicts, nor that the two now run the same model.
+RM's own past verdicts, nor that the two ran the same model.
 
 **Why it mattered.** Three distinct couplings, one direction:
 
@@ -94,13 +94,18 @@ RM's own past verdicts, nor that the two now run the same model.
    plan may be PM anchoring on RM's history rather than expressing
    conviction, and a run of `clean` verdicts is evidence **about the loop**,
    not about the plans. RM was never told the loop existed.
-3. *Shared model.* The accepted routing policy puts both seats on
-   `google/gemini-2.5-flash-lite`. Whatever blind spot produced the plan is
-   one the reviewer shares.
+3. *Shared model.* The routing policy as proposed put both seats on
+   `google/gemini-2.5-flash-lite`. Whatever blind spot produced the plan was
+   one the reviewer shared. **This one was subsequently fixed at the routing
+   layer** — see the correction below.
 
 **Decision.** Change what RM **knows**, never what it **may do**. Reorder the
 evidence, label PM's chain as claims, and disclose both couplings to RM.
 Leave every threshold alone.
+
+(The third coupling was later removed outright rather than merely disclosed,
+once PR #30's review established that the quality argument against splitting
+the seats did not exist.)
 
 **Change made.**
 - `src/agents/risk_manager.py` — block order is now `proposed trades →
@@ -112,7 +117,11 @@ Leave every threshold alone.
   entirely absent chain now renders as a stated finding rather than an empty
   string.
 - `config/prompts/risk_manager.md` — a leading "Your independence" section
-  disclosing the calibration loop and the shared model.
+  disclosing the calibration loop and RM's model relationship to PM. That
+  last paragraph is pinned to `config/settings.yaml` by
+  `test_f5_rm_prompt_states_its_model_relationship_to_pm_accurately`, so the
+  prompt cannot go on claiming a shared model after the seats diverge (or
+  vice versa) — the stale-claim failure this whole audit is about.
 
 **Intentionally retained.** The veto hierarchy — "veto is nuclear", prefer
 `modifications`, `approved: false` only for an incoherent chain / ≥ 5 mods /
@@ -129,19 +138,46 @@ objections. Pinned by `test_f5_veto_hierarchy_is_unchanged`.
 **Evidence/tests.** `test_f5_*` — six tests, including an explicit assertion
 on the *ordering* of the five section headers.
 
-**Remaining uncertainty, and it is the largest in this document.** Ordering
-and disclosure are the cheap, safe half of independence. They do not make the
-gate structurally independent: it is still the same model reading a
-correlated input set, and no unit test can show that reordering the prompt
-changed a verdict. The genuinely independent option — a different model at
-the RM seat — was measured and rejected on quality
-(`MODEL_ROUTING_POLICY.md`, "Known limitations"): every alternative scored
-worse at that seat, so splitting would trade measured quality for
-hypothetical independence. That trade is a live decision for the reviewer,
-not a settled one, and it is a one-line config change if taken. The
-paper-trading observable is the `reason_category` distribution: an RM whose
-verdicts are essentially always `clean` while PM's plans vary is not
-reviewing.
+**Correction (PR #30 review).** This section previously said the structural
+option — a different model at the RM seat — "was measured and rejected on
+quality: every alternative scored worse at that seat". **That was false.**
+It repeated a claim from `MODEL_ROUTING_POLICY.md` that had read the
+whole-sweep aggregate as if it were the seat's result. The committed
+2026-08-12 raw results show **10 of 12 candidates scoring 1.00 on both runs
+at `risk_rr_breach`**. A model that is mediocre across six roles can be
+perfect at one, and the RM seat only ever runs RM.
+
+The seat was re-measured on this branch (2026-08-14, 5 models x 2 RM
+scenarios x 3 repeats, $0.157) because the old numbers were both misread
+and stale — they predated the 2026-08-13 prompt cleanup and the F5/F6
+changes here. Four candidates tie at 1.00 mean / 1.00 worst; a deliberately
+weak control still scores 0.00, so the scenarios discriminate. With quality
+tied, the structural option was taken: **`risk_manager` now runs
+`qwen/qwen3-235b-a22b-2507` and PM runs `google/gemini-2.5-flash-lite`**.
+It cost nothing — $0.00162 vs $0.00163 per two calls, +7.6s on a seat that
+issues one call per 1200s session. Full evidence and tie-break:
+`MODEL_ROUTING_POLICY.md`, "Why `risk_manager` is not on PM's model".
+
+**Remaining uncertainty.** Smaller than it was, and still real.
+
+The gate no longer shares PM's model, which removes a correlated failure
+mode. It does not follow that RM catches more: two models can be wrong in
+different ways and still both be wrong, and nothing here demonstrates a
+better verdict. The evidence supports "independence was available for free",
+not "independence improves decisions".
+
+The tie itself is thin — four models each went 6-for-6, which is enough to
+say no candidate is clearly better and therefore that nothing measurable was
+given up, and not enough to say the four are equivalent.
+
+Ordering and disclosure remain what they were: the cheap half. No unit test
+can show that moving PM's narrative below the primary evidence changed a
+verdict.
+
+The paper-trading observable is unchanged and is now the load-bearing one:
+the `reason_category` distribution. An RM whose verdicts are essentially
+always `clean` while PM's plans vary is not reviewing — and that would be
+true on a shared model or a split one.
 
 ---
 

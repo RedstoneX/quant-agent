@@ -86,7 +86,11 @@ EXPECTED_ROUTING: dict[str, str] = {
     "macro_analyst":     "google/gemini-2.5-flash-lite",
     "earnings_analyst":  "google/gemini-2.5-flash-lite",
     "portfolio_manager": "google/gemini-2.5-flash-lite",
-    "risk_manager":      "google/gemini-2.5-flash-lite",
+    # Deliberately NOT PM's model — the AI Risk Manager is the gate over the
+    # Portfolio Manager, and measured quality at that seat is tied, so the
+    # policy buys decision-chain independence rather than spending the tie on
+    # nothing. See config/settings.yaml and MODEL_ROUTING_POLICY.md.
+    "risk_manager":      "qwen/qwen3-235b-a22b-2507",
     "position_reviewer": "google/gemini-2.5-flash-lite",
     "evening_analyst":   "google/gemini-2.5-flash-lite",
     "meta_reflector":    "google/gemini-2.5-flash-lite",

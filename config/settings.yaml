@@ -43,7 +43,30 @@ llm:
   portfolio_manager_provider: "openrouter"
   portfolio_manager_model: "google/gemini-2.5-flash-lite"
   risk_manager_provider: "openrouter"
-  risk_manager_model: "google/gemini-2.5-flash-lite"
+  # The ONE seat that diverges, and the reason the per-seat structure exists.
+  #
+  # PR #30 review: the claim that "every alternative scored worse at the RM
+  # seat" was false — it read the whole-sweep aggregate as if it were the
+  # seat's result. On 2026-08-12, 10 of 12 candidates scored 1.00/1.00 at
+  # `risk_rr_breach`. Re-measured on the current branch (2026-08-14, 30
+  # trials, 2 RM scenarios x 3 repeats), four candidates tie at 1.00 mean and
+  # 1.00 worst run, so there is no quality trade to make here.
+  #
+  # With quality tied, the review's ordering makes PM/RM model independence
+  # the next criterion: this seat is the gate over the Portfolio Manager, and
+  # a shared model shares its blind spots. That eliminates gemini-flash-lite
+  # (PM's model) and leaves three. Latency and cost then break the tie —
+  # qwen3-235b answers in 10.4s against 61.4s (glm-5.2) and 113.0s
+  # (deepseek-v4-pro), at 1/14th their cost.
+  #
+  # Independence is effectively free: $0.00162 vs gemini's $0.00163 per two
+  # RM calls, and +8s on a session with a 1200s kill in which RM issues
+  # exactly ONE call. (That last point is what makes this seat different from
+  # tech_analyst, where five sequential calls made latency disqualifying.)
+  #
+  # NOT a general promotion of this model: it scored 0.95 mean / 0.85 worst
+  # across the full six-scenario sweep and is measured only at THIS seat.
+  risk_manager_model: "qwen/qwen3-235b-a22b-2507"
   position_reviewer_provider: "openrouter"
   position_reviewer_model: "google/gemini-2.5-flash-lite"
   evening_analyst_provider: "openrouter"

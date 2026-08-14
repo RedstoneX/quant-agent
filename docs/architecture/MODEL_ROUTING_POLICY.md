@@ -11,8 +11,9 @@ policy is expressed through and is unchanged by it.
 
 ## The policy
 
-Every agent seat runs `provider: openrouter` on
-**`google/gemini-2.5-flash-lite`**.
+Every agent seat runs `provider: openrouter`. Eight run
+**`google/gemini-2.5-flash-lite`**; the AI Risk Manager runs
+**`qwen/qwen3-235b-a22b-2507`**.
 
 | Seat | Model | Basis |
 |---|---|---|
@@ -20,23 +21,40 @@ Every agent seat runs `provider: openrouter` on
 | `news_analyst` | `google/gemini-2.5-flash-lite` | measured — `news_intel` |
 | `macro_analyst` | `google/gemini-2.5-flash-lite` | measured — `macro_stress` |
 | `portfolio_manager` | `google/gemini-2.5-flash-lite` | measured — `pm_constrained` |
-| `risk_manager` | `google/gemini-2.5-flash-lite` | measured — `risk_rr_breach` |
+| `risk_manager` | **`qwen/qwen3-235b-a22b-2507`** | measured — `risk_rr_breach`, `risk_drawdown_discipline`; **held apart from PM** |
 | `position_reviewer` | `google/gemini-2.5-flash-lite` | measured — `midday_exit` |
 | `earnings_analyst` | `google/gemini-2.5-flash-lite` | **by analogy** to `news_analyst` |
 | `evening_analyst` | `google/gemini-2.5-flash-lite` | **by analogy** to `portfolio_manager` |
 | `meta_reflector` | `google/gemini-2.5-flash-lite` | **by analogy** to `portfolio_manager` |
 
-### One model is the finding, not a shortcut
+### Cost is not a quality signal — and was never used as one
+
+Worth stating because a test in this repo briefly implied otherwise (an
+input-price >= $0.10/M floor on the decision seats, removed at PR #30
+review). Nothing in this policy infers quality from price. Every seat
+assignment traces to a graded run at that seat, and the invariant the tests
+now enforce is exactly that: a decision seat's model must carry a committed
+`quality_min` of 1.00 at its own scenario. The price floor would have failed
+this policy — both routed models sit at or below it — while passing any
+expensive model nobody had measured.
+
+### Eight seats on one model is the finding; the ninth is the exception
 
 The tranche was authorized to reserve stronger models for seats that
-demonstrably benefit. **No seat did.** Every model more expensive than the
-selected one scored the same or worse on the seats it would have occupied,
-so assigning one would have bought cost and complexity for no measured
-quality. Saying so plainly is more useful than manufacturing tiers.
+demonstrably benefit. On quality, **no seat did** — no candidate outscored
+the selected model anywhere, so no seat is assigned a more expensive model
+to buy quality it would not get.
 
-The per-seat *structure* is retained even though all nine values match. It
-is what lets a single seat diverge later as a config edit rather than a
-plumbing change, and it is what `verify_commissioning.py` pins against.
+`risk_manager` diverges for a different reason, and only after quality had
+already tied. It is the gate over the Portfolio Manager, so a shared model
+means the reviewer shares the reviewed party's blind spots. When four
+candidates measured identically at that seat, spending the tie on
+independence costs nothing and buys something. See
+"Why `risk_manager` is not on PM's model" below.
+
+The per-seat *structure* is what made that a one-line config edit rather
+than a plumbing change, and it is what `verify_commissioning.py` pins
+against.
 
 ## Shape
 
@@ -70,10 +88,17 @@ python ops/model_policy/benchmark_models.py --report \
   ops/model_policy/results/sweep-b.json \
   ops/model_policy/results/rerun-capfix-flash.json \
   ops/model_policy/results/rerun-capfix-pro.json \
-  ops/model_policy/results/sweep-tech-full.json
+  ops/model_policy/results/sweep-tech-full.json \
+  ops/model_policy/results/rm-rerun-2026-08-14.json
 ```
 
 Quality is the weighted mean of a scenario's graded checks (0–1).
+
+The table below is the **whole-sweep** aggregate across six roles. Read it
+as what it is: a summary of general fitness, useful for choosing one model
+for eight seats. It is **not** evidence about any individual seat, and
+treating it as such is the error PR #30's review caught — see "Why
+`risk_manager` is not on PM's model".
 
 | model | mean | worst run | $/sweep |
 |---|---|---|---|
@@ -95,9 +120,12 @@ scenario, which the other ten did not run. On the common six scenarios
 `gemini-2.5-flash-lite` cost **$0.0079** — the figure comparable to the
 baseline's $0.6547, i.e. **83x cheaper**.
 
-Three models scored a perfect mean **and** a perfect worst run. The choice
-between them was made on latency and cost, both of which favour the
-selected model decisively — see the next two sections.
+Three models scored a perfect mean **and** a perfect worst run across all
+six roles. For the eight seats that share a model, the choice between them
+was made on latency and cost, both of which favour the selected model
+decisively — see the next section. (The RM seat was decided separately and
+on its own measurements; a model can be imperfect across six roles and
+flawless at one.)
 
 **`worst run` is the column that matters.** A mean hides the failure mode
 that actually hurts: a model that alternates between excellent and
@@ -107,12 +135,93 @@ nothing the pipeline could use.
 
 ### Why not `deepseek-v4-pro-0813`, which also scored 1.00/1.00
 
-Latency, and cost. It answered in **104–246s** per call across the
-scenarios, against 3–22s for the selected model. `tech_analyst` alone
-issues five sequential calls per morning against a 1200s session kill (see
-below), and PM and RM still have to run after them. It is also 4x more
-expensive on the common scenarios. It is a genuinely capable model here —
-it simply loses on the two axes that were left after quality tied.
+Latency, and cost — **at the seats that issue many calls**. It answered in
+104–246s per call across the scenarios, against 3–22s for the selected
+model. `tech_analyst` alone issues five sequential calls per morning
+against a 1200s session kill (see below), and PM and RM still have to run
+after them. It is also 4x more expensive on the common scenarios.
+
+That reasoning does **not** transfer to `risk_manager`, which issues
+exactly one call per session — see the next section, where it was
+re-evaluated on its own terms.
+
+## Why `risk_manager` is not on PM's model
+
+### The claim this replaces was wrong
+
+Earlier revisions of this document said splitting PM and RM "would trade
+measured quality for hypothetical independence — every alternative scored
+worse at the RM seat". **That was false**, and PR #30's review caught it.
+It read the whole-sweep aggregate as if it were the seat's result. The
+committed 2026-08-12 raw results say otherwise: at `risk_rr_breach`,
+**10 of 12 candidates scored 1.00 on both runs**. Only `gpt-5-nano`
+(0.00/0.00) and `gpt-5.6-luna` (0.00/1.00) failed. There was never a
+quality argument against splitting; there was a quality argument against
+those two models.
+
+A model that is mediocre *across six roles* can be perfect at *one*, and
+the RM seat only ever runs RM. Aggregating across seats and then reasoning
+about a single seat is the error.
+
+### Re-measured on the current branch
+
+Those results also predated the 2026-08-13 prompt cleanup and this branch's
+F5/F6 changes to RM's prompt and inputs, so they were stale as well as
+misread. Re-run 2026-08-14 — 5 models x 2 RM scenarios x 3 repeats, 30
+trials, $0.157:
+
+| model | quality mean | worst run | latency | cost / 2 calls | independent of PM |
+|---|---|---|---|---|---|
+| **`qwen/qwen3-235b-a22b-2507`** | **1.00** | **1.00** | **10.4s** | **$0.00162** | **yes** |
+| `google/gemini-2.5-flash-lite` | 1.00 | 1.00 | 2.8s | $0.00163 | no — PM's model |
+| `z-ai/glm-5.2` | 1.00 | 1.00 | 61.4s | $0.02355 | yes |
+| `deepseek/deepseek-v4-pro-0813` | 1.00 | 1.00 | 113.0s | $0.02035 | yes |
+| `openai/gpt-5-nano` *(control)* | 0.50 | 0.00 | 42.0s | $0.00517 | — |
+
+```
+python ops/model_policy/benchmark_models.py --report \
+  ops/model_policy/results/rm-rerun-2026-08-14.json
+```
+
+`gpt-5-nano` was included deliberately as a weak control, and it failed the
+same way it failed in August — omitting `RiskVerdict.reasoning`, so
+`review()` returns `None` and the session has no risk verdict at all. A
+four-way 1.00 tie is only meaningful if the scenarios can still produce a
+0.00, and on the current branch they can.
+
+### How the tie was broken
+
+Quality first, then independence, then latency and cost:
+
+1. **Quality** — four-way tie at 1.00 mean and 1.00 worst run. No candidate
+   is better at this seat, so nothing is given up by choosing on another
+   axis.
+2. **Independence** — eliminates `gemini-2.5-flash-lite`, which is PM's
+   model. The decision chain exists so that RM checks PM; running both on
+   one model means a flaw in PM's reasoning is one the gate is
+   systematically likely to reproduce. Three candidates remain.
+3. **Latency and cost** — `qwen3-235b-a22b-2507` wins decisively among
+   them: 10.4s against 61.4s and 113.0s, at roughly 1/14th the cost.
+
+**Independence here is effectively free.** $0.00162 versus gemini's
+$0.00163 per two RM calls — the input rate is actually *lower* ($0.09/M vs
+$0.10/M) — and +7.6s on a session bounded at 1200s in which this seat makes
+exactly one call. The projected monthly total is unchanged at the reported
+precision.
+
+### What this is not
+
+Not a general promotion of `qwen3-235b-a22b-2507`. It scored 0.95 mean /
+0.85 worst across the full six-scenario sweep and is measured **only at
+this seat**. Moving it anywhere else needs its own measurement, which
+`tests/test_model_routing_policy.py` now enforces for every decision seat.
+
+Not a claim that RM will catch more. Independence removes a correlated
+failure mode; it does not demonstrate a better verdict. That is a
+paper-trading question — see `DECISION_CHAIN_AUDIT.md` (F5).
+
+Not a change to what RM may DO. Veto authority, the modification hierarchy,
+and every deterministic risk and execution semantic are untouched.
 
 ### What the failures actually were
 
@@ -153,8 +262,8 @@ explicit about which inputs are measured and which are structural):
 
 | | baseline (all `gpt-5.5`) | policy | cut |
 |---|---|---|---|
-| per trading day | $3.4334 | $0.0539 | 98.4% |
-| per month (21 days) | **$72.10** | **$1.13** | **63.7x cheaper** |
+| per trading day | $3.4334 | $0.0543 | 98.4% |
+| per month (21 days) | **$72.10** | **$1.14** | **63.2x cheaper** |
 
 `tech_analyst` is over half of it: five calls a day at 33,328 input tokens
 each, measured at real chunk size rather than extrapolated.
@@ -248,7 +357,7 @@ prices.
 
 | Check | Guards |
 |---|---|
-| `tests/test_model_routing_policy.py` | every seat explicit, every model priceable offline, decision seats off the cheapest tier, policy materially cheaper than baseline, fail-closed with no model substitution |
+| `tests/test_model_routing_policy.py` | every seat explicit, every model priceable offline, **every decision seat's model carries a committed `quality_min` of 1.00 at its own scenario**, the risk seat additionally measured on `risk_drawdown_discipline`, policy materially cheaper than baseline, fail-closed with no model substitution |
 | `verify_commissioning.py` (`config`) | the DEPLOYED config matches the reviewed per-seat map — the expected map is a separate copy on purpose, so editing `settings.yaml` on the runtime host fails the check |
 | `verify_commissioning.py` (`preflight`) | every distinct policy model is in the catalog AND completes a real call; WARNs if OpenRouter serves a different model than requested |
 | `ops/model_policy/verify_pricing.py` | pinned rates still match the live catalog |
@@ -256,33 +365,48 @@ prices.
 
 ## Known limitations
 
-1. **Monoculture, and PM/RM share a model.** The decision chain exists so
-   the Risk Manager independently checks the Portfolio Manager; one model
-   means shared blind spots. Splitting them would trade *measured* quality
-   for *hypothetical* independence — every alternative scored worse at the
-   RM seat — so the evidence was followed. **This is the top item for
-   external review**, and the per-seat structure makes a split a one-line
-   change.
+1. **Near-monoculture.** Eight of nine seats run one model. `risk_manager`
+   is now split off (see "Why `risk_manager` is not on PM's model"), which
+   addresses the case that mattered most — the gate sharing the reviewed
+   party's blind spots — but the specialist seats still fail together if
+   that model degrades or is withdrawn. There is no fallback, deliberately;
+   the posture is fail-closed, not fail-over.
 
-   The agent-audit tranche took the half of this that does not need a model
-   change: RM now reads the primary evidence before PM's narrative, is told
-   that PM pre-calibrates against its own past verdicts, and is told that it
-   shares PM's model. See `DECISION_CHAIN_AUDIT.md` (F5). That reduces the
-   *behavioural* coupling; it does nothing about the shared blind spot,
-   which still needs this decision.
+   The behavioural half of the same problem was handled separately and does
+   not depend on the model split: RM reads the primary evidence before PM's
+   narrative and is told that PM pre-calibrates against RM's own past
+   verdicts. See `DECISION_CHAIN_AUDIT.md` (F5).
+
+   What the split does **not** establish: that RM now catches more. It
+   removes a correlated failure mode. Whether that changes verdicts is a
+   paper-trading question, and the observable is the `reason_category`
+   distribution.
 2. **Three seats are assigned by analogy**, not measurement:
    `earnings_analyst`, `evening_analyst`, `meta_reflector`. Their nearest
    measured analogues both scored 1.00/1.00, but that is an inference.
-3. **Twelve trials per model is thin.** 1.00/1.00 means "no failure
-   observed in 12 runs", not "cannot fail". `--repeats` exists to deepen
-   this when it matters.
-4. **`gpt-5.5`'s production-scale tech latency was never measured** — the
+3. **The sample is thin.** 1.00/1.00 means "no failure observed", not
+   "cannot fail" — 12 runs per model in the August sweep, 6 per model in
+   the RM re-run. That is thinnest exactly where it matters most: the RM
+   seat's four-way tie is four models that each went 6-for-6, and a tie at
+   n=6 could hide a real ordering. It is enough to establish that no
+   candidate is *clearly* better and therefore that nothing measurable was
+   given up by choosing on independence; it is not enough to prove the four
+   are equivalent. `--repeats` deepens it when a decision needs more.
+4. **The seats other than `risk_manager` were not re-measured after the
+   2026-08-13 prompt cleanup and this branch's prompt edits.** Their rows
+   come from the August sweep against slightly different prompt text. The
+   RM seat was re-run because its prompt and inputs changed materially and
+   because a decision turned on it; the specialist seats changed less and
+   no decision turns on them, so re-running the full sweep was not worth
+   the spend. This is a real gap, and it is the first thing to close if a
+   specialist seat starts behaving oddly in paper trading.
+5. **`gpt-5.5`'s production-scale tech latency was never measured** — the
    402 above made it unrunnable at 128k `max_tokens`. Its baseline column
    comes from the 3-symbol scenario.
-5. **Scenarios are synthetic**, chosen so the correct answer follows from
+6. **Scenarios are synthetic**, chosen so the correct answer follows from
    arithmetic the prompt already states. They test rule application, not
    market judgement, and no benchmark of this kind predicts P&L.
-6. **A benchmark-local `max_tokens` cap distorted 3 trials** before it was
+7. **A benchmark-local `max_tokens` cap distorted 3 trials** before it was
    found and fixed; scenarios now read the production value from
    `settings.yaml` (see `scenarios.py:production_max_tokens`). The affected
    pairs were re-run and fold in via the report merge, which supersedes an

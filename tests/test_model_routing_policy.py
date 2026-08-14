@@ -11,6 +11,8 @@ seat assignment.
 """
 from __future__ import annotations
 
+import json
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -27,11 +29,32 @@ AGENTS = (
     "evening_analyst", "meta_reflector",
 )
 
-# The seats whose output is a trading decision or the gate over one. The
-# policy may put a cheaper model on a specialist seat; these three are where
-# a quality regression reaches the broker, so they are held to the decision
-# tier explicitly rather than by convention.
+# The seats whose output is a trading decision or the gate over one — where
+# a quality regression reaches the broker. They are held to a higher bar than
+# the specialist seats, but the bar is MEASURED QUALITY AT THAT SEAT, not
+# price (see test_decision_seats_run_a_model_measured_at_that_seat).
 DECISION_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
+
+# Which benchmark scenario measures each decision seat.
+SEAT_SCENARIO = {
+    "portfolio_manager": "pm_constrained",
+    "risk_manager": "risk_rr_breach",
+    "position_reviewer": "midday_exit",
+}
+
+RESULTS_DIR = Path(__file__).resolve().parents[1] / "ops" / "model_policy" / "results"
+
+
+@lru_cache(maxsize=1)
+def _benchmark_pairs() -> dict:
+    """`{"<model>|<scenario>": aggregate_row}` across every committed results
+    file, later files winning — the same supersede rule `--report` uses when
+    a re-run corrects an earlier sweep."""
+    pairs: dict = {}
+    for path in sorted(RESULTS_DIR.glob("*.json")):
+        data = json.loads(path.read_text())
+        pairs.update((data.get("aggregate") or {}).get("pairs") or {})
+    return pairs
 
 # The commissioning baseline. Being back on it for every seat means the cost
 # tranche silently reverted.
@@ -93,17 +116,57 @@ def test_policy_is_cheaper_than_the_commissioning_baseline(llm):
     assert baseline_rate["input"] == 5.0  # guards the comparison's own basis
 
 
-def test_decision_seats_are_not_on_the_cheapest_tier(llm):
-    """A specialist seat may run a sub-$0.10/M model. The PM, the risk
-    manager and the midday exit path may not: those are where a quality
-    regression reaches the broker, and the benchmark bought their models a
-    measured quality margin that a bottom-tier swap would throw away."""
+def test_decision_seats_run_a_model_measured_at_that_seat(llm):
+    """The invariant the decision seats actually need: their model was
+    BENCHMARKED at that seat and did not fail a run.
+
+    This replaces an input-price >= $0.10/M floor (removed at PR #30 review).
+    Price is not a quality or safety property, and using it as a proxy
+    contradicted the whole method of this tranche — the policy was selected
+    on measured quality per dollar, and the model it selected for every seat
+    is cheaper than that floor. The proxy would have failed the accepted
+    policy while passing any expensive unmeasured model, which is backwards.
+
+    `quality_min` rather than the mean on purpose: a seat that alternates
+    between excellent and unparseable averages respectably and silences a
+    session every other day.
+    """
     for agent in DECISION_SEATS:
-        rate = _PRICING_OPENROUTER[llm[f"{agent}_model"]]
-        assert rate["input"] >= 0.10, (
-            f"{agent} is on {llm[f'{agent}_model']} at ${rate['input']}/M input — "
-            "decision seats require a measured model, not the cheapest tier"
+        model = llm[f"{agent}_model"]
+        scenario = SEAT_SCENARIO[agent]
+        pair = _benchmark_pairs().get(f"{model}|{scenario}")
+        assert pair is not None, (
+            f"{agent} is on {model}, which has no committed benchmark result "
+            f"for its own scenario ({scenario}). Decision seats require a "
+            f"model measured AT THAT SEAT — run "
+            f"`ops/model_policy/benchmark_models.py --scenario {scenario} "
+            f"--models {model}` and commit the results."
         )
+        assert pair["runs"] >= 2, f"{agent}: {model} has only {pair['runs']} run(s)"
+        assert pair["quality_min"] == 1.0, (
+            f"{agent} is on {model}, which scored quality_min="
+            f"{pair['quality_min']} on {scenario} — a decision seat may not "
+            f"run a model with a failing run at its own scenario"
+        )
+        assert not pair["errors"], f"{agent}: {model} errored — {pair['errors']}"
+
+
+def test_risk_seat_evidence_covers_the_rules_the_audit_gave_it(llm):
+    """The risk seat owns two rules that no deterministic code enforces —
+    the drawdown-halve and the <5d holding-discipline audit (2026-08-13
+    agent audit, F6). `risk_rr_breach` does not exercise either, so the seat
+    must additionally be measured on the scenario that does."""
+    model = llm["risk_manager_model"]
+    pair = _benchmark_pairs().get(f"{model}|risk_drawdown_discipline")
+    assert pair is not None, (
+        f"risk_manager is on {model} with no measurement on "
+        f"risk_drawdown_discipline — the seat would be unevidenced for the "
+        f"two rules it is the only check on"
+    )
+    assert pair["quality_min"] == 1.0, (
+        f"risk_manager on {model} scored quality_min={pair['quality_min']} on "
+        f"risk_drawdown_discipline"
+    )
 
 
 def test_no_agent_exceeds_its_models_context(llm):

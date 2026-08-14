@@ -142,8 +142,12 @@ _PRICING_PINNED: dict[str, dict[str, float]] = {
 # unnoticed and make verify_pricing.py noisy; the on-demand catalog resolver
 # below covers anything an operator wants to experiment with.
 _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
-    # Every agent seat (docs/architecture/MODEL_ROUTING_POLICY.md).
+    # Eight of nine agent seats (docs/architecture/MODEL_ROUTING_POLICY.md).
     "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
+    # risk_manager only — held apart from PM's model for decision-chain
+    # independence at measured-equal quality. Note the input rate is BELOW
+    # gemini's: independence here costs nothing.
+    "qwen/qwen3-235b-a22b-2507":       {"input": 0.090, "output":  0.550},
     # Commissioning baseline. Retained because it is what the cost reduction
     # is measured against, and pricing it is what makes that measurable.
     "openai/gpt-5.5":                  {"input": 5.000, "output": 30.000},
@@ -445,11 +449,16 @@ def _valid_rates(value: object) -> bool:
     )
 
 
-def _resolve_openrouter_model(model: str) -> dict[str, float] | None:
-    """Price a `vendor/model` id from OpenRouter's catalog.
+def _resolve_openrouter_model_status(
+    model: str,
+) -> tuple[dict[str, float] | None, bool]:
+    """`(rates_or_None, saw_catalog)` for a `vendor/model` id.
 
-    Reached only for ids NOT in `_PRICING_OPENROUTER` — i.e. a model an
-    operator has configured but the accepted policy has not adopted.
+    The second element is what lets the caller tell "OpenRouter's catalog
+    does not list this model" from "we could not reach OpenRouter's
+    catalog". Both return no rates, but only the first is a permanent
+    answer worth memoising — mirrors the `saw_dataset` discipline the
+    LiteLLM path already uses.
 
     A FRESH cache is trusted outright. A stale one is not: it is kept only
     as the last resort if the refetch fails, because serving a rate that
@@ -459,12 +468,16 @@ def _resolve_openrouter_model(model: str) -> dict[str, float] | None:
     cached = _read_openrouter_cache() or {}
     if _openrouter_cache_is_fresh():
         rates = cached.get(model)
-        return _memoise(model, rates, "cached OpenRouter catalog") if _valid_rates(rates) else None
+        if _valid_rates(rates):
+            return _memoise(model, rates, "cached OpenRouter catalog"), True
+        return None, True
 
     fetched = _fetch_openrouter_pricing()
     if fetched is not None:
         rates = fetched.get(model)
-        return _memoise(model, rates, "live OpenRouter catalog") if _valid_rates(rates) else None
+        if _valid_rates(rates):
+            return _memoise(model, rates, "live OpenRouter catalog"), True
+        return None, True
 
     # Catalog unreachable. A stale entry beats no cost at all, and it is not
     # memoised as authoritative — the next process retries the fetch.
@@ -475,8 +488,17 @@ def _resolve_openrouter_model(model: str) -> dict[str, float] | None:
             "(older than %dh); cost may be inaccurate",
             model, _CACHE_MAX_AGE_SECONDS // 3600,
         )
-        return _memoise(model, rates, "stale OpenRouter cache")
-    return None
+        return _memoise(model, rates, "stale OpenRouter cache"), False
+    return None, False
+
+
+def _resolve_openrouter_model(model: str) -> dict[str, float] | None:
+    """Price a `vendor/model` id from OpenRouter's catalog.
+
+    Reached only for ids NOT in `_PRICING_OPENROUTER` — i.e. a model an
+    operator has configured but the accepted policy has not adopted.
+    """
+    return _resolve_openrouter_model_status(model)[0]
 
 
 def _resolve_unknown_model(model: str) -> dict[str, float] | None:
@@ -491,19 +513,44 @@ def _resolve_unknown_model(model: str) -> dict[str, float] | None:
     purely by the dataset being unreachable is NOT memoised (retried later).
     Returns the rate dict, or None when the model can't be priced.
 
-    A `vendor/model` id goes to OpenRouter's catalog FIRST. LiteLLM does not
-    key models that way, so asking it about "qwen/qwen3.7-flash" can only
-    ever miss — and worse, `_litellm_entry`'s "openai/<id>" probe could match
-    an unrelated row for an id that happens to collide. OpenRouter is also
-    the only source that is definitionally right about routed traffic.
+    A `vendor/model` id is resolved against OpenRouter's catalog and ONLY
+    that catalog. It never falls through to LiteLLM, and that is a
+    correctness rule rather than an optimisation:
+
+    - LiteLLM keys models by bare vendor id, so the fall-through could only
+      match by accident — and when it does match, `_litellm_entry` probes
+      `<id>`, `openai/<id>` and `anthropic/<id>`, any of which can hit an
+      unrelated row for a colliding id. `openai/gpt-5.5` is the live
+      example: LiteLLM carries that exact key for OpenAI's DIRECT API,
+      whose rate is not what routed OpenRouter traffic costs.
+    - The failure mode is silent and confidently wrong. A cost report built
+      on a direct-provider rate for routed traffic looks authoritative and
+      is not, which is strictly worse than the "$?.??" an honest miss
+      renders — the same argument this module already makes for refusing a
+      stale OpenRouter rate.
+
+    So an OpenRouter id that OpenRouter cannot price stays unpriced. When
+    the catalog was actually read and did not list it, that is a permanent
+    answer and is memoised; when the catalog was merely unreachable, it is
+    not, so connectivity returning fixes it.
     """
     if not model or model in _UNKNOWN_MODELS:
         return None
 
     if "/" in model:
-        rates = _resolve_openrouter_model(model)
+        rates, saw_catalog = _resolve_openrouter_model_status(model)
         if rates is not None:
             return rates
+        if saw_catalog:
+            _UNKNOWN_MODELS.add(model)
+            logger.warning(
+                "model %r is not priced in OpenRouter's catalog — cost will "
+                "render as $?.?? rather than fall back to a direct-provider "
+                "rate, which would not be what routed traffic costs. Add it "
+                "to _PRICING_OPENROUTER if this is a real routed model.",
+                model,
+            )
+        return None
 
     saw_dataset = False
     # 1. Local cache (full LiteLLM JSON written by refresh_pricing) — no network.

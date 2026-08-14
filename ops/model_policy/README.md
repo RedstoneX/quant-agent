@@ -35,7 +35,29 @@ Grading never asks whether a model shares an opinion about the market.
 Every scenario is built so the correct answer follows from arithmetic the
 prompt already states: `risk_rr_breach` contains a BUY at 0.42R against a
 documented 1.5 floor, `pm_constrained` cannot fund new weight without
-trimming, `midday_exit` has one position pinned 0.25 ATRs from its stop.
+trimming, `midday_exit` has one position pinned 0.25 ATRs from its stop,
+`risk_drawdown_discipline` has a BUY sized at the full base while
+`in_drawdown=true` requires it halved.
+
+### Scoping a re-run to one seat
+
+A prompt or input change to a single agent invalidates that agent's rows
+and nothing else. Re-run the seat rather than the sweep:
+
+```bash
+.venv/bin/python ops/model_policy/benchmark_models.py --from-onecli \
+  --models google/gemini-2.5-flash-lite deepseek/deepseek-v4-pro-0813 \
+  --scenario risk_rr_breach --scenario risk_drawdown_discipline \
+  --repeats 3 --out results/rm-rerun-<date>.json
+```
+
+`tests/test_model_routing_policy.py` reads every file in `results/` and
+requires each decision seat's configured model to carry a `quality_min` of
+1.00 at its own scenario, so a seat whose evidence has gone stale fails the
+suite rather than drifting unnoticed.
+
+`risk_drawdown_discipline` is `default=False` — it informs the risk seat
+only and would otherwise be paid for on every candidate in a full sweep.
 
 Useful flags:
 

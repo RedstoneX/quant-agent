@@ -31,9 +31,9 @@ Both open tranches are reconciled onto current `main` and pushed on
 
 **1. Cost-optimized model routing** (previously stranded on `claude/cost-optimized-model-routing-h4k2vn`, five commits behind `main`, now merged in whole — only `docs/WORK.md` conflicted and `main`'s newer timer-activation position was preserved):
 
-1. Per-seat model policy through the existing `config/settings.yaml` seam — no routing infrastructure added. Evidence and limitations: `docs/architecture/MODEL_ROUTING_POLICY.md`.
+1. Per-seat model policy through the existing `config/settings.yaml` seam — no routing infrastructure added. Eight seats on `google/gemini-2.5-flash-lite`; `risk_manager` on `qwen/qwen3-235b-a22b-2507`, held apart from the Portfolio Manager for decision-chain independence at measured-equal quality. Evidence and limitations: `docs/architecture/MODEL_ROUTING_POLICY.md`.
 2. Working cost telemetry. Under the baseline, `estimate_cost` could not price an OpenRouter `vendor/model` id at all, so every call persisted `cost_usd = NULL` and every session rendered `$?.??`.
-3. Projected LLM spend of **$72.10 → $1.13 per month** (98.4%) at measured-equal quality on 148 graded trials.
+3. Projected LLM spend of **$72.10 → $1.14 per month** (98.4%) at measured-equal quality on 148 graded trials plus a 30-trial RM re-run.
 
 **2. The deferred agent-audit findings.** The 2026-08-13 adversarial audit landed its text-only findings in `57f5b2d` and held five back for external architectural review. All five are resolved — three as fixes (the AI Risk Manager's missing drawdown/position-age evidence; PM/RM independence, as an information change only; premortem observability) and two as recorded decisions to retain (earnings valuation data stays out of a cached filing read; the veto hierarchy and every sizing threshold are unchanged). Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
 
@@ -50,7 +50,9 @@ One item is **not** closed and is the operator's:
 - Enabling trading timers.
 - Merging this branch.
 - Any second provider or fallback model (deliberately not added — see the policy doc).
-- Splitting the Portfolio Manager and AI Risk Manager onto different models. It is a one-line config change and the open question in `docs/WORK.md`, but it trades measured quality for independence and is the reviewer's call, not Claude's.
+- Promoting `qwen/qwen3-235b-a22b-2507` to any seat other than `risk_manager`. It is measured only there; `tests/test_model_routing_policy.py` blocks an unmeasured decision-seat promotion, and the specialist seats have no such guard beyond review.
+
+**Resolved, was previously listed here:** splitting PM and the AI Risk Manager onto different models. It was reserved to the reviewer on the premise that it traded measured quality for independence. PR #30's review established that premise was false — the "every alternative scored worse at the RM seat" claim had read a whole-sweep aggregate as a per-seat result — and supplied the decision rule. The re-measurement found a four-way quality tie, so the trade did not exist and the split was taken. Reversing it is one line in `config/settings.yaml` plus one in `verify_commissioning.py::EXPECTED_ROUTING`.
 
 ## Timer activation rule
 

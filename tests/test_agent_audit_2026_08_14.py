@@ -357,13 +357,37 @@ def test_f5_rm_prompt_discloses_the_calibration_feedback_loop() -> None:
     assert "not** evidence that the plans were good" in text
 
 
-def test_f5_rm_prompt_discloses_the_shared_model() -> None:
-    """The accepted routing policy puts PM and RM on the same model, so the
-    independent gate shares PM's blind spots. RM should know that is true of
-    its own position rather than assume architectural independence."""
+def test_f5_rm_prompt_states_its_model_relationship_to_pm_accurately() -> None:
+    """RM should know whether it shares PM's blind spots, and the prompt must
+    say whichever is actually true.
+
+    It said "you and PM currently run the same model" when that was the
+    policy. PR #30's RM-only re-run found four candidates tied at 1.00/1.00
+    at this seat, so the tie was spent on independence and the seats now
+    diverge. A prompt asserting a shared model against a split policy is
+    exactly the kind of stale claim the audit was about, so this test is
+    pinned to `config/settings.yaml` rather than to a fixed sentence.
+    """
+    import yaml
+
+    settings = yaml.safe_load(
+        (_REPO_ROOT / "config" / "settings.yaml").read_text()
+    )["llm"]
+    shared = settings["risk_manager_model"] == settings["portfolio_manager_model"]
+
     text = (PROMPT_DIR / "risk_manager.md").read_text()
-    assert "same model" in text
     assert "MODEL_ROUTING_POLICY.md" in text
+    if shared:
+        assert "same model" in text, (
+            "PM and RM share a model — RM's prompt must disclose that it "
+            "shares PM's blind spots"
+        )
+    else:
+        assert "different model from PM" in text, (
+            "PM and RM run different models — RM's prompt must not claim "
+            "they share one"
+        )
+        assert "same model" not in text
 
 
 def test_f5_independence_is_not_framed_as_disagreeing_more() -> None:

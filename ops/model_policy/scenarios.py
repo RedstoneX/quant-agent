@@ -519,6 +519,24 @@ _RISK_POSITIONS = [
 ]
 
 
+# Holding ages and system-performance state. RiskStage always passes both
+# (rebuilding them on the resume lane), so a scenario that omitted them would
+# be measuring the seat in a configuration production never runs. Neither
+# position is inside the <5d protection period and `in_drawdown` is false, so
+# the arithmetic this scenario grades is unchanged — the extra evidence is
+# present and simply gives nothing away.
+_RISK_POSITION_HISTORY = {
+    "NVDA": {"days_held": 30, "entry_date": "2026-07-13"},
+    "XLE": {"days_held": 46, "entry_date": "2026-06-27"},
+}
+_RISK_RECENT_PERFORMANCE = {
+    "rolling_5d_pct": -0.8,
+    "rolling_20d_pct": 1.4,
+    "in_drawdown": False,
+    "trailing_days": 24,
+}
+
+
 def _risk_invoke(agent):
     verdict, _ = agent.review(
         portfolio_decision=_RISK_DECISION,
@@ -527,6 +545,8 @@ def _risk_invoke(agent):
         rule_violations=[],
         total_value=42_000.0,
         cash=5_040.0,
+        position_history=_RISK_POSITION_HISTORY,
+        recent_performance=_RISK_RECENT_PERFORMANCE,
     )
     return verdict
 
@@ -573,6 +593,147 @@ def _risk_grade(verdict) -> list[Check]:
         "reason_category_not_clean", 0.10,
         verdict.reason_category != "clean" or verdict.approved is False,
         f"reason_category={verdict.reason_category}",
+    ))
+    return checks
+
+
+# --------------------------------------------------------------------------
+# 4b. risk_manager — the two rules the 2026-08-13 audit gave it the evidence
+#     for. Separate scenario, not extra checks on `risk_rr_breach`: that one
+#     grades the R/R gate and mixing a second rule into it would make a
+#     failure unattributable.
+#
+#     Both breaches below are forced by arithmetic the prompts already state,
+#     the same discipline as every other scenario here:
+#
+#       - `in_drawdown=true` (5d -4.6% is past the -3% trigger) requires PM
+#         to halve every new BUY. PM sized MSFT at the full 12% high-
+#         conviction base and SAID SO in `sizing_logic`. Nothing
+#         deterministic enforces this rule, so RM is the only check on it.
+#       - AMD is 2 days held, inside the <5d protection period, and the SELL
+#         cites a Tech downgrade — which portfolio_manager.md names
+#         explicitly as NOT sufficient.
+#
+#     MSFT's R/R is 2.5 (entry 100 / stop 94 / target 115), comfortably above
+#     the 1.5 floor and below the 3.0 "don't nick it" band, so a model cannot
+#     score here by re-running the R/R check from `risk_rr_breach`.
+# --------------------------------------------------------------------------
+
+_DRAWDOWN_PM_CHAIN = ReasoningChain(
+    macro_filter="Regime risk-on, target invested 75%.",
+    news_check="No HIGH state changes on held or proposed names.",
+    earnings_check="Nothing queued inside the window.",
+    signal_conflicts="Tech and macro aligned on MSFT.",
+    sizing_logic=(
+        "MSFT at the full 12% high-conviction base — 4/4 alignment and "
+        "R/R 2.5, so no reduction applied."
+    ),
+    portfolio_balance="Technology 34%, inside the 40% cap.",
+    cash_target="Cash 14% after the adds, inside the risk-on band.",
+    continuity_check="Consistent with the week's constructive stance.",
+    premortem_check=(
+        "Bear case on MSFT: the AI capex trade is crowded and a soft "
+        "Azure print would take the multiple down. Falsifier: a close "
+        "below the 20-day on rising volume."
+    ),
+)
+
+_DRAWDOWN_DECISION = PortfolioDecision(
+    reasoning_chain=_DRAWDOWN_PM_CHAIN,
+    decisions=[
+        TradeDecision(
+            action="BUY", symbol="MSFT", allocation_pct=12.0,
+            entry_price=100.0, stop_loss=94.0, take_profit=115.0,
+            reasoning="High conviction, 4/4 aligned, R/R 2.5.",
+        ),
+        TradeDecision(
+            action="SELL", symbol="AMD", allocation_pct=100.0,
+            entry_price=162.0, stop_loss=155.0, take_profit=180.0,
+            reasoning="Tech rating downgraded to neutral today.",
+        ),
+    ],
+    portfolio_view="Adding quality tech, cutting the weak AMD entry.",
+)
+
+_DRAWDOWN_POSITIONS = [
+    Position(symbol="NVDA", qty=120, avg_entry=142.0, current_price=151.3,
+             market_value=18_156.0, unrealized_pnl=1_116.0, sector="Technology"),
+    Position(symbol="AMD", qty=40, avg_entry=162.0, current_price=159.4,
+             market_value=6_376.0, unrealized_pnl=-104.0, sector="Technology"),
+]
+
+_DRAWDOWN_POSITION_HISTORY = {
+    "NVDA": {"days_held": 30, "entry_date": "2026-07-13"},
+    "AMD": {"days_held": 2, "entry_date": "2026-08-10"},
+}
+
+_DRAWDOWN_RECENT_PERFORMANCE = {
+    "rolling_5d_pct": -4.6,     # past the -3% trigger
+    "rolling_20d_pct": -2.1,
+    "in_drawdown": True,
+    "trailing_days": 24,
+}
+
+
+def _risk_drawdown_invoke(agent):
+    verdict, _ = agent.review(
+        portfolio_decision=_DRAWDOWN_DECISION,
+        positions=_DRAWDOWN_POSITIONS,
+        macro_summary=_MACRO_SUMMARY,
+        rule_violations=[],
+        total_value=42_000.0,
+        cash=8_400.0,
+        position_history=_DRAWDOWN_POSITION_HISTORY,
+        recent_performance=_DRAWDOWN_RECENT_PERFORMANCE,
+    )
+    return verdict
+
+
+def _risk_drawdown_grade(verdict) -> list[Check]:
+    checks: list[Check] = []
+    checks.append(Check("parsed", 0.20, verdict is not None, "RiskVerdict validated"))
+    if verdict is None:
+        return checks
+
+    chain = verdict.reasoning_chain.model_dump()
+    checks.append(Check(
+        "cot_complete", 0.10,
+        all(str(v).strip() for v in chain.values()),
+        f"{sum(1 for v in chain.values() if str(v).strip())}/{len(chain)} steps",
+    ))
+
+    # Did it ACT on a BUY that ignored the halving requirement? Same shape as
+    # the rr_breach check: a mod on the name, a portfolio-wide scale-down, or
+    # a rejection all count.
+    msft_mods = [m for m in verdict.modifications if m.symbol.upper() == "MSFT"]
+    acted = (
+        (not verdict.approved)
+        or bool(msft_mods)
+        or verdict.scale_all_buys < 1.0
+    )
+    checks.append(Check(
+        "acts_on_unhalved_drawdown_buy", 0.30, acted,
+        f"approved={verdict.approved} msft_mods={len(msft_mods)} "
+        f"scale_all_buys={verdict.scale_all_buys}",
+    ))
+
+    # And did it say why. "Acted for some other reason" is not the same as
+    # applying the rule, so the audit trail has to name the drawdown.
+    chain_text = " ".join(str(v) for v in chain.values())
+    checks.append(Check(
+        "names_drawdown_in_chain", 0.20,
+        re.search(r"drawdown|halv", chain_text, re.IGNORECASE) is not None,
+        f"sizing_sanity={str(chain.get('sizing_sanity', ''))[:110]!r}",
+    ))
+
+    # The <5d SELL. RM cannot cleanly cancel a SELL (setting allocation_pct
+    # to 0 is forbidden — it silently skips the exit), so the graded response
+    # is that it flags the name, not that it acts on it.
+    checks.append(Check(
+        "flags_protected_period_sell", 0.20,
+        re.search(r"\bAMD\b", chain_text) is not None
+        or any(m.symbol.upper() == "AMD" for m in verdict.modifications),
+        f"chain mentions AMD={bool(re.search(r'\bAMD\b', chain_text))}",
     ))
     return checks
 
@@ -888,6 +1049,18 @@ SCENARIOS: list[Scenario] = [
         grade=_risk_grade,
         description="Plan contains a 0.42R BUY at 18% of book. Grades whether "
                     "the last LLM gate catches and names it.",
+    ),
+    Scenario(
+        key="risk_drawdown_discipline",
+        role="risk_manager",
+        agent_path="src.agents.risk_manager:RiskManagerAgent",
+        invoke=_risk_drawdown_invoke,
+        grade=_risk_drawdown_grade,
+        default=False,
+        description="in_drawdown=true with an unhalved 12% BUY, plus a SELL "
+                    "on a 2-day-old position citing only a Tech downgrade. "
+                    "Grades the two rules the 2026-08-13 audit gave RM the "
+                    "evidence for. Opt-in: it informs the risk seat only.",
     ),
     Scenario(
         key="tech_batch_full",
