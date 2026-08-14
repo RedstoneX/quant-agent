@@ -31,19 +31,23 @@ Every agent seat runs `provider: openrouter`. Eight run
 
 Worth stating because a test in this repo briefly implied otherwise (an
 input-price >= $0.10/M floor on the decision seats, removed at PR #30
-review). Nothing in this policy infers quality from price. Every seat
-assignment traces to a graded run at that seat, and the invariant the tests
-now enforce is exactly that: a decision seat's model must carry a committed
-`quality_min` of 1.00 at its own scenario. The price floor would have failed
-this policy — both routed models sit at or below it — while passing any
-expensive model nobody had measured.
+review). Nothing in this policy infers quality from price. Every **decision
+seat** assignment traces to a graded run at that seat, and the invariant the
+tests now enforce is exactly that: a decision seat's model must carry a
+committed `quality_min` of 1.00 at its own scenario. The three seats marked
+**by analogy** above are explicit exceptions and are not represented as
+directly measured. The price floor would have failed this policy — both
+routed models sit at or below it — while passing any expensive model nobody
+had measured.
 
 ### Eight seats on one model is the finding; the ninth is the exception
 
 The tranche was authorized to reserve stronger models for seats that
-demonstrably benefit. On quality, **no seat did** — no candidate outscored
-the selected model anywhere, so no seat is assigned a more expensive model
-to buy quality it would not get.
+demonstrably benefit. On measured quality, **no measured seat did** — no
+candidate outscored the selected model on a measured seat, so no measured
+seat is assigned a more expensive model to buy quality it would not get.
+Three unmeasured seats are assigned by analogy and remain an explicit known
+limitation rather than evidence of equivalence.
 
 `risk_manager` diverges for a different reason, and only after quality had
 already tied. It is the gate over the Portfolio Manager, so a shared model
@@ -276,31 +280,35 @@ average, and three seats' token profiles are structural estimates.
 
 ## An operational fault this exposed
 
-**As commissioned, QAMC could not have completed a single agent call.**
+**At the time of the commissioning-baseline check, QAMC could not have
+completed a single `gpt-5.5` agent call at the configured ceiling.**
 
 OpenRouter pre-authorizes worst-case output spend before starting a
-request. At the configured `max_tokens: 128000`, `gpt-5.5` reserves
-`128000 x $30/M = $3.84` per call. The account holds **$2.04**
-(`/api/v1/credits`: $10 granted, $7.96 used). Every call therefore returns
+request. At `max_tokens: 128000`, `gpt-5.5` reserves
+`128000 x $30/M = $3.84` per call. The account then held **$2.04**
+(`/api/v1/credits`: $10 granted, $7.96 used). Every call therefore returned
 HTTP 402 — which `_is_retryable` correctly classifies as non-retryable, so
-`_execute` fails immediately, and with no Anthropic key there is no
-failover. The first agent of the first session dies and the session fails
-closed.
+`_execute` failed immediately, and with no Anthropic key there was no
+failover. The first agent of the first session would have failed closed.
 
 Commissioning did not catch this because the preflight calls with
 `max_tokens=512`, reserving about a cent.
 
-The policy fixes it as a side effect. Same 128k ceiling, per-call
-reservation by model:
+The account was subsequently topped up; this is **not a current credit
+blocker**. `docs/WORK.md` records the latest observed balance during the
+review cycle. The finding remains relevant because it explains why the
+baseline was operationally unusable at that moment and why preflight must
+not be mistaken for affordability at production token ceilings.
 
-| model | reserved per call | affordable at $2.04 |
-|---|---|---|
-| `openai/gpt-5.5` | $3.8400 | **no — 402** |
-| `google/gemini-2.5-flash-lite` | $0.0512 | yes |
+The policy also reduces the reservation by model. Same 128k ceiling:
 
-A 75x reduction in credit reserved per call, independent of tokens
-actually spent. **The operator must still top up OpenRouter credit before
-any live session** — see `docs/WORK.md`.
+| model | reserved per call |
+|---|---|
+| `openai/gpt-5.5` | $3.8400 |
+| `google/gemini-2.5-flash-lite` | $0.0512 |
+
+That is a 75x reduction in credit reserved per call, independent of tokens
+actually spent.
 
 ## Failure behaviour — and why no fallback was added
 
