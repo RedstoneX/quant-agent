@@ -1,50 +1,61 @@
 # QAMC Current Work
 
-Status: **FINAL RUNTIME ACCEPTANCE → PAPER SOAK**
+Status: **PAPER SOAK ACTIVATION**
 
 ## Goal
 
-Start scheduled **Alpaca Paper trading** as soon as the final runtime commissioning rerun is green. Do not add another agent-intelligence, prompt, model-routing or dashboard-polish tranche before soak start unless runtime evidence exposes a genuine blocker.
+Enable the existing scheduled **Alpaca Paper** timers, verify the schedule and runtime health, then begin observing real paper-trading behaviour. Do not insert another intelligence/model/dashboard tranche before soak start unless activation itself exposes a genuine blocker.
 
-The operator has explicitly authorized the paper soak once commissioning passes.
+The operator has already authorized the paper soak.
 
-## Already closed
+## Commissioning is closed
 
-- Stages 0–5 are accepted and deployed.
-- Mission Control is private, read-only and sufficient for initial soak observability.
-- Cost-optimized OpenRouter routing is accepted: eight seats on `google/gemini-2.5-flash-lite`, `risk_manager` on `qwen/qwen3-235b-a22b-2507`.
-- The decision-chain audit is accepted.
-- Alpaca Paper connectivity, market data, FRED and both policy-model completions pass through OneCLI.
-- Runtime health is green for DB, paper mode and broker reachability.
-- The `dev` commissioning half is already green and proves the off-account credential-isolation boundary.
-- Direct runtime inspection confirmed all seven trading timers are disabled.
-- PR #33 fixed the verifier bug that misread systemd `disabled enabled` output and merged to `main` as `aa52f5f9fd5912914a1640f74bdab84d1e30cd51`.
+The final `qamc` live commissioning run against current `main` passed on 2026-08-14:
 
-## Immediate remaining work
+- **37 passed / 0 failed / 0 warned / 1 skipped**
+- `COMMISSIONING ACCEPTANCE: PASS`
+- `EXIT=0`
 
-One final `qamc` runtime acceptance rerun remains against current `main`.
+The single SKIP is the intentionally `dev`-only off-account credential-isolation check. The earlier green `dev` run already proves that boundary. Full commissioning is therefore accepted by union of the two account runs.
 
-Acceptance condition:
+Also closed:
 
-- zero FAIL results and process exit `0`;
-- the dev-only isolation check may remain `SKIP` / single-account coverage may remain `partial` because that obligation is already proved by the green `dev` run;
-- full commissioning is the union of the green `dev` and `qamc` evidence.
+- stages 0–5 accepted/deployed;
+- Mission Control private/read-only and sufficient for initial soak observability;
+- OneCLI credential path green;
+- Alpaca Paper account/data/quote/calendar green;
+- FRED green;
+- both accepted OpenRouter policy models complete live calls;
+- runtime DB/paper/broker health green;
+- all seven trading timers confirmed disabled before activation;
+- PR #33 timer-state parser fix merged and verified;
+- deterministic risk/execution semantics unchanged.
 
-The previous runtime run was **36 PASS / 1 FAIL / 1 SKIP**. Every functional, credential, broker, model and Mission Control check passed. The sole FAIL was the now-fixed timer-state parser.
+## Immediate work
 
-If the corrected runtime run is green, commissioning is complete. The already-recorded operator authorization then makes paper-soak activation a routine deployment step, not another architecture/product gate.
+Activate the existing QAMC trading timers under the `qamc` user and verify:
 
-## What is deliberately deferred until after soak start
+1. the intended timer units are enabled and scheduled;
+2. Alpaca remains Paper-only;
+3. Mission Control and broker health remain green;
+4. no unrelated service or public exposure is introduced.
 
-Unless new runtime evidence shows a blocker, do **not** delay the experiment for:
+Activation is routine deployment under the already-recorded operator authorization, not a new architecture/product gate.
 
-- more model benchmarking;
-- more agent/prompt intelligence work;
-- additional decision-chain redesign;
-- richer dashboard charts or visual polish;
-- speculative feature expansion.
+## After activation
 
-After paper trading starts, prioritize improvements from observed evidence: positions chosen, specialist disagreement, PM/RM reasoning, deterministic blocks, order/fill behaviour, cost/latency, missed opportunities, attribution, performance and Mission Control usability during real sessions.
+Use actual soak evidence to prioritize the next work:
+
+- positions selected and rejected;
+- specialist disagreement and evidence quality;
+- PM/RM reasoning and vetoes;
+- deterministic blocks;
+- order/fill behaviour;
+- cost/latency/model attribution;
+- missed opportunities and performance;
+- Mission Control usability during real sessions.
+
+Do **not** prioritize speculative polish over observed failures or learning from the soak.
 
 ## Hard boundaries
 
