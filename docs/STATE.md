@@ -55,7 +55,7 @@ This marks the start of the authorized **Alpaca Paper soak**. It does **not** au
 
 The OVH host's private operator path was completed and verified on 2026-08-14:
 
-- Tailscale is authenticated, enabled and healthy under the neutral MagicDNS node name `redstone-vps`.
+- Tailscale is authenticated, enabled and healthy. The canonical private Tailscale VPS hostname is **`wallaby-bowfin.ts.net`**. Treat this as the memorable source-of-truth name for SSH and Mission Control access; older `redstone-vps` references are obsolete.
 - Tailscale Serve provides tailnet-only HTTPS to Mission Control while the API remains bound to `127.0.0.1:8800`; ports 443 and 8800 are not publicly reachable.
 - Existing OpenSSH key authentication for `ubuntu` and `dev` was verified over the tailnet. Tailscale SSH remains disabled so the existing key-based OpenSSH path stays authoritative.
 - Public port 22 remains temporarily available as the recovery path until the operator validates SSH from the other regular Tailscale clients; it must not be removed before that validation.
