@@ -73,7 +73,7 @@ The existing detailed run/candidate forensic views remain the source for deep in
 - Administration account: `ubuntu`
 - Tailnet DNS name: `wallaby-bowfin.ts.net`
 - OVH VPS machine name: `redstone-vps`
-- **Canonical explicit VPS MagicDNS FQDN: `redstone-vps.wallaby-bowfin.ts.net`**
+- **Canonical SSH / explicit MagicDNS host: `redstone-vps.wallaby-bowfin.ts.net`**
 - QAMC and OneCLI remain private.
 
 ## ⏭️ NEXT MOVES
