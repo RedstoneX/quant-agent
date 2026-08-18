@@ -1,128 +1,163 @@
 # QAMC Current Work
 
-Status: **ALPACA PAPER SOAK ACTIVE — DIRECTIONALITY + MISSION CONTROL EXPLAINABILITY TRANCHE AUTHORIZED**
+Status: **ALPACA PAPER SOAK ACTIVE — AUTONOMOUS PRODUCT IMPROVEMENT TRANCHE AUTHORIZED**
 
 ## Goal
 
-Use actual paper-soak evidence from the Aug 17–18 market decline to determine why QAMC deployed no meaningful risk, verify that the existing bearish/inverse-ETF path is genuinely usable, and make Mission Control explain the answer without requiring raw-log archaeology.
+Use the running paper soak to materially improve both **QAMC trading intelligence** and **Mission Control as an operator product**. The current dashboard is functionally useful but materially short of the intended Mission Control cockpit, and the recent market decline is a live test of whether QAMC's supported bearish path is genuinely usable.
 
-This is evidence-driven post-start iteration. It is no longer speculative dashboard polish: the operator has observed both a significant market move and a dashboard that does not clearly explain why candidates produced no trade.
+This tranche is not an endless audit. Investigate enough to establish causes, then **plan, implement, test, browser-verify, iterate and document** the fixes that are justified inside the accepted architecture.
 
-## Product decision now explicit
+## Engineering autonomy
+
+Claude is the engineering lead for this tranche and has broad authority inside the existing architecture to:
+
+- inspect repository and runtime evidence;
+- decide routine implementation details;
+- use subagents and safe parallel worktrees where useful;
+- refactor read-side/API/UI code when that improves clarity or maintainability;
+- add bounded read-only derived API fields/endpoints when required by the product outcome;
+- improve prompts/candidate plumbing when evidence proves a behavioural blind spot;
+- implement dashboard information architecture and visual changes;
+- run focused and full tests;
+- use browser/runtime verification and screenshots;
+- update existing authoritative documentation;
+- push a dedicated implementation branch for external review.
+
+Do **not** repeatedly stop after discovery or planning. Stop for the operator only when required by credentials/privilege, a genuine unresolved product/value choice, or a material architecture/safety fork prohibited by `CLAUDE.md`.
+
+## Product decisions already made
+
+### Directionality
 
 QAMC is **not intended to be structurally long-only**. Within the currently supported instruments and existing safety architecture, it should be able to express bullish, bearish or neutral/cash views.
 
-Current approved bearish expression is through the inverse ETFs already in the universe (`SH`, `SDS`, `PSQ`, `SQQQ`). This tranche does **not** authorize direct stock shorting, options/theta strategies, margin, or a deterministic risk/execution redesign.
+Current approved bearish expression is through inverse ETFs already in the universe (`SH`, `SDS`, `PSQ`, `SQQQ`). This tranche does **not** authorize direct stock shorting, options/theta strategies, margin, or deterministic risk/execution redesign.
 
-SGOV is also explicitly **cash-equivalent sweep parking**, not a PM investment decision. It must not be presented to the operator as if the AI chose to allocate the portfolio defensively to bonds.
+SGOV is **cash-equivalent sweep parking**, not a PM investment thesis. Mission Control must never make it look like the AI deliberately put the portfolio into bonds as its main risk allocation.
 
-## Workstream A — forensic directionality audit
+### Mission Control visual/product direction
 
-Reconstruct the relevant Aug 17–18 scheduled paper sessions from authoritative runtime/database evidence. For each meaningful morning run, follow the actual chain:
+The existing single-column/vertically stacked dashboard is a baseline, not the target product.
 
-1. market/regime evidence, including SPY/QQQ context;
-2. Tech ratings for `SPY`, `QQQ`, `SH`, `SDS`, `PSQ`, `SQQQ` where available;
-3. Macro and News stance;
-4. candidates that reached the Portfolio Manager;
-5. PM targets/reasoning and whether inverse ETFs were considered;
-6. AI Risk Manager verdict/modifications;
-7. deterministic Python blocks, if any;
-8. order/execution result;
-9. evening missed-opportunity assessment.
+The prior QAMC Mission Control vision is reaffirmed as the **layout and information-hierarchy target**: a dense, coherent desktop trading cockpit that remains usable on iPad, with the most important trading state visible without long scrolling or raw-log archaeology.
 
-The audit must distinguish among at least these possibilities rather than assuming “no trade” is wrong:
+Converge toward these characteristics using the data and architecture QAMC actually has:
 
-- no technically qualified bearish setup;
-- bearish signals existed but never reached candidate/PM consideration;
-- PM recognized the decline but intentionally stayed neutral;
-- inherited long-participation priors or prompt framing created directional bias;
-- RM vetoed/scaled the plan;
+- compact top account/status strip;
+- equity, daily P&L, unrealized P&L, deployable liquidity, sweep parking and directional/risk exposure clearly separated;
+- market/regime and system status visible near the top when authoritative evidence exists;
+- candidates/watchlist as a first-class working area rather than chips buried deep in a journal;
+- chart-led market/security context where existing data can support it without inventing a new trading/data platform;
+- visually prominent **Specialists → Portfolio Manager → AI Risk Manager → deterministic gate → execution** chain;
+- explicit first-class states for **no trade**, proposed trade, rejected/modified trade and executed trade;
+- positions/orders/trades available but not allowed to dominate the entire page;
+- journal presented as a decision narrative: thesis, candidates, decisions, missed opportunities, lessons and next posture;
+- investigations/forensics that make useful questions easy to answer (e.g. PM wanted risk but RM reduced it; deterministic gate rejected a later winner; expensive deliberation produced no trade; bearish opportunity was missed);
+- model/provider/cost/latency and raw technical metadata available through progressive disclosure rather than competing with the trading workflow;
+- responsive desktop/tablet layout with materially less unnecessary vertical stacking.
+
+Use the vision as a product reference, not permission to fabricate features. In particular, the old mockup's PAUSE/KILL/trade controls remain **out of scope** because Mission Control is currently read-only.
+
+## Workstream A — one-pass directionality forensic + correction
+
+Reconstruct the relevant Aug 17–18 scheduled paper sessions once from authoritative runtime/database evidence. Follow the actual chain through market/regime evidence, inverse-ETF technical evidence, candidates, PM, RM, deterministic gate, execution and evening review.
+
+Classify the actual cause of no meaningful risk deployment. Possible causes include:
+
+- no qualified bearish setup;
+- bearish evidence never reached candidate/PM consideration;
+- PM recognized the decline but deliberately stayed neutral;
+- inherited long-participation priors or prompt framing distorted the decision;
+- RM vetoed/scaled it;
 - deterministic risk blocked it;
-- data/runtime failure suppressed an otherwise valid decision.
+- runtime/data failure suppressed an otherwise valid path.
 
-Do not change intelligence because the move is obvious in hindsight. A behavioural correction requires evidence that the supported bearish path was systematically ignored, contradicted or inaccessible.
+Do not stop at the classification. If the evidence shows a genuine blind spot, correct the smallest responsible layer and add a regression fixture. Valid corrections can include explicit inverse-ETF consideration under materially bearish evidence, candidate plumbing fixes, horizon wording that distinguishes swing trading from long-only thinking, or rebalancing an inherited prior that is demonstrably distorting current-account decisions.
 
-## Workstream B — Mission Control explainability
+Do not hindsight-fit the system merely because a recent decline is obvious after the fact.
 
-Improve the existing read-only cockpit using existing authoritative sources/derived read-only aggregations. Keep the API/UI non-critical to trading.
+## Workstream B — Mission Control redesign + explainability
 
-### Required UX outcomes
+Redesign the existing read-only Mission Control so the main screen answers, at a glance:
 
-1. **Liquidity is honest at a glance.** Distinguish:
-   - raw broker cash;
-   - SGOV cash-sweep parking;
-   - deployable liquidity;
-   - real risk-asset exposure / directional exposure.
+1. **What do I own and how much real risk is deployed?**
+2. **What does QAMC think the market is doing?**
+3. **What opportunities/candidates is it looking at?**
+4. **What did the specialists, PM, Risk and deterministic gate decide?**
+5. **Why did it trade — or why did it not trade?**
+6. **What did it miss and what is it learning from that?**
+7. **Is the system healthy and what did the AI cost?**
 
-   SGOV may still appear in a detailed positions view for broker truth, but it must be visibly labeled cash-equivalent/sweep rather than an AI-selected risk position.
+Required concrete outcomes include:
 
-2. **Latest run answers “WHY NO TRADE?”** The main page must provide a compact decision funnel for the most recent substantive trading run, using recorded evidence where available. At minimum show:
-   - candidates considered;
-   - PM targets/proposed actions;
-   - RM approvals/rejections/modifications;
-   - deterministic blocks;
-   - executed trades;
-   - a concise dominant no-trade reason when the funnel ends at zero execution.
+- honest raw cash / SGOV sweep / deployable liquidity / risk exposure presentation;
+- a latest substantive run decision funnel with a concise dominant **WHY NO TRADE?** explanation when appropriate;
+- latest available directional/regime posture with honest unknown states;
+- inverse-ETF consideration visible when relevant;
+- missed UP and DOWN opportunities visible from journal/evening evidence;
+- existing PM/RM/specialist/model/cost details preserved in drill-down;
+- substantially improved information density, hierarchy, spacing and responsive layout compared with the current vertically stacked page.
 
-   The existing detailed run/candidate modal remains the forensic drill-down; the new top-level summary is an index into it, not a second source of truth.
+Claude may reorganize the UI significantly and may add bounded read-only API aggregation required to support this presentation. Do not introduce a new framework, persistent service, database, observability platform or trading-critical dependency without architectural approval.
 
-3. **Directional posture is visible.** Surface the latest available market/regime stance and whether bearish/inverse-ETF opportunities were actually considered. Do not fabricate a market regime when no authoritative run evidence exists.
+## Workstream C — operator usefulness and experiment measurement
 
-4. **Missed opportunities are visible.** Journal/evening data should make notable missed UP and DOWN moves easy to see, including symbol, move direction/magnitude and classification when recorded.
+Review the current product for other high-value improvements that are already supported by existing data and architecture. Implement them when they clearly advance `OUTCOME.md` without creating major new infrastructure.
 
-5. **Existing detail remains accessible.** PM reasoning, RM reasoning, specialist disagreement, provider/model/cost/latency and proposed-vs-executed evidence must remain available through the existing read-only drill-down.
+Examples include:
 
-## Workstream C — conditional intelligence correction
+- benchmark/account performance context where existing history supports it;
+- clearer AI-vs-deterministic attribution if existing records permit a truthful comparison;
+- more useful journal summaries and investigations;
+- clearer model/provider/cost/latency reporting;
+- better navigation/progressive disclosure;
+- fixes for misleading empty states, labels or terminology exposed by real soak use.
 
-Only after Workstream A establishes a real blind spot, make the smallest correction inside the existing accepted architecture.
+Do not add decorative complexity or unsupported vanity metrics.
 
-Allowed examples:
+## Verification / iteration
 
-- prompt wording that requires explicit inverse-ETF consideration when current Macro/Tech evidence is materially bearish;
-- candidate-selection plumbing that accidentally excludes already-approved inverse ETFs;
-- clearer separation of “swing/position horizon” from “must be long” so multi-day bearish opportunities can be expressed;
-- removal or rebalance of an inherited prior if current-account evidence shows it is distorting decisions.
+Treat browser appearance as an acceptance dimension, not an afterthought.
 
-Not allowed in this tranche:
+Before stopping:
 
-- direct short positions or negative target weights;
-- options/theta infrastructure;
-- margin enablement;
-- new broker/execution semantics;
-- weakening stop/cash/daily-loss/position/sector protections;
-- changing models simply because a decision was conservative;
-- new authoritative UI storage or a second trading-memory system.
+- run focused tests continuously and the full automated suite at the checkpoint;
+- verify representative real/sanitized soak states in the browser;
+- capture desktop and tablet/iPad-sized screenshots under the existing verification convention;
+- compare screenshots against the product direction in `OUTCOME.md` and iterate if the result still reads like a raw database/status page;
+- verify a real no-trade run is understandable from the main screen and traceable into detailed evidence;
+- verify SGOV is visually unmistakable as cash-equivalent sweep parking;
+- verify no deterministic risk/execution semantics changed;
+- verify Alpaca remains Paper-only;
+- verify no secrets enter Git, screenshots, UI or logs.
 
-Any intelligence change must include a regression fixture showing the prior failure mode and the corrected behaviour without weakening deterministic safety.
-
-## Verification / acceptance
-
-Before this tranche can be accepted:
-
-- forensic findings must state **finding → evidence → decision → change (if any) → remaining uncertainty**;
-- the full automated test suite must pass;
-- dashboard changes must be browser/runtime verified against representative real or sanitized soak data, with screenshots under the existing verification convention;
-- SGOV must be visibly differentiated from risk positions;
-- a real no-trade run must be explainable from the main page and traceable into the existing run/candidate detail;
-- no deterministic risk/execution semantics may change;
-- Alpaca remains Paper-only;
-- no secrets may appear in Git, UI evidence, screenshots or logs;
-- paper-soak timers remain active unless a genuine runtime defect requires a bounded operational stop.
+A technically green page that is still materially far from the intended cockpit is **not** complete.
 
 ## Hard boundaries
 
 - Alpaca **Paper only**; no live trading.
 - Preserve Specialist Agents → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution.
+- Deterministic Python and broker protections remain final safety/execution authority.
 - No deterministic risk/execution semantic redesign.
-- No direct shorting, options trading or margin in this tranche.
-- No broker-write Mission Control controls.
+- No direct stock shorting, negative target weights, options trading or margin in this tranche.
+- Mission Control remains read-only and non-critical to trading; no broker-write controls.
 - No public services; Mission Control remains tailnet/private.
 - Preserve `dev` / `qamc` / `ubuntu` isolation.
 - Keep upstream OneCLI as the credential layer.
+- No new persistent service, durable infrastructure layer, security system, database, proxy, framework migration or custom replacement for an approved component without explicit architecture approval.
 - No secrets in Git/chat/logs/screenshots/client evidence.
 - No silent model fallback or unrecorded model choice.
-- Claude does not merge its own PR or push implementation directly to `main`.
+- Claude does not push implementation directly to `main` and does not merge its own PR.
 
-## Handoff
+## Checkpoint
 
-Begin with the runtime/database forensic reconstruction, while the non-behavioural Mission Control presentation fixes may proceed in parallel because their defects are already established. Stop and reconcile only if the evidence indicates a material architecture change beyond the allowed inverse-ETF/prompt/candidate path.
+Continue autonomously until a **meaningful implementation checkpoint** is complete, not merely until an audit or plan is written.
+
+At checkpoint:
+
+1. commit and push the dedicated branch;
+2. ensure tests and browser/runtime verification evidence are recorded;
+3. update existing `STATE.md` / `WORK.md` only as appropriate — do not create new handoff/status docs;
+4. report concisely using **finding → decision → change → evidence → remaining uncertainty**;
+5. STOP for independent ChatGPT/operator review and merge decision.

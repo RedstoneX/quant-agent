@@ -25,6 +25,22 @@ The operator should be able to understand, without reading raw logs:
 - what meaningful bullish or bearish opportunities the system missed;
 - whether model/prompt choices appear to add measurable value over time.
 
+## Mission Control product direction
+
+Mission Control is intended to feel like a **real trading cockpit**, not a vertically stacked database/log viewer.
+
+The prior QAMC Mission Control vision remains the product reference for layout and information hierarchy: a dense desktop-first cockpit, responsive on iPad, with a compact account/status strip, candidate/watchlist context, chart-led market context where authoritative data supports it, a visually prominent Specialist → PM → Risk → deterministic gate → execution chain, positions/orders/trades as supporting state, and journal/investigation/learning views that explain decisions and missed opportunities.
+
+The governing UX principles are:
+
+- **Clarity first** — the important trading state is immediately visible.
+- **Transparency always** — reasoning, disagreement, vetoes and deterministic blocks are inspectable.
+- **Explanation before action** — especially for no-trade and rejected-trade states.
+- **Human in control** — without making Mission Control part of the trading-critical path.
+- **Maximum useful reuse, minimum custom infrastructure** — improve the existing product before inventing new durable systems.
+
+The visual reference is directional, not blanket feature authorization. Mockup concepts that conflict with current safety boundaries — including broker-write PAUSE/KILL controls, direct trade controls, or other write paths — remain unimplemented unless separately authorized. Do not fabricate unsupported data merely to match a mockup.
+
 ## MVP lifecycle principle
 
 QAMC should reach a safe, observable deployed baseline and then **start the Alpaca Paper experiment promptly**. Paper-soak evidence is not the reward after polish; it is the evidence needed to decide what should be improved next.
@@ -37,7 +53,7 @@ Before soak start, the product needs enough observability to understand account 
 
 After soak start, engineering should use observed trading behaviour and operator experience to prioritize work: weak evidence, poor decisions, excessive vetoes, execution problems, missing telemetry, confusing Mission Control views, missed opportunities in either direction, model cost/latency and measurable out-of-sample performance.
 
-Dedicated visual polish remains valuable, but it must not delay a safe paper experiment once the minimum useful cockpit and commissioning gates are satisfied. Likewise, agent/prompt/model improvements can continue during the soak rather than being treated as prerequisites to collecting real evidence.
+Now that the soak is active, visual/product convergence is valid engineering work when the running cockpit materially fails the intended operator experience. Functional correctness alone is not sufficient acceptance for a Mission Control redesign.
 
 ## Hard outcome constraints
 
