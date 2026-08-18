@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-14
+Updated: 2026-08-18
 
 This file says what is accepted and authorized **now**. Git history preserves prior detail.
 
@@ -14,6 +14,7 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Alpaca Paper-only is enforced in code.
 - Cost-optimized model routing and the decision-chain audit are accepted on `main`.
 - PR #33 fixed the commissioning timer-state false positive and merged to `main` as `aa52f5f9fd5912914a1640f74bdab84d1e30cd51`.
+- PR #37 recorded the verified private Tailscale/Orca access path and merged to `main` on 2026-08-18.
 
 ### Runtime commissioning accepted
 
@@ -81,22 +82,28 @@ The OVH host's private operator path was completed and verified on 2026-08-14:
 - **No deterministic risk or execution semantics changed.** Alpaca remains Paper-only.
 - Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
 
-## Current product priority: observe the paper soak
+## Paper-soak findings now accepted as work-driving evidence
 
-The immediate product goal is now to observe what QAMC actually does under scheduled Alpaca Paper operation and use real evidence to drive the next tranche.
+The first operator review of real soak behaviour and Mission Control on 2026-08-18 exposed issues that are now legitimate post-start work rather than speculative polish:
 
-Prioritize:
+- **SGOV is deterministic cash parking, not a Portfolio Manager investment thesis.** The cash-sweep subsystem parks excess raw cash in SGOV, hides it from LLM-facing portfolio views, treats it as cash-equivalent for risk, and releases it before real BUYs. Mission Control currently presents SGOV like an ordinary position, which can materially mislead the operator about risk posture and deployable liquidity.
+- **QAMC has an existing bearish path but is not currently a direct-short system.** `SH`, `SDS`, `PSQ` and `SQQQ` are already in the trading universe and deterministic risk code handles their signed inverse exposure and leverage. The Portfolio Manager cannot emit negative target weights; SELLs reduce/close owned positions. Direct stock shorting, options/theta strategies and margin are therefore outside the current implementation and remain unauthorized.
+- **The product must not be structurally long-only.** Within the currently supported instrument set, QAMC is expected to consider and exploit credible bearish opportunities as well as bullish ones. This is now explicit in `docs/OUTCOME.md`. It does not require a trade every down day and does not authorize hindsight-driven chasing.
+- **A possible long/caution bias requires evidence-based audit.** The PM and Evening prompts are intentionally swing/position oriented and still contain inherited Apr–Jul 2026 priors aimed at correcting predecessor-account under-investment and missed leaders. Those priors are provenance-tagged, but the running account has little history. The Aug 17–18 decline therefore warrants a forensic check of whether bearish/inverse-ETF evidence reached Tech → PM → RM correctly before changing intelligence.
+- **Mission Control buries the useful explanation.** Existing API/UI code already records per-candidate specialist evidence, PM reasoning/targets, RM verdict/modifications, deterministic gate records and execution. The current top-level dashboard still makes the operator drill into run/candidate modals to answer the basic question “why did QAMC do nothing?” A 2026-08-18 morning run visibly considered candidates while producing no decision, making this an observed usability gap.
+- **Missed-opportunity data exists but is not prominent enough.** The Evening Analyst can review notable UP or DOWN moves and the journal can render `missed_opportunities`; the operator should not need to infer from an empty trade table whether the system recognized a significant move.
 
-- positions selected and rejected;
-- specialist disagreement and evidence quality;
-- PM/RM reasoning and vetoes;
-- deterministic blocks;
-- order/fill behaviour;
-- cost/latency/model attribution;
-- missed opportunities and performance;
-- Mission Control usability during real sessions.
+## Current product priority: directionality + explainability during the live paper soak
 
-No additional agent/prompt/model/dashboard polish is a prerequisite to the running soak.
+The paper soak continues uninterrupted. The next authorized tranche is to use actual Aug 17–18 evidence to determine whether the system's lack of risk deployment was intentional, a candidate-generation/agent bias, a risk veto, or simply no qualified setup, while simultaneously fixing the dashboard presentation defects that make that distinction difficult.
+
+Priority order:
+
+1. forensic reconstruction of bearish opportunities through specialist → PM → RM → deterministic gate → execution;
+2. make raw cash, SGOV sweep liquidity, real risk exposure and deployable liquidity visually distinct;
+3. put a latest-run decision funnel / “why no trade?” explanation on the main Mission Control view;
+4. surface directional posture, inverse-ETF consideration and missed opportunities using existing read-only evidence where practical;
+5. change prompt/agent behaviour only if the forensic evidence demonstrates a real directional blind spot.
 
 ## ChatGPT GitHub integration role
 
@@ -105,6 +112,7 @@ ChatGPT owns GitHub review/integration and should use the connected GitHub plugi
 ## Not authorized without a new contract
 
 - Any live-broker trading.
+- Direct stock shorting, options trading/theta strategies, or enabling margin.
 - Any second model provider or silent fallback model.
 - Deterministic risk/execution semantic redesign.
 - Broker-write Mission Control controls.
@@ -114,4 +122,4 @@ ChatGPT owns GitHub review/integration and should use the connected GitHub plugi
 
 ## Handoff
 
-Paper soak is active. Use observed soak evidence to choose and scope the next improvement tranche.
+Paper soak remains active. Execute the authorized directionality/forensics + Mission Control explainability tranche in `docs/WORK.md`, preserving existing deterministic safety semantics and requiring evidence before any intelligence correction.
