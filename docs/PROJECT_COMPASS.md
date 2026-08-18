@@ -21,7 +21,7 @@ Live-money trading is **not authorized**.
 
 ### ▶️ Alpaca Paper soak is ACTIVE
 
-Commissioning is complete and accepted, all seven paper timers remain armed, and private operator access is now available through Tailscale at **`wallaby-bowfin.ts.net`**.
+Commissioning is complete and accepted, all seven paper timers remain armed, and private operator access is available through Tailscale. The tailnet DNS name is **`wallaby-bowfin.ts.net`** and the OVH VPS machine is **`redstone-vps`**, giving the explicit MagicDNS FQDN **`redstone-vps.wallaby-bowfin.ts.net`**.
 
 The first real soak review has already produced useful evidence:
 
@@ -45,7 +45,7 @@ That evidence is enough to authorize the next tranche without stopping the soak.
 | ✅ DONE | Model routing | 8 seats on Gemini 2.5 Flash Lite; Risk Manager on Qwen3 235B via OpenRouter. |
 | ✅ DONE | Decision-chain audit | PM/RM evidence flow and auditability reviewed without changing deterministic safety semantics. |
 | ✅ DONE | Runtime commissioning | 37 PASS / 0 FAIL / EXIT 0, combined with prior green dev isolation evidence. |
-| ✅ DONE | Private operator access | Tailscale/Orca path recorded; `wallaby-bowfin.ts.net` is the canonical private VPS access name. |
+| ✅ DONE | Private operator access | Tailscale/Orca path recorded; explicit VPS FQDN is `redstone-vps.wallaby-bowfin.ts.net`. |
 | ✅ ACTIVE | Scheduled Alpaca Paper soak | Autonomous paper schedule remains armed. |
 | 🟨 NOW | Directionality forensic audit | Reconstruct Aug 17–18 bearish opportunities through Tech → PM → RM → deterministic gate → execution. |
 | 🟨 NOW | Mission Control explainability | Separate SGOV sweep from risk exposure; add decision funnel / “why no trade?”; surface directional posture and missed opportunities. |
@@ -71,7 +71,9 @@ The existing detailed run/candidate forensic views remain the source for deep in
 - Runtime account: `qamc`
 - Development account: `dev`
 - Administration account: `ubuntu`
-- **Canonical private Tailscale VPS hostname: `wallaby-bowfin.ts.net`**
+- Tailnet DNS name: `wallaby-bowfin.ts.net`
+- OVH VPS machine name: `redstone-vps`
+- **Canonical explicit VPS MagicDNS FQDN: `redstone-vps.wallaby-bowfin.ts.net`**
 - QAMC and OneCLI remain private.
 
 ## ⏭️ NEXT MOVES
