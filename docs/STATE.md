@@ -50,6 +50,18 @@ Systemd reported all seven as `enabled`. The six trading-stage timers are schedu
 
 This marks the start of the authorized **Alpaca Paper soak**. It does **not** authorize live-money trading.
 
+## Private operator access
+
+The OVH host's private operator path was completed and verified on 2026-08-14:
+
+- Tailscale is authenticated, enabled and healthy under the neutral MagicDNS node name `redstone-vps`.
+- Tailscale Serve provides tailnet-only HTTPS to Mission Control while the API remains bound to `127.0.0.1:8800`; ports 443 and 8800 are not publicly reachable.
+- Existing OpenSSH key authentication for `ubuntu` and `dev` was verified over the tailnet. Tailscale SSH remains disabled so the existing key-based OpenSSH path stays authoritative.
+- Public port 22 remains temporarily available as the recovery path until the operator validates SSH from the other regular Tailscale clients; it must not be removed before that validation.
+- Orca development tooling runs under `dev` from `/home/dev/projects`; host-administration work is isolated under `ubuntu` in `/home/ubuntu/orca-admin`; `qamc` remains runtime-only.
+- Only `ubuntu` has sudo administration. `dev` and `qamc` have neither sudo nor Docker-group membership, and no foreign-owned files were found in the three account homes.
+- OneCLI remains healthy and loopback-only on ports 10254/10255.
+
 ## Accepted model policy
 
 - OpenRouter remains the model-provider path.
