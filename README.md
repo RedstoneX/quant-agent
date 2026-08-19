@@ -219,7 +219,8 @@ chmod 600 .env
      TELEGRAM_BOT_TOKEN=12345:ABC...
      TELEGRAM_CHAT_ID=987654321
      ```
-  5. (Optional) Set `TELEGRAM_DISABLED=1` to mute without removing the creds.
+  5. Verify delivery without running a trading session: `.venv/bin/python scripts/telegram_test.py` (add `--dry-run` to check the config without sending). It reports each variable as SET / NOT SET — never its value — and says whether the creds came from `.env` or the shell. No broker, LLM or market-data call.
+  6. (Optional) Set `TELEGRAM_DISABLED=1` to mute without removing the creds. The notifier accepts exactly `1` / `true` / `yes` (case-insensitive) — `0` and `false` leave pushes ON, so un-mute by removing the line.
 
   **Per-mode noise policy** (so the operator gets signal, not noise):
   - `morning` / `midday` / `close` / `evening`: always notify on completion (status + run_id + orders + degraded-data flag + elapsed).
