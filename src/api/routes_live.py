@@ -33,6 +33,7 @@ from src.api.broker_reads import (
     read_account,
     read_orders,
     read_positions,
+    read_price_bars,
 )
 from src.api.deps import (
     get_alpaca_paper,
@@ -49,6 +50,8 @@ from src.api.schemas import (
     OrdersResponse,
     PositionItem,
     PositionsResponse,
+    PriceBar,
+    PriceBarsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -289,3 +292,18 @@ def get_orders(
         raise
     except Exception as exc:
         return OrdersResponse(orders=[], error=str(exc))
+
+
+@router.get("/prices/{symbol}", response_model=PriceBarsResponse)
+def get_prices(symbol: str, lookback_days: int = Query(120, ge=1, le=500)) -> PriceBarsResponse:
+    """Daily OHLCV bars for one symbol — market-data read only (Alpaca's
+    historical data client), never account/order/trading state. Powers
+    the cockpit's price chart panel; never places, cancels or references
+    an order."""
+    try:
+        symbol = symbol.strip().upper()
+        result = read_price_bars(symbol, lookback_days=lookback_days)
+        bars = [PriceBar(**b) for b in result.get("bars", [])]
+        return PriceBarsResponse(symbol=symbol, bars=bars, error=result.get("error"))
+    except Exception as exc:
+        return PriceBarsResponse(symbol=symbol, bars=[], error=str(exc))

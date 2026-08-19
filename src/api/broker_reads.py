@@ -232,6 +232,33 @@ def read_orders(status: str = "open", limit: int = 50) -> dict:
         return {"orders": [], "error": str(exc)}
 
 
+def read_price_bars(symbol: str, lookback_days: int = 120) -> dict:
+    """Best-effort read of daily OHLCV bars for one symbol.
+
+    Wraps `AlpacaBroker.get_bars` — a market-data read (Alpaca's
+    `StockHistoricalDataClient.get_stock_bars`), not a trading/account
+    call. `get_bars` itself already never raises and returns `[]` on any
+    failure; this wrapper only adds the same `{"bars": [...], "error":
+    None|str}` degradation contract every other function in this module
+    uses, so a chart panel can distinguish "no data" from "read failed."
+    """
+    try:
+        broker = _get_broker()
+        bars = broker.get_bars(symbol, lookback_days=lookback_days)
+        out = [
+            {
+                "date": b.date.isoformat(),
+                "open": b.open, "high": b.high, "low": b.low,
+                "close": b.close, "volume": b.volume,
+            }
+            for b in bars
+        ]
+        return {"bars": out, "error": None}
+    except Exception as exc:
+        logger.warning("broker_reads.read_price_bars failed for %s: %s", symbol, exc)
+        return {"bars": [], "error": str(exc)}
+
+
 def check_broker_reachable() -> bool | None:
     """Best-effort connectivity ping.
 

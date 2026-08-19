@@ -148,6 +148,26 @@ class OrdersResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# /prices/{symbol}
+# ---------------------------------------------------------------------------
+
+class PriceBar(BaseModel):
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class PriceBarsResponse(BaseModel):
+    symbol: str
+    bars: list[PriceBar] = []
+    source: str = "alpaca_market_data"
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # /trades
 # ---------------------------------------------------------------------------
 

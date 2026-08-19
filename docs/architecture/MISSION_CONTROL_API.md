@@ -85,3 +85,13 @@ state, no broker-write surface, no new external dependency.
   all) — a run that legitimately considered zero candidates (e.g. a
   hard-risk-block before `risk_manager` ever ran) still returns 200 with
   `decision_state="hard_risk_block"` and an empty `candidates` list.
+
+## Stage 6 — price bars (chart panel)
+
+`GET /prices/{symbol}?lookback_days=120` (`PriceBarsResponse`): daily
+OHLCV bars for one symbol, wrapping `AlpacaBroker.get_bars` — Alpaca's
+market-data client (`StockHistoricalDataClient.get_stock_bars`), a
+distinct read-only client from the trading client `broker_reads.py`
+already uses for account/positions/orders. Never places, cancels, or
+references an order; degrades to `{"bars": [], "error": "..."}` on any
+failure rather than raising. Powers the cockpit's price chart panel.

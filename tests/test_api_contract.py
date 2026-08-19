@@ -544,6 +544,38 @@ def test_orders_rejects_invalid_status(client, stub_broker):
 
 
 # ---------------------------------------------------------------------------
+# /prices/{symbol}
+# ---------------------------------------------------------------------------
+
+def test_prices_returns_seeded_bars(client, monkeypatch):
+    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120: {
+        "bars": [
+            {"date": "2026-08-17", "open": 100.0, "high": 105.0, "low": 99.0, "close": 104.0, "volume": 1_000_000},
+            {"date": "2026-08-18", "open": 104.0, "high": 106.0, "low": 103.0, "close": 105.5, "volume": 900_000},
+        ],
+        "error": None,
+    })
+    r = client.get("/prices/aapl")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["symbol"] == "AAPL"
+    assert len(body["bars"]) == 2
+    assert body["bars"][0]["close"] == 104.0
+    assert body["error"] is None
+
+
+def test_prices_degrades_to_error_without_crashing(client, monkeypatch):
+    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120: {
+        "bars": [], "error": "data client unreachable",
+    })
+    r = client.get("/prices/NVDA")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bars"] == []
+    assert body["error"] == "data client unreachable"
+
+
+# ---------------------------------------------------------------------------
 # /health
 # ---------------------------------------------------------------------------
 
