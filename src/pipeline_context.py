@@ -46,6 +46,24 @@ class RunContext:
     account: dict = field(default_factory=dict)
     positions: list = field(default_factory=list)  # list[Position]
     cash: float = 0.0
+    # What QAMC can deploy into equities WITHOUT borrowing: raw `cash`
+    # plus the market value of the cash-equivalent sweep vehicle, which is
+    # liquidated before the BUY phase. Both are assets already owned, so
+    # this can never exceed equity and never implies margin.
+    #
+    # Verified Alpaca semantics (2026-08-19): `cash` is credited as soon as
+    # a SELL FILLS, so filled sweep proceeds fund an equity BUY the same
+    # session. `non_marginable_buying_power` is the settled/crypto figure
+    # and lags a same-day equity sale by a business day — it is NOT the
+    # right field for equity sizing. `buying_power`/`regt_buying_power` are
+    # margin figures (~2x equity here) and must never be used.
+    #
+    # This is a PLANNING figure for PM / RM / the pre-trade gate.
+    # ExecutionStage still re-reads raw broker `cash` after the funding
+    # sale and skips any BUY that cash does not actually cover — that
+    # deterministic backstop is unchanged and remains authoritative.
+    # See TradingPipeline._compute_deployable_cash.
+    deployable_cash: float = 0.0
     total_value: float = 0.0
     last_equity: float = 0.0
 

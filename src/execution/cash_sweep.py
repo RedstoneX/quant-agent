@@ -124,9 +124,19 @@ class CashSweeper:
     def fund_buys(self, ctx, planned_notional: float) -> float:
         """Sell enough of the vehicle that raw cash covers `planned_notional`.
 
-        Returns the estimated dollars freed (0.0 when nothing was done).
-        Refreshes ctx.positions / ctx.cash / ctx.total_value from the broker
-        after a fill so the BUY phase runs on truth.
+        Returns the **confirmed** dollars freed — the observed rise in raw
+        broker cash after the sale — or 0.0 when nothing was done or the
+        proceeds could not be confirmed. Refreshes ctx.positions /
+        ctx.cash / ctx.deployable_cash / ctx.total_value from the broker so
+        the BUY phase runs on truth.
+
+        Alpaca credits `cash` as soon as a SELL FILLS (settlement at T+1
+        only gates withdrawal/transfer and the non-marginable/crypto
+        figure), so a filled liquidation of the vehicle genuinely funds an
+        equity BUY in the same session. What must never be assumed is that
+        the sale filled: reporting the submitted order's notional as
+        "freed" when it did not fill is how a BUY gets sized against money
+        that isn't there (2026-08-19).
         """
         if not self.enabled():
             return 0.0
@@ -182,30 +192,70 @@ class CashSweeper:
         # stopless vehicle, but keeps the SELL discipline uniform).
         self._pipeline._finalize_pending_protections([prot], context="CASH SWEEP")
 
-        freed = qty * price
+        estimated = qty * price
         # Commit each snapshot the moment it's in hand (audit round 2): the
         # old order fetched account THEN positions and assigned ctx only after
         # both — a raise on the second call discarded the already-fetched
         # cash figure while `freed>0` told the BUY loop cash was released,
         # leaving ctx.cash at its stale pre-sale value.
+        refreshed = False
         try:
             account = self._pipeline.broker.get_account()
             ctx.cash = account["cash"]
+            ctx.deployable_cash = self._pipeline._compute_deployable_cash(ctx.cash, ctx.positions)
             ctx.total_value = account["portfolio_value"]
+            refreshed = True
         except Exception as e:  # noqa: BLE001
-            # Best-effort estimate keeps ctx coherent with freed > 0.
-            ctx.cash = cash + freed
-            logger.warning("cash sweep: account refresh after funding sell "
-                           "failed (%s) — estimating cash=$%.2f", e, ctx.cash)
+            # Broker unreachable: we cannot CONFIRM the proceeds landed, so
+            # report zero freed. ctx.cash keeps its pre-sale value, which
+            # makes ExecutionStage's raw-cash check skip BUYs it can't prove
+            # are funded. Fail closed — the old code optimistically set
+            # `ctx.cash = cash + freed` here and returned the estimate,
+            # which is exactly how an unfunded BUY could be waved through.
+            logger.error(
+                "cash sweep: account refresh after funding sell failed (%s) — "
+                "cannot confirm proceeds landed; reporting $0 freed so the "
+                "deterministic cash check governs the BUY phase", e,
+            )
+            return 0.0
         try:
             ctx.positions = self._pipeline.broker.get_positions()
+            # Recompute now that the vehicle's remaining size is known.
+            ctx.deployable_cash = self._pipeline._compute_deployable_cash(
+                ctx.cash, ctx.positions,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("cash sweep: position refresh after funding sell failed: %s", e)
+
+        # CONFIRMED funding is the observed rise in raw broker cash, not the
+        # size of the order we submitted. Alpaca credits `cash` as soon as
+        # the SELL fills, so a filled liquidation shows up here immediately;
+        # a sale that did not fill (or only partially filled) shows up as a
+        # smaller-or-zero delta and is reported honestly rather than assumed.
+        # This is the 2026-08-19 correction: the BUY phase must be sized
+        # against money the broker has actually credited.
+        confirmed = ctx.cash - cash if refreshed else 0.0
+        if confirmed <= 0:
+            logger.error(
+                "cash sweep: funding sell for %s did not raise cash "
+                "($%.2f -> $%.2f; ~$%.0f expected) — the sale did not fill "
+                "as expected. BUYs will be skipped by the deterministic cash "
+                "check rather than submitted unfunded.",
+                parked.symbol, cash, ctx.cash, estimated,
+            )
+            return 0.0
+        if confirmed + 0.01 < estimated:
+            logger.warning(
+                "cash sweep: funding sell for %s only partially funded "
+                "($%.2f confirmed of ~$%.0f expected) — BUY sizing uses the "
+                "confirmed amount", parked.symbol, confirmed, estimated,
+            )
         logger.info(
-            "cash sweep: released ~$%.0f from %s (%s sh) — post-refresh cash=$%.2f",
-            freed, parked.symbol, self._pipeline._format_qty(qty), ctx.cash,
+            "cash sweep: released $%.2f (confirmed) from %s (%s sh) — "
+            "post-refresh cash=$%.2f",
+            confirmed, parked.symbol, self._pipeline._format_qty(qty), ctx.cash,
         )
-        return freed
+        return confirmed
 
     # ---------- parking (after a session's trading is done) ----------
 
@@ -233,6 +283,7 @@ class CashSweeper:
             return None
         ctx.positions = positions
         ctx.cash = cash
+        ctx.deployable_cash = self._pipeline._compute_deployable_cash(cash, positions)
         ctx.total_value = total_value
 
         # NEVER park on a daily-loss-breach day (audit round 2). The breach

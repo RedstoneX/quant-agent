@@ -377,3 +377,158 @@ def test_invariant_session_date_key_stable_across_host_tz():
     # 2026-04-18 04:00 UTC == 2026-04-18 00:00 ET
     past_et_midnight = datetime(2026, 4, 18, 4, 0, 0, tzinfo=UTC)
     assert session_date_key(past_et_midnight) == "2026-04-18"
+
+
+# ---------------------------------------------------------------------------
+# Invariant 6 (2026-08-19 three-defect forensic fix): the SGOV/deployable-
+# liquidity fix, the intraday opportunity scan, and the Tech batch-loss fix
+# must each leave the accepted safety boundaries exactly where they were.
+# These are deliberately cross-cutting: the per-defect suites prove the
+# behavior changed correctly, these prove the boundaries did NOT.
+# ---------------------------------------------------------------------------
+
+def test_invariant_alpaca_remains_paper_only():
+    """No change in this tranche may make a live-trading config loadable."""
+    from src.config import AlpacaConfig
+
+    base = {
+        "api_key": "k", "secret_key": "s",
+        "base_url": "https://paper-api.alpaca.markets",
+    }
+    with pytest.raises(ValueError, match="paper must be true"):
+        AlpacaConfig(**base, paper=False)
+    assert AlpacaConfig(**base, paper=True).paper is True
+
+
+def test_invariant_cash_only_no_margin_still_enforced_on_deployable_cash():
+    """The cash_only rule must still hard-block a BUY that exceeds available
+    cash — and now it evaluates against the truthful deployable figure, so
+    SGOV's parked value can no longer be what makes a BUY 'affordable'."""
+    cfg = RiskConfig(
+        max_position_pct=100.0, max_total_position_pct=100.0,
+        max_daily_loss_pct=3.0, max_sector_pct=100.0,
+        require_stop_loss=True, allow_margin=False,
+    )
+    engine = RiskRuleEngine(cfg)
+    decision = TradeDecision(
+        action="BUY", symbol="NVDA", allocation_pct=50.0,  # $5,000 of a $10k book
+        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        reasoning="more than deployable cash covers",
+    )
+    violations = engine.check(
+        decision=decision, positions=[], total_value=10_000.0, daily_pnl=0,
+        cash=145.0,  # the forensic's real deployable figure
+    )
+    assert "cash_only" in {v.rule for v in violations}
+    assert "cash_only" in HARD_BLOCK_RULES
+
+
+def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
+    """The intraday scan must route through the SAME RiskStage the morning
+    run uses — it must never call ExecutionStage directly. A RiskStage
+    early-exit (deterministic gate block / RM rejection) must stop the scan
+    before any order is submitted."""
+    import tempfile
+    from pathlib import Path as _Path
+    from types import SimpleNamespace
+    from src.config import IntradayScanConfig
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.config = SimpleNamespace(
+        trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
+        storage=SimpleNamespace(
+            db_path=str(_Path(tempfile.mkdtemp()) / "t.db"),
+        ),
+        intraday_scan=IntradayScanConfig(enabled=True),
+    )
+    p.broker = MagicMock()
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": {"last_price": 110.0, "prev_close": 100.0},
+    }
+    p.db = MagicMock()
+    p.db.get_trades.return_value = []
+    p.market = MagicMock()
+    p.market.get_ohlcv.return_value = [MagicMock()]
+    p.macro_store = MagicMock()
+    p.macro_store.load_last_state.return_value = {}
+    p.tech_store = MagicMock()
+    p.tech_store.load.return_value = {}
+    p.tech_store.compute_ages.return_value = {}
+    p.tech_analyst = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+    analysis = TechAnalysisResult(
+        symbol="AAPL", rating="buy", conviction="high",
+        entry_price=100.0, stop_loss=95.0, reference_target=115.0,
+        reasoning_chain=TechReasoningChain(
+            trend="x", momentum="x", volatility="x", volume="x",
+            support_resistance="x",
+        ),
+        reasoning="test",
+    )
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": analysis},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage = MagicMock()
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision",
+        SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
+    )
+    p.risk_stage = MagicMock()
+    # Deterministic gate blocks everything — RiskStage's existing early-exit.
+    p.risk_stage.run.return_value = {
+        "status": "hard_risk_block", "orders": [], "reason": "cash_only",
+    }
+    p.execution_stage = MagicMock()
+
+    ctx = RunContext.start("intra_check")
+    with patch("src.pipeline.compute_indicators", return_value=MagicMock()):
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "hard_risk_block"
+    p.risk_stage.run.assert_called_once_with(ctx)
+    p.execution_stage.run.assert_not_called(), (
+        "a deterministic-gate block must stop the scan before execution"
+    )
+
+
+def test_invariant_intraday_scan_reuses_shared_stages_not_its_own_chain():
+    """Structural guarantee: `_run_intraday_opportunity_scan` must drive the
+    pipeline's shared DecisionStage/RiskStage/ExecutionStage objects —
+    the same instances run_morning uses — rather than constructing its own
+    decision path that could drift from the audited one."""
+    import inspect
+    from src.pipeline import TradingPipeline as _TP
+
+    # The scan is a thin concurrency-guard wrapper delegating to a body;
+    # inspect both so the invariant can't be dodged by moving code between
+    # them.
+    src = (
+        inspect.getsource(_TP._run_intraday_opportunity_scan)
+        + inspect.getsource(_TP._intraday_opportunity_scan_body)
+    )
+    assert "self.decision_stage.run(ctx)" in src
+    assert "self.risk_stage.run(ctx)" in src
+    assert "self.execution_stage.run(ctx)" in src
+    # ...and must not re-implement PM/RM calls itself.
+    assert "portfolio_manager.decide" not in src
+    assert "risk_manager.review" not in src
+
+
+def test_invariant_intraday_scan_adds_no_shorting_or_margin_path():
+    """The intraday path must express bearish views only through the
+    already-approved inverse ETFs in the configured universe — never by
+    emitting a short/sell-to-open action or enabling margin."""
+    import inspect
+    from src.pipeline import TradingPipeline as _TP
+
+    src = (
+        inspect.getsource(_TP._run_intraday_opportunity_scan)
+        + inspect.getsource(_TP._intraday_opportunity_scan_body)
+    )
+    for forbidden in ("sell_short", "short_sell", "allow_margin", "SHORT"):
+        assert forbidden not in src, f"intraday scan must not reference {forbidden}"
+    # Candidates come from the configured universe only — no ad-hoc symbols.
+    assert "self.config.trading.universe" in src

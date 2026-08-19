@@ -412,6 +412,79 @@ grammar bug writeup, and screenshots:
 Merged to `main` via PR #46 alongside Stage 6f/6g and cut over to
 production on 2026-08-19 — see the Stage 6 header above.
 
+## Three-defect forensic fix (2026-08-19) — implemented, NOT merged
+
+A read-only production forensic on 2026-08-19 established three defects.
+Branch `fix/sgov-liquidity-intraday-batch` (off `main` at `4b54d5c`) fixes
+all three. **Awaiting ChatGPT/operator review; not merged; production
+untouched.** Full suite: 1907 passed, 0 failed (baseline 1857).
+
+1. **SGOV funding semantics.** PM/RM/the deterministic gate were shown
+   ~$10K "cash" while real cash was ~$145; SGOV was sold to fund approved
+   BUYs but execution's recheck found no money, so every BUY was skipped.
+
+   **Corrected after external review.** A first pass mis-diagnosed this as
+   T+1 settlement and switched sizing to
+   `non_marginable_buying_power` — the wrong field. Verified against
+   Alpaca's official documentation: `cash` is credited **as soon as a SELL
+   fills** ("the cash is updated post the SELL trade is filled, but the
+   cash_withdrawable and cash_transferable are updated post T+1"), so a
+   *filled* SGOV liquidation genuinely funds an equity BUY the same
+   session. `non_marginable_buying_power` is the settled/crypto figure and
+   *lags* a same-day equity sale by a business day; `buying_power` /
+   `regt_buying_power` are margin figures (~2x equity — every Alpaca
+   account is a margin account) and must never be used.
+
+   Final implementation: `_compute_deployable_cash()` = raw `cash` + the
+   convertible sweep value — both assets already owned, so it can never
+   exceed equity or imply leverage. The real defect was never the
+   crediting; it was *assuming the sale filled*. `CashSweeper.fund_buys()`
+   now reports the **confirmed** rise in raw broker cash instead of the
+   notional it submitted, and fails closed (reports $0, leaves cash
+   untouched) when it cannot confirm. `reserve_pct` stays at **1.0** — the
+   first pass's raise to 5.0 treated a symptom and is reverted.
+   Execution's final raw-cash recheck is **unchanged and authoritative**.
+2. **Intraday opportunity-discovery blind spot.** Opportunity generation
+   ran once each morning; `intra_check` was loss-protection only. Added a
+   bounded scan on the **existing** `intra_check` cadence — **no new
+   timer/service/daemon**: one bulk Alpaca snapshot call flags symbols
+   that moved past a threshold since the last close; only those (capped,
+   cooldown-deduped) get a real `tech_analyst` call and then the **same**
+   DecisionStage → RiskStage → ExecutionStage chain morning uses.
+
+   **Intraday evidence corrected after external review:** the scan
+   detected candidates on live prices but then handed Tech only completed
+   daily bars ending at the prior close, so the very move that triggered
+   the scan was invisible to the analyst judging it. The snapshot now also
+   carries today's still-forming session bar, and Tech renders it as an
+   explicit `CURRENT SESSION (TODAY, INCOMPLETE)` block — live price, move
+   vs prior close, session O/H/L and partial-day volume — kept out of the
+   completed-bar series, with the indicators explicitly flagged as
+   predating the move. An incomplete day is never shown as a finished
+   daily bar; the old mislabelled "Current close" is now "Last completed
+   close". Bearish
+   views surface through the already-approved inverse ETFs
+   (`SH`/`SDS`/`PSQ`/`SQQQ`) — no shorting, options or margin added.
+   Ships **disabled** (`intraday_scan.enabled: false`) pending operator
+   review. Macro/news/earnings are deliberately not re-run and are marked
+   `not_run_intraday`, so RiskStage's existing degraded-data advisory
+   fires honestly and RM knows the evidence is thinner than a morning run.
+3. **Tech batch-response symbol loss.** Symbols sent to `tech_analyst`
+   silently vanished during batch parsing (one chunk parsed 1/10).
+   `analyze_batch` now guarantees every submitted symbol is a key in the
+   returned dict — a result on success, or `None` for a visible terminal
+   failure after one bounded retry that re-asks only the missing symbols.
+   Retry token/cost/latency is merged, never dropped. Callers filter
+   `None` and surface a `partial` data status instead of a silent "ok".
+
+Two concurrency defects in the new intraday path were found by verifying
+the scheduling assumptions against `scripts/run_if_et_window.sh` rather
+than trusting them: that script exempts `intra_check` from the cross-mode
+session lock *because its actions are idempotent*, which opening a new
+position is not. Both fixed — a fail-closed 15-minute DB-row guard
+against racing another session, and an advisory `flock` mutex against two
+overlapping `intra_check` processes.
+
 ## Current product priority: directionality + explainability during the live paper soak
 
 The paper soak continues uninterrupted. The next authorized tranche is to use actual Aug 17–18 evidence to determine whether the system's lack of risk deployment was intentional, a candidate-generation/agent bias, a risk veto, or simply no qualified setup, while simultaneously fixing the dashboard presentation defects that make that distinction difficult.

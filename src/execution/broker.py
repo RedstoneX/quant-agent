@@ -215,10 +215,24 @@ class AlpacaBroker:
         last_equity = float(raw_last) if raw_last else portfolio_value
         if last_equity <= 0:
             last_equity = portfolio_value
+        # `cash` can include same-day sale proceeds that are not yet
+        # settled (T+1 for equities) and therefore not safely spendable on
+        # a new BUY without implicitly drawing broker margin — Alpaca does
+        # not offer a true cash-account product; every account is a margin
+        # account, and accounts >= $2,000 equity get no unsettled-funds
+        # allowance. `non_marginable_buying_power` is Alpaca's own settled,
+        # non-margin-eligible buying-power figure — the correct "safe to
+        # spend right now, no margin" number for a cash-only design (2026-
+        # 08-19 SGOV/deployable-liquidity forensic).
+        raw_nmbp = getattr(acct, "non_marginable_buying_power", None)
+        non_marginable_buying_power = (
+            float(raw_nmbp) if raw_nmbp is not None else float(acct.cash)
+        )
         return {
             "cash": float(acct.cash),
             "portfolio_value": portfolio_value,
             "last_equity": last_equity,
+            "non_marginable_buying_power": non_marginable_buying_power,
         }
 
     def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
@@ -654,6 +668,76 @@ class AlpacaBroker:
             logger.warning("Failed to fetch latest price for %s: %s", symbol, exc)
 
         return None
+
+    def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
+        """Bulk current-session move data for the intraday opportunity scan.
+
+        One Alpaca snapshot call for the whole symbol list (not one call
+        per symbol — the same `symbol_or_symbols` bulk parameter
+        `get_latest_price` already uses for a single symbol) — cheap
+        enough to run every intra_check tick, unlike re-fetching daily
+        bars for the whole universe.
+
+        Returns, for every requested symbol, a dict of the current-session
+        facts needed both to detect a material move and to give Tech
+        truthful intraday evidence:
+
+            {"last_price", "prev_close",
+             "session_open", "session_high", "session_low", "session_volume"}
+
+        The `session_*` fields come from Alpaca's TODAY bar, which is an
+        INCOMPLETE, still-forming bar — callers must present it as such and
+        must never append it to a series of completed daily bars. Any field
+        is `None` when unavailable. Never raises — broker/network failure
+        degrades to an empty dict (caller treats that as "no signal this
+        tick", not a crash).
+        """
+        if not symbols:
+            return {}
+        try:
+            if self._data_client is None:
+                from alpaca.data.historical.stock import StockHistoricalDataClient
+
+                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+                _install_http_timeout(self._data_client)
+
+            from alpaca.data.requests import StockSnapshotRequest
+
+            snapshots = self._data_client.get_stock_snapshot(
+                StockSnapshotRequest(symbol_or_symbols=list(symbols))
+            )
+        except Exception as exc:
+            logger.warning("get_intraday_snapshots: bulk snapshot fetch failed "
+                           "for %d symbols: %s", len(symbols), exc)
+            return {}
+
+        def _num(obj, attr):
+            if obj is None:
+                return None
+            try:
+                v = float(getattr(obj, attr, 0) or 0)
+            except (TypeError, ValueError):
+                return None
+            return v if v > 0 else None
+
+        out: dict[str, dict] = {}
+        for symbol in symbols:
+            snap = snapshots.get(symbol) if isinstance(snapshots, dict) else None
+            trade = getattr(snap, "latest_trade", None) if snap is not None else None
+            prev_bar = getattr(snap, "previous_daily_bar", None) if snap is not None else None
+            # TODAY's still-forming bar. Deliberately kept in its own
+            # `session_*` namespace so no caller can mistake it for a
+            # completed daily bar (2026-08-19 intraday-evidence fix).
+            today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
+            out[symbol] = {
+                "last_price": _num(trade, "price"),
+                "prev_close": _num(prev_bar, "close"),
+                "session_open": _num(today_bar, "open"),
+                "session_high": _num(today_bar, "high"),
+                "session_low": _num(today_bar, "low"),
+                "session_volume": _num(today_bar, "volume"),
+            }
+        return out
 
     @staticmethod
     def _extract_symbol_payload(payload, symbol: str):
