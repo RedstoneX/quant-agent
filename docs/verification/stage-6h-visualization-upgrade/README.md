@@ -110,6 +110,25 @@ rendering the AI Risk Manager as "PENDING" instead of "APPROVED" on an
 executed run. Confirms the production degrade-don't-crash contract works
 as designed; fixed by correcting the fixture to use real enum values.
 
+A third bug — a real one, in application code, found by a follow-up
+professional-design critique pass over the screenshots below rather than
+by inspection — was caught in `AgentFlowGraph.tsx` (`components/
+agentflow/`, unrelated to any file this pass otherwise touched):
+React Flow's `fitView` only frames the topology once, at mount. On iPad,
+`DecisionRoomPanel` mounts inside the Candidates/Chart/Decision Room tab
+strip's `hidden` pane (the default `mobilePane` is "watchlist"), so
+`fitView` measures a 0×0 container and collapses the graph; switching to
+the Decision Room tab later never re-triggers it — the graph rendered as
+a tiny collapsed fragment in one corner with a large dead area below it,
+the exact same defect class (a "hidden→visible never re-fits" bug) Stage
+6g already found and fixed once for the price chart's `autoSize`. Fixed
+the same way: an explicit `ResizeObserver` on the wrapping element calls
+`fitView()` again on every real size change, including the 0→nonzero
+transition a tab switch produces. Screenshot 09 below was re-captured
+against the fix, reproducing the exact broken path (land on Candidates,
+then switch to Decision Room) to confirm it, not just the direct-load
+path that happened to work already.
+
 ## Method
 
 A throwaway, `dev`-account-only, monkeypatched Mission Control API instance
@@ -145,13 +164,39 @@ verification pass.
 | 06 | `06-desktop-journal-reflection.png` | Desktop 1600×1000 | Same day scrolled to trades/candidates/evening-reflection — RM sizing-modification narrative and the COIN missed-opportunity entry. |
 | 07 | `07-ipad-cockpit-candidates.png` | iPad 820×1100 | Cockpit collapsed to the Candidates/Chart/Decision-Room tab strip below the `xl` breakpoint — hero band, gauge, and regime badge stack full-width above it. |
 | 08 | `08-ipad-chart.png` | iPad 820×1100 | Chart tab — candlesticks + BUY marker render correctly at iPad width with the fixed-height (non-viewport-calc) mobile sizing path. |
-| 09 | `09-ipad-decision-room.png` | iPad 820×1100 | Decision Room tab — the same React Flow graph, scrollable within its iPad pane. |
+| 09 | `09-ipad-decision-room.png` | iPad 820×1100 | Decision Room tab, reached via the exact hidden→visible path that was broken (land on Candidates, then switch tabs) — the full 5-stage graph now renders correctly framed, confirming the `AgentFlowGraph` `fitView`/`ResizeObserver` fix. |
 
 Screenshots 01–09 were captured in a plain Chromium context with no explicit
 `prefers-color-scheme` override, so they render QAMC's **light** theme
 variant — incidental but useful additional confirmation that the Stage 6g
 token system (and every new component in this pass) resolves correctly in
 light mode too, not only the dark mode shown in prior stages' evidence.
+
+## Professional design review
+
+Run via the installed `frontend-design@claude-plugins-official` plugin
+against the actual rendered screenshots (not the source code), asking the
+review's own central question: would a professional trader/portfolio
+operator understand system state faster from this than raw tables/logs,
+and does any part still read as an admin panel wearing trading-dashboard
+colors?
+
+- The dark instrument-panel identity (IBM Plex Mono numerals, hue-coded
+  semantic tokens, the hexagonal hazard-striped deterministic gate) reads
+  as a deliberate, subject-specific choice, not one of the generic
+  AI-dashboard defaults (warm-cream+serif, near-black+one-accent,
+  broadsheet columns) — confirmed it holds up in **light** mode too
+  (screenshots 01–09), not just the dark mode shown in prior stages.
+- The hexagonal gate remains the strongest single "signature element" in
+  the product — the one thing that couldn't be mistaken for a generic
+  workflow diagram.
+- Chart-dominance, donut/treemap/scatter panel balance, and typography
+  hierarchy were all found sound — no further changes made on aesthetic
+  grounds alone, consistent with the review's own warning against
+  rebuilding a working answer just to make it look different.
+- One genuine defect found, not aesthetic: the iPad Decision Room's dead
+  white space described above (a real interaction-path bug the static
+  code read past) — fixed and re-verified, see above.
 
 ## Checks performed
 
