@@ -231,11 +231,22 @@ export interface MacroBroaderContext {
   timestamp: string | null;
 }
 
+export interface NewsStateChange {
+  event: string;
+  previous_state: string;
+  new_state: string;
+  market_impact: string;
+  affected_symbols: string[];
+  conviction: "high" | "medium" | "low";
+}
+
 export interface NewsBroaderContext {
   market_sentiment: string | null;
   confidence: string | null;
   pm_briefing: string | null;
+  era_themes: string[];
   current_regime: string | null;
+  relevant_state_changes: NewsStateChange[];
   timestamp: string | null;
 }
 

@@ -135,6 +135,35 @@ function NewsContextCard({ news }: { news: NewsBroaderContext | null }) {
       <KV label="Confidence" value={news.confidence} />
       <KV label="Current regime" value={news.current_regime} />
       {news.pm_briefing && <CardText text={news.pm_briefing} />}
+      {news.era_themes.length > 0 && (
+        <ul className="mt-1.5 pl-4 text-[0.79rem] list-disc">
+          {news.era_themes.map((t, i) => (
+            <li key={i}>{t}</li>
+          ))}
+        </ul>
+      )}
+      {news.relevant_state_changes.length > 0 && (
+        <table className="mt-2">
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Transition</th>
+              <th>Market impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            {news.relevant_state_changes.map((s, i) => (
+              <tr key={i}>
+                <td className="whitespace-normal">{s.event}</td>
+                <td className="whitespace-normal">
+                  {s.previous_state} &rarr; {s.new_state}
+                </td>
+                <td className="whitespace-normal">{s.market_impact}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </Card>
   );
 }
