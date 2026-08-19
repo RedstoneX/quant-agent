@@ -24,10 +24,23 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+from src.api.deps import (
+    INVERSE_ETF_SYMBOLS,
+    get_alpaca_credentials,
+    get_alpaca_paper,
+    get_cash_sweep_symbol,
+)
 from src.execution.broker import AlpacaBroker
 
 logger = logging.getLogger(__name__)
+
+
+def _position_direction(symbol: str, sweep_symbol: str) -> str:
+    if symbol == sweep_symbol:
+        return "cash_equivalent"
+    if symbol in INVERSE_ETF_SYMBOLS:
+        return "bearish_hedge"
+    return "long"
 
 
 @lru_cache(maxsize=1)
@@ -79,6 +92,15 @@ def read_positions() -> dict:
     try:
         broker = _get_broker()
         positions = broker.get_positions()
+        try:
+            sweep_symbol = get_cash_sweep_symbol()
+        except Exception as exc:
+            # A config-read failure must degrade only the direction/
+            # is_cash_equivalent labeling, never the whole positions read —
+            # same "one subsystem's failure never masks the rest" posture
+            # as every other broker_reads function.
+            logger.warning("broker_reads.read_positions: could not read cash_sweep symbol: %s", exc)
+            sweep_symbol = None
         out = []
         for p in positions:
             out.append({
@@ -90,6 +112,8 @@ def read_positions() -> dict:
                 "unrealized_pnl": p.unrealized_pnl,
                 "unrealized_intraday_pnl": getattr(p, "unrealized_intraday_pnl", None),
                 "sector": getattr(p, "sector", None),
+                "is_cash_equivalent": p.symbol == sweep_symbol,
+                "direction": _position_direction(p.symbol, sweep_symbol),
             })
         return {"positions": out, "error": None}
     except Exception as exc:

@@ -65,6 +65,22 @@ class DailyPnlPoint(BaseModel):
     equity_close: float | None = None
 
 
+class LiquidityBreakdown(BaseModel):
+    """Honest split of `AccountResponse.cash` so raw cash, cash parked in
+    the sweep vehicle, and the configured reserve floor are never conflated
+    into one ambiguous number (docs/STATE.md 2026-08-18 soak finding: SGOV
+    must never present like an ordinary position or invented risk posture).
+    Any field is None when the underlying account/positions read failed —
+    never fabricated from a partial read."""
+    sweep_enabled: bool = False
+    sweep_symbol: str | None = None
+    raw_cash: float | None = None            # broker cash, includes the reserve
+    sweep_parked_value: float | None = None  # market value of the held sweep vehicle, 0 if none
+    reserve_usd: float | None = None         # config reserve_pct% of portfolio_value
+    deployable_cash: float | None = None     # max(raw_cash - reserve_usd, 0)
+    total_liquidity: float | None = None     # raw_cash + sweep_parked_value
+
+
 class AccountResponse(BaseModel):
     cash: float | None = None
     portfolio_value: float | None = None
@@ -74,6 +90,7 @@ class AccountResponse(BaseModel):
     paper: bool | None = None
     source: str = "alpaca_live"
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
+    liquidity: LiquidityBreakdown | None = None
     error: str | None = None             # set (fields above null) when the broker read failed
 
 
@@ -90,6 +107,13 @@ class PositionItem(BaseModel):
     unrealized_pnl: float
     unrealized_intraday_pnl: float | None = None
     sector: str | None = None
+    # True only for the configured cash-sweep vehicle (e.g. SGOV) — parked
+    # idle cash, never a Portfolio Manager thesis. See LiquidityBreakdown.
+    is_cash_equivalent: bool = False
+    # "long" (ordinary equity/ETF) | "bearish_hedge" (an inverse ETF already
+    # in the trading universe — SH/SDS/PSQ/SQQQ) | "cash_equivalent" (the
+    # sweep vehicle). Display labeling only; computes no exposure/risk math.
+    direction: str = "long"
 
 
 class PositionsResponse(BaseModel):
@@ -405,6 +429,62 @@ class CandidateDetailResponse(BaseModel):
     trade: TradeItem | None = None
 
     consensus: ConsensusSummary = ConsensusSummary()
+
+
+# ---------------------------------------------------------------------------
+# /runs/{run_id}/funnel — decision-funnel / "why no trade?" aggregation
+# ---------------------------------------------------------------------------
+
+class CandidateFunnelItem(BaseModel):
+    """One candidate's progress through the decision chain this run —
+    the structural facts only (did it reach each stage, what stage it
+    stopped at), never a synthesized narrative."""
+    symbol: str
+    # "bullish" | "bearish" | "neutral" | "unknown" — from tech_analyst's
+    # rating when available (see _TECH_DIRECTION), else "unknown". Purely
+    # a display label; computes no exposure/risk math.
+    direction: str = "unknown"
+    is_bearish_hedge: bool = False  # SH/SDS/PSQ/SQQQ — inverse ETF already in the universe
+    reached_pm_target: bool = False
+    pm_target_weight_pct: float | None = None
+    reached_proposed_order: bool = False
+    proposed_action: str | None = None       # BUY | SELL | HOLD | None
+    risk_modified: bool = False
+    executed: bool = False
+    trade_action: str | None = None
+
+
+class RunFunnelResponse(BaseModel):
+    """Stage 6 — structural decision funnel for one run, built to answer
+    "why did it trade, or why not?" without requiring the operator to open
+    every candidate individually. Every field is derived from existing
+    specialist_evidence/trades rows already written by Stage 4; this
+    introduces no new authoritative state. The PM/RM `reasoning`/`verdict`
+    text below is quoted verbatim from what those agents actually wrote —
+    never a Mission-Control-authored summary of "why," which could
+    misrepresent the decision."""
+    run_id: str
+    session_prefix: str | None = None
+    timestamp: str | None = None
+
+    candidates: list[CandidateFunnelItem] = []
+    candidates_considered: int = 0
+    reached_pm_count: int = 0
+    proposed_order_count: int = 0
+    executed_count: int = 0
+    bearish_hedge_considered: bool = False
+
+    hard_risk_block: bool = False
+    pm_reasoning: PmReasoning | None = None
+    risk_verdict: RiskManagerVerdict | None = None
+    macro_context: MacroBroaderContext | None = None
+
+    # "executed" | "proposed_not_executed" | "hard_risk_block" |
+    # "no_proposal" | "no_candidates" — the single structural fact the
+    # dashboard's headline state badge renders; never invents a cause
+    # beyond what candidates/pm_reasoning/risk_verdict/hard_risk_block
+    # above actually show.
+    decision_state: str = "no_candidates"
 
 
 # ---------------------------------------------------------------------------

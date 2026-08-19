@@ -25,8 +25,10 @@ import json
 from fastapi import APIRouter, HTTPException
 
 from src.api import db_reads
+from src.api.deps import INVERSE_ETF_SYMBOLS
 from src.api.schemas import (
     CandidateDetailResponse,
+    CandidateFunnelItem,
     ConsensusSignal,
     ConsensusSummary,
     MacroBroaderContext,
@@ -34,6 +36,7 @@ from src.api.schemas import (
     PmReasoning,
     RiskManagerVerdict,
     RunCandidatesResponse,
+    RunFunnelResponse,
     TradeItem,
 )
 from src.models import (
@@ -80,6 +83,44 @@ def _find(rows: list[dict], agent_name: str, kind: str) -> dict | None:
         if row["agent_name"] == agent_name and row["kind"] == kind:
             return row
     return None
+
+
+def _run_scoped_context(run_rows: list[dict]) -> tuple:
+    """PM reasoning + AI Risk verdict + macro regime context from a run's
+    scope="run" specialist_evidence rows — shared by the per-candidate
+    (`get_candidate_detail`) and per-run (`get_run_funnel`) views so the
+    same run-wide evidence is interpreted identically in both places."""
+    pm_reasoning = None
+    reasoning_row = _find(run_rows, "portfolio_manager", "reasoning")
+    if reasoning_row:
+        data = _parse_evidence(reasoning_row) or {}
+        pm_reasoning = PmReasoning(
+            portfolio_view=data.get("portfolio_view"),
+            reasoning_chain=_validate(ReasoningChain, data.get("reasoning_chain")),
+            timestamp=reasoning_row.get("timestamp"),
+        )
+
+    risk_verdict = None
+    verdict_row = _find(run_rows, "risk_manager", "verdict")
+    if verdict_row:
+        risk_verdict = RiskManagerVerdict(
+            verdict=_validate(RiskVerdict, _parse_evidence(verdict_row)),
+            timestamp=verdict_row.get("timestamp"),
+        )
+
+    macro_context = None
+    macro_row = _find(run_rows, "macro_analyst", "analysis")
+    if macro_row:
+        ma = _validate(MacroAnalysis, _parse_evidence(macro_row))
+        if ma is not None:
+            macro_context = MacroBroaderContext(
+                regime=ma.regime, equity_outlook=ma.equity_outlook,
+                confidence=ma.confidence, summary=ma.summary,
+                sector_guidance=[g.model_dump() for g in ma.sector_guidance],
+                timestamp=macro_row.get("timestamp"),
+            )
+
+    return pm_reasoning, risk_verdict, macro_context
 
 
 @router.get("/runs/{run_id}/candidates", response_model=RunCandidatesResponse)
@@ -134,35 +175,7 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
         _validate(RiskModification, _parse_evidence(mod_row)) if mod_row else None
     )
 
-    pm_reasoning = None
-    reasoning_row = _find(run_rows, "portfolio_manager", "reasoning")
-    if reasoning_row:
-        data = _parse_evidence(reasoning_row) or {}
-        pm_reasoning = PmReasoning(
-            portfolio_view=data.get("portfolio_view"),
-            reasoning_chain=_validate(ReasoningChain, data.get("reasoning_chain")),
-            timestamp=reasoning_row.get("timestamp"),
-        )
-
-    risk_verdict = None
-    verdict_row = _find(run_rows, "risk_manager", "verdict")
-    if verdict_row:
-        risk_verdict = RiskManagerVerdict(
-            verdict=_validate(RiskVerdict, _parse_evidence(verdict_row)),
-            timestamp=verdict_row.get("timestamp"),
-        )
-
-    macro_context = None
-    macro_row = _find(run_rows, "macro_analyst", "analysis")
-    if macro_row:
-        ma = _validate(MacroAnalysis, _parse_evidence(macro_row))
-        if ma is not None:
-            macro_context = MacroBroaderContext(
-                regime=ma.regime, equity_outlook=ma.equity_outlook,
-                confidence=ma.confidence, summary=ma.summary,
-                sector_guidance=[g.model_dump() for g in ma.sector_guidance],
-                timestamp=macro_row.get("timestamp"),
-            )
+    pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)
 
     news_symbol: list[dict] = []
     news_context = None
@@ -230,4 +243,114 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
         pm_proposed_order=pm_proposed_order, risk_verdict=risk_verdict,
         risk_modification=risk_modification, trade=trade,
         consensus=ConsensusSummary(signals=signals, agreement=agreement),
+    )
+
+
+@router.get("/runs/{run_id}/funnel", response_model=RunFunnelResponse)
+def get_run_funnel(run_id: str) -> RunFunnelResponse:
+    """Stage 6 — structural decision funnel for one run: every candidate's
+    progress through specialist -> PM target -> PM proposed order -> AI
+    Risk -> execution, plus the run-wide PM/RM/macro context, so the
+    dashboard can answer "why did it trade, or why not?" without the
+    client opening every candidate individually. Pure aggregation over
+    the same Stage-4 tables `get_candidate_detail` reads — never a
+    Mission-Control-authored guess about intent."""
+    raw = db_reads.get_run_funnel(run_id)
+    if not raw["run_exists"]:
+        raise HTTPException(404, "run not found")
+
+    evidence_rows = raw["specialist_evidence"]
+    trades = raw["trades"]
+
+    symbol_rows = [r for r in evidence_rows if r.get("scope") == "symbol" and r.get("symbol")]
+    run_rows = [r for r in evidence_rows if r.get("scope") == "run"]
+
+    by_symbol: dict[str, list[dict]] = {}
+    for r in symbol_rows:
+        by_symbol.setdefault(r["symbol"], []).append(r)
+    first_trade_by_symbol: dict[str, dict] = {}
+    for t in trades:
+        first_trade_by_symbol.setdefault(t["symbol"], t)
+
+    symbols = sorted(set(by_symbol) | set(first_trade_by_symbol))
+
+    candidates: list[CandidateFunnelItem] = []
+    bearish_hedge_considered = False
+    reached_pm_count = 0
+    proposed_order_count = 0
+    executed_count = 0
+
+    for sym in symbols:
+        rows = by_symbol.get(sym, [])
+
+        tech_row = _find(rows, "tech_analyst", "analysis")
+        tech = _validate(TechAnalysisResult, _parse_evidence(tech_row)) if tech_row else None
+        direction = _TECH_DIRECTION.get(tech.rating, "neutral") if tech is not None else "unknown"
+
+        is_hedge = sym in INVERSE_ETF_SYMBOLS
+        if is_hedge:
+            bearish_hedge_considered = True
+
+        target_row = _find(rows, "portfolio_manager", "target")
+        pm_target = _validate(TargetPosition, _parse_evidence(target_row)) if target_row else None
+        reached_target = pm_target is not None
+        if reached_target:
+            reached_pm_count += 1
+
+        proposed_row = _find(rows, "portfolio_manager", "proposed_order")
+        pm_proposed = _validate(TradeDecision, _parse_evidence(proposed_row)) if proposed_row else None
+        reached_proposed = pm_proposed is not None
+        if reached_proposed:
+            proposed_order_count += 1
+
+        risk_modified = _find(rows, "risk_manager", "modification") is not None
+
+        trade = first_trade_by_symbol.get(sym)
+        executed = trade is not None and db_reads.is_executed_trade(trade)
+        if executed:
+            executed_count += 1
+
+        candidates.append(CandidateFunnelItem(
+            symbol=sym,
+            direction=direction,
+            is_bearish_hedge=is_hedge,
+            reached_pm_target=reached_target,
+            pm_target_weight_pct=pm_target.target_weight_pct if pm_target else None,
+            reached_proposed_order=reached_proposed,
+            proposed_action=pm_proposed.action if pm_proposed else None,
+            risk_modified=risk_modified,
+            executed=executed,
+            trade_action=trade.get("action") if trade else None,
+        ))
+
+    pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)
+
+    if raw["hard_risk_block"]:
+        decision_state = "hard_risk_block"
+    elif executed_count > 0:
+        decision_state = "executed"
+    elif proposed_order_count > 0:
+        decision_state = "proposed_not_executed"
+    elif symbols:
+        decision_state = "no_proposal"
+    else:
+        decision_state = "no_candidates"
+
+    session_prefix = run_id.rsplit("-", 1)[0] if "-" in run_id else run_id
+
+    return RunFunnelResponse(
+        run_id=run_id,
+        session_prefix=session_prefix,
+        timestamp=raw["first_timestamp"],
+        candidates=candidates,
+        candidates_considered=len(symbols),
+        reached_pm_count=reached_pm_count,
+        proposed_order_count=proposed_order_count,
+        executed_count=executed_count,
+        bearish_hedge_considered=bearish_hedge_considered,
+        hard_risk_block=raw["hard_risk_block"],
+        pm_reasoning=pm_reasoning,
+        risk_verdict=risk_verdict,
+        macro_context=macro_context,
+        decision_state=decision_state,
     )

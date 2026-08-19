@@ -19,6 +19,15 @@ from pathlib import Path
 
 from src.config import AGENT_NAMES, AppConfig, load_config
 
+# Display-only duplicate of src/risk/rules.py::_ETF_LEVERAGE's negative-
+# multiplier entries (the inverse/short ETFs already in the trading
+# universe). src/api may never import src.risk (tests/test_api_safety.py
+# enforces this structurally), so this small labeling set is reimplemented
+# here rather than shared — it only tags directional character for
+# display, it computes no exposure/sizing/risk math. Keep in sync by hand
+# if the risk-engine list changes.
+INVERSE_ETF_SYMBOLS: frozenset[str] = frozenset({"SH", "SDS", "PSQ", "SQQQ"})
+
 # Agent roles are a static, documented fact about the system (CLAUDE.md's
 # "Agent CoT structure" table) — safe to hardcode here rather than derive.
 AGENT_ROLES: dict[str, str] = {
@@ -57,6 +66,18 @@ def get_alpaca_paper() -> bool:
 def get_alpaca_credentials() -> tuple[str, str]:
     cfg = get_config()
     return cfg.api_keys.alpaca_key, cfg.api_keys.alpaca_secret
+
+
+def get_cash_sweep_enabled() -> bool:
+    return get_config().cash_sweep.enabled
+
+
+def get_cash_sweep_symbol() -> str:
+    return get_config().cash_sweep.symbol
+
+
+def get_cash_sweep_reserve_pct() -> float:
+    return get_config().cash_sweep.reserve_pct
 
 
 def get_agent_model(agent_name: str) -> str | None:

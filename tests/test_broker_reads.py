@@ -121,8 +121,31 @@ def test_read_positions_flattens_position_objects(monkeypatch):
         "symbol": "NVDA", "qty": 10.0, "avg_entry": 100.0,
         "current_price": 110.0, "market_value": 1100.0,
         "unrealized_pnl": 100.0, "unrealized_intraday_pnl": 5.0,
-        "sector": "Technology",
+        "sector": "Technology", "is_cash_equivalent": False, "direction": "long",
     }]
+
+
+def test_read_positions_tags_sweep_vehicle_and_inverse_etf(monkeypatch):
+    """The configured cash-sweep symbol tags `is_cash_equivalent`/
+    `direction="cash_equivalent"`; an inverse ETF already in the universe
+    tags `direction="bearish_hedge"` — both display-only, computed from
+    `src.api.deps.INVERSE_ETF_SYMBOLS`/`get_cash_sweep_symbol`, never from
+    `src.risk` (src/api may not import it)."""
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [
+            _position(symbol="SGOV", sector=None),
+            _position(symbol="SQQQ", sector=None),
+            _position(symbol="NVDA"),
+        ],
+    ))
+    rows = {r["symbol"]: r for r in broker_reads.read_positions()["positions"]}
+    assert rows["SGOV"]["is_cash_equivalent"] is True
+    assert rows["SGOV"]["direction"] == "cash_equivalent"
+    assert rows["SQQQ"]["is_cash_equivalent"] is False
+    assert rows["SQQQ"]["direction"] == "bearish_hedge"
+    assert rows["NVDA"]["is_cash_equivalent"] is False
+    assert rows["NVDA"]["direction"] == "long"
 
 
 def test_read_positions_defaults_optional_fields_to_none(monkeypatch):
