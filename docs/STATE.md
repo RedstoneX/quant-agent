@@ -57,10 +57,10 @@ The OVH host's private operator path was completed and verified on 2026-08-14:
 
 - Tailscale is authenticated, enabled and healthy.
 - The **tailnet DNS name** is `wallaby-bowfin.ts.net`.
-- The OVH VPS **machine name** remains `redstone-vps`.
-- Therefore the VPS's canonical MagicDNS FQDN is **`redstone-vps.wallaby-bowfin.ts.net`**. Use that FQDN for explicit SSH/HTTPS configuration; the shorter `redstone-vps` may also resolve on clients where MagicDNS search domains are active.
+- The OVH VPS **Tailscale machine name is `ovh-vps`**, verified from live `tailscale status` on 2026-08-18.
+- Therefore the VPS's canonical MagicDNS FQDN is **`ovh-vps.wallaby-bowfin.ts.net`**. Use that FQDN for explicit SSH/HTTPS configuration; the shorter `ovh-vps` may also resolve on clients where MagicDNS search domains are active.
+- Older `redstone-vps` references are obsolete and must not be used for current Tailscale access.
 - `wallaby-bowfin.ts.net` by itself names the tailnet DNS namespace, not the VPS node, and must not be used as the SSH host.
-- This distinction follows Tailscale's documented MagicDNS naming rule: device FQDN = `<machine-name>.<tailnet-dns-name>`.
 - Tailscale Serve provides tailnet-only HTTPS to Mission Control while the API remains bound to `127.0.0.1:8800`; ports 443 and 8800 are not publicly reachable.
 - Existing OpenSSH key authentication for `ubuntu` and `dev` was verified over the tailnet. Tailscale SSH remains disabled so the existing key-based OpenSSH path stays authoritative.
 - Public port 22 remains temporarily available as the recovery path until the operator validates SSH from the other regular Tailscale clients; it must not be removed before that validation.
@@ -127,4 +127,4 @@ ChatGPT owns GitHub review/integration and should use the connected GitHub plugi
 
 ## Handoff
 
-Paper soak remains active. Execute the authorized directionality/forensics + Mission Control explainability tranche in `docs/WORK.md`, preserving existing deterministic safety semantics and requiring evidence before any intelligence correction.
+Paper soak remains active. Execute the authorized autonomous product-improvement tranche in `docs/WORK.md`, preserving existing deterministic safety semantics and requiring evidence before any intelligence correction.
