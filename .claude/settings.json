@@ -5,16 +5,17 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "permissions": {
+    "defaultMode": "acceptEdits",
     "allow": [
-      "Bash(pytest tests/ -q)",
-      "Bash(python -m pytest tests/ -q)",
-      "Bash(npm run build)",
-      "Bash(npm run lint)",
-      "Bash(npm run typecheck)",
-      "Bash(npm test)",
-      "Bash(git status --short)",
-      "Bash(git diff --stat)",
-      "Bash(git diff --name-only)"
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)"
     ],
     "deny": [
       "Read(./.env)",
@@ -40,7 +41,7 @@
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": false,
-    "autoAllowBashIfSandboxed": false,
+    "autoAllowBashIfSandboxed": true,
     "filesystem": {
       "denyRead": [
         "./.env",
