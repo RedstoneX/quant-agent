@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QAMC Mission Control — Cockpit</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-brand">
+    <h1>QAMC <span class="dim">Mission Control</span></h1>
+    <span id="mode-badge" class="badge badge-unknown">MODE UNKNOWN</span>
+    <span id="health-dot" class="health-dot health-unknown" title="System health"></span>
+  </div>
+  <div class="topbar-stats" id="topbar-stats" data-body>
+    <div class="skeleton-line"></div>
+  </div>
+  <div class="topbar-meta">
+    <span id="health-label" class="dim">checking…</span>
+    <span id="last-updated" class="dim last-updated"></span>
+    <a class="legacy-link" href="/ui/" title="Original Stage 3-5 dashboard">legacy view</a>
+  </div>
+</header>
+
+<main class="cockpit-grid">
+
+  <section class="panel panel-funnel" id="panel-funnel" data-panel>
+    <div class="panel-head">
+      <h2>Latest decision — why did it trade, or why not?</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-watchlist" id="panel-watchlist" data-panel>
+    <div class="panel-head">
+      <h2>Candidates this run</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-liquidity" id="panel-liquidity" data-panel>
+    <div class="panel-head">
+      <h2>Cash &amp; risk exposure</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-positions" id="panel-positions" data-panel>
+    <div class="panel-head">
+      <h2>Positions</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-missed" id="panel-missed" data-panel>
+    <div class="panel-head">
+      <h2>Missed opportunities</h2>
+      <span class="panel-subtitle">Notable moves the evening review flagged — up or down.</span>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-orders" id="panel-orders" data-panel>
+    <div class="panel-head">
+      <h2>Orders</h2>
+      <div class="panel-head-actions">
+        <select id="orders-status">
+          <option value="open" selected>Open</option>
+          <option value="closed">Closed</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-trades" id="panel-trades" data-panel>
+    <div class="panel-head">
+      <h2>Recent trades</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-runs" id="panel-runs" data-panel>
+    <div class="panel-head">
+      <h2>Runs</h2>
+      <span class="panel-subtitle">Every pipeline run. Click one to see its full decision funnel and candidate evidence.</span>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-journal" id="panel-journal" data-panel>
+    <div class="panel-head">
+      <h2>Journal</h2>
+      <div class="panel-head-actions">
+        <select id="journal-date"><option value="">Loading dates…</option></select>
+      </div>
+      <span class="panel-subtitle">Prior trading day: equity snapshot, evening reflection, runs, trades, candidates.</span>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+  <section class="panel panel-search" id="panel-search" data-panel>
+    <div class="panel-head">
+      <h2>Search</h2>
+      <div class="panel-head-actions panel-head-search">
+        <input type="search" id="search-input" placeholder="Search trade reasoning, agent names, models, summaries…">
+        <button type="button" id="search-btn">Search</button>
+      </div>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="state-message">Type a search term above.</div>
+    </div>
+  </section>
+
+  <section class="panel panel-health" id="panel-health" data-panel>
+    <div class="panel-head">
+      <h2>System health</h2>
+      <span class="panel-status" data-status></span>
+    </div>
+    <div class="panel-body" data-body>
+      <div class="skeleton-line"></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>QAMC Mission Control is a read-only view. It cannot place, cancel, or modify orders, and its failure has no effect on trading.</span>
+</footer>
+
+<div class="modal-overlay" id="modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Run and candidate detail">
+    <div class="modal-head">
+      <div class="modal-breadcrumb" id="modal-breadcrumb"></div>
+      <button type="button" class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

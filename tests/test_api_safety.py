@@ -334,3 +334,21 @@ def test_ui_static_mount_is_get_only_and_has_no_path_traversal():
 
     traversal_resp = client.get("/ui/../server.py")
     assert traversal_resp.status_code in (403, 404)
+
+
+def test_cockpit_static_mount_is_get_only_and_has_no_path_traversal():
+    from fastapi.testclient import TestClient
+
+    from src.api.server import app
+
+    client = TestClient(app)
+
+    assert client.post("/cockpit/app.js").status_code == 405
+    assert client.put("/cockpit/index.html").status_code == 405
+    assert client.delete("/cockpit/styles.css").status_code == 405
+
+    get_resp = client.get("/cockpit/index.html")
+    assert get_resp.status_code == 200
+
+    traversal_resp = client.get("/cockpit/../server.py")
+    assert traversal_resp.status_code in (403, 404)
