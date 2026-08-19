@@ -5,7 +5,7 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "permissions": {
-    "defaultMode": "acceptEdits",
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(pytest:*)",
       "Bash(python -m pytest:*)",
@@ -35,7 +35,6 @@
       "Edit(./secrets/**)",
       "Edit(./config/credentials.json)"
     ],
-    "disableBypassPermissionsMode": "disable",
     "disableAutoMode": "disable"
   },
   "sandbox": {
