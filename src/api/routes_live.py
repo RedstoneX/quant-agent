@@ -20,6 +20,7 @@ unhandled 500 (which could leak an internal stack trace / file path).
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,17 +33,28 @@ from src.api.broker_reads import (
     read_account,
     read_orders,
     read_positions,
+    read_price_bars,
 )
-from src.api.deps import get_alpaca_paper
+from src.api.deps import (
+    get_alpaca_paper,
+    get_cash_sweep_enabled,
+    get_cash_sweep_reserve_pct,
+    get_cash_sweep_symbol,
+)
 from src.api.schemas import (
     AccountResponse,
     DailyPnlPoint,
     HealthResponse,
+    LiquidityBreakdown,
     OrderItem,
     OrdersResponse,
     PositionItem,
     PositionsResponse,
+    PriceBar,
+    PriceBarsResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -122,6 +134,58 @@ def get_health() -> HealthResponse:
         )
 
 
+def _compute_liquidity(cash: float | None, portfolio_value: float | None) -> LiquidityBreakdown:
+    """Honest raw-cash / sweep-parked / deployable split (2026-08-18 soak
+    finding: SGOV must never read like an ordinary position or an invented
+    risk posture). Reads positions independently so a positions-read
+    failure degrades only the sweep_parked_value/total_liquidity fields,
+    never silently zeroes them. A config-read failure degrades this whole
+    breakdown to an honest empty object — it must never take down the rest
+    of the /account response (see AccountResponse.cash etc)."""
+    try:
+        sweep_enabled = get_cash_sweep_enabled()
+        sweep_symbol = get_cash_sweep_symbol()
+        reserve_pct = get_cash_sweep_reserve_pct()
+    except Exception as exc:
+        logger.warning("routes_live._compute_liquidity: could not read cash_sweep config: %s", exc)
+        return LiquidityBreakdown()
+
+    sweep_parked_value: float | None = None
+    positions_result = read_positions()
+    if positions_result.get("error") is None:
+        sweep_parked_value = sum(
+            p.get("market_value") or 0.0
+            for p in positions_result.get("positions", [])
+            if p.get("is_cash_equivalent")
+        )
+
+    reserve_usd = (
+        portfolio_value * reserve_pct / 100.0
+        if portfolio_value is not None
+        else None
+    )
+    deployable_cash = (
+        max(cash - reserve_usd, 0.0)
+        if cash is not None and reserve_usd is not None
+        else None
+    )
+    total_liquidity = (
+        cash + sweep_parked_value
+        if cash is not None and sweep_parked_value is not None
+        else None
+    )
+
+    return LiquidityBreakdown(
+        sweep_enabled=sweep_enabled,
+        sweep_symbol=sweep_symbol,
+        raw_cash=cash,
+        sweep_parked_value=sweep_parked_value,
+        reserve_usd=reserve_usd,
+        deployable_cash=deployable_cash,
+        total_liquidity=total_liquidity,
+    )
+
+
 @router.get("/account", response_model=AccountResponse)
 def get_account() -> AccountResponse:
     try:
@@ -151,6 +215,8 @@ def get_account() -> AccountResponse:
         except Exception:
             history = []
 
+        liquidity = _compute_liquidity(cash, portfolio_value) if acct.get("error") is None else None
+
         return AccountResponse(
             cash=cash,
             portfolio_value=portfolio_value,
@@ -159,6 +225,7 @@ def get_account() -> AccountResponse:
             daily_pnl_pct=daily_pnl_pct,
             paper=get_alpaca_paper(),
             history=history,
+            liquidity=liquidity,
             error=acct.get("error"),
         )
     except Exception as exc:
@@ -179,6 +246,8 @@ def get_positions() -> PositionsResponse:
                 unrealized_pnl=p.get("unrealized_pnl"),
                 unrealized_intraday_pnl=p.get("unrealized_intraday_pnl"),
                 sector=p.get("sector"),
+                is_cash_equivalent=p.get("is_cash_equivalent", False),
+                direction=p.get("direction", "long"),
             )
             for p in result.get("positions", [])
         ]
@@ -223,3 +292,18 @@ def get_orders(
         raise
     except Exception as exc:
         return OrdersResponse(orders=[], error=str(exc))
+
+
+@router.get("/prices/{symbol}", response_model=PriceBarsResponse)
+def get_prices(symbol: str, lookback_days: int = Query(120, ge=1, le=500)) -> PriceBarsResponse:
+    """Daily OHLCV bars for one symbol — market-data read only (Alpaca's
+    historical data client), never account/order/trading state. Powers
+    the cockpit's price chart panel; never places, cancels or references
+    an order."""
+    try:
+        symbol = symbol.strip().upper()
+        result = read_price_bars(symbol, lookback_days=lookback_days)
+        bars = [PriceBar(**b) for b in result.get("bars", [])]
+        return PriceBarsResponse(symbol=symbol, bars=bars, error=result.get("error"))
+    except Exception as exc:
+        return PriceBarsResponse(symbol=symbol, bars=[], error=str(exc))

@@ -77,6 +77,17 @@ def _executed_trade_predicate() -> str:
     )
 
 
+def is_executed_trade(row: dict) -> bool:
+    """Python-side equivalent of `_executed_trade_predicate()` for callers
+    that already have a trades row in hand (e.g. `get_run_funnel`'s
+    route-layer grouping) rather than filtering via SQL. Keep the two
+    definitions in sync — this mirrors the SQL predicate exactly."""
+    fill_status = row.get("fill_status")
+    action = row.get("action")
+    fill_qty = row.get("fill_qty") or 0
+    return (fill_status is None and action != "HOLD") or fill_status == "filled" or fill_qty > 0
+
+
 def get_trades(
     symbol: str | None = None,
     run_id: str | None = None,
@@ -431,6 +442,67 @@ def get_run_candidates(run_id: str) -> list[str]:
         return sorted(symbols)
     except sqlite3.Error:
         return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_run_funnel(run_id: str) -> dict:
+    """Raw rows for Stage 6's decision-funnel aggregation: every
+    `specialist_evidence` row for this run (both symbol- and run-scoped —
+    the route layer separates them), every `trades` row, whether the
+    forensic `agent_name="risk_gate"` hard-risk-block row is present (same
+    sentinel as `RunDetailResponse.hard_risk_block_recorded`), and the
+    run's first `agent_logs` timestamp. Pure read aggregation over
+    existing Stage-4 tables — the route layer (`routes_evidence.py`) does
+    all typed validation/grouping, this function only fetches."""
+    conn = None
+    try:
+        conn = _connect()
+        evidence_rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM specialist_evidence WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+        ]
+        trade_rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM trades WHERE run_id = ? ORDER BY timestamp",
+                (run_id,),
+            ).fetchall()
+        ]
+        hard_risk_block = conn.execute(
+            "SELECT 1 FROM agent_logs WHERE run_id = ? AND agent_name = 'risk_gate' LIMIT 1",
+            (run_id,),
+        ).fetchone() is not None
+        ts_row = conn.execute(
+            "SELECT MIN(timestamp) as first_ts FROM agent_logs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        first_timestamp = ts_row["first_ts"] if ts_row else None
+        # A hard-risk-block run (blocked before risk_manager ever ran) can
+        # legitimately have zero specialist_evidence rows and zero trades,
+        # and conversely a run can have specialist_evidence with no
+        # agent_logs row pinned to that exact run_id in a test fixture —
+        # "run exists at all" must come from any of the three tables, never
+        # from having candidates, or the exact "why no trade?" state this
+        # endpoint exists to surface would 404 instead of rendering.
+        run_exists = bool(evidence_rows) or bool(trade_rows) or first_timestamp is not None
+        return {
+            "specialist_evidence": evidence_rows,
+            "trades": trade_rows,
+            "hard_risk_block": hard_risk_block,
+            "first_timestamp": first_timestamp,
+            "run_exists": run_exists,
+        }
+    except sqlite3.Error:
+        return {
+            "specialist_evidence": [], "trades": [],
+            "hard_risk_block": False, "first_timestamp": None,
+            "run_exists": False,
+        }
     finally:
         if conn is not None:
             conn.close()

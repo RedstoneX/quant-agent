@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-18
+Updated: 2026-08-19
 
 This file says what is accepted and authorized **now**. Git history preserves prior detail.
 
@@ -95,8 +95,319 @@ The first operator review of real soak behaviour and Mission Control on 2026-08-
 - **QAMC has an existing bearish path but is not currently a direct-short system.** `SH`, `SDS`, `PSQ` and `SQQQ` are already in the trading universe and deterministic risk code handles their signed inverse exposure and leverage. The Portfolio Manager cannot emit negative target weights; SELLs reduce/close owned positions. Direct stock shorting, options/theta strategies and margin are therefore outside the current implementation and remain unauthorized.
 - **The product must not be structurally long-only.** Within the currently supported instrument set, QAMC is expected to consider and exploit credible bearish opportunities as well as bullish ones. This is now explicit in `docs/OUTCOME.md`. It does not require a trade every down day and does not authorize hindsight-driven chasing.
 - **A possible long/caution bias requires evidence-based audit.** The PM and Evening prompts are intentionally swing/position oriented and still contain inherited Apr–Jul 2026 priors aimed at correcting predecessor-account under-investment and missed leaders. Those priors are provenance-tagged, but the running account has little history. The Aug 17–18 decline therefore warrants a forensic check of whether bearish/inverse-ETF evidence reached Tech → PM → RM correctly before changing intelligence.
+
+  **Forensic outcome (2026-08-19, one-pass reconstruction against the live `qamc` runtime via the read-only Mission Control API):** no genuine blind spot found; no correction made. Sampled six of the eighteen 2026-08-17/18 scheduled runs (open/mid/close on each day) plus a full-window `/search` sweep of every `tech_analyst` universe-scan log line. `tech_analyst` rated `SQQQ` (the -3x Nasdaq inverse ETF already in the universe) `sell` or `neutral` on every sampled run — never `buy` — with reasoning tied to `SQQQ`'s own bearish trend/momentum plus an explicit volume-confirmation caution; `SPY`/`IWM`/`DIA`/`XLE`/`XLF` were themselves rated `buy`/`neutral` throughout both days, i.e. the system's own technical evidence read bullish-to-neutral on the broad market, not bearish. `macro_analyst` reported regime `transitional`, equity outlook `neutral`, confidence `low`, explicitly citing missing VIX data and stale inflation figures — an honestly-disclosed data-freshness gap, not a suppressed or misrepresented signal. `news_analyst` sentiment was `neutral` (Middle East tensions / rising yields as headwinds, not a decline narrative). Because `tech_analyst` never emitted a `buy` rating on `SQQQ`, `portfolio_manager` never received a target/proposed-order for it on any sampled run — the PM stage was never reached because no qualified bearish setup existed upstream, not because evidence was dropped or discounted. The account was flat both days (+$0.98 and +$1.96 on ~$10k, zero positions, zero trades) and both evening reflections recorded an explicit, coherent rationale ("cautious stance amidst significant geopolitical and macroeconomic headwinds") with empty `missed_opportunities_json`. Classification: **no qualified bearish setup existed** — a legitimate, evidence-consistent neutral/cash outcome, not a directional or prompt-level blind spot. Per the "do not hindsight-fit" instruction, no intelligence/prompt correction was made; Workstream A closes as investigated-and-clean rather than investigated-and-corrected.
 - **Mission Control buries the useful explanation.** Existing API/UI code already records per-candidate specialist evidence, PM reasoning/targets, RM verdict/modifications, deterministic gate records and execution. The current top-level dashboard still makes the operator drill into run/candidate modals to answer the basic question “why did QAMC do nothing?” A 2026-08-18 morning run visibly considered candidates while producing no decision, making this an observed usability gap.
 - **Missed-opportunity data exists but is not prominent enough.** The Evening Analyst can review notable UP or DOWN moves and the journal can render `missed_opportunities`; the operator should not need to infer from an empty trade table whether the system recognized a significant move.
+
+## Mission Control cockpit rebuild (Stage 6) — implemented, pending review/cutover
+
+Branch `claude/mission-control-cockpit-redesign` implements the final-cockpit
+tranche `docs/WORK.md` authorized (superseding the prior generic
+framework-migration prohibition for this bounded case):
+
+- Backend: `/account.liquidity` (raw cash / sweep-parked / reserve /
+  deployable), `/positions[].direction`
+  (`long`/`bearish_hedge`/`cash_equivalent`), `GET /runs/{id}/funnel`
+  (structural decision funnel + quoted PM/RM/macro context), and
+  `GET /prices/{symbol}` (daily OHLCV, Alpaca's market-data client) — all
+  bounded, read-only, GET-only, isolation-tested. Full suite: 1857
+  passed, 0 failed.
+- Frontend: evaluated the vanilla-JS prototype built earlier this
+  tranche (preserved at commit `73c68bf`) against React+Vite+Tailwind+
+  TradingView Lightweight Charts per `docs/WORK.md`'s explicit direction
+  to evaluate that stack first. The prototype proved the information
+  architecture but could not economically deliver real charting, a true
+  multi-pane layout, or Orallexa-style consensus visualization without
+  hand-building equivalent infrastructure — so the cockpit was rebuilt in
+  React (source in `frontend/`, compiled output replacing
+  `src/api/static_cockpit/`, same `/cockpit` static mount, same
+  no-runtime-dependency deployment model as `/ui`).
+- `/ui` (Stage 3-5 dashboard) is untouched and remains the fallback per
+  the parallel-build/cutover rule — no cutover has happened yet.
+- Browser-verified desktop + iPad + dark mode against seeded
+  representative data: `docs/verification/stage-6-react/`.
+- The Aug 17–18 directionality forensic (Workstream A) is closed:
+  investigated, no blind spot found, no correction made — see the
+  "Paper-soak findings" section above for the full evidence trail.
+
+### Stage 6b — agent deliberation, journal narrative, directional bias
+
+A follow-on same-branch tranche, orchestrated as three parallel isolated-
+worktree workstreams then integrated and visually polished by the lead:
+
+- **Agent deliberation UX**: `SpecialistCards` (one card per specialist
+  that actually produced evidence, with identity, direction, conviction,
+  reasoning, an honestly-derived aligned/diverges indicator) replaces the
+  old flat consensus list; a reusable `DecisionFlowDiagram` (Specialists →
+  PM → AI Risk → Deterministic Gate → Execution) is used both in the
+  candidate drill-down and, aggregated, in the main funnel panel.
+- **Decision-process observability**: `reason_category`, the full RM/PM
+  reasoning-chain breakdowns, PM's continuity/premortem disclosure flags,
+  and a derived clean/modified/rejected state are now surfaced — all data
+  that was already flowing through the API, previously untyped/unrendered.
+- **Journal rebuilt into a real day-by-day narrative**: morning regime,
+  per-run decision cards (candidates with direction tags, PM/RM text,
+  explicit trade/no-trade), full evening-reflection fields, prev/next
+  date navigation.
+- **Directional-bias observability panel**: bullish/bearish/neutral
+  candidate and proposal counts, inverse-ETF consideration, AI Risk
+  approve/reject breakdown by direction (explicitly caveated as run-level
+  not per-candidate), and a dominant-outcome histogram — aggregated
+  client-side from existing endpoints, no new backend surface, explicitly
+  framed as observability only ("not a trading signal or recommendation").
+- **Visual QA pass**: increased panel contrast/depth (the flat/monochrome
+  weakness was real), agent-identity badges, and two genuine responsive
+  bugs found and fixed (a `sm:`-breakpoint 4-column grid squeezed inside
+  a half-width panel at iPad width; the top stat strip hid 4 of 5 stats
+  behind an undiscoverable horizontal scroll).
+
+Evidence: `docs/verification/stage-6b-deliberation-journal-bias/`. Full
+backend suite unaffected throughout (1857 passed, 0 failed) — this
+tranche is frontend-only.
+
+### Stage 6c — directional exposure semantics fix (external review finding)
+
+`CandidateFunnelItem.direction` is the instrument's own signal, not
+resulting portfolio exposure — for an approved inverse ETF, a bullish
+instrument signal expresses bearish market exposure. The Directional Bias
+panel was conflating the two. Fixed: `exposureDirection()` flips
+bullish/bearish only when `is_bearish_hedge` is true (derived from that
+API flag, never a symbol heuristic); candidate and PM-proposal direction
+aggregation now show both series, clearly labeled. 8 new Vitest tests
+(dev-only dependency, confirmed absent from the production bundle).
+Evidence: `docs/verification/stage-6c-directional-exposure-fix/`.
+
+### Stage 6d — operator branch-preview endpoint
+
+`ops/preview/branch_preview.py`: an ephemeral (no systemd unit, no
+auto-start), GET-only, `dev`-account process letting the operator review
+this branch's actual `/cockpit` and `/ui` frontend from any tailnet
+device before merge, proxying real (never faked/duplicated) `qamc`
+production data via loopback GET requests to `127.0.0.1:8800` — the only
+data source available without weakening the `dev`/`qamc` account
+boundary. Binds only to the VPS's Tailscale IP (`100.111.170.97` /
+`ovh-vps.wallaby-bowfin.ts.net:8810`) — verified structurally
+unreachable via the public IP and even `127.0.0.1`. Verified `qamc`'s
+Mission Control process untouched (identical PID/uptime/health before
+and after). Documented known limitation: panels depending on this
+branch's not-yet-deployed backend endpoints degrade honestly rather than
+faking data. Evidence: `docs/verification/stage-6d-branch-preview/`.
+
+### Stage 6e — branch-preview API contract fix (real data, end-to-end)
+
+Fixed the blocker recorded in Stage 6d: old `qamc` production predates
+this branch's Stage 6 backend additions (`AccountResponse.liquidity`,
+`PositionItem.direction`/`is_cash_equivalent`, `GET /runs/{id}/funnel`),
+so the decision funnel, directional bias, liquidity, and position-
+direction panels rendered blank against the proxy. `ops/preview/
+branch_preview.py` now reconstructs exactly those missing fields/routes
+from data upstream **already** exposes (`/account`, `/positions`,
+`/runs/{id}`, `/runs/{id}/candidates(/{symbol})`, all already deployed),
+using the same typed schemas and pure derivation rules this branch's own
+backend uses — never a direct DB/broker-credential read from the `dev`
+account, and self-obsoleting once production actually deploys this
+branch. `GET /prices/{symbol}` (the one field needing real Alpaca
+market-data credentials `dev` doesn't have) continues to degrade
+honestly, as before.
+
+Verified interactively in a real connected browser (zero failed requests,
+zero console errors) and independently with a local headless Playwright
+script (zero console errors across desktop/iPad/legacy-`/ui`) against the
+live preview serving real `qamc` production data — Decision Room funnel,
+Directional Bias, Cash & Risk Exposure, positions direction, run detail
+(81 real candidates), candidate drill-down, and the day-narrative Journal
+all confirmed populated with genuine account/run data, not fabricated.
+`qamc` production `/health` confirmed identical before/after (untouched,
+never restarted). Full backend suite: 1857 passed, 0 failed (unchanged).
+Frontend Vitest: 8 passed (unchanged — no `frontend/`/`src/api/` files
+were touched this tranche). Evidence:
+`docs/verification/stage-6e-preview-contract-fix/`.
+
+### Stage 6f — cockpit information architecture + visual redesign
+
+Operator review of the Stage 6e cockpit found it still read as a long
+telemetry/admin page (a flat stacked two-column layout, including an
+unbounded ~80-ticker flat pill dump) rather than a compact Mission
+Control cockpit. Frontend-only restructure, no backend/API changes:
+
+- `App.tsx` rebuilt into a real cockpit grid — candidate rail (left) /
+  chart + selected-symbol context (center) / Decision Room (right) at
+  desktop width, collapsing to an explicit `Candidates / Chart /
+  Decision Room` tab strip below the `xl` (1280px) breakpoint (covers
+  every iPad size) instead of a squeezed 3-column layout. Nine
+  previously-stacked full-width panels (positions, orders, trades, runs,
+  directional bias, missed opportunities, search, health) are now a
+  single tabbed support area below the cockpit. Cockpit vs Journal is
+  its own top-level view switch.
+- `CandidateRail` (replaces `WatchlistPanel`): the candidate universe is
+  bucketed by the furthest funnel stage each candidate reached
+  (rejected by specialist / reached PM / proposed / modified-or-blocked
+  by risk / executed), with clickable filter chips, a funnel-bars
+  visualization, a symbol filter, and a height-bounded scrollable list
+  — no more unbounded flat pill dump.
+- `DecisionRoomPanel` (replaces the old full-width decision-funnel
+  panel): a narrow-column Specialists → PM → AI Risk → Deterministic
+  Gate → Execution chain, rendered **vertically** so all 5 stages are
+  visible without scrolling, with the deterministic gate visually
+  marked "Final authority" (thicker border, explicit label) rather than
+  reading as just another agent step.
+- Real visual toolbox added where the cockpit was plain text/tables:
+  conviction meter bars on specialist cards, segmented exposure/
+  liquidity bars on the cash & risk panel, an always-visible header
+  exposure gauge (`ExposureStrip`, real long/hedge/cash split from
+  already-fetched account+positions data), a real-data equity sparkline
+  on the Journal view.
+- Two real bugs found and fixed during this same pass: a CSS Grid `1fr`
+  track without `min-width:0` let the price chart's content width push
+  the Decision Room column off-screen; `lightweight-charts`' `autoSize`
+  resized the chart canvas correctly when its pane went from hidden to
+  visible but never re-fit the visible time range, rendering bars
+  compressed into a sliver — replaced with an explicit `ResizeObserver`
+  that resizes and fits together.
+- Verified against real `qamc` production data (honest current empty
+  state — zero candidates, zero non-cash positions) via the existing
+  `ops/preview/branch_preview.py`, and against a throwaway seeded
+  scenario (not committed) spanning every candidate-funnel bucket, both
+  desktop and iPad, zero console/page errors across 12 scripted
+  Playwright captures. `qamc` production `/health` confirmed unaffected
+  (same PID, untouched). `npm run build` + `npm run test` (8/8) pass.
+  Evidence: `docs/verification/stage-6f-cockpit-ia/`.
+
+Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
+default, or keep both mounted). Claude does not cut over or merge its
+own work.
+
+### Stage 6g — cockpit visual identity system + stale-data correctness fix
+
+A real Stage 6f screenshot the operator captured exposed two problems Stage
+6f's information-architecture fix didn't reach: the cockpit still read as a
+generic dark admin panel (weak typography, plain bordered cards, a
+Decision Room that was five stacked rectangles), and a genuine correctness
+bug — a failed API poll could leave old `funnel`/`positions`/`account` data
+rendering as if current, underneath a separate visible error message
+elsewhere on the same page. This tranche fixed both, after a dedicated
+research pass (external component-ecosystem and product-pattern research,
+including a public MIT React+Vite AI-trading-frontend project
+(`sh1ftmaker/helm`) read directly for its decision-card visual grammar) the
+operator reviewed and explicitly authorized a small, coherent set of mature
+visualization libraries for — deliberately **not** minimizing dependency
+count, on the operator's explicit instruction that best-in-class UX
+outweighs dependency-count minimization for this product:
+
+- **Design tokens**: a color grammar where hue carries meaning (cyan =
+  system/brand, green/red = market truth only, violet = AI reasoning,
+  amber = attention, magenta = bearish-hedge flag), IBM Plex Sans/Mono
+  typography, a subtle vignette/dot-grid background replacing flat black.
+- **Hero band** + a full-width **decision-state banner** (EXECUTED / NO
+  TRADE / REJECTED / DETERMINISTIC GATE BLOCKED) promoted above the
+  primary cockpit body — WORK.md's "what do I own / what's the market
+  doing / why did it (not) trade" questions are now answered before any
+  interaction, not just after opening the Decision Room.
+- **Decision Room rebuilt on React Flow**: the Specialists → PM → AI Risk →
+  Deterministic Gate → Execution chain is a real node/edge graph with
+  genuine per-specialist fan-in (one node per specialist that actually
+  produced evidence, not a flattened "Specialists" box), and the
+  Deterministic Gate is a categorically different node **shape** (a
+  hexagonal hard-interlock outline with a hazard-stripe fill), not just a
+  thicker border — the single most-requested fix ("not five prettier
+  rectangles").
+- **CandidateRail** on TanStack Table (real column sort + expandable rows)
+  and an ECharts native funnel series; real BUY/SELL trade markers wired
+  onto the price chart via `lightweight-charts`' existing (previously
+  unused) marker API.
+- **Desktop-only Dockview support workspace** — explicit, scoped operator
+  approval for this one new architectural dependency: resizable/
+  draggable/poppable, default layout matching the old tab order, never
+  wraps the primary cockpit, never instantiated below the `xl` (iPad)
+  breakpoint, layout persists to `localStorage` only (non-authoritative).
+- **Stale-data correctness fix**: every polled resource now tracks data +
+  error + last-good timestamp separately; a failed poll never overwrites
+  good data, and every affected panel renders an explicit "STALE — last
+  known data as of HH:MM" state instead of silently continuing to show old
+  data as current. Verified with a real forced-failure → recovery cycle
+  (Playwright route-blocking), not a mock.
+
+Frontend-only (`git diff --stat` confirms zero changes under `src/` outside
+the pre-existing compiled `src/api/static_cockpit/` bundle); `/ui` and real
+`qamc` production confirmed untouched. Full details, the library-by-library
+authorization record, and the stale→recovery screenshots:
+`docs/verification/stage-6g-cockpit-visual-system/`.
+
+Deferred to a follow-on tranche (scoped but not implemented this pass): the
+ECharts Sankey candidate-branching detail view and the missed-opportunities
+scatter chart, both explicitly secondary/detail-view items in the design
+plan.
+
+### Stage 6h — mature-visualization upgrade + chart dead-space fix
+
+A follow-on external review of a real Stage 6g screenshot found the
+information architecture and visual-identity work sound but flagged three
+concrete defects and asked for a bounded, evidence-based research pass
+(information → best visualization pattern → best available mature
+component → KEEP/TRANSFORM/REPLACE/CONSOLIDATE/REMOVE) rather than another
+prettifying pass over homemade primitives:
+
+- **Chart dead-space fix**: the cockpit's three-column row now shares one
+  explicit viewport-bounded height (`xl:h-[calc(100vh-150px)]`) instead of
+  an unconstrained grid cell; the candidate rail and Decision Room scroll
+  independently within it, and the chart's `flex-1 min-h-0` wrapper lets it
+  fill whatever vertical space is actually available (240px floor) instead
+  of the old hard-coded 260px that left a large dead region below it on
+  any taller viewport. `PriceChartPanel`'s `ResizeObserver` now reads
+  height as well as width. Verified at two desktop heights (1000px,
+  760px) — no dead region at either.
+- **Liquidity + Real-Risk-Exposure donuts** (`DonutMeter.tsx`, ECharts
+  `pie` in donut mode, sharing `ArcGauge`'s token/substrate) replace both
+  `SegmentedBar` thin bars the operator had already rejected once. SGOV
+  sweep-parking keeps a distinct, truthful `dim` category — never
+  market-status green/red, never the brand-accent cyan.
+- **Positions treemap** (`PositionsTreemap.tsx`, new): block area = market
+  value (concentration), block color = real unrealized P&L sign — a
+  treemap rather than another donut because holdings are a real,
+  unbucketed hierarchy, not a 2–3-category composition.
+- **Missed-opportunities scatter**: `MissedOpportunitiesPanel` now
+  aggregates the last 20 journal days (existing endpoints, no new backend
+  surface) into an ECharts scatter — date × signed move % × genuine-miss/
+  disciplined-pass coloring — so the up/down miss balance `docs/
+  OUTCOME.md` cares about is visible longitudinally instead of inferred
+  from one day's text. Previously deferred pending a real case for it;
+  this is that case.
+- **Decision Room re-assessed against the review's explicit 9-question
+  bar and found already sufficient** (Stage 6g's React Flow graph +
+  existing `CandidateDetailModal` drill-down) — deliberately **not**
+  rebuilt, to avoid the "prettier homemade primitive" failure mode the
+  review warned against. Sankey reassessed and still deferred: current
+  candidate volumes don't yet make the case for it over the existing
+  funnel bars + table.
+- **Two real bugs found and fixed**: the in-flight (uncommitted at pass
+  start) `DonutMeter` work was typecheck-broken (`GaugeTone` missing the
+  just-added `"hedge"` member; two ECharts `graphic` text elements used
+  the nonexistent `textAlign` instead of `align`) and, once compiling,
+  `LiquidityPanel` had been silently re-pointed to `tone: "neg"` (market-
+  loss red) for bearish-hedge and `tone: "accent"` (brand cyan) for
+  cash-equivalent — both violate this project's own color-grammar
+  contract. Fixed by extending `DonutMeter`'s tone set and restoring the
+  correct semantic tones. Separately, this pass's own verification
+  fixture had an invalid `RiskVerdict.reason_category` enum value and a
+  `RiskModification` missing its required `symbol` field, which Pydantic
+  silently degraded to a missing verdict (confirming, not breaking, the
+  production degrade-don't-crash contract) — fixed in the fixture.
+
+Frontend-only; `git diff --stat -- src/` confirms zero backend/trading
+changes beyond the compiled `src/api/static_cockpit/` bundle, and `/ui` is
+byte-for-byte untouched. Verified with a seeded throwaway fixture spanning
+six days and every decision state (same monkeypatch-at-the-broker/db-read-
+seam convention as Stage 6f/6g), captured via a local headless Playwright
+script at two desktop heights and iPad width, zero console/page errors
+across every scenario. `npm run build`/`npm test` and the backend safety/
+isolation test subset (`test_api_safety.py`, `test_api_isolation.py`,
+`test_api_no_secrets.py`, 41 tests) all pass. Full details, the color-
+grammar bug writeup, and screenshots:
+`docs/verification/stage-6h-visualization-upgrade/`.
+
+Awaiting ChatGPT/operator review alongside Stage 6f/6g. Claude does not cut
+over or merge its own work.
 
 ## Current product priority: directionality + explainability during the live paper soak
 

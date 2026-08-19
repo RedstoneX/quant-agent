@@ -1,0 +1,197 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* QAMC Mission Control token system.
+ *
+ * Color carries meaning, not just decoration: `accent` (cyan) is system/
+ * brand/interactive chrome; `pos`/`neg` (green/red) is market truth (P&L,
+ * price direction) and is never repurposed; `agent` (violet) is AI
+ * reasoning — specialists, Portfolio Manager, AI Risk Manager; `warn`
+ * (amber) is attention/pending/modified; `hedge` (magenta) flags a
+ * bearish-hedge instrument. A reader who learns this grammar once can tell
+ * "is this a market fact or a model's opinion" from color alone, anywhere
+ * in the product. */
+:root {
+  --c-bg: 7 10 16;
+  --c-surface: 13 17 27;
+  --c-surface-2: 19 25 38;
+  --c-surface-inset: 9 12 19;
+  --c-border: 28 36 52;
+  --c-border-strong: 45 58 82;
+  --c-ink: 236 241 248;
+  --c-ink-dim: 148 158 176;
+  --c-ink-faint: 90 99 117;
+
+  --c-accent: 45 200 255;
+  --c-agent: 154 122 255;
+  --c-green: 52 211 153;
+  --c-red: 251 90 90;
+  --c-amber: 255 176 32;
+  --c-hedge: 255 111 176;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --c-bg: 227 231 237;
+    --c-surface: 255 255 255;
+    --c-surface-2: 244 246 250;
+    --c-surface-inset: 236 239 244;
+    --c-border: 213 220 229;
+    --c-border-strong: 190 199 211;
+    --c-ink: 26 32 39;
+    --c-ink-dim: 91 102 114;
+    --c-ink-faint: 130 140 152;
+
+    --c-accent: 8 137 178;
+    --c-agent: 109 61 214;
+    --c-green: 21 140 88;
+    --c-red: 199 55 64;
+    --c-amber: 168 105 12;
+    --c-hedge: 199 45 128;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-ink font-sans;
+  font-size: 14px;
+  margin: 0;
+  /* A faint radial vignette + hairline dot grid so genuinely empty page
+     space (a quiet trading day, a short center column) reads as an
+     intentional dark-terminal surface instead of a broken/blank void —
+     the single biggest complaint about the pre-redesign build. Both layers
+     are near-invisible individually; deliberately subtle, not a texture. */
+  background-image: radial-gradient(ellipse 1400px 900px at 50% -10%, rgb(var(--c-accent) / 0.05), transparent 60%),
+    radial-gradient(circle, rgb(var(--c-ink) / 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
+  background-attachment: fixed;
+}
+
+/* Tabular numerals everywhere a real number renders — prices, P&L, sizes,
+   timestamps — so a column of figures aligns like a real terminal instead
+   of a UI font's proportional digits drifting. */
+.num,
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  @apply bg-panel border border-border rounded-lg overflow-hidden flex flex-col h-full;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 8px 20px -10px rgba(0, 0, 0, 0.35);
+}
+
+.panel-head {
+  @apply flex items-center gap-2 flex-wrap px-3.5 py-2.5 border-b border-border;
+}
+
+.panel-head h2 {
+  @apply text-[0.8rem] uppercase tracking-wide text-dim font-semibold m-0;
+}
+
+.panel-body {
+  @apply px-3.5 py-3 overflow-x-auto flex-1 min-h-0;
+}
+
+table {
+  @apply w-full border-collapse text-[0.82rem];
+}
+
+th {
+  @apply text-left text-dim font-semibold text-[0.68rem] uppercase tracking-wide px-2 py-1.5 border-b border-border whitespace-nowrap;
+}
+
+td {
+  @apply text-left px-2 py-1.5 border-b border-border whitespace-nowrap font-mono num;
+}
+
+tr:last-child td {
+  @apply border-b-0;
+}
+
+.pill {
+  @apply inline-block px-2 py-0.5 rounded-full text-[0.66rem] font-bold uppercase tracking-wide whitespace-nowrap;
+}
+
+.card {
+  @apply bg-panel-alt border border-border rounded-lg px-3 py-2.5;
+}
+
+.state-message {
+  @apply text-dim text-[0.83rem] py-1.5;
+}
+
+.kv-row {
+  @apply flex gap-2 justify-between text-[0.8rem] py-1 border-b border-dashed border-border last:border-b-0;
+}
+
+.kv-row > span:last-child {
+  @apply font-mono num;
+}
+
+.candidate-chip {
+  @apply inline-flex items-center gap-1.5 px-2.5 py-1 mr-1.5 mb-1.5 rounded-full border border-border bg-panel-alt text-[0.78rem] font-semibold cursor-pointer hover:border-accent hover:text-accent transition-colors;
+}
+
+/* Hero-band KPI numeral — the single largest, most confident text in the
+   product, on purpose: equity/P&L is the first thing an operator's eye
+   should land on. */
+.hero-num {
+  @apply font-mono num font-semibold tracking-tight;
+  font-size: clamp(1.5rem, 2.4vw, 2.15rem);
+  line-height: 1.05;
+}
+
+/* Truthful-data states — shared vocabulary for "is this current?" across
+   Panel headers and the primary decision-state banner. Never silently keep
+   showing old data as if it were live (the stale-data correctness fix). */
+.state-live {
+  @apply text-pos;
+}
+.state-stale {
+  @apply text-warn;
+}
+.state-error {
+  @apply text-neg;
+}
+.state-degraded {
+  @apply text-warn;
+}
+
+/* Dockview theme override — QAMC's own tokens instead of the library's
+ * built-in vscode-dark palette, so the desktop support workspace reads as
+ * the same product as everything around it, not an embedded third-party
+ * widget. Full variable set (see `dockview-react/dist/styles/dockview.css`
+ * for the built-in themes this mirrors the shape of), values substituted. */
+.dockview-theme-qamc {
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 34px;
+  --dv-drag-over-background-color: rgb(var(--c-accent) / 0.15);
+  --dv-drag-over-border-color: rgb(var(--c-accent));
+  --dv-edge-dock-indicator-color: rgb(var(--c-accent) / 0.9);
+  --dv-tabs-container-scrollbar-color: rgb(var(--c-ink-faint));
+  --dv-icon-hover-background-color: rgb(var(--c-ink-faint) / 0.2);
+  --dv-floating-border: 1px solid rgb(var(--c-border-strong));
+  --dv-border-radius: 8px;
+  --dv-tab-border-radius: 6px 6px 0 0;
+  --dv-sash-color: rgb(var(--c-border));
+  --dv-active-sash-color: rgb(var(--c-accent));
+  --dv-group-view-background-color: rgb(var(--c-surface));
+  --dv-tabs-and-actions-container-background-color: rgb(var(--c-surface-2));
+  --dv-activegroup-visiblepanel-tab-background-color: rgb(var(--c-surface));
+  --dv-activegroup-hiddenpanel-tab-background-color: rgb(var(--c-surface-2));
+  --dv-inactivegroup-visiblepanel-tab-background-color: rgb(var(--c-surface));
+  --dv-inactivegroup-hiddenpanel-tab-background-color: rgb(var(--c-surface-2));
+  --dv-tab-divider-color: rgb(var(--c-border));
+  --dv-activegroup-visiblepanel-tab-color: rgb(var(--c-accent));
+  --dv-activegroup-hiddenpanel-tab-color: rgb(var(--c-ink-dim));
+  --dv-inactivegroup-visiblepanel-tab-color: rgb(var(--c-ink-dim));
+  --dv-inactivegroup-hiddenpanel-tab-color: rgb(var(--c-ink-faint));
+  --dv-separator-border: rgb(var(--c-border));
+  font-family: "IBM Plex Sans", sans-serif;
+}

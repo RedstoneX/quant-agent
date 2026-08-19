@@ -44,6 +44,13 @@ from src.api.routes_journal import router as journal_router
 from src.api.routes_live import router as live_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
+# Stage 6 — the richer cockpit (docs/visual/MISSION_CONTROL_VISION_BOARD.png
+# as layout/hierarchy reference). A second, independent static bundle, not
+# a replacement: /ui keeps serving the Stage 3-5 dashboard byte-for-byte as
+# a safe fallback while this one is verified. Same no-build-step, no-
+# framework, no-new-dependency posture — see docs/WORK.md's explicit
+# "no framework migration without architecture approval" boundary.
+_COCKPIT_DIR = Path(__file__).parent / "static_cockpit"
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +89,10 @@ def create_app() -> FastAPI:
         # Mounted last and under its own path so it never shadows the JSON
         # routes above or the `/` service-meta route below.
         app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="ui")
+
+    if _COCKPIT_DIR.is_dir():
+        # Stage 6 cockpit — same static-assets-only posture as /ui above.
+        app.mount("/cockpit", StaticFiles(directory=str(_COCKPIT_DIR), html=True), name="cockpit")
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception):

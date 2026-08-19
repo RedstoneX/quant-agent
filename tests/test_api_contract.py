@@ -474,6 +474,51 @@ def test_account_surfaces_broker_error_without_crashing(client, seeded_db, monke
     assert body["error"] == "connection refused"
     assert body["cash"] is None
     assert body["daily_pnl"] is None
+    assert body["liquidity"] is None
+
+
+def test_account_liquidity_breakdown_separates_raw_cash_from_sweep_parked(
+    client, seeded_db, monkeypatch,
+):
+    """2026-08-18 soak finding: SGOV must never read like an ordinary
+    position or an invented risk posture — /account must separate raw
+    cash, sweep-parked value, the reserve floor, and deployable cash."""
+    monkeypatch.setattr(routes_live, "read_account", lambda: {
+        "cash": 10_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
+        "error": None,
+    })
+    monkeypatch.setattr(routes_live, "read_positions", lambda: {
+        "positions": [
+            {
+                "symbol": "SGOV", "qty": 5000, "avg_entry": 100.0, "current_price": 100.0,
+                "market_value": 50_000.0, "unrealized_pnl": 0.0,
+                "unrealized_intraday_pnl": 0.0, "sector": None,
+                "is_cash_equivalent": True, "direction": "cash_equivalent",
+            },
+            {
+                "symbol": "AAPL", "qty": 10, "avg_entry": 150.0, "current_price": 155.0,
+                "market_value": 1550.0, "unrealized_pnl": 50.0,
+                "unrealized_intraday_pnl": 5.0, "sector": "Technology",
+                "is_cash_equivalent": False, "direction": "long",
+            },
+        ],
+        "error": None,
+    })
+    monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: 1.0)
+
+    r = client.get("/account")
+    assert r.status_code == 200
+    liquidity = r.json()["liquidity"]
+    assert liquidity["sweep_enabled"] is True
+    assert liquidity["sweep_symbol"] == "SGOV"
+    assert liquidity["raw_cash"] == 10_000.0
+    assert liquidity["sweep_parked_value"] == 50_000.0
+    assert liquidity["reserve_usd"] == pytest.approx(1_000.0)  # 1% of 100k
+    assert liquidity["deployable_cash"] == pytest.approx(9_000.0)  # 10k - 1k reserve
+    assert liquidity["total_liquidity"] == pytest.approx(60_000.0)  # raw + parked
 
 
 def test_positions_returns_seeded_position(client, stub_broker):
@@ -496,6 +541,38 @@ def test_orders_returns_seeded_order(client, stub_broker):
 def test_orders_rejects_invalid_status(client, stub_broker):
     r = client.get("/orders", params={"status": "not-a-real-status"})
     assert r.status_code == 422  # FastAPI Literal/Query validation
+
+
+# ---------------------------------------------------------------------------
+# /prices/{symbol}
+# ---------------------------------------------------------------------------
+
+def test_prices_returns_seeded_bars(client, monkeypatch):
+    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120: {
+        "bars": [
+            {"date": "2026-08-17", "open": 100.0, "high": 105.0, "low": 99.0, "close": 104.0, "volume": 1_000_000},
+            {"date": "2026-08-18", "open": 104.0, "high": 106.0, "low": 103.0, "close": 105.5, "volume": 900_000},
+        ],
+        "error": None,
+    })
+    r = client.get("/prices/aapl")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["symbol"] == "AAPL"
+    assert len(body["bars"]) == 2
+    assert body["bars"][0]["close"] == 104.0
+    assert body["error"] is None
+
+
+def test_prices_degrades_to_error_without_crashing(client, monkeypatch):
+    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120: {
+        "bars": [], "error": "data client unreachable",
+    })
+    r = client.get("/prices/NVDA")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bars"] == []
+    assert body["error"] == "data client unreachable"
 
 
 # ---------------------------------------------------------------------------
