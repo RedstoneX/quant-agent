@@ -123,6 +123,25 @@ const TONE_TEXT: Record<Alignment["tone"], string> = {
   neg: "text-neg",
 };
 
+// Visual agent identity — a colored initial badge per specialist role, so
+// cards read at a glance in a dense grid rather than relying on reading
+// the role label text every time. Purely cosmetic; carries no meaning
+// beyond distinguishing role type.
+const ROLE_BADGE: Record<string, string> = {
+  "Technical Analyst": "bg-accent/15 text-accent",
+  "Earnings Analyst": "bg-hedge/15 text-hedge",
+  "News Analyst": "bg-warn/15 text-warn",
+};
+
+function RoleBadge({ role }: { role: string }) {
+  const cls = ROLE_BADGE[role] || "bg-dim/15 text-dim";
+  return (
+    <span className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[0.75rem] font-extrabold ${cls}`}>
+      {role.charAt(0)}
+    </span>
+  );
+}
+
 function ConsensusHeader({ consensus }: { consensus: ConsensusSummary }) {
   return (
     <div className="flex items-center gap-2 flex-wrap mb-2.5">
@@ -149,9 +168,12 @@ export function SpecialistCards({ detail }: { detail: CandidateDetailResponse })
             return (
               <div key={e.key} className={`card ${align ? TONE_BORDER[align.tone] : ""}`}>
                 <div className="flex items-start justify-between gap-2 mb-1.5 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="font-bold text-[0.85rem]">{e.role}</div>
-                    {e.subtitle && <div className="text-[0.72rem] text-dim mt-0.5">{e.subtitle}</div>}
+                  <div className="flex items-start gap-2 min-w-0">
+                    <RoleBadge role={e.role} />
+                    <div className="min-w-0">
+                      <div className="font-bold text-[0.85rem]">{e.role}</div>
+                      {e.subtitle && <div className="text-[0.72rem] text-dim mt-0.5">{e.subtitle}</div>}
+                    </div>
                   </div>
                   <Pill text={e.direction} />
                 </div>

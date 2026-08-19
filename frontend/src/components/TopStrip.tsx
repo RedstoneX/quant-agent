@@ -56,7 +56,14 @@ export function TopStrip({
       {account?.error ? (
         <div className="text-neg text-[0.82rem]">Account unavailable: {account.error}</div>
       ) : (
-        <div className="flex items-stretch flex-1 min-w-0 overflow-x-auto border-l border-r border-border">
+        // flex-wrap + a real min-width, not overflow-x-auto: at tablet
+        // widths this strip doesn't have room for all 5 stats plus the
+        // brand/meta blocks on one line, and a horizontally-scrolling
+        // strip hid every stat but the first behind an undiscoverable
+        // scroll. min-w-[320px] forces the *strip* to wrap onto its own
+        // row instead of being squeezed to near-zero width; flex-wrap
+        // then lets its own stat items wrap across 1-2 lines there.
+        <div className="flex items-stretch flex-wrap flex-1 min-w-[320px] border-l border-r border-border">
           <Stat label="Equity" value={fmtMoney(account?.portfolio_value)} />
           <Stat
             label="Day P&L"

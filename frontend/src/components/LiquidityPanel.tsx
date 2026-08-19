@@ -27,7 +27,12 @@ export function LiquidityPanel({
     <Panel title="Cash & risk exposure" status="ok">
       {liq ? (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
+          {/* lg: (1024px), not sm: (640px) — this panel is half-width inside
+              the main 2-column layout from md: (768px) up, so a viewport-
+              width breakpoint alone would trigger 4 columns while the
+              panel itself is still only ~400px wide at e.g. iPad's 820px,
+              cramming labels like "Sweep parked (SGOV)" into ~90px. */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2">
             <Figure label="Raw cash" value={fmtMoney(liq.raw_cash)} />
             <Figure
               label={`Sweep parked${liq.sweep_symbol ? ` (${liq.sweep_symbol})` : ""}`}

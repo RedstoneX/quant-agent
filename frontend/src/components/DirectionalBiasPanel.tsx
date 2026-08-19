@@ -265,6 +265,7 @@ export function DirectionalBiasPanel() {
       subtitle="Read-only lens on past runs — not a trading signal or recommendation."
       status={status}
       full
+      accent
     >
       {error && <StateMessage text={`Could not load directional-bias data: ${error}`} error />}
       {!error && loading && !agg && <StateMessage text="Loading…" />}

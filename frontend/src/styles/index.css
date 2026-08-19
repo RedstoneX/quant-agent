@@ -18,10 +18,15 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    --c-bg: 242 244 247;
+    /* Cooler, slightly darker page background than before so white panels
+       actually pop instead of blending into it (prior 242/244/247 sat only
+       ~5 units below panel white, reading as flat/monochrome). */
+    --c-bg: 227 231 237;
     --c-panel: 255 255 255;
-    --c-panel-alt: 238 241 245;
-    --c-border: 221 227 233;
+    /* Nested cards/rows sit visibly between panel and page background
+       instead of nearly matching the page background. */
+    --c-panel-alt: 244 246 250;
+    --c-border: 213 220 229;
     --c-text: 26 32 39;
     --c-text-dim: 91 102 114;
     --c-accent: 31 111 214;
@@ -47,6 +52,7 @@ body {
 
 .panel {
   @apply bg-panel border border-border rounded-lg overflow-hidden flex flex-col;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.035);
 }
 
 .panel-head {

@@ -23,7 +23,10 @@ export function HealthPanel({ health, error }: { health: HealthResponse | null; 
     .join("  ·  ");
   return (
     <Panel title="System health" status={status}>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[0.8rem]">
+      {/* lg:, not sm: — this panel is half-width in the main 2-column
+          layout; see LiquidityPanel.tsx for the full explanation of why a
+          viewport-width breakpoint alone is wrong here. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-[0.8rem]">
         <Field label="Database" value={health.db_reachable ? "reachable" : "unreachable"} />
         <Field
           label="Broker"

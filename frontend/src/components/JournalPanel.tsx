@@ -416,6 +416,7 @@ export function JournalPanel({ onOpenCandidate }: { onOpenCandidate: (runs: RunS
       subtitle="Prior trading day, read as a narrative: morning regime, specialist views, PM/risk decisions, trades, and evening reflection."
       status={status}
       full
+      accent
       actions={
         dates.length > 0 && (
           <div className="flex items-center gap-1">
