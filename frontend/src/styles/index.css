@@ -95,7 +95,7 @@ body {
 }
 
 .panel-body {
-  @apply px-3.5 py-3 overflow-x-auto flex-1;
+  @apply px-3.5 py-3 overflow-x-auto flex-1 min-h-0;
 }
 
 table {

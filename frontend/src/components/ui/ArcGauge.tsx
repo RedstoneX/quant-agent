@@ -14,7 +14,7 @@ import { readQamcTheme } from "../../lib/theme";
  * parser (like lightweight-charts') cannot resolve `var(--c-x)` the way a
  * real CSS property can; see lib/theme.ts. */
 
-export type GaugeTone = "pos" | "warn" | "neg" | "accent" | "agent";
+export type GaugeTone = "pos" | "warn" | "neg" | "accent" | "agent" | "hedge";
 
 export interface GaugeBand {
   /** Cumulative threshold (0-100) where this color band ends. */
@@ -45,6 +45,7 @@ export function ArcGauge({
     neg: theme.red,
     accent: theme.accent,
     agent: theme.agent,
+    hedge: theme.hedge,
   };
 
   const option: EChartsOption = {

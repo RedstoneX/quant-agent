@@ -64,6 +64,11 @@ function tradeMarkers(
     .sort((a, b) => (a.time as string).localeCompare(b.time as string));
 }
 
+// The chart must always resize to a real, non-trivial height even on a
+// short/laptop viewport where `calc(100vh-150px)` leaves less room than a
+// tall desktop monitor — never so short the candles become unreadable.
+const MIN_CHART_HEIGHT = 240;
+
 export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null; trades?: TradeItem[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -76,13 +81,15 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   useEffect(() => {
     if (!containerRef.current) return;
     const colors = readThemeColors();
+    const initialWidth = containerRef.current.clientWidth || 600;
+    const initialHeight = Math.max(containerRef.current.clientHeight, MIN_CHART_HEIGHT);
     const chart = createChart(containerRef.current, {
       layout: { background: { color: "transparent" }, textColor: colors.text, fontSize: 11 },
       grid: { vertLines: { color: colors.border }, horzLines: { color: colors.border } },
       rightPriceScale: { borderColor: colors.border },
       timeScale: { borderColor: colors.border },
-      width: containerRef.current.clientWidth,
-      height: 260,
+      width: initialWidth,
+      height: initialHeight,
     });
     const candleSeries = chart.addCandlestickSeries({
       upColor: colors.green,
@@ -105,19 +112,27 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
     // `autoSize: true` — this cockpit mounts the chart inside a pane that
     // can be `display:none` (the mobile/iPad "Chart" tab starts hidden;
     // the desktop 3-column pane can also cross the xl breakpoint on
-    // resize). autoSize correctly picks up the new pixel width on a
+    // resize). autoSize correctly picks up the new pixel size on a
     // hidden->visible transition, but does NOT itself re-fit the visible
     // time range afterward, leaving all bars compressed into whatever
     // narrow bar-spacing was last fit — most of the panel renders blank
     // with a cramped sliver of candles at one edge. Doing resize() and
     // fitContent() together, in that order, inside one observer removes
     // the ordering race a second independent observer would risk.
+    //
+    // BOTH dimensions are read from the observed box, not just width: the
+    // chart's parent chain now flexes the container to fill whatever
+    // vertical space the primary cockpit's viewport-bounded row actually
+    // has (App.tsx's `xl:h-[calc(100vh-150px)]` + flex-1 chart wrapper),
+    // so a hard-coded height here would silently reintroduce the exact
+    // dead-space bug this fixes — the chart would sit inside a
+    // correctly-tall flex box while itself staying a fixed small size.
     const resizeObserver = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width && width > 0) {
-        chart.resize(width, 260);
-        chart.timeScale().fitContent();
-      }
+      const rect = entries[0]?.contentRect;
+      if (!rect || rect.width <= 0) return;
+      const height = Math.max(rect.height, MIN_CHART_HEIGHT);
+      chart.resize(rect.width, height);
+      chart.timeScale().fitContent();
     });
     resizeObserver.observe(containerRef.current);
 
@@ -208,16 +223,20 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
 
   return (
     <Panel title={symbol ? `Price — ${symbol}` : "Price chart"} status={status} full>
-      {/* Always mounted at a real, fixed size, never display:none — the
-          chart object is created once against this container at mount
-          time and lightweight-charts' autoSize ResizeObserver needs a
-          real height to measure from the start. The overlay below sits on
-          top of that same empty grid rather than adding a second block of
-          vertical space beneath it, so an empty/degraded state reads as a
-          designed placeholder instead of prime chart space going to waste
-          on a blank "OK" box. */}
-      <div className="relative">
-        <div ref={containerRef} className="w-full h-[260px]" />
+      {/* Always mounted at a real size, never display:none — the chart
+          object is created once against this container at mount time and
+          the manual ResizeObserver above needs a real box to measure from
+          the start. `h-full` lets it inherit whatever height App.tsx's
+          flex-1 chart wrapper actually computed (viewport-bounded on
+          desktop, a fixed fallback below `xl` — see App.tsx); `min-h-[240px]`
+          is the same floor as MIN_CHART_HEIGHT so the container and the
+          chart's own resize logic can never disagree. The overlay below
+          sits on top of that same grid rather than adding a second block
+          of vertical space beneath it, so an empty/degraded state reads as
+          a designed placeholder instead of prime chart space going to
+          waste on a blank "OK" box. */}
+      <div className="relative h-[320px] xl:h-full min-h-[240px]">
+        <div ref={containerRef} className="w-full h-full" />
         {overlayText && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
             <span

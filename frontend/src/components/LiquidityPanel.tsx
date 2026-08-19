@@ -1,7 +1,7 @@
 import { AccountResponse, PositionItem } from "../api/client";
-import { fmtMoney } from "../lib/format";
+import { fmtMoney, fmtMoneyCompact } from "../lib/format";
 import { Panel, StateMessage } from "./ui/Panel";
-import { SegmentedBar } from "./ui/Meter";
+import { DonutMeter } from "./ui/DonutMeter";
 
 export function LiquidityPanel({
   account,
@@ -42,8 +42,10 @@ export function LiquidityPanel({
         <>
           <div className="mb-1">
             <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1.5">Liquidity — where the cash is</div>
-            <SegmentedBar
-              formatValue={fmtMoney}
+            <DonutMeter
+              formatValue={fmtMoneyCompact}
+              centerLabel="Total liquidity"
+              centerValue={fmtMoneyCompact(liq.total_liquidity ?? (liq.raw_cash ?? 0) + (liq.sweep_parked_value ?? 0))}
               segments={[
                 { label: "Deployable cash", value: liq.deployable_cash ?? 0, tone: "pos" },
                 { label: "Reserve (held back)", value: heldBack, tone: "warn" },
@@ -69,8 +71,10 @@ export function LiquidityPanel({
       <div className="mt-3.5">
         <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1.5">Positions — real risk exposure</div>
         {longMv + hedgeMv + cashEquivMv > 0 ? (
-          <SegmentedBar
-            formatValue={fmtMoney}
+          <DonutMeter
+            formatValue={fmtMoneyCompact}
+            centerLabel="Positions"
+            centerValue={fmtMoneyCompact(longMv + hedgeMv + cashEquivMv)}
             segments={[
               { label: "Long", value: longMv, tone: "pos" },
               { label: "Bearish hedge", value: hedgeMv, tone: "hedge" },

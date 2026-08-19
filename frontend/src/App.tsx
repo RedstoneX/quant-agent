@@ -285,8 +285,19 @@ export default function App() {
           {/* The primary cockpit body — deliberately a fixed, non-dockable
               grid (not Dockview): this is the "answer at a glance" surface,
               customization belongs only to the support workspace below. */}
+          {/* All three columns share one explicit height at desktop width
+              (xl:h-[calc(100vh-150px)], not just a max-height) so the row
+              is a real viewport-bounded workstation, not just capped —
+              Candidates/Decision Room scroll internally within it, and the
+              center column can flex its own children to actually fill it
+              (see the chart's flex-1 wrapper below). Previously the center
+              column had no height rule at all, so CSS Grid's stretch
+              alignment made the grid CELL tall to match the other two
+              columns while the price chart inside it stayed hard-coded to
+              260px — a large dead gap below the chart on any viewport
+              taller than ~550px. */}
           <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_360px] gap-3 p-3 items-stretch">
-            <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto`}>
+            <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
               <CandidateRail
                 funnel={funnel}
                 loading={funnelLoading}
@@ -302,16 +313,27 @@ export default function App() {
                 its widest child's natural content width (the price chart)
                 instead of shrinking to its assigned share of the row,
                 pushing the Decision Room column past the viewport edge. */}
-            <div className={`${mobilePane === "chart" ? "block" : "hidden xl:block"} min-w-0`}>
+            <div
+              className={`${
+                mobilePane === "chart" ? "flex" : "hidden xl:flex"
+              } min-w-0 flex-col xl:h-[calc(100vh-150px)]`}
+            >
               <SelectedSymbolContext
                 funnel={funnel}
                 symbol={chartSymbol}
                 onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)}
               />
-              <PriceChartPanel symbol={chartSymbol} trades={trades} />
+              {/* flex-1 + min-h-0 is the other half of the fix: without
+                  min-h-0 a flex child's default min-height:auto lets its
+                  content (the chart) refuse to shrink below its own natural
+                  size, which would silently defeat the resize-to-fill
+                  behavior on a short viewport. */}
+              <div className="flex-1 min-h-0">
+                <PriceChartPanel symbol={chartSymbol} trades={trades} />
+              </div>
             </div>
 
-            <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto`}>
+            <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
               <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
             </div>
           </div>

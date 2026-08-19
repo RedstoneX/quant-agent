@@ -339,7 +339,74 @@ ECharts Sankey candidate-branching detail view and the missed-opportunities
 scatter chart, both explicitly secondary/detail-view items in the design
 plan.
 
-Awaiting ChatGPT/operator review alongside Stage 6f. Claude does not cut
+### Stage 6h — mature-visualization upgrade + chart dead-space fix
+
+A follow-on external review of a real Stage 6g screenshot found the
+information architecture and visual-identity work sound but flagged three
+concrete defects and asked for a bounded, evidence-based research pass
+(information → best visualization pattern → best available mature
+component → KEEP/TRANSFORM/REPLACE/CONSOLIDATE/REMOVE) rather than another
+prettifying pass over homemade primitives:
+
+- **Chart dead-space fix**: the cockpit's three-column row now shares one
+  explicit viewport-bounded height (`xl:h-[calc(100vh-150px)]`) instead of
+  an unconstrained grid cell; the candidate rail and Decision Room scroll
+  independently within it, and the chart's `flex-1 min-h-0` wrapper lets it
+  fill whatever vertical space is actually available (240px floor) instead
+  of the old hard-coded 260px that left a large dead region below it on
+  any taller viewport. `PriceChartPanel`'s `ResizeObserver` now reads
+  height as well as width. Verified at two desktop heights (1000px,
+  760px) — no dead region at either.
+- **Liquidity + Real-Risk-Exposure donuts** (`DonutMeter.tsx`, ECharts
+  `pie` in donut mode, sharing `ArcGauge`'s token/substrate) replace both
+  `SegmentedBar` thin bars the operator had already rejected once. SGOV
+  sweep-parking keeps a distinct, truthful `dim` category — never
+  market-status green/red, never the brand-accent cyan.
+- **Positions treemap** (`PositionsTreemap.tsx`, new): block area = market
+  value (concentration), block color = real unrealized P&L sign — a
+  treemap rather than another donut because holdings are a real,
+  unbucketed hierarchy, not a 2–3-category composition.
+- **Missed-opportunities scatter**: `MissedOpportunitiesPanel` now
+  aggregates the last 20 journal days (existing endpoints, no new backend
+  surface) into an ECharts scatter — date × signed move % × genuine-miss/
+  disciplined-pass coloring — so the up/down miss balance `docs/
+  OUTCOME.md` cares about is visible longitudinally instead of inferred
+  from one day's text. Previously deferred pending a real case for it;
+  this is that case.
+- **Decision Room re-assessed against the review's explicit 9-question
+  bar and found already sufficient** (Stage 6g's React Flow graph +
+  existing `CandidateDetailModal` drill-down) — deliberately **not**
+  rebuilt, to avoid the "prettier homemade primitive" failure mode the
+  review warned against. Sankey reassessed and still deferred: current
+  candidate volumes don't yet make the case for it over the existing
+  funnel bars + table.
+- **Two real bugs found and fixed**: the in-flight (uncommitted at pass
+  start) `DonutMeter` work was typecheck-broken (`GaugeTone` missing the
+  just-added `"hedge"` member; two ECharts `graphic` text elements used
+  the nonexistent `textAlign` instead of `align`) and, once compiling,
+  `LiquidityPanel` had been silently re-pointed to `tone: "neg"` (market-
+  loss red) for bearish-hedge and `tone: "accent"` (brand cyan) for
+  cash-equivalent — both violate this project's own color-grammar
+  contract. Fixed by extending `DonutMeter`'s tone set and restoring the
+  correct semantic tones. Separately, this pass's own verification
+  fixture had an invalid `RiskVerdict.reason_category` enum value and a
+  `RiskModification` missing its required `symbol` field, which Pydantic
+  silently degraded to a missing verdict (confirming, not breaking, the
+  production degrade-don't-crash contract) — fixed in the fixture.
+
+Frontend-only; `git diff --stat -- src/` confirms zero backend/trading
+changes beyond the compiled `src/api/static_cockpit/` bundle, and `/ui` is
+byte-for-byte untouched. Verified with a seeded throwaway fixture spanning
+six days and every decision state (same monkeypatch-at-the-broker/db-read-
+seam convention as Stage 6f/6g), captured via a local headless Playwright
+script at two desktop heights and iPad width, zero console/page errors
+across every scenario. `npm run build`/`npm test` and the backend safety/
+isolation test subset (`test_api_safety.py`, `test_api_isolation.py`,
+`test_api_no_secrets.py`, 41 tests) all pass. Full details, the color-
+grammar bug writeup, and screenshots:
+`docs/verification/stage-6h-visualization-upgrade/`.
+
+Awaiting ChatGPT/operator review alongside Stage 6f/6g. Claude does not cut
 over or merge its own work.
 
 ## Current product priority: directionality + explainability during the live paper soak
