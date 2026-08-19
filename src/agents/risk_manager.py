@@ -45,6 +45,12 @@ class RiskManagerAgent(BaseAgent):
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses", []) or []
         total_value: float | None = kwargs.get("total_value")
         cash: float | None = kwargs.get("cash")
+        # Cash-equivalent sweep reserve (SGOV), reported separately from
+        # `cash` — 2026-08-19 SGOV/deployable-liquidity forensic. `cash` is
+        # already the truthful immediately-deployable figure; never re-add
+        # this to it (that is the exact bug that let the hard gate approve
+        # BUYs execution couldn't fund).
+        reserve_balance: float = kwargs.get("reserve_balance", 0.0) or 0.0
         # 2026-08-13 agent audit — "risk evidence completeness". RM's prompt
         # claims it enforces PM's holding-discipline and drawdown-halve rules,
         # but neither input reached it: Position carries no entry date, and
@@ -88,7 +94,12 @@ class RiskManagerAgent(BaseAgent):
             cash_bit = ""
             if cash is not None:
                 cash_pct = (cash / total_value * 100) if total_value else 0.0
-                cash_bit = f" | Cash: ${cash:,.0f} ({cash_pct:.1f}%)"
+                cash_bit = f" | Cash (deployable now): ${cash:,.0f} ({cash_pct:.1f}%)"
+            if reserve_balance > 0:
+                cash_bit += (
+                    f" | Reserve (sweep-parked, ~1 trading day to convert): "
+                    f"${reserve_balance:,.0f}"
+                )
             account_section = (
                 f"## Account\n- Total equity: ${total_value:,.0f}{cash_bit}\n"
             )
@@ -349,6 +360,7 @@ Review these proposed trades and provide your verdict as JSON."""
                earnings_analyses: list[dict] | None = None,
                total_value: float | None = None,
                cash: float | None = None,
+               reserve_balance: float = 0.0,
                position_history: dict | None = None,
                recent_performance: dict | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
@@ -369,6 +381,7 @@ Review these proposed trades and provide your verdict as JSON."""
             earnings_analyses=earnings_analyses or [],
             total_value=total_value,
             cash=cash,
+            reserve_balance=reserve_balance,
             position_history=position_history or {},
             recent_performance=recent_performance or {},
         )

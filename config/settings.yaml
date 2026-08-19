@@ -117,15 +117,42 @@ risk:
 
 # Idle-cash sweep — park cash above the reserve in a T-bill ETF, release it
 # automatically before BUYs. The vehicle is cash-equivalent everywhere:
-# hidden from every LLM view, counted as cash by the risk engine, stopless
+# hidden from every LLM view, excluded from position/exposure math, stopless
 # by design, first to liquidate in force_delever. Deterministic, zero-LLM.
 # (2026-07-16 forensics: ~84% idle cash for weeks = ~$300/mo risk-free carry
 # left on the table; see src/execution/cash_sweep.py.)
+#
+# 2026-08-19 SGOV/deployable-liquidity forensic: SGOV's value is NOT
+# counted as cash for PM/RM/the deterministic gate anymore (it was, and
+# that let approved BUYs get sized against ~$10K of "cash" that was
+# actually ~$145 real + ~$9.8K parked — SGOV was sold to fund the BUYs but
+# Alpaca's T+1 equity settlement meant the proceeds weren't spendable by
+# the time execution rechecked, so every BUY was safely skipped). Raised
+# reserve_pct 1.0 -> 5.0 so a typical single same-day BUY has real cash to
+# draw on without depending on a same-day SGOV liquidation that may not
+# settle in time; see CashSweepConfig.reserve_pct docstring.
 cash_sweep:
   enabled: true
   symbol: "SGOV"        # iShares 0-3mo T-bills; BIL is the fallback choice
-  reserve_pct: 1.0      # % of equity kept as raw cash for fees/slippage
+  reserve_pct: 5.0       # % of equity kept as raw cash for same-day BUYs/fees/slippage
   min_order_usd: 500    # don't churn sub-$500 parking orders
+
+# 2026-08-19 intraday opportunity-discovery fix — bounded, cheap trigger
+# added onto the existing intra_check cadence (every 30 min): a single bulk
+# current-session snapshot flags symbols that moved materially since the
+# last close; only those (capped, cooldown-deduped) get a real tech_analyst
+# call and the normal Specialist -> PM -> AI Risk -> deterministic gate ->
+# execution chain. See src/config.py::IntradayScanConfig.
+#
+# Left DISABLED here deliberately: this is new autonomous-decision surface
+# added mid-tranche, not yet operator-reviewed against real soak behavior.
+# Flip `enabled: true` after reviewing this PR (same rollout pattern
+# cash_sweep followed: built once, enabled in a later explicit step).
+intraday_scan:
+  enabled: false
+  move_threshold_pct: 3.0   # min |% move| since last close to qualify
+  cooldown_hours: 3.0       # min hours between two decisions for the same symbol
+  max_candidates_per_scan: 5  # hard cap per tick — bounded, not high-frequency
 
 trading:
   universe:

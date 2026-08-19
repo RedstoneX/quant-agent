@@ -191,6 +191,7 @@ class CashSweeper:
         try:
             account = self._pipeline.broker.get_account()
             ctx.cash = account["cash"]
+            ctx.deployable_cash = account.get("non_marginable_buying_power", ctx.cash)
             ctx.total_value = account["portfolio_value"]
         except Exception as e:  # noqa: BLE001
             # Best-effort estimate keeps ctx coherent with freed > 0.
@@ -233,6 +234,7 @@ class CashSweeper:
             return None
         ctx.positions = positions
         ctx.cash = cash
+        ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
         ctx.total_value = total_value
 
         # NEVER park on a daily-loss-breach day (audit round 2). The breach

@@ -32,6 +32,12 @@ class PortfolioManagerAgent(BaseAgent):
         positions: list[Position] = kwargs["positions"]
         macro_analysis: dict | None = kwargs.get("macro_analysis")
         cash_balance: float = kwargs["cash_balance"]
+        # Short-term reserve (SGOV/cash-equivalent sweep parking), reported
+        # separately from cash_balance — 2026-08-19 SGOV/deployable-
+        # liquidity forensic. Never fold this into cash_balance: it is not
+        # reliably spendable same-day (Alpaca T+1 equity settlement), so
+        # sizing against it produces BUYs execution can't actually fund.
+        reserve_balance: float = kwargs.get("reserve_balance", 0.0) or 0.0
         total_value: float = kwargs["total_value"]
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses", [])
@@ -466,9 +472,15 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             if facts is not None else ""
         )
 
+        reserve_line = (
+            f"\n- Short-Term Reserve (cash-equivalent sweep, NOT immediately "
+            f"spendable — allow ~1 trading day to convert if a BUY needs "
+            f"more than Cash Balance): ${reserve_balance:,.2f}"
+            if reserve_balance > 0 else ""
+        )
         return f"""## Account Status
 - Total Value: ${total_value:,.2f}
-- Cash Balance: ${cash_balance:,.2f}
+- Cash Balance: ${cash_balance:,.2f} (immediately deployable, no margin){reserve_line}
 - Invested: ${invested:,.2f} ({invested_pct:.1f}%)
 
 ## Current Positions (with entry context + signal trajectory)
@@ -515,6 +527,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
 
     def decide(self, analyses: list[TechAnalysisResult], positions: list[Position],
                macro_analysis: dict | None = None, cash_balance: float = 0,
+               reserve_balance: float = 0.0,
                total_value: float = 0,
                news_intel: NewsIntelligenceReport | None = None,
                earnings_analyses: list[dict] | None = None,
@@ -538,6 +551,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             positions=positions,
             macro_analysis=macro_analysis,
             cash_balance=cash_balance,
+            reserve_balance=reserve_balance,
             total_value=total_value,
             news_intel=news_intel,
             earnings_analyses=earnings_analyses or [],

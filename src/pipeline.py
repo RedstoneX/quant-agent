@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import math
 import uuid
@@ -36,6 +37,7 @@ from src.pipeline_stages import (
     ExecutionStage,
     MorningResearchStage,
     RiskStage,
+    _persist_evidence,
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.storage.db import Database
@@ -479,17 +481,25 @@ class TradingPipeline:
         pending_cash_outflow = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
-        # exclude it from the position list (net-exposure / cluster math must
-        # not count parked cash as market exposure) and credit its market
-        # value to the cash budget (ExecutionStage liquidates it before BUYs
-        # submit, mirroring how SELL proceeds are pre-credited below).
+        # exclude it from the position list so net-exposure / cluster math
+        # doesn't count parked cash as market exposure.
+        #
+        # 2026-08-19 SGOV/deployable-liquidity forensic: this used to also
+        # credit the parked vehicle's market value straight into the cash
+        # budget the hard gate checks a BUY against. That is what let the
+        # gate approve BUYs sized against ~$10K when real settled cash was
+        # ~$145 — SGOV was sold to fund them, but Alpaca settlement (T+1)
+        # meant the proceeds were not actually spendable by the time
+        # execution rechecked. `cash` here is now the caller-supplied
+        # `ctx.deployable_cash` (Alpaca's settled non-margin buying power),
+        # which never carries unsettled SGOV proceeds — so no crediting is
+        # done here anymore. The `sell_proceeds` credit just below is
+        # unrelated and unchanged: it only credits proceeds of REAL
+        # position SELLs this same run, which ExecutionStage always
+        # executes and waits for before any BUY submits.
         sweeper = self._sweeper()
         if sweeper is not None:
-            positions, parked = sweeper.split_positions(positions)
-            if parked is not None and cash is not None:
-                mv = parked.market_value
-                if isinstance(mv, (int, float)) and math.isfinite(mv) and mv > 0:
-                    cash = cash + mv
+            positions, _parked = sweeper.split_positions(positions)
 
         # Pre-pass: sum the cash SELLs in this session will return. The
         # execution stage always runs SELLs before BUYs and waits for fills,
@@ -5412,6 +5422,7 @@ class TradingPipeline:
             account = self.broker.get_account()
             ctx.positions = self.broker.get_positions()
             ctx.cash = account["cash"]
+            ctx.deployable_cash = account.get("non_marginable_buying_power", ctx.cash)
             ctx.total_value = account["portfolio_value"]
             ctx.last_equity = account.get("last_equity", ctx.total_value)
             logger.info(
@@ -5481,10 +5492,12 @@ class TradingPipeline:
             ctx.account = account
             ctx.positions = positions
             ctx.cash = cash
+            ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
             ctx.total_value = total_value
             ctx.last_equity = last_equity
-            logger.info("Account: $%.2f total, $%.2f cash, %d positions (last close $%.2f)",
-                         total_value, cash, len(positions), last_equity)
+            logger.info(
+                "Account: $%.2f total, $%.2f cash (deployable $%.2f), %d positions (last close $%.2f)",
+                total_value, cash, ctx.deployable_cash, len(positions), last_equity)
 
             # 1a. Cash-only safety net — force-sell if margin was entered before
             # this session. Refreshes ctx.cash / positions on completion, so
@@ -5920,6 +5933,7 @@ class TradingPipeline:
         ctx.account = account
         ctx.positions = positions
         ctx.cash = cash
+        ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
         ctx.total_value = total_value
         ctx.last_equity = last_equity
 
@@ -5983,6 +5997,7 @@ class TradingPipeline:
                 ctx.account = account
                 ctx.positions = positions
                 ctx.cash = cash
+                ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
                 ctx.total_value = total_value
                 ctx.last_equity = last_equity
                 self.db.sync_positions(positions)
@@ -6010,25 +6025,29 @@ class TradingPipeline:
         # Pre-LLM orders (take-profit + ex-div) feed into the same bucket.
         orders = list(auto_tp_orders) + list(exdiv_orders)
 
-        # LLM view: the cash-sweep vehicle is cash, not a position — the
-        # reviewer must never see it, hold-grade it, or sell it. Raw
-        # `positions` stays in scope for the paths that need broker truth
-        # (emergency liquidate below sells EVERYTHING, parked cash included).
+        # LLM view: the cash-sweep vehicle is cash-equivalent, not a
+        # position — the reviewer must never see it, hold-grade it, or sell
+        # it. Raw `positions` stays in scope for the paths that need broker
+        # truth (emergency liquidate below sells EVERYTHING, parked cash
+        # included).
+        #
+        # 2026-08-19 SGOV/deployable-liquidity forensic: crediting the
+        # parked vehicle's market value straight into "cash" (2026-07-16
+        # audit's fix) told the reviewer money was instantly available when
+        # it was not — Alpaca settlement (T+1) means a same-day SGOV
+        # liquidation is not reliably spendable by the time execution
+        # rechecks. `review_cash` is now `ctx.deployable_cash` (Alpaca's
+        # settled non-margin buying power); `reserve_balance` carries the
+        # parked value separately, informationally, so the reviewer still
+        # knows the reserve exists without treating it as instant cash.
         review_positions = positions
-        review_cash = cash
+        review_cash = ctx.deployable_cash
+        reserve_balance = 0.0
         sweeper = self._sweeper()
         if sweeper is not None:
             review_positions, parked = sweeper.split_positions(positions)
-            # ...and the cash side of that same contract: stripping the
-            # vehicle from the position list while showing RAW cash told the
-            # reviewer the book was ~all-in with a few hundred dollars spare,
-            # when most of the equity was parked and instantly available. Its
-            # de-lever mandate and weight reasoning both key off this number
-            # (2026-07-16 audit; DecisionStage already credits it for the PM).
             if parked is not None:
-                mv = parked.market_value
-                if isinstance(mv, (int, float)) and math.isfinite(mv) and mv > 0:
-                    review_cash = cash + mv
+                reserve_balance = sweeper.parked_value(positions)
 
         if review_positions:
             # Sweep any straggler fills before building the reviewer prompt.
@@ -6086,6 +6105,7 @@ class TradingPipeline:
                 positions=review_positions,
                 macro_summary=macro_summary,
                 cash_balance=review_cash,
+                reserve_balance=reserve_balance,
                 total_value=total_value,
                 session_type=session_type,
                 position_facts=position_facts,
@@ -6380,6 +6400,8 @@ class TradingPipeline:
         daily_pnl = total_value - last_equity
         ctx.account = account
         ctx.positions = positions
+        ctx.cash = account["cash"]
+        ctx.deployable_cash = account.get("non_marginable_buying_power", ctx.cash)
         ctx.total_value = total_value
         ctx.last_equity = last_equity
         ctx.daily_pnl = daily_pnl
@@ -6391,13 +6413,28 @@ class TradingPipeline:
 
         loss_violation = self.risk_engine.check_daily_loss(last_equity, daily_pnl)
         if not loss_violation or not positions:
-            return {
+            result = {
                 "status": "ok",
                 "daily_pnl": daily_pnl,
                 "daily_return_pct": daily_return_pct,
                 "positions": len(positions),
                 "run_id": run_id,
             }
+            # 2026-08-19 intraday opportunity-discovery fix: bounded new-
+            # opportunity scan, gated additionally on `not loss_violation`
+            # (belt-and-suspenders) — a daily-loss breach must never add
+            # new risk, whether or not there happened to be a position to
+            # force-close in the branch above.
+            if not loss_violation:
+                try:
+                    scan_result = self._run_intraday_opportunity_scan(ctx)
+                except Exception as e:  # noqa: BLE001 — never let the scan
+                    # turn a routine intra_check tick into a failed run.
+                    logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
+                    scan_result = None
+                if scan_result is not None:
+                    result["intraday_scan"] = scan_result
+            return result
 
         logger.warning(
             "INTRA RISK ALERT: %s — force-closing all %d positions",
@@ -6472,6 +6509,371 @@ class TradingPipeline:
             "daily_return_pct": daily_return_pct,
             "orders": orders,
             "run_id": run_id,
+        }
+
+    def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:
+        """True when `symbol` already went through an intraday-scan decision
+        (any action, including HOLD — ExecutionStage records every decision)
+        within the last `cooldown_hours`.
+
+        Same query-and-cutoff idiom as `_trail_tightened_recently`. Matches
+        on `run_id` prefix `intra_check-` (see `RunContext.start`) rather
+        than on action type, because the whole point is "don't re-run
+        Specialist -> PM -> AI Risk on this symbol again yet", regardless
+        of what the prior tick concluded — a scan that already produced a
+        BUY, a HOLD, or even an RM-rejected proposal is all equally "already
+        looked at this recently".
+        """
+        try:
+            rows = self.db.get_trades(symbol=symbol, limit=10)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday cooldown query failed for %s: %s", symbol, e)
+            return False
+        from datetime import datetime as _dt, timedelta, timezone
+        cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
+        for row in rows:
+            run_id = row.get("run_id") or ""
+            if not run_id.startswith("intra_check-"):
+                continue
+            ts = row.get("timestamp") or ""
+            try:
+                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
+                    else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt >= cutoff:
+                return True
+        return False
+
+    def _another_session_recently_active(self, run_id: str,
+                                         within_minutes: float = 15.0) -> bool:
+        """True when a DIFFERENT session wrote a trade row in the last
+        `within_minutes` — i.e. a morning/midday/close run is probably
+        mid-flight right now.
+
+        Why this exists (2026-08-19, found while verifying the scheduling
+        assumptions rather than assuming them): `scripts/run_if_et_window.sh`
+        deliberately exempts `intra_check` from the cross-mode session lock
+        so the flash-crash circuit breaker fires on every 30-min tick "
+        regardless of what else is running" — and it justifies that
+        exemption explicitly on the grounds that all of intra_check's
+        actions (force_delever / emergency_liquidate / P&L read) are
+        IDEMPOTENT.
+
+        Opening a NEW position is not idempotent. Without this guard the
+        intraday scan could run concurrently with a morning run that is
+        still executing: both snapshot the same positions and the same
+        deployable cash, both size against caps computed from that stale
+        pre-fill state, and the combined result can breach
+        `max_position_pct` / `cash_only` even though each process's own
+        deterministic gate passed. Loss protection keeps its exemption (it
+        runs before this, and must never be gated); only the new
+        opportunity-discovery path backs off — it simply waits for the next
+        30-minute tick, which costs at most one tick of latency on a
+        deliberately non-high-frequency feature.
+
+        Fails CLOSED: a query failure returns True (skip the scan).
+        """
+        from datetime import datetime as _dt, timedelta, timezone
+        try:
+            rows = self.db.get_trades(today_only=True, limit=50)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Intraday scan: concurrent-session query failed (%s) — "
+                "skipping the scan this tick (fail-closed)", e,
+            )
+            return True
+        cutoff = _dt.now(timezone.utc) - timedelta(minutes=within_minutes)
+        for row in rows:
+            other = row.get("run_id") or ""
+            if not other or other == run_id:
+                continue
+            ts = row.get("timestamp") or ""
+            try:
+                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
+                    else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt >= cutoff:
+                logger.info(
+                    "Intraday scan: session %s wrote a trade row within the "
+                    "last %.0f min — another session is likely mid-flight; "
+                    "skipping this tick to avoid concurrent position sizing",
+                    other, within_minutes,
+                )
+                return True
+        return False
+
+    @contextlib.contextmanager
+    def _intraday_scan_process_lock(self):
+        """Non-blocking process-level mutex for the intraday scan.
+
+        Yields True when this process holds the lock, False otherwise.
+
+        Why (independent review finding, 2026-08-19): the DB-row-based
+        `_another_session_recently_active` guard can only see a concurrent
+        session AFTER that session has written a trade row. Two
+        `intra_check` processes launched at nearly the same instant would
+        both pass it during the window before either writes — and could
+        then size BUYs against the same pre-fill snapshot, breaching
+        `max_position_pct`.
+
+        In practice `scripts/run_if_et_window.sh` makes that impossible:
+        ticks are 1800s apart and the wrapper hard-kills a run at
+        `timeout --kill-after=30 1200` (~1230s), so a tick is always dead
+        before the next fires. But that guarantee lives in a deployment
+        config this code cannot read (the production systemd units are not
+        in-repo), and it would silently disappear if the interval were ever
+        shortened. A trading safety property should not depend on an
+        unverifiable assumption, so this closes the class outright.
+
+        Deliberately NOT a new service/daemon/timer — a plain advisory
+        `flock` on a local file, the same idea as the wrapper's existing
+        `mkdir`-based session lock, and it applies ONLY to the new
+        opportunity-discovery path. Loss protection keeps its exemption and
+        never touches this. The lock is released on process exit even if we
+        are SIGKILLed, so a killed run cannot wedge it.
+        """
+        import fcntl
+
+        lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
+        fh = None
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(lock_path, "w")
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                logger.info(
+                    "Intraday scan: another process already holds the scan "
+                    "lock — skipping this tick (no concurrent position sizing)",
+                )
+                yield False
+                return
+            yield True
+        except Exception as e:  # noqa: BLE001 — unknowable lock state must not scan
+            logger.warning(
+                "Intraday scan: could not establish the process lock (%s) — "
+                "skipping this tick (fail-closed)", e,
+            )
+            yield False
+        finally:
+            if fh is not None:
+                try:
+                    fh.close()   # releases the flock
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def _run_intraday_opportunity_scan(self, ctx: RunContext) -> dict | None:
+        """Concurrency-guarded wrapper around the scan body."""
+        cfg = getattr(self.config, "intraday_scan", None)
+        if cfg is None or not getattr(cfg, "enabled", False):
+            return None
+        with self._intraday_scan_process_lock() as acquired:
+            if not acquired:
+                return None
+            return self._intraday_opportunity_scan_body(ctx)
+
+    def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict | None:
+        """Bounded intraday opportunity discovery (2026-08-19 fix).
+
+        Runs on the existing intra_check cadence — no new systemd timer,
+        no full morning research stack. One cheap bulk current-session
+        snapshot call flags symbols that moved materially since the last
+        close; only those (capped, cooldown-deduped against repeat churn)
+        get real daily bars/indicators and a real tech_analyst call, then
+        the SAME DecisionStage -> RiskStage -> ExecutionStage chain
+        morning uses — no separate/duplicated decision logic, so PM's
+        sizing rules, RM's veto authority and the deterministic gate all
+        apply exactly as they do in the morning run. Bullish AND bearish
+        setups both surface: the universe already includes the approved
+        inverse ETFs (SH/SDS/PSQ/SQQQ), so a broad-market decline shows up
+        as a qualifying move in those symbols the same way a rally shows
+        up in a long candidate — no separate bearish code path needed.
+
+        Returns None when nothing qualifies or when tech analysis produced
+        nothing usable. Otherwise a result dict mirroring the shape callers
+        of run_morning already expect (status/orders/run_id). Best-effort:
+        any failure degrades to None, never raises (the caller also wraps
+        this defensively) — a scan miss costs a possible trade; a scan
+        crash must never cost the loss-protection check that already ran
+        this tick.
+
+        The enabled-check and the process-level lock live in the
+        `_run_intraday_opportunity_scan` wrapper; this is the body.
+        """
+        cfg = self.config.intraday_scan
+
+        # Second concurrency layer, complementing the process lock held by
+        # the wrapper: the lock stops two *intra_check* processes, this
+        # stops racing a morning/midday/close session, which runs as a
+        # different process and so takes a different lock. intra_check is
+        # deliberately exempt from the wrapper script's cross-mode session
+        # lock (for the circuit breaker), so this path must check itself.
+        if self._another_session_recently_active(ctx.run_id):
+            return None
+
+        universe = list(self.config.trading.universe)
+        snapshots = self.broker.get_intraday_snapshots(universe)
+        if not snapshots:
+            return None
+
+        candidates: list[tuple[str, float]] = []
+        for symbol in universe:
+            snap = snapshots.get(symbol) or {}
+            last = snap.get("last_price")
+            prev = snap.get("prev_close")
+            if not (isinstance(last, (int, float)) and isinstance(prev, (int, float))):
+                continue
+            if prev <= 0:
+                continue
+            move_pct = abs(last - prev) / prev * 100.0
+            if move_pct < cfg.move_threshold_pct:
+                continue
+            if self._recently_intraday_evaluated(symbol, cfg.cooldown_hours):
+                continue
+            candidates.append((symbol, move_pct))
+
+        if not candidates:
+            return None
+
+        # Largest moves first, capped — bounded per-tick cost regardless of
+        # how many symbols move on a broad market day; not a scan of
+        # everything, a check of the few things that moved most.
+        candidates.sort(key=lambda t: -t[1])
+        symbols = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
+        logger.info(
+            "Intraday scan: %d symbol(s) moved >= %.1f%% since last close "
+            "and are outside the %.1fh cooldown: %s",
+            len(symbols), cfg.move_threshold_pct, cfg.cooldown_hours, symbols,
+        )
+
+        symbols_data = []
+        symbols_bars: dict[str, list] = {}
+        for symbol in symbols:
+            try:
+                bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Intraday scan: bar fetch failed for %s: %s", symbol, e)
+                continue
+            if not bars:
+                continue
+            indicators = compute_indicators(symbol, bars)
+            symbols_data.append({"symbol": symbol, "bars": bars, "indicators": indicators})
+            symbols_bars[symbol] = bars
+        if not symbols_data:
+            return None
+        ctx.symbols_bars = symbols_bars
+
+        prior_macro_state: dict = {}
+        try:
+            prior_macro_state = self.macro_store.load_last_state() or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: prior macro state load failed: %s", e)
+        prior_ratings: dict = {}
+        try:
+            prior_ratings = self.tech_store.load()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: tech store load failed: %s", e)
+
+        analyses_map, ta_result = self.tech_analyst.analyze_batch(
+            symbols_data,
+            prior_ratings=prior_ratings,
+            valuations={},
+            prior_macro_regime=prior_macro_state.get("regime"),
+            prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+        )
+        # analyses_map carries every candidate symbol as a key (2026-08-19
+        # Tech batch-response symbol-loss fix) — None marks a symbol
+        # tech_analyst could not resolve even after its own bounded retry.
+        # Filter before treating entries as real analyses.
+        analyses = [a for a in analyses_map.values() if a is not None]
+        failed_count = len(analyses_map) - len(analyses)
+        if failed_count:
+            logger.warning(
+                "Intraday scan: %d/%d candidate symbol(s) failed to resolve "
+                "even after retry: %s", failed_count, len(analyses_map),
+                sorted(sym for sym, a in analyses_map.items() if a is None),
+            )
+        if ta_result:
+            try:
+                self.db.insert_agent_log(
+                    agent_name="tech_analyst", run_id=ctx.run_id,
+                    input_summary=(
+                        f"Intraday scan batch: {len(analyses)}/{len(analyses_map)} "
+                        f"symbols analyzed" + (f", {failed_count} failed" if failed_count else "")
+                    ),
+                    input_message=ta_result.user_message,
+                    output_summary=", ".join(f"{a.symbol}:{a.rating}" for a in analyses),
+                    full_response=ta_result.raw_text,
+                    model=ta_result.model,
+                    tokens_used=ta_result.tokens_used,
+                    input_tokens=ta_result.input_tokens,
+                    output_tokens=ta_result.output_tokens,
+                    cost_usd=ta_result.cost_usd,
+                    **agent_log_kwargs(ta_result),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Intraday scan: tech_analyst agent_log insert failed: %s", e)
+            for analysis in analyses:
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="tech_analyst",
+                    kind="analysis", scope="symbol", symbol=analysis.symbol,
+                    evidence_json=analysis.model_dump_json(),
+                )
+        if analyses:
+            try:
+                self.tech_store.update(analyses)
+                ages = self.tech_store.compute_ages([a.symbol for a in analyses])
+                for analysis in analyses:
+                    if analysis.symbol in ages:
+                        analysis.signal_age_days = ages[analysis.symbol]
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Intraday scan: tech store update failed: %s", e)
+
+        if not analyses:
+            logger.info("Intraday scan: tech_analyst returned no usable analyses this tick")
+            return None
+
+        # Same shared chain morning uses — no separate PM/RM/gate logic.
+        # Macro/news/earnings are deliberately NOT re-fetched this tick
+        # (that is exactly the "expensive research stack" this fix must
+        # avoid rerunning); marking them explicitly here (rather than
+        # leaving ctx.data_status empty) makes RiskStage's existing
+        # 2+-degraded-sources advisory fire honestly, so RM is told this
+        # decision rests on thinner evidence than a full morning pass.
+        ctx.analyses = analyses
+        ctx.data_status = {
+            "tech": "partial" if failed_count else "ok",
+            "macro": "not_run_intraday",
+            "news": "not_run_intraday",
+            "earnings": "not_run_intraday",
+        }
+        ctx.macro_analysis = None
+        ctx.news_intel = None
+        ctx.earnings_results = []
+
+        self.decision_stage.run(ctx)
+        if not ctx.portfolio_decision or not ctx.portfolio_decision.decisions:
+            logger.info("Intraday scan: PM produced no actionable decisions")
+            return {
+                "status": "intraday_no_trades", "candidates": symbols,
+                "run_id": ctx.run_id,
+            }
+
+        early_exit = self.risk_stage.run(ctx)
+        if early_exit is not None:
+            early_exit["candidates"] = symbols
+            return early_exit
+
+        orders = self.execution_stage.run(ctx)
+        return {
+            "status": "intraday_executed" if orders else "intraday_no_trades",
+            "candidates": symbols, "orders": orders, "run_id": ctx.run_id,
         }
 
     def run_evening(self) -> dict:

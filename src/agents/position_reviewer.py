@@ -108,6 +108,10 @@ class PositionReviewerAgent(BaseAgent):
         positions: list[Position] = kwargs["positions"]
         macro_summary: dict = kwargs["macro_summary"]
         cash_balance: float = kwargs["cash_balance"]
+        # Cash-equivalent sweep reserve (SGOV), reported separately —
+        # 2026-08-19 SGOV/deployable-liquidity forensic. Never re-add this
+        # to cash_balance; it is not reliably spendable same-day.
+        reserve_balance: float = kwargs.get("reserve_balance", 0.0) or 0.0
         total_value: float = kwargs["total_value"]
         session_type: str = kwargs.get("session_type", "midday")
         position_facts: dict = kwargs.get("position_facts") or {}  # symbol → deterministic-metrics dict
@@ -461,6 +465,11 @@ class PositionReviewerAgent(BaseAgent):
 
         # Account + cash.
         cash_pct = f"{cash_balance / total_value * 100:.1f}%" if total_value else "N/A"
+        reserve_line = (
+            f"\n- Short-Term Reserve (sweep-parked, ~1 trading day to "
+            f"convert if needed): ${reserve_balance:,.2f}"
+            if reserve_balance > 0 else ""
+        )
 
         # Margin mandate (carried over from v2 — sub-dollar threshold).
         allow_margin: bool = bool(kwargs.get("allow_margin", True))
@@ -531,7 +540,7 @@ class PositionReviewerAgent(BaseAgent):
 
 ### Account
 - Total Value: ${total_value:,.2f}
-- Cash: ${cash_balance:,.2f} ({cash_pct})
+- Cash: ${cash_balance:,.2f} ({cash_pct}, immediately deployable, no margin){reserve_line}
 
 ### Open Positions
 {positions_text}
@@ -561,6 +570,7 @@ schema."""
 
     def review(self, positions: list[Position], macro_summary: dict,
                cash_balance: float, total_value: float,
+               reserve_balance: float = 0.0,
                session_type: str = "midday",
                position_facts: dict | None = None,
                morning_trades: list[dict] | None = None,
@@ -581,6 +591,7 @@ schema."""
             positions=positions,
             macro_summary=macro_summary,
             cash_balance=cash_balance,
+            reserve_balance=reserve_balance,
             total_value=total_value,
             session_type=session_type,
             position_facts=position_facts or {},

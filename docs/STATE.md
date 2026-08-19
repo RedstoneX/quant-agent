@@ -412,6 +412,57 @@ grammar bug writeup, and screenshots:
 Merged to `main` via PR #46 alongside Stage 6f/6g and cut over to
 production on 2026-08-19 — see the Stage 6 header above.
 
+## Three-defect forensic fix (2026-08-19) — implemented, NOT merged
+
+A read-only production forensic on 2026-08-19 established three defects.
+Branch `fix/sgov-liquidity-intraday-batch` (off `main` at `4b54d5c`) fixes
+all three. **Awaiting ChatGPT/operator review; not merged; production
+untouched.** Full suite: 1895 passed, 0 failed (baseline 1857).
+
+1. **SGOV / deployable-liquidity mismatch.** PM/RM/the deterministic hard
+   gate were shown ~$10K "cash" because the SGOV sweep vehicle's market
+   value was credited into cash at four call sites; real deployable cash
+   was ~$145. SGOV was sold to fund approved BUYs, but Alpaca's T+1 equity
+   settlement meant the proceeds weren't spendable when execution
+   rechecked, so every BUY was safely skipped. Root cause fixed, not the
+   gate: `AlpacaBroker.get_account()` now also reads Alpaca's
+   `non_marginable_buying_power` (settled, non-margin); `RunContext` gains
+   `deployable_cash`; PM, RM, the review session and the deterministic
+   `cash_only` gate all evaluate that truthful figure, with SGOV's value
+   passed separately and informationally as `reserve_balance`. Alpaca does
+   not offer true cash accounts, so `non_marginable_buying_power` is the
+   correct "safe to spend now, no margin" field. `cash_sweep.reserve_pct`
+   raised 1.0 → 5.0 so an ordinary same-day BUY has real cash to draw on.
+   Execution's final raw-cash recheck is **unchanged**.
+2. **Intraday opportunity-discovery blind spot.** Opportunity generation
+   ran once each morning; `intra_check` was loss-protection only. Added a
+   bounded scan on the **existing** `intra_check` cadence — **no new
+   timer/service/daemon**: one bulk Alpaca snapshot call flags symbols
+   that moved past a threshold since the last close; only those (capped,
+   cooldown-deduped) get a real `tech_analyst` call and then the **same**
+   DecisionStage → RiskStage → ExecutionStage chain morning uses. Bearish
+   views surface through the already-approved inverse ETFs
+   (`SH`/`SDS`/`PSQ`/`SQQQ`) — no shorting, options or margin added.
+   Ships **disabled** (`intraday_scan.enabled: false`) pending operator
+   review. Macro/news/earnings are deliberately not re-run and are marked
+   `not_run_intraday`, so RiskStage's existing degraded-data advisory
+   fires honestly and RM knows the evidence is thinner than a morning run.
+3. **Tech batch-response symbol loss.** Symbols sent to `tech_analyst`
+   silently vanished during batch parsing (one chunk parsed 1/10).
+   `analyze_batch` now guarantees every submitted symbol is a key in the
+   returned dict — a result on success, or `None` for a visible terminal
+   failure after one bounded retry that re-asks only the missing symbols.
+   Retry token/cost/latency is merged, never dropped. Callers filter
+   `None` and surface a `partial` data status instead of a silent "ok".
+
+Two concurrency defects in the new intraday path were found by verifying
+the scheduling assumptions against `scripts/run_if_et_window.sh` rather
+than trusting them: that script exempts `intra_check` from the cross-mode
+session lock *because its actions are idempotent*, which opening a new
+position is not. Both fixed — a fail-closed 15-minute DB-row guard
+against racing another session, and an advisory `flock` mutex against two
+overlapping `intra_check` processes.
+
 ## Current product priority: directionality + explainability during the live paper soak
 
 The paper soak continues uninterrupted. The next authorized tranche is to use actual Aug 17–18 evidence to determine whether the system's lack of risk deployment was intentional, a candidate-generation/agent bias, a risk veto, or simply no qualified setup, while simultaneously fixing the dashboard presentation defects that make that distinction difficult.

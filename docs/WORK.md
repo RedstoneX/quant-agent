@@ -38,10 +38,35 @@ and hard boundaries (Alpaca Paper-only, cash-only/no-margin, Specialist →
 PM → AI Risk → deterministic gate → execution unchanged and final,
 no direct shorting/options/margin, no live trading). Implementation
 branch: `fix/sgov-liquidity-intraday-batch` off `main` at `4b54d5c`.
-Required regression tests, focused + broader suite run, and a
-ROOT CAUSE → CHANGES → TEST EVIDENCE → REMAINING UNCERTAINTY → BRANCH +
-COMMIT SHA report before stopping for ChatGPT/operator review. Do not
-merge.
+
+**Status: implemented, tested, independently reviewed — awaiting
+ChatGPT/operator review and merge. Not merged. Production untouched
+(structurally inaccessible from the `dev` account).**
+
+Implementation notes that matter for review:
+
+- **No new daemon, service, timer or database was created.** The intraday
+  scan attaches to the *existing* `intra_check` cadence, verified from
+  `scripts/run_if_et_window.sh` (fires every 30-min tick, 09:30–16:00 ET)
+  rather than assumed.
+- **The intraday scan ships DISABLED** (`intraday_scan.enabled: false`).
+  It is new autonomous-decision surface, so it is reviewable but inert
+  until the operator explicitly enables it — the same rollout pattern
+  `cash_sweep` followed.
+- **Two concurrency defects were found by verifying infrastructure
+  assumptions rather than trusting them**, and both are fixed:
+  `run_if_et_window.sh` deliberately exempts `intra_check` from the
+  cross-mode session lock, justifying that exemption on the grounds that
+  all of intra_check's actions are *idempotent*. Opening a new position
+  is not. Fixed with (a) a fail-closed 15-minute DB-row guard against
+  racing a morning/midday/close session, and (b) an advisory `flock`
+  process mutex against two overlapping `intra_check` processes. (b) was
+  added because the "ticks are 1800s apart, hard kill at ~1230s" argument
+  that makes overlap impossible lives in a deployment config this code
+  cannot read.
+- Deterministic risk/execution semantics are unchanged. Execution's final
+  raw-cash recheck — the backstop that correctly skipped the BUYs in the
+  incident — was deliberately **not** touched.
 
 ---
 

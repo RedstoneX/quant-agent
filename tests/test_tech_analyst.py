@@ -84,6 +84,11 @@ def test_tech_analyst_batch_parses_full_schema(mock_cls, sample_indicators, samp
 
 @patch("anthropic.Anthropic")
 def test_tech_analyst_bad_response(mock_cls, sample_indicators, sample_bars):
+    """2026-08-19 Tech batch-response symbol-loss fix: a non-JSON response
+    must NOT silently return an empty dict — the submitted symbol still
+    comes back as an explicit key, mapped to None (a visible failure),
+    even after the bounded retry (the mock keeps returning the same bad
+    text, so retry can't rescue it either)."""
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text="I think it's bullish but I'm not sure")]
@@ -94,7 +99,10 @@ def test_tech_analyst_bad_response(mock_cls, sample_indicators, sample_bars):
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     results, _ = agent.analyze_batch(_sym_data("SPY", sample_bars, sample_indicators))
-    assert results == {}
+    assert results == {"SPY": None}
+    # Retried exactly once (bounded) — two total LLM calls, not an
+    # unbounded retry loop.
+    assert mock_client.messages.create.call_count == 2
 
 
 def test_build_user_message_includes_indicators_and_current_close(sample_indicators, sample_bars):
@@ -274,3 +282,206 @@ def test_tech_analyst_chunked_merged_cost_sums_when_model_priced(
     assert abs(merged.cost_usd - expected) < 0.01
     assert merged.input_tokens == 80_000 * 2
     assert merged.output_tokens == 12_000 * 2
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-19 Tech batch-response symbol-loss fix.
+#
+# Production incident: symbols passed the pre-filter and were sent to
+# tech_analyst, but silently disappeared during batch parsing — one chunk
+# parsed only 1/10 submitted symbols. The old code iterated over whatever
+# the LLM returned and computed a `missing` set purely for a WARNING log,
+# so an unrepresented symbol was simply absent from the returned dict:
+# indistinguishable, downstream, from "never asked about".
+#
+# Contract now: every submitted symbol is a KEY in the returned dict —
+# a TechAnalysisResult (parsed, incl. an explicitly neutral/sell rating)
+# or None (visibly failed after a bounded retry). Never absent.
+# ---------------------------------------------------------------------------
+
+def _multi_sym_data(symbols, bars, indicators):
+    return [
+        {"symbol": s, "bars": bars,
+         "indicators": TechnicalIndicators(**{**indicators.model_dump(), "symbol": s})}
+        for s in symbols
+    ]
+
+
+@patch("anthropic.Anthropic")
+def test_short_response_retries_and_recovers_the_missing_symbols(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """The exact incident shape: the first response covers only 1 of 10
+    submitted symbols. The bounded retry re-asks for exactly the 9 missing
+    ones and recovers them — no symbol silently dropped, and the retry
+    prompt carries only the missing symbols (not the whole batch again)."""
+    syms = [f"SYM{i:02d}" for i in range(10)]
+
+    calls = {"n": 0, "retry_symbols": None}
+
+    def _respond(**kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            arr = [json.loads(_valid_response_for("SYM00"))[0]]
+        else:
+            # Record what the retry actually asked about.
+            calls["retry_symbols"] = [
+                s for s in syms if f"### {s}" in kw.get("messages", [{}])[0].get("content", "")
+            ]
+            arr = [json.loads(_valid_response_for(s))[0] for s in syms[1:]]
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps(arr))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, merged = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert set(results.keys()) == set(syms), "every submitted symbol must be a key"
+    assert all(v is not None for v in results.values()), "retry must recover all 9"
+    assert calls["n"] == 2, "exactly one bounded retry"
+    assert calls["retry_symbols"] == syms[1:], "retry re-asks only the missing symbols"
+    # Retry tokens/cost are merged into the reported result, never dropped.
+    assert merged.input_tokens == 1000
+    assert merged.output_tokens == 400
+
+
+@patch("anthropic.Anthropic")
+def test_symbols_unresolved_after_retry_are_explicit_none_not_absent(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """When the retry ALSO comes back short, the still-missing symbols are
+    returned as explicit None keys — a visible terminal failure — rather
+    than vanishing from the dict."""
+    syms = ["AAA", "BBB", "CCC"]
+
+    def _respond(**kw):
+        # Always answers about AAA only, no matter what was asked.
+        arr = [json.loads(_valid_response_for("AAA"))[0]]
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps(arr))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert set(results.keys()) == set(syms)
+    assert results["AAA"] is not None
+    assert results["BBB"] is None
+    assert results["CCC"] is None
+
+
+@patch("anthropic.Anthropic")
+def test_explicitly_neutral_rating_is_a_terminal_outcome_not_a_loss(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """A considered-and-passed symbol (neutral/sell) is a successful
+    terminal outcome — it must come back as a real result and must NOT
+    trigger the retry path."""
+    resp_json = json.dumps([{
+        "symbol": "SPY", "rating": "neutral", "conviction": "low",
+        "reasoning_chain": {
+            "trend": "Flat.", "momentum": "RSI mid.", "volatility": "Quiet.",
+            "volume": "Average.", "support_resistance": "Range-bound.",
+        },
+        "reasoning": "No edge here.",
+    }])
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=resp_json)]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 200
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_sym_data("SPY", sample_bars, sample_indicators))
+
+    assert results["SPY"] is not None
+    assert results["SPY"].rating == "neutral"
+    assert mock_client.messages.create.call_count == 1, "no retry for a valid neutral"
+
+
+@patch("anthropic.Anthropic")
+def test_schema_invalid_row_is_retried_then_marked_failed(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """A row that fails TechAnalysisResult validation counts as missing
+    (it produced no usable analysis), gets retried, and — if still bad —
+    ends as an explicit None rather than a silent omission."""
+    bad_row = json.dumps([{
+        "symbol": "SPY", "rating": "buy", "conviction": "high",
+        # entry_price omitted -> model validator rejects a `buy` without it
+        "reasoning_chain": {
+            "trend": "x", "momentum": "x", "volatility": "x",
+            "volume": "x", "support_resistance": "x",
+        },
+        "reasoning": "Broken row.",
+    }])
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=bad_row)]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 200
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_sym_data("SPY", sample_bars, sample_indicators))
+
+    assert results == {"SPY": None}
+    assert mock_client.messages.create.call_count == 2
+
+
+@patch("anthropic.Anthropic")
+def test_chunked_batch_never_loses_a_symbol_across_chunks(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """Chunk-level guarantee composes to the batch level: with 50 symbols
+    (2 chunks) where the second chunk's response is entirely unusable,
+    every one of the 50 is still a key — chunk 1's parsed, chunk 2's
+    explicitly None."""
+    syms = [f"SYM{i:02d}" for i in range(50)]
+
+    call_counter = {"n": 0}
+
+    def _respond(**kw):
+        call_counter["n"] += 1
+        if call_counter["n"] == 1:
+            arr = [json.loads(_valid_response_for(s))[0] for s in syms[:25]]
+            text = json.dumps(arr)
+        else:
+            text = "the model rambled instead of returning JSON"
+        resp = MagicMock()
+        resp.content = [MagicMock(text=text)]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert set(results.keys()) == set(syms), "no symbol may vanish between chunks"
+    assert all(results[s] is not None for s in syms[:25])
+    assert all(results[s] is None for s in syms[25:])

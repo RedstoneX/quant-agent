@@ -239,9 +239,22 @@ class CashSweepConfig(BaseModel):
     anything with real market beta breaks the cash-equivalence assumption
     that justifies every exemption listed above."""
 
-    reserve_pct: float = Field(default=1.0, ge=0, le=20)
-    """% of equity kept as raw cash (fees, slippage, partial fills).
-    Excess above the reserve is parked."""
+    reserve_pct: float = Field(default=5.0, ge=0, le=20)
+    """% of equity kept as raw cash (fees, slippage, partial fills, and —
+    2026-08-19 SGOV/deployable-liquidity forensic — genuine same-day BUY
+    capacity). Excess above the reserve is parked.
+
+    Raised from 1.0 to 5.0 after the forensic: PM/RM/the deterministic
+    gate now size and approve BUYs against real deployable cash rather
+    than SGOV's market value (see pipeline_stages.py), so a thin reserve
+    directly caps what a typical single-position BUY can do same-day —
+    fund_buys() liquidating SGOV mid-session to cover the gap is a
+    best-effort bridge, not a guarantee, because Alpaca's T+1 equity
+    settlement means freshly-sold SGOV proceeds are not reliably spendable
+    by the time execution rechecks. 5% keeps most idle cash earning
+    T-bill yield while leaving a same-day-usable cushion sized to match a
+    single ordinary BUY (on a ~$10K book, ~$500 — also `min_order_usd`'s
+    floor, not a coincidence)."""
 
     min_order_usd: float = Field(default=500.0, ge=0)
     """Don't churn sub-$500 parking orders — spread + noise beat the
@@ -254,6 +267,43 @@ class CashSweepConfig(BaseModel):
         if not v:
             raise ValueError("cash_sweep.symbol must be a non-empty ticker")
         return v
+
+
+class IntradayScanConfig(BaseModel):
+    """2026-08-19 intraday opportunity-discovery fix.
+
+    The full opportunity-generation chain (macro/news/tech/earnings ->
+    PM -> RM -> deterministic gate -> execution) runs once each morning.
+    Tech's data is completed-daily-bar-as-of-prior-close; `intra_check`
+    (every 30 min) is loss-protection only; midday/close review existing
+    holdings only. A material move developing after the morning run could
+    not generate a new trade. This adds a bounded, cheap trigger onto the
+    EXISTING intra_check cadence — no new systemd timer, no full research
+    stack rerun: one bulk current-session snapshot call flags symbols that
+    moved materially since the last close; only THOSE few symbols (capped)
+    get real daily bars/indicators and a real tech_analyst call, then the
+    SAME DecisionStage -> RiskStage -> ExecutionStage chain morning uses.
+    """
+    enabled: bool = False
+    """Master switch. False = intra_check's existing loss-protection-only
+    behavior is completely unchanged. Off by default: this is new
+    autonomous-decision surface added mid-tranche, not yet operator-
+    reviewed in production — flip on deliberately after reviewing the PR,
+    the same rollout pattern cash_sweep followed."""
+
+    move_threshold_pct: float = Field(default=3.0, ge=0.5, le=50)
+    """Minimum |% move| since the last daily close (via a single bulk
+    Alpaca snapshot call) for a symbol to qualify as a candidate."""
+
+    cooldown_hours: float = Field(default=3.0, ge=0.5, le=24)
+    """Minimum hours between two intraday-scan decisions for the SAME
+    symbol — prevents repeated scans from churning the same setup every
+    30-minute tick while a move is still developing."""
+
+    max_candidates_per_scan: int = Field(default=5, ge=1, le=20)
+    """Hard cap on how many symbols get a real tech_analyst call in one
+    tick — keeps this a bounded, occasional check, not a high-frequency
+    system, even on a broad-market move day when many symbols qualify."""
 
 
 class ScheduleConfig(BaseModel):
@@ -376,6 +426,10 @@ class AppConfig(BaseModel):
     # Optional section — a settings.yaml without it gets a disabled sweeper
     # (enabled=False default), so older configs keep working unchanged.
     cash_sweep: CashSweepConfig = Field(default_factory=CashSweepConfig)
+    # Optional section — a settings.yaml without it gets the scan disabled
+    # (enabled=False default), so intra_check's existing behavior is
+    # unchanged unless explicitly opted in.
+    intraday_scan: IntradayScanConfig = Field(default_factory=IntradayScanConfig)
 
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):

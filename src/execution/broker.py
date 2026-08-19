@@ -215,10 +215,24 @@ class AlpacaBroker:
         last_equity = float(raw_last) if raw_last else portfolio_value
         if last_equity <= 0:
             last_equity = portfolio_value
+        # `cash` can include same-day sale proceeds that are not yet
+        # settled (T+1 for equities) and therefore not safely spendable on
+        # a new BUY without implicitly drawing broker margin — Alpaca does
+        # not offer a true cash-account product; every account is a margin
+        # account, and accounts >= $2,000 equity get no unsettled-funds
+        # allowance. `non_marginable_buying_power` is Alpaca's own settled,
+        # non-margin-eligible buying-power figure — the correct "safe to
+        # spend right now, no margin" number for a cash-only design (2026-
+        # 08-19 SGOV/deployable-liquidity forensic).
+        raw_nmbp = getattr(acct, "non_marginable_buying_power", None)
+        non_marginable_buying_power = (
+            float(raw_nmbp) if raw_nmbp is not None else float(acct.cash)
+        )
         return {
             "cash": float(acct.cash),
             "portfolio_value": portfolio_value,
             "last_equity": last_equity,
+            "non_marginable_buying_power": non_marginable_buying_power,
         }
 
     def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
@@ -654,6 +668,63 @@ class AlpacaBroker:
             logger.warning("Failed to fetch latest price for %s: %s", symbol, exc)
 
         return None
+
+    def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
+        """Bulk current-session move data for the intraday opportunity scan.
+
+        One Alpaca snapshot call for the whole symbol list (not one call
+        per symbol — the same `symbol_or_symbols` bulk parameter
+        `get_latest_price` already uses for a single symbol) — cheap
+        enough to run every intra_check tick, unlike re-fetching daily
+        bars for the whole universe.
+
+        Returns ``{symbol: {"last_price": float|None, "prev_close":
+        float|None}}`` for every requested symbol; both are `None` when
+        that symbol's snapshot is missing or unusable. Never raises —
+        broker/network failure degrades to an empty dict (caller treats
+        that as "no signal this tick", not a crash).
+        """
+        if not symbols:
+            return {}
+        try:
+            if self._data_client is None:
+                from alpaca.data.historical.stock import StockHistoricalDataClient
+
+                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+                _install_http_timeout(self._data_client)
+
+            from alpaca.data.requests import StockSnapshotRequest
+
+            snapshots = self._data_client.get_stock_snapshot(
+                StockSnapshotRequest(symbol_or_symbols=list(symbols))
+            )
+        except Exception as exc:
+            logger.warning("get_intraday_snapshots: bulk snapshot fetch failed "
+                           "for %d symbols: %s", len(symbols), exc)
+            return {}
+
+        out: dict[str, dict] = {}
+        for symbol in symbols:
+            snap = snapshots.get(symbol) if isinstance(snapshots, dict) else None
+            last_price = None
+            prev_close = None
+            if snap is not None:
+                trade = getattr(snap, "latest_trade", None)
+                if trade is not None:
+                    try:
+                        p = float(getattr(trade, "price", 0) or 0)
+                        last_price = p if p > 0 else None
+                    except (TypeError, ValueError):
+                        last_price = None
+                prev_bar = getattr(snap, "previous_daily_bar", None)
+                if prev_bar is not None:
+                    try:
+                        c = float(getattr(prev_bar, "close", 0) or 0)
+                        prev_close = c if c > 0 else None
+                    except (TypeError, ValueError):
+                        prev_close = None
+            out[symbol] = {"last_price": last_price, "prev_close": prev_close}
+        return out
 
     @staticmethod
     def _extract_symbol_payload(payload, symbol: str):

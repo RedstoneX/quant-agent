@@ -46,6 +46,15 @@ class RunContext:
     account: dict = field(default_factory=dict)
     positions: list = field(default_factory=list)  # list[Position]
     cash: float = 0.0
+    # Settled, non-margin buying power (Alpaca `non_marginable_buying_power`)
+    # — the truthful "safe to deploy right now, no margin" figure. Unlike
+    # `cash`, it never carries same-day unsettled sale proceeds (SGOV sweep
+    # or otherwise), so PM/RM/the deterministic cash_only gate must size and
+    # audit against THIS field, never `cash + parked SGOV value` (2026-08-19
+    # SGOV/deployable-liquidity forensic). `cash` remains what it always
+    # was — the raw broker balance cash_sweep and the execution-time final
+    # recheck use; that backstop is intentionally unchanged.
+    deployable_cash: float = 0.0
     total_value: float = 0.0
     last_equity: float = 0.0
 

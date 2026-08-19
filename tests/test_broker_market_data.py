@@ -268,3 +268,68 @@ def test_open_buy_notional_skips_a_non_positive_price_and_uses_the_quote():
     b = _with_orders([_open_order(qty="2", limit_price="0")])
     b.get_latest_price = lambda symbol: 30.0
     assert b.open_buy_notional() == pytest.approx(60.0)
+
+
+# ---------------------------------------------------------------------------
+# get_intraday_snapshots — 2026-08-19 intraday opportunity-discovery fix.
+# One bulk snapshot call for the whole watchlist (never one call per
+# symbol) — this is what makes running a scan every intra_check tick cheap.
+# ---------------------------------------------------------------------------
+
+def _snapshot_client(snapshots: dict):
+    client = MagicMock()
+    client.get_stock_snapshot.return_value = snapshots
+    return client
+
+
+def test_intraday_snapshots_reads_last_trade_and_prior_close():
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "NVDA": SimpleNamespace(
+            symbol="NVDA",
+            latest_trade=SimpleNamespace(price=185.0),
+            previous_daily_bar=SimpleNamespace(close=180.0),
+        ),
+    })
+    out = b.get_intraday_snapshots(["NVDA"])
+    assert out == {"NVDA": {"last_price": 185.0, "prev_close": 180.0}}
+
+
+def test_intraday_snapshots_is_a_single_bulk_call_for_many_symbols():
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "NVDA": SimpleNamespace(
+            symbol="NVDA", latest_trade=SimpleNamespace(price=185.0),
+            previous_daily_bar=SimpleNamespace(close=180.0),
+        ),
+        "AAPL": SimpleNamespace(
+            symbol="AAPL", latest_trade=SimpleNamespace(price=210.0),
+            previous_daily_bar=SimpleNamespace(close=200.0),
+        ),
+    })
+    out = b.get_intraday_snapshots(["NVDA", "AAPL"])
+    assert out["NVDA"]["last_price"] == 185.0
+    assert out["AAPL"]["prev_close"] == 200.0
+    # Exactly one network call regardless of watchlist size.
+    assert b._data_client.get_stock_snapshot.call_count == 1
+
+
+def test_intraday_snapshots_degrades_to_none_fields_for_a_missing_symbol():
+    b = _broker()
+    b._data_client = _snapshot_client({})  # SGOV not in the response at all
+    out = b.get_intraday_snapshots(["SGOV"])
+    assert out == {"SGOV": {"last_price": None, "prev_close": None}}
+
+
+def test_intraday_snapshots_returns_empty_dict_on_total_failure():
+    b = _broker()
+    b._data_client = MagicMock()
+    b._data_client.get_stock_snapshot.side_effect = ConnectionError("data.alpaca.markets down")
+    assert b.get_intraday_snapshots(["NVDA"]) == {}
+
+
+def test_intraday_snapshots_empty_symbol_list_short_circuits():
+    b = _broker()
+    b._data_client = MagicMock()
+    assert b.get_intraday_snapshots([]) == {}
+    b._data_client.get_stock_snapshot.assert_not_called()
