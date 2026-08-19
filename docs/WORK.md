@@ -2,6 +2,14 @@
 
 Status: **ALPACA PAPER SOAK ACTIVE — FINAL MISSION CONTROL + AUTONOMOUS PRODUCT IMPROVEMENT AUTHORIZED**
 
+**2026-08-19 update:** The Mission Control cockpit cutover authorized by
+this contract is complete. PR #46 (Stages 6–6h) merged to `main` and
+production cutover completed successfully on 2026-08-19; production is
+at `7668771`. `/cockpit` and `/ui` are both confirmed healthy. Alpaca
+remains Paper-only. See `docs/STATE.md` for the accepted record. The
+Checkpoint item below asking Claude to stop for a cutover decision has
+been satisfied for this tranche.
+
 ## Goal
 
 Use the running paper soak to materially improve both **QAMC trading intelligence** and **Mission Control as an operator product**. The current vanilla dashboard remains a useful operational fallback, but it is not the target product.
@@ -188,3 +196,7 @@ At checkpoint:
 4. update existing `STATE.md` / `WORK.md` only as appropriate — do not create new handoff/status docs;
 5. report concisely using **finding → decision → change → evidence → remaining uncertainty**;
 6. STOP for independent ChatGPT/operator review and merge/cutover decision.
+
+Satisfied for the Mission Control cockpit tranche: PR #46 merged and cut
+over to production on 2026-08-19 (see the 2026-08-19 update at the top
+of this file and `docs/STATE.md`).

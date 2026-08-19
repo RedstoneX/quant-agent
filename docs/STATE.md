@@ -15,6 +15,7 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - Cost-optimized model routing and the decision-chain audit are accepted on `main`.
 - PR #33 fixed the commissioning timer-state false positive and merged to `main` as `aa52f5f9fd5912914a1640f74bdab84d1e30cd51`.
 - PR #37 recorded the verified private Tailscale/Orca access path and merged to `main` on 2026-08-18.
+- PR #46 (Mission Control cockpit redesign and visualization upgrade, Stages 6–6h) merged to `main` on 2026-08-19. Mission Control production cutover completed successfully the same day; production is at `766877109b60026c94c00b38dbfb0e0c9630d236` (`7668771`). `/cockpit` and `/ui` are both confirmed healthy. Alpaca remains Paper-only.
 
 ### Runtime commissioning accepted
 
@@ -100,7 +101,7 @@ The first operator review of real soak behaviour and Mission Control on 2026-08-
 - **Mission Control buries the useful explanation.** Existing API/UI code already records per-candidate specialist evidence, PM reasoning/targets, RM verdict/modifications, deterministic gate records and execution. The current top-level dashboard still makes the operator drill into run/candidate modals to answer the basic question “why did QAMC do nothing?” A 2026-08-18 morning run visibly considered candidates while producing no decision, making this an observed usability gap.
 - **Missed-opportunity data exists but is not prominent enough.** The Evening Analyst can review notable UP or DOWN moves and the journal can render `missed_opportunities`; the operator should not need to infer from an empty trade table whether the system recognized a significant move.
 
-## Mission Control cockpit rebuild (Stage 6) — implemented, pending review/cutover
+## Mission Control cockpit rebuild (Stage 6) — implemented and cut over to production (2026-08-19)
 
 Branch `claude/mission-control-cockpit-redesign` implements the final-cockpit
 tranche `docs/WORK.md` authorized (superseding the prior generic
@@ -123,8 +124,10 @@ framework-migration prohibition for this bounded case):
   React (source in `frontend/`, compiled output replacing
   `src/api/static_cockpit/`, same `/cockpit` static mount, same
   no-runtime-dependency deployment model as `/ui`).
-- `/ui` (Stage 3-5 dashboard) is untouched and remains the fallback per
-  the parallel-build/cutover rule — no cutover has happened yet.
+- `/ui` (Stage 3-5 dashboard) remains deployed alongside `/cockpit` as the
+  operational fallback per the parallel-build/cutover rule. Production
+  cutover completed via PR #46 on 2026-08-19; both `/cockpit` and `/ui`
+  are confirmed healthy on production `main` at `7668771`.
 - Browser-verified desktop + iPad + dark mode against seeded
   representative data: `docs/verification/stage-6-react/`.
 - The Aug 17–18 directionality forensic (Workstream A) is closed:
@@ -274,9 +277,9 @@ Control cockpit. Frontend-only restructure, no backend/API changes:
   (same PID, untouched). `npm run build` + `npm run test` (8/8) pass.
   Evidence: `docs/verification/stage-6f-cockpit-ia/`.
 
-Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
-default, or keep both mounted). Claude does not cut over or merge its
-own work.
+Merged to `main` via PR #46 and cut over to production on 2026-08-19 —
+see the Stage 6 header above. `/cockpit` and `/ui` are both mounted and
+confirmed healthy on production `main` at `7668771`.
 
 ### Stage 6g — cockpit visual identity system + stale-data correctness fix
 
@@ -406,8 +409,8 @@ isolation test subset (`test_api_safety.py`, `test_api_isolation.py`,
 grammar bug writeup, and screenshots:
 `docs/verification/stage-6h-visualization-upgrade/`.
 
-Awaiting ChatGPT/operator review alongside Stage 6f/6g. Claude does not cut
-over or merge its own work.
+Merged to `main` via PR #46 alongside Stage 6f/6g and cut over to
+production on 2026-08-19 — see the Stage 6 header above.
 
 ## Current product priority: directionality + explainability during the live paper soak
 
