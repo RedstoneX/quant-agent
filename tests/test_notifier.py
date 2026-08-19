@@ -93,6 +93,74 @@ def test_notifier_send_swallows_http_error(monkeypatch):
         assert n.send("hello") is False
 
 
+def test_notifier_failure_log_redacts_the_bot_token(monkeypatch, caplog):
+    """`requests` puts the request URL — .../bot<TOKEN>/sendMessage — into
+    HTTPError and ConnectionError messages, so logging the raw exception
+    wrote the bot token into quant_agent.log and the journal on every
+    Telegram failure. A wrong or rotated token is the most likely failure,
+    i.e. it leaked exactly when the operator was most likely to share the
+    log."""
+    token = "9999999:SENTINELTOKEN"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    with caplog.at_level("WARNING"), patch("src.notifier.requests.post") as mock_post:
+        bad = MagicMock()
+        bad.raise_for_status.side_effect = requests.HTTPError(
+            f"401 Client Error: Unauthorized for url: {url}"
+        )
+        mock_post.return_value = bad
+        assert n.send("hello") is False
+
+    assert token not in caplog.text
+    assert "<redacted>" in caplog.text
+
+
+def test_notifier_send_document_failure_log_redacts_the_bot_token(
+    monkeypatch, caplog,
+):
+    """Same leak, same fix, on the daily P&L CSV path."""
+    token = "9999999:SENTINELTOKEN"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with caplog.at_level("WARNING"), patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = requests.ConnectionError(
+            f"failed for url: https://api.telegram.org/bot{token}/sendDocument"
+        )
+        assert n.send_document(b"a,b\n1,2\n", "pnl.csv") is False
+
+    assert token not in caplog.text
+    assert "<redacted>" in caplog.text
+
+
+def test_notifier_redaction_cannot_itself_escape_the_swallow(monkeypatch):
+    """Redaction runs inside the except block, so it must not become a
+    new way for a notifier failure to reach trading. An exception whose
+    __str__ raises is the edge case logging used to absorb for us."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    class _Unprintable(Exception):
+        def __str__(self):
+            raise ValueError("__str__ is broken")
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = _Unprintable()
+        assert n.send("hello") is False  # swallowed, not raised
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = _Unprintable()
+        assert n.send_document(b"a,b\n", "pnl.csv") is False
+
+
 def test_notifier_send_truncates_long_messages(monkeypatch):
     """Telegram caps at 4096 chars; we leave a small margin and append
     a truncation marker."""

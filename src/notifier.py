@@ -80,6 +80,32 @@ class TelegramNotifier:
                     "TELEGRAM_CHAT_ID env vars to enable)"
                 )
 
+    def _redact(self, value: object) -> str:
+        """Strip the bot token out of anything headed for the log.
+
+        `requests` embeds the full request URL in HTTPError /
+        ConnectionError messages, and ours is
+        `https://api.telegram.org/bot<TOKEN>/sendMessage` — so logging
+        the raw exception wrote the bot token into quant_agent.log (and
+        the systemd journal) on every Telegram failure. A wrong or
+        rotated token is the most likely failure, i.e. the token leaked
+        exactly when the operator was most likely to share the log.
+
+        Non-raising on purpose: this runs INSIDE the `except` blocks
+        below, and `logger.warning("%s", exc)` used to defer `str(exc)`
+        to logging (which absorbs its own formatting errors). Calling
+        str() eagerly here would otherwise hand an exception with a
+        broken __str__ a brand-new path out of a notifier that must
+        never raise into trading.
+        """
+        try:
+            text = str(value)
+            if self.token:
+                text = text.replace(self.token, "<redacted>")
+            return text
+        except Exception:  # noqa: BLE001
+            return "<unprintable error>"
+
     def send(self, text: str) -> bool:
         """Fire-and-forget send. Returns True on success.
 
@@ -112,7 +138,7 @@ class TelegramNotifier:
             # best-effort side channel. A 429 rate-limit, a 5xx, a
             # connection reset, a DNS failure, a bad token — none of
             # those should bubble up and crash the trading session.
-            logger.warning("Telegram notify failed: %s", exc)
+            logger.warning("Telegram notify failed: %s", self._redact(exc))
             return False
 
     def send_document(self, csv_bytes: bytes, filename: str, caption: str = "") -> bool:
@@ -129,7 +155,7 @@ class TelegramNotifier:
             response.raise_for_status()
             return True
         except Exception as exc:
-            logger.warning("Telegram send_document failed: %s", exc)
+            logger.warning("Telegram send_document failed: %s", self._redact(exc))
             return False
 
 
