@@ -21,9 +21,11 @@ type TabId = "positions" | "orders" | "runs" | "bias" | "missed" | "search" | "s
 
 export function SupportTabs({
   account,
+  accountError,
   positions,
   positionsError,
   positionsLoading,
+  positionsUpdatedAt,
   orders,
   ordersError,
   ordersLoading,
@@ -39,9 +41,11 @@ export function SupportTabs({
   healthError,
 }: {
   account: AccountResponse | null;
+  accountError?: string | null;
   positions: PositionItem[];
   positionsError: string | null;
   positionsLoading: boolean;
+  positionsUpdatedAt?: Date | null;
   orders: OrderItem[];
   ordersError: string | null;
   ordersLoading: boolean;
@@ -88,8 +92,8 @@ export function SupportTabs({
 
       {tab === "positions" && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          <LiquidityPanel account={account} positions={positions} />
-          <PositionsPanel positions={positions} error={positionsError} loading={positionsLoading} />
+          <LiquidityPanel account={account} accountError={accountError} positions={positions} />
+          <PositionsPanel positions={positions} error={positionsError} loading={positionsLoading} updatedAt={positionsUpdatedAt} />
         </div>
       )}
 

@@ -12,11 +12,15 @@ import {
 import { usePoll } from "./lib/usePoll";
 import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
-import { ExposureStrip } from "./components/ExposureStrip";
+import { HeroBand } from "./components/HeroBand";
+import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { CandidateRail } from "./components/CandidateRail";
 import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
 import { SupportTabs } from "./components/SupportTabs";
+import { DockviewSupportWorkspace } from "./components/DockviewSupportWorkspace";
+import { SupportWorkspaceProvider } from "./context/SupportWorkspaceContext";
+import { useIsDesktop } from "./lib/useIsDesktop";
 import { useOrderStatus } from "./components/OrdersPanel";
 import { JournalPanel } from "./components/JournalPanel";
 import { RunDetailModal } from "./components/RunDetailModal";
@@ -119,9 +123,22 @@ function SelectedSymbolContext({
 }
 
 export default function App() {
+  // Truthful-freshness state: every poll target below tracks its data,
+  // its current error (if the LATEST poll failed), and the timestamp of
+  // its last successful fetch. A failed poll never overwrites previously
+  // good data with nulls/empties — it only sets the error, so the UI can
+  // render "STALE — last known data as of HH:MM" instead of silently
+  // continuing to show old data as if it were current (or, worse,
+  // blanking real data that's still the best information available).
+  // This is the fix for the exact bug an operator screenshot exposed:
+  // an EXECUTED Decision Room rendering as current underneath a visible
+  // fetch-error banner. See docs/STATE.md's Stage 6g entry.
   const [account, setAccount] = useState<AccountResponse | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountUpdatedAt, setAccountUpdatedAt] = useState<Date | null>(null);
   const [positions, setPositions] = useState<PositionItem[]>([]);
   const [positionsError, setPositionsError] = useState<string | null>(null);
+  const [positionsUpdatedAt, setPositionsUpdatedAt] = useState<Date | null>(null);
   const [orderStatus, setOrderStatus] = useOrderStatus();
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -132,6 +149,7 @@ export default function App() {
   const [funnel, setFunnel] = useState<RunFunnelResponse | null>(null);
   const [funnelError, setFunnelError] = useState<string | null>(null);
   const [funnelLoading, setFunnelLoading] = useState(true);
+  const [funnelUpdatedAt, setFunnelUpdatedAt] = useState<Date | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
@@ -140,18 +158,36 @@ export default function App() {
   const [mobilePane, setMobilePane] = useState<MobilePane>("watchlist");
 
   const { state: modalState, value: modalActions } = useModalState();
+  const isDesktop = useIsDesktop();
 
   usePoll(() => {
     api
       .account()
-      .then(setAccount)
-      .catch((err) => setAccount({ cash: null, portfolio_value: null, last_equity: null, daily_pnl: null, daily_pnl_pct: null, paper: null, history: [], liquidity: null, error: err.message }));
+      .then((a) => {
+        // A backend-reported failure (a.error set) is treated identically
+        // to a network/fetch exception below: both are "this poll failed,"
+        // and both must leave the last-good `account` object in place
+        // rather than replacing it with an all-null husk.
+        if (a.error) {
+          setAccountError(a.error);
+        } else {
+          setAccount(a);
+          setAccountError(null);
+          setAccountUpdatedAt(new Date());
+        }
+      })
+      .catch((err) => setAccountError(err.message));
 
     api
       .positions()
       .then((r) => {
-        setPositions(r.positions);
-        setPositionsError(r.error);
+        if (r.error) {
+          setPositionsError(r.error);
+        } else {
+          setPositions(r.positions);
+          setPositionsError(null);
+          setPositionsUpdatedAt(new Date());
+        }
       })
       .catch((err) => setPositionsError(err.message));
 
@@ -177,17 +213,23 @@ export default function App() {
       .then((r) => {
         if (!r.runs.length) {
           setFunnel(null);
+          setFunnelError(null);
           setFunnelLoading(false);
+          setFunnelUpdatedAt(new Date());
           return;
         }
         return api.runFunnel(r.runs[0].run_id).then((f) => {
           setFunnel(f);
           setFunnelError(null);
           setFunnelLoading(false);
+          setFunnelUpdatedAt(new Date());
           if (!chartSymbol && f.candidates.length) setChartSymbol(f.candidates[0].symbol);
         });
       })
       .catch((err) => {
+        // Deliberately does NOT clear `funnel` — see the freshness comment
+        // above. CandidateRail/DecisionRoomPanel render the retained data
+        // with an explicit "stale" Panel status instead of a blank error.
         setFunnelError(err.message);
         setFunnelLoading(false);
       });
@@ -230,20 +272,26 @@ export default function App() {
 
   return (
     <ModalProvider value={modalActions}>
-      <TopStrip account={account} positions={positions} health={health} updatedAt={updatedAt} />
-      <ExposureStrip account={account} positions={positions} />
+      <TopStrip account={account} accountError={accountError} health={health} updatedAt={updatedAt} />
       <ViewNav view={view} onChange={setView} />
 
       {view === "cockpit" && (
         <>
+          <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} />
+          <DecisionStateBanner funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
+
           <PaneNav pane={mobilePane} onChange={setMobilePane} />
 
-          <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_360px] gap-3 p-3 xl:items-start">
+          {/* The primary cockpit body — deliberately a fixed, non-dockable
+              grid (not Dockview): this is the "answer at a glance" surface,
+              customization belongs only to the support workspace below. */}
+          <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_360px] gap-3 p-3 items-stretch">
             <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto`}>
               <CandidateRail
                 funnel={funnel}
                 loading={funnelLoading}
                 error={funnelError}
+                updatedAt={funnelUpdatedAt}
                 selectedSymbol={chartSymbol}
                 onSelectSymbol={setChartSymbol}
               />
@@ -260,34 +308,67 @@ export default function App() {
                 symbol={chartSymbol}
                 onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)}
               />
-              <PriceChartPanel symbol={chartSymbol} />
+              <PriceChartPanel symbol={chartSymbol} trades={trades} />
             </div>
 
             <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto`}>
-              <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} />
+              <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
             </div>
           </div>
 
           <div className="px-3 pb-3">
-            <SupportTabs
-              account={account}
-              positions={positions}
-              positionsError={positionsError}
-              positionsLoading={!account}
-              orders={orders}
-              ordersError={ordersError}
-              ordersLoading={!account}
-              orderStatus={orderStatus}
-              onOrderStatusChange={setOrderStatus}
-              trades={trades}
-              tradesError={tradesError}
-              tradesLoading={!account}
-              runs={runs}
-              runsError={runsError}
-              runsLoading={runs.length === 0 && !runsError}
-              health={health}
-              healthError={healthError}
-            />
+            {isDesktop ? (
+              // Desktop-only, operator-approved: the support workspace
+              // becomes a real resizable/draggable Dockview surface here.
+              // Never mounted below the `xl` breakpoint — see useIsDesktop.
+              <SupportWorkspaceProvider
+                value={{
+                  account,
+                  accountError,
+                  positions,
+                  positionsError,
+                  positionsLoading: !account && !positionsError,
+                  positionsUpdatedAt,
+                  orders,
+                  ordersError,
+                  ordersLoading: !account,
+                  orderStatus,
+                  onOrderStatusChange: setOrderStatus,
+                  trades,
+                  tradesError,
+                  tradesLoading: !account,
+                  runs,
+                  runsError,
+                  runsLoading: runs.length === 0 && !runsError,
+                  health,
+                  healthError,
+                }}
+              >
+                <DockviewSupportWorkspace />
+              </SupportWorkspaceProvider>
+            ) : (
+              <SupportTabs
+                account={account}
+                accountError={accountError}
+                positions={positions}
+                positionsError={positionsError}
+                positionsLoading={!account && !positionsError}
+                positionsUpdatedAt={positionsUpdatedAt}
+                orders={orders}
+                ordersError={ordersError}
+                ordersLoading={!account}
+                orderStatus={orderStatus}
+                onOrderStatusChange={setOrderStatus}
+                trades={trades}
+                tradesError={tradesError}
+                tradesLoading={!account}
+                runs={runs}
+                runsError={runsError}
+                runsLoading={runs.length === 0 && !runsError}
+                health={health}
+                healthError={healthError}
+              />
+            )}
           </div>
         </>
       )}

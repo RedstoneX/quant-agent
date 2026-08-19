@@ -37,6 +37,13 @@ export function fmtTime(iso: string | null | undefined): string {
   });
 }
 
+// Mirrors src/api/db_reads.py::is_executed_trade exactly — a TradeItem row
+// that actually executed some quantity, not just an attempted/HOLD entry.
+export function isExecutedTrade(t: { fill_status?: string | null; action?: string | null; fill_qty?: number | null }): boolean {
+  const fillQty = t.fill_qty || 0;
+  return (t.fill_status == null && t.action !== "HOLD") || t.fill_status === "filled" || fillQty > 0;
+}
+
 export function pnlClass(v: number | null | undefined): string {
   if (v === null || v === undefined) return "";
   return v > 0 ? "text-pos" : v < 0 ? "text-neg" : "";

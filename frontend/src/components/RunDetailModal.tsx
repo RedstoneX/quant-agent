@@ -5,16 +5,10 @@ import { Modal } from "./ui/Modal";
 import { Pill } from "./ui/Pill";
 import { EvidenceSection } from "./ui/Evidence";
 import { StateMessage } from "./ui/Panel";
-import { FunnelSteps } from "./funnelShared";
+import { STATE_LABELS } from "./funnelShared";
+import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
+import { buildRunGraph } from "./agentflow/buildGraph";
 import { useModalActions } from "../context/ModalContext";
-
-const STATE_LABELS: Record<string, string> = {
-  executed: "EXECUTED",
-  proposed_not_executed: "PROPOSED — NOT EXECUTED",
-  hard_risk_block: "DETERMINISTIC GATE BLOCKED",
-  no_proposal: "NO TRADE — PM STAYED NEUTRAL",
-  no_candidates: "NO CANDIDATES CONSIDERED",
-};
 
 function AgentLogsTable({ detail }: { detail: RunDetailResponse }) {
   if (!detail.agent_logs.length) return <StateMessage text="No agent calls logged for this run." />;
@@ -82,7 +76,7 @@ export function RunDetailModal({ runId, onClose }: { runId: string; onClose: () 
           <div className="flex items-center gap-3 flex-wrap mb-3">
             <span className="pill border px-3 py-1 bg-panel-alt">{STATE_LABELS[funnel.decision_state]}</span>
           </div>
-          <FunnelSteps funnel={funnel} />
+          <AgentFlowGraph {...buildRunGraph(funnel, "horizontal")} height={180} />
           <EvidenceSection title="Candidates">
             {[
               funnel.candidates.length ? (

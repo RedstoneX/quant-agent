@@ -278,6 +278,70 @@ Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
 default, or keep both mounted). Claude does not cut over or merge its
 own work.
 
+### Stage 6g — cockpit visual identity system + stale-data correctness fix
+
+A real Stage 6f screenshot the operator captured exposed two problems Stage
+6f's information-architecture fix didn't reach: the cockpit still read as a
+generic dark admin panel (weak typography, plain bordered cards, a
+Decision Room that was five stacked rectangles), and a genuine correctness
+bug — a failed API poll could leave old `funnel`/`positions`/`account` data
+rendering as if current, underneath a separate visible error message
+elsewhere on the same page. This tranche fixed both, after a dedicated
+research pass (external component-ecosystem and product-pattern research,
+including a public MIT React+Vite AI-trading-frontend project
+(`sh1ftmaker/helm`) read directly for its decision-card visual grammar) the
+operator reviewed and explicitly authorized a small, coherent set of mature
+visualization libraries for — deliberately **not** minimizing dependency
+count, on the operator's explicit instruction that best-in-class UX
+outweighs dependency-count minimization for this product:
+
+- **Design tokens**: a color grammar where hue carries meaning (cyan =
+  system/brand, green/red = market truth only, violet = AI reasoning,
+  amber = attention, magenta = bearish-hedge flag), IBM Plex Sans/Mono
+  typography, a subtle vignette/dot-grid background replacing flat black.
+- **Hero band** + a full-width **decision-state banner** (EXECUTED / NO
+  TRADE / REJECTED / DETERMINISTIC GATE BLOCKED) promoted above the
+  primary cockpit body — WORK.md's "what do I own / what's the market
+  doing / why did it (not) trade" questions are now answered before any
+  interaction, not just after opening the Decision Room.
+- **Decision Room rebuilt on React Flow**: the Specialists → PM → AI Risk →
+  Deterministic Gate → Execution chain is a real node/edge graph with
+  genuine per-specialist fan-in (one node per specialist that actually
+  produced evidence, not a flattened "Specialists" box), and the
+  Deterministic Gate is a categorically different node **shape** (a
+  hexagonal hard-interlock outline with a hazard-stripe fill), not just a
+  thicker border — the single most-requested fix ("not five prettier
+  rectangles").
+- **CandidateRail** on TanStack Table (real column sort + expandable rows)
+  and an ECharts native funnel series; real BUY/SELL trade markers wired
+  onto the price chart via `lightweight-charts`' existing (previously
+  unused) marker API.
+- **Desktop-only Dockview support workspace** — explicit, scoped operator
+  approval for this one new architectural dependency: resizable/
+  draggable/poppable, default layout matching the old tab order, never
+  wraps the primary cockpit, never instantiated below the `xl` (iPad)
+  breakpoint, layout persists to `localStorage` only (non-authoritative).
+- **Stale-data correctness fix**: every polled resource now tracks data +
+  error + last-good timestamp separately; a failed poll never overwrites
+  good data, and every affected panel renders an explicit "STALE — last
+  known data as of HH:MM" state instead of silently continuing to show old
+  data as current. Verified with a real forced-failure → recovery cycle
+  (Playwright route-blocking), not a mock.
+
+Frontend-only (`git diff --stat` confirms zero changes under `src/` outside
+the pre-existing compiled `src/api/static_cockpit/` bundle); `/ui` and real
+`qamc` production confirmed untouched. Full details, the library-by-library
+authorization record, and the stale→recovery screenshots:
+`docs/verification/stage-6g-cockpit-visual-system/`.
+
+Deferred to a follow-on tranche (scoped but not implemented this pass): the
+ECharts Sankey candidate-branching detail view and the missed-opportunities
+scatter chart, both explicitly secondary/detail-view items in the design
+plan.
+
+Awaiting ChatGPT/operator review alongside Stage 6f. Claude does not cut
+over or merge its own work.
+
 ## Current product priority: directionality + explainability during the live paper soak
 
 The paper soak continues uninterrupted. The next authorized tranche is to use actual Aug 17–18 evidence to determine whether the system's lack of risk deployment was intentional, a candidate-generation/agent bias, a risk veto, or simply no qualified setup, while simultaneously fixing the dashboard presentation defects that make that distinction difficult.

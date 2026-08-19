@@ -7,17 +7,29 @@ export function PositionsPanel({
   positions,
   error,
   loading,
+  updatedAt,
 }: {
   positions: PositionItem[];
   error: string | null;
   loading: boolean;
+  updatedAt?: Date | null;
 }) {
-  const status = error ? "degraded" : loading ? "loading" : "ok";
+  // `updatedAt` (not positions.length) is the "have we ever loaded
+  // successfully" signal — an empty positions array is a legitimate loaded
+  // state (no open positions), indistinguishable from "never loaded" by
+  // length alone.
+  const everLoaded = Boolean(updatedAt);
+  const status = error ? (everLoaded ? "stale" : "error") : loading ? "loading" : "ok";
   return (
-    <Panel title="Positions" status={status}>
-      {error && <StateMessage text={`Positions read failed: ${error}`} error />}
+    <Panel title="Positions" status={status} staleSince={updatedAt}>
+      {error && !everLoaded && <StateMessage text={`Positions read failed: ${error}`} error />}
       {!error && positions.length === 0 && <StateMessage text="No open positions." />}
-      {!error && positions.length > 0 && (
+      {error && everLoaded && (
+        <div className="text-warn text-[0.72rem] bg-warn/10 border border-warn/30 rounded-md px-2 py-1.5 mb-2">
+          Stale — last known as of {updatedAt ? updatedAt.toLocaleTimeString() : "an earlier fetch"} ({error})
+        </div>
+      )}
+      {positions.length > 0 && (
         <table>
           <thead>
             <tr>

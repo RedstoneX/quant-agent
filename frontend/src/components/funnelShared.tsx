@@ -1,6 +1,6 @@
 import { DecisionState, RunFunnelResponse } from "../api/client";
 import { fmtNum } from "../lib/format";
-import { FlowStage, FlowStatus } from "./DecisionFlowDiagram";
+import { FlowStage, FlowStatus } from "./agentflow/types";
 
 // Shared Specialists -> PM -> AI Risk -> Deterministic Gate -> Execution
 // run-level presentation building blocks, used by both the compact

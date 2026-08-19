@@ -5,16 +5,17 @@ import { SegmentedBar } from "./ui/Meter";
 
 export function LiquidityPanel({
   account,
+  accountError,
   positions,
 }: {
   account: AccountResponse | null;
+  accountError?: string | null;
   positions: PositionItem[];
 }) {
-  if (!account) return <Panel title="Cash & risk exposure" status="loading"><StateMessage text="Loading…" /></Panel>;
-  if (account.error) {
+  if (!account) {
     return (
-      <Panel title="Cash & risk exposure" status="degraded">
-        <StateMessage text={`Account read failed: ${account.error}`} error />
+      <Panel title="Cash & risk exposure" status={accountError ? "error" : "loading"}>
+        <StateMessage text={accountError ? `Account read failed: ${accountError}` : "Loading…"} error={Boolean(accountError)} />
       </Panel>
     );
   }
@@ -31,7 +32,12 @@ export function LiquidityPanel({
   const heldBack = liq && liq.raw_cash !== null && liq.deployable_cash !== null ? Math.max(liq.raw_cash - liq.deployable_cash, 0) : 0;
 
   return (
-    <Panel title="Cash & risk exposure" status="ok">
+    <Panel title="Cash & risk exposure" status={accountError ? "stale" : "ok"}>
+      {accountError && (
+        <div className="text-warn text-[0.72rem] bg-warn/10 border border-warn/30 rounded-md px-2 py-1.5 mb-2.5">
+          Showing last known account data — a fresh fetch failed: {accountError}
+        </div>
+      )}
       {liq ? (
         <>
           <div className="mb-1">

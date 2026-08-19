@@ -1,10 +1,9 @@
 import { RunFunnelResponse } from "../api/client";
-import { fmtTime } from "../lib/format";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 import { Card, KV } from "./ui/Evidence";
-import { DecisionFlowDiagram } from "./DecisionFlowDiagram";
-import { STATE_LABELS, STATE_COLORS, buildFunnelStages } from "./funnelShared";
+import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
+import { buildRunGraph } from "./agentflow/buildGraph";
 import { useModalActions } from "../context/ModalContext";
 
 /* The cockpit's "Decision Room" — a narrow-column condensation of what
@@ -26,31 +25,37 @@ export function DecisionRoomPanel({
   funnel,
   loading,
   error,
+  updatedAt,
 }: {
   funnel: RunFunnelResponse | null;
   loading: boolean;
   error: string | null;
+  updatedAt?: Date | null;
 }) {
   const { openRunDetail } = useModalActions();
-  const status = error ? "error" : loading ? "loading" : "ok";
+  // A failed poll never blanks previously-loaded funnel data — it renders
+  // as "stale" instead, with a timestamp, so the reader is never shown an
+  // old EXECUTED/REJECTED verdict looking exactly like a current one. Only
+  // a fetch that has NEVER succeeded (no funnel data at all) renders as a
+  // bare error.
+  const status = error ? (funnel ? "stale" : "error") : loading ? "loading" : "ok";
 
   return (
-    <Panel title="Decision Room — latest run" status={status} accent>
-      {error && <StateMessage text={`Could not load latest decision: ${error}`} error />}
+    <Panel title="Decision Room — latest run" status={status} staleSince={updatedAt} accent>
+      {error && !funnel && <StateMessage text={`Could not load latest decision: ${error}`} error />}
       {!error && !funnel && <StateMessage text="Loading…" />}
       {funnel && (
         <div className="flex flex-col gap-3">
-          <div>
-            <span className={`pill border text-[0.76rem] px-2.5 py-1 ${STATE_COLORS[funnel.decision_state]}`}>
-              {STATE_LABELS[funnel.decision_state]}
-            </span>
-            <div className="text-dim text-[0.72rem] mt-1.5">
-              run {funnel.run_id}
-              {funnel.session_prefix ? ` (${funnel.session_prefix})` : ""} &middot; {fmtTime(funnel.timestamp)}
+          {error && (
+            <div className="text-warn text-[0.78rem] bg-warn/10 border border-warn/30 rounded-md px-2.5 py-1.5">
+              Showing last known decision as of {updatedAt ? updatedAt.toLocaleTimeString() : "an earlier fetch"} — a fresh
+              fetch failed: {error}
             </div>
-          </div>
-
-          <DecisionFlowDiagram stages={buildFunnelStages(funnel)} layout="vertical" />
+          )}
+          {/* The terminal state pill itself now lives in the full-width
+              DecisionStateBanner above the cockpit body — this graph is the
+              "how it got there," not a second place to restate "what." */}
+          <AgentFlowGraph {...buildRunGraph(funnel)} height={420} />
 
           {funnel.bearish_hedge_considered && (
             <div className="state-message">A bearish inverse-ETF candidate was considered this run.</div>

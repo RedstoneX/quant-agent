@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { createChart, IChartApi, ISeriesApi, CandlestickData, HistogramData } from "lightweight-charts";
-import { api, PriceBar } from "../api/client";
+import { createChart, IChartApi, ISeriesApi, CandlestickData, HistogramData, SeriesMarker, Time } from "lightweight-charts";
+import { api, PriceBar, TradeItem } from "../api/client";
 import { Panel } from "./ui/Panel";
+import { isExecutedTrade } from "../lib/format";
 
 // Theme vars are space-separated "R G B" (Tailwind's arbitrary-alpha
 // convention, valid modern CSS) — lightweight-charts' internal color
@@ -13,7 +14,7 @@ function readThemeColors() {
   const rgb = (name: string) => style.getPropertyValue(name).trim().split(/\s+/).join(", ");
   const solid = (components: string) => `rgb(${components})`;
   const alpha = (components: string, a: number) => `rgba(${components}, ${a})`;
-  const text = rgb("--c-text-dim");
+  const text = rgb("--c-ink-dim");
   const border = rgb("--c-border");
   const green = rgb("--c-green");
   const red = rgb("--c-red");
@@ -39,7 +40,31 @@ function toVolume(bars: PriceBar[], colors: { greenAlpha: string; redAlpha: stri
   }));
 }
 
-export function PriceChartPanel({ symbol }: { symbol: string | null }) {
+// TradeItem.timestamp is a naive-UTC full datetime string
+// ("YYYY-MM-DD HH:MM:SS"); the daily-bar chart's time axis only has a date
+// component, so a marker's `time` must be truncated to match — otherwise
+// lightweight-charts silently drops any marker whose exact timestamp isn't
+// one of the series' existing data points.
+function tradeMarkers(
+  symbol: string,
+  trades: TradeItem[],
+  colors: { green: string; red: string }
+): SeriesMarker<Time>[] {
+  return trades
+    .filter((t) => t.symbol === symbol && t.timestamp && isExecutedTrade(t) && (t.action === "BUY" || t.action === "SELL"))
+    .map(
+      (t): SeriesMarker<Time> => ({
+        time: t.timestamp!.slice(0, 10) as Time,
+        position: t.action === "BUY" ? "belowBar" : "aboveBar",
+        color: t.action === "BUY" ? colors.green : colors.red,
+        shape: t.action === "BUY" ? "arrowUp" : "arrowDown",
+        text: `${t.action}${t.qty ? ` ${t.qty}` : ""}`,
+      })
+    )
+    .sort((a, b) => (a.time as string).localeCompare(b.time as string));
+}
+
+export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null; trades?: TradeItem[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -151,6 +176,22 @@ export function PriceChartPanel({ symbol }: { symbol: string | null }) {
       cancelled = true;
     };
   }, [symbol]);
+
+  // Real BUY/SELL execution markers on the price series — the vision
+  // board's chart mockup shows these; `lightweight-charts` already
+  // supports them natively (`ISeriesApi.setMarkers`), so this is wiring an
+  // existing capability, not a new visualization primitive. Re-applied
+  // whenever the bar data (barCount) or the trade list changes, so a stale
+  // marker set from a previously-charted symbol never lingers.
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+    if (!symbol || barCount === 0) {
+      candleSeriesRef.current.setMarkers([]);
+      return;
+    }
+    const colors = readThemeColors();
+    candleSeriesRef.current.setMarkers(tradeMarkers(symbol, trades, { green: colors.green, red: colors.red }));
+  }, [symbol, trades, barCount]);
 
   // "degraded", not "ok" — a symbol is selected but no real bars rendered
   // (e.g. no Alpaca market-data credentials in this environment). An "OK"

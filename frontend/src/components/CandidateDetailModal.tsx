@@ -20,8 +20,9 @@ import { Pill } from "./ui/Pill";
 import { Card, KV, CardText, EvidenceSection } from "./ui/Evidence";
 import { StateMessage } from "./ui/Panel";
 import { useModalActions } from "../context/ModalContext";
-import { SpecialistCards } from "./SpecialistCards";
-import { DecisionFlowDiagram, FlowStage, FlowStatus } from "./DecisionFlowDiagram";
+import type { FlowStage, FlowStatus } from "./agentflow/types";
+import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
+import { buildCandidateGraph } from "./agentflow/buildGraph";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
   if (!tech) return null;
@@ -411,9 +412,16 @@ function DecisionDetail({
   const outcome = riskOutcome(detail);
   const pmChain = detail.pm_reasoning?.reasoning_chain ?? null;
 
+  // Specialist nodes stay short (identity + threshold-colored confidence +
+  // a reasoning excerpt) — clicking one scrolls to the full structured
+  // evidence card below (TechCard/EarningsCard/NewsSymbolCards) rather than
+  // cramming full CoT text into a graph node.
+  const scrollToEvidence = () =>
+    document.getElementById("symbol-specific-evidence")?.scrollIntoView({ behavior: "smooth", block: "start" });
+
   return (
     <div>
-      <DecisionFlowDiagram stages={stages} />
+      <AgentFlowGraph {...buildCandidateGraph(detail, stages, () => scrollToEvidence())} height={300} />
 
       <div className="flex flex-col gap-3 mt-3.5">
         <div>
@@ -606,7 +614,12 @@ export function CandidateDetailModal({
       {!error && !detail && <StateMessage text={`Loading ${symbol}…`} />}
       {detail && (
         <div>
-          <EvidenceSection title="Consensus">{[<SpecialistCards key="specialists" detail={detail} />]}</EvidenceSection>
+          {/* Specialist identity/direction/confidence now lives in the
+              agent-topology graph inside "Decision flow" below (real
+              fan-in, not a separate near-duplicate card grid) — clicking a
+              specialist node there scrolls to this full structured-evidence
+              section for the complete reasoning text. */}
+          <div id="symbol-specific-evidence" />
           <EvidenceSection title="Symbol-specific evidence">
             {[
               <TechCard key="tech" tech={detail.tech} />,
