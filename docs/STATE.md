@@ -131,6 +131,41 @@ framework-migration prohibition for this bounded case):
   investigated, no blind spot found, no correction made — see the
   "Paper-soak findings" section above for the full evidence trail.
 
+### Stage 6b — agent deliberation, journal narrative, directional bias
+
+A follow-on same-branch tranche, orchestrated as three parallel isolated-
+worktree workstreams then integrated and visually polished by the lead:
+
+- **Agent deliberation UX**: `SpecialistCards` (one card per specialist
+  that actually produced evidence, with identity, direction, conviction,
+  reasoning, an honestly-derived aligned/diverges indicator) replaces the
+  old flat consensus list; a reusable `DecisionFlowDiagram` (Specialists →
+  PM → AI Risk → Deterministic Gate → Execution) is used both in the
+  candidate drill-down and, aggregated, in the main funnel panel.
+- **Decision-process observability**: `reason_category`, the full RM/PM
+  reasoning-chain breakdowns, PM's continuity/premortem disclosure flags,
+  and a derived clean/modified/rejected state are now surfaced — all data
+  that was already flowing through the API, previously untyped/unrendered.
+- **Journal rebuilt into a real day-by-day narrative**: morning regime,
+  per-run decision cards (candidates with direction tags, PM/RM text,
+  explicit trade/no-trade), full evening-reflection fields, prev/next
+  date navigation.
+- **Directional-bias observability panel**: bullish/bearish/neutral
+  candidate and proposal counts, inverse-ETF consideration, AI Risk
+  approve/reject breakdown by direction (explicitly caveated as run-level
+  not per-candidate), and a dominant-outcome histogram — aggregated
+  client-side from existing endpoints, no new backend surface, explicitly
+  framed as observability only ("not a trading signal or recommendation").
+- **Visual QA pass**: increased panel contrast/depth (the flat/monochrome
+  weakness was real), agent-identity badges, and two genuine responsive
+  bugs found and fixed (a `sm:`-breakpoint 4-column grid squeezed inside
+  a half-width panel at iPad width; the top stat strip hid 4 of 5 stats
+  behind an undiscoverable horizontal scroll).
+
+Evidence: `docs/verification/stage-6b-deliberation-journal-bias/`. Full
+backend suite unaffected throughout (1857 passed, 0 failed) — this
+tranche is frontend-only.
+
 Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
 default, or keep both mounted). Claude does not cut over or merge its
 own work.
