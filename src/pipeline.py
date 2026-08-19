@@ -528,19 +528,15 @@ class TradingPipeline:
         # exclude it from the position list so net-exposure / cluster math
         # doesn't count parked cash as market exposure.
         #
-        # 2026-08-19 SGOV/deployable-liquidity forensic: this used to also
-        # credit the parked vehicle's market value straight into the cash
-        # budget the hard gate checks a BUY against. That is what let the
-        # gate approve BUYs sized against ~$10K when real settled cash was
-        # ~$145 — SGOV was sold to fund them, but Alpaca settlement (T+1)
-        # meant the proceeds were not actually spendable by the time
-        # execution rechecked. `cash` here is now the caller-supplied
-        # `ctx.deployable_cash` (Alpaca's settled non-margin buying power),
-        # which never carries unsettled SGOV proceeds — so no crediting is
-        # done here anymore. The `sell_proceeds` credit just below is
-        # unrelated and unchanged: it only credits proceeds of REAL
-        # position SELLs this same run, which ExecutionStage always
-        # executes and waits for before any BUY submits.
+        # This gate does NOT credit the parked vehicle's value into the cash
+        # budget. Callers pass `ctx.deployable_cash`, which already includes
+        # it (raw `cash` + convertible sweep value — see
+        # `_compute_deployable_cash`). Crediting it a second time here would
+        # double-count the same dollars and approve BUYs execution cannot
+        # fund. The `sell_proceeds` credit just below is unrelated and
+        # unchanged: it only credits proceeds of REAL position SELLs this
+        # same run, which ExecutionStage always executes and waits for
+        # before any BUY submits.
         sweeper = self._sweeper()
         if sweeper is not None:
             positions, _parked = sweeper.split_positions(positions)
