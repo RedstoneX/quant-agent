@@ -1,14 +1,58 @@
 # QAMC Current Work
 
-Status: **ALPACA PAPER SOAK ACTIVE — FINAL MISSION CONTROL + AUTONOMOUS PRODUCT IMPROVEMENT AUTHORIZED**
+Status: **ALPACA PAPER SOAK ACTIVE — TRANCHE: THREE-DEFECT FORENSIC FIX (SGOV liquidity, intraday blind spot, Tech batch loss)**
 
-**2026-08-19 update:** The Mission Control cockpit cutover authorized by
-this contract is complete. PR #46 (Stages 6–6h) merged to `main` and
-production cutover completed successfully on 2026-08-19; production is
-at `7668771`. `/cockpit` and `/ui` are both confirmed healthy. Alpaca
-remains Paper-only. See `docs/STATE.md` for the accepted record. The
-Checkpoint item below asking Claude to stop for a cutover decision has
-been satisfied for this tranche.
+**2026-08-19 update (new tranche):** The Mission Control cockpit tranche
+below (Workstreams A/B/C) is complete and closed — PR #46 merged,
+production cutover done, checkpoint satisfied. A separate operator-
+directed read-only production forensic performed the same day from the
+Ubuntu admin session established three new defects, treated as verified
+evidence (do not repeat the forensic unless implementation reveals a
+contradiction):
+
+1. **SGOV / deployable-liquidity mismatch** — PM/RM were shown ~$10K
+   effectively-available cash because SGOV was treated as cash-
+   equivalent; actual immediately usable cash was ~$145. SGOV was sold
+   to fund approved BUYs, but proceeds weren't available when execution
+   rechecked cash, so all BUYs were safely skipped by the deterministic
+   gate. Fix the root cause (truthful liquidity through the decision
+   chain, Alpaca settlement-aware cash-sweep behavior), not the
+   deterministic gate itself.
+2. **Intraday opportunity-discovery blind spot** — the full opportunity-
+   generation chain runs once each morning; `intra_check` is loss-
+   protection only; midday/close review existing holdings only. A
+   material intraday move cannot generate a new trade. Implement the
+   smallest coherent fix: current-session data, both bullish and (via
+   existing inverse ETFs) bearish discovery, explicit cadence/trigger +
+   dedup/cooldown, no full morning-stack rerun, no new shorting/options/
+   margin, not a HFT system.
+3. **Tech batch-response symbol loss** — symbols passed the pre-filter
+   and were sent to `tech_analyst` but silently disappeared during batch
+   parsing (one chunk parsed 1/10 symbols). Every submitted symbol must
+   reach an explicit terminal outcome (parsed / explicitly neutral-
+   rejected / visibly failed) — never a silent drop — with bounded
+   retry/recovery for partial batch failures.
+
+This is authorized implementation work under the existing architecture
+and hard boundaries (Alpaca Paper-only, cash-only/no-margin, Specialist →
+PM → AI Risk → deterministic gate → execution unchanged and final,
+no direct shorting/options/margin, no live trading). Implementation
+branch: `fix/sgov-liquidity-intraday-batch` off `main` at `4b54d5c`.
+Required regression tests, focused + broader suite run, and a
+ROOT CAUSE → CHANGES → TEST EVIDENCE → REMAINING UNCERTAINTY → BRANCH +
+COMMIT SHA report before stopping for ChatGPT/operator review. Do not
+merge.
+
+---
+
+**Prior tranche (2026-08-19, closed):** The Mission Control cockpit
+cutover authorized by the contract below is complete. PR #46 (Stages
+6–6h) merged to `main` and production cutover completed successfully on
+2026-08-19; production is at `7668771`. `/cockpit` and `/ui` are both
+confirmed healthy. Alpaca remains Paper-only. See `docs/STATE.md` for the
+accepted record. The Checkpoint item below asking Claude to stop for a
+cutover decision has been satisfied for this tranche and is preserved
+here only as historical/architecture context for the new tranche above.
 
 ## Goal
 
