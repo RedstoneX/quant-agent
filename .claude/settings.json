@@ -7,14 +7,22 @@
   "permissions": {
     "allow": [
       "Bash(pytest tests/ -q)",
+      "Bash(pytest *)",
       "Bash(python -m pytest tests/ -q)",
+      "Bash(python -m pytest *)",
       "Bash(npm run build)",
       "Bash(npm run lint)",
       "Bash(npm run typecheck)",
       "Bash(npm test)",
       "Bash(git status --short)",
       "Bash(git diff --stat)",
-      "Bash(git diff --name-only)"
+      "Bash(git diff --name-only)",
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(git fetch*)",
+      "Bash(.venv/bin/python ops/commissioning/verify_commissioning.py *)",
+      "Bash(python3 -m py_compile *)",
+      "Bash(.venv/bin/python ops/model_policy/benchmark_models.py *)"
     ],
     "deny": [
       "Read(./.env)",
