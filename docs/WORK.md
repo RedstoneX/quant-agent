@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **ALPACA PAPER SOAK ACTIVE — TRANCHE: THREE-DEFECT FORENSIC FIX (SGOV liquidity, intraday blind spot, Tech batch loss)**
+Status: **ALPACA PAPER SOAK ACTIVE — PR #48 MERGED; PRODUCTION DEPLOYMENT / INTRADAY ROLLOUT PENDING**
 
 **2026-08-19 update (new tranche):** The Mission Control cockpit tranche
 below (Workstreams A/B/C) is complete and closed — PR #46 merged,
@@ -56,9 +56,10 @@ PM → AI Risk → deterministic gate → execution unchanged and final,
 no direct shorting/options/margin, no live trading). Implementation
 branch: `fix/sgov-liquidity-intraday-batch` off `main` at `4b54d5c`.
 
-**Status: implemented, tested, independently reviewed — awaiting
-ChatGPT/operator review and merge. Not merged. Production untouched
-(structurally inaccessible from the `dev` account).**
+**Status: implemented, tested, independently reviewed, and merged via
+PR #48 as `70099c15097b77e6194a4cae247a9bacbea9a201`. Production has not yet
+been deployed from this merge. The intraday scan remains disabled pending
+explicit rollout.**
 
 Implementation notes that matter for review:
 

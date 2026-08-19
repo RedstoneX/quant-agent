@@ -412,12 +412,15 @@ grammar bug writeup, and screenshots:
 Merged to `main` via PR #46 alongside Stage 6f/6g and cut over to
 production on 2026-08-19 — see the Stage 6 header above.
 
-## Three-defect forensic fix (2026-08-19) — implemented, NOT merged
+## Three-defect forensic fix (2026-08-19) — merged to main; production deployment pending
 
 A read-only production forensic on 2026-08-19 established three defects.
-Branch `fix/sgov-liquidity-intraday-batch` (off `main` at `4b54d5c`) fixes
-all three. **Awaiting ChatGPT/operator review; not merged; production
-untouched.** Full suite: 1907 passed, 0 failed (baseline 1857).
+PR #48 (`fix/sgov-liquidity-intraday-batch`) was externally reviewed and
+merged to `main` on 2026-08-19 as
+`70099c15097b77e6194a4cae247a9bacbea9a201`. **Production has not yet
+been deployed from this merge.** Full suite: 1907 passed, 0 failed
+(baseline 1857). The new intraday scan remains disabled by default pending
+explicit rollout.
 
 1. **SGOV funding semantics.** PM/RM/the deterministic gate were shown
    ~$10K "cash" while real cash was ~$145; SGOV was sold to fund approved
@@ -465,8 +468,7 @@ untouched.** Full suite: 1907 passed, 0 failed (baseline 1857).
    close". Bearish
    views surface through the already-approved inverse ETFs
    (`SH`/`SDS`/`PSQ`/`SQQQ`) — no shorting, options or margin added.
-   Ships **disabled** (`intraday_scan.enabled: false`) pending operator
-   review. Macro/news/earnings are deliberately not re-run and are marked
+   Ships **disabled** (`intraday_scan.enabled: false`) pending explicit production rollout. Macro/news/earnings are deliberately not re-run and are marked
    `not_run_intraday`, so RiskStage's existing degraded-data advisory
    fires honestly and RM knows the evidence is thinner than a morning run.
 3. **Tech batch-response symbol loss.** Symbols sent to `tech_analyst`
