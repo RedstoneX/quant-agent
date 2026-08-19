@@ -15,52 +15,33 @@ This file records what is accepted and true **now**. Git history preserves prior
 
 ## Production code position
 
-Production is intentionally **not** at current `main`.
+Production is currently pinned at `9c736c158fec84129765c25a9429254d3602ad6b` (`9c736c1`). That production hotfix contains the reviewed Telegram restoration/security diff on top of the prior Mission Control production baseline and deliberately excludes PR #48.
 
-- Prior production baseline: `766877109b60026c94c00b38dbfb0e0c9630d236` (`7668771`, Mission Control cutover / PR #46 lineage).
-- Current production: `9c736c158fec84129765c25a9429254d3602ad6b` (`9c736c1`).
-- `9c736c1` is exactly one commit above `7668771` and contains only the reviewed Telegram restoration/security diff.
-- Current GitHub `main`: `7f065c50287d8d55d191b89ada3f29abeb75b1e9`, which includes both PR #48 and PR #51.
-- **Do not make production follow `main` or run `git checkout main` until the separately deferred PR #48 production rollout is explicitly authorized.**
+GitHub `main` contains the accepted PR #48 fixes, the Telegram restoration, and current governance/documentation. The finish-line rollout contract in `docs/WORK.md` now authorizes production convergence to a **pinned, verified exact `main` SHA** after preflight; Claude must not deploy a moving branch tip blindly.
 
 ## Telegram notification restoration — complete
 
-The bounded Telegram restoration tranche is closed.
+The bounded Telegram restoration tranche is closed and active in production.
 
-Repository work:
+- Notifier request failures redact the bot token before logging.
+- OneCLI 1.45.0 stores the real Telegram bot token and injects it into `api.telegram.org` requests with `pathTemplate: /bot{value}`.
+- The real bot token is stored only in OneCLI; `qamc/.env` contains only a harmless placeholder plus `TELEGRAM_CHAT_ID`.
+- Preflight `getMe` returned HTTP 200 before activation.
+- Exactly one non-trading Telegram delivery probe returned `DELIVERED`.
+- Existing scheduled wrappers were verified to source the same runtime `.env` path.
+- Telegram remains notification/status output only. Commands, callbacks, webhooks and broker-write controls are not authorized.
 
-- PR #51 merged to `main` as `7f065c50287d8d55d191b89ada3f29abeb75b1e9`.
-- The production-specific hotfix branch was built from `7668771` and deployed as exact commit `9c736c1`, avoiding PR #48.
-- `src/notifier.py` now redacts the bot token from request-exception logging before any real Telegram credential is active.
-- `scripts/telegram_test.py` provides the accepted non-trading delivery probe.
+## PR #48 — accepted, rollout authorized
 
-Runtime activation completed successfully on 2026-08-19:
+PR #48 (`fix/sgov-liquidity-intraday-batch`) is merged and accepted. Its production rollout is now authorized under the stage-gated finish-line contract in `docs/WORK.md`.
 
-- OneCLI running version verified as **1.45.0**.
-- Real `TELEGRAM_BOT_TOKEN` is stored **only in OneCLI** as a generic secret scoped to `api.telegram.org`.
-- OneCLI URL-path injection uses `pathTemplate: /bot{value}`.
-- The secret is granted only to the existing QAMC OneCLI agent.
-- `qamc/.env` contains only a harmless non-empty `TELEGRAM_BOT_TOKEN` placeholder plus ordinary `TELEGRAM_CHAT_ID`; the real bot token is not stored there.
-- Existing `HTTPS_PROXY`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` OneCLI wiring remains intact.
-- Preflight `getMe` returned HTTP 200 **before** production deployment, proving path substitution, proxy/CA wiring and Telegram egress.
-- Exactly one non-trading `telegram_test.py` message returned `DELIVERED`.
-- `run_if_et_window.sh` and `run_daily_export.sh` were verified to source the same runtime `.env` path used by the successful probe.
-- No service/timer was started or restarted during activation; no broker order or trading action occurred.
-- The operator rotated the initially exposed Telegram token before final activation.
-
-Telegram remains notification/status output only. Commands, callbacks, webhooks, approvals and broker-write controls are not authorized.
-
-## PR #48 — merged to main, production rollout still pending
-
-PR #48 (`fix/sgov-liquidity-intraday-batch`) is merged to `main` as `70099c15097b77e6194a4cae247a9bacbea9a201` but is **not deployed to production**.
-
-It contains three accepted fixes:
+It contains three accepted changes:
 
 1. **SGOV funding semantics** — deployable cash uses owned raw cash plus convertible sweep value, while `CashSweeper.fund_buys()` reports only confirmed broker-cash increase after the sweep sale; execution's final raw-cash recheck remains authoritative.
 2. **Intraday opportunity discovery** — bounded discovery on the existing `intra_check` cadence, including explicit current-session incomplete evidence and existing inverse ETFs for bearish expression.
 3. **Tech batch-response completeness** — every submitted symbol reaches an explicit terminal outcome; missing batch results receive one bounded retry instead of silently disappearing.
 
-The intraday scan ships **disabled** (`intraday_scan.enabled: false`). Deploying PR #48 and enabling the intraday scan remain separate decisions.
+The intraday scan is still disabled at the start of the tranche. The operator has now explicitly authorized enabling it **after** the preceding deployment and behavior-verification gates pass. No new timer/service/daemon is authorized.
 
 ## Directionality and paper-soak evidence
 
@@ -77,26 +58,33 @@ The intraday scan ships **disabled** (`intraday_scan.enabled: false`). Deploying
 - OpenRouter remains the model-provider path.
 - Cost-optimized model routing and the accepted decision-chain audit remain in force.
 
-## Current authorization
+## Current authorization — finish-line paper rollout
 
-There is **no active implementation tranche** after the Telegram closeout.
+The operator has explicitly authorized one coordinated, outcome-driven tranche to reach the finished paper-trading operating state described in `docs/WORK.md`.
 
-The next substantive production decision is the separately pending PR #48 rollout. It requires explicit authorization and must not be inferred from the fact that PR #48 is already merged to `main`.
+Claude may use a lead/orchestrator subagent to delegate work, verify stage gates and advance automatically through routine stages. **Do not return to the operator for micro-approval after every successful stage.** Stop only for operator-only privilege/credential actions, a material architecture/safety conflict, an unresolved product/value fork, or another boundary explicitly listed in `docs/WORK.md`.
 
-Routine read-only review, evidence gathering, documentation maintenance and GitHub housekeeping remain permitted within existing governance.
+The authorized end state includes:
 
-## Not authorized without a new contract
+- deployment of the accepted PR #48 fixes;
+- production verification of SGOV funding and Tech batch completeness;
+- staged enablement of the already-accepted intraday opportunity scanner on the existing cadence after its prerequisite gates pass;
+- end-to-end health/observability verification across the existing paper-trading system;
+- clean final governance/state closeout.
+
+## Not authorized
 
 - Live-broker trading.
-- Direct stock shorting, options/theta strategies, or enabling margin.
-- Enabling `intraday_scan` without explicit rollout authorization.
-- Deploying current `main` to production merely for synchronization/cleanup.
+- Direct stock shorting, options/theta strategies, or margin.
+- New timers, daemons, services, databases, proxies, credential systems or other durable infrastructure outside accepted architecture.
 - Deterministic risk/execution semantic redesign.
 - Broker-write Mission Control controls.
+- Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
 - Replacing upstream OneCLI or adding a new durable routing/security/credential platform without an accepted architectural decision.
+- Forcing/manufacturing a paper trade merely to prove the rollout.
 
 ## Handoff
 
-Paper soak continues on production `9c736c1` with Telegram notifications active. PR #48 production deployment and any later `intraday_scan` enablement remain pending, separate work.
+Execute the stage-gated finish-line paper rollout in `docs/WORK.md`. The correct completion condition is operational readiness and verified wiring on the accepted architecture, not guaranteed trade generation.
