@@ -55,7 +55,12 @@ interface Aggregates {
   runsFetchFailed: number;
 
   totalCandidates: number;
+  // Instrument's own signal direction (tech_analyst rating on the symbol).
   candidateDirectionCounts: DirectionCounts;
+  // Effective market/portfolio exposure direction — instrument direction
+  // with inverse-ETF candidates flipped via exposureDirection(). This is
+  // the number that actually answers "is QAMC structurally long-only?".
+  candidateExposureCounts: DirectionCounts;
 
   hedgeRunsConsidered: number;
   hedgeCandidatesCount: number;
@@ -64,6 +69,7 @@ interface Aggregates {
 
   proposedTotal: number;
   proposedDirectionCounts: DirectionCounts;
+  proposedExposureCounts: DirectionCounts;
   proposedActionCounts: Record<string, number>;
 
   riskReachingRuns: number;
@@ -83,12 +89,34 @@ function bucketDirection(counts: DirectionCounts, direction: Direction) {
   else counts.neutralOrUnknown += 1;
 }
 
+// `CandidateFunnelItem.direction` is the *instrument's own* signal
+// direction (tech_analyst's rating on the symbol itself) — it is NOT the
+// resulting market/portfolio exposure direction. For an ordinary long
+// instrument the two coincide: a bullish signal expresses bullish
+// exposure. For an approved inverse ETF (`is_bearish_hedge` — SH/SDS/
+// PSQ/SQQQ, see src/api/deps.py::INVERSE_ETF_SYMBOLS on the backend),
+// being bullish ON THE INSTRUMENT (e.g. BUY SQQQ) expresses BEARISH
+// exposure to the underlying index, and vice versa — so exposure
+// direction is the *inverse* of instrument direction there. This is a
+// panel meant to diagnose structural long bias, so silently counting an
+// inverse-ETF BUY as "bullish" would hide the exact bearish positioning
+// it exists to surface. Always derived from the API's own
+// `is_bearish_hedge` flag, never from the symbol name.
+function exposureDirection(direction: Direction, isBearishHedge: boolean): Direction {
+  if (!isBearishHedge) return direction;
+  if (direction === "bullish") return "bearish";
+  if (direction === "bearish") return "bullish";
+  return direction; // neutral/unknown carries no exposure to flip
+}
+
 // Pure aggregation over already-fetched funnel data — kept separate from
 // the fetching effect below so the counting logic is easy to trace/verify
 // by hand against a small hypothetical dataset.
 function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): Aggregates {
   const candidateDirectionCounts = emptyDirectionCounts();
+  const candidateExposureCounts = emptyDirectionCounts();
   const proposedDirectionCounts = emptyDirectionCounts();
+  const proposedExposureCounts = emptyDirectionCounts();
   const proposedActionCounts: Record<string, number> = {};
   const decisionStateCounts: Record<DecisionState, number> = {
     executed: 0,
@@ -116,6 +144,7 @@ function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): A
     for (const c of f.candidates) {
       totalCandidates += 1;
       bucketDirection(candidateDirectionCounts, c.direction);
+      bucketDirection(candidateExposureCounts, exposureDirection(c.direction, c.is_bearish_hedge));
 
       if (c.is_bearish_hedge) {
         hedgeCandidatesCount += 1;
@@ -126,6 +155,7 @@ function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): A
       if (c.reached_proposed_order) {
         proposedTotal += 1;
         bucketDirection(proposedDirectionCounts, c.direction);
+        bucketDirection(proposedExposureCounts, exposureDirection(c.direction, c.is_bearish_hedge));
         const action = c.proposed_action || "none";
         proposedActionCounts[action] = (proposedActionCounts[action] ?? 0) + 1;
       }
@@ -149,12 +179,14 @@ function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): A
     runsFetchFailed: fetchFailed,
     totalCandidates,
     candidateDirectionCounts,
+    candidateExposureCounts,
     hedgeRunsConsidered,
     hedgeCandidatesCount,
     hedgeCandidatesProposed,
     hedgeCandidatesExecuted,
     proposedTotal,
     proposedDirectionCounts,
+    proposedExposureCounts,
     proposedActionCounts,
     riskReachingRuns,
     riskHedgeRuns,
@@ -280,18 +312,38 @@ export function DirectionalBiasPanel() {
             {agg.runsFetchFailed > 0 ? ` (${agg.runsFetchFailed} run${agg.runsFetchFailed === 1 ? "" : "s"} failed to load and were excluded)` : ""}.
           </div>
 
-          {/* Bullish vs bearish candidates considered */}
+          {/* Instrument signal direction vs effective market exposure —
+              deliberately shown as two separate bars, never collapsed into
+              one number. A bullish signal on an inverse ETF (SQQQ, etc.)
+              expresses BEARISH market exposure; conflating the two would
+              hide exactly the structural-long-bias signal this panel
+              exists to surface. */}
           <div>
             <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-2 pb-1 border-b border-border">
-              Candidates considered, by direction
+              Candidates considered — direction
             </div>
             {agg.totalCandidates === 0 ? (
               <StateMessage text="No candidates were considered in this window." />
             ) : (
-              <>
-                <DirectionRatioBar counts={agg.candidateDirectionCounts} total={agg.totalCandidates} />
-                <div className="text-dim text-[0.72rem] mt-1.5">{agg.totalCandidates} candidate consideration(s) total.</div>
-              </>
+              <div className="flex flex-col gap-3">
+                <div>
+                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">Instrument signal direction</div>
+                  <DirectionRatioBar counts={agg.candidateDirectionCounts} total={agg.totalCandidates} />
+                </div>
+                <div>
+                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">
+                    Effective market exposure{" "}
+                    <span className="normal-case font-normal text-dim">(inverse-ETF candidates flipped)</span>
+                  </div>
+                  <DirectionRatioBar counts={agg.candidateExposureCounts} total={agg.totalCandidates} />
+                </div>
+                <div className="text-dim text-[0.72rem]">
+                  {agg.totalCandidates} candidate consideration(s) total
+                  {agg.hedgeCandidatesCount > 0
+                    ? ` — ${agg.hedgeCandidatesCount} on an inverse ETF, where a bullish instrument signal expresses bearish market exposure (and vice versa).`
+                    : "."}
+                </div>
+              </div>
             )}
           </div>
 
@@ -336,7 +388,17 @@ export function DirectionalBiasPanel() {
               <StateMessage text="No candidates reached a proposed order in this window." />
             ) : (
               <div className="flex flex-col gap-2.5">
-                <DirectionRatioBar counts={agg.proposedDirectionCounts} total={agg.proposedTotal} />
+                <div>
+                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">Instrument signal direction</div>
+                  <DirectionRatioBar counts={agg.proposedDirectionCounts} total={agg.proposedTotal} />
+                </div>
+                <div>
+                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">
+                    Effective market exposure{" "}
+                    <span className="normal-case font-normal text-dim">(inverse-ETF candidates flipped)</span>
+                  </div>
+                  <DirectionRatioBar counts={agg.proposedExposureCounts} total={agg.proposedTotal} />
+                </div>
                 <div className="flex flex-wrap gap-2 items-center">
                   <span className="text-dim text-[0.72rem]">Proposed actions:</span>
                   {Object.entries(agg.proposedActionCounts).map(([action, count]) => (
@@ -420,3 +482,9 @@ export function DirectionalBiasPanel() {
     </Panel>
   );
 }
+
+// Exported for unit testing (DirectionalBiasPanel.test.ts) — the pure
+// aggregation/derivation logic, kept separate from data-fetching and
+// rendering so it's directly verifiable without mounting a component.
+export { exposureDirection, computeAggregates };
+export type { Aggregates, DirectionCounts };
