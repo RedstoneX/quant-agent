@@ -17,6 +17,14 @@ This file says what is accepted and authorized **now**. Git history preserves pr
 - PR #37 recorded the verified private Tailscale/Orca access path and merged to `main` on 2026-08-18.
 - PR #46 (Mission Control cockpit redesign and visualization upgrade, Stages 6–6h) merged to `main` on 2026-08-19. Mission Control production cutover completed successfully the same day; production is at `766877109b60026c94c00b38dbfb0e0c9630d236` (`7668771`). `/cockpit` and `/ui` are both confirmed healthy. Alpaca remains Paper-only.
 
+## Current authorization — Telegram notification restoration
+
+A bounded tranche is authorized to **restore, configure and test the existing upstream Telegram notification capability** already present in `src/notifier.py`, `main.py`, `src/scheduler.py` and the existing run wrappers. This is restoration/integration, not a new product or subsystem.
+
+Allowed work is limited to inspecting existing notifier/deployment wiring, documenting/restoring `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / optional `TELEGRAM_DISABLED` configuration without exposing secrets, making only minimal reliability/configuration/test changes, and proving notification delivery with a non-trading test. Telegram remains status/notification output only and notifier failure must remain non-fatal to trading.
+
+This authorization does **not** permit Telegram commands/callbacks/webhook trading controls, any broker-write path, a new daemon/service/database/proxy/security/credential architecture, live trading, margin/options/direct stock shorting, production deployment of PR #48, or enabling `intraday_scan`. Preserve `dev` / `qamc` / `ubuntu` isolation and existing secret-handling conventions. Claude must stop for operator action when an actual secret or privileged runtime change is required and must not merge its own work.
+
 ### Runtime commissioning accepted
 
 The final privileged `qamc` live verifier run against current `main` passed on 2026-08-14:
@@ -516,4 +524,4 @@ ChatGPT owns GitHub review/integration and should use the connected GitHub plugi
 
 ## Handoff
 
-Paper soak remains active. Execute the authorized autonomous product-improvement tranche in `docs/WORK.md`, preserving existing deterministic safety semantics and requiring evidence before any intelligence correction.
+Paper soak remains active. Execute the authorized Telegram notification restoration tranche in `docs/WORK.md`. The PR #48 production deployment and intraday rollout remain separate, pending work and must not be touched as part of Telegram restoration.

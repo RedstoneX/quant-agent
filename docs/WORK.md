@@ -1,6 +1,29 @@
 # QAMC Current Work
 
-Status: **ALPACA PAPER SOAK ACTIVE — PR #48 MERGED; PRODUCTION DEPLOYMENT / INTRADAY ROLLOUT PENDING**
+Status: **ALPACA PAPER SOAK ACTIVE — TELEGRAM RESTORATION AUTHORIZED; PR #48 PRODUCTION DEPLOYMENT / INTRADAY ROLLOUT STILL PENDING**
+
+## Telegram notification restoration — authorized (2026-08-19)
+
+Restore, configure and test the **existing upstream Telegram notification capability** already implemented in `src/notifier.py`, `main.py`, `src/scheduler.py`, and the existing execution wrappers. This is a bounded restoration/integration tranche, not authorization for a new product, subsystem, service, daemon, database, proxy, security layer or credential architecture.
+
+Authorized work:
+
+- verify the current notifier and timer/wrapper wiring and existing tests;
+- restore/document the existing environment-variable configuration (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, optional `TELEGRAM_DISABLED`) without committing or exposing secrets;
+- make only the smallest repository/configuration/test changes needed for reliable notification/status delivery;
+- verify a non-trading Telegram test message and existing session-notification behavior without submitting, modifying or cancelling orders;
+- preserve `dev` / `qamc` / `ubuntu` isolation and use the existing runtime `.env`/deployment conventions rather than inventing a new secret-delivery path;
+- stop for operator action only when a real secret or privileged `qamc` runtime change is required, and never request that a secret be pasted into chat, Git, logs or screenshots.
+
+Hard boundaries for this tranche:
+
+- Alpaca Paper only; no live trading, margin, options or direct stock shorting;
+- Telegram is notification/status output only — no commands, callbacks, bot polling, webhook trading controls or broker-write path;
+- deterministic Python/broker safety remains final authority and notifier failure must never affect trading execution;
+- do not deploy PR #48, enable `intraday_scan`, or otherwise change the pending production/intraday rollout;
+- no new persistent service/daemon/database/proxy/security/credential architecture.
+
+At checkpoint, push a dedicated implementation branch and STOP for independent ChatGPT review. Claude does not merge its own work.
 
 **2026-08-19 update (new tranche):** The Mission Control cockpit tranche
 below (Workstreams A/B/C) is complete and closed — PR #46 merged,
