@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-18
+Updated: 2026-08-19
 
 This file says what is accepted and authorized **now**. Git history preserves prior detail.
 
@@ -99,6 +99,41 @@ The first operator review of real soak behaviour and Mission Control on 2026-08-
   **Forensic outcome (2026-08-19, one-pass reconstruction against the live `qamc` runtime via the read-only Mission Control API):** no genuine blind spot found; no correction made. Sampled six of the eighteen 2026-08-17/18 scheduled runs (open/mid/close on each day) plus a full-window `/search` sweep of every `tech_analyst` universe-scan log line. `tech_analyst` rated `SQQQ` (the -3x Nasdaq inverse ETF already in the universe) `sell` or `neutral` on every sampled run — never `buy` — with reasoning tied to `SQQQ`'s own bearish trend/momentum plus an explicit volume-confirmation caution; `SPY`/`IWM`/`DIA`/`XLE`/`XLF` were themselves rated `buy`/`neutral` throughout both days, i.e. the system's own technical evidence read bullish-to-neutral on the broad market, not bearish. `macro_analyst` reported regime `transitional`, equity outlook `neutral`, confidence `low`, explicitly citing missing VIX data and stale inflation figures — an honestly-disclosed data-freshness gap, not a suppressed or misrepresented signal. `news_analyst` sentiment was `neutral` (Middle East tensions / rising yields as headwinds, not a decline narrative). Because `tech_analyst` never emitted a `buy` rating on `SQQQ`, `portfolio_manager` never received a target/proposed-order for it on any sampled run — the PM stage was never reached because no qualified bearish setup existed upstream, not because evidence was dropped or discounted. The account was flat both days (+$0.98 and +$1.96 on ~$10k, zero positions, zero trades) and both evening reflections recorded an explicit, coherent rationale ("cautious stance amidst significant geopolitical and macroeconomic headwinds") with empty `missed_opportunities_json`. Classification: **no qualified bearish setup existed** — a legitimate, evidence-consistent neutral/cash outcome, not a directional or prompt-level blind spot. Per the "do not hindsight-fit" instruction, no intelligence/prompt correction was made; Workstream A closes as investigated-and-clean rather than investigated-and-corrected.
 - **Mission Control buries the useful explanation.** Existing API/UI code already records per-candidate specialist evidence, PM reasoning/targets, RM verdict/modifications, deterministic gate records and execution. The current top-level dashboard still makes the operator drill into run/candidate modals to answer the basic question “why did QAMC do nothing?” A 2026-08-18 morning run visibly considered candidates while producing no decision, making this an observed usability gap.
 - **Missed-opportunity data exists but is not prominent enough.** The Evening Analyst can review notable UP or DOWN moves and the journal can render `missed_opportunities`; the operator should not need to infer from an empty trade table whether the system recognized a significant move.
+
+## Mission Control cockpit rebuild (Stage 6) — implemented, pending review/cutover
+
+Branch `claude/mission-control-cockpit-redesign` implements the final-cockpit
+tranche `docs/WORK.md` authorized (superseding the prior generic
+framework-migration prohibition for this bounded case):
+
+- Backend: `/account.liquidity` (raw cash / sweep-parked / reserve /
+  deployable), `/positions[].direction`
+  (`long`/`bearish_hedge`/`cash_equivalent`), `GET /runs/{id}/funnel`
+  (structural decision funnel + quoted PM/RM/macro context), and
+  `GET /prices/{symbol}` (daily OHLCV, Alpaca's market-data client) — all
+  bounded, read-only, GET-only, isolation-tested. Full suite: 1857
+  passed, 0 failed.
+- Frontend: evaluated the vanilla-JS prototype built earlier this
+  tranche (preserved at commit `73c68bf`) against React+Vite+Tailwind+
+  TradingView Lightweight Charts per `docs/WORK.md`'s explicit direction
+  to evaluate that stack first. The prototype proved the information
+  architecture but could not economically deliver real charting, a true
+  multi-pane layout, or Orallexa-style consensus visualization without
+  hand-building equivalent infrastructure — so the cockpit was rebuilt in
+  React (source in `frontend/`, compiled output replacing
+  `src/api/static_cockpit/`, same `/cockpit` static mount, same
+  no-runtime-dependency deployment model as `/ui`).
+- `/ui` (Stage 3-5 dashboard) is untouched and remains the fallback per
+  the parallel-build/cutover rule — no cutover has happened yet.
+- Browser-verified desktop + iPad + dark mode against seeded
+  representative data: `docs/verification/stage-6-react/`.
+- The Aug 17–18 directionality forensic (Workstream A) is closed:
+  investigated, no blind spot found, no correction made — see the
+  "Paper-soak findings" section above for the full evidence trail.
+
+Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
+default, or keep both mounted). Claude does not cut over or merge its
+own work.
 
 ## Current product priority: directionality + explainability during the live paper soak
 
