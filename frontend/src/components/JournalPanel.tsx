@@ -1,7 +1,9 @@
 import { KeyboardEvent, useEffect, useMemo, useState } from "react";
 import {
   api,
+  AccountResponse,
   CandidateFunnelItem,
+  DailyPnlPoint,
   DecisionState,
   JournalDayResponse,
   RunFunnelResponse,
@@ -166,6 +168,35 @@ function CandidateChip({
   );
 }
 
+// A small real-data timeline strip — recent daily P&L from the same
+// `account.history` the top strip's equity figure already comes from
+// (AccountResponse.history, up to 30 days). No new fetch, no synthesized
+// values: bar height is |daily_pnl| scaled to the window's own max, color
+// is the real sign. Gives the journal a graphical "how did this stretch
+// go" glance before reading any single day's narrative below.
+function EquitySparkline({ history }: { history: DailyPnlPoint[] | undefined }) {
+  if (!history || history.length === 0) return null;
+  const recent = history.slice(-20);
+  const max = Math.max(...recent.map((d) => Math.abs(d.daily_pnl ?? 0)), 1);
+  return (
+    <div className="flex items-end gap-1 h-9 mb-3.5" title="Recent daily P&L">
+      {recent.map((d) => {
+        const pnl = d.daily_pnl ?? 0;
+        const h = Math.max(3, (Math.abs(pnl) / max) * 30);
+        const cls = pnl > 0 ? "bg-pos" : pnl < 0 ? "bg-neg" : "bg-dim";
+        return (
+          <div
+            key={d.date}
+            className={`w-2 rounded-sm flex-shrink-0 ${cls}`}
+            style={{ height: `${h}px` }}
+            title={`${d.date}: ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 function RunNarrativeCard({
   run,
   funnel,
@@ -288,7 +319,13 @@ function RunNarrativeCard({
   );
 }
 
-export function JournalPanel({ onOpenCandidate }: { onOpenCandidate: (runs: RunSummary[], symbol: string) => void }) {
+export function JournalPanel({
+  account,
+  onOpenCandidate,
+}: {
+  account: AccountResponse | null;
+  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
+}) {
   const [dates, setDates] = useState<string[]>([]);
   const [date, setDate] = useState<string>("");
   const [day, setDay] = useState<JournalDayResponse | null>(null);
@@ -461,6 +498,7 @@ export function JournalPanel({ onOpenCandidate }: { onOpenCandidate: (runs: RunS
       {!error && dates.length === 0 && !loading && <StateMessage text="No journal data recorded yet." />}
       {!error && day && (
         <div>
+          <EquitySparkline history={account?.history} />
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-3">
             <div>
               <div className="text-[0.68rem] text-dim uppercase tracking-wide">Equity close</div>

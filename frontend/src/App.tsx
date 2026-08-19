@@ -12,21 +12,111 @@ import {
 import { usePoll } from "./lib/usePoll";
 import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
-import { DecisionFunnelPanel } from "./components/DecisionFunnelPanel";
-import { DirectionalBiasPanel } from "./components/DirectionalBiasPanel";
-import { WatchlistPanel } from "./components/WatchlistPanel";
+import { ExposureStrip } from "./components/ExposureStrip";
+import { CandidateRail } from "./components/CandidateRail";
+import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
-import { LiquidityPanel } from "./components/LiquidityPanel";
-import { PositionsPanel } from "./components/PositionsPanel";
-import { OrdersPanel, useOrderStatus } from "./components/OrdersPanel";
-import { TradesPanel } from "./components/TradesPanel";
-import { RunsPanel } from "./components/RunsPanel";
-import { MissedOpportunitiesPanel } from "./components/MissedOpportunitiesPanel";
+import { SupportTabs } from "./components/SupportTabs";
+import { useOrderStatus } from "./components/OrdersPanel";
 import { JournalPanel } from "./components/JournalPanel";
-import { SearchPanel } from "./components/SearchPanel";
-import { HealthPanel } from "./components/HealthPanel";
 import { RunDetailModal } from "./components/RunDetailModal";
 import { CandidateDetailModal } from "./components/CandidateDetailModal";
+import { Pill } from "./components/ui/Pill";
+
+type View = "cockpit" | "journal";
+type MobilePane = "watchlist" | "chart" | "decision";
+
+/* Top-level view switcher — Cockpit (the live working surface) vs Journal
+ * (the day-by-day narrative). Kept as two views rather than one more
+ * panel in the cockpit stack: Journal is a full day's worth of reading on
+ * its own and dilutes "what is happening right now" if it shares scroll
+ * space with the cockpit. */
+function ViewNav({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+  return (
+    <nav className="flex items-center gap-1 px-4 border-b border-border bg-bg">
+      {(["cockpit", "journal"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onChange(v)}
+          className={`px-3 py-2 text-[0.78rem] font-semibold uppercase tracking-wide border-b-2 -mb-px ${
+            view === v ? "border-accent text-accent" : "border-transparent text-dim hover:text-ink"
+          }`}
+        >
+          {v === "cockpit" ? "Cockpit" : "Journal"}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+const PANE_LABELS: Record<MobilePane, string> = {
+  watchlist: "Candidates",
+  chart: "Chart",
+  decision: "Decision Room",
+};
+
+// Below the `xl` breakpoint (covers every iPad size, portrait or
+// landscape) the three cockpit panes become an explicit tab strip instead
+// of being squeezed side by side — a real tabbed surface, not a
+// compressed desktop layout.
+function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePane) => void }) {
+  return (
+    <div className="xl:hidden flex border-b border-border">
+      {(["watchlist", "chart", "decision"] as const).map((p) => (
+        <button
+          key={p}
+          type="button"
+          onClick={() => onChange(p)}
+          className={`flex-1 py-2 text-[0.72rem] font-semibold uppercase tracking-wide border-b-2 ${
+            pane === p ? "border-accent text-accent" : "border-transparent text-dim"
+          }`}
+        >
+          {PANE_LABELS[p]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Center-column header for whichever symbol is currently charted — derived
+// only from the latest run's already-fetched funnel data (no extra
+// fetch), so the chart never sits contextless above a bare candlestick.
+function SelectedSymbolContext({
+  funnel,
+  symbol,
+  onOpenDetail,
+}: {
+  funnel: RunFunnelResponse | null;
+  symbol: string | null;
+  onOpenDetail: () => void;
+}) {
+  if (!symbol) return null;
+  const c = funnel?.candidates.find((x) => x.symbol === symbol);
+  return (
+    <div className="flex items-center gap-2 flex-wrap px-3.5 py-2 mb-3 rounded-lg border border-border bg-panel-alt">
+      <span className="font-bold text-[0.95rem]">{symbol}</span>
+      {c ? (
+        <>
+          <Pill text={c.direction} />
+          {c.is_bearish_hedge && <Pill text="bearish_hedge" />}
+          {c.executed ? (
+            <Pill text="executed" />
+          ) : c.reached_proposed_order ? (
+            <Pill text={c.risk_modified ? "modified" : "proposed"} />
+          ) : c.reached_pm_target ? (
+            <Pill text="reached_pm" />
+          ) : null}
+          <button type="button" onClick={onOpenDetail} className="ml-auto text-accent underline text-[0.78rem]">
+            Full drill-down &rarr;
+          </button>
+        </>
+      ) : (
+        <span className="text-dim text-[0.78rem]">not among the latest run&rsquo;s candidates</span>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [account, setAccount] = useState<AccountResponse | null>(null);
@@ -46,6 +136,8 @@ export default function App() {
   const [runsError, setRunsError] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [view, setView] = useState<View>("cockpit");
+  const [mobilePane, setMobilePane] = useState<MobilePane>("watchlist");
 
   const { state: modalState, value: modalActions } = useModalState();
 
@@ -139,28 +231,72 @@ export default function App() {
   return (
     <ModalProvider value={modalActions}>
       <TopStrip account={account} positions={positions} health={health} updatedAt={updatedAt} />
+      <ExposureStrip account={account} positions={positions} />
+      <ViewNav view={view} onChange={setView} />
 
-      <main className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
-        <DecisionFunnelPanel funnel={funnel} loading={funnelLoading} error={funnelError} />
-        <DirectionalBiasPanel />
-        <WatchlistPanel funnel={funnel} loading={funnelLoading} error={funnelError} onSelectSymbol={setChartSymbol} />
-        <PriceChartPanel symbol={chartSymbol} />
-        <LiquidityPanel account={account} positions={positions} />
-        <PositionsPanel positions={positions} error={positionsError} loading={!account} />
-        <MissedOpportunitiesPanel />
-        <OrdersPanel
-          orders={orders}
-          error={ordersError}
-          loading={!account}
-          status={orderStatus}
-          onStatusChange={setOrderStatus}
-        />
-        <TradesPanel trades={trades} error={tradesError} loading={!account} />
-        <RunsPanel runs={runs} error={runsError} loading={runs.length === 0 && !runsError} />
-        <JournalPanel onOpenCandidate={openJournalCandidate} />
-        <SearchPanel />
-        <HealthPanel health={health} error={healthError} />
-      </main>
+      {view === "cockpit" && (
+        <>
+          <PaneNav pane={mobilePane} onChange={setMobilePane} />
+
+          <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_360px] gap-3 p-3 xl:items-start">
+            <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto`}>
+              <CandidateRail
+                funnel={funnel}
+                loading={funnelLoading}
+                error={funnelError}
+                selectedSymbol={chartSymbol}
+                onSelectSymbol={setChartSymbol}
+              />
+            </div>
+
+            {/* min-w-0 is load-bearing: a CSS Grid `1fr` track defaults to
+                minmax(auto, 1fr), so without it this column would size to
+                its widest child's natural content width (the price chart)
+                instead of shrinking to its assigned share of the row,
+                pushing the Decision Room column past the viewport edge. */}
+            <div className={`${mobilePane === "chart" ? "block" : "hidden xl:block"} min-w-0`}>
+              <SelectedSymbolContext
+                funnel={funnel}
+                symbol={chartSymbol}
+                onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)}
+              />
+              <PriceChartPanel symbol={chartSymbol} />
+            </div>
+
+            <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto`}>
+              <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} />
+            </div>
+          </div>
+
+          <div className="px-3 pb-3">
+            <SupportTabs
+              account={account}
+              positions={positions}
+              positionsError={positionsError}
+              positionsLoading={!account}
+              orders={orders}
+              ordersError={ordersError}
+              ordersLoading={!account}
+              orderStatus={orderStatus}
+              onOrderStatusChange={setOrderStatus}
+              trades={trades}
+              tradesError={tradesError}
+              tradesLoading={!account}
+              runs={runs}
+              runsError={runsError}
+              runsLoading={runs.length === 0 && !runsError}
+              health={health}
+              healthError={healthError}
+            />
+          </div>
+        </>
+      )}
+
+      {view === "journal" && (
+        <div className="p-3">
+          <JournalPanel account={account} onOpenCandidate={openJournalCandidate} />
+        </div>
+      )}
 
       <footer className="text-center text-[0.7rem] text-dim py-4 px-3">
         QAMC Mission Control is a read-only view. It cannot place, cancel, or modify orders, and its failure has no

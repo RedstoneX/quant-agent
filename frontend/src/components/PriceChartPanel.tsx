@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, IChartApi, ISeriesApi, CandlestickData, HistogramData } from "lightweight-charts";
 import { api, PriceBar } from "../api/client";
-import { Panel, StateMessage } from "./ui/Panel";
+import { Panel } from "./ui/Panel";
 
 // Theme vars are space-separated "R G B" (Tailwind's arbitrary-alpha
 // convention, valid modern CSS) — lightweight-charts' internal color
@@ -56,8 +56,8 @@ export function PriceChartPanel({ symbol }: { symbol: string | null }) {
       grid: { vertLines: { color: colors.border }, horzLines: { color: colors.border } },
       rightPriceScale: { borderColor: colors.border },
       timeScale: { borderColor: colors.border },
+      width: containerRef.current.clientWidth,
       height: 260,
-      autoSize: true,
     });
     const candleSeries = chart.addCandlestickSeries({
       upColor: colors.green,
@@ -76,7 +76,28 @@ export function PriceChartPanel({ symbol }: { symbol: string | null }) {
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
 
+    // Handled manually rather than via lightweight-charts' own
+    // `autoSize: true` — this cockpit mounts the chart inside a pane that
+    // can be `display:none` (the mobile/iPad "Chart" tab starts hidden;
+    // the desktop 3-column pane can also cross the xl breakpoint on
+    // resize). autoSize correctly picks up the new pixel width on a
+    // hidden->visible transition, but does NOT itself re-fit the visible
+    // time range afterward, leaving all bars compressed into whatever
+    // narrow bar-spacing was last fit — most of the panel renders blank
+    // with a cramped sliver of candles at one edge. Doing resize() and
+    // fitContent() together, in that order, inside one observer removes
+    // the ordering race a second independent observer would risk.
+    const resizeObserver = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width && width > 0) {
+        chart.resize(width, 260);
+        chart.timeScale().fitContent();
+      }
+    });
+    resizeObserver.observe(containerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
     };
@@ -131,21 +152,43 @@ export function PriceChartPanel({ symbol }: { symbol: string | null }) {
     };
   }, [symbol]);
 
-  const status = error ? "error" : loading ? "loading" : "ok";
+  // "degraded", not "ok" — a symbol is selected but no real bars rendered
+  // (e.g. no Alpaca market-data credentials in this environment). An "OK"
+  // pill over a blank chart would misrepresent a known data gap as
+  // everything-fine.
+  const status = error ? "error" : loading ? "loading" : symbol && barCount === 0 ? "degraded" : "ok";
+  const overlayText = !symbol
+    ? "Click a candidate to chart it."
+    : error
+    ? `Could not load ${symbol} price history: ${error}`
+    : !loading && barCount === 0
+    ? `No daily bars available for ${symbol}.`
+    : null;
+
   return (
     <Panel title={symbol ? `Price — ${symbol}` : "Price chart"} status={status} full>
-      {!symbol && <StateMessage text="Click a candidate above to chart it." />}
-      {symbol && error && <StateMessage text={`Could not load ${symbol} price history: ${error}`} error />}
-      {symbol && !error && barCount === 0 && !loading && (
-        <StateMessage text={`No daily bars available for ${symbol}.`} />
-      )}
       {/* Always mounted at a real, fixed size, never display:none — the
           chart object is created once against this container at mount
           time and lightweight-charts' autoSize ResizeObserver needs a
-          real height to measure from the start. An empty grid with no
-          candles when nothing is loaded yet is an honest empty state,
-          not fabricated data. */}
-      <div ref={containerRef} className="w-full h-[260px]" />
+          real height to measure from the start. The overlay below sits on
+          top of that same empty grid rather than adding a second block of
+          vertical space beneath it, so an empty/degraded state reads as a
+          designed placeholder instead of prime chart space going to waste
+          on a blank "OK" box. */}
+      <div className="relative">
+        <div ref={containerRef} className="w-full h-[260px]" />
+        {overlayText && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
+            <span
+              className={`text-[0.82rem] text-center px-3 py-1.5 rounded-md border ${
+                error ? "text-neg border-neg/40 bg-neg/10" : "text-dim border-border bg-panel/85"
+              }`}
+            >
+              {overlayText}
+            </span>
+          </div>
+        )}
+      </div>
     </Panel>
   );
 }

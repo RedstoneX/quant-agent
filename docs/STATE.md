@@ -224,6 +224,56 @@ Frontend Vitest: 8 passed (unchanged — no `frontend/`/`src/api/` files
 were touched this tranche). Evidence:
 `docs/verification/stage-6e-preview-contract-fix/`.
 
+### Stage 6f — cockpit information architecture + visual redesign
+
+Operator review of the Stage 6e cockpit found it still read as a long
+telemetry/admin page (a flat stacked two-column layout, including an
+unbounded ~80-ticker flat pill dump) rather than a compact Mission
+Control cockpit. Frontend-only restructure, no backend/API changes:
+
+- `App.tsx` rebuilt into a real cockpit grid — candidate rail (left) /
+  chart + selected-symbol context (center) / Decision Room (right) at
+  desktop width, collapsing to an explicit `Candidates / Chart /
+  Decision Room` tab strip below the `xl` (1280px) breakpoint (covers
+  every iPad size) instead of a squeezed 3-column layout. Nine
+  previously-stacked full-width panels (positions, orders, trades, runs,
+  directional bias, missed opportunities, search, health) are now a
+  single tabbed support area below the cockpit. Cockpit vs Journal is
+  its own top-level view switch.
+- `CandidateRail` (replaces `WatchlistPanel`): the candidate universe is
+  bucketed by the furthest funnel stage each candidate reached
+  (rejected by specialist / reached PM / proposed / modified-or-blocked
+  by risk / executed), with clickable filter chips, a funnel-bars
+  visualization, a symbol filter, and a height-bounded scrollable list
+  — no more unbounded flat pill dump.
+- `DecisionRoomPanel` (replaces the old full-width decision-funnel
+  panel): a narrow-column Specialists → PM → AI Risk → Deterministic
+  Gate → Execution chain, rendered **vertically** so all 5 stages are
+  visible without scrolling, with the deterministic gate visually
+  marked "Final authority" (thicker border, explicit label) rather than
+  reading as just another agent step.
+- Real visual toolbox added where the cockpit was plain text/tables:
+  conviction meter bars on specialist cards, segmented exposure/
+  liquidity bars on the cash & risk panel, an always-visible header
+  exposure gauge (`ExposureStrip`, real long/hedge/cash split from
+  already-fetched account+positions data), a real-data equity sparkline
+  on the Journal view.
+- Two real bugs found and fixed during this same pass: a CSS Grid `1fr`
+  track without `min-width:0` let the price chart's content width push
+  the Decision Room column off-screen; `lightweight-charts`' `autoSize`
+  resized the chart canvas correctly when its pane went from hidden to
+  visible but never re-fit the visible time range, rendering bars
+  compressed into a sliver — replaced with an explicit `ResizeObserver`
+  that resizes and fits together.
+- Verified against real `qamc` production data (honest current empty
+  state — zero candidates, zero non-cash positions) via the existing
+  `ops/preview/branch_preview.py`, and against a throwaway seeded
+  scenario (not committed) spanning every candidate-funnel bucket, both
+  desktop and iPad, zero console/page errors across 12 scripted
+  Playwright captures. `qamc` production `/health` confirmed unaffected
+  (same PID, untouched). `npm run build` + `npm run test` (8/8) pass.
+  Evidence: `docs/verification/stage-6f-cockpit-ia/`.
+
 Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
 default, or keep both mounted). Claude does not cut over or merge its
 own work.

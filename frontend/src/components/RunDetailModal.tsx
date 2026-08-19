@@ -5,7 +5,7 @@ import { Modal } from "./ui/Modal";
 import { Pill } from "./ui/Pill";
 import { EvidenceSection } from "./ui/Evidence";
 import { StateMessage } from "./ui/Panel";
-import { FunnelSteps } from "./DecisionFunnelPanel";
+import { FunnelSteps } from "./funnelShared";
 import { useModalActions } from "../context/ModalContext";
 
 const STATE_LABELS: Record<string, string> = {

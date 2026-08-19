@@ -59,11 +59,59 @@ function connectorTone(status: FlowStatus): string {
   return "border-pos/50";
 }
 
-export function DecisionFlowDiagram({ stages }: { stages: FlowStage[] }): ReactNode {
+export function DecisionFlowDiagram({
+  stages,
+  layout = "horizontal",
+}: {
+  stages: FlowStage[];
+  /** "vertical" stacks the chain top-to-bottom so all 5 stages are visible
+   * without horizontal scrolling — needed for narrow contexts (the
+   * cockpit's ~340px Decision Room rail) where the horizontal layout's 5
+   * nodes don't fit and the tail (deterministic gate, execution — exactly
+   * the stages a "why did/didn't it trade" glance most needs) end up
+   * hidden behind a scrollbar. */
+  layout?: "horizontal" | "vertical";
+}): ReactNode {
+  if (layout === "vertical") {
+    return (
+      <div className="flex flex-col">
+        {stages.map((s, i) => {
+          const style = STATUS_STYLE[s.status];
+          const isGate = s.key === "gate";
+          return (
+            <div key={s.key}>
+              {i > 0 && <div className={`w-0 h-2.5 ml-[13px] border-l-2 border-dashed ${connectorTone(s.status)}`} aria-hidden="true" />}
+              <div
+                className={`flex items-start gap-2 rounded-lg px-2.5 py-1.5 ${isGate ? "border-2" : "border"} ${style.border} ${style.bg}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${style.dot}`} aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-[0.76rem] leading-tight">{s.label}</span>
+                    <span className={`text-[0.62rem] font-semibold uppercase tracking-wide ${style.text}`}>{STATUS_TEXT[s.status]}</span>
+                  </div>
+                  {isGate && <div className="text-[0.56rem] text-dim uppercase tracking-wide font-semibold">Final authority</div>}
+                  {s.caption && <div className="text-[0.7rem] text-dim mt-0.5 leading-snug">{s.caption}</div>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-stretch gap-0 overflow-x-auto pb-1 -mx-0.5 px-0.5">
       {stages.map((s, i) => {
         const style = STATUS_STYLE[s.status];
+        // The deterministic gate is the final, non-negotiable safety
+        // authority — every model-driven stage before it is advisory by
+        // comparison. Visually distinguished (thicker border + a small
+        // "final authority" marker) so it doesn't read as just one more
+        // agent in the chain, per the project's decision-chain contract:
+        // Specialists -> PM -> AI Risk -> deterministic gate -> execution.
+        const isGate = s.key === "gate";
         return (
           <div key={s.key} className="flex items-center flex-shrink-0">
             {i > 0 && (
@@ -72,11 +120,20 @@ export function DecisionFlowDiagram({ stages }: { stages: FlowStage[] }): ReactN
                 aria-hidden="true"
               />
             )}
-            <div className={`min-w-[104px] sm:min-w-[132px] rounded-lg border px-2.5 py-2 ${style.border} ${style.bg}`}>
+            <div
+              className={`min-w-[104px] sm:min-w-[132px] rounded-lg px-2.5 py-2 ${
+                isGate ? "border-2" : "border"
+              } ${style.border} ${style.bg} ${isGate ? "ring-1 ring-offset-0 ring-ink/10" : ""}`}
+            >
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${style.dot}`} aria-hidden="true" />
                 <span className="font-bold text-[0.72rem] leading-tight">{s.label}</span>
               </div>
+              {isGate && (
+                <div className="text-[0.56rem] text-dim uppercase tracking-wide font-semibold mb-0.5">
+                  Final authority
+                </div>
+              )}
               <div className={`text-[0.64rem] font-semibold uppercase tracking-wide ${style.text}`}>
                 {STATUS_TEXT[s.status]}
               </div>

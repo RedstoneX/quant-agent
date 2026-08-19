@@ -1,6 +1,7 @@
 import { AccountResponse, PositionItem } from "../api/client";
 import { fmtMoney } from "../lib/format";
 import { Panel, StateMessage } from "./ui/Panel";
+import { SegmentedBar } from "./ui/Meter";
 
 export function LiquidityPanel({
   account,
@@ -19,27 +20,34 @@ export function LiquidityPanel({
   }
   const liq = account.liquidity;
   const longMv = positions.filter((p) => p.direction === "long").reduce((s, p) => s + (p.market_value || 0), 0);
-  const hedgeMv = positions
-    .filter((p) => p.direction === "bearish_hedge")
-    .reduce((s, p) => s + (p.market_value || 0), 0);
+  const hedgeMv = positions.filter((p) => p.direction === "bearish_hedge").reduce((s, p) => s + (p.market_value || 0), 0);
+  const cashEquivMv = positions.filter((p) => p.is_cash_equivalent).reduce((s, p) => s + (p.market_value || 0), 0);
+
+  // "held back" = the slice of raw cash the reserve floor keeps out of
+  // deployable_cash — derived as raw_cash minus deployable_cash so the bar
+  // can never disagree with deployable_cash's own math, rather than
+  // rendering reserve_usd (a target floor) as if it were guaranteed to be
+  // fully funded by cash alone.
+  const heldBack = liq && liq.raw_cash !== null && liq.deployable_cash !== null ? Math.max(liq.raw_cash - liq.deployable_cash, 0) : 0;
 
   return (
     <Panel title="Cash & risk exposure" status="ok">
       {liq ? (
         <>
-          {/* lg: (1024px), not sm: (640px) — this panel is half-width inside
-              the main 2-column layout from md: (768px) up, so a viewport-
-              width breakpoint alone would trigger 4 columns while the
-              panel itself is still only ~400px wide at e.g. iPad's 820px,
-              cramming labels like "Sweep parked (SGOV)" into ~90px. */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2">
-            <Figure label="Raw cash" value={fmtMoney(liq.raw_cash)} />
-            <Figure
-              label={`Sweep parked${liq.sweep_symbol ? ` (${liq.sweep_symbol})` : ""}`}
-              value={liq.sweep_enabled ? fmtMoney(liq.sweep_parked_value) : "disabled"}
+          <div className="mb-1">
+            <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1.5">Liquidity — where the cash is</div>
+            <SegmentedBar
+              formatValue={fmtMoney}
+              segments={[
+                { label: "Deployable cash", value: liq.deployable_cash ?? 0, tone: "pos" },
+                { label: "Reserve (held back)", value: heldBack, tone: "warn" },
+                {
+                  label: `Sweep parked${liq.sweep_symbol ? ` (${liq.sweep_symbol})` : ""}`,
+                  value: liq.sweep_enabled ? liq.sweep_parked_value ?? 0 : 0,
+                  tone: "dim",
+                },
+              ]}
             />
-            <Figure label="Reserve floor" value={fmtMoney(liq.reserve_usd)} />
-            <Figure label="Deployable cash" value={fmtMoney(liq.deployable_cash)} />
           </div>
           {liq.sweep_enabled && (
             <div className="state-message">
@@ -51,19 +59,22 @@ export function LiquidityPanel({
       ) : (
         <StateMessage text="Liquidity breakdown unavailable." />
       )}
-      <div className="grid grid-cols-2 gap-3 mt-3">
-        <Figure label="Long exposure" value={fmtMoney(longMv)} />
-        <Figure label="Bearish-hedge exposure" value={hedgeMv > 0 ? fmtMoney(hedgeMv) : "none"} />
+
+      <div className="mt-3.5">
+        <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1.5">Positions — real risk exposure</div>
+        {longMv + hedgeMv + cashEquivMv > 0 ? (
+          <SegmentedBar
+            formatValue={fmtMoney}
+            segments={[
+              { label: "Long", value: longMv, tone: "pos" },
+              { label: "Bearish hedge", value: hedgeMv, tone: "hedge" },
+              { label: "Cash-equivalent", value: cashEquivMv, tone: "dim" },
+            ]}
+          />
+        ) : (
+          <StateMessage text="No open positions to visualize." />
+        )}
       </div>
     </Panel>
-  );
-}
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[0.68rem] text-dim uppercase tracking-wide">{label}</div>
-      <div className="text-[1.05rem] font-bold tabular-nums">{value}</div>
-    </div>
   );
 }

@@ -20,7 +20,11 @@ export function Panel({
   const statusColor =
     status === "error" ? "text-neg" : status === "degraded" ? "text-warn" : status === "ok" ? "text-pos" : "text-dim";
   return (
-    <section className={`panel ${full ? "md:col-span-2" : ""} ${accent ? "border-accent/40" : ""}`}>
+    <section
+      className={`panel ${full ? "md:col-span-2" : ""} ${
+        accent ? "border-accent/40 shadow-[0_10px_28px_-12px_rgb(var(--c-accent)/0.4)]" : ""
+      }`}
+    >
       <div className="panel-head">
         <h2>{title}</h2>
         <div className="ml-auto flex items-center gap-2">

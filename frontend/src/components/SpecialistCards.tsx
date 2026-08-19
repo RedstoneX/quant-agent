@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { CandidateDetailResponse, ConsensusSummary } from "../api/client";
-import { CardText } from "./ui/Evidence";
 import { Pill } from "./ui/Pill";
 import { StateMessage } from "./ui/Panel";
+import { Meter } from "./ui/Meter";
 
 /* First-class per-specialist "agent cards" — Orallexa PerspectivePanelCard-
  * inspired (docs/DONOR_COMPONENTS.md, structural/visual reference only,
@@ -133,6 +134,35 @@ const ROLE_BADGE: Record<string, string> = {
   "News Analyst": "bg-warn/15 text-warn",
 };
 
+// Rough, labeled-as-such visual mapping from the LLM's own discrete
+// high/medium/low conviction label to a meter fill — never a fabricated
+// precise number, just a graphical read of the same three-value label
+// already shown as text beside it.
+const CONVICTION_PCT: Record<string, number> = { high: 92, medium: 58, low: 28 };
+const DIRECTION_TONE: Record<Direction, "pos" | "neg" | "dim"> = { bullish: "pos", bearish: "neg", neutral: "dim" };
+
+// Long specialist reasoning defaults to a clamped preview with an explicit
+// expand toggle — progressive disclosure inside an already-dense card grid,
+// rather than letting one verbose specialist stretch every card in the row.
+function ReasoningBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > 170;
+  return (
+    <div>
+      <p className={`text-[0.8rem] mt-1.5 leading-snug ${!expanded && long ? "line-clamp-3" : ""}`}>{text}</p>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-accent text-[0.7rem] font-semibold mt-1"
+        >
+          {expanded ? "Show less" : "Show full reasoning →"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RoleBadge({ role }: { role: string }) {
   const cls = ROLE_BADGE[role] || "bg-dim/15 text-dim";
   return (
@@ -181,7 +211,10 @@ export function SpecialistCards({ detail }: { detail: CandidateDetailResponse })
                   <span className="text-dim">Conviction</span>
                   <span>{e.conviction ? e.conviction.toString().toUpperCase() : "—"}</span>
                 </div>
-                <CardText text={e.reasoning} />
+                {e.conviction && CONVICTION_PCT[e.conviction] !== undefined && (
+                  <Meter value={CONVICTION_PCT[e.conviction]} tone={DIRECTION_TONE[e.direction]} />
+                )}
+                <ReasoningBlock text={e.reasoning} />
                 {align && <div className={`text-[0.7rem] font-semibold mt-1.5 ${TONE_TEXT[align.tone]}`}>{align.label}</div>}
               </div>
             );
