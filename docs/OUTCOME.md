@@ -29,7 +29,7 @@ The operator should be able to understand, without reading raw logs:
 
 Mission Control is intended to feel like a **real trading cockpit**, not a vertically stacked database/log viewer.
 
-The prior QAMC Mission Control vision remains the product reference for layout and information hierarchy: a dense desktop-first cockpit, responsive on iPad, with a compact account/status strip, candidate/watchlist context, chart-led market context where authoritative data supports it, a visually prominent Specialist → PM → Risk → deterministic gate → execution chain, positions/orders/trades as supporting state, and journal/investigation/learning views that explain decisions and missed opportunities.
+`docs/visual/MISSION_CONTROL_VISION_BOARD.png` is the durable product reference for layout and information hierarchy: a dense desktop-first cockpit, responsive on iPad, with a compact account/status strip, candidate/watchlist context, chart-led market context where authoritative data supports it, a visually prominent Specialist → PM → Risk → deterministic gate → execution chain, positions/orders/trades as supporting state, and journal/investigation/learning views that explain decisions and missed opportunities.
 
 The governing UX principles are:
 

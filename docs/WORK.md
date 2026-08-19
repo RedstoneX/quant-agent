@@ -40,7 +40,7 @@ SGOV is **cash-equivalent sweep parking**, not a PM investment thesis. Mission C
 
 The existing single-column/vertically stacked dashboard is a baseline, not the target product.
 
-The prior QAMC Mission Control vision is reaffirmed as the **layout and information-hierarchy target**: a dense, coherent desktop trading cockpit that remains usable on iPad, with the most important trading state visible without long scrolling or raw-log archaeology.
+`docs/visual/MISSION_CONTROL_VISION_BOARD.png` is the durable Mission Control design reference. It is reaffirmed as the **layout and information-hierarchy target**: a dense, coherent desktop trading cockpit that remains usable on iPad, with the most important trading state visible without long scrolling or raw-log archaeology.
 
 Converge toward these characteristics using the data and architecture QAMC actually has:
 
