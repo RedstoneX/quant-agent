@@ -143,6 +143,10 @@ export interface PriceBarsResponse {
 export interface AgentLogItem {
   id: number;
   agent_name: string;
+  decision_id: string | null;
+  timestamp: string | null;
+  input_summary: string | null;
+  output_summary: string | null;
   requested_provider: string | null;
   requested_model: string | null;
   actual_provider: string | null;
@@ -259,9 +263,26 @@ export interface TradeDecision {
   reasoning: string;
 }
 
+// "clean" = approved untouched; the others each name the specific reason
+// the AI Risk Manager modified, scaled, or rejected — PM reads recent
+// history of this field to self-calibrate. See src/models.py::RiskVerdict.
+export type RiskReasonCategory =
+  | "clean"
+  | "oversized"
+  | "rr_fail"
+  | "concentration"
+  | "correlation_risk"
+  | "event_risk"
+  | "macro_misalign"
+  | "data_degraded"
+  | "signal_fidelity"
+  | "other";
+
 export interface RiskVerdict {
   approved: boolean;
   reasoning: string;
+  reasoning_chain: ReasoningChainLike;
+  reason_category: RiskReasonCategory;
   modifications: { symbol: string; field: string; original_value: number; new_value: number; reason: string }[];
   scale_all_buys: number;
 }
