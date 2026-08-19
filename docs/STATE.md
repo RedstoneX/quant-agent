@@ -166,6 +166,34 @@ Evidence: `docs/verification/stage-6b-deliberation-journal-bias/`. Full
 backend suite unaffected throughout (1857 passed, 0 failed) — this
 tranche is frontend-only.
 
+### Stage 6c — directional exposure semantics fix (external review finding)
+
+`CandidateFunnelItem.direction` is the instrument's own signal, not
+resulting portfolio exposure — for an approved inverse ETF, a bullish
+instrument signal expresses bearish market exposure. The Directional Bias
+panel was conflating the two. Fixed: `exposureDirection()` flips
+bullish/bearish only when `is_bearish_hedge` is true (derived from that
+API flag, never a symbol heuristic); candidate and PM-proposal direction
+aggregation now show both series, clearly labeled. 8 new Vitest tests
+(dev-only dependency, confirmed absent from the production bundle).
+Evidence: `docs/verification/stage-6c-directional-exposure-fix/`.
+
+### Stage 6d — operator branch-preview endpoint
+
+`ops/preview/branch_preview.py`: an ephemeral (no systemd unit, no
+auto-start), GET-only, `dev`-account process letting the operator review
+this branch's actual `/cockpit` and `/ui` frontend from any tailnet
+device before merge, proxying real (never faked/duplicated) `qamc`
+production data via loopback GET requests to `127.0.0.1:8800` — the only
+data source available without weakening the `dev`/`qamc` account
+boundary. Binds only to the VPS's Tailscale IP (`100.111.170.97` /
+`ovh-vps.wallaby-bowfin.ts.net:8810`) — verified structurally
+unreachable via the public IP and even `127.0.0.1`. Verified `qamc`'s
+Mission Control process untouched (identical PID/uptime/health before
+and after). Documented known limitation: panels depending on this
+branch's not-yet-deployed backend endpoints degrade honestly rather than
+faking data. Evidence: `docs/verification/stage-6d-branch-preview/`.
+
 Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
 default, or keep both mounted). Claude does not cut over or merge its
 own work.
