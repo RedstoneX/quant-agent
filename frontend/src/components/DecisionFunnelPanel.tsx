@@ -3,6 +3,7 @@ import { fmtNum, fmtTime } from "../lib/format";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 import { Card, KV, CardText } from "./ui/Evidence";
+import { DecisionFlowDiagram, FlowStage, FlowStatus } from "./DecisionFlowDiagram";
 
 const STATE_LABELS: Record<DecisionState, string> = {
   executed: "EXECUTED",
@@ -42,6 +43,52 @@ export function FunnelSteps({ funnel }: { funnel: RunFunnelResponse }) {
   );
 }
 
+// Run-wide aggregate of the same Specialists -> PM -> AI Risk -> gate ->
+// execution flow language CandidateDetailModal draws per-candidate — built
+// from RunFunnelResponse's own aggregate counts/flags, never a per-candidate
+// fabrication. `candidates[].risk_modified`/`executed` are precise
+// server-computed booleans (see src/api/routes_evidence.py::get_run_funnel);
+// counting them here is exact, not an estimate.
+function buildFunnelStages(funnel: RunFunnelResponse): FlowStage[] {
+  const considered = funnel.candidates_considered;
+  const pmCount = funnel.reached_pm_count;
+  const proposedCount = funnel.proposed_order_count;
+  const modifiedCount = funnel.candidates.filter((c) => c.risk_modified).length;
+  const execCount = funnel.executed_count;
+  const verdict = funnel.risk_verdict?.verdict ?? null;
+
+  let riskStatus: FlowStatus = "not_reached";
+  if (funnel.hard_risk_block) riskStatus = "blocked";
+  else if (verdict) riskStatus = verdict.approved === false ? "rejected" : modifiedCount > 0 ? "modified" : "approved";
+  else if (proposedCount > 0) riskStatus = "pending";
+
+  let gateStatus: FlowStatus = "not_reached";
+  let gateCaption: string | undefined;
+  if (funnel.hard_risk_block) {
+    gateStatus = "blocked";
+    gateCaption = "Blocked before AI Risk Manager ran";
+  } else if (execCount > 0) {
+    gateStatus = "reached";
+    gateCaption = `${execCount} cleared`;
+  } else if (verdict?.approved === true) {
+    gateStatus = "pending";
+    gateCaption = "Approved; no execution recorded";
+  }
+
+  return [
+    { key: "specialists", label: "Specialists", status: considered > 0 ? "reached" : "not_reached", caption: `${fmtNum(considered, 0)} considered` },
+    { key: "pm", label: "Portfolio Manager", status: pmCount > 0 ? "reached" : "not_reached", caption: `${fmtNum(pmCount, 0)} reached target` },
+    {
+      key: "risk",
+      label: "AI Risk Manager",
+      status: riskStatus,
+      caption: proposedCount > 0 ? `${fmtNum(proposedCount, 0)} proposed${modifiedCount ? `, ${fmtNum(modifiedCount, 0)} modified` : ""}` : undefined,
+    },
+    { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
+    { key: "exec", label: "Execution", status: execCount > 0 ? "executed" : "not_reached", caption: `${fmtNum(execCount, 0)} executed` },
+  ];
+}
+
 export function DecisionFunnelPanel({
   funnel,
   loading,
@@ -67,7 +114,7 @@ export function DecisionFunnelPanel({
               {funnel.session_prefix ? ` (${funnel.session_prefix})` : ""} &middot; {fmtTime(funnel.timestamp)}
             </span>
           </div>
-          <FunnelSteps funnel={funnel} />
+          <DecisionFlowDiagram stages={buildFunnelStages(funnel)} />
           {funnel.bearish_hedge_considered && (
             <div className="state-message mt-2">
               A bearish inverse-ETF candidate was considered this run — see Candidates below.
@@ -98,7 +145,10 @@ export function DecisionFunnelPanel({
               <Card title="AI Risk Manager">
                 <div className="kv-row">
                   <span className="text-dim">Verdict</span>
-                  <Pill text={funnel.risk_verdict.verdict.approved ? "approved" : "rejected"} />
+                  <div className="flex gap-1.5 flex-wrap justify-end">
+                    <Pill text={funnel.risk_verdict.verdict.approved ? "approved" : "rejected"} />
+                    <Pill text={funnel.risk_verdict.verdict.reason_category} />
+                  </div>
                 </div>
                 <CardText text={funnel.risk_verdict.verdict.reasoning} />
               </Card>

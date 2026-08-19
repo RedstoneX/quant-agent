@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  AgentLogItem,
   CandidateDetailResponse,
-  ConsensusSummary,
   EarningsAnalysis,
   MacroBroaderContext,
   NewsBroaderContext,
   NewsSymbolItem,
+  ReasoningChainLike,
+  RunDetailResponse,
+  RunFunnelResponse,
   TechAnalysisResult,
   TradeItem,
   TradeDecision,
@@ -17,38 +20,8 @@ import { Pill } from "./ui/Pill";
 import { Card, KV, CardText, EvidenceSection } from "./ui/Evidence";
 import { StateMessage } from "./ui/Panel";
 import { useModalActions } from "../context/ModalContext";
-
-/* Consensus / disagreement — Orallexa PerspectivePanelCard-inspired: one
- * row per specialist with a directional bias badge and its reasoning,
- * plus an agreement summary, rather than a plain bulleted list. */
-function ConsensusBlock({ consensus }: { consensus: ConsensusSummary }) {
-  const dirColor = (d: string) =>
-    d === "bullish" ? "bg-pos" : d === "bearish" ? "bg-neg" : "bg-dim";
-  return (
-    <Card title="Consensus / disagreement">
-      <div className="kv-row">
-        <span className="text-dim">Agreement</span>
-        <Pill text={consensus.agreement} />
-      </div>
-      {consensus.signals.length ? (
-        <div className="mt-2 flex flex-col gap-1.5">
-          {consensus.signals.map((s, i) => (
-            <div key={i} className="flex items-start gap-2 text-[0.79rem]">
-              <span className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${dirColor(s.direction)}`} />
-              <div>
-                <strong>{s.source}: </strong>
-                <Pill text={s.direction} />
-                <span> {s.detail}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <StateMessage text="No independent signals available to compare." />
-      )}
-    </Card>
-  );
-}
+import { SpecialistCards } from "./SpecialistCards";
+import { DecisionFlowDiagram, FlowStage, FlowStatus } from "./DecisionFlowDiagram";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
   if (!tech) return null;
@@ -218,144 +191,318 @@ function ProposedVsExecuted({ proposed, trade }: { proposed: TradeDecision | nul
   );
 }
 
-/* PM -> AI Risk -> execution, rendered as a numbered sequence. The AI
- * Risk verdict card below is deliberately shaped like Orallexa's
- * `PortfolioManagerCard` (approve/reject + reasoning + modifications) —
- * that donor component's fields map to QAMC's risk_manager semantics,
- * not QAMC's own Portfolio Manager (Stage 0 donor-inventory naming-
- * inversion note). */
-function DecisionChain({ detail }: { detail: CandidateDetailResponse }) {
-  const steps: { title: string; body: JSX.Element }[] = [];
+/* ------------------------------------------------------------------ *
+ * Decision flow: Specialists -> Portfolio Manager -> AI Risk Manager ->
+ * Deterministic Gate -> Execution. buildCandidateStages derives every
+ * stage's reached/outcome status purely from fields CandidateDetailResponse
+ * already carries (cross-checked against the run funnel's per-candidate
+ * `executed`/`hard_risk_block` when that supplementary fetch succeeds) —
+ * never a fabricated guess about a stage Mission Control has no evidence
+ * for. See src/api/db_reads.py::is_executed_trade for the exact predicate
+ * `isExecutedTrade` below mirrors.
+ * ------------------------------------------------------------------ */
 
-  if (detail.pm_reasoning?.portfolio_view) {
-    steps.push({
-      title: "Portfolio Manager reasoning",
-      body: <CardText text={detail.pm_reasoning.portfolio_view} />,
-    });
+// TradeItem (the Mission Control API's trade shape) doesn't expose the raw
+// `fill_qty` column src/api/db_reads.py::is_executed_trade also checks —
+// only fill_status/action are visible here, so this fallback uses those two
+// (still exact for the common no-fill-tracking and explicit-fill cases; the
+// funnel's own per-candidate `executed` boolean is preferred over this
+// fallback whenever the supplementary funnel fetch succeeds).
+function isExecutedTrade(trade: TradeItem | null): boolean {
+  if (!trade) return false;
+  return (trade.fill_status === null && trade.action !== "HOLD") || trade.fill_status === "filled";
+}
+
+// "clean" = approved untouched, "modified" = approved with a modification,
+// "rejected" = not approved. Exactly the derivation the product brief
+// specifies from risk_verdict.verdict.approved + modifications/risk_modification.
+function riskOutcome(detail: CandidateDetailResponse): "clean" | "modified" | "rejected" | null {
+  const v = detail.risk_verdict?.verdict;
+  if (!v) return null;
+  if (v.approved === false) return "rejected";
+  const hasMods = !!detail.risk_modification || v.modifications.length > 0;
+  return hasMods ? "modified" : "clean";
+}
+
+function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
+  const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
+  const specialistsReached = specialistCount > 0;
+
+  const pmReached = !!(detail.pm_target || detail.pm_proposed_order || detail.pm_reasoning?.portfolio_view);
+  const pmCaption = detail.pm_target
+    ? `Target ${fmtNum(detail.pm_target.target_weight_pct)}%`
+    : detail.pm_proposed_order
+    ? detail.pm_proposed_order.action
+    : undefined;
+
+  const verdict = detail.risk_verdict?.verdict ?? null;
+  let riskStatus: FlowStatus = "not_reached";
+  if (verdict) {
+    const hasMods = !!detail.risk_modification || verdict.modifications.length > 0;
+    riskStatus = verdict.approved === false ? "rejected" : hasMods ? "modified" : "approved";
   }
-  if (detail.pm_target) {
-    const t = detail.pm_target;
-    steps.push({
-      title: "Portfolio Manager target",
-      body: (
-        <>
-          <KV label="Target weight" value={`${fmtNum(t.target_weight_pct)}%`} />
-          <KV label="Conviction" value={t.conviction} />
-          <CardText text={t.thesis} />
-        </>
-      ),
-    });
+  const riskCaption = verdict?.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
+
+  const hardBlocked = funnel?.hard_risk_block === true;
+  const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
+  const executed = funnelCandidate ? funnelCandidate.executed : isExecutedTrade(detail.trade);
+
+  let gateStatus: FlowStatus = "not_reached";
+  let gateCaption: string | undefined;
+  if (hardBlocked) {
+    gateStatus = "blocked";
+    gateCaption = "Hard-risk gate blocked every candidate this run before the AI Risk Manager was called.";
+  } else if (detail.trade) {
+    gateStatus = "reached";
+    gateCaption = "Cleared for execution.";
+  } else if (verdict?.approved === true) {
+    gateStatus = "pending";
+    gateCaption = "Approved upstream; no trade recorded — gate outcome not separately exposed to Mission Control.";
+  } else if (verdict?.approved === false) {
+    gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
+  } else {
+    gateCaption = "Not reached — no usable AI Risk Manager verdict recorded for this run.";
   }
-  if (detail.pm_proposed_order) {
-    const p = detail.pm_proposed_order;
-    steps.push({
-      title: "PM constructed order (pre-review)",
-      body: (
-        <>
-          <div className="kv-row">
-            <span className="text-dim">Action</span>
-            <Pill text={p.action} />
-          </div>
-          <KV label="Allocation" value={`${fmtNum(p.allocation_pct)}%`} />
-          <KV label="Entry" value={fmtMoney(p.entry_price)} />
-          <CardText text={p.reasoning} />
-        </>
-      ),
-    });
-  }
-  if (detail.risk_verdict) {
-    const v = detail.risk_verdict.verdict;
-    steps.push({
-      title: "AI Risk Manager verdict (run-wide)",
-      body: v ? (
-        <>
-          <div className="kv-row">
-            <span className="text-dim">Verdict</span>
-            <Pill text={v.approved ? "approved" : "rejected"} />
-          </div>
-          <CardText text={v.reasoning} />
-          {v.modifications.length > 0 && (
-            <ul className="mt-1.5 pl-4 text-[0.79rem] list-disc">
-              {v.modifications.map((m, i) => (
-                <li key={i}>
-                  {m.symbol}: {m.field} {m.original_value} &rarr; {m.new_value} ({m.reason})
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      ) : (
-        <StateMessage text="Verdict recorded but could not be read back." />
-      ),
-    });
-  }
-  if (detail.risk_modification) {
-    const m = detail.risk_modification;
-    steps.push({
-      title: "AI Risk Manager modification (this symbol)",
-      body: (
-        <>
-          <KV label="Field" value={m.field} />
-          <KV label="Original" value={fmtNum(m.original_value)} />
-          <KV label="Modified to" value={fmtNum(m.new_value)} />
-          <CardText text={m.reason} />
-        </>
-      ),
-    });
-  }
-  if (detail.trade) {
-    const t = detail.trade;
-    steps.push({
-      title: "Executed trade",
-      body: (
-        <>
-          <div className="kv-row">
-            <span className="text-dim">Action</span>
-            <Pill text={t.action} />
-          </div>
-          <KV label="Qty" value={t.qty !== null && t.qty !== undefined ? fmtNum(t.qty) : null} />
-          <KV label="Price" value={fmtMoney(t.price)} />
-          <div className="kv-row">
-            <span className="text-dim">Fill status</span>
-            <Pill text={t.fill_status || "unfilled"} />
-          </div>
-          {t.reasoning && <CardText text={t.reasoning} />}
-          <ProposedVsExecuted proposed={detail.pm_proposed_order} trade={detail.trade} />
-        </>
-      ),
-    });
+
+  let execStatus: FlowStatus = "not_reached";
+  let execCaption: string | undefined;
+  if (executed) {
+    execStatus = "executed";
+    execCaption = detail.trade
+      ? `${detail.trade.action}${detail.trade.qty !== null && detail.trade.qty !== undefined ? ` ${fmtNum(detail.trade.qty)}sh` : ""}`
+      : undefined;
+  } else if (verdict?.approved === false) {
+    execCaption = "No trade — rejected by the AI Risk Manager before execution.";
   } else if (detail.pm_proposed_order) {
-    steps.push({
-      title: "Executed trade",
-      body: (
-        <StateMessage
-          text={
-            detail.risk_verdict?.verdict?.approved === false
-              ? "No trade — rejected by the AI Risk Manager before execution."
-              : "No trade recorded for this candidate this run (proposed but not executed, or a HOLD)."
-          }
-        />
-      ),
-    });
+    execCaption = "Proposed but not executed this run (or a HOLD).";
+  } else {
+    execCaption = "No proposal reached execution.";
   }
 
-  if (!steps.length) {
-    return <StateMessage text="No PM/Risk/execution chain recorded for this candidate this run." />;
-  }
+  return [
+    {
+      key: "specialists",
+      label: "Specialists",
+      status: specialistsReached ? "reached" : "not_reached",
+      caption: specialistsReached ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}` : "No evidence recorded",
+    },
+    { key: "pm", label: "Portfolio Manager", status: pmReached ? "reached" : "not_reached", caption: pmCaption },
+    { key: "risk", label: "AI Risk Manager", status: riskStatus, caption: riskCaption },
+    { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
+    { key: "exec", label: "Execution", status: execStatus, caption: execCaption },
+  ];
+}
 
+// PM's 7(+2)-step CoT (src/models.py::ReasoningChain) and the Risk
+// Manager's 6-step CoT (src/models.py::RiskReasoningChain) — human labels
+// for whatever keys are actually present. Unknown/extra keys still render
+// (fallback to the raw key), so this never hides evidence the backend sends.
+const PM_CHAIN_LABELS: Record<string, string> = {
+  macro_filter: "Macro filter",
+  news_check: "News check",
+  earnings_check: "Earnings check",
+  signal_conflicts: "Signal conflicts",
+  sizing_logic: "Sizing logic",
+  portfolio_balance: "Portfolio balance",
+  cash_target: "Cash target",
+  continuity_check: "Continuity check (7-day arc)",
+  premortem_check: "Pre-mortem (disconfirming case)",
+};
+
+const RISK_CHAIN_LABELS: Record<string, string> = {
+  rr_audit: "R/R audit",
+  signal_fidelity: "Signal fidelity",
+  correlation_check: "Correlation check",
+  event_risk: "Event risk",
+  sizing_sanity: "Sizing sanity",
+  overall: "Overall synthesis",
+};
+
+function ChainList({ chain, labels }: { chain: ReasoningChainLike | null | undefined; labels: Record<string, string> }) {
+  const entries = chain
+    ? Object.entries(chain).filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== "")
+    : [];
+  if (!entries.length) return <StateMessage text="No reasoning chain recorded." />;
   return (
-    <div className="flex flex-col gap-3">
-      {steps.map((s, i) => (
-        <div key={i} className="flex gap-3 items-start">
-          <div className="flex-shrink-0 w-6 h-6 rounded-full bg-panel-alt border border-border flex items-center justify-center text-[0.68rem] font-bold text-dim mt-0.5">
-            {i + 1}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-bold text-[0.85rem] mb-1">{s.title}</div>
-            {s.body}
-          </div>
+    <div className="flex flex-col gap-1.5 mt-1.5">
+      {entries.map(([k, v]) => (
+        <div key={k} className="text-[0.78rem]">
+          <span className="font-semibold text-dim">{labels[k] || k}: </span>
+          <span>{v}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AuditFlag({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={`text-[0.68rem] font-semibold ${ok ? "text-pos" : "text-dim"}`}>
+      {ok ? "✓" : "—"} {label}
+    </span>
+  );
+}
+
+// Not a structured API field — the AI Risk Manager's runtime position-age/
+// drawdown audit context lives only in the risk_manager agent_logs row's
+// input_summary text (RunDetailResponse.agent_logs, fetched separately from
+// CandidateDetailResponse). Clearly labeled as raw log text, not a
+// candidate-specific structured field, and silently absent when unavailable.
+function RiskAuditContextCard({ log }: { log: AgentLogItem | null }) {
+  if (!log || !log.input_summary) return null;
+  return (
+    <details className="card mt-2">
+      <summary className="font-bold text-[0.85rem] cursor-pointer select-none">
+        Audit context the Risk Manager reviewed
+      </summary>
+      <p className="text-[0.7rem] text-dim mt-1.5">
+        From this run&rsquo;s risk_manager model-call log (input_summary) — not a separate structured field, and
+        applies to the whole run, not only this symbol.
+      </p>
+      <div className="text-[0.78rem] mt-1.5 whitespace-pre-wrap leading-snug">{log.input_summary}</div>
+    </details>
+  );
+}
+
+function DecisionDetail({
+  detail,
+  funnel,
+  riskLog,
+}: {
+  detail: CandidateDetailResponse;
+  funnel: RunFunnelResponse | null;
+  riskLog: AgentLogItem | null;
+}) {
+  const stages = buildCandidateStages(detail, funnel);
+  const gate = stages.find((s) => s.key === "gate");
+  const exec = stages.find((s) => s.key === "exec");
+  const pmReached = stages.find((s) => s.key === "pm")?.status !== "not_reached";
+
+  const verdict = detail.risk_verdict?.verdict ?? null;
+  const outcome = riskOutcome(detail);
+  const pmChain = detail.pm_reasoning?.reasoning_chain ?? null;
+
+  return (
+    <div>
+      <DecisionFlowDiagram stages={stages} />
+
+      <div className="flex flex-col gap-3 mt-3.5">
+        <div>
+          <div className="font-bold text-[0.85rem] mb-1">Portfolio Manager</div>
+          {pmReached ? (
+            <div className="card">
+              {detail.pm_reasoning?.portfolio_view && <CardText text={detail.pm_reasoning.portfolio_view} />}
+              {detail.pm_target && (
+                <div className="mt-2">
+                  <KV label="Target weight" value={`${fmtNum(detail.pm_target.target_weight_pct)}%`} />
+                  <KV label="Conviction" value={detail.pm_target.conviction} />
+                  <CardText text={detail.pm_target.thesis} />
+                </div>
+              )}
+              {detail.pm_proposed_order && (
+                <div className="mt-2">
+                  <div className="kv-row">
+                    <span className="text-dim">Constructed order</span>
+                    <Pill text={detail.pm_proposed_order.action} />
+                  </div>
+                  <KV label="Allocation" value={`${fmtNum(detail.pm_proposed_order.allocation_pct)}%`} />
+                  <KV label="Entry" value={fmtMoney(detail.pm_proposed_order.entry_price)} />
+                  <CardText text={detail.pm_proposed_order.reasoning} />
+                </div>
+              )}
+              {pmChain && (
+                <div className="flex gap-3 flex-wrap mt-2">
+                  <AuditFlag ok={!!pmChain.continuity_check?.trim()} label="Continuity check considered" />
+                  <AuditFlag ok={!!pmChain.premortem_check?.trim()} label="Pre-mortem considered" />
+                </div>
+              )}
+              <details className="mt-2">
+                <summary className="text-[0.75rem] font-semibold cursor-pointer select-none text-dim">
+                  Portfolio Manager reasoning chain
+                </summary>
+                <ChainList chain={pmChain} labels={PM_CHAIN_LABELS} />
+              </details>
+            </div>
+          ) : (
+            <StateMessage text="Portfolio Manager did not reach a target or order for this candidate this run." />
+          )}
+        </div>
+
+        <div>
+          <div className="font-bold text-[0.85rem] mb-1">AI Risk Manager</div>
+          {detail.risk_verdict ? (
+            verdict ? (
+              <div className="card">
+                <div className="kv-row">
+                  <span className="text-dim">Verdict</span>
+                  <div className="flex gap-1.5 flex-wrap justify-end">
+                    <Pill text={verdict.approved ? "approved" : "rejected"} />
+                    {outcome && outcome !== "rejected" && outcome !== verdict.reason_category && <Pill text={outcome} />}
+                    <Pill text={verdict.reason_category} />
+                  </div>
+                </div>
+                <CardText text={verdict.reasoning} />
+                {verdict.modifications.length > 0 && (
+                  <ul className="mt-1.5 pl-4 text-[0.79rem] list-disc">
+                    {verdict.modifications.map((m, i) => (
+                      <li key={i}>
+                        {m.symbol}: {m.field} {m.original_value} &rarr; {m.new_value} ({m.reason})
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {detail.risk_modification && (
+                  <div className="mt-2">
+                    <div className="text-[0.7rem] text-dim uppercase tracking-wide mb-1">Modification — this symbol</div>
+                    <KV label="Field" value={detail.risk_modification.field} />
+                    <KV label="Original" value={fmtNum(detail.risk_modification.original_value)} />
+                    <KV label="Modified to" value={fmtNum(detail.risk_modification.new_value)} />
+                    <CardText text={detail.risk_modification.reason} />
+                  </div>
+                )}
+                <details className="mt-2">
+                  <summary className="text-[0.75rem] font-semibold cursor-pointer select-none text-dim">
+                    Risk Manager reasoning chain
+                  </summary>
+                  <ChainList chain={verdict.reasoning_chain} labels={RISK_CHAIN_LABELS} />
+                </details>
+                <RiskAuditContextCard log={riskLog} />
+              </div>
+            ) : (
+              <StateMessage text="Verdict recorded but could not be read back." />
+            )
+          ) : (
+            <StateMessage text="AI Risk Manager was not reached for this candidate this run." />
+          )}
+        </div>
+
+        <div>
+          <div className="font-bold text-[0.85rem] mb-1">Deterministic gate</div>
+          <StateMessage text={gate?.caption || "No further detail recorded."} />
+        </div>
+
+        <div>
+          <div className="font-bold text-[0.85rem] mb-1">Execution</div>
+          {detail.trade ? (
+            <div className="card">
+              <div className="kv-row">
+                <span className="text-dim">Action</span>
+                <Pill text={detail.trade.action} />
+              </div>
+              <KV label="Qty" value={detail.trade.qty !== null && detail.trade.qty !== undefined ? fmtNum(detail.trade.qty) : null} />
+              <KV label="Price" value={fmtMoney(detail.trade.price)} />
+              <div className="kv-row">
+                <span className="text-dim">Fill status</span>
+                <Pill text={detail.trade.fill_status || "unfilled"} />
+              </div>
+              {detail.trade.reasoning && <CardText text={detail.trade.reasoning} />}
+              <ProposedVsExecuted proposed={detail.pm_proposed_order} trade={detail.trade} />
+            </div>
+          ) : (
+            <StateMessage text={exec?.caption || "No trade recorded for this candidate this run."} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -370,13 +517,18 @@ export function CandidateDetailModal({
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<CandidateDetailResponse | null>(null);
+  const [funnel, setFunnel] = useState<RunFunnelResponse | null>(null);
+  const [runDetail, setRunDetail] = useState<RunDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { openRunDetail } = useModalActions();
 
   useEffect(() => {
     let cancelled = false;
     setDetail(null);
+    setFunnel(null);
+    setRunDetail(null);
     setError(null);
+
     api
       .candidateDetail(runId, symbol)
       .then((d) => {
@@ -385,10 +537,30 @@ export function CandidateDetailModal({
       .catch((err) => {
         if (!cancelled) setError(err.message);
       });
+
+    // Supplementary, non-fatal fetches: cross-check the deterministic-gate
+    // outcome (hard_risk_block, per-candidate `executed`) and surface the
+    // AI Risk Manager's raw audit-context log. Neither blocks or replaces
+    // the primary candidateDetail fetch above if it fails.
+    api
+      .runFunnel(runId)
+      .then((f) => {
+        if (!cancelled) setFunnel(f);
+      })
+      .catch(() => undefined);
+    api
+      .runDetail(runId)
+      .then((d) => {
+        if (!cancelled) setRunDetail(d);
+      })
+      .catch(() => undefined);
+
     return () => {
       cancelled = true;
     };
   }, [runId, symbol]);
+
+  const riskLog = runDetail?.agent_logs.find((a) => a.agent_name === "risk_manager") ?? null;
 
   return (
     <Modal
@@ -405,7 +577,7 @@ export function CandidateDetailModal({
       {!error && !detail && <StateMessage text={`Loading ${symbol}…`} />}
       {detail && (
         <div>
-          <EvidenceSection title="Consensus">{[<ConsensusBlock key="c" consensus={detail.consensus} />]}</EvidenceSection>
+          <EvidenceSection title="Consensus">{[<SpecialistCards key="specialists" detail={detail} />]}</EvidenceSection>
           <EvidenceSection title="Symbol-specific evidence">
             {[
               <TechCard key="tech" tech={detail.tech} />,
@@ -416,8 +588,8 @@ export function CandidateDetailModal({
           <EvidenceSection title="Broader context (not symbol-specific)">
             {[<MacroCard key="macro" macro={detail.macro_context} />, <NewsContextCard key="newsctx" news={detail.news_context} />]}
           </EvidenceSection>
-          <EvidenceSection title="Decision chain: PM &rarr; AI Risk &rarr; execution">
-            {[<DecisionChain key="chain" detail={detail} />]}
+          <EvidenceSection title="Decision flow: Specialists &rarr; PM &rarr; AI Risk &rarr; gate &rarr; execution">
+            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} />]}
           </EvidenceSection>
         </div>
       )}
