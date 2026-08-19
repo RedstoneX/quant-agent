@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { ReactFlow, Background, BackgroundVariant, type Node, type Edge, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { NODE_TYPES } from "./nodes";
@@ -36,6 +36,17 @@ export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; 
     observer.observe(containerRef.current);
     resizeObserverRef.current = observer;
   }
+
+  // The observer is created lazily inside `onInit` (React Flow's own init
+  // callback, not a React lifecycle hook), so nothing else disconnects it —
+  // same disconnect-on-unmount contract PriceChartPanel/EChart already use
+  // for their own ResizeObservers.
+  useEffect(() => {
+    return () => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+    };
+  }, []);
 
   return (
     <div ref={containerRef} style={{ height }} className="rounded-lg border border-border bg-panel-inset overflow-hidden">
