@@ -374,9 +374,16 @@ export interface ReflectionItem {
   date: string;
   tomorrow_outlook: string | null;
   lessons: string | null;
+  suggested_actions: string | null;
   risk_rating: string | null;
   tomorrow_bias: string | null;
+  tomorrow_conviction: string | null;
+  tomorrow_key_risks: string | null;
+  sell_decisions_assessment: string | null;
+  sell_grades_json: string | null;
+  buy_grades_json: string | null;
   missed_opportunities_json: string | null;
+  timestamp: string | null;
 }
 
 export interface JournalDatesResponse {
