@@ -194,6 +194,36 @@ and after). Documented known limitation: panels depending on this
 branch's not-yet-deployed backend endpoints degrade honestly rather than
 faking data. Evidence: `docs/verification/stage-6d-branch-preview/`.
 
+### Stage 6e — branch-preview API contract fix (real data, end-to-end)
+
+Fixed the blocker recorded in Stage 6d: old `qamc` production predates
+this branch's Stage 6 backend additions (`AccountResponse.liquidity`,
+`PositionItem.direction`/`is_cash_equivalent`, `GET /runs/{id}/funnel`),
+so the decision funnel, directional bias, liquidity, and position-
+direction panels rendered blank against the proxy. `ops/preview/
+branch_preview.py` now reconstructs exactly those missing fields/routes
+from data upstream **already** exposes (`/account`, `/positions`,
+`/runs/{id}`, `/runs/{id}/candidates(/{symbol})`, all already deployed),
+using the same typed schemas and pure derivation rules this branch's own
+backend uses — never a direct DB/broker-credential read from the `dev`
+account, and self-obsoleting once production actually deploys this
+branch. `GET /prices/{symbol}` (the one field needing real Alpaca
+market-data credentials `dev` doesn't have) continues to degrade
+honestly, as before.
+
+Verified interactively in a real connected browser (zero failed requests,
+zero console errors) and independently with a local headless Playwright
+script (zero console errors across desktop/iPad/legacy-`/ui`) against the
+live preview serving real `qamc` production data — Decision Room funnel,
+Directional Bias, Cash & Risk Exposure, positions direction, run detail
+(81 real candidates), candidate drill-down, and the day-narrative Journal
+all confirmed populated with genuine account/run data, not fabricated.
+`qamc` production `/health` confirmed identical before/after (untouched,
+never restarted). Full backend suite: 1857 passed, 0 failed (unchanged).
+Frontend Vitest: 8 passed (unchanged — no `frontend/`/`src/api/` files
+were touched this tranche). Evidence:
+`docs/verification/stage-6e-preview-contract-fix/`.
+
 Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
 default, or keep both mounted). Claude does not cut over or merge its
 own work.

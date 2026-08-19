@@ -54,18 +54,33 @@ This branch adds new backend endpoints (`GET /runs/{id}/funnel`,
 `GET /prices/{symbol}`, `liquidity`/`direction` fields on `/account` and
 `/positions`) that are **not yet deployed to `qamc` production**, because
 this branch hasn't been merged/deployed yet. Since the preview proxies to
-production for real data (deliberately, rather than faking it), panels
-that depend on those new endpoints — the decision funnel, directional
-bias, and per-run journal narrative — will show an honest "could not
-load" state rather than data, and the browser console will show the
-corresponding failed-request entries. This is expected, not a defect:
-every other panel (account, positions, orders, trades, runs, evening
-reflection, missed opportunities, search) renders real production data
-correctly. The new panels' actual correctness against a version-matched
-backend was already verified separately — see
-`docs/verification/stage-6b-deliberation-journal-bias/` and
-`docs/verification/stage-6c-directional-exposure-fix/` (seeded,
-representative data, zero console errors).
+production for real data (deliberately, rather than faking it), those
+fields/endpoints are missing from the raw upstream response.
+
+As of the Stage 6e fix, `branch_preview.py` reconstructs the missing
+`liquidity`/`direction` fields and the `/runs/{id}/funnel` endpoint
+itself from real data upstream **does** already expose (`/account`,
+`/positions`, `/runs/{id}`, `/runs/{id}/candidates(/{symbol})`), using
+the same typed schemas and pure derivation rules this branch's own
+backend uses — see the module docstring and `_reconstruct_funnel`'s
+docstring in `branch_preview.py` for exactly what is reconstructed and
+from where. The decision funnel, directional bias, cash/liquidity
+breakdown, and position-direction panels now render real production data
+in this preview — see `docs/verification/stage-6e-preview-contract-fix/`.
+Reconstruction is self-obsoleting: once this branch merges and `qamc`
+production actually returns these fields/routes, the real upstream value
+passes straight through untouched.
+
+The one exception is `GET /prices/{symbol}` (the price chart panel),
+which still shows an honest "could not load" state in this preview —
+real OHLCV bars require Alpaca market-data credentials this `dev`-account
+process deliberately does not have, so there is no real data to
+reconstruct from. The chart component's own correctness against real
+bars was already verified separately with seeded data — see
+`docs/verification/stage-6-react/` (and
+`docs/verification/stage-6b-deliberation-journal-bias/` /
+`docs/verification/stage-6c-directional-exposure-fix/` for the other
+panels' pre-existing seeded-data verification).
 
 ## Safety boundaries (verified, not just asserted)
 
