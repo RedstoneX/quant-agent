@@ -13,6 +13,7 @@ import { usePoll } from "./lib/usePoll";
 import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
 import { DecisionFunnelPanel } from "./components/DecisionFunnelPanel";
+import { DirectionalBiasPanel } from "./components/DirectionalBiasPanel";
 import { WatchlistPanel } from "./components/WatchlistPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
 import { LiquidityPanel } from "./components/LiquidityPanel";
@@ -141,6 +142,7 @@ export default function App() {
 
       <main className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
         <DecisionFunnelPanel funnel={funnel} loading={funnelLoading} error={funnelError} />
+        <DirectionalBiasPanel />
         <WatchlistPanel funnel={funnel} loading={funnelLoading} error={funnelError} onSelectSymbol={setChartSymbol} />
         <PriceChartPanel symbol={chartSymbol} />
         <LiquidityPanel account={account} positions={positions} />
