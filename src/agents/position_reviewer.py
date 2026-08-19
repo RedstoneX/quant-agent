@@ -466,8 +466,9 @@ class PositionReviewerAgent(BaseAgent):
         # Account + cash.
         cash_pct = f"{cash_balance / total_value * 100:.1f}%" if total_value else "N/A"
         reserve_line = (
-            f"\n- Short-Term Reserve (sweep-parked, ~1 trading day to "
-            f"convert if needed): ${reserve_balance:,.2f}"
+            f"\n  (of which ${reserve_balance:,.2f} is sweep-parked and "
+            f"auto-liquidated before any BUY executes — already included "
+            f"in Cash above)"
             if reserve_balance > 0 else ""
         )
 
@@ -540,7 +541,7 @@ class PositionReviewerAgent(BaseAgent):
 
 ### Account
 - Total Value: ${total_value:,.2f}
-- Cash: ${cash_balance:,.2f} ({cash_pct}, immediately deployable, no margin){reserve_line}
+- Cash: ${cash_balance:,.2f} ({cash_pct}, deployable this session, no margin){reserve_line}
 
 ### Open Positions
 {positions_text}

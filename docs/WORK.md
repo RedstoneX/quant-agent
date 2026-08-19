@@ -10,22 +10,39 @@ Ubuntu admin session established three new defects, treated as verified
 evidence (do not repeat the forensic unless implementation reveals a
 contradiction):
 
-1. **SGOV / deployable-liquidity mismatch** — PM/RM were shown ~$10K
-   effectively-available cash because SGOV was treated as cash-
-   equivalent; actual immediately usable cash was ~$145. SGOV was sold
-   to fund approved BUYs, but proceeds weren't available when execution
-   rechecked cash, so all BUYs were safely skipped by the deterministic
-   gate. Fix the root cause (truthful liquidity through the decision
-   chain, Alpaca settlement-aware cash-sweep behavior), not the
-   deterministic gate itself.
+1. **SGOV funding semantics** — PM/RM were shown ~$10K effectively-
+   available cash because SGOV was treated as cash-equivalent; actual
+   usable cash was ~$145. SGOV was sold to fund approved BUYs, but the
+   proceeds weren't there when execution rechecked, so all BUYs were
+   safely skipped by the deterministic gate.
+
+   **Resolved (external review round 2).** Verified from Alpaca's official
+   docs: `cash` is credited as soon as a SELL *fills*; T+1 gates only
+   withdrawal/transfer and the non-marginable (crypto) figure. So filled
+   SGOV proceeds DO fund a same-session equity BUY, and the first pass's
+   switch to `non_marginable_buying_power` was the wrong field (it lags).
+   Margin fields (`buying_power`, `regt_buying_power` — ~2x equity, since
+   every Alpaca account is a margin account) are never used. Deployable =
+   `cash` + convertible sweep value, both owned assets, so no leverage.
+   The real defect was assuming the sale filled: `fund_buys` now reports
+   the CONFIRMED rise in raw broker cash and fails closed when it cannot
+   confirm. `reserve_pct` reverted 5.0 → 1.0.
 2. **Intraday opportunity-discovery blind spot** — the full opportunity-
    generation chain runs once each morning; `intra_check` is loss-
    protection only; midday/close review existing holdings only. A
-   material intraday move cannot generate a new trade. Implement the
-   smallest coherent fix: current-session data, both bullish and (via
-   existing inverse ETFs) bearish discovery, explicit cadence/trigger +
-   dedup/cooldown, no full morning-stack rerun, no new shorting/options/
-   margin, not a HFT system.
+   material intraday move cannot generate a new trade. Fixed on the
+   existing `intra_check` cadence: current-session data, bullish and (via
+   existing inverse ETFs) bearish, explicit trigger + dedup/cooldown, no
+   morning-stack rerun, no shorting/options/margin, not HFT.
+
+   **Intraday evidence corrected (external review round 2):** the scan
+   detected on live prices but handed Tech only completed daily bars
+   ending at the prior close, so the triggering move was invisible to the
+   analyst. Tech now also receives an explicit `CURRENT SESSION (TODAY,
+   INCOMPLETE)` block — live price, move vs prior close, session O/H/L and
+   partial-day volume — held separate from the completed-bar series, with
+   the indicators flagged as predating the move. An incomplete day is
+   never presented as a finished daily bar.
 3. **Tech batch-response symbol loss** — symbols passed the pre-filter
    and were sent to `tech_analyst` but silently disappeared during batch
    parsing (one chunk parsed 1/10 symbols). Every submitted symbol must

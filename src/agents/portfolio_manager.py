@@ -473,14 +473,15 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         )
 
         reserve_line = (
-            f"\n- Short-Term Reserve (cash-equivalent sweep, NOT immediately "
-            f"spendable — allow ~1 trading day to convert if a BUY needs "
-            f"more than Cash Balance): ${reserve_balance:,.2f}"
+            f"\n  (of which ${reserve_balance:,.2f} is parked in the "
+            f"cash-equivalent sweep vehicle and is auto-liquidated before "
+            f"any BUY executes — already included in Cash Balance above, "
+            f"do not add it again)"
             if reserve_balance > 0 else ""
         )
         return f"""## Account Status
 - Total Value: ${total_value:,.2f}
-- Cash Balance: ${cash_balance:,.2f} (immediately deployable, no margin){reserve_line}
+- Cash Balance: ${cash_balance:,.2f} (deployable this session, no margin){reserve_line}
 - Invested: ${invested:,.2f} ({invested_pct:.1f}%)
 
 ## Current Positions (with entry context + signal trajectory)

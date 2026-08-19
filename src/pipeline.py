@@ -386,6 +386,50 @@ class TradingPipeline:
         except Exception:  # noqa: BLE001 — a broken config must not take down a session
             return None
 
+    def _compute_deployable_cash(self, cash: float, positions) -> float:
+        """Cash QAMC can deploy into equities WITHOUT borrowing.
+
+        Verified Alpaca account-field semantics (2026-08-19, official docs):
+
+        - `cash` is credited as soon as a SELL **fills** — Alpaca:
+          "The cash is updated post the SELL trade is filled, but the
+          cash_withdrawable and cash_transferable are updated post T+1."
+          So proceeds of a filled SGOV sale ARE usable for an equity BUY
+          the same session; there is no settlement wait for trading.
+        - `non_marginable_buying_power` is the settled/non-margin (crypto)
+          figure and LAGS a same-day equity sale by one business day. Using
+          it to size equity BUYs is wrong in the conservative direction —
+          it makes legitimately-available money invisible. An earlier pass
+          in this tranche did exactly that; this is the correction.
+        - `buying_power` / `regt_buying_power` are MARGIN figures. Every
+          Alpaca account is a margin account and this one's equity puts it
+          at multiplier 2, so those fields are ~2x equity. QAMC must never
+          size against them — that is borrowed money by definition.
+
+        Deployable is therefore raw `cash` plus the market value of the
+        cash-equivalent sweep vehicle, which `CashSweeper.fund_buys`
+        liquidates before the BUY phase and whose proceeds land in `cash`
+        on fill. Both components are assets QAMC already owns, so the sum
+        can never exceed equity and never creates leverage.
+
+        This is a PLANNING figure for PM / RM / the pre-trade gate. It is
+        not authoritative for execution: ExecutionStage still re-reads raw
+        broker `cash` after the funding sale and skips any BUY that cash
+        does not actually cover. See `CashSweeper.fund_buys`.
+        """
+        if not isinstance(cash, (int, float)) or not math.isfinite(cash):
+            return 0.0
+        sweeper = self._sweeper()
+        if sweeper is None:
+            return float(cash)
+        try:
+            parked = sweeper.parked_value(positions)
+        except Exception as e:  # noqa: BLE001 — unknowable sweep state must not inflate
+            logger.warning("deployable cash: parked-value read failed (%s) — "
+                           "treating sweep reserve as unavailable", e)
+            return float(cash)
+        return float(cash) + parked
+
     @staticmethod
     def _format_qty(qty: float) -> str:
         if float(qty).is_integer():
@@ -5422,7 +5466,7 @@ class TradingPipeline:
             account = self.broker.get_account()
             ctx.positions = self.broker.get_positions()
             ctx.cash = account["cash"]
-            ctx.deployable_cash = account.get("non_marginable_buying_power", ctx.cash)
+            ctx.deployable_cash = self._compute_deployable_cash(ctx.cash, ctx.positions)
             ctx.total_value = account["portfolio_value"]
             ctx.last_equity = account.get("last_equity", ctx.total_value)
             logger.info(
@@ -5492,7 +5536,7 @@ class TradingPipeline:
             ctx.account = account
             ctx.positions = positions
             ctx.cash = cash
-            ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
+            ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
             ctx.total_value = total_value
             ctx.last_equity = last_equity
             logger.info(
@@ -5933,7 +5977,7 @@ class TradingPipeline:
         ctx.account = account
         ctx.positions = positions
         ctx.cash = cash
-        ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
+        ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
         ctx.total_value = total_value
         ctx.last_equity = last_equity
 
@@ -5997,7 +6041,7 @@ class TradingPipeline:
                 ctx.account = account
                 ctx.positions = positions
                 ctx.cash = cash
-                ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
+                ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 ctx.last_equity = last_equity
                 self.db.sync_positions(positions)
@@ -6401,7 +6445,7 @@ class TradingPipeline:
         ctx.account = account
         ctx.positions = positions
         ctx.cash = account["cash"]
-        ctx.deployable_cash = account.get("non_marginable_buying_power", ctx.cash)
+        ctx.deployable_cash = self._compute_deployable_cash(ctx.cash, ctx.positions)
         ctx.total_value = total_value
         ctx.last_equity = last_equity
         ctx.daily_pnl = daily_pnl
@@ -6780,10 +6824,21 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: tech store load failed: %s", e)
 
+        # Truthful current-session evidence for exactly the candidates being
+        # analyzed (2026-08-19): the scan detects on live prices, so Tech
+        # must see those same live prices — not just daily bars ending at
+        # yesterday's close, which is what triggered the scan being
+        # invisible to the analyst that had to judge it. Rendered by
+        # `build_user_message` as an explicit INCOMPLETE-session block,
+        # never as a completed daily bar.
+        intraday_context = {
+            s: snapshots[s] for s in symbols if s in snapshots
+        }
         analyses_map, ta_result = self.tech_analyst.analyze_batch(
             symbols_data,
             prior_ratings=prior_ratings,
             valuations={},
+            intraday_context=intraday_context,
             prior_macro_regime=prior_macro_state.get("regime"),
             prior_macro_outlook=prior_macro_state.get("equity_outlook"),
         )

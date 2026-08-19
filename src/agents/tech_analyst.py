@@ -78,6 +78,14 @@ class TechAnalystAgent(BaseAgent):
         # overnight, so this is a cheap additional context.
         prior_macro_regime: str | None = kwargs.get("prior_macro_regime")
         prior_macro_outlook: str | None = kwargs.get("prior_macro_outlook")
+        # Current-session (TODAY, still forming) facts per symbol, from the
+        # intraday scan's snapshot call. Rendered as its own clearly-labelled
+        # INCOMPLETE block — never merged into the completed-daily-bar
+        # series, and never used to overwrite the last completed close
+        # (2026-08-19: the intraday scan detected candidates on live prices
+        # but then handed Tech only bars ending at yesterday's close, so the
+        # very move that triggered the scan was invisible to the analyst).
+        intraday_context: dict[str, dict] = kwargs.get("intraday_context") or {}
 
         # How many days ago did the cached rating first appear?
         from datetime import date as _date
@@ -117,6 +125,44 @@ class TechAnalystAgent(BaseAgent):
                 f"\nValuation: trailing PE {t} | forward PE {f} | P/S {ps}"
             )
 
+        def _intraday_block(symbol: str, last_completed_close) -> str:
+            ic = intraday_context.get(symbol)
+            if not ic:
+                return ""
+            last = ic.get("last_price")
+            prev = ic.get("prev_close")
+            if not isinstance(last, (int, float)) or last <= 0:
+                return ""
+            # Move is measured against the prior COMPLETED close, which is
+            # what "today's move" means; fall back to the last bar in the
+            # series when the snapshot didn't carry one.
+            base = prev if isinstance(prev, (int, float)) and prev > 0 else None
+            if base is None and isinstance(last_completed_close, (int, float)):
+                base = last_completed_close if last_completed_close > 0 else None
+            move_str = "n/a"
+            if base:
+                move_str = f"{(last - base) / base * 100:+.2f}% vs prior close ${base:,.2f}"
+
+            def _fmt(key, prefix="$"):
+                v = ic.get(key)
+                if not isinstance(v, (int, float)) or v <= 0:
+                    return "n/a"
+                return f"{prefix}{v:,.2f}" if prefix else f"{v:,.0f}"
+
+            return (
+                f"\n⚠️ CURRENT SESSION (TODAY, INCOMPLETE — this trading day has "
+                f"NOT closed; these are live intraday figures, NOT a finished "
+                f"daily bar and NOT part of the completed series above):"
+                f"\n  Last trade: ${last:,.2f} ({move_str})"
+                f"\n  Session so far: O={_fmt('session_open')} "
+                f"H={_fmt('session_high')} L={_fmt('session_low')} "
+                f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
+                f"\n  The indicators above are computed from COMPLETED daily "
+                f"bars only and therefore do NOT yet reflect this move. Judge "
+                f"the setup on today's live price action against those levels, "
+                f"and say so explicitly in your reasoning_chain."
+            )
+
         sections = []
         for item in symbols_data:
             symbol = item["symbol"]
@@ -127,12 +173,12 @@ class TechAnalystAgent(BaseAgent):
                 f"  {b.date}: O={b.open} H={b.high} L={b.low} C={b.close} V={b.volume}"
                 for b in recent_bars
             )
-            current_price = recent_bars[-1].close if recent_bars else "N/A"
+            last_close = recent_bars[-1].close if recent_bars else "N/A"
             sections.append(f"""### {symbol}{_prior_line(symbol)}{_valuation_line(symbol)}
-Price (last {len(recent_bars)} daily bars):
+Price (last {len(recent_bars)} COMPLETED daily bars):
 {bars_text}
 Indicators: MA20={indicators.ma_20} MA50={indicators.ma_50} MA200={indicators.ma_200} | RSI={indicators.rsi_14} | MACD={indicators.macd}/{indicators.macd_signal}/{indicators.macd_hist} | BB={indicators.bb_lower}/{indicators.bb_middle}/{indicators.bb_upper} | ATR={indicators.atr_14} | Vol%={indicators.volume_change_pct}
-Current close: {current_price}""")
+Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
 
         macro_context = ""
         if prior_macro_regime:
@@ -163,6 +209,7 @@ Current close: {current_price}""")
         valuations: dict[str, dict] | None = None,
         prior_macro_regime: str | None = None,
         prior_macro_outlook: str | None = None,
+        intraday_context: dict[str, dict] | None = None,
     ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
         """Batch analyze multiple symbols. Auto-chunks when > 30 symbols to avoid
         context overflow on the LLM call. Returns ({symbol: result}, merged AgentResult).
@@ -195,7 +242,7 @@ Current close: {current_price}""")
         if len(symbols_data) <= _MAX_SYMBOLS_PER_CALL:
             return self._analyze_chunk(
                 symbols_data, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
             )
 
         # Chunk and stitch.
@@ -240,7 +287,7 @@ Current close: {current_price}""")
         for i, chunk in enumerate(chunks, 1):
             chunk_analyses, chunk_result = self._analyze_chunk(
                 chunk, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
             )
             merged.update(chunk_analyses)
             if chunk_result is not None:
@@ -293,6 +340,7 @@ Current close: {current_price}""")
         valuations: dict[str, dict] | None = None,
         prior_macro_regime: str | None = None,
         prior_macro_outlook: str | None = None,
+        intraday_context: dict[str, dict] | None = None,
         _retries_left: int = _MAX_MISSING_RETRIES,
     ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
         """Single-call variant used inside the chunking loop.
@@ -314,6 +362,7 @@ Current close: {current_price}""")
             valuations=valuations or {},
             prior_macro_regime=prior_macro_regime,
             prior_macro_outlook=prior_macro_outlook,
+            intraday_context=intraday_context or {},
         )
         parsed = result.parse_json()
 
@@ -383,7 +432,7 @@ Current close: {current_price}""")
             )
             retry_analyses, retry_result = self._analyze_chunk(
                 retry_data, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
                 _retries_left=_retries_left - 1,
             )
             analyses.update({

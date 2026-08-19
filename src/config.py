@@ -239,22 +239,17 @@ class CashSweepConfig(BaseModel):
     anything with real market beta breaks the cash-equivalence assumption
     that justifies every exemption listed above."""
 
-    reserve_pct: float = Field(default=5.0, ge=0, le=20)
-    """% of equity kept as raw cash (fees, slippage, partial fills, and —
-    2026-08-19 SGOV/deployable-liquidity forensic — genuine same-day BUY
-    capacity). Excess above the reserve is parked.
+    reserve_pct: float = Field(default=1.0, ge=0, le=20)
+    """% of equity kept as raw cash (fees, slippage, partial fills).
+    Excess above the reserve is parked.
 
-    Raised from 1.0 to 5.0 after the forensic: PM/RM/the deterministic
-    gate now size and approve BUYs against real deployable cash rather
-    than SGOV's market value (see pipeline_stages.py), so a thin reserve
-    directly caps what a typical single-position BUY can do same-day —
-    fund_buys() liquidating SGOV mid-session to cover the gap is a
-    best-effort bridge, not a guarantee, because Alpaca's T+1 equity
-    settlement means freshly-sold SGOV proceeds are not reliably spendable
-    by the time execution rechecks. 5% keeps most idle cash earning
-    T-bill yield while leaving a same-day-usable cushion sized to match a
-    single ordinary BUY (on a ~$10K book, ~$500 — also `min_order_usd`'s
-    floor, not a coincidence)."""
+    Deliberately left at 1.0. An earlier pass in the 2026-08-19 tranche
+    raised this to 5.0 as a workaround for BUYs being skipped for lack of
+    cash — that was treating a symptom. Alpaca credits `cash` as soon as a
+    SELL fills, so a filled SGOV liquidation funds an equity BUY in the
+    same session; the real fix is confirming that fill before the BUY
+    phase (see `CashSweeper.fund_buys`), not starving the sweep of the
+    idle cash it exists to put to work."""
 
     min_order_usd: float = Field(default=500.0, ge=0)
     """Don't churn sub-$500 parking orders — spread + noise beat the

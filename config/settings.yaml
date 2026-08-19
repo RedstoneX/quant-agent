@@ -122,19 +122,20 @@ risk:
 # (2026-07-16 forensics: ~84% idle cash for weeks = ~$300/mo risk-free carry
 # left on the table; see src/execution/cash_sweep.py.)
 #
-# 2026-08-19 SGOV/deployable-liquidity forensic: SGOV's value is NOT
-# counted as cash for PM/RM/the deterministic gate anymore (it was, and
-# that let approved BUYs get sized against ~$10K of "cash" that was
-# actually ~$145 real + ~$9.8K parked — SGOV was sold to fund the BUYs but
-# Alpaca's T+1 equity settlement meant the proceeds weren't spendable by
-# the time execution rechecked, so every BUY was safely skipped). Raised
-# reserve_pct 1.0 -> 5.0 so a typical single same-day BUY has real cash to
-# draw on without depending on a same-day SGOV liquidation that may not
-# settle in time; see CashSweepConfig.reserve_pct docstring.
+# 2026-08-19 SGOV/deployable-liquidity fix: SGOV's market value still
+# counts toward the cash PM/RM/the pre-trade gate plan against — that is
+# correct, because Alpaca credits `cash` as soon as a SELL FILLS ("the
+# cash is updated post the SELL trade is filled"), so a filled SGOV
+# liquidation funds an equity BUY in the same session. What was missing
+# was CONFIRMING that fill before the BUY phase; fund_buys now verifies
+# raw cash actually rose and reports only the confirmed increase, and
+# ExecutionStage's raw-cash recheck remains the final authority.
+# reserve_pct stays at 1.0 — an earlier pass raised it to 5.0, which
+# treated the symptom and starved the sweep.
 cash_sweep:
   enabled: true
   symbol: "SGOV"        # iShares 0-3mo T-bills; BIL is the fallback choice
-  reserve_pct: 5.0       # % of equity kept as raw cash for same-day BUYs/fees/slippage
+  reserve_pct: 1.0      # % of equity kept as raw cash for fees/slippage
   min_order_usd: 500    # don't churn sub-$500 parking orders
 
 # 2026-08-19 intraday opportunity-discovery fix — bounded, cheap trigger

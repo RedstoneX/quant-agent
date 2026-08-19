@@ -113,7 +113,10 @@ def test_build_user_message_includes_indicators_and_current_close(sample_indicat
         assert "505.0" in msg      # ma_20
         assert "58.0" in msg       # rsi_14
         assert "ATR=8.5" in msg    # ATR is surfaced for ATR-based stops
-        assert "Current close: 507.0" in msg
+        # Renamed from "Current close" (2026-08-19): with intraday context
+        # now possible, calling the last completed daily close "current"
+        # was the exact ambiguity that let a stale price read as live.
+        assert "Last completed close: 507.0" in msg
         # With no prior_ratings passed, no prior line should appear
         assert "Prior rating" not in msg
 

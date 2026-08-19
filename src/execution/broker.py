@@ -678,11 +678,19 @@ class AlpacaBroker:
         enough to run every intra_check tick, unlike re-fetching daily
         bars for the whole universe.
 
-        Returns ``{symbol: {"last_price": float|None, "prev_close":
-        float|None}}`` for every requested symbol; both are `None` when
-        that symbol's snapshot is missing or unusable. Never raises —
-        broker/network failure degrades to an empty dict (caller treats
-        that as "no signal this tick", not a crash).
+        Returns, for every requested symbol, a dict of the current-session
+        facts needed both to detect a material move and to give Tech
+        truthful intraday evidence:
+
+            {"last_price", "prev_close",
+             "session_open", "session_high", "session_low", "session_volume"}
+
+        The `session_*` fields come from Alpaca's TODAY bar, which is an
+        INCOMPLETE, still-forming bar — callers must present it as such and
+        must never append it to a series of completed daily bars. Any field
+        is `None` when unavailable. Never raises — broker/network failure
+        degrades to an empty dict (caller treats that as "no signal this
+        tick", not a crash).
         """
         if not symbols:
             return {}
@@ -703,27 +711,32 @@ class AlpacaBroker:
                            "for %d symbols: %s", len(symbols), exc)
             return {}
 
+        def _num(obj, attr):
+            if obj is None:
+                return None
+            try:
+                v = float(getattr(obj, attr, 0) or 0)
+            except (TypeError, ValueError):
+                return None
+            return v if v > 0 else None
+
         out: dict[str, dict] = {}
         for symbol in symbols:
             snap = snapshots.get(symbol) if isinstance(snapshots, dict) else None
-            last_price = None
-            prev_close = None
-            if snap is not None:
-                trade = getattr(snap, "latest_trade", None)
-                if trade is not None:
-                    try:
-                        p = float(getattr(trade, "price", 0) or 0)
-                        last_price = p if p > 0 else None
-                    except (TypeError, ValueError):
-                        last_price = None
-                prev_bar = getattr(snap, "previous_daily_bar", None)
-                if prev_bar is not None:
-                    try:
-                        c = float(getattr(prev_bar, "close", 0) or 0)
-                        prev_close = c if c > 0 else None
-                    except (TypeError, ValueError):
-                        prev_close = None
-            out[symbol] = {"last_price": last_price, "prev_close": prev_close}
+            trade = getattr(snap, "latest_trade", None) if snap is not None else None
+            prev_bar = getattr(snap, "previous_daily_bar", None) if snap is not None else None
+            # TODAY's still-forming bar. Deliberately kept in its own
+            # `session_*` namespace so no caller can mistake it for a
+            # completed daily bar (2026-08-19 intraday-evidence fix).
+            today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
+            out[symbol] = {
+                "last_price": _num(trade, "price"),
+                "prev_close": _num(prev_bar, "close"),
+                "session_open": _num(today_bar, "open"),
+                "session_high": _num(today_bar, "high"),
+                "session_low": _num(today_bar, "low"),
+                "session_volume": _num(today_bar, "volume"),
+            }
         return out
 
     @staticmethod

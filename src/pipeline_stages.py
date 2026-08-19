@@ -1132,7 +1132,7 @@ class ExecutionStage:
             total_value = account["portfolio_value"]
             ctx.positions = positions
             ctx.cash = cash
-            ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
+            ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
             ctx.total_value = total_value
             logger.info(
                 "Post-sell refresh: $%.2f total, $%.2f cash, %d positions",
@@ -1167,7 +1167,7 @@ class ExecutionStage:
                 total_value = account["portfolio_value"]
                 ctx.positions = positions
                 ctx.cash = cash
-                ctx.deployable_cash = account.get("non_marginable_buying_power", cash)
+                ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 price_map = {**price_map, **fresh_prices}
             daily_pnl_now = total_value - ctx.last_equity

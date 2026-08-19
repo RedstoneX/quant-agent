@@ -525,3 +525,133 @@ def test_process_lock_is_released_for_the_next_tick(tmp_path):
     # First released on context exit; the next tick gets it.
     with second._intraday_scan_process_lock() as acquired_next:
         assert acquired_next is True
+
+
+# ---------- Blocker 2: Tech receives truthful CURRENT-SESSION evidence ----------
+#
+# The scan detects candidates on live current-session prices. Before this
+# fix Tech was then handed only COMPLETED daily bars ending at yesterday's
+# close — so the very move that triggered the scan was invisible to the
+# analyst asked to judge it. Tech now also receives an explicitly-labelled
+# INCOMPLETE current-session block. An incomplete day is never presented
+# as a finished daily bar.
+
+def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None):
+    return {
+        "last_price": last, "prev_close": prev,
+        "session_open": o, "session_high": h,
+        "session_low": lo, "session_volume": v,
+    }
+
+
+@patch("src.pipeline.compute_indicators")
+def test_todays_move_is_passed_to_tech_as_current_session_context(mock_compute_indicators):
+    """The live figures the scan triggered on must reach tech_analyst."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    snap = _session_snapshot(last=110.0, prev=100.0, o=101.0, h=111.0,
+                             lo=100.5, v=9_100_000)
+    p.broker.get_intraday_snapshots.return_value = {"AAPL": snap}
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
+
+    ctx_arg = p.tech_analyst.analyze_batch.call_args.kwargs["intraday_context"]
+    assert ctx_arg["AAPL"]["last_price"] == 110.0
+    assert ctx_arg["AAPL"]["prev_close"] == 100.0
+    assert ctx_arg["AAPL"]["session_volume"] == 9_100_000
+
+
+def test_tech_prompt_renders_todays_move_without_faking_a_daily_bar():
+    """The rendered prompt must show today's price and % move, label the
+    session INCOMPLETE, and keep it out of the completed-bar series."""
+    from datetime import date
+    from src.agents.tech_analyst import TechAnalystAgent
+    from src.models import OHLCV, TechnicalIndicators
+
+    bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0,
+                  close=100.0, volume=5_000_000)]
+    indicators = TechnicalIndicators(
+        symbol="AAPL", ma_20=99.0, ma_50=98.0, ma_200=95.0, rsi_14=55.0,
+        macd=0.5, macd_signal=0.4, macd_hist=0.1, bb_upper=104.0,
+        bb_middle=100.0, bb_lower=96.0, atr_14=2.0, volume_change_pct=5.0,
+    )
+    with patch("anthropic.Anthropic"):
+        agent = TechAnalystAgent(api_key="t", model="claude-sonnet-4-6-20250514")
+        msg = agent.build_user_message(
+            symbols_data=[{"symbol": "AAPL", "bars": bars, "indicators": indicators}],
+            intraday_context={"AAPL": _session_snapshot(
+                last=110.0, prev=100.0, o=101.0, h=111.0, lo=100.5, v=9_100_000,
+            )},
+        )
+
+    assert "CURRENT SESSION" in msg and "INCOMPLETE" in msg
+    assert "110.00" in msg                    # today's live price
+    assert "+10.00%" in msg                   # move vs prior close
+    assert "Last completed close: 100.0" in msg
+    # The completed-bar series must still contain ONLY the finished day.
+    completed = msg.split("CURRENT SESSION")[0]
+    assert "2026-08-18" in completed
+    assert "110.0" not in completed, "today's live price must not appear as a daily bar"
+    # And Tech must be told the indicators predate the move.
+    assert "do NOT yet reflect this move" in msg
+
+
+def test_tech_prompt_omits_session_block_when_no_intraday_context():
+    """Morning runs pass no intraday context — the prompt must be unchanged
+    for them (no empty/misleading session block)."""
+    from datetime import date
+    from src.agents.tech_analyst import TechAnalystAgent
+    from src.models import OHLCV, TechnicalIndicators
+
+    bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0,
+                  close=100.0, volume=5_000_000)]
+    indicators = TechnicalIndicators(
+        symbol="AAPL", ma_20=99.0, ma_50=98.0, ma_200=95.0, rsi_14=55.0,
+        macd=0.5, macd_signal=0.4, macd_hist=0.1, bb_upper=104.0,
+        bb_middle=100.0, bb_lower=96.0, atr_14=2.0, volume_change_pct=5.0,
+    )
+    with patch("anthropic.Anthropic"):
+        agent = TechAnalystAgent(api_key="t", model="claude-sonnet-4-6-20250514")
+        msg = agent.build_user_message(
+            symbols_data=[{"symbol": "AAPL", "bars": bars, "indicators": indicators}],
+        )
+    assert "CURRENT SESSION" not in msg
+
+
+@patch("src.pipeline.compute_indicators")
+def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_indicators):
+    """End-to-end for Blocker 2: a move that develops TODAY is detected on
+    live prices, handed to Tech WITH that live evidence, and flows through
+    Tech -> PM -> Risk -> deterministic gate -> execution."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _session_snapshot(last=110.0, prev=100.0, o=101.0,
+                                  h=111.0, lo=100.5, v=9_100_000),
+    }
+    analysis = _ta_result("AAPL", rating="buy")
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": analysis},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision",
+        SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = [{"id": "o1", "action": "BUY", "symbol": "AAPL"}]
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    # Tech saw today's live move...
+    assert p.tech_analyst.analyze_batch.call_args.kwargs[
+        "intraday_context"]["AAPL"]["last_price"] == 110.0
+    # ...and it reached execution through the shared chain.
+    assert ctx.analyses == [analysis]
+    p.decision_stage.run.assert_called_once_with(ctx)
+    p.risk_stage.run.assert_called_once_with(ctx)
+    p.execution_stage.run.assert_called_once_with(ctx)
+    assert result["status"] == "intraday_executed"

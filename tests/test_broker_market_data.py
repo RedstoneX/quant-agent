@@ -282,17 +282,25 @@ def _snapshot_client(snapshots: dict):
     return client
 
 
-def test_intraday_snapshots_reads_last_trade_and_prior_close():
+def test_intraday_snapshots_reads_last_trade_prior_close_and_session_bar():
+    """Also carries TODAY's still-forming bar under a distinct `session_*`
+    namespace so no caller can mistake it for a completed daily bar."""
     b = _broker()
     b._data_client = _snapshot_client({
         "NVDA": SimpleNamespace(
             symbol="NVDA",
             latest_trade=SimpleNamespace(price=185.0),
             previous_daily_bar=SimpleNamespace(close=180.0),
+            daily_bar=SimpleNamespace(open=181.0, high=186.0, low=180.5,
+                                      close=185.0, volume=1_250_000),
         ),
     })
     out = b.get_intraday_snapshots(["NVDA"])
-    assert out == {"NVDA": {"last_price": 185.0, "prev_close": 180.0}}
+    assert out == {"NVDA": {
+        "last_price": 185.0, "prev_close": 180.0,
+        "session_open": 181.0, "session_high": 186.0,
+        "session_low": 180.5, "session_volume": 1_250_000.0,
+    }}
 
 
 def test_intraday_snapshots_is_a_single_bulk_call_for_many_symbols():
@@ -318,7 +326,11 @@ def test_intraday_snapshots_degrades_to_none_fields_for_a_missing_symbol():
     b = _broker()
     b._data_client = _snapshot_client({})  # SGOV not in the response at all
     out = b.get_intraday_snapshots(["SGOV"])
-    assert out == {"SGOV": {"last_price": None, "prev_close": None}}
+    assert out == {"SGOV": {
+        "last_price": None, "prev_close": None,
+        "session_open": None, "session_high": None,
+        "session_low": None, "session_volume": None,
+    }}
 
 
 def test_intraday_snapshots_returns_empty_dict_on_total_failure():

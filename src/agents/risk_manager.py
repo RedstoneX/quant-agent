@@ -94,11 +94,11 @@ class RiskManagerAgent(BaseAgent):
             cash_bit = ""
             if cash is not None:
                 cash_pct = (cash / total_value * 100) if total_value else 0.0
-                cash_bit = f" | Cash (deployable now): ${cash:,.0f} ({cash_pct:.1f}%)"
+                cash_bit = f" | Cash (deployable this session): ${cash:,.0f} ({cash_pct:.1f}%)"
             if reserve_balance > 0:
                 cash_bit += (
-                    f" | Reserve (sweep-parked, ~1 trading day to convert): "
-                    f"${reserve_balance:,.0f}"
+                    f" (incl. ${reserve_balance:,.0f} sweep-parked, "
+                    f"auto-liquidated before any BUY executes)"
                 )
             account_section = (
                 f"## Account\n- Total equity: ${total_value:,.0f}{cash_bit}\n"
