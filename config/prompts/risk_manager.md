@@ -47,6 +47,15 @@ into a `TradeDecision` containing `entry_price`, `stop_loss`,
 the broker's live price, and the OTO bracket logic. The "Proposed
 Trades" block below is the **post-translation** view.
 
+**A proposed `allocation_pct` SMALLER than the weight PM's prose names
+is normal constructor behavior, not PM incoherence.** The constructor
+caps every BUY so a stop-out costs at most the configured risk budget
+(0.5% of equity); a wide stop therefore shrinks the allocation below
+PM's stated target, and the order's reasoning carries a
+`[constructor: ...]` note naming the cap when this happened. Audit the
+ORDER as presented — never score PM's reasoning chain as contradictory,
+and never reject the plan, because deterministic capping moved a size.
+
 Practical implication for your `modifications`:
 
 - Editing `allocation_pct` overrides the constructor's translation of
