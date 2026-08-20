@@ -165,3 +165,241 @@ def test_pm_decision_missing_chain_field_is_repaired(monkeypatch):
     assert decision is not None
     assert len(decision.targets) == 1
     assert decision.reasoning_chain.cash_target == "cash 95% by design"
+
+
+# ===========================================================================
+# External review: schema repair must never become a re-decision.
+# ===========================================================================
+
+def test_repair_that_flips_approved_fails_closed(monkeypatch):
+    """If the repaired response changes `approved`, that is a re-decision,
+    not a schema completion — must fail closed even though the repair
+    otherwise parses cleanly."""
+    agent = _rm()
+    monkeypatch.setattr(
+        RiskManagerAgent, "run",
+        lambda self, **kw: _result(BROKEN_VERDICT), raising=False,
+    )
+    flipped = json.loads(FIXED_VERDICT)
+    flipped["approved"] = False
+    monkeypatch.setattr(
+        RiskManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(flipped)),
+        raising=False,
+    )
+
+    verdict, _ = _review(agent)
+    assert verdict is None, "changed `approved` must fail closed, not be accepted"
+
+
+def test_repair_that_changes_a_modification_value_fails_closed(monkeypatch):
+    agent = _rm()
+    monkeypatch.setattr(
+        RiskManagerAgent, "run",
+        lambda self, **kw: _result(BROKEN_VERDICT), raising=False,
+    )
+    tampered = json.loads(FIXED_VERDICT)
+    tampered["modifications"][0]["new_value"] = 9.9  # was 2.5
+    monkeypatch.setattr(
+        RiskManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(tampered)),
+        raising=False,
+    )
+
+    verdict, _ = _review(agent)
+    assert verdict is None
+
+
+def test_repair_that_changes_reason_category_fails_closed(monkeypatch):
+    agent = _rm()
+    monkeypatch.setattr(
+        RiskManagerAgent, "run",
+        lambda self, **kw: _result(BROKEN_VERDICT), raising=False,
+    )
+    tampered = json.loads(FIXED_VERDICT)
+    tampered["reason_category"] = "clean"  # was rr_fail
+    monkeypatch.setattr(
+        RiskManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(tampered)),
+        raising=False,
+    )
+
+    verdict, _ = _review(agent)
+    assert verdict is None
+
+
+def test_repair_that_changes_scale_all_buys_fails_closed(monkeypatch):
+    agent = _rm()
+    monkeypatch.setattr(
+        RiskManagerAgent, "run",
+        lambda self, **kw: _result(BROKEN_VERDICT), raising=False,
+    )
+    tampered = json.loads(FIXED_VERDICT)
+    tampered["scale_all_buys"] = 0.5  # was 1.0
+    monkeypatch.setattr(
+        RiskManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(tampered)),
+        raising=False,
+    )
+
+    verdict, _ = _review(agent)
+    assert verdict is None
+
+
+def test_repair_reordering_modifications_is_still_accepted(monkeypatch):
+    """Order-insensitive comparison: reordering the SAME modifications is
+    not a re-decision and must not spuriously fail closed."""
+    agent = _rm()
+    monkeypatch.setattr(
+        RiskManagerAgent, "run",
+        lambda self, **kw: _result(BROKEN_VERDICT), raising=False,
+    )
+    reordered = json.loads(FIXED_VERDICT)
+    reordered["modifications"] = list(reversed(reordered["modifications"]))
+    monkeypatch.setattr(
+        RiskManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(reordered)),
+        raising=False,
+    )
+
+    verdict, _ = _review(agent)
+    assert verdict is not None
+    assert verdict.approved is True
+
+
+def test_decision_bearing_validation_error_skips_repair_entirely(monkeypatch):
+    """`approved` missing entirely is a decision-bearing validation
+    failure — must fail closed WITHOUT attempting a repair call."""
+    agent = _rm()
+    missing_approved = json.dumps({
+        "reasoning_chain": {
+            "rr_audit": "a", "signal_fidelity": "b", "correlation_check": "c",
+            "event_risk": "d", "sizing_sanity": "e", "overall": "f",
+        },
+        "modifications": [], "scale_all_buys": 1.0, "reason_category": "clean",
+        "reasoning": "no approved field",
+    })
+    monkeypatch.setattr(
+        RiskManagerAgent, "run",
+        lambda self, **kw: _result(missing_approved), raising=False,
+    )
+    execute_calls: list[str] = []
+    monkeypatch.setattr(
+        RiskManagerAgent, "_execute",
+        lambda self, user_message: execute_calls.append(user_message) or _result("{}"),
+        raising=False,
+    )
+
+    verdict, _ = _review(agent)
+    assert verdict is None
+    assert execute_calls == [], "repair must not be attempted for a decision-bearing failure"
+
+
+def test_pm_repair_that_changes_target_weight_fails_closed(monkeypatch):
+    broken = json.dumps({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b",
+        },
+        "targets": [{
+            "symbol": "XLE", "target_weight_pct": 5.0, "conviction": "medium",
+            "thesis": "energy tailwind", "thesis_invalid_if": "", "catalyst": "",
+        }],
+        "portfolio_view": "small energy book",
+    })
+    tampered = json.loads(broken)
+    tampered["reasoning_chain"]["cash_target"] = "cash 95%"
+    tampered["targets"][0]["target_weight_pct"] = 15.0  # was 5.0 — re-decided
+
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "run",
+        lambda self, **kw: _result(broken), raising=False,
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(tampered)),
+        raising=False,
+    )
+
+    decision, _ = agent.decide(analyses=[], positions=[])
+    assert decision is None, "a changed target weight must fail closed"
+
+
+def test_pm_repair_that_adds_a_target_fails_closed(monkeypatch):
+    broken = json.dumps({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b",
+        },
+        "targets": [{
+            "symbol": "XLE", "target_weight_pct": 5.0, "conviction": "medium",
+            "thesis": "energy tailwind", "thesis_invalid_if": "", "catalyst": "",
+        }],
+        "portfolio_view": "small energy book",
+    })
+    tampered = json.loads(broken)
+    tampered["reasoning_chain"]["cash_target"] = "cash 90%"
+    tampered["targets"].append({
+        "symbol": "NVDA", "target_weight_pct": 8.0, "conviction": "high",
+        "thesis": "smuggled in during repair", "thesis_invalid_if": "", "catalyst": "",
+    })
+
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "run",
+        lambda self, **kw: _result(broken), raising=False,
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "_execute",
+        lambda self, user_message: _result(json.dumps(tampered)),
+        raising=False,
+    )
+
+    decision, _ = agent.decide(analyses=[], positions=[])
+    assert decision is None
+
+
+def test_pm_decision_bearing_validation_error_skips_repair_entirely(monkeypatch):
+    """`targets` is not a list at all (e.g. a stray string) — decision-
+    bearing failure; must fail closed without a repair call. Note:
+    `_drop_invalid_targets` normalizes non-list `targets` to `[]` BEFORE
+    the pydantic construction, so a `targets`-rooted failure here means
+    another decision-bearing constraint (e.g. duplicate symbols) — this
+    test exercises the guard path via a monkeypatched validation_error
+    check rather than hunting a specific schema constraint."""
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    broken = json.dumps({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b", "cash_target": "c",
+        },
+        "targets": [{
+            "symbol": "XLE", "target_weight_pct": 5.0, "conviction": "medium",
+            "thesis": "t", "thesis_invalid_if": "", "catalyst": "",
+        }],
+        # portfolio_view omitted — required str field, but NOT decision-bearing
+        # for PM (only "targets" is in _DECISION_FIELDS), so this alone should
+        # still attempt repair. This test instead forces the guard directly.
+    })
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "run",
+        lambda self, **kw: _result(broken), raising=False,
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "validation_error_touches",
+        staticmethod(lambda error, fields: True), raising=False,
+    )
+    execute_calls: list[str] = []
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "_execute",
+        lambda self, user_message: execute_calls.append(user_message) or _result("{}"),
+        raising=False,
+    )
+
+    decision, _ = agent.decide(analyses=[], positions=[])
+    assert decision is None
+    assert execute_calls == [], "repair must not be attempted when the guard fires"

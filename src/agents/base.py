@@ -661,30 +661,67 @@ class BaseAgent(ABC):
         "REJECTED: parse error". A prose omission silently destroyed an
         approving verdict and ended the trading day. One corrective call
         (~$0.002) names the exact validation errors and asks the model to
-        re-emit the complete object; if the second attempt also fails,
-        callers keep their existing fail-closed path (None → reject/retry).
+        complete the object; if the second attempt also fails, callers
+        keep their existing fail-closed path (None → reject/retry).
+
+        This is SCHEMA COMPLETION, never re-decision. The coda explicitly
+        scopes the model to filling missing/invalid narrative fields and
+        forbids touching any decision-bearing value. That instruction is
+        advisory, not enforcement — callers MUST additionally verify the
+        repaired parse's decision-bearing fields are byte-identical to the
+        pre-repair parse (see `RiskManagerAgent`/`PortfolioManagerAgent`)
+        and fail closed if the model changed them or the original failure
+        was itself rooted in a decision-bearing field (in which case
+        callers should skip repair entirely — see
+        `validation_error_touches`).
 
         Deliberately built on `_execute` (not `run`) so the original
-        user message is replayed verbatim with a repair coda — the model
-        re-decides nothing, it completes what it already decided. The
+        user message is replayed verbatim with a repair coda. The
         returned AgentResult's `user_message` includes the coda, so the
         agent_logs row is self-describing about being a repair call.
         """
         coda = (
-            f"\n\n## SCHEMA REPAIR REQUIRED\n"
+            f"\n\n## SCHEMA REPAIR REQUIRED — NOT A RE-DECISION\n"
             f"Your previous response was parseable JSON but failed "
             f"{schema_name} schema validation.\n\n"
             f"Validation errors:\n{error}\n\n"
             f"Your previous response was:\n{failed.raw_text}\n\n"
-            f"Re-emit the COMPLETE corrected JSON object now — keep the same "
-            f"decisions and content, add every missing required field with "
-            f"substantive content. Respond ONLY with the JSON object."
+            f"Re-emit the COMPLETE JSON object, filling in ONLY the "
+            f"missing or invalid schema field(s) named in the validation "
+            f"errors above — typically an empty or omitted narrative "
+            f"field. Do NOT reconsider, add, remove, or change the value "
+            f"of any decision-bearing field: every target/symbol/weight, "
+            f"every approved/modifications/scale_all_buys/reason_category "
+            f"value must be returned EXACTLY as in your previous response. "
+            f"This is schema completion only. Respond ONLY with the JSON "
+            f"object."
         )
         logger.warning(
             "Agent %s: %s validation failed — attempting one repair reprompt",
             self.name, schema_name,
         )
         return self._execute(failed.user_message + coda)
+
+    @staticmethod
+    def validation_error_touches(error, field_names: tuple[str, ...]) -> bool:
+        """True if a pydantic ValidationError is rooted at one of the
+        named top-level fields.
+
+        Used to skip `repair_reprompt` entirely when the validation
+        failure concerns DECISION-bearing content (e.g. `approved` has
+        the wrong type, `modifications[0].new_value` isn't numeric) rather
+        than a narrative field — a repair call cannot fix that without
+        re-deciding, so the caller should fail closed immediately instead
+        of spending a call the fix-closed comparison would reject anyway.
+        """
+        try:
+            errors = error.errors()
+        except AttributeError:
+            return False
+        return any(
+            err.get("loc", (None,))[:1] and err["loc"][0] in field_names
+            for err in errors
+        )
 
     def _execute(self, user_message: str) -> AgentResult:
         """The retry / cross-provider-failover / cost / parse loop, decoupled

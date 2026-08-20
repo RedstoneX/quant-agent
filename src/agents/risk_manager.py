@@ -407,10 +407,36 @@ Review these proposed trades and provide your verdict as JSON."""
             # day over. One bounded repair reprompt names the exact
             # validation errors; a second failure keeps the fail-closed
             # None → reject path exactly as before.
+            #
+            # External review (post-implementation): a schema repair must
+            # never become a re-decision. If the validation failure is
+            # itself rooted in a DECISION-bearing field, a repair call
+            # can't fix it without the model re-deciding — skip repair
+            # and fail closed immediately. Otherwise, after repair,
+            # decision-bearing fields must be byte-identical to the
+            # pre-repair parse; any drift is treated as an unauthorized
+            # re-decision and also fails closed.
+            if self.validation_error_touches(e, self._DECISION_FIELDS):
+                logger.error(
+                    "Risk verdict validation failure is rooted in a "
+                    "decision-bearing field (%s) — not schema-repairable; "
+                    "failing closed: %s",
+                    ", ".join(self._DECISION_FIELDS), e,
+                )
+                return None, result
             repaired = self.repair_reprompt(result, e, "RiskVerdict")
             reparsed = repaired.parse_json()
             if isinstance(reparsed, dict):
                 reparsed = self._drop_invalid_modifications(reparsed)
+                if not self._decision_fields_unchanged(parsed, reparsed):
+                    logger.error(
+                        "Risk verdict repair changed decision-bearing "
+                        "content (approved/modifications/scale_all_buys/"
+                        "reason_category) instead of only completing the "
+                        "schema — treating as an unauthorized re-decision "
+                        "and failing closed.",
+                    )
+                    return None, repaired
                 try:
                     verdict = RiskVerdict(**reparsed)
                     logger.info(
@@ -431,6 +457,44 @@ Review these proposed trades and provide your verdict as JSON."""
         except Exception as e:
             logger.error("Failed to parse risk verdict: %s", e)
             return None, result
+
+    _DECISION_FIELDS = ("approved", "modifications", "scale_all_buys", "reason_category")
+
+    @staticmethod
+    def _canonical_modifications(mods) -> list[tuple]:
+        if not isinstance(mods, list):
+            return []
+        out = []
+        for m in mods:
+            if not isinstance(m, dict):
+                continue
+            try:
+                orig = round(float(m.get("original_value")), 6)
+                new = round(float(m.get("new_value")), 6)
+            except (TypeError, ValueError):
+                orig = m.get("original_value")
+                new = m.get("new_value")
+            out.append((m.get("symbol"), m.get("field"), orig, new))
+        return sorted(out, key=lambda t: (str(t[0]), str(t[1])))
+
+    @classmethod
+    def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
+        """True iff every decision-bearing field survived a schema
+        repair unchanged. `original` and `repaired` are both already
+        post-`_drop_invalid_modifications` for a fair comparison."""
+        if bool(original.get("approved")) != bool(repaired.get("approved")):
+            return False
+        if cls._canonical_modifications(original.get("modifications")) != \
+                cls._canonical_modifications(repaired.get("modifications")):
+            return False
+        try:
+            orig_scale = round(float(original.get("scale_all_buys", 1.0) or 1.0), 6)
+            new_scale = round(float(repaired.get("scale_all_buys", 1.0) or 1.0), 6)
+        except (TypeError, ValueError):
+            return False
+        if orig_scale != new_scale:
+            return False
+        return original.get("reason_category") == repaired.get("reason_category")
 
     @staticmethod
     def _drop_invalid_modifications(parsed: dict) -> dict:

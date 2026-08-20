@@ -224,3 +224,16 @@ def test_risk_review_survives_one_malformed_modification(mock_cls, sample_portfo
     assert verdict.approved is False
     assert len(verdict.modifications) == 1
     assert verdict.modifications[0].symbol == "NVDA"
+
+
+def test_prompt_describes_correct_pipeline_order():
+    """External review: the prompt claimed PortfolioConstructor runs
+    AFTER the Risk Manager ('After you, PortfolioConstructor submits
+    orders') — backwards. The constructor translates PM's targets into
+    the orders RM reviews BEFORE RM ever runs; deterministic re-check +
+    execution run after RM. Pin the corrected order so this can't
+    silently drift back."""
+    from src.agents.risk_manager import PROMPT_PATH
+    text = PROMPT_PATH.read_text()
+    assert "already ran, before you" in text
+    assert "After you, `PortfolioConstructor` submits orders" not in text

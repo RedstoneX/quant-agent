@@ -611,10 +611,34 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # analysis_error. One immediate ~$0.006 repair call naming the
             # validation errors is strictly cheaper; a second failure keeps
             # today's fail-closed None → analysis_error path.
+            #
+            # External review (post-implementation): a schema repair must
+            # never become a re-decision. `targets` is the decision — if
+            # the validation failure is rooted there, repair can't fix it
+            # without the model re-deciding, so skip repair and fail
+            # closed. Otherwise, after repair, the target set (symbol +
+            # weight) must be byte-identical to the pre-repair parse; any
+            # drift fails closed too.
+            if self.validation_error_touches(e, self._DECISION_FIELDS):
+                logger.error(
+                    "Portfolio decision validation failure is rooted in a "
+                    "decision-bearing field (%s) — not schema-repairable; "
+                    "failing closed: %s",
+                    ", ".join(self._DECISION_FIELDS), e,
+                )
+                return None, result
             repaired = self.repair_reprompt(result, e, "PortfolioDecision")
             reparsed = repaired.parse_json()
             if isinstance(reparsed, dict):
                 reparsed = self._drop_invalid_targets(reparsed)
+                if not self._decision_fields_unchanged(parsed, reparsed):
+                    logger.error(
+                        "Portfolio decision repair changed target symbols/"
+                        "weights instead of only completing the schema — "
+                        "treating as an unauthorized re-decision and "
+                        "failing closed.",
+                    )
+                    return None, repaired
                 try:
                     decision = PortfolioDecision(**reparsed)
                     logger.info(
@@ -676,3 +700,30 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             valid.append(item)
         parsed["targets"] = valid
         return parsed
+
+    _DECISION_FIELDS = ("targets",)
+
+    @staticmethod
+    def _canonical_targets(targets) -> list[tuple]:
+        if not isinstance(targets, list):
+            return []
+        out = []
+        for t in targets:
+            if not isinstance(t, dict):
+                continue
+            try:
+                weight = round(float(t.get("target_weight_pct")), 6)
+            except (TypeError, ValueError):
+                weight = t.get("target_weight_pct")
+            sym = str(t.get("symbol") or "").strip().upper()
+            out.append((sym, weight))
+        return sorted(out, key=lambda t: t[0])
+
+    @classmethod
+    def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
+        """True iff the target set (symbol + weight — the actual decision
+        that reaches PortfolioConstructor) survived a schema repair
+        unchanged. `original` and `repaired` are both already post-
+        `_drop_invalid_targets` for a fair comparison."""
+        return cls._canonical_targets(original.get("targets")) == \
+            cls._canonical_targets(repaired.get("targets"))

@@ -492,3 +492,19 @@ def test_sanity_check_keeps_regime_shift_with_two_fresh_indicators(mock_cls):
     assert analysis is not None
     assert analysis.regime_shift is True
     assert analysis.shift_reason == "VIX + HY both jumped today"
+
+
+def test_prompt_uses_one_consistent_staleness_rule_for_daily_and_monthly():
+    """External review: the UNSOURCED-token rule and the Confidence
+    Calibration section previously disagreed on the daily threshold
+    (>7 vs >3) and the UNSOURCED rule didn't state the monthly number at
+    all. Pin both sections to the SAME numbers so the prompt can't drift
+    out of sync with `_stale()` / `_apply_sanity_checks` again."""
+    from src.agents.macro_analyst import PROMPT_PATH
+    text = PROMPT_PATH.read_text()
+    assert "staleness_days > 7" not in text, (
+        "stale >7 threshold must not reappear — daily cadence is >3 "
+        "everywhere in this prompt"
+    )
+    assert "staleness_days > 3" in text
+    assert "staleness_days > 55" in text
