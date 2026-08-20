@@ -2,6 +2,22 @@
 
 Status: **TRADING-UTILITY RECOVERY — FIXES IMPLEMENTED, AWAITING EXTERNAL REVIEW**
 
+## Deployment task blocked — PR #56 does not match this work (2026-08-20)
+
+**Finding:** A deployment task asked Claude to carry "the merged PR #56" (trading-utility recovery, described as having "passed external review") through the governed production deployment path. Repository evidence contradicts the premise on every count checked; no deployment was performed.
+
+**Evidence:**
+- GitHub PR #56 for this repo (commit `92420b5`, squash-merged into `claude/vps-deployment-hardening-q3f7k2`) is `fix(execution): defer protection finalize to actual fill (P1 codex r4)` — an unrelated execution/protection-finalize fix (part of the separate PR I/J/K = #55/#56/#57 series). It has nothing to do with trading-utility recovery.
+- `fix/trading-utility-conversion` (this branch, tip `4f7191c`) has no associated PR at all and is not an ancestor of `origin/claude/vps-deployment-hardening-q3f7k2` (`git merge-base --is-ancestor` → false). It has never been merged anywhere.
+- This file's own Status line above — last updated on this branch at commit `c6bc024` — already read "AWAITING EXTERNAL REVIEW" before this deployment task arrived.
+- No commit, branch, or doc anywhere in this repository's history associates "PR #56" (or any PR number) with trading-utility recovery.
+
+**Decision:** Treated as a material conflict with accepted architecture/safety/scope (CLAUDE.md decision discipline) and the standing "Claude does not merge or deploy its own work; external review remains required" boundary (Hard boundaries, below). Did not deploy, merge, open a PR, or touch production. `docs/STATE.md`'s production pin is untouched and remains accurate to what is actually running.
+
+**Change:** None to code or production — this record only.
+
+**Remaining uncertainty:** Whether "PR #56" was simply a misidentification (the next sequential PR number was assumed rather than checked — #55/#56/#57 were in concurrent use by the unrelated execution-protection fix series, so this recovery's real future PR number would be #58 or later), or whether external review actually happened through a channel this repository doesn't record. Before any deployment proceeds: open an actual PR from `fix/trading-utility-conversion` against the correct base, get real external review, merge it, then update `STATE.md`/`WORK.md` to the true reviewed SHA.
+
 ## Recovery record (2026-08-20, branch `fix/trading-utility-conversion`)
 
 Census of all 13 decision runs since soak start (Aug 14–20): ~80–96 candidates per run, $0.71 total model spend, **zero risk positions ever opened**. Five root causes found, all evidence-backed, all fixed within the accepted architecture:
