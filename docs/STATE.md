@@ -6,10 +6,11 @@ This file records what is accepted and true **now**. Git history preserves prior
 
 ## Accepted production state
 
+- **Terminology:** **QAMC / Mission Control** means the whole product/system. **Dashboard** means the browser/iPad read-side UI and its frontend/UX workstream. **Core recovery** means trading/backend deployment and natural-validation work.
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission, margin, options and direct stock shorting are not authorized.
 - Paper vs live is an execution-environment boundary, not a separate trading architecture. The accepted Specialist → PM → AI Risk → deterministic risk/execution → position-management path is intended to remain the same if live-capital operation is later authorized; genuine environment differences stay at the broker/configuration boundary.
 - Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development/Claude Code by `dev`. These account boundaries remain hard.
-- Mission Control/API remain private, read-only and non-critical to trading. `/cockpit`, `/ui` and `/health` are deployed and healthy.
+- Dashboard/API remain private, read-only and non-critical to trading. `/cockpit`, `/ui` and `/health` are deployed and healthy.
 - Private operator access uses Tailscale. Canonical VPS MagicDNS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
 - OneCLI remains the accepted credential-delivery layer. Docker publishes OneCLI only on loopback (`127.0.0.1:10254-10255`); the dashboard may also be reached through `tailscaled` on this host's exact tailnet addresses. The credential gateway itself remains loopback-only. No public listener is authorized.
 - The current Alpaca Paper validation run remains active under the existing seven `qamc` user timers.
@@ -38,13 +39,13 @@ Accepted evidence from that run:
 
 - exact target SHA/tree and reviewed 23-file production delta verified before checkout;
 - production import/config smoke passed with `paper=True`, SGOV sweep enabled, the four approved inverse ETFs present, and intraday still OFF at cutover;
-- Mission Control restarted healthy on the target;
-- commissioning verifier: 23/23 checks PASS across config, OneCLI, wiring, providers and Mission Control;
+- Dashboard/API restarted healthy on the target;
+- commissioning verifier: 23/23 checks PASS across config, OneCLI, wiring, providers and Dashboard/API;
 - live provider preflight: 9/9 checks PASS, including both accepted OpenRouter models, Alpaca Paper account/market-data/calendar/quote paths and FRED;
 - Telegram `getMe` returned 200 through OneCLI; the real bot token remained only in OneCLI and no token-shaped string was found in the runtime log;
 - Gate C focused deterministic suite: **246 passed**, 0 failed/error/skipped/xfailed (62 warnings);
 - seven existing timers remained active and unchanged, with zero failed units;
-- `/cockpit`, `/ui` and `/health` all returned 200 and Mission Control rejected POST/PUT/DELETE/PATCH writes;
+- `/cockpit`, `/ui` and `/health` all returned 200 and Dashboard/API rejected POST/PUT/DELETE/PATCH writes;
 - `dev` / `qamc` / `ubuntu` account boundaries remained intact.
 
 No order was placed, cancelled or modified by the rollout.
@@ -83,9 +84,9 @@ The first naturally scheduled Tech batch line and first naturally scheduled enab
 - Cost-optimized routing and the accepted decision-chain audit remain in force.
 - Trading-critical behavior is environment-neutral by design; Paper mode must not justify weaker or alternate agent/risk/position-management semantics.
 
-## Mission Control product direction
+## Dashboard product direction
 
-Mission Control product convergence is authorized to proceed concurrently with the trading-utility deployment/validation so long as it remains private, read-only and non-critical to trading.
+Dashboard product convergence is authorized to proceed concurrently with the trading-utility deployment/validation so long as it remains private, read-only and non-critical to trading.
 
 `docs/visual/MISSION_CONTROL_VISION_BOARD.png` remains the durable product reference. The accepted direction includes the donor concepts recorded in `docs/OUTCOME.md`, especially Oralexa-style agent cards/debate/signal fusion/PM-Risk decision presentation, OpenTradex-style cockpit shell/layout ideas, TradingView Lightweight Charts-style chart context, and the structured Journal Day experience. Later semantic audits refine these ideas; they do not silently discard them.
 
@@ -102,7 +103,7 @@ Mission Control product convergence is authorized to proceed concurrently with t
 - New timers, daemons, services, databases, proxies, credential systems or other durable infrastructure outside accepted architecture.
 - Deterministic risk/execution semantic redesign.
 - Paper-specific shortcuts or a separate Paper-only trading logic path that would require re-architecting for live operation later.
-- Broker-write Mission Control controls.
+- Broker-write Dashboard controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
@@ -111,4 +112,4 @@ Mission Control product convergence is authorized to proceed concurrently with t
 
 ## Handoff
 
-PR #56 is merged. The primary core task is governed deployment of the accepted recovery followed by natural market validation. Mission Control product convergence may proceed concurrently on an isolated branch/worktree under `docs/WORK.md`, without altering or delaying the trading-critical deployment path.
+PR #56 is merged. The primary core task is governed deployment of the accepted recovery followed by natural market validation. Dashboard product convergence may proceed concurrently on an isolated branch/worktree under `docs/WORK.md`, without altering or delaying the trading-critical deployment path.
