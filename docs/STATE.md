@@ -22,6 +22,14 @@ The checkout carries exactly **one** intended local delta: `config/settings.yaml
 
 Rollback point remains `9c736c158fec84129765c25a9429254d3602ad6b` (`9c736c1`). The accepted rollout transcript is `/root/qamc-rollout-20260820T052756Z.log` on the VPS (root-only).
 
+## Trading-utility recovery — merged, deployment pending
+
+PR **#56 — `fix(qamc): restore trading-utility conversion path`** merged into `main` on 2026-08-20. Merge commit: `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df`; reviewed recovery head: `04f6f76a65f7c02891449a243320977695523117`.
+
+The merged recovery repairs evidenced opportunity→decision→execution blockers including PM parse-fragment selection, SGOV funding latency, bounded fail-closed PM/Risk schema repair, execution-skip observability, FRED/staleness conservatism and deterministic sizing provenance to AI Risk.
+
+**Production has not been declared converged to this merge.** The deployed SHA above remains authoritative until governed rollout evidence records a new production pin.
+
 ## Finish-line acceptance — complete
 
 The coordinated Stage A→E rollout completed successfully in one guarded run and ended with `GATE E / FINISH LINE PASSED`.
@@ -75,6 +83,12 @@ The first naturally scheduled Tech batch line and first naturally scheduled enab
 - Cost-optimized routing and the accepted decision-chain audit remain in force.
 - Trading-critical behavior is environment-neutral by design; Paper mode must not justify weaker or alternate agent/risk/position-management semantics.
 
+## Mission Control product direction
+
+Mission Control product convergence is authorized to proceed concurrently with the trading-utility deployment/validation so long as it remains private, read-only and non-critical to trading.
+
+`docs/visual/MISSION_CONTROL_VISION_BOARD.png` remains the durable product reference. The accepted direction includes the donor concepts recorded in `docs/OUTCOME.md`, especially Oralexa-style agent cards/debate/signal fusion/PM-Risk decision presentation, OpenTradex-style cockpit shell/layout ideas, TradingView Lightweight Charts-style chart context, and the structured Journal Day experience. Later semantic audits refine these ideas; they do not silently discard them.
+
 ## Directionality
 
 - QAMC is not intended to be structurally long-only.
@@ -97,4 +111,4 @@ The first naturally scheduled Tech batch line and first naturally scheduled enab
 
 ## Handoff
 
-The finish-line rollout remains accepted. Trading-utility recovery is under external integration in PR #56 from `fix/trading-utility-conversion`; production remains on the accepted SHA above until that PR is merged and a separately governed deployment occurs. See `docs/WORK.md`.
+PR #56 is merged. The primary core task is governed deployment of the accepted recovery followed by natural market validation. Mission Control product convergence may proceed concurrently on an isolated branch/worktree under `docs/WORK.md`, without altering or delaying the trading-critical deployment path.
