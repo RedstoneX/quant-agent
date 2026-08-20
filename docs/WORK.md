@@ -1,14 +1,15 @@
 # QAMC Current Work
 
-Status: **TRADING-UTILITY RECOVERY — EXTERNALLY REVIEWED; PR #56 OPEN; AWAITING MERGE AND GOVERNED DEPLOYMENT**
+Status: **TRADING-UTILITY RECOVERY — PR #56 MERGED; DEPLOYMENT PREPARED; AWAITING ONE OPERATOR (`ubuntu`) COMMAND**
 
 ## Current integration truth
 
-- Recovery branch: `fix/trading-utility-conversion`.
-- GitHub PR: **#56 — `fix(qamc): restore trading-utility conversion path`**, targeting `main`.
-- The trading-utility code has completed external review, including follow-up fixes to schema-repair decision integrity and macro/pipeline-order prompt consistency.
-- Production is **not** yet running this recovery. `docs/STATE.md` remains authoritative for the deployed SHA.
-- A temporary branch note claiming PR #56 was unrelated was based on a stale/incorrect repository view and is superseded by current GitHub state.
+- Recovery branch: `fix/trading-utility-conversion`, merged via PR #56 into `main` at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` (verified against GitHub directly, not assumed).
+- Production is **not** yet running this recovery — still pinned at `775296e1d516279381a4c516dfb3e783b33a7495`. `docs/STATE.md` remains authoritative for the deployed SHA; it will be updated from actual post-deployment evidence, not from this entry.
+- Deployment is fully prepared and verified from `dev`: target SHA/tree confirmed against `origin/main`; 30-file baseline→target delta reviewed (no unexpected content, no secret-shaped strings); all seven recovery fix markers independently confirmed present in `d14e28d` by file:line (parse containment `src/agents/base.py`, funding wait/poll `src/execution/cash_sweep.py`, schema-repair `src/agents/risk_manager.py`, skip telemetry `src/pipeline_context.py`, unfunded retry `src/pipeline.py`, FRED staleness `src/data/macro.py`, constructor provenance `src/portfolio_constructor.py`); full suite independently reproduced at **1997 passed**; a Gate-C-focused subset (the delta's own test files) independently run at **163 passed**.
+- The actual rollout script is `ops/review/qamc-recovery-rollout.sh` on branch `claude/trading-utility-recovery-rollout` (pushed, not merged — matching how `ops/review/*` was handled for the prior finish-line rollout). It is a derivative of the externally reviewed `ops/review/qamc-finish-line-rollout.sh`: Gate A/B/D/E, the deployment-state machine, convergent rollback and every self-integrity check are byte-identical; only the baseline/target identity, Gate C's focused suite, and one new content-verification block (the seven fix markers, checked three times: pre-checkout, post-checkout, post-enable) differ. The existing 116-test structural suite for this script family passes unmodified against it. Full details and the single operator command are in `ops/review/README-recovery-rollout.md` on that branch.
+- `dev` has no privilege to execute the rollout (account boundary: runtime is `qamc`, administration/recovery is `ubuntu`). This is the one remaining step; see the handoff for the exact command.
+- A temporary branch note claiming PR #56 was unrelated to this work was based on a stale/incorrect repository view (checked before Rex updated PR #56 to point at this branch) and is superseded by current GitHub state — recorded here so it is not mistaken for a live concern.
 
 ## Product/architecture principle
 
@@ -43,9 +44,9 @@ Success is **not** “more trades.” Do not force activity, weaken safety, or h
 
 ## Next authorized work
 
-1. Complete external GitHub integration of PR #56.
-2. Deploy the exact accepted merged SHA through the existing governed production rollout path, preserving the current Alpaca Paper authorization and production-specific intraday enablement.
-3. Verify services/timers/API/Telegram/provider wiring and the new recovery behavior, then allow natural sessions to provide the actual trading evidence.
+1. ~~Complete external GitHub integration of PR #56.~~ Done — merged to `main` at `d14e28d`.
+2. Run the one prepared operator command (`ops/review/README-recovery-rollout.md` on `claude/trading-utility-recovery-rollout`) to deploy the exact accepted merged SHA through the existing governed rollout path, preserving Alpaca Paper authorization and the production-specific intraday enablement.
+3. Verify services/timers/API/Telegram/provider wiring and the new recovery behavior from the rollout's own Gate B/C/E evidence and transcript, update `docs/STATE.md` from that evidence, then allow natural sessions to provide the actual trading evidence.
 
 Deployment passing proves the machinery, not trading success.
 
