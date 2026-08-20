@@ -478,15 +478,13 @@ class DecisionStage:
         earnings_results = ctx.earnings_results
         macro_analysis = ctx.macro_analysis
         total_value = ctx.total_value
-        # 2026-08-19 SGOV/deployable-liquidity forensic: PM used to size
-        # deployment against `cash + parked SGOV value`, which overstated
-        # what was actually spendable this session by orders of magnitude
-        # (observed: ~$10K shown, ~$145 truly settled) — SGOV must be sold
-        # and Alpaca settlement (T+1) does not make the proceeds usable
-        # same-day. PM now sizes against `ctx.deployable_cash` (Alpaca's
-        # settled non-margin buying power) and is told the parked reserve
-        # separately/informationally via `reserve_balance`, never folded
-        # into "cash".
+        # PM sizes against `ctx.deployable_cash` = raw cash + convertible
+        # sweep value (see `_compute_deployable_cash` for the verified
+        # Alpaca field semantics: a filled SGOV sale credits `cash`
+        # immediately — T+1 gates only withdrawal/transfer). The sweep
+        # detail is rendered informationally via `reserve_balance`;
+        # execution's raw-cash recheck after the funding sale remains the
+        # final authority on what a BUY can actually spend.
         cash = ctx.deployable_cash
         last_equity = ctx.last_equity
 
@@ -1182,20 +1180,17 @@ class ExecutionStage:
                 )
                 buy_decisions = []
 
-        # Cash-sweep funding: PM/RM/the hard gate now size and approve BUYs
-        # against `deployable_cash` (never SGOV's parked value — 2026-08-19
-        # forensic), so this is no longer routinely load-bearing for a
-        # typical single trade. It remains a best-effort bridge for the
-        # ordinary gap between decision-time and execution-time (price
-        # drift, an intervening SELL) and for the reserve_pct raw-cash
-        # cushion running thin on a busy day. Release just enough parked
-        # cash to cover the planned notional before the BUY loop sizes
-        # against `available_cash` — but because same-day SGOV liquidation
-        # is NOT reliably settled/spendable by the time execution rechecks
-        # (Alpaca T+1 equity settlement), this is still only an attempt:
-        # `available_cash` below is always re-read from the broker after,
-        # and a BUY this doesn't actually fund is safely skipped, same as
-        # before. Waits for the fill and refreshes ctx.
+        # Cash-sweep funding: PM/RM/the hard gate size BUYs against
+        # `deployable_cash` (raw cash + convertible sweep value), so on any
+        # session with meaningful BUYs this sale IS load-bearing — the raw
+        # cash on hand is typically just the reserve. `fund_buys` sells
+        # enough of the vehicle to cover the planned notional, then waits
+        # for the fill and CONFIRMS the observed rise in broker cash (a
+        # filled sale credits `cash` immediately; the 2026-08-19 loss of a
+        # fully-approved plan was a 51s fill outliving a 15s wait, not
+        # settlement — see cash_sweep._FUND_TERMINAL_TIMEOUT_S). Whatever
+        # it confirms, `available_cash` below governs: a BUY the sale
+        # didn't actually fund is safely skipped.
         # isinstance guard: stage tests stub `pipeline` with MagicMock.
         if buy_decisions:
             from src.execution.cash_sweep import CashSweeper

@@ -47,6 +47,7 @@ costs basis points; an over-swept dollar can reject a real trade.
 """
 import logging
 import math
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,20 @@ logger = logging.getLogger(__name__)
 # session bookend.
 _FUND_BUFFER_FRAC = 0.01
 _FUND_BUFFER_MIN_USD = 50.0
+
+# Funding-sell confirmation budgets. The funding sale is the one order the
+# session's entire purpose depends on: if its proceeds are not confirmed
+# before the BUY loop, every risk-approved BUY is skipped as unfunded.
+# Production fills of the vehicle have been observed at 2s, 5s and 51s —
+# the 51s one (2026-08-19 13:35) outlived the default 15s terminal wait,
+# the account was read pre-fill, all three approved BUYs died, and the
+# proceeds landed 36 seconds into an already-dead session. Terminal wait
+# gets 3.5x the observed worst case; the cash-settle poll covers any lag
+# between the status flip and the cash credit. Both stay far inside the
+# session wrapper's 20-minute kill budget.
+_FUND_TERMINAL_TIMEOUT_S = 180.0
+_FUND_CASH_SETTLE_TIMEOUT_S = 30.0
+_FUND_CASH_SETTLE_POLL_S = 2.0
 
 # Limit-price paddings. The vehicle trades at ~1bp spreads; ±0.1% crosses
 # the book immediately while still capping a pathological fill.
@@ -188,34 +203,72 @@ class CashSweeper:
         except Exception as e:  # noqa: BLE001 — ledger failure must not strand the fill wait
             logger.warning("cash sweep: insert_trade failed for SWEEP_SELL: %s", e)
 
-        # Block until terminal + finalize protection bookkeeping (no-op for a
-        # stopless vehicle, but keeps the SELL discipline uniform).
+        # Extended terminal wait for the FUNDING sell specifically, before
+        # finalize (whose internal 15s default wait then returns instantly
+        # on the already-terminal order). Failure here is not fatal — the
+        # cash-settle poll below is the authoritative confirmation either
+        # way — but a terminal non-fill is worth a loud line.
+        order_id = order.get("id")
+        try:
+            terminal_status = self._pipeline.broker.wait_for_order_terminal(
+                order_id, timeout_seconds=_FUND_TERMINAL_TIMEOUT_S,
+            )
+        except Exception as e:  # noqa: BLE001
+            terminal_status = None
+            logger.warning(
+                "cash sweep: funding-sell terminal wait errored (%s) — "
+                "falling through to the cash-settle poll", e,
+            )
+        if terminal_status != "filled":
+            logger.warning(
+                "cash sweep: funding sell %s not filled after %.0fs "
+                "(status=%s) — BUYs will be governed by whatever cash the "
+                "settle poll confirms",
+                order_id, _FUND_TERMINAL_TIMEOUT_S, terminal_status,
+            )
+
+        # Finalize protection bookkeeping (no-op for a stopless vehicle,
+        # but keeps the SELL discipline uniform).
         self._pipeline._finalize_pending_protections([prot], context="CASH SWEEP")
 
         estimated = qty * price
-        # Commit each snapshot the moment it's in hand (audit round 2): the
-        # old order fetched account THEN positions and assigned ctx only after
-        # both — a raise on the second call discarded the already-fetched
-        # cash figure while `freed>0` told the BUY loop cash was released,
-        # leaving ctx.cash at its stale pre-sale value.
+        # Confirm the proceeds by POLLING raw broker cash, not by a single
+        # point-in-time read — the single read is exactly what turned the
+        # 2026-08-19 slow fill into a lost trading day. Commit each snapshot
+        # the moment it's in hand (audit round 2): a raise on a later call
+        # must not discard an already-fetched cash figure.
         refreshed = False
-        try:
-            account = self._pipeline.broker.get_account()
-            ctx.cash = account["cash"]
-            ctx.deployable_cash = self._pipeline._compute_deployable_cash(ctx.cash, ctx.positions)
-            ctx.total_value = account["portfolio_value"]
-            refreshed = True
-        except Exception as e:  # noqa: BLE001
-            # Broker unreachable: we cannot CONFIRM the proceeds landed, so
-            # report zero freed. ctx.cash keeps its pre-sale value, which
-            # makes ExecutionStage's raw-cash check skip BUYs it can't prove
-            # are funded. Fail closed — the old code optimistically set
-            # `ctx.cash = cash + freed` here and returned the estimate,
-            # which is exactly how an unfunded BUY could be waved through.
+        last_refresh_error: Exception | None = None
+        deadline = time.monotonic() + _FUND_CASH_SETTLE_TIMEOUT_S
+        while True:
+            try:
+                account = self._pipeline.broker.get_account()
+                ctx.cash = account["cash"]
+                ctx.deployable_cash = self._pipeline._compute_deployable_cash(
+                    ctx.cash, ctx.positions,
+                )
+                ctx.total_value = account["portfolio_value"]
+                refreshed = True
+                if ctx.cash - cash >= needed - 0.01:
+                    break
+            except Exception as e:  # noqa: BLE001
+                last_refresh_error = e
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_FUND_CASH_SETTLE_POLL_S)
+        if not refreshed:
+            # Broker unreachable for the whole window: we cannot CONFIRM the
+            # proceeds landed, so report zero freed. ctx.cash keeps its
+            # pre-sale value, which makes ExecutionStage's raw-cash check
+            # skip BUYs it can't prove are funded. Fail closed — the old
+            # code optimistically set `ctx.cash = cash + freed` here and
+            # returned the estimate, which is exactly how an unfunded BUY
+            # could be waved through.
             logger.error(
                 "cash sweep: account refresh after funding sell failed (%s) — "
                 "cannot confirm proceeds landed; reporting $0 freed so the "
-                "deterministic cash check governs the BUY phase", e,
+                "deterministic cash check governs the BUY phase",
+                last_refresh_error,
             )
             return 0.0
         try:
