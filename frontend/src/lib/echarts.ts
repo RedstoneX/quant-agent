@@ -1,6 +1,6 @@
 import * as echarts from "echarts/core";
 import { GaugeChart, ScatterChart, SankeyChart, GraphChart, FunnelChart, PieChart, TreemapChart } from "echarts/charts";
-import { TooltipComponent, GridComponent, LegendComponent } from "echarts/components";
+import { TooltipComponent, GridComponent, LegendComponent, GraphicComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
 /* Tree-shaken ECharts registration — core + exactly the chart types QAMC
@@ -22,7 +22,11 @@ import { CanvasRenderer } from "echarts/renderers";
  * rather than 2-3 buckets, per the same "simple composition -> donut, real
  * hierarchy -> treemap" rule DonutMeter's own header comment documents.
  * `ScatterChart`/`SankeyChart` were registered ahead of use (candidate
- * funnel work) and are reused as-is. */
+ * funnel work) and are reused as-is. `GraphicComponent` backs ArcGauge's/
+ * DonutMeter's center-label `graphic` elements — omitting it doesn't break
+ * rendering (ECharts warns and skips the graphic) but throws a console
+ * error on every affected panel, which fails this project's zero-console-
+ * error verification bar. */
 echarts.use([
   GaugeChart,
   ScatterChart,
@@ -34,6 +38,7 @@ echarts.use([
   TooltipComponent,
   GridComponent,
   LegendComponent,
+  GraphicComponent,
   CanvasRenderer,
 ]);
 

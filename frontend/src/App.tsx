@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   AccountResponse,
@@ -14,6 +14,7 @@ import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
 import { HeroBand } from "./components/HeroBand";
 import { DecisionStateBanner } from "./components/DecisionStateBanner";
+import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
 import { CandidateRail } from "./components/CandidateRail";
 import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
@@ -26,6 +27,8 @@ import { JournalPanel } from "./components/JournalPanel";
 import { RunDetailModal } from "./components/RunDetailModal";
 import { CandidateDetailModal } from "./components/CandidateDetailModal";
 import { Pill } from "./components/ui/Pill";
+import { bestPrimaryRunId } from "./components/funnelShared";
+import { todayEtDate } from "./lib/format";
 
 type View = "cockpit" | "journal";
 type MobilePane = "watchlist" | "chart" | "decision";
@@ -146,10 +149,41 @@ export default function App() {
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [funnel, setFunnel] = useState<RunFunnelResponse | null>(null);
-  const [funnelError, setFunnelError] = useState<string | null>(null);
-  const [funnelLoading, setFunnelLoading] = useState(true);
-  const [funnelUpdatedAt, setFunnelUpdatedAt] = useState<Date | null>(null);
+
+  // Day-scoped session state — replaces a single "latest run" funnel.
+  // QAMC runs several session types a day, several of which (midday/close
+  // position review) structurally carry zero candidates; always following
+  // the literal latest run means a routine afternoon review silently
+  // blanks the cockpit even when a real morning scan ran. `todaysRuns`/
+  // `todaysFunnels` cover every one of today's runs (reusing the journal
+  // endpoints' existing ET-trading-day grouping — see
+  // docs/architecture/MISSION_CONTROL_API.md's Stage 5 entry — rather than
+  // re-implementing date bucketing here), `selectedRunId` is whichever one
+  // currently drives Candidates/Chart/Decision Room, and `autoFollow`
+  // tracks whether that selection is still automatic (best-primary-run,
+  // see funnelShared.ts::bestPrimaryRunId) or the operator pinned one via
+  // TodaySessionsStrip.
+  const [todaysRuns, setTodaysRuns] = useState<RunSummary[]>([]);
+  const [todaysFunnels, setTodaysFunnels] = useState<Record<string, RunFunnelResponse | null>>({});
+  const [todaysTrades, setTodaysTrades] = useState<TradeItem[]>([]);
+  const [todaysError, setTodaysError] = useState<string | null>(null);
+  const [todaysLoading, setTodaysLoading] = useState(true);
+  const [todaysUpdatedAt, setTodaysUpdatedAt] = useState<Date | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [autoFollow, setAutoFollow] = useState(true);
+  // usePoll(fn, []) freezes `fn`'s closure at mount — reading component
+  // state directly inside it would always see the initial value (a real,
+  // separate bug this same change fixes for chartSymbol below). Refs give
+  // the poll callback a way to read the CURRENT autoFollow/selectedRunId.
+  const autoFollowRef = useRef(autoFollow);
+  const selectedRunIdRef = useRef(selectedRunId);
+  useEffect(() => {
+    autoFollowRef.current = autoFollow;
+    selectedRunIdRef.current = selectedRunId;
+  }, [autoFollow, selectedRunId]);
+
+  const funnel = selectedRunId ? todaysFunnels[selectedRunId] ?? null : null;
+
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
@@ -207,33 +241,85 @@ export default function App() {
         setUpdatedAt(new Date());
       })
       .catch((err) => setHealthError(err.message));
+  }, []);
 
+  // Day-scoped session poll — every one of today's runs (via the journal
+  // endpoints' existing ET-trading-day grouping) plus each one's funnel,
+  // in parallel. A single failed run's funnel fetch is caught to `null`
+  // rather than aborting the whole batch (same resilience contract
+  // JournalPanel already established). Auto-follow recomputes the best
+  // primary run each tick unless the operator has pinned a different one
+  // via TodaySessionsStrip.
+  usePoll(() => {
+    // Deliberately today's literal ET calendar date, NOT journalDates(1)
+    // (the most recent day the journal listing considers "complete" —
+    // JournalPanel's own default view). During market hours today has
+    // real runs long before it gets a daily_pnl/close snapshot, so
+    // journalDates(1) would keep resolving to YESTERDAY all day — the
+    // exact same erasure this strip exists to fix, just relabeled
+    // "Today's sessions" while actually showing a stale prior day. A 404
+    // (no runs recorded yet today — before the first session, or a
+    // non-trading day) is an honest empty state, not an error.
     api
-      .runs(1)
-      .then((r) => {
-        if (!r.runs.length) {
-          setFunnel(null);
-          setFunnelError(null);
-          setFunnelLoading(false);
-          setFunnelUpdatedAt(new Date());
+      .journalDay(todayEtDate())
+      .then((day) =>
+        Promise.all(
+          day.runs.map((r) =>
+            api
+              .runFunnel(r.run_id)
+              .then((f): [string, RunFunnelResponse | null] => [r.run_id, f])
+              .catch((): [string, RunFunnelResponse | null] => [r.run_id, null])
+          )
+        ).then((pairs) => {
+          const funnels = Object.fromEntries(pairs);
+          setTodaysRuns(day.runs);
+          setTodaysFunnels(funnels);
+          setTodaysTrades(day.trades);
+          setTodaysError(null);
+          setTodaysLoading(false);
+          setTodaysUpdatedAt(new Date());
+
+          const best = bestPrimaryRunId(day.runs, funnels);
+          const stillExists = selectedRunIdRef.current && day.runs.some((r) => r.run_id === selectedRunIdRef.current);
+          if (autoFollowRef.current || !stillExists) {
+            setSelectedRunId(best);
+          }
+        })
+      )
+      .catch((err) => {
+        if (err.status === 404) {
+          setTodaysRuns([]);
+          setTodaysFunnels({});
+          setTodaysTrades([]);
+          setTodaysError(null);
+          setTodaysLoading(false);
+          setTodaysUpdatedAt(new Date());
+          if (autoFollowRef.current) setSelectedRunId(null);
           return;
         }
-        return api.runFunnel(r.runs[0].run_id).then((f) => {
-          setFunnel(f);
-          setFunnelError(null);
-          setFunnelLoading(false);
-          setFunnelUpdatedAt(new Date());
-          if (!chartSymbol && f.candidates.length) setChartSymbol(f.candidates[0].symbol);
-        });
-      })
-      .catch((err) => {
-        // Deliberately does NOT clear `funnel` — see the freshness comment
-        // above. CandidateRail/DecisionRoomPanel render the retained data
-        // with an explicit "stale" Panel status instead of a blank error.
-        setFunnelError(err.message);
-        setFunnelLoading(false);
+        // Deliberately does NOT clear todaysRuns/todaysFunnels — the
+        // strip/rail/decision-room render the retained data tagged stale
+        // instead of blanking real information on a transient poll error.
+        setTodaysError(err.message);
+        setTodaysLoading(false);
       });
   }, []);
+
+  // Re-chart whenever the SELECTED run changes (auto-follow promoting a
+  // different primary run, or an operator's manual pick) — a normal effect
+  // with `selectedRunId` in its deps, not logic inside the poll callback
+  // above, which would suffer the same frozen-closure problem the prior
+  // `if (!chartSymbol && ...)` line actually had: usePoll(fn, []) captures
+  // `fn` once at mount, so a read of component state inside it is always
+  // the value from that first render — every poll tick was unconditionally
+  // resetting chartSymbol back to the funnel's first candidate, silently
+  // overriding any candidate the operator had clicked to chart, every 20s.
+  useEffect(() => {
+    if (!selectedRunId) return;
+    const f = todaysFunnels[selectedRunId];
+    setChartSymbol(f && f.candidates.length ? f.candidates[0].symbol : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRunId]);
 
   usePoll(() => {
     api
@@ -251,6 +337,16 @@ export default function App() {
       .then((r) => setRuns(r.runs))
       .catch((err) => setRunsError(err.message));
   }, []);
+
+  function selectSession(runId: string) {
+    setAutoFollow(false);
+    setSelectedRunId(runId);
+  }
+
+  function followLatestSession() {
+    setAutoFollow(true);
+    setSelectedRunId(bestPrimaryRunId(todaysRuns, todaysFunnels));
+  }
 
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
     if (!dayRuns.length) return;
@@ -278,7 +374,18 @@ export default function App() {
       {view === "cockpit" && (
         <>
           <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} />
-          <DecisionStateBanner funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
+          <TodaySessionsStrip
+            runs={todaysRuns}
+            funnels={todaysFunnels}
+            trades={todaysTrades}
+            loading={todaysLoading}
+            error={todaysError}
+            selectedRunId={selectedRunId}
+            autoFollow={autoFollow}
+            onSelect={selectSession}
+            onFollowLatest={followLatestSession}
+          />
+          <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
 
           <PaneNav pane={mobilePane} onChange={setMobilePane} />
 
@@ -300,9 +407,9 @@ export default function App() {
             <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
               <CandidateRail
                 funnel={funnel}
-                loading={funnelLoading}
-                error={funnelError}
-                updatedAt={funnelUpdatedAt}
+                loading={todaysLoading}
+                error={todaysError}
+                updatedAt={todaysUpdatedAt}
                 selectedSymbol={chartSymbol}
                 onSelectSymbol={setChartSymbol}
               />
@@ -334,7 +441,7 @@ export default function App() {
             </div>
 
             <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
-              <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
+              <DecisionRoomPanel funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
             </div>
           </div>
 

@@ -1,6 +1,6 @@
-import { RunFunnelResponse } from "../api/client";
+import { RunFunnelResponse, TradeItem } from "../api/client";
 import { fmtTime } from "../lib/format";
-import { STATE_LABELS } from "./funnelShared";
+import { STATE_LABELS, isSweepOnlyExecution } from "./funnelShared";
 
 /* Full-width "why did it trade, or why not" verdict — promoted out of the
  * Decision Room's right column per the operator-approved Concept C. A
@@ -21,9 +21,12 @@ const STATE_TONE: Record<
   no_candidates: { border: "border-border-strong", bg: "bg-panel-alt", text: "text-dim", icon: "○" },
 };
 
-function whySummary(funnel: RunFunnelResponse): string {
+function whySummary(funnel: RunFunnelResponse, sweepOnly: boolean): string {
   switch (funnel.decision_state) {
     case "executed": {
+      if (sweepOnly) {
+        return "Only cash-sweep housekeeping (SGOV parking/unparking) filled this run — no strategy trade.";
+      }
       const n = funnel.executed_count;
       const rest = funnel.candidates.filter((c) => !c.executed && c.reached_proposed_order).length;
       return `${n} order${n === 1 ? "" : "s"} executed${rest ? `, ${rest} more proposed but not executed this run` : ""}.`;
@@ -47,25 +50,48 @@ function whySummary(funnel: RunFunnelResponse): string {
 
 export function DecisionStateBanner({
   funnel,
+  trades,
   loading,
   error,
   updatedAt,
 }: {
   funnel: RunFunnelResponse | null;
+  /** Recent trades (any run) — filtered here to this funnel's run_id, same
+   * pattern JournalPanel's RunNarrativeCard already uses, so a run whose
+   * only fill was cash-sweep housekeeping doesn't read as a strategy
+   * EXECUTED. */
+  trades: TradeItem[];
   loading: boolean;
   error: string | null;
   updatedAt: Date | null;
 }) {
   if (!funnel) {
     if (loading) return null;
+    if (!error) {
+      // Honest empty state, not a failure: before today's first session
+      // runs (or on a non-trading day) there is truthfully nothing to
+      // report yet — see docs/OUTCOME.md's "empty/no-trade states should
+      // look intentional" principle.
+      return (
+        <div className="mx-3 mt-3 rounded-xl border border-border-strong bg-panel-alt px-4 py-3 text-dim text-[0.85rem]">
+          No sessions recorded yet today.
+        </div>
+      );
+    }
     return (
       <div className="mx-3 mt-3 rounded-xl border border-neg/40 bg-neg/8 px-4 py-3 text-neg text-[0.85rem]">
-        Could not load the latest decision: {error || "no data"}
+        Could not load the latest decision: {error}
       </div>
     );
   }
 
-  const tone = STATE_TONE[funnel.decision_state];
+  const sweepOnly =
+    funnel.decision_state === "executed" &&
+    isSweepOnlyExecution(trades.filter((t) => t.run_id === funnel.run_id));
+  const tone = sweepOnly
+    ? { border: "border-border-strong", bg: "bg-panel-alt", text: "text-dim", icon: "○" }
+    : STATE_TONE[funnel.decision_state];
+  const label = sweepOnly ? "CASH SWEEP ONLY" : STATE_LABELS[funnel.decision_state];
   const stale = Boolean(error);
 
   return (
@@ -78,14 +104,14 @@ export function DecisionStateBanner({
       )}
       <div className="flex items-center gap-3 flex-wrap">
         <span className={`text-[1.15rem] font-extrabold tracking-tight ${tone.text}`}>
-          {tone.icon} {STATE_LABELS[funnel.decision_state]}
+          {tone.icon} {label}
         </span>
         <span className="text-dim text-[0.72rem] font-mono num">
           run {funnel.run_id}
           {funnel.session_prefix ? ` · ${funnel.session_prefix}` : ""} · {fmtTime(funnel.timestamp)}
         </span>
       </div>
-      <p className="text-[0.85rem] mt-1 leading-snug">{whySummary(funnel)}</p>
+      <p className="text-[0.85rem] mt-1 leading-snug">{whySummary(funnel, sweepOnly)}</p>
     </div>
   );
 }

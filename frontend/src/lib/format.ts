@@ -44,6 +44,22 @@ export function isExecutedTrade(t: { fill_status?: string | null; action?: strin
   return (t.fill_status == null && t.action !== "HOLD") || t.fill_status === "filled" || fillQty > 0;
 }
 
+// QAMC's trading-day boundaries are US/Eastern regardless of where the
+// operator's browser sits — journal/{date} buckets sessions by ET calendar
+// day (docs/architecture/MISSION_CONTROL_API.md's Stage 5 entry). "Today"
+// for that purpose must be computed in ET explicitly, not the browser's
+// local timezone, which could disagree with the backend near a midnight
+// boundary (an operator in a non-US timezone would otherwise ask for the
+// wrong day's journal entirely, not just a display glitch).
+export function todayEtDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export function pnlClass(v: number | null | undefined): string {
   if (v === null || v === undefined) return "";
   return v > 0 ? "text-pos" : v < 0 ? "text-neg" : "";

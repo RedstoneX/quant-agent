@@ -20,6 +20,7 @@ import { EChart } from "./ui/EChart";
 import { readQamcTheme } from "../lib/theme";
 import { useModalActions } from "../context/ModalContext";
 import { fmtNum } from "../lib/format";
+import { Stage, STAGE_META, STAGE_ORDER, candidateStage } from "./funnelShared";
 
 /* Left rail: the candidate universe collapsed into the funnel stage each
  * candidate actually reached, instead of one flat "PM: no proposal" pill
@@ -34,41 +35,6 @@ import { fmtNum } from "../lib/format";
  * rows (an inline PM/Risk summary from data already on the row, no extra
  * fetch) is a genuine watchlist-grid upgrade a hand-rolled list wouldn't
  * get for free. */
-
-type Stage = "rejected" | "reached_pm" | "proposed" | "risk_action" | "executed";
-
-const STAGE_META: Record<Stage, { label: string; dotClass: string; textClass: string; short: string; rank: number }> = {
-  executed: { label: "Executed", dotClass: "bg-pos", textClass: "text-pos", short: "executed", rank: 0 },
-  risk_action: { label: "Modified / blocked by risk", dotClass: "bg-neg", textClass: "text-neg", short: "risk", rank: 1 },
-  proposed: { label: "Proposed", dotClass: "bg-warn", textClass: "text-warn", short: "proposed", rank: 2 },
-  reached_pm: { label: "Reached PM", dotClass: "bg-accent", textClass: "text-accent", short: "PM", rank: 3 },
-  rejected: { label: "Rejected by specialist", dotClass: "bg-dim", textClass: "text-dim", short: "—", rank: 4 },
-};
-
-// Furthest-stage first, so the rail's default (unfiltered) ordering
-// surfaces the most decision-relevant candidates before the 60+ that
-// never left specialist screening.
-const STAGE_ORDER: Stage[] = ["executed", "risk_action", "proposed", "reached_pm", "rejected"];
-
-// risk_verdict is recorded per run, not per candidate (the AI Risk
-// Manager evaluates a run's proposed orders as one batch — see
-// DirectionalBiasPanel's identical caveat). A run-wide hard-risk block or
-// rejected verdict is therefore attributed to every candidate that
-// reached a proposed order in that run; risk_modified is already exact
-// per-candidate. This is the same run-level-attribution precedent already
-// accepted elsewhere in this codebase, not a new inference.
-function candidateStage(c: CandidateFunnelItem, funnel: RunFunnelResponse): Stage {
-  if (c.executed) return "executed";
-  const verdict = funnel.risk_verdict?.verdict;
-  const riskActed =
-    c.risk_modified ||
-    (c.reached_proposed_order && funnel.hard_risk_block) ||
-    (c.reached_proposed_order && verdict?.approved === false);
-  if (riskActed) return "risk_action";
-  if (c.reached_proposed_order) return "proposed";
-  if (c.reached_pm_target) return "reached_pm";
-  return "rejected";
-}
 
 function DirGlyph({ direction }: { direction: CandidateFunnelItem["direction"] }) {
   const glyph = direction === "bullish" ? "▲" : direction === "bearish" ? "▼" : "•";
@@ -162,7 +128,7 @@ function ExpandedSummary({ c }: { c: CandidateFunnelItem }) {
   if (c.reached_proposed_order && c.proposed_action) parts.push(`Proposed ${c.proposed_action}`);
   if (c.risk_modified) parts.push("Modified by AI Risk Manager");
   if (c.executed && c.trade_action) parts.push(`Executed ${c.trade_action}`);
-  if (!parts.length) parts.push("Rejected by specialist screening — never reached the Portfolio Manager.");
+  if (!parts.length) parts.push("Screened but never reached a Portfolio Manager target this run.");
   return <div className="px-2 pb-1.5 pt-0.5 text-[0.7rem] text-dim leading-snug">{parts.join(" · ")}</div>;
 }
 
