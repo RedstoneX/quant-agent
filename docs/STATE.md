@@ -94,4 +94,4 @@ The first naturally scheduled live Tech batch line and first naturally scheduled
 
 ## Handoff
 
-The finish-line rollout contract is discharged. Current work is paper-soak observation and evidence review; see `docs/WORK.md`.
+The finish-line rollout remains accepted. Current work is the trading-utility recovery defined in `docs/WORK.md`; production continues running naturally while that investigation proceeds.
