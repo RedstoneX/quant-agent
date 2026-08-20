@@ -521,6 +521,82 @@ def test_account_liquidity_breakdown_separates_raw_cash_from_sweep_parked(
     assert liquidity["total_liquidity"] == pytest.approx(60_000.0)  # raw + parked
 
 
+def test_total_liquidity_equals_the_engines_own_deployable_cash(
+    client, seeded_db, monkeypatch,
+):
+    """`deployable_cash` names two different things, and this pins the bridge.
+
+    The read-only API's `liquidity.deployable_cash` is raw cash free of the
+    reserve floor (a component of the donut composition). The TRADING
+    ENGINE's `TradingPipeline._compute_deployable_cash` is raw cash plus the
+    convertible sweep value — the figure PM, the AI Risk Manager and the
+    pre-trade gate actually plan against.
+
+    `total_liquidity` is the field that carries the engine's number, so an
+    operator reading Mission Control can find it at all. This test asserts
+    that equivalence by CALLING the engine function rather than restating
+    its formula, so the two cannot drift apart silently — which is the
+    failure that would leave the cockpit understating QAMC's real capacity
+    by the whole parked balance.
+
+    See `LiquidityBreakdown`'s docstring for why renaming the API field is
+    deferred rather than improvised.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from src.config import CashSweepConfig
+    from src.execution.cash_sweep import CashSweeper
+    from src.models import Position
+    from src.pipeline import TradingPipeline
+
+    raw_cash, parked_mv = 10_000.0, 50_000.0
+
+    monkeypatch.setattr(routes_live, "read_account", lambda: {
+        "cash": raw_cash, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
+        "error": None,
+    })
+    monkeypatch.setattr(routes_live, "read_positions", lambda: {
+        "positions": [{
+            "symbol": "SGOV", "qty": 500, "avg_entry": 100.0, "current_price": 100.0,
+            "market_value": parked_mv, "unrealized_pnl": 0.0,
+            "unrealized_intraday_pnl": 0.0, "sector": None,
+            "is_cash_equivalent": True, "direction": "cash_equivalent",
+        }],
+        "error": None,
+    })
+    monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: 1.0)
+
+    # The engine's own figure, from the engine's own code.
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = SimpleNamespace(
+        cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
+                                   reserve_pct=1.0, min_order_usd=500.0),
+    )
+    pipeline.broker = MagicMock()
+    pipeline.db = MagicMock()
+    pipeline.cash_sweeper = CashSweeper(pipeline=pipeline)
+    engine_deployable = pipeline._compute_deployable_cash(
+        raw_cash,
+        [Position(symbol="SGOV", qty=500, avg_entry=100.0, current_price=100.0,
+                  market_value=parked_mv, unrealized_pnl=0.0, sector="Unknown")],
+    )
+
+    liquidity = client.get("/account").json()["liquidity"]
+    assert engine_deployable == pytest.approx(raw_cash + parked_mv)
+    assert liquidity["total_liquidity"] == pytest.approx(engine_deployable), (
+        "total_liquidity must carry the engine's deployable figure so the "
+        "cockpit can show what QAMC will actually put to work"
+    )
+    # And the API field of the same name is deliberately the SMALLER, raw-cash
+    # quantity — documented, not accidental.
+    assert liquidity["deployable_cash"] == pytest.approx(raw_cash - 1_000.0)
+    assert liquidity["deployable_cash"] < liquidity["total_liquidity"]
+
+
 def test_positions_returns_seeded_position(client, stub_broker):
     r = client.get("/positions")
     assert r.status_code == 200

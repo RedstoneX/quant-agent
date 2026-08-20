@@ -71,14 +71,41 @@ class LiquidityBreakdown(BaseModel):
     into one ambiguous number (docs/STATE.md 2026-08-18 soak finding: SGOV
     must never present like an ordinary position or invented risk posture).
     Any field is None when the underlying account/positions read failed —
-    never fabricated from a partial read."""
+    never fabricated from a partial read.
+
+    **`deployable_cash` here is NOT the trading engine's `deployable_cash`.**
+    Two different, individually-correct quantities share that name:
+
+    * this field  = ``max(raw_cash - reserve_usd, 0)`` — RAW cash free of the
+      reserve floor, *before* any sweep conversion. It is a component of a
+      three-way composition (deployable + reserve-held-back + sweep-parked)
+      that sums to ``total_liquidity``, which is what the cockpit's liquidity
+      donut renders.
+    * the engine's ``TradingPipeline._compute_deployable_cash`` = raw cash
+      PLUS the convertible sweep value — i.e. exactly ``total_liquidity``
+      below. That is the figure the Portfolio Manager, the AI Risk Manager
+      and the pre-trade gate plan against, because a filled sweep
+      liquidation funds an equity BUY the same session.
+
+    So an operator reading this field alone will *understate* what QAMC will
+    actually put to work, by the parked amount. ``total_liquidity`` is the
+    engine-equivalent number and is pinned to that definition by
+    ``tests/test_api_contract.py``.
+
+    Renaming this field (``raw_cash_free_of_reserve``) and/or adding an
+    explicit ``engine_deployable_cash`` is the preferred correction, but it
+    is a public read-only API schema change that the compiled cockpit bundle
+    consumes, so it needs a coordinated frontend rebuild and browser
+    re-verification. It is therefore recorded as deferred rather than
+    improvised here; see docs/WORK.md.
+    """
     sweep_enabled: bool = False
     sweep_symbol: str | None = None
     raw_cash: float | None = None            # broker cash, includes the reserve
     sweep_parked_value: float | None = None  # market value of the held sweep vehicle, 0 if none
     reserve_usd: float | None = None         # config reserve_pct% of portfolio_value
-    deployable_cash: float | None = None     # max(raw_cash - reserve_usd, 0)
-    total_liquidity: float | None = None     # raw_cash + sweep_parked_value
+    deployable_cash: float | None = None     # max(raw_cash - reserve_usd, 0) — see the class docstring
+    total_liquidity: float | None = None     # raw_cash + sweep_parked_value == the ENGINE's deployable figure
 
 
 class AccountResponse(BaseModel):
