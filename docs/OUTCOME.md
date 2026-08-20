@@ -8,7 +8,7 @@ Build a small, understandable autonomous AI-assisted **Alpaca trading system** t
 
 QAMC is being validated first in Alpaca Paper. Paper is the current execution environment and safety authorization, not the product identity. If the system earns progression to live capital, the same decision, risk, execution, position-management, journaling and observability architecture should carry forward without a paper-to-live redesign.
 
-The system should run largely unattended while giving the operator a browser/iPad Mission Control that makes the trading process understandable rather than opaque.
+The system should run largely unattended while giving the operator a browser/iPad Dashboard that makes the trading process understandable rather than opaque.
 
 **Directional neutrality is a product requirement, not a promise of constant activity.** QAMC should not structurally depend on rising equity markets to have an opportunity set. Within the instruments and risk architecture actually supported by the project, it should be able to express bullish, bearish or neutral/cash views and evaluate missed opportunities in both directions. The currently supported bearish expression is through the approved inverse ETFs already in the universe; this statement does not authorize direct stock shorting, options, margin or a deterministic risk/execution redesign.
 
@@ -29,13 +29,21 @@ The operator should be able to understand, without reading raw logs:
 
 ## Execution-environment principle
 
-Paper and live operation share one trading architecture. No agent, portfolio-construction, risk, position-management, reflection or dashboard semantics should become easier, looser, or materially different merely because the current broker account is Paper.
+Paper and live operation share one trading architecture. No agent, portfolio-construction, risk, position-management, reflection or Dashboard semantics should become easier, looser, or materially different merely because the current broker account is Paper.
 
 Environment-specific differences belong at the broker/configuration boundary: credentials, endpoint selection, account identity and genuine execution-mechanics differences such as simulated versus real fills/slippage. Live activation, if later authorized, should therefore be a focused operational/risk authorization change rather than a rewrite of the trading system.
 
-## Mission Control product direction
+## Terminology
 
-Mission Control is intended to feel like a **real trading cockpit**, not a vertically stacked database/log viewer.
+- **QAMC / Mission Control** refers to the whole product/system.
+- **Dashboard** refers specifically to the browser/iPad read-side UI and the parallel frontend/UX workstream.
+- **Core recovery** refers to trading/backend deployment and natural-validation work.
+
+This distinction is intentional so future sessions do not mistake the Dashboard for the whole Mission Control project.
+
+## Dashboard product direction
+
+The QAMC Dashboard is intended to feel like a **real trading cockpit**, not a vertically stacked database/log viewer.
 
 `docs/visual/MISSION_CONTROL_VISION_BOARD.png` is the durable product reference for layout, information hierarchy and donor direction. It is not merely historical inspiration. Product work should actively preserve the strongest ideas already captured there while correcting any semantic or data-truth problems discovered later.
 
@@ -107,7 +115,7 @@ The detailed event/log stream can remain available for forensics, but it is not 
 
 ### Required screen states
 
-Mission Control should deliberately handle the major workflow states shown in the vision board rather than treating them as incidental variations:
+The Dashboard should deliberately handle the major workflow states shown in the vision board rather than treating them as incidental variations:
 - normal/no-trade;
 - proposed trade;
 - rejected/modified trade;
@@ -123,7 +131,7 @@ Each state must remain truthful when data is absent, partial or degraded; an emp
 - **Transparency always** — reasoning, disagreement, vetoes and deterministic blocks are inspectable.
 - **Explanation before action** — especially for no-trade and rejected-trade states.
 - **Graphical synthesis before text dumping** — use cards, chains, charts, funnels and deltas to summarize; preserve drill-down for detail.
-- **Human in control** — without making Mission Control part of the trading-critical path.
+- **Human in control** — without making the Dashboard part of the trading-critical path.
 - **Maximum useful reuse, minimum custom infrastructure** — adapt the donor ideas and existing product before inventing new durable systems.
 - **Desktop + iPad first** — phone is secondary to a strong cockpit experience on the operator's primary surfaces.
 
@@ -139,9 +147,9 @@ The expected sequence is:
 
 Before Paper validation starts, the product needs enough observability to understand account state, decisions, execution, health and history. It does **not** need every desirable reasoning refinement, benchmark, chart or UX improvement.
 
-After validation starts, engineering should use observed trading behaviour and operator experience to prioritize work: weak evidence, poor decisions, excessive vetoes, execution problems, missing telemetry, confusing Mission Control views, missed opportunities in either direction, model cost/latency and measurable out-of-sample performance.
+After validation starts, engineering should use observed trading behaviour and operator experience to prioritize work: weak evidence, poor decisions, excessive vetoes, execution problems, missing telemetry, confusing Dashboard views, missed opportunities in either direction, model cost/latency and measurable out-of-sample performance.
 
-Now that the validation run is active, visual/product convergence is valid engineering work when the running cockpit materially fails the intended operator experience. Functional correctness alone is not sufficient acceptance for a Mission Control redesign.
+Now that the validation run is active, visual/product convergence is valid engineering work when the running Dashboard materially fails the intended operator experience. Functional correctness alone is not sufficient acceptance for a Dashboard redesign.
 
 ## Hard outcome constraints
 
@@ -150,7 +158,7 @@ These are not implementation suggestions; they define the currently authorized s
 - the trading architecture must remain environment-neutral: no paper-only shortcuts or separate paper-specific decision/risk path;
 - `yebof/quant-agent` remains the authoritative trading engine unless the operator explicitly changes that project premise;
 - deterministic Python and broker protections remain final safety/execution authority and fail closed;
-- Mission Control/read-side failure must not stop trading or weaken broker protection;
+- Dashboard/read-side failure must not stop trading or weaken broker protection;
 - UI/search/journal state must not become a second authoritative trading-memory system;
 - no secrets or fake production trading state exposed to the UI;
 - directional capability must remain inside the supported instrument/risk contracts and must not bypass deterministic safety;
