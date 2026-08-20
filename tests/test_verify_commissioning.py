@@ -573,3 +573,209 @@ def test_json_output_carries_the_account_and_pending_list(monkeypatch, capsys):
     assert payload["failed"] == 0
     assert payload["account"]
     assert payload["pending_accounts"] == ["qamc"] or payload["account"] == "qamc"
+
+
+# ---------------------------------------------------------------------------
+# Listener-privacy classification (2026-08-20 Gate B false positive)
+# ---------------------------------------------------------------------------
+#
+# The first real finish-line rollout aborted at Gate B because the old rule was
+# "loopback, or it is public". OneCLI's dashboard port therefore failed the
+# moment `tailscaled` served it on the tailnet, even though the operator
+# evidence showed Docker publishing OneCLI only as 127.0.0.1:10254-10255 and
+# `tailscale serve status` reporting the extra listener as tailnet-only.
+#
+# The correction must not overshoot: whitelisting 100.64.0.0/10, fd7a::/16 or
+# RFC1918 would let anything that binds a plausible-looking address through.
+# Only the exact addresses Tailscale reports for THIS host are accepted.
+
+TS4 = "100.111.170.97"
+TS6 = "fd7a:115c:a1e0::9034:aa62"
+TAILNET = {TS4, TS6}
+
+
+def test_loopback_only_is_private():
+    status, detail = vc.listener_privacy_verdict(["127.0.0.1", "[::1]"], TAILNET)
+    assert status == vc.PASS
+    assert "loopback" in detail
+
+
+def test_loopback_plus_exact_host_tailscale_addresses_is_private():
+    """The exact operator evidence from the aborted rollout: 127.0.0.1 via
+    docker-proxy, plus the v4 and v6 tailnet addresses via tailscaled."""
+    status, detail = vc.listener_privacy_verdict(
+        ["127.0.0.1", TS4, f"[{TS6}]"], TAILNET,
+    )
+    assert status == vc.PASS, detail
+    assert "tailnet-only" in detail
+
+
+def test_bracketed_and_bare_ipv6_compare_equal():
+    """`ss` brackets IPv6 and may add a zone id; Tailscale reports it bare."""
+    status, _ = vc.listener_privacy_verdict([f"[{TS6}%tailscale0]"], TAILNET)
+    assert status == vc.PASS
+    # Same address written in expanded form must also match.
+    expanded = "fd7a:115c:a1e0:0000:0000:0000:9034:aa62"
+    status, _ = vc.listener_privacy_verdict([f"[{expanded}]"], TAILNET)
+    assert status == vc.PASS
+
+
+def test_specific_public_ipv4_bind_fails():
+    status, detail = vc.listener_privacy_verdict(["51.222.13.44"], TAILNET)
+    assert status == vc.FAIL
+    assert "51.222.13.44" in detail
+
+
+def test_rfc1918_address_not_owned_by_tailscale_fails():
+    """A private-looking range is not evidence of anything. Only addresses
+    Tailscale actually claims for this host are accepted."""
+    for addr in ("192.168.1.50", "10.0.0.7", "172.16.4.9"):
+        status, detail = vc.listener_privacy_verdict([addr], TAILNET)
+        assert status == vc.FAIL, f"{addr} was accepted: {detail}"
+
+
+def test_cgnat_address_tailscale_does_not_claim_fails():
+    """100.64.0.0/10 is Tailscale's range, but membership of the range is not
+    the test — being one of THIS host's addresses is."""
+    status, detail = vc.listener_privacy_verdict(["100.64.9.9"], TAILNET)
+    assert status == vc.FAIL, detail
+    status, detail = vc.listener_privacy_verdict(["[fd7a:115c:a1e0::dead:beef]"], TAILNET)
+    assert status == vc.FAIL, detail
+
+
+@pytest.mark.parametrize("wildcard", ["0.0.0.0", "*", "[::]", "::"])
+def test_wildcard_binds_always_fail(wildcard):
+    status, detail = vc.listener_privacy_verdict([wildcard], TAILNET)
+    assert status == vc.FAIL, detail
+
+
+def test_wildcard_fails_even_when_tailscale_lookup_is_unavailable():
+    """A wildcard bind is definitively public, so it is a FAIL on its own
+    merits rather than an unresolved classification."""
+    status, detail = vc.listener_privacy_verdict(["0.0.0.0"], None)
+    assert status == vc.FAIL
+    assert "cannot classify" not in detail
+
+
+def test_tailscale_lookup_unavailable_with_non_loopback_listener_fails_closed():
+    """An unanswered question is not a pass."""
+    status, detail = vc.listener_privacy_verdict([TS4], None)
+    assert status == vc.FAIL
+    assert "could not be determined" in detail
+
+
+def test_tailscale_lookup_unavailable_with_only_loopback_still_passes():
+    """Loopback needs no tailnet knowledge to be classified."""
+    status, _ = vc.listener_privacy_verdict(["127.0.0.1", "[::1]"], None)
+    assert status == vc.PASS
+
+
+def test_one_foreign_address_fails_the_whole_port():
+    status, detail = vc.listener_privacy_verdict(
+        ["127.0.0.1", TS4, "51.222.13.44"], TAILNET,
+    )
+    assert status == vc.FAIL
+    assert "51.222.13.44" in detail
+
+
+def test_no_listeners_is_skip_not_pass():
+    status, _ = vc.listener_privacy_verdict([], TAILNET)
+    assert status == vc.SKIP
+
+
+def test_empty_tailnet_set_is_treated_as_no_tailnet_addresses():
+    """An empty set means "Tailscale answered: none", which is different from
+    None ("Tailscale did not answer") — but either way a tailnet-shaped
+    address that is not claimed must fail."""
+    status, _ = vc.listener_privacy_verdict([TS4], set())
+    assert status == vc.FAIL
+
+
+def test_tailscale_local_addresses_prefers_status_json(monkeypatch):
+    import subprocess as _sp
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1:3] == ["status", "--json"]:
+            return _sp.CompletedProcess(
+                cmd, 0,
+                stdout='{"Self": {"TailscaleIPs": ["100.111.170.97", "fd7a:115c:a1e0::9034:aa62"]}}',
+                stderr="",
+            )
+        raise AssertionError(f"unexpected fallback call: {cmd}")
+
+    monkeypatch.setattr(vc, "_tailscale_binary", lambda: "/usr/bin/tailscale")
+    monkeypatch.setattr(vc.subprocess, "run", fake_run)
+    assert vc.tailscale_local_addresses() == TAILNET
+    assert calls == [["/usr/bin/tailscale", "status", "--json"]]
+
+
+def test_tailscale_local_addresses_falls_back_to_ip_flags(monkeypatch):
+    import subprocess as _sp
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1:3] == ["status", "--json"]:
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr="unknown flag")
+        if cmd[1:] == ["ip", "-4"]:
+            return _sp.CompletedProcess(cmd, 0, stdout=f"{TS4}\n", stderr="")
+        if cmd[1:] == ["ip", "-6"]:
+            return _sp.CompletedProcess(cmd, 0, stdout=f"{TS6}\n", stderr="")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(vc, "_tailscale_binary", lambda: "/usr/bin/tailscale")
+    monkeypatch.setattr(vc.subprocess, "run", fake_run)
+    assert vc.tailscale_local_addresses() == TAILNET
+
+
+def test_missing_tailscale_binary_is_unknown_not_absent(monkeypatch):
+    """The runtime account's non-login PATH is narrower than an interactive
+    one. "Not on PATH" must not masquerade as "this host has no tailnet
+    addresses", or a listener that IS private gets failed for the wrong
+    reason — the same class of error as the false positive this replaces."""
+    monkeypatch.setattr(vc, "_tailscale_binary", lambda: None)
+    assert vc.tailscale_local_addresses() is None
+
+
+def test_tailscale_binary_is_resolved_off_path_when_needed(monkeypatch, tmp_path):
+    fake = tmp_path / "tailscale"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(vc.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(vc.os.path, "isfile", lambda p: p == "/usr/bin/tailscale")
+    monkeypatch.setattr(vc.os, "access", lambda p, _m: p == "/usr/bin/tailscale")
+    assert vc._tailscale_binary() == "/usr/bin/tailscale"
+
+
+def test_tailscale_lookup_never_inherits_a_proxy(monkeypatch):
+    """The runtime sources OneCLI's proxy wiring before this runs, and
+    `tailscale` speaks to a local unix socket."""
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:10255")
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:10255")
+    env = vc._env_without_proxies()
+    assert "HTTPS_PROXY" not in env and "https_proxy" not in env
+
+
+def test_tailscale_local_addresses_returns_none_when_unavailable(monkeypatch):
+    """None means "unknown", never "there are none" — the caller fails closed
+    on it. If this ever returned an empty set instead, a tailnet listener would
+    be reclassified as foreign, which is safe, but an absent binary would be
+    indistinguishable from a host genuinely off the tailnet."""
+    def fake_run(cmd, **kwargs):
+        raise OSError("tailscale: command not found")
+
+    monkeypatch.setattr(vc.subprocess, "run", fake_run)
+    assert vc.tailscale_local_addresses() is None
+
+
+def test_garbage_from_tailscale_does_not_become_a_pass(monkeypatch):
+    import subprocess as _sp
+
+    def fake_run(cmd, **kwargs):
+        return _sp.CompletedProcess(cmd, 0, stdout="not json at all", stderr="")
+
+    monkeypatch.setattr(vc.subprocess, "run", fake_run)
+    assert vc.tailscale_local_addresses() is None
+    status, _ = vc.listener_privacy_verdict([TS4], vc.tailscale_local_addresses())
+    assert status == vc.FAIL

@@ -51,8 +51,10 @@ each provider is probed through the same library its real caller uses:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -481,6 +483,236 @@ def _port_bindings(port: int) -> list[str]:
     return hosts
 
 
+# --------------------------------------------------------------------------
+# Listener-privacy classification
+# --------------------------------------------------------------------------
+#
+# 2026-08-20: the first real finish-line rollout aborted at Gate B on a FALSE
+# POSITIVE here. The rule was "loopback or it is public", so OneCLI's dashboard
+# port failed the moment `tailscaled` served it on the tailnet — even though
+# the operator evidence showed Docker publishing OneCLI only as
+# 127.0.0.1:10254-10255, the extra listeners being `tailscaled` itself, and
+# `tailscale serve status` reporting the listener as tailnet-only. Private
+# Tailscale operator access is accepted QAMC architecture (docs/STATE.md), so
+# equating "non-loopback" with "public" was simply wrong.
+#
+# The fix must not overshoot in the other direction. Whitelisting 100.64.0.0/10
+# (Tailscale's CGNAT range), fd7a::/16, or RFC1918 would mean any process that
+# binds a plausible-looking address passes the gate. So the ONLY non-loopback
+# addresses accepted are the exact addresses Tailscale itself reports for THIS
+# host. A CGNAT-shaped address Tailscale does not claim is foreign, and is
+# treated exactly like a public one.
+
+
+def normalize_listen_addr(raw: str) -> str:
+    """Canonical form of a listener address for comparison.
+
+    `ss` renders IPv6 in brackets and may carry a zone id; Tailscale renders
+    the same address bare. Both are parsed through `ipaddress` so
+    `[fd7a:115c:a1e0::9034:aa62]` and `fd7a:115c:a1e0:0:0:0:9034:aa62` compare
+    equal rather than differing as strings.
+    """
+    text = (raw or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    text = text.strip("[]")
+    if "%" in text:
+        text = text.split("%", 1)[0]
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return text.lower()
+
+
+WILDCARD_ADDRS = {"0.0.0.0", "*", "::", "[::]", ""}
+
+
+def is_loopback_addr(raw: str) -> bool:
+    normalized = normalize_listen_addr(raw)
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def is_wildcard_addr(raw: str) -> bool:
+    text = (raw or "").strip()
+    if text in WILDCARD_ADDRS:
+        return True
+    normalized = normalize_listen_addr(text)
+    if normalized in WILDCARD_ADDRS:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_unspecified
+    except ValueError:
+        return False
+
+
+_TAILNET_CACHE: list = []   # [] = not yet resolved; [value] = resolved (value may be None)
+
+
+def tailscale_local_addresses_cached() -> set[str] | None:
+    """`tailscale_local_addresses()` resolved at most once per run."""
+    if not _TAILNET_CACHE:
+        _TAILNET_CACHE.append(tailscale_local_addresses())
+    return _TAILNET_CACHE[0]
+
+
+_PROXY_ENV_VARS = (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+)
+
+
+def _env_without_proxies() -> dict:
+    """The current environment minus proxy variables.
+
+    The runtime account sources OneCLI's proxy/CA wiring before running this
+    script, and `tailscale` talks to a local unix socket. Handing it a proxy it
+    must not use invites an environment-dependent failure that would look like
+    "Tailscale is unavailable" and fail the privacy gate closed for the wrong
+    reason.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in _PROXY_ENV_VARS}
+    return env
+
+
+def _tailscale_binary() -> str | None:
+    """Resolve the `tailscale` CLI.
+
+    PATH first, then the absolute locations it is actually installed to. The
+    runtime account's non-login shell has a narrower PATH than an interactive
+    one, and "the binary was not on PATH" must not be able to masquerade as
+    "this host has no Tailscale addresses" — that is precisely how a listener
+    that IS private would get failed closed for the wrong reason.
+    """
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    for candidate in ("/usr/bin/tailscale", "/usr/local/bin/tailscale",
+                      "/usr/sbin/tailscale", "/opt/tailscale/tailscale"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def tailscale_local_addresses() -> set[str] | None:
+    """This host's OWN Tailscale addresses, according to Tailscale.
+
+    Returns a normalized set, or **None** when Tailscale cannot be
+    interrogated. None means "unknown", never "none" — callers must fail
+    closed on it rather than reading an unanswered question as an absence of
+    tailnet addresses.
+    """
+    binary = _tailscale_binary()
+    if binary is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [binary, "status", "--json"],
+            capture_output=True, text=True, timeout=10, env=_env_without_proxies(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        proc = None
+    if proc is not None and proc.returncode == 0 and proc.stdout.strip():
+        try:
+            data = json.loads(proc.stdout)
+            raw = (data.get("Self") or {}).get("TailscaleIPs") or []
+            addrs = {
+                normalize_listen_addr(ip) for ip in raw
+                if isinstance(ip, str) and ip.strip()
+            }
+            if addrs:
+                return addrs
+        except (ValueError, AttributeError, TypeError):
+            pass
+
+    # Fallback for a tailscaled too old for --json, or a status shape change.
+    addrs = set()
+    saw_output = False
+    for flag in ("-4", "-6"):
+        try:
+            proc = subprocess.run(
+                [binary, "ip", flag],
+                capture_output=True, text=True, timeout=10, env=_env_without_proxies(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode != 0:
+            continue
+        for token in proc.stdout.split():
+            normalized = normalize_listen_addr(token)
+            try:
+                ipaddress.ip_address(normalized)
+            except ValueError:
+                continue
+            saw_output = True
+            addrs.add(normalized)
+    return addrs if saw_output and addrs else None
+
+
+def classify_listener_addresses(
+    bindings: Iterable[str], tailnet: set[str] | None,
+) -> tuple[list[str], list[str], list[str]]:
+    """Split listener addresses into (loopback, tailnet, foreign).
+
+    `tailnet` is this host's exact Tailscale addresses, or None if unknown.
+    An address is tailnet-private only if it is EXACTLY one of those — never
+    because it merely falls inside a private-looking range. Wildcards are
+    always foreign; when `tailnet` is None every other non-loopback address is
+    foreign too, so an undiscoverable Tailscale fails the gate closed instead
+    of being waved through.
+    """
+    loopback: list[str] = []
+    tailnet_hit: list[str] = []
+    foreign: list[str] = []
+    known = tailnet or set()
+    for raw in bindings:
+        if is_wildcard_addr(raw):
+            foreign.append(raw)
+        elif is_loopback_addr(raw):
+            loopback.append(raw)
+        elif normalize_listen_addr(raw) in known:
+            tailnet_hit.append(raw)
+        else:
+            foreign.append(raw)
+    return loopback, tailnet_hit, foreign
+
+
+def listener_privacy_verdict(
+    bindings: list[str], tailnet: set[str] | None,
+) -> tuple[str, str]:
+    """(status, detail) for one port's listener set. Pure; unit-tested."""
+    if not bindings:
+        return SKIP, "`ss` unavailable or port not listed"
+
+    loopback, tailnet_hit, foreign = classify_listener_addresses(bindings, tailnet)
+
+    if foreign:
+        if tailnet is None and not all(is_wildcard_addr(b) for b in foreign):
+            return FAIL, (
+                f"cannot classify non-loopback address(es): {', '.join(foreign)} — "
+                "this host's Tailscale addresses could not be determined "
+                "(`tailscale status --json` / `tailscale ip` unavailable), so "
+                "they cannot be confirmed as private tailnet listeners. "
+                "Failing closed: an unanswered question is not a pass."
+            )
+        return FAIL, (
+            f"bound to address(es) that are neither loopback nor this host's "
+            f"Tailscale addresses: {', '.join(foreign)} — public exposure is "
+            "not authorized"
+        )
+
+    parts = []
+    if loopback:
+        parts.append(f"loopback {', '.join(loopback)}")
+    if tailnet_hit:
+        parts.append(f"tailnet-only {', '.join(tailnet_hit)}")
+    if not parts:
+        return SKIP, "no classifiable listener addresses"
+    return PASS, "bound " + " + ".join(parts)
+
+
 def _tcp_open(host: str, port: int, timeout: float = 3.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -615,16 +847,10 @@ def check_gateway(ctx: Ctx) -> None:
             f"{LOOPBACK}:{port} {'accepting connections' if reachable else 'refused'}",
         )
         bindings = _port_bindings(port)
-        if not bindings:
-            ctx.add(group, f"onecli {label} is private", SKIP,
-                    "`ss` unavailable or port not listed")
-        elif all(b in ("127.0.0.1", "[::1]", "::1") for b in bindings):
-            ctx.add(group, f"onecli {label} is private", PASS,
-                    f"bound loopback-only ({', '.join(bindings)})")
-        else:
-            ctx.add(group, f"onecli {label} is private", FAIL,
-                    f"bound to non-loopback address(es): {', '.join(bindings)} — "
-                    "public exposure of OneCLI is not authorized")
+        status, detail = listener_privacy_verdict(
+            bindings, tailscale_local_addresses_cached(),
+        )
+        ctx.add(group, f"onecli {label} is private", status, detail)
 
 
 def check_wiring(ctx: Ctx) -> None:
@@ -723,14 +949,10 @@ def check_mission_control(ctx: Ctx) -> None:
         return
 
     bindings = _port_bindings(MISSION_CONTROL_PORT)
-    if not bindings:
-        ctx.add(group, "api is private", SKIP, "`ss` unavailable or port not listed")
-    elif all(b in ("127.0.0.1", "[::1]", "::1") for b in bindings):
-        ctx.add(group, "api is private", PASS, f"bound loopback-only ({', '.join(bindings)})")
-    else:
-        ctx.add(group, "api is private", FAIL,
-                f"bound to non-loopback address(es): {', '.join(bindings)} — "
-                "public exposure of QAMC is not authorized")
+    status, detail = listener_privacy_verdict(
+        bindings, tailscale_local_addresses_cached(),
+    )
+    ctx.add(group, "api is private", status, detail)
 
     url = f"http://{LOOPBACK}:{MISSION_CONTROL_PORT}/health"
     try:
