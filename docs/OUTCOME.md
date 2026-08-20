@@ -37,15 +37,95 @@ Environment-specific differences belong at the broker/configuration boundary: cr
 
 Mission Control is intended to feel like a **real trading cockpit**, not a vertically stacked database/log viewer.
 
-`docs/visual/MISSION_CONTROL_VISION_BOARD.png` is the durable product reference for layout and information hierarchy: a dense desktop-first cockpit, responsive on iPad, with a compact account/status strip, candidate/watchlist context, chart-led market context where authoritative data supports it, a visually prominent Specialist → PM → Risk → deterministic gate → execution chain, positions/orders/trades as supporting state, and journal/investigation/learning views that explain decisions and missed opportunities.
+`docs/visual/MISSION_CONTROL_VISION_BOARD.png` is the durable product reference for layout, information hierarchy and donor direction. It is not merely historical inspiration. Product work should actively preserve the strongest ideas already captured there while correcting any semantic or data-truth problems discovered later.
 
-The governing UX principles are:
+The cockpit should be dense but legible, desktop-first and strong on iPad, with:
+- a compact account/status strip;
+- watchlist/candidate context;
+- chart-led market context where authoritative data supports it;
+- a visually prominent **Specialists → Portfolio Manager → AI Risk → deterministic gate → execution** chain;
+- positions/orders/trades as supporting state rather than the whole product;
+- structured journal, investigation and learning views that explain decisions and missed opportunities.
 
+### Design-donor decisions to preserve
+
+The vision board intentionally uses donors for proven interaction/design ideas while keeping `quant-agent` as the authoritative trading engine.
+
+**OpenTradex — shell/layout donor**
+- Keep/adapt: resizable panes, terminal-style layout, compact top account bar, reusable public UI components, and the run-control visual concept where it remains read-only/safe.
+- Do not adopt: its trading engine/gateway, command-chat control path, or internal data models.
+
+**Oralexa — agent/decision visualization donor**
+- Keep/adapt as first-class QAMC concepts: **agent cards**, debate/signal-fusion presentation, Portfolio Manager decision cards, scoreboards where backed by real metrics, and bias/self-correction presentation for the Learning Center.
+- The agent cards should make each specialist's stance, important evidence, disagreements and confidence/calibration visible without requiring raw-log reading.
+- The chain should visually show how specialist views combine into PM intent, how Risk modifies/rejects it, what deterministic Python does next, and what actually reaches the broker.
+- Do not adopt Oralexa mock-data layers or its trading logic.
+
+**TradingView Lightweight Charts — charting donor**
+- Use/adapt for chart-led context: candlesticks, indicators, volume, trade markers and streaming updates where the existing QAMC data contracts can support them truthfully.
+- Charts are context for the decision process, not a replacement trading engine or source of fabricated signals.
+
+### Agent-card principle
+
+Agent cards are a core interaction pattern, not decorative status tiles.
+
+A useful card should answer, at a glance:
+- what this agent currently believes;
+- the strongest evidence behind the view;
+- what would invalidate/change the view where available;
+- whether it agrees or conflicts with other agents;
+- any genuine confidence/calibration signal that exists in authoritative data.
+
+Do not invent pseudo-confidence percentages or arbitrary gauges merely to make a card look complete. If confidence is not authoritative, show the actual qualitative state/evidence rather than manufacturing precision.
+
+### Decision-chain principle
+
+The operator should be able to follow one compact graphical story:
+
+**candidate/opportunity → specialist cards → disagreements/signal fusion → PM proposal → Risk approval/modification/rejection → deterministic gate → execution → position/exit result.**
+
+The cockpit should emphasize changes and deltas: what PM proposed, what Risk changed, what deterministic Python blocked, and what actually executed.
+
+### Journal Day page
+
+The structured Journal Day mockup on the vision board is an accepted product direction and should not be replaced by an endless chronological event dump.
+
+A day page should compress the session into a useful operator narrative such as:
+1. **Market Thesis**
+2. **Watchlist / Candidates**
+3. **Agent Analysis** — compact specialist cards/table
+4. **Disagreements**
+5. **Portfolio Manager Proposal**
+6. **Risk Review**
+7. **Proposed → Executed Difference**
+8. **Trades**
+9. **Daily Result**
+10. **Lesson Learned**
+11. **Tomorrow / what to monitor**
+
+The detailed event/log stream can remain available for forensics, but it is not the primary journal experience.
+
+### Required screen states
+
+Mission Control should deliberately handle the major workflow states shown in the vision board rather than treating them as incidental variations:
+- normal/no-trade;
+- proposed trade;
+- rejected/modified trade;
+- executed trade;
+- learning/reflection.
+
+Each state must remain truthful when data is absent, partial or degraded; an empty or no-trade state should look intentional rather than broken.
+
+### UX principles
+
+- **Truth before decoration** — candidate/run attribution, capital semantics, execution state and agent provenance must be correct.
 - **Clarity first** — the important trading state is immediately visible.
 - **Transparency always** — reasoning, disagreement, vetoes and deterministic blocks are inspectable.
 - **Explanation before action** — especially for no-trade and rejected-trade states.
+- **Graphical synthesis before text dumping** — use cards, chains, charts, funnels and deltas to summarize; preserve drill-down for detail.
 - **Human in control** — without making Mission Control part of the trading-critical path.
-- **Maximum useful reuse, minimum custom infrastructure** — improve the existing product before inventing new durable systems.
+- **Maximum useful reuse, minimum custom infrastructure** — adapt the donor ideas and existing product before inventing new durable systems.
+- **Desktop + iPad first** — phone is secondary to a strong cockpit experience on the operator's primary surfaces.
 
 The visual reference is directional, not blanket feature authorization. Mockup concepts that conflict with current safety boundaries — including broker-write PAUSE/KILL controls, direct trade controls, or other write paths — remain unimplemented unless separately authorized. Do not fabricate unsupported data merely to match a mockup.
 
@@ -80,6 +160,6 @@ These are not implementation suggestions; they define the currently authorized s
 
 Everything else is challengeable during discovery and post-validation iteration.
 
-Existing architecture, donor choices, stage boundaries, data presentation, component structure, sequencing and implementation techniques are prior proposals—not instructions to preserve merely because they already exist in Git.
+Existing architecture, donor choices, stage boundaries, data presentation, component structure, sequencing and implementation techniques are prior proposals—not instructions to preserve merely because they already exist in Git. The explicit donor/product principles above, however, represent desired product outcomes and should not be silently discarded merely because later work focused on semantic correctness.
 
-Claude Code is expected to inspect the actual repository and challenge whether those choices still provide the simplest, safest and most effective path to the outcome. Material changes to accepted safety/product boundaries still require reconciliation and approval before implementation.
+Claude Code is expected to inspect the actual repository and challenge whether implementation choices still provide the simplest, safest and most effective path to the outcome. Material changes to accepted safety/product boundaries still require reconciliation and approval before implementation.
