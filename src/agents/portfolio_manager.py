@@ -576,6 +576,19 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         if parsed is None:
             logger.error("Portfolio manager returned non-JSON response")
             return None, result
+        if not isinstance(parsed, dict):
+            # A PortfolioDecision is an OBJECT. A bare list here means the
+            # candidate scan surfaced a fragment (historically: the plan's own
+            # `targets` array) instead of the decision — treat as a parse
+            # failure so the session retries, never as a deliberate hold.
+            # `PortfolioDecision(**list)` below would raise anyway; this makes
+            # the failure mode explicit and greppable.
+            logger.error(
+                "Portfolio manager parse produced %s, not a decision object — "
+                "treating as parse failure (fragment selected over full plan?)",
+                type(parsed).__name__,
+            )
+            return None, result
         # Per-entry isolation for targets: a single malformed TargetPosition
         # (e.g. target_weight_pct=30 violating the 0-25 range, or empty
         # thesis on a Field with no min_length but PortfolioConstructor's
