@@ -4,7 +4,9 @@ This file states the result QAMC is trying to achieve. It is intentionally less 
 
 ## Outcome
 
-Build a small, understandable autonomous AI-assisted **Alpaca paper-trading experiment** that can determine whether inexpensive modern AI models add measurable out-of-sample trading value beyond deterministic market signals.
+Build a small, understandable autonomous AI-assisted **Alpaca trading system** that can determine whether inexpensive modern AI models add measurable out-of-sample trading value beyond deterministic market signals.
+
+QAMC is being validated first in Alpaca Paper. Paper is the current execution environment and safety authorization, not the product identity. If the system earns progression to live capital, the same decision, risk, execution, position-management, journaling and observability architecture should carry forward without a paper-to-live redesign.
 
 The system should run largely unattended while giving the operator a browser/iPad Mission Control that makes the trading process understandable rather than opaque.
 
@@ -25,6 +27,12 @@ The operator should be able to understand, without reading raw logs:
 - what meaningful bullish or bearish opportunities the system missed;
 - whether model/prompt choices appear to add measurable value over time.
 
+## Execution-environment principle
+
+Paper and live operation share one trading architecture. No agent, portfolio-construction, risk, position-management, reflection or dashboard semantics should become easier, looser, or materially different merely because the current broker account is Paper.
+
+Environment-specific differences belong at the broker/configuration boundary: credentials, endpoint selection, account identity and genuine execution-mechanics differences such as simulated versus real fills/slippage. Live activation, if later authorized, should therefore be a focused operational/risk authorization change rather than a rewrite of the trading system.
+
 ## Mission Control product direction
 
 Mission Control is intended to feel like a **real trading cockpit**, not a vertically stacked database/log viewer.
@@ -43,33 +51,34 @@ The visual reference is directional, not blanket feature authorization. Mockup c
 
 ## MVP lifecycle principle
 
-QAMC should reach a safe, observable deployed baseline and then **start the Alpaca Paper experiment promptly**. Paper-soak evidence is not the reward after polish; it is the evidence needed to decide what should be improved next.
+QAMC should reach a safe, observable deployed baseline and then **start real-market validation in Alpaca Paper promptly**. Paper evidence is not the reward after polish; it is the evidence needed to decide what should be improved next and whether the system could eventually justify live-capital authorization.
 
 The expected sequence is:
 
-**functional foundation → integrated verification → VPS deployment → runtime commissioning → paper-soak start → observe/evaluate real sessions → iterative agent/code/dashboard improvement**.
+**functional foundation → integrated verification → VPS deployment → runtime commissioning → Paper validation → observe/evaluate natural sessions → iterative agent/code/dashboard improvement → separate live-capital authorization if earned**.
 
-Before soak start, the product needs enough observability to understand account state, decisions, execution, health and history. It does **not** need every desirable reasoning refinement, benchmark, chart or UX improvement.
+Before Paper validation starts, the product needs enough observability to understand account state, decisions, execution, health and history. It does **not** need every desirable reasoning refinement, benchmark, chart or UX improvement.
 
-After soak start, engineering should use observed trading behaviour and operator experience to prioritize work: weak evidence, poor decisions, excessive vetoes, execution problems, missing telemetry, confusing Mission Control views, missed opportunities in either direction, model cost/latency and measurable out-of-sample performance.
+After validation starts, engineering should use observed trading behaviour and operator experience to prioritize work: weak evidence, poor decisions, excessive vetoes, execution problems, missing telemetry, confusing Mission Control views, missed opportunities in either direction, model cost/latency and measurable out-of-sample performance.
 
-Now that the soak is active, visual/product convergence is valid engineering work when the running cockpit materially fails the intended operator experience. Functional correctness alone is not sufficient acceptance for a Mission Control redesign.
+Now that the validation run is active, visual/product convergence is valid engineering work when the running cockpit materially fails the intended operator experience. Functional correctness alone is not sufficient acceptance for a Mission Control redesign.
 
 ## Hard outcome constraints
 
-These are not implementation suggestions; they define the safe experiment:
-- Alpaca **Paper only** until a separate future authorization;
+These are not implementation suggestions; they define the currently authorized safe system:
+- Alpaca **Paper is the only currently authorized execution environment** until a separate future live-capital authorization;
+- the trading architecture must remain environment-neutral: no paper-only shortcuts or separate paper-specific decision/risk path;
 - `yebof/quant-agent` remains the authoritative trading engine unless the operator explicitly changes that project premise;
 - deterministic Python and broker protections remain final safety/execution authority and fail closed;
 - Mission Control/read-side failure must not stop trading or weaken broker protection;
 - UI/search/journal state must not become a second authoritative trading-memory system;
 - no secrets or fake production trading state exposed to the UI;
 - directional capability must remain inside the supported instrument/risk contracts and must not bypass deterministic safety;
-- keep the experiment small enough to understand, operate and evaluate rather than turning it into a bespoke platform.
+- keep the system small enough to understand, operate and evaluate rather than turning it into a bespoke platform.
 
 ## Design freedom
 
-Everything else is challengeable during discovery and post-soak iteration.
+Everything else is challengeable during discovery and post-validation iteration.
 
 Existing architecture, donor choices, stage boundaries, data presentation, component structure, sequencing and implementation techniques are prior proposals—not instructions to preserve merely because they already exist in Git.
 
