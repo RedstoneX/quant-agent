@@ -598,32 +598,90 @@ def test_intraday_value_extractor_ignores_cash_sweep(text: str) -> None:
     assert _run_awk(program, doc_no_block).stdout.strip() == ""
 
 
-PUBLIC_LISTENERS = """\
-State  Recv-Q Send-Q Local Address:Port Peer Address:Port
-LISTEN 0      2048   127.0.0.1:8800     0.0.0.0:*
-LISTEN 0      4096   0.0.0.0:6768       0.0.0.0:*
-LISTEN 0      4096   100.111.170.97:10254 0.0.0.0:*
-LISTEN 0      4096   127.0.0.1:10255    0.0.0.0:*
-"""
+# Gate E's listener-privacy check is no longer a local awk program: it calls
+# the DEPLOYED verifier's own `listener_privacy_verdict()`. These tests pin that
+# arrangement, because the whole point is that Gate B and Gate E cannot drift
+# into two different definitions of "private" — which is what made the first
+# real rollout's false positive expensive.
+
+def test_gate_e_delegates_listener_privacy_to_the_deployed_verifier(text: str) -> None:
+    e4 = text[text.index("# E4 — OneCLI healthy"):text.index("# E5 —")]
+    assert "verify_commissioning.py" in e4, \
+        "Gate E must use the deployed verifier, not a private copy of the rule"
+    assert "listener_privacy_verdict" in e4
+    assert "tailscale_local_addresses" in e4
+    assert "verdict=PASS" in e4, "Gate E must require an explicit PASS verdict"
 
 
-@pytest.fixture(scope="module")
-def bindscan(text: str) -> str:
-    return _extract(text, r'PUBLIC_BINDS="\$\(printf \'%s\\n\' "\$SS_OUT" \| awk -v ports="\$PRIVATE_PORTS" \'\n(.*?)\'\)"', "public-bind awk")
+def test_gate_e_no_longer_reimplements_the_rule_in_awk(text: str) -> None:
+    """The old awk scanner only rejected wildcards, so a service bound to a
+    specific PUBLIC ip would have passed the finish line."""
+    assert 'want[i]' not in text, "the old awk bind-scanner is still present"
+    e4 = text[text.index("# E4 — OneCLI healthy"):text.index("# E5 —")]
+    assert "0.0.0.0" not in e4, \
+        "Gate E must not carry its own wildcard list; the verifier owns the rule"
 
 
-def test_bind_scan_passes_on_a_private_listener_set(bindscan: str) -> None:
-    """Loopback and tailnet-scoped listeners are private by design; a non-QAMC
-    public port (Orca's 6768) is out of scope and must not trip this."""
-    r = _run_awk(bindscan, PUBLIC_LISTENERS, "-v", "ports=8800 10254 10255 10256")
-    assert r.stdout.strip() == "", r.stdout
+def test_gate_e_checks_every_qamc_facing_port(text: str) -> None:
+    e4 = text[text.index("# E4 — OneCLI healthy"):text.index("# E5 —")]
+    for port in ("8800", "10254", "10255", "10256"):
+        assert port in e4, f"Gate E does not classify port {port}"
 
 
-@pytest.mark.parametrize("bad", ["0.0.0.0:8800", "[::]:10254", "0.0.0.0:10256"])
-def test_bind_scan_detects_a_public_qamc_port(bindscan: str, bad: str) -> None:
-    data = PUBLIC_LISTENERS + f"LISTEN 0      4096   {bad}       0.0.0.0:*\n"
-    r = _run_awk(bindscan, data, "-v", "ports=8800 10254 10255 10256")
-    assert bad in r.stdout
+def test_gate_e_reports_whether_tailscale_was_resolvable(text: str) -> None:
+    """A future permissions change that makes Tailscale unqueryable must be
+    visible in the transcript, not a silent reclassification."""
+    e4 = text[text.index("# E4 — OneCLI healthy"):text.index("# E5 —")]
+    assert "tailnet_resolved" in e4
+
+
+# --- directory-permission digits -------------------------------------------
+
+DIR_MODE_CONDITION = (
+    '[[ "${DIR_MODE: -2:1}" =~ ^[0145]$ && "${DIR_MODE: -1:1}" =~ ^[0145]$ ]]'
+)
+
+
+def test_directory_permission_check_enumerates_safe_digits(text: str) -> None:
+    """`[0-5]` accepted 2 (write) and 3 (write+execute) — the exact modes this
+    check exists to reject."""
+    assert DIR_MODE_CONDITION in text
+    # The comment above the check names the old range deliberately, so that a
+    # future reader knows why it must not come back. Only CODE is checked.
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert "[0-5]" not in code, "the permissive digit range is still present in code"
+
+
+@pytest.mark.parametrize("mode,accept", [
+    ("700", True), ("500", True), ("755", True), ("711", True), ("701", True),
+    ("750", True), ("555", True), ("400", True), ("744", True),
+    # Anything with a group or other WRITE bit must be refused.
+    ("770", False), ("707", False), ("777", False), ("757", False),
+    ("775", False), ("772", False), ("773", False), ("730", False),
+    ("720", False), ("703", False), ("702", False), ("727", False),
+])
+def test_directory_permission_condition_behaviour(tmp_path: Path, mode: str, accept: bool) -> None:
+    """Drive the real condition rather than trusting the regex by eye."""
+    script = tmp_path / "cond.sh"
+    script.write_text(
+        f'DIR_MODE="{mode}"\n{DIR_MODE_CONDITION} && exit 0 || exit 1\n'
+    )
+    rc = subprocess.run(["bash", str(script)]).returncode
+    assert (rc == 0) is accept, (
+        f"mode {mode} was {'accepted' if rc == 0 else 'rejected'}, expected "
+        f"{'accepted' if accept else 'rejected'}"
+    )
+
+
+def test_every_group_or_world_writable_mode_is_rejected() -> None:
+    """Exhaustive over all 512 modes: acceptance must be exactly 'no write bit
+    for group or other', with no gaps."""
+    import itertools
+    for a, b, c in itertools.product(range(8), repeat=3):
+        mode = f"{a}{b}{c}"
+        writable = bool(b & 0o2) or bool(c & 0o2)
+        accepted = (str(b) in "0145") and (str(c) in "0145")
+        assert accepted == (not writable), f"mode {mode} misclassified"
 
 
 def test_intra_check_service_resolver(text: str) -> None:
@@ -849,3 +907,30 @@ def test_a_half_finished_previous_run_is_refused_with_instructions(text: str) ->
 def test_sigkill_residual_is_stated_in_the_header(text: str) -> None:
     header = text[: text.index("set -Eeuo pipefail")]
     assert "SIGKILL" in header, "the one untrappable abort must be documented, not implied"
+
+
+# ---------------------------------------------------------------------------
+# 10. The target must carry the corrected listener-privacy classifier
+# ---------------------------------------------------------------------------
+
+def test_preflight_refuses_a_target_without_the_privacy_fix(text: str) -> None:
+    """Both Gate B (which runs the deployed verifier) and Gate E4 (which loads
+    its classifier) depend on the corrected rule. If the pinned target predates
+    it, the run must stop in PREFLIGHT — where nothing has been touched — not
+    at Gate B after a deploy and a rollback, which is what the first real
+    rollout cost."""
+    assert "listener_privacy_verdict' ${TARGET_SHA} -- ops/commissioning/verify_commissioning.py" in text
+    guard = text[text.index("does NOT contain the corrected listener-privacy"):]
+    guard = guard[:2000]
+    assert "NOTHING HAS BEEN CHANGED" in guard
+    # It must tell the operator exactly how to re-pin, not just that it failed.
+    for constant in ("TARGET_SHA", "TARGET_TREE", "EXPECTED_CHANGED_FILES",
+                     "EXPECTED_FILELIST_SHA"):
+        assert constant in guard, f"the retarget instructions omit {constant}"
+
+
+def test_the_privacy_guard_runs_before_any_mutation(text: str) -> None:
+    guard = text.index("does NOT contain the corrected listener-privacy")
+    first_mutation = text.index('DEPLOY_STATE="deployed"')
+    assert guard < first_mutation, \
+        "the retarget guard must fire in preflight, before the checkout"

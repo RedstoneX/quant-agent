@@ -15,14 +15,16 @@ checkpoint.
 | Production baseline (rollback point) | `9c736c158fec84129765c25a9429254d3602ad6b` |
 | Deployment target | `bb223eadde30654d72ab11e055185a757d0cddc0` |
 | Target tree | `ff27c9458ba6f4677c8db2329af7d8d47b176e77` |
-| Reviewed script — git blob | `b24ffacaa98b664b215db2b882eddda185b78d4e` |
-| Reviewed script — sha256 | `9870c402fd8047b01d1e419b2155b149680ce829979ef5c0813e51d111fe1509` |
-| Reviewed script — size | 72275 bytes |
+| Reviewed script — git blob | `69e0968f6438be0d7d1a5d92d4f0e5e335ba42fe` |
+| Reviewed script — sha256 | `77701bb2c41db5c8f7b35b813e83bf46069767d962dfaab1d75aa6bb440bbc10` |
+| Reviewed script — size | 75298 bytes |
 
 ## The single operator command
 
+Run this **as `ubuntu`** (the only account with sudo):
+
 ```bash
-git -C /home/dev/projects/quant-agent cat-file blob b24ffacaa98b664b215db2b882eddda185b78d4e | sudo install -o root -g root -m 0700 /dev/stdin /root/qamc-finish-line-rollout.sh && echo "9870c402fd8047b01d1e419b2155b149680ce829979ef5c0813e51d111fe1509  /root/qamc-finish-line-rollout.sh" | sudo sha256sum -c - && sudo /root/qamc-finish-line-rollout.sh
+sudo bash -o pipefail -c 'sudo -u dev -H git -C /home/dev/projects/quant-agent cat-file blob 69e0968f6438be0d7d1a5d92d4f0e5e335ba42fe | install -o root -g root -m 0700 /dev/stdin /root/qamc-finish-line-rollout.sh && echo "77701bb2c41db5c8f7b35b813e83bf46069767d962dfaab1d75aa6bb440bbc10  /root/qamc-finish-line-rollout.sh" | sha256sum -c - && /root/qamc-finish-line-rollout.sh'
 ```
 
 Nothing else needs to be typed. The script writes its own complete transcript
@@ -31,38 +33,66 @@ the start and the end.
 
 ### Why it is shaped like that
 
-The problem this replaces is a real one: reviewing a file in `/home/dev` and
-then running *a file at that path* as root are two different acts, and the
-Claude Code account can write to `/home/dev` in between. Every step below
-closes part of that gap, and the chain is `&&`-joined so any failure stops
-before execution.
+Reviewing a file in `/home/dev` and then running *a file at that path* as root
+are two different acts, and the Claude Code account can write to `/home/dev` in
+between. Every element below closes part of that gap, and the `&&` chain means
+any failure stops before execution.
 
-1. **`git cat-file blob <blob>`** reads the reviewed bytes out of the
-   content-addressed object store by their own hash. It does not read the
-   working tree, so an edited, replaced or symlinked
-   `ops/review/qamc-finish-line-rollout.sh` cannot be what gets installed. The
+1. **`sudo -u dev -H git … cat-file blob 69e0968f6438…`** reads the reviewed
+   bytes out of the content-addressed object store by their own hash. It never
+   reads the working tree, so an edited, replaced or symlinked
+   `ops/review/qamc-finish-line-rollout.sh` cannot be what gets installed — the
    blob id is the identity ChatGPT reviewed.
-2. **`sudo install -o root -g root -m 0700 /dev/stdin`** creates the file
-   directly as root-owned `0700` in `/root`. There is no intermediate
-   unprivileged copy, and no window where the file exists with wider
-   permissions.
-3. **`sha256sum -c`** verifies the *installed* bytes against the reviewed
-   hash, as root, after installation. Git object reads do not always
-   re-validate the hash on the way out, so this is an independent check of the
-   same content by a different algorithm. A mismatch exits non-zero and the
-   `&&` chain never reaches execution.
-4. **`sudo /root/qamc-finish-line-rollout.sh`** runs the verified file. The
-   script then re-checks its own identity before doing anything: it refuses
-   unless it is owned by `root:root`, is mode exactly `0700` (not merely
-   "no write bits for others"), and sits in a root-owned directory that is not
-   group- or world-writable.
 
-No secret is read, written, printed or moved by any step, and nothing here is
-passed on a command line that could reach `ps`.
+   It runs **as `dev`** because `ubuntu` cannot traverse `/home/dev` (mode
+   0750, owned by `dev`). The first real run proved this: extraction as
+   `ubuntu` fails outright. The outer `sudo` has already made us root, and root
+   running `sudo -u dev` needs no password, so this adds no prompt.
+
+2. **`bash -o pipefail`** is load-bearing, not decoration. Without it, a failed
+   `git cat-file` still leaves `install` succeeding on empty input, the
+   pipeline reports success, and the `&&` chain marches on to install and then
+   execute a **zero-byte** file. With `pipefail` the pipeline fails and the
+   chain stops. (The sha256 check below is the second line of defence against
+   exactly that.)
+
+3. **`install -o root -g root -m 0700 /dev/stdin`** creates the file directly
+   as root-owned `0700` — no intermediate unprivileged copy, and no window at
+   wider permissions.
+
+4. **`sha256sum -c`** verifies the *installed* bytes, as root, after
+   installation. Git object reads do not always re-validate the hash on the way
+   out, so this is an independent check of the same content by a different
+   algorithm. A mismatch exits non-zero and the chain never reaches execution.
+
+5. **`/root/qamc-finish-line-rollout.sh`** runs only if every step above
+   succeeded. The script then re-checks its own identity before acting: owned
+   by `root:root`, mode exactly `0700`, in a root-owned directory with no group
+   or world write bit.
+
+No secret is read, written, printed or moved by any step, and nothing is passed
+on a command line that could reach `ps`.
 
 Residual, stated plainly: this does not defend against an already-root
-attacker, who could replace the file between step 3 and step 4. At that point
-the host is compromised regardless.
+attacker, who could replace the file between steps 4 and 5. At that point the
+host is compromised regardless.
+
+## Before this can run: the target must be re-pinned
+
+**The pinned target `bb223ea` does not contain the corrected listener-privacy
+classifier.** Gate B runs the deployed verifier, and Gate E4 loads its
+classifier, so on `bb223ea` the run would abort at Gate B on the same false
+positive that stopped the first attempt.
+
+The script now detects this in **preflight**, before touching anything, and
+stops with instructions. Once ChatGPT merges this branch to `main`, re-pin four
+constants at the top of the script and regenerate the provenance hashes:
+
+```bash
+git rev-parse origin/main; git rev-parse origin/main^{tree}; git diff --name-only 9c736c158fec84129765c25a9429254d3602ad6b origin/main | wc -l; git diff --name-only 9c736c158fec84129765c25a9429254d3602ad6b origin/main | sha256sum; git hash-object ops/review/qamc-finish-line-rollout.sh; sha256sum ops/review/qamc-finish-line-rollout.sh
+```
+
+Nothing else in the script changes; every gate below is unaffected.
 
 ## What the script does
 

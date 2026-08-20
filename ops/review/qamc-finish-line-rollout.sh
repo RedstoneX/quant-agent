@@ -90,8 +90,12 @@ read -r DIR_OWNER DIR_MODE <<< "$(stat -c '%U %a' "$SELF_DIR")"
 [[ "$DIR_OWNER" == "root" ]] \
   || { err "$SELF_DIR is owned by $DIR_OWNER, not root — a 0700 file in a directory
        someone else owns can be replaced wholesale. Refusing."; exit 1; }
-[[ "${DIR_MODE: -2:1}" =~ ^[0-5]$ && "${DIR_MODE: -1:1}" =~ ^[0-5]$ ]] \
-  || { err "$SELF_DIR is group/world writable (mode $DIR_MODE) — this script could be
+# The write bit is octal 2, so the digits WITHOUT it are 0, 1, 4 and 5.
+# A previous version tested `[0-5]`, which wrongly accepted 2 (write) and
+# 3 (write+execute) — exactly the modes this check exists to reject. Do not
+# reintroduce a range here: enumerate the safe digits.
+[[ "${DIR_MODE: -2:1}" =~ ^[0145]$ && "${DIR_MODE: -1:1}" =~ ^[0145]$ ]] \
+  || { err "$SELF_DIR is group- or world-writable (mode $DIR_MODE) — this script could be
        replaced between verification and execution. Refusing."; exit 1; }
 
 # ── Self-logging ─────────────────────────────────────────────────────────────
@@ -478,6 +482,37 @@ qgit "grep -qF '_MAX_MISSING_RETRIES' ${TARGET_SHA} -- src/agents/tech_analyst.p
 qgit "grep -qF 'self._redact(exc)' ${TARGET_SHA} -- src/notifier.py" \
   || die "Telegram token redaction absent from the target commit. STOP."
 ok "all three PR #48 fixes and the Telegram redaction present in the target commit"
+
+# The target must carry the corrected listener-privacy classifier, because BOTH
+# Gate B (which runs the deployed verifier) and Gate E4 (which loads the
+# deployed verifier's classifier) depend on it.
+#
+# 2026-08-20: the first real rollout aborted at Gate B on the old rule, which
+# equated "non-loopback" with "public" and so failed OneCLI's tailnet listener.
+# Rollback was clean, but it cost a full deploy/rollback cycle. This check moves
+# that failure to PREFLIGHT, where nothing has been touched yet.
+if ! qgit "grep -qF 'listener_privacy_verdict' ${TARGET_SHA} -- ops/commissioning/verify_commissioning.py" 2>/dev/null; then
+  die "the target commit $TARGET_SHA does NOT contain the corrected listener-privacy
+       classifier, so Gate B would abort on the same false positive that stopped
+       the first rollout — OneCLI's tailnet listener would again be read as public
+       exposure.
+
+       NOTHING HAS BEEN CHANGED. Production is untouched at $BASELINE_SHA.
+
+       The fix lives on branch claude/finish-line-rollout and must reach \`main\`
+       before this rollout can succeed. After ChatGPT merges it, re-pin the four
+       target constants at the top of this script:
+
+         TARGET_SHA            git rev-parse origin/main
+         TARGET_TREE           git rev-parse origin/main^{tree}
+         EXPECTED_CHANGED_FILES
+                               git diff --name-only $BASELINE_SHA origin/main | wc -l
+         EXPECTED_FILELIST_SHA
+                               git diff --name-only $BASELINE_SHA origin/main | sha256sum
+
+       Re-pinning is the only edit required; every gate below is unchanged."
+fi
+ok "target commit carries the corrected listener-privacy classifier (Gate B and E4 depend on it)"
 
 if qgit "grep -nE '^[[:space:]]*paper:[[:space:]]*false' ${TARGET_SHA} -- config/settings.yaml" 2>/dev/null; then
   die "config/settings.yaml in the target commit sets paper: false. HARD STOP."
@@ -1025,30 +1060,51 @@ for pat in 'sell_short' 'SELL_SHORT' 'OptionLegRequest' 'OptionsOrderRequest' 'e
 done
 ok "E3 no direct-shorting, options or margin path in the deployed source"
 
-# E4 — OneCLI healthy and private; nothing QAMC-facing bound to a public address
+# E4 — OneCLI healthy; every QAMC-facing listener is loopback or one of THIS
+#      host's exact Tailscale addresses.
+#
+# This deliberately calls the DEPLOYED verifier's own classifier rather than
+# re-implementing the rule in awk. The first real rollout aborted at Gate B on
+# a false positive in exactly this area, and the failure mode that made it
+# expensive was two different definitions of "private" living in two places.
+# Gate B and Gate E now cannot disagree, because they are the same function.
+#
+# The previous Gate E logic was also strictly WEAKER than Gate B's: it rejected
+# only wildcard binds, so a service bound to a specific public IP would have
+# sailed through the finish line.
 [[ "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$ONECLI_API/agents" || true)" == "200" ]] \
   || abort "E4: OneCLI gateway is not healthy"
-# `ss` output is required evidence, not optional: if it is missing or does not
-# even show the Mission Control port listening, this check has proven nothing
-# and must fail rather than pass vacuously.
-SS_OUT="$(ss -ltn 2>/dev/null || true)"
-[[ -n "${SS_OUT//[[:space:]]/}" ]] || abort "E4: 'ss -ltn' produced no output — public-exposure cannot be verified"
-grep -q ':8800' <<< "$SS_OUT" || abort "E4: port 8800 is not listening according to 'ss' — the listener inventory is not trustworthy"
-PUBLIC_BINDS="$(printf '%s\n' "$SS_OUT" | awk -v ports="$PRIVATE_PORTS" '
-  BEGIN { n = split(ports, want, " ") }
-  NR == 1 && $1 == "State" { next }
-  {
-    addr = $4
-    p = addr; sub(/.*:/, "", p)
-    host = addr; sub(/:[^:]*$/, "", host)
-    for (i = 1; i <= n; i++)
-      if (p == want[i] && (host == "0.0.0.0" || host == "*" || host == "[::]" || host == "::"))
-        print addr
-  }')"
-[[ -z "${PUBLIC_BINDS//[[:space:]]/}" ]] \
-  || abort "E4: QAMC/OneCLI port(s) are bound to a PUBLIC address: $PUBLIC_BINDS"
-ok "E4 OneCLI healthy; none of ports $PRIVATE_PORTS is bound to a public address"
-note "E4 tailnet-scoped listeners (Tailscale Serve) are private by design and expected."
+
+E4_OUT="$(as_qamc "cd '$QAMC_REPO' && '$VENV_PY' - <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location(
+    'qamc_verify', 'ops/commissioning/verify_commissioning.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['qamc_verify'] = m
+spec.loader.exec_module(m)
+
+tailnet = m.tailscale_local_addresses()
+print('tailnet_resolved=%s' % (tailnet is not None))
+print('tailnet_addrs=%s' % (','.join(sorted(tailnet)) if tailnet else ''))
+bad = []
+for port in (8800, 10254, 10255, 10256):
+    bindings = m._port_bindings(port)
+    status, detail = m.listener_privacy_verdict(bindings, tailnet)
+    print('port %d: %s | %s' % (port, status, detail))
+    if status == m.FAIL:
+        bad.append(port)
+print('verdict=%s' % ('FAIL' if bad else 'PASS'))
+PY
+" 2>&1)" || { printf '%s\n' "$E4_OUT" | sed 's/^/         /' >&2
+              abort "E4: the listener-privacy classification could not be evaluated"; }
+printf '%s\n' "$E4_OUT" | sed 's/^/         /'
+grep -q '^verdict=PASS$' <<< "$E4_OUT" \
+  || abort "E4: a QAMC-facing port is bound to an address that is neither loopback nor
+       one of this host's own Tailscale addresses (see the per-port lines above)"
+grep -q '^tailnet_resolved=True$' <<< "$E4_OUT" \
+  || note "E4 Tailscale addresses could not be resolved; every listener was loopback, so the verdict stands."
+ok "E4 OneCLI healthy; ports $PRIVATE_PORTS are loopback or this host's own Tailscale addresses only"
+note "E4 classification is the deployed verifier's own listener_privacy_verdict() — Gate B and Gate E cannot disagree."
 
 # E5 — provider/model-routing/broker/market-data/FRED/DB still green after enablement
 VERIFY_JSON_E="$(run_verifier "$VERIFY_ARGS" "$TMPD/verify-e.err")"
