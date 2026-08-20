@@ -305,6 +305,11 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
 
         risk_modified = _find(rows, "risk_manager", "modification") is not None
 
+        skip_row = _find(rows, "execution", "execution_skip")
+        skip = _parse_evidence(skip_row) if skip_row else None
+        skip_reason = skip.get("reason") if isinstance(skip, dict) else None
+        skip_detail = skip.get("detail") if isinstance(skip, dict) else None
+
         trade = first_trade_by_symbol.get(sym)
         executed = trade is not None and db_reads.is_executed_trade(trade)
         if executed:
@@ -321,6 +326,8 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
             risk_modified=risk_modified,
             executed=executed,
             trade_action=trade.get("action") if trade else None,
+            execution_skip_reason=skip_reason,
+            execution_skip_detail=skip_detail,
         ))
 
     pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)

@@ -88,6 +88,34 @@ def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str
         )
 
 
+def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
+                           detail: str) -> None:
+    """Durable record of a deterministic BUY skip in the execution phase.
+
+    Every skip path in the BUY loop used to be a log-only `continue`: the
+    DB, funnel, Mission Control and the evening reflection all read a
+    session whose approved BUYs were dropped here as a deliberate no-trade
+    (2026-08-19: three risk-approved BUYs skipped as unfunded; the evening
+    analyst concluded the system needed "proactive idea generation").
+    Appends to ctx.execution_skips (drives the run's final status) and
+    persists an `execution_skip` evidence row (drives the funnel/journal).
+    Best-effort by construction — persistence failure never affects the
+    skip decision itself (trading-core rule).
+    """
+    ctx.execution_skips.append(
+        {"symbol": symbol, "reason": reason, "detail": detail},
+    )
+    import json as _json
+    _persist_evidence(
+        pipeline.db, run_id=ctx.run_id, agent_name="execution",
+        kind="execution_skip", scope="symbol", symbol=symbol,
+        decision_id=ctx.decision_id,
+        evidence_json=_json.dumps(
+            {"symbol": symbol, "reason": reason, "detail": detail},
+        ),
+    )
+
+
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     """Apply RiskVerdict.scale_all_buys to BUY decisions.
 
@@ -1178,6 +1206,11 @@ class ExecutionStage:
                     "%d BUY(s); intra will liquidate on next tick",
                     loss_violation_now.message, len(buy_decisions),
                 )
+                for d in buy_decisions:
+                    _record_execution_skip(
+                        pipeline, ctx, d.symbol, "daily_loss_recheck",
+                        loss_violation_now.message,
+                    )
                 buy_decisions = []
 
         # Cash-sweep funding: PM/RM/the hard gate size BUYs against
@@ -1261,6 +1294,12 @@ class ExecutionStage:
                                 decision.symbol, decision.entry_price,
                                 deviation * 100, market_price,
                             )
+                            _record_execution_skip(
+                                pipeline, ctx, decision.symbol, "stale_entry",
+                                f"entry ${decision.entry_price:.2f} is "
+                                f"{deviation * 100:.1f}% from market "
+                                f"${market_price:.2f} (threshold 5%)",
+                            )
                             continue
                         elif limit_price < market_price:
                             logger.info(
@@ -1279,6 +1318,11 @@ class ExecutionStage:
                         "(broker + bars both unavailable). "
                         "LLM proposed entry $%.2f but cannot be validated.",
                         decision.symbol, decision.entry_price,
+                    )
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "no_price",
+                        "no verifiable price reference (broker + bars "
+                        "unavailable)",
                     )
                     continue
 
@@ -1338,6 +1382,13 @@ class ExecutionStage:
                             decision.entry_price, decision.stop_loss,
                             sizing_price, stop_price,
                         )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "geometry_rr",
+                            f"executed geometry R/R {reward / risk:.2f} < 1.2 "
+                            f"(RM approved ${decision.entry_price:.2f}/"
+                            f"${decision.stop_loss:.2f}, execution moved to "
+                            f"${sizing_price:.2f}/${stop_price:.2f})",
+                        )
                         continue
 
                 qty_by_alloc = int((total_value * decision.allocation_pct / 100) / sizing_price)
@@ -1361,6 +1412,11 @@ class ExecutionStage:
                     qty = qty_by_alloc
                 if qty <= 0:
                     logger.warning("Calculated qty=0 for %s, skipping", decision.symbol)
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "qty_zero",
+                        f"allocation {decision.allocation_pct:.2f}% at "
+                        f"${sizing_price:.2f} rounds to zero shares",
+                    )
                     continue
 
                 estimated_cost = qty * sizing_price
@@ -1368,6 +1424,11 @@ class ExecutionStage:
                     logger.warning(
                         "Skipping BUY %s: estimated cost $%.2f exceeds available cash $%.2f after sell phase",
                         decision.symbol, estimated_cost, available_cash,
+                    )
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "insufficient_cash",
+                        f"estimated cost ${estimated_cost:.2f} exceeds "
+                        f"available cash ${available_cash:.2f}",
                     )
                     continue
 
@@ -1420,6 +1481,11 @@ class ExecutionStage:
                     # Distinct from the submit-raised case: here we KNOW
                     # the broker rejected, so there's no orphan to sweep.
                     pipeline.db.mark_trade_submit_failed(pending_row_id)
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "broker_rejected",
+                        f"broker rejected buy {qty} @ "
+                        f"{'limit $%.2f' % limit_price if limit_price else 'market'}",
+                    )
                     continue
 
                 # Submit accepted — finalize the pending row with the

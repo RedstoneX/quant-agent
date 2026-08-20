@@ -104,6 +104,13 @@ class RunContext:
 
     # === Populated by execution stage ===
     orders: list[dict] = field(default_factory=list)
+    # Per-BUY skip records: {symbol, reason, detail}. Every deterministic
+    # skip in the BUY loop lands here AND as an `execution_skip` evidence
+    # row — before this, a risk-approved BUY could die on a log-only
+    # `continue` and the funnel/journal/evening-reflection all read the
+    # session as a deliberate no-trade (2026-08-19: three approved BUYs
+    # skipped as unfunded; evening concluded "generate more ideas").
+    execution_skips: list[dict] = field(default_factory=list)
 
     # === Structured facts for PM — Phase 4 #4 ===
     # Populated at the top of the DecisionStage so PM sees numbers, not

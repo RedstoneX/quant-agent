@@ -181,3 +181,71 @@ def test_funnel_proposed_not_executed_state(client, rejected_proposal_db):
     assert cand["symbol"] == "TSLA"
     assert cand["proposed_action"] == "BUY"
     assert cand["executed"] is False
+    # No execution_skip evidence in this fixture — the RM veto happened
+    # before the execution phase, so the fields stay None.
+    assert cand["execution_skip_reason"] is None
+
+
+UNFUNDED_RUN_ID = "run-unfunded01"
+UNFUNDED_DECISION_ID = f"{UNFUNDED_RUN_ID}-dec-000004"
+
+
+@pytest.fixture
+def unfunded_skip_db(tmp_path, monkeypatch):
+    """The 2026-08-19 shape: RM approved the BUY, execution skipped it as
+    unfunded (funding-sell race), and the trading process persisted an
+    `execution_skip` evidence row at the skip site."""
+    db_path = tmp_path / "unfunded.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_specialist_evidence(
+        run_id=UNFUNDED_RUN_ID, agent_name="portfolio_manager", kind="target", scope="symbol",
+        symbol="XLE", decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps({
+            "symbol": "XLE", "target_weight_pct": 10.0, "conviction": "high",
+            "thesis": "Energy tailwind.",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=UNFUNDED_RUN_ID, agent_name="portfolio_manager", kind="proposed_order", scope="symbol",
+        symbol="XLE", decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps({
+            "action": "BUY", "symbol": "XLE", "allocation_pct": 10.0,
+            "entry_price": 63.78, "stop_loss": 59.0, "take_profit": 73.34,
+            "reasoning": "constructed order",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=UNFUNDED_RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps({
+            "approved": True, "reasoning_chain": _risk_reasoning_chain(),
+            "reasoning": "Approved.",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=UNFUNDED_RUN_ID, agent_name="execution", kind="execution_skip", scope="symbol",
+        symbol="XLE", decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps({
+            "symbol": "XLE", "reason": "insufficient_cash",
+            "detail": "estimated cost $637.80 exceeds available cash $145.11",
+        }),
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+    return db_path
+
+
+def test_funnel_surfaces_execution_skip_reason(client, unfunded_skip_db):
+    """An approved-then-skipped BUY must be distinguishable from a
+    deliberate no-trade — the funnel quotes the trading process's own
+    skip record, closing the 2026-08-19 invisibility gap."""
+    r = client.get(f"/runs/{UNFUNDED_RUN_ID}/funnel")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["decision_state"] == "proposed_not_executed"
+    cand = body["candidates"][0]
+    assert cand["symbol"] == "XLE"
+    assert cand["executed"] is False
+    assert cand["execution_skip_reason"] == "insufficient_cash"
+    assert "145.11" in cand["execution_skip_detail"]
