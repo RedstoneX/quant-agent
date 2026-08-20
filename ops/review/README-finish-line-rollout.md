@@ -49,11 +49,10 @@ fail-closed substitutions.
 Run **as `ubuntu`**:
 
 ```bash
-sudo bash -o pipefail -c '[[ "$(stat -c "%U:%G:%a" /root)" == "root:root:700" ]] && sudo -u dev -H git -C /home/dev/projects/quant-agent cat-file blob fd8879b7a745165022888e8c4a5c26710ffa0646 | install -o root -g root -m 0700 /dev/stdin /root/qamc-finish-line-launcher.sh && echo "2e8f01eaf1c1ecdb3112ae49b92372a2f56c1815df2c866797c073e46b626699  /root/qamc-finish-line-launcher.sh" | sha256sum -c - && /root/qamc-finish-line-launcher.sh'
+sudo bash -o pipefail -c '[[ "$(stat -c "%U:%G:%a" /root)" == "root:root:700" ]] && sudo -u dev -H git -C /home/dev/projects/quant-agent fetch --no-tags origin "+refs/heads/claude/finish-line-rollout:refs/remotes/origin/claude/finish-line-rollout" && sudo -u dev -H git -C /home/dev/projects/quant-agent cat-file blob fd8879b7a745165022888e8c4a5c26710ffa0646 | install -o root -g root -m 0700 /dev/stdin /root/qamc-finish-line-launcher.sh && echo "2e8f01eaf1c1ecdb3112ae49b92372a2f56c1815df2c866797c073e46b626699  /root/qamc-finish-line-launcher.sh" | sha256sum -c - && /root/qamc-finish-line-launcher.sh'
 ```
 
-Nothing else is required. The launcher prints its derived inner SHA-256 and
-then the rollout writes the complete transcript to
+The command first fetches the review branch **without touching the dev working tree**, so the exact launcher/source blobs are guaranteed to exist locally. Nothing else is required. The launcher prints its derived inner SHA-256 and then the rollout writes the complete transcript to
 `/root/qamc-rollout-<UTC timestamp>.log`.
 
 ## Expected sequence
