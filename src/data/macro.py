@@ -1,5 +1,6 @@
 import logging
 import socket
+import time
 
 import pandas as pd
 from fredapi import Fred
@@ -13,6 +14,20 @@ logger = logging.getLogger(__name__)
 # plist's 600s kill budget. 15s is generous — FRED typically responds in
 # <1s; anything slower is network / service trouble, degrade gracefully.
 _FRED_TIMEOUT_S = 15.0
+
+# One bounded retry per series. Production evidence (2026-08-14..20 soak):
+# 14 "read operation timed out" failures spread across DIFFERENT series on
+# different runs — the same series succeeded 30 minutes earlier/later, so
+# a single short-backoff retry recovers the observed transient mode. On
+# 2026-08-20 14:01 five series died in ONE run and the macro analyst
+# (correctly, per its inputs) called "critical missing data → low
+# confidence → 55% cash", turning one flaky FRED minute into a full-day
+# conservative posture. The consecutive-failure breaker stops retrying
+# once a run looks like a genuine outage, so the worst case stays inside
+# the session's time budget instead of 8 series × retry × 15s.
+_FRED_MAX_RETRIES = 1
+_FRED_RETRY_BACKOFF_S = 2.0
+_FRED_BREAKER_AFTER_FAILED_SERIES = 2
 
 
 def _et_lookback_start(days: int) -> pd.Timestamp:
@@ -47,18 +62,43 @@ class MacroDataProvider:
                 "exercise the offline / mock path."
             )
         self.fred = Fred(api_key=api_key)
+        # Consecutive fully-failed series this provider instance. Once it
+        # reaches _FRED_BREAKER_AFTER_FAILED_SERIES the retry layer stands
+        # down (single attempt per series) — a genuine outage should
+        # degrade fast, not multiply its own latency.
+        self._consecutive_failed_series = 0
 
     def _safe_get_series(self, series_id: str, **kwargs) -> pd.Series:
         # Scoped socket timeout so other modules' sockets aren't affected.
         prev = socket.getdefaulttimeout()
         socket.setdefaulttimeout(_FRED_TIMEOUT_S)
+        retries = (
+            _FRED_MAX_RETRIES
+            if self._consecutive_failed_series < _FRED_BREAKER_AFTER_FAILED_SERIES
+            else 0
+        )
+        result = None
         try:
-            result = self.fred.get_series(series_id, **kwargs)
-        except Exception as e:
-            logger.warning("FRED API error for %s: %s", series_id, e)
-            return pd.Series(dtype=float)
+            for attempt in range(retries + 1):
+                try:
+                    result = self.fred.get_series(series_id, **kwargs)
+                    break
+                except Exception as e:
+                    if attempt < retries:
+                        logger.warning(
+                            "FRED API error for %s (attempt %d/%d): %s — "
+                            "retrying in %.0fs",
+                            series_id, attempt + 1, retries + 1, e,
+                            _FRED_RETRY_BACKOFF_S,
+                        )
+                        time.sleep(_FRED_RETRY_BACKOFF_S)
+                        continue
+                    logger.warning("FRED API error for %s: %s", series_id, e)
+                    self._consecutive_failed_series += 1
+                    return pd.Series(dtype=float)
         finally:
             socket.setdefaulttimeout(prev)
+        self._consecutive_failed_series = 0
         if result is None or len(result) == 0:
             # FRED responded successfully but returned 0 rows. Distinct from
             # the exception path (logged above) — usually a misconfigured

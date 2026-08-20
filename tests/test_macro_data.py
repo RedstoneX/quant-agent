@@ -213,3 +213,85 @@ def test_staleness_returns_none_for_empty_series():
     """No observations → can't compute staleness. Caller treats this as 'data unavailable'."""
     series = pd.Series(dtype=float)
     assert MacroDataProvider._staleness_days(series) is None
+
+
+# ===========================================================================
+# Transient-failure retry — trading-utility recovery (2026-08-20 incident:
+# five series timed out in ONE run with no retry; the macro analyst read
+# "critical missing data" and pinned the day to low-confidence / 55% cash).
+# ===========================================================================
+
+@patch("src.data.macro.time.sleep")
+@patch("src.data.macro.Fred")
+def test_transient_fred_timeout_recovers_on_retry(mock_fred_cls, mock_sleep):
+    mock = MagicMock()
+    good = pd.Series(
+        [18.5, 19.2], index=pd.date_range("2026-04-01", periods=2, freq="B"),
+    )
+    mock.get_series.side_effect = [TimeoutError("The read operation timed out"), good]
+    mock_fred_cls.return_value = mock
+
+    provider = MacroDataProvider(api_key="test-key")
+    vix = provider.get_vix()
+
+    assert vix["current"] == 19.2, "one transient timeout must not blank the series"
+    assert mock.get_series.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+@patch("src.data.macro.time.sleep")
+@patch("src.data.macro.Fred")
+def test_persistent_failure_returns_empty_after_bounded_retry(mock_fred_cls, mock_sleep):
+    mock = MagicMock()
+    mock.get_series.side_effect = TimeoutError("The read operation timed out")
+    mock_fred_cls.return_value = mock
+
+    provider = MacroDataProvider(api_key="test-key")
+    vix = provider.get_vix()
+
+    assert vix["current"] is None
+    assert mock.get_series.call_count == 2, "exactly one retry, then degrade"
+
+
+@patch("src.data.macro.time.sleep")
+@patch("src.data.macro.Fred")
+def test_outage_breaker_stops_retrying_after_consecutive_failed_series(
+    mock_fred_cls, mock_sleep,
+):
+    """Two series exhausting their retries looks like an outage, not a
+    flake — later series must degrade after a single attempt so a full
+    FRED outage can't multiply its own latency across all eight series."""
+    mock = MagicMock()
+    mock.get_series.side_effect = TimeoutError("down")
+    mock_fred_cls.return_value = mock
+
+    provider = MacroDataProvider(api_key="test-key")
+    provider.get_vix()              # attempts 2 (1 + retry)
+    provider.get_fed_funds_rate()   # attempts 2 (1 + retry) -> breaker arms
+    calls_before = mock.get_series.call_count
+    provider.get_unemployment()     # breaker armed: single attempt
+
+    assert calls_before == 4
+    assert mock.get_series.call_count == 5
+
+
+@patch("src.data.macro.time.sleep")
+@patch("src.data.macro.Fred")
+def test_success_resets_outage_breaker(mock_fred_cls, mock_sleep):
+    mock = MagicMock()
+    good = pd.Series([1.0], index=pd.date_range("2026-04-01", periods=1))
+    # fail, fail(retry) -> series 1 dead; then success resets the count.
+    mock.get_series.side_effect = [
+        TimeoutError("x"), TimeoutError("x"),   # series 1: dead after retry
+        good,                                   # series 2: success -> reset
+        TimeoutError("x"), good,                # series 3: retry still armed
+    ]
+    mock_fred_cls.return_value = mock
+
+    provider = MacroDataProvider(api_key="test-key")
+    provider.get_vix()
+    provider.get_fed_funds_rate()
+    result = provider.get_unemployment()
+
+    assert result["current"] == 1.0
+    assert mock.get_series.call_count == 5

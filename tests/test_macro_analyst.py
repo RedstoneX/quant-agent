@@ -252,11 +252,11 @@ def test_macro_analyze_survives_one_malformed_observation(mock_cls):
 # Sanity-check tests — _apply_sanity_checks soft floors
 # ===========================================================================
 #
-# The prompt teaches stricter rules than we enforce here (see the docstring
-# on `_apply_sanity_checks`); the literal "ANY stale → MUST be low" would
-# peg confidence at 'low' essentially every session because BLS/BEA
-# inflation + unemployment prints are monthly and almost always show
-# staleness_days > 3. The sanity check enforces only the two most
+# Prompt and code share per-cadence staleness semantics (see the docstring
+# on `_apply_sanity_checks`): daily series stale past 3 business days,
+# monthly series (CPI/PCE, UNRATE) only once a release cycle is missed —
+# BLS/BEA prints are monthly, so their staleness_days is 20-51 on
+# perfectly-normal cadence. The sanity check enforces only the two most
 # flagrant violations the LLM occasionally makes:
 #   - confidence='high' with stale/null indicators → downgrade to 'medium'
 #   - regime_shift=True with < 2 fresh indicators → clear it
@@ -326,29 +326,60 @@ def _mock_macro_llm(mock_cls, response_dict: dict):
 
 
 @patch("anthropic.Anthropic")
-def test_sanity_check_downgrades_high_confidence_when_indicator_stale(mock_cls, caplog):
-    """LLM self-inflates to confidence='high' but inflation is stale 10d.
-    Sanity check must downgrade to 'medium' per the prompt's
-    Confidence Calibration rule ('high' requires all indicators
-    fresh)."""
+def test_sanity_check_keeps_high_when_monthly_staleness_is_normal_cadence(mock_cls):
+    """Per-cadence semantics (trading-utility recovery): inflation 10d /
+    unemployment 15d is NORMAL monthly BLS/BEA cadence — the freshest
+    print that exists. Under the old flat >3d gate this fixture
+    downgraded every 'high', making high macro confidence structurally
+    unreachable in production (and PM's evening-tilt sizing never saw
+    one). Normal monthly cadence must NOT downgrade."""
+    _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    analysis, _ = agent.analyze(macro_summary=MACRO_SUMMARY, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.confidence == "high", (
+        "monthly indicators at normal release cadence (10d/15d) must not "
+        "downgrade 'high' — that was the unreachable-high bug"
+    )
+
+
+@patch("anthropic.Anthropic")
+def test_sanity_check_downgrades_high_when_daily_indicator_stale(mock_cls, caplog):
+    """A DAILY indicator (VIX) stale >3 business days still downgrades
+    'high' — per-cadence semantics tighten nothing for daily series."""
+    macro = {**MACRO_SUMMARY, "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 10}}
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
     agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     import logging
     with caplog.at_level(logging.WARNING):
-        analysis, _ = agent.analyze(macro_summary=MACRO_SUMMARY, universe=["SPY"])
+        analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
 
     assert analysis is not None
-    assert analysis.confidence == "medium", (
-        "high confidence with stale inflation (10d) / unemployment (15d) "
-        "must be downgraded to 'medium' by the sanity check"
-    )
-    # Warning log surfaces which indicators triggered the downgrade so
-    # the operator can spot when the LLM is misbehaving.
+    assert analysis.confidence == "medium"
     assert any(
-        "confidence='high'" in r.message and "inflation" in r.message
+        "confidence='high'" in r.message and "vix" in r.message
         for r in caplog.records
     ), "downgrade must log which indicators triggered it"
+
+
+@patch("anthropic.Anthropic")
+def test_sanity_check_downgrades_high_when_monthly_release_cycle_missed(mock_cls):
+    """A monthly indicator past ~55 business days HAS missed a release
+    cycle — that is genuine staleness and still downgrades 'high'."""
+    macro = {
+        **MACRO_SUMMARY,
+        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60},
+    }
+    _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.confidence == "medium"
 
 
 @patch("anthropic.Anthropic")
