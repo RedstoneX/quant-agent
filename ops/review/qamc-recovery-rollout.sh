@@ -150,6 +150,95 @@ wait_healthy() {
   return 1
 }
 
+# ── The authorized local delta: config/settings.yaml intraday_scan.enabled ──
+# docs/STATE.md: the ONLY accepted uncommitted delta over whatever SHA is
+# checked out is this one line, false -> true. Three places need it —
+# Gate A verifies it is EXACTLY this before touching anything, Gate D
+# establishes it on the newly deployed tree, and convergence re-establishes
+# it after any rollback — so all three share ONE editor (EDITOR_PY, defined
+# once) through apply_intraday_override(), instead of separate copies that
+# could drift apart. apply_intraday_override is idempotent: it prints
+# ALREADY_ENABLED and writes nothing if the line already reads true.
+EDITOR_PY='
+import re, sys
+path = sys.argv[1]
+with open(path) as fh:
+    lines = fh.read().split("\n")
+in_block = False
+changed = 0
+already = False
+for i, line in enumerate(lines):
+    if re.match(r"^intraday_scan:\s*$", line):
+        in_block = True
+        continue
+    if in_block:
+        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
+            break                      # left the block
+        m = re.match(r"^(\s*)enabled:\s*(\S+)(.*)$", line)
+        if m:
+            if m.group(2) == "true":
+                already = True
+            elif m.group(2) == "false":
+                lines[i] = "%senabled: true%s" % (m.group(1), m.group(3))
+                changed += 1
+            break
+if already and changed == 0:
+    print("ALREADY_ENABLED")
+    sys.exit(0)
+if changed != 1:
+    sys.exit("expected exactly 1 replacement inside intraday_scan, made %d" % changed)
+with open(path, "w") as fh:
+    fh.write("\n".join(lines))
+print("ENABLED")
+'
+apply_intraday_override() {  # writes config/settings.yaml in place; idempotent
+  sudo -u "$QAMC_USER" -H python3 -c "$EDITOR_PY" "$QAMC_REPO/config/settings.yaml"
+}
+
+# Read-only. Confirms the working tree is byte-identical to the committed
+# content at $1 EXCEPT for exactly one line: intraday_scan.enabled, false
+# (committed) vs true (working). Prints nothing and exits 0 on match; on any
+# mismatch exits non-zero with the reason on stdout. Never writes anything.
+verify_intraday_override_only() {  # $1 = SHA to diff the working tree against
+  local committed
+  committed="$(qgit "show $1:config/settings.yaml" 2>/dev/null)" || {
+    echo "could not read config/settings.yaml at $1"; return 1; }
+  sudo -u "$QAMC_USER" -H python3 -c '
+import re, sys
+committed = sys.argv[1].split("\n")
+with open(sys.argv[2]) as fh:
+    working = fh.read().split("\n")
+if len(committed) != len(working):
+    sys.exit("line count differs from the committed baseline: committed %d, working %d"
+              % (len(committed), len(working)))
+diffs = [(i + 1, c, w) for i, (c, w) in enumerate(zip(committed, working)) if c != w]
+if len(diffs) != 1:
+    sys.exit("expected exactly 1 line different from the committed baseline, found %d: %r"
+              % (len(diffs), diffs))
+line_no, c_line, w_line = diffs[0]
+# Confirm the one differing line is intraday_scan.enabled specifically, by
+# re-scanning the COMMITTED text for the block with the same rule the
+# mutator uses, so a coincidental one-line diff elsewhere can never pass.
+in_block = False
+is_the_enabled_line = False
+for i, line in enumerate(committed):
+    if re.match(r"^intraday_scan:\s*$", line):
+        in_block = True
+        continue
+    if in_block:
+        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
+            break
+        if i + 1 == line_no and re.match(r"^(\s*)enabled:\s*false\s*$", line):
+            is_the_enabled_line = True
+        break
+if not is_the_enabled_line:
+    sys.exit("the one differing line (line %d) is not the committed intraday_scan.enabled: "
+              "false line: committed=%r working=%r" % (line_no, c_line, w_line))
+if not re.match(r"^(\s*)enabled:\s*true\s*$", w_line):
+    sys.exit("intraday_scan.enabled in the working tree is not exactly \"true\": %r" % w_line)
+' "$committed" "$QAMC_REPO/config/settings.yaml"
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Deployment-state machine + convergent rollback
 # ═════════════════════════════════════════════════════════════════════════════
@@ -193,23 +282,30 @@ converge() {  # $1 = why. Idempotent, recursion-safe, never raises.
   err "[ROLLBACK] deployment state at abort: $DEPLOY_STATE"
 
   if [[ "$DEPLOY_STATE" == "pristine" ]]; then
-    err "[ROLLBACK] nothing was changed — production is untouched at $BASELINE_SHA"
+    err "[ROLLBACK] nothing was changed — production is untouched at $BASELINE_SHA with the authorized intraday override intact"
     CONVERGED="yes"
     IN_CONVERGE=0
     return 0
   fi
 
-  local converged=1 head_after dirty_after pid_after
+  local converged=1 head_after dirty_after pid_after override_out override_err
 
   qgit "checkout -- config/settings.yaml" >/dev/null 2>&1
   if qgit "checkout --detach '$BASELINE_SHA'" >/dev/null 2>&1; then
     head_after="$(qgit 'rev-parse HEAD' 2>/dev/null)"
+    # The accepted production state is BASELINE_SHA plus the authorized
+    # intraday override (docs/STATE.md) — re-establish it BEFORE judging
+    # whether the tree converged, so "converged" means the actually-accepted
+    # state, not the bare committed baseline.
+    override_out="$(apply_intraday_override 2>&1)"; override_rc=$?
     dirty_after="$(qgit 'status --porcelain' 2>/dev/null)"
-    if [[ "$head_after" == "$BASELINE_SHA" && -z "$dirty_after" ]]; then
-      err "[ROLLBACK] checkout + config restored to $BASELINE_SHA (tree clean)"
+    override_err="$(verify_intraday_override_only "$BASELINE_SHA" 2>&1)"; override_verify_rc=$?
+    if [[ "$head_after" == "$BASELINE_SHA" && "$override_rc" -eq 0 \
+          && "$dirty_after" == " M config/settings.yaml" && "$override_verify_rc" -eq 0 ]]; then
+      err "[ROLLBACK] checkout + config restored to $BASELINE_SHA + authorized intraday override ($override_out)"
     else
       converged=0
-      err "[ROLLBACK] tree NOT clean — HEAD=${head_after:-unknown} status=${dirty_after:-clean}"
+      err "[ROLLBACK] tree NOT at the accepted state — HEAD=${head_after:-unknown} status=${dirty_after:-clean} override=${override_out:-?} verify=${override_err:-ok}"
     fi
   else
     converged=0
@@ -229,13 +325,17 @@ converge() {  # $1 = why. Idempotent, recursion-safe, never raises.
 
   if (( converged )); then
     CONVERGED="yes"
-    err "[ROLLBACK] PRODUCTION CONVERGED: checkout $BASELINE_SHA, clean tree, API healthy, intraday NOT enabled"
+    err "[ROLLBACK] PRODUCTION CONVERGED: checkout $BASELINE_SHA + authorized intraday override, API healthy"
   else
     CONVERGED="no"
     err "[ROLLBACK] CONVERGENCE INCOMPLETE — FINISH BY HAND:"
-    err "  sudo -u $QAMC_USER -H bash -c \"cd $QAMC_REPO && git checkout -- config/settings.yaml && git checkout --detach $BASELINE_SHA\""
-    err "  sudo -u $QAMC_USER -H bash -c \"$SYSTEMD_ENV systemctl --user restart $API_UNIT\""
-    err "  curl -s $API_HEALTH"
+    err "  1) sudo -u $QAMC_USER -H bash -c \"cd $QAMC_REPO && git checkout -- config/settings.yaml && git checkout --detach $BASELINE_SHA\""
+    err "  2) confirm/set intraday_scan.enabled: true in $QAMC_REPO/config/settings.yaml —"
+    err "     this is the one authorized production-local delta (docs/STATE.md); check with:"
+    err "     sudo -u $QAMC_USER -H git -C $QAMC_REPO diff -- config/settings.yaml"
+    err "     it must show exactly one line, enabled: false -> true, nothing else"
+    err "  3) sudo -u $QAMC_USER -H bash -c \"$SYSTEMD_ENV systemctl --user restart $API_UNIT\""
+    err "  4) curl -s $API_HEALTH"
   fi
   IN_CONVERGE=0
   return 0
@@ -298,6 +398,8 @@ if [[ "$HEAD_NOW" == "$TARGET_SHA" ]]; then
 
        Converge back to the baseline first, then re-run:
          sudo -u $QAMC_USER -H bash -c \"cd $QAMC_REPO && git checkout -- config/settings.yaml && git checkout --detach $BASELINE_SHA\"
+         then confirm/set intraday_scan.enabled: true in config/settings.yaml
+         (the one authorized production-local delta — docs/STATE.md) before:
          sudo -u $QAMC_USER -H bash -c \"$SYSTEMD_ENV systemctl --user restart $API_UNIT\"
          curl -s $API_HEALTH
 
@@ -309,11 +411,31 @@ fi
        deploying anything."
 ok "production HEAD == $BASELINE_SHA (the reviewed baseline)"
 
+# The accepted production state (docs/STATE.md) is BASELINE_SHA PLUS exactly
+# one local delta: config/settings.yaml intraday_scan.enabled false -> true.
+# A bare "must be clean" check is WRONG here — production is never clean at
+# this baseline by design. Accept only the exact authorized delta; reject a
+# clean tree (that would mean production is NOT in the documented accepted
+# state) and reject any dirty state that is not exactly this one line.
 DIRTY="$(qgit 'status --porcelain')"
-[[ -z "$DIRTY" ]] || die "production working tree is dirty:
+if [[ -z "$DIRTY" ]]; then
+  die "production working tree is CLEAN, but the accepted production state in
+       docs/STATE.md requires exactly one local delta: config/settings.yaml
+       intraday_scan.enabled false -> true. An unexpectedly clean tree means
+       production is not in the state this rollout was reviewed against.
+       Reconcile by hand before deploying. STOP."
+fi
+[[ "$DIRTY" == " M config/settings.yaml" ]] \
+  || die "production working tree is dirty, but not in the one accepted way
+       (expected exactly ' M config/settings.yaml', the authorized intraday
+       override):
 $(printf '%s\n' "$DIRTY" | sed 's/^/         /')
        Reconcile by hand before deploying. STOP."
-ok "production working tree clean"
+DELTA_ERR="$(verify_intraday_override_only "$BASELINE_SHA")" \
+  || die "config/settings.yaml is dirty, but not exactly the authorized
+       intraday_scan.enabled false -> true override: $DELTA_ERR
+       Reconcile by hand before deploying. STOP."
+ok "production working tree carries exactly the accepted local delta (config/settings.yaml intraday_scan.enabled: true over committed false)"
 
 REPO_OWNER="$(stat -c '%U:%G' "$QAMC_REPO/main.py")"
 [[ "$REPO_OWNER" == "${QAMC_USER}:${QAMC_USER}" ]] \
@@ -577,13 +699,23 @@ say "PHASE 3 — deploy exact $TARGET_SHA (detached; main is never followed)  [M
 # already armed: if it fails part-way (a signal mid-checkout, a half-written
 # index), DEPLOY_STATE is set BEFORE the command runs, so any abort path
 # converges the tree back to the baseline rather than leaving it mid-transition.
+#
+# Gate A verified the tree carries exactly the authorized intraday override
+# on top of BASELINE_SHA — not clean. Discard that local delta FIRST, so the
+# checkout below moves a genuinely clean tree onto TARGET_SHA (the same
+# clean-checkout precondition this script was reviewed against), then Gate D
+# re-establishes the override on the new tree at its normal governed point,
+# after Gate C. This one discard is the same operation converge() already
+# performs, so a failure here converges exactly like any other Phase 3+ abort.
 DEPLOY_STATE="deployed"
+qgit "checkout -- config/settings.yaml" >/dev/null 2>&1 \
+  || abort "could not discard the authorized local delta before checkout — production may have been left mid-transition"
 qgit "checkout --detach '$TARGET_SHA'" >/dev/null 2>&1 \
   || abort "checkout of $TARGET_SHA failed — production may have been left mid-transition"
 
 NEW_SHA="$(qgit 'rev-parse HEAD')"
 [[ "$NEW_SHA" == "$TARGET_SHA" ]] || abort "post-checkout HEAD is $NEW_SHA, expected $TARGET_SHA"
-[[ -z "$(qgit 'status --porcelain')" ]] || abort "working tree is dirty right after checkout"
+[[ -z "$(qgit 'status --porcelain')" ]] || abort "working tree is dirty right after checkout (the local delta should have been discarded before this checkout)"
 DEPLOYED_TREE="$(qgit 'rev-parse HEAD^{tree}')"
 [[ "$DEPLOYED_TREE" == "$TARGET_TREE" ]] || abort "deployed tree is $DEPLOYED_TREE, expected $TARGET_TREE"
 ok "production HEAD == $TARGET_SHA, tree == $TARGET_TREE, working tree clean"
@@ -1009,40 +1141,11 @@ grep -q '^usable=True$' <<< "$SNAP" \
 ok "D0 intraday market-data path verified live and read-only (no order placed)"
 
 # ── D1. enable, in place, scoped to the intraday_scan block ────────────────
-EDITOR_PY='
-import re, sys
-path = sys.argv[1]
-with open(path) as fh:
-    lines = fh.read().split("\n")
-in_block = False
-changed = 0
-already = False
-for i, line in enumerate(lines):
-    if re.match(r"^intraday_scan:\s*$", line):
-        in_block = True
-        continue
-    if in_block:
-        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
-            break                      # left the block
-        m = re.match(r"^(\s*)enabled:\s*(\S+)(.*)$", line)
-        if m:
-            if m.group(2) == "true":
-                already = True
-            elif m.group(2) == "false":
-                lines[i] = "%senabled: true%s" % (m.group(1), m.group(3))
-                changed += 1
-            break
-if already and changed == 0:
-    print("ALREADY_ENABLED")
-    sys.exit(0)
-if changed != 1:
-    sys.exit("expected exactly 1 replacement inside intraday_scan, made %d" % changed)
-with open(path, "w") as fh:
-    fh.write("\n".join(lines))
-print("ENABLED")
-'
+# Same EDITOR_PY / apply_intraday_override() Gate A verified against and
+# convergence re-uses — one editor, three call sites, defined once near the
+# top of this script.
 DEPLOY_STATE="enabled"
-EDIT_RESULT="$(sudo -u "$QAMC_USER" -H python3 -c "$EDITOR_PY" "$QAMC_REPO/config/settings.yaml")" \
+EDIT_RESULT="$(apply_intraday_override)" \
   || abort "GATE D: failed to enable intraday_scan in the deployed config"
 ok "config/settings.yaml intraday_scan: $EDIT_RESULT"
 
@@ -1320,9 +1423,11 @@ cat <<EOF
     * the first live Tech batch log line ("Batch: N/M symbols analyzed")
     * the first live intraday tick on the next weekday inside 09:30-16:00 ET
 
-  ROLLBACK (code + config + process, converged):
+  ROLLBACK (code + config + process, converged to baseline + its own
+  authorized intraday override — NOT bare baseline):
 
       sudo -u $QAMC_USER -H bash -c "cd $QAMC_REPO && git checkout -- config/settings.yaml && git checkout --detach $BASELINE_SHA" \\
+        && sudo -u $QAMC_USER -H bash -c "cd $QAMC_REPO && python3 -c '$EDITOR_PY' config/settings.yaml" \\
         && sudo -u $QAMC_USER -H bash -c "$SYSTEMD_ENV systemctl --user restart $API_UNIT" \\
         && sleep 5 && curl -s $API_HEALTH
 
