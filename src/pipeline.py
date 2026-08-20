@@ -6071,15 +6071,14 @@ class TradingPipeline:
         # truth (emergency liquidate below sells EVERYTHING, parked cash
         # included).
         #
-        # 2026-08-19 SGOV/deployable-liquidity forensic: crediting the
-        # parked vehicle's market value straight into "cash" (2026-07-16
-        # audit's fix) told the reviewer money was instantly available when
-        # it was not — Alpaca settlement (T+1) means a same-day SGOV
-        # liquidation is not reliably spendable by the time execution
-        # rechecks. `review_cash` is now `ctx.deployable_cash` (Alpaca's
-        # settled non-margin buying power); `reserve_balance` carries the
-        # parked value separately, informationally, so the reviewer still
-        # knows the reserve exists without treating it as instant cash.
+        # 2026-08-19 SGOV/deployable-liquidity forensic: `review_cash` is
+        # `ctx.deployable_cash` — the same single figure PM and RM see (raw
+        # cash + convertible sweep value) — and `reserve_balance` carries
+        # the parked component separately so the reviewer can see how much
+        # of it is sweep parking rather than raw cash. The point is one
+        # source of truth disclosed in two parts, not a smaller number:
+        # the vehicle is genuinely convertible, and ExecutionStage's
+        # raw-cash recheck is what makes that safe.
         review_positions = positions
         review_cash = ctx.deployable_cash
         reserve_balance = 0.0

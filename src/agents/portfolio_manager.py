@@ -33,10 +33,11 @@ class PortfolioManagerAgent(BaseAgent):
         macro_analysis: dict | None = kwargs.get("macro_analysis")
         cash_balance: float = kwargs["cash_balance"]
         # Short-term reserve (SGOV/cash-equivalent sweep parking), reported
-        # separately from cash_balance — 2026-08-19 SGOV/deployable-
-        # liquidity forensic. Never fold this into cash_balance: it is not
-        # reliably spendable same-day (Alpaca T+1 equity settlement), so
-        # sizing against it produces BUYs execution can't actually fund.
+        # separately — 2026-08-19 SGOV/deployable-liquidity forensic. It is
+        # already INCLUDED in cash_balance (which is `ctx.deployable_cash` =
+        # raw cash + convertible sweep value), and the rendered account
+        # block below says so explicitly, so the model neither double-counts
+        # it nor mistakes the sweep for a discretionary bond position.
         reserve_balance: float = kwargs.get("reserve_balance", 0.0) or 0.0
         total_value: float = kwargs["total_value"]
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")

@@ -215,15 +215,20 @@ class AlpacaBroker:
         last_equity = float(raw_last) if raw_last else portfolio_value
         if last_equity <= 0:
             last_equity = portfolio_value
-        # `cash` can include same-day sale proceeds that are not yet
-        # settled (T+1 for equities) and therefore not safely spendable on
-        # a new BUY without implicitly drawing broker margin — Alpaca does
-        # not offer a true cash-account product; every account is a margin
-        # account, and accounts >= $2,000 equity get no unsettled-funds
-        # allowance. `non_marginable_buying_power` is Alpaca's own settled,
-        # non-margin-eligible buying-power figure — the correct "safe to
-        # spend right now, no margin" number for a cash-only design (2026-
-        # 08-19 SGOV/deployable-liquidity forensic).
+        # `non_marginable_buying_power` is surfaced for observability only:
+        # NOTHING in the decision or execution path reads it, and nothing
+        # should. An intermediate pass in the 2026-08-19 SGOV/deployable-
+        # liquidity tranche sized equity BUYs against it and that was
+        # rejected — it is Alpaca's settled/non-margin (crypto) figure and
+        # LAGS a same-day equity sale by a business day, so using it makes
+        # money the account genuinely owns invisible. Alpaca credits `cash`
+        # as soon as a SELL FILLS ("the cash is updated post the SELL trade
+        # is filled, but the cash_withdrawable and cash_transferable are
+        # updated post T+1"), so `cash` is the right basis for same-session
+        # equity sizing. See `TradingPipeline._compute_deployable_cash` for
+        # the figure the pipeline actually plans against, and note that
+        # `buying_power`/`regt_buying_power` are MARGIN figures that must
+        # never be used at all.
         raw_nmbp = getattr(acct, "non_marginable_buying_power", None)
         non_marginable_buying_power = (
             float(raw_nmbp) if raw_nmbp is not None else float(acct.cash)

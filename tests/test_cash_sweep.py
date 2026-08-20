@@ -457,13 +457,16 @@ def test_risk_stage_rm_view_excludes_vehicle():
         assert call.kwargs["cash"] == 10_000.0
 
 
-def test_decision_stage_pm_view_gets_deployable_cash_not_sgov_inflated():
-    """2026-08-19 SGOV/deployable-liquidity forensic, PM side: the exact
-    incident this regresses is PM being told ~$10K was "cash" (really
-    ~$145 deployable + ~$9.8K parked SGOV), sizing BUYs against the
-    inflated figure that execution could never actually fund. PM must now
-    receive ctx.deployable_cash verbatim as cash_balance, with SGOV's
-    value surfaced only informationally via reserve_balance."""
+def test_decision_stage_pm_view_gets_deployable_cash_verbatim():
+    """2026-08-19 SGOV/deployable-liquidity forensic, PM side.
+
+    DecisionStage must hand PM `ctx.deployable_cash` UNCHANGED as
+    cash_balance, and disclose the parked component separately via
+    reserve_balance. It must not re-derive the figure or re-add the sweep
+    vehicle's market value on top — `_compute_deployable_cash` already
+    included it, and adding it twice is what would produce BUYs execution
+    cannot fund. The single source of truth, disclosed in two parts, is
+    the property under test; the magnitude of the number is not."""
     from src.pipeline_stages import DecisionStage
     from src.pipeline_context import RunContext
 

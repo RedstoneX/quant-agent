@@ -532,3 +532,79 @@ def test_invariant_intraday_scan_adds_no_shorting_or_margin_path():
         assert forbidden not in src, f"intraday scan must not reference {forbidden}"
     # Candidates come from the configured universe only — no ad-hoc symbols.
     assert "self.config.trading.universe" in src
+
+
+def test_invariant_funding_docs_do_not_describe_the_rejected_design():
+    """Comments in the funding path must describe what shipped, not what was
+    rejected.
+
+    An intermediate pass in the 2026-08-19 SGOV tranche sized equity BUYs
+    against `non_marginable_buying_power` and described `deployable_cash` as
+    "Alpaca's settled non-margin buying power" that excludes the parked
+    sweep value. That approach was rejected — the shipped
+    `_compute_deployable_cash` is raw cash PLUS the convertible sweep value
+    — but the prose survived in several files, asserting a safety property
+    ("never SGOV's parked value") that is the opposite of what the code
+    does.
+
+    Stale comments in a funding path are not cosmetic: the next reader
+    reasons about spendable cash from them. This invariant keeps the
+    rejected description from coming back.
+    """
+    from pathlib import Path
+
+    rejected_phrases = (
+        "settled non-margin buying power",
+        "settled, non-margin)",
+        "never SGOV's parked value",
+        "not reliably spendable same-day",
+        "is not reliably spendable",
+    )
+    root = Path(__file__).resolve().parents[1] / "src"
+    offenders = []
+    for path in root.rglob("*.py"):
+        if "static_cockpit" in str(path):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for phrase in rejected_phrases:
+            if phrase in text:
+                offenders.append(f"{path.relative_to(root.parent)}: {phrase!r}")
+    assert not offenders, (
+        "these files still describe the REJECTED non_marginable_buying_power "
+        "design:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_invariant_non_marginable_buying_power_is_observability_only():
+    """The field may be surfaced by the broker adapter, but no decision,
+    sizing or execution module may READ it.
+
+    Checked against the AST rather than the file text, so the comments that
+    explain *why* it must not be used — which are exactly what stops the
+    rejected design being reintroduced — are not themselves violations.
+    """
+    import ast
+    from pathlib import Path
+
+    NAME = "non_marginable_buying_power"
+    root = Path(__file__).resolve().parents[1] / "src"
+    allowed = {"execution/broker.py"}
+    offenders = []
+    for path in root.rglob("*.py"):
+        rel = str(path.relative_to(root))
+        if "static_cockpit" in rel or rel in allowed:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == NAME:
+                offenders.append(f"{rel}:{node.lineno} attribute access")
+            elif isinstance(node, ast.Subscript):
+                sl = node.slice
+                if isinstance(sl, ast.Constant) and sl.value == NAME:
+                    offenders.append(f"{rel}:{node.lineno} dict lookup")
+    assert not offenders, (
+        f"{NAME} must not be read outside the broker adapter; found: {offenders}"
+    )

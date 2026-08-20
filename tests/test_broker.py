@@ -38,10 +38,16 @@ def test_get_account(mock_tc_cls):
 
 @patch("src.execution.broker.TradingClient")
 def test_get_account_reads_non_marginable_buying_power(mock_tc_cls):
-    """2026-08-19 SGOV/deployable-liquidity forensic: get_account() must
-    surface Alpaca's settled, non-margin buying-power figure — the
-    truthful "safe to spend right now, no margin" number — distinct from
-    `cash`, which can include same-day unsettled sale proceeds."""
+    """2026-08-19 SGOV/deployable-liquidity forensic: get_account() surfaces
+    Alpaca's settled/non-margin figure for OBSERVABILITY, distinct from
+    `cash`.
+
+    Nothing in the decision or execution path reads it, and nothing should:
+    an intermediate pass in that tranche sized equity BUYs against it and
+    was rejected, because it lags a same-day equity sale by a business day
+    and hides money the account owns. The pipeline plans against
+    `_compute_deployable_cash` (raw cash + convertible sweep value); see
+    test_deployable_cash_never_uses_margin_buying_power_fields."""
     mock_client = MagicMock()
     mock_client.get_account.return_value = _make_mock_account(
         cash="10145.0", non_marginable_buying_power="145.0",

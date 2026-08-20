@@ -109,8 +109,10 @@ class PositionReviewerAgent(BaseAgent):
         macro_summary: dict = kwargs["macro_summary"]
         cash_balance: float = kwargs["cash_balance"]
         # Cash-equivalent sweep reserve (SGOV), reported separately —
-        # 2026-08-19 SGOV/deployable-liquidity forensic. Never re-add this
-        # to cash_balance; it is not reliably spendable same-day.
+        # 2026-08-19 SGOV/deployable-liquidity forensic. It is already
+        # INCLUDED in cash_balance (`ctx.deployable_cash`), so never re-add
+        # it: this field exists to show how much of that figure is sweep
+        # parking rather than raw cash.
         reserve_balance: float = kwargs.get("reserve_balance", 0.0) or 0.0
         total_value: float = kwargs["total_value"]
         session_type: str = kwargs.get("session_type", "midday")
