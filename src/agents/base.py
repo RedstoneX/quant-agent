@@ -650,6 +650,42 @@ class BaseAgent(ABC):
         user_message = self.build_user_message(**kwargs)
         return self._execute(user_message)
 
+    def repair_reprompt(self, failed: AgentResult, error, schema_name: str) -> AgentResult:
+        """One bounded re-ask after a response parsed as JSON but failed
+        schema validation (e.g. a mandatory reasoning_chain field omitted).
+
+        Production incident 2026-08-18 15:03: the Risk Manager APPROVED the
+        day's plan with three sensible halving modifications, but omitted
+        `sizing_sanity` and `overall` from its reasoning_chain — validation
+        failed, the verdict became None, and RiskStage recorded
+        "REJECTED: parse error". A prose omission silently destroyed an
+        approving verdict and ended the trading day. One corrective call
+        (~$0.002) names the exact validation errors and asks the model to
+        re-emit the complete object; if the second attempt also fails,
+        callers keep their existing fail-closed path (None → reject/retry).
+
+        Deliberately built on `_execute` (not `run`) so the original
+        user message is replayed verbatim with a repair coda — the model
+        re-decides nothing, it completes what it already decided. The
+        returned AgentResult's `user_message` includes the coda, so the
+        agent_logs row is self-describing about being a repair call.
+        """
+        coda = (
+            f"\n\n## SCHEMA REPAIR REQUIRED\n"
+            f"Your previous response was parseable JSON but failed "
+            f"{schema_name} schema validation.\n\n"
+            f"Validation errors:\n{error}\n\n"
+            f"Your previous response was:\n{failed.raw_text}\n\n"
+            f"Re-emit the COMPLETE corrected JSON object now — keep the same "
+            f"decisions and content, add every missing required field with "
+            f"substantive content. Respond ONLY with the JSON object."
+        )
+        logger.warning(
+            "Agent %s: %s validation failed — attempting one repair reprompt",
+            self.name, schema_name,
+        )
+        return self._execute(failed.user_message + coda)
+
     def _execute(self, user_message: str) -> AgentResult:
         """The retry / cross-provider-failover / cost / parse loop, decoupled
         from build_user_message so a stored historical `input_message` can be

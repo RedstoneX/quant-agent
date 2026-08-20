@@ -400,6 +400,34 @@ Review these proposed trades and provide your verdict as JSON."""
             parsed = self._drop_invalid_modifications(parsed)
         try:
             return RiskVerdict(**parsed), result
+        except ValidationError as e:
+            # 2026-08-18 incident: an APPROVING verdict with three sound
+            # modifications died because two reasoning_chain prose fields
+            # were omitted — recorded as "REJECTED: parse error", trading
+            # day over. One bounded repair reprompt names the exact
+            # validation errors; a second failure keeps the fail-closed
+            # None → reject path exactly as before.
+            repaired = self.repair_reprompt(result, e, "RiskVerdict")
+            reparsed = repaired.parse_json()
+            if isinstance(reparsed, dict):
+                reparsed = self._drop_invalid_modifications(reparsed)
+                try:
+                    verdict = RiskVerdict(**reparsed)
+                    logger.info(
+                        "Risk verdict repair succeeded (approved=%s, %d mods)",
+                        verdict.approved, len(verdict.modifications),
+                    )
+                    return verdict, repaired
+                except Exception as e2:  # noqa: BLE001
+                    logger.error(
+                        "Failed to parse risk verdict after repair: %s", e2,
+                    )
+                    return None, repaired
+            logger.error(
+                "Risk verdict repair returned %s, not an object",
+                type(reparsed).__name__,
+            )
+            return None, repaired
         except Exception as e:
             logger.error("Failed to parse risk verdict: %s", e)
             return None, result

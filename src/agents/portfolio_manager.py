@@ -603,6 +603,35 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             parsed = self._drop_invalid_targets(parsed)
         try:
             return PortfolioDecision(**parsed), result
+        except ValidationError as e:
+            # Mirror of the RiskManager repair path (2026-08-18 incident
+            # class): a decision that parsed as JSON but failed schema
+            # validation (typically an omitted mandatory reasoning_chain
+            # field) costs a FULL research re-run 30 minutes later via
+            # analysis_error. One immediate ~$0.006 repair call naming the
+            # validation errors is strictly cheaper; a second failure keeps
+            # today's fail-closed None → analysis_error path.
+            repaired = self.repair_reprompt(result, e, "PortfolioDecision")
+            reparsed = repaired.parse_json()
+            if isinstance(reparsed, dict):
+                reparsed = self._drop_invalid_targets(reparsed)
+                try:
+                    decision = PortfolioDecision(**reparsed)
+                    logger.info(
+                        "Portfolio decision repair succeeded (%d targets)",
+                        len(decision.targets),
+                    )
+                    return decision, repaired
+                except Exception as e2:  # noqa: BLE001
+                    logger.error(
+                        "Failed to parse portfolio decision after repair: %s", e2,
+                    )
+                    return None, repaired
+            logger.error(
+                "Portfolio decision repair returned %s, not an object",
+                type(reparsed).__name__,
+            )
+            return None, repaired
         except Exception as e:
             logger.error("Failed to parse portfolio decision: %s", e)
             return None, result
