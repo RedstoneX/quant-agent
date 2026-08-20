@@ -411,7 +411,16 @@ class AgentResult:
     # partial thinking-out-loud, or a tool-like object), these anchors let us
     # pick the actual output instead of the largest stray fragment.
     _EXPECTED_AGENT_KEY_WEIGHTS = {
-        "decisions": 50,           # PortfolioDecision
+        "decisions": 50,           # PortfolioDecision (legacy pre-constructor key)
+        # Phase-2 constructor refactor renamed PM's actionable output from
+        # `decisions` to `targets` but this table was never updated, so a
+        # full PortfolioDecision scored only 40 (portfolio_view +
+        # reasoning_chain) while its own inner `targets` ARRAY scored
+        # 5/symbol — any plan with ≥8 targets lost to a fragment of itself
+        # and the whole morning collapsed to "no trades" (2026-08-17/20
+        # production: 10 of 13 decision runs died here; reproduced from
+        # recorded payloads in tests/fixtures/pm_response_*).
+        "targets": 50,             # PortfolioDecision (current key)
         "approved": 50,            # RiskVerdict
         "actions": 50,             # MiddayReview
         "daily_summary": 40,       # EveningReport
@@ -460,7 +469,9 @@ class AgentResult:
         except json.JSONDecodeError:
             pass
 
-        candidates: list[tuple[int, int, int, dict | list]] = []
+        # Each candidate carries its source SPAN (start, end in raw_text) so
+        # nested fragments can be recognized. (score, size, idx, span, parsed)
+        candidates: list[tuple[int, int, int, tuple[int, int], dict | list]] = []
         # idx preserves source order so we can break ties predictably.
         idx = 0
         # Fenced ```json blocks — highest trust.
@@ -469,7 +480,10 @@ class AgentResult:
                 parsed = json.loads(match.group(1).strip())
             except json.JSONDecodeError:
                 continue
-            candidates.append((self._shape_score(parsed), len(json.dumps(parsed)), idx, parsed))
+            candidates.append((
+                self._shape_score(parsed), len(json.dumps(parsed)), idx,
+                match.span(1), parsed,
+            ))
             idx += 1
 
         decoder = json.JSONDecoder()
@@ -480,19 +494,54 @@ class AgentResult:
                 parsed, end = decoder.raw_decode(self.raw_text[i:])
             except json.JSONDecodeError:
                 continue
-            candidates.append((self._shape_score(parsed), len(json.dumps(parsed)), idx, parsed))
+            candidates.append((
+                self._shape_score(parsed), len(json.dumps(parsed)), idx,
+                (i, i + end), parsed,
+            ))
             idx += 1
+
+        # Nested-fragment filter: a candidate STRICTLY contained inside a
+        # larger candidate is part of that candidate's content, not a later
+        # "correction" of it — the recency tie-break below was designed for
+        # DISJOINT draft-then-fix fragments. Without this, the PM's inner
+        # `targets` array (5 pts/symbol) outranked the very object that
+        # contained it once the plan reached ≥8 names, and the entire
+        # morning decision was destroyed by a fragment of itself
+        # (2026-08-17/20 production incident; see _EXPECTED_AGENT_KEY_WEIGHTS
+        # note). A container that itself looks like agent output (score > 0)
+        # therefore always wins over its own fragments, REGARDLESS of the
+        # fragments' scores. The only nested fragment worth keeping is one
+        # inside a score-0 container — the prose-wrapper case
+        # (e.g. {"thinking": ..., "answer": {...}}), where the wrapper has
+        # no recognizable agent shape and the payload is the real output.
+        def _strictly_inside(inner: tuple[int, int], outer: tuple[int, int]) -> bool:
+            return (
+                outer[0] <= inner[0] and inner[1] <= outer[1]
+                and (outer[0] < inner[0] or inner[1] < outer[1])
+            )
+
+        filtered = [
+            c for c in candidates
+            if not any(
+                other is not c
+                and other[0] > 0
+                and _strictly_inside(c[3], other[3])
+                for other in candidates
+            )
+        ]
+        candidates = filtered or candidates
+
         if candidates:
             max_shape = max(item[0] for item in candidates)
             if max_shape > 0:
                 # Once something looks like a real agent output, prefer the
                 # latest correction over an earlier larger draft.
                 shaped = [item for item in candidates if item[0] == max_shape]
-                return max(shaped, key=lambda item: (item[2], item[1]))[3]
+                return max(shaped, key=lambda item: (item[2], item[1]))[4]
 
             # If nothing has recognizable agent keys, fall back to the largest
             # valid JSON fragment and use recency only as a tiebreaker.
-            return max(candidates, key=lambda item: (item[1], item[2]))[3]
+            return max(candidates, key=lambda item: (item[1], item[2]))[4]
 
         logger.warning("Failed to parse agent response as JSON: %s", self.raw_text[:200])
         return None
@@ -600,6 +649,79 @@ class BaseAgent(ABC):
     def run(self, **kwargs) -> AgentResult:
         user_message = self.build_user_message(**kwargs)
         return self._execute(user_message)
+
+    def repair_reprompt(self, failed: AgentResult, error, schema_name: str) -> AgentResult:
+        """One bounded re-ask after a response parsed as JSON but failed
+        schema validation (e.g. a mandatory reasoning_chain field omitted).
+
+        Production incident 2026-08-18 15:03: the Risk Manager APPROVED the
+        day's plan with three sensible halving modifications, but omitted
+        `sizing_sanity` and `overall` from its reasoning_chain — validation
+        failed, the verdict became None, and RiskStage recorded
+        "REJECTED: parse error". A prose omission silently destroyed an
+        approving verdict and ended the trading day. One corrective call
+        (~$0.002) names the exact validation errors and asks the model to
+        complete the object; if the second attempt also fails, callers
+        keep their existing fail-closed path (None → reject/retry).
+
+        This is SCHEMA COMPLETION, never re-decision. The coda explicitly
+        scopes the model to filling missing/invalid narrative fields and
+        forbids touching any decision-bearing value. That instruction is
+        advisory, not enforcement — callers MUST additionally verify the
+        repaired parse's decision-bearing fields are byte-identical to the
+        pre-repair parse (see `RiskManagerAgent`/`PortfolioManagerAgent`)
+        and fail closed if the model changed them or the original failure
+        was itself rooted in a decision-bearing field (in which case
+        callers should skip repair entirely — see
+        `validation_error_touches`).
+
+        Deliberately built on `_execute` (not `run`) so the original
+        user message is replayed verbatim with a repair coda. The
+        returned AgentResult's `user_message` includes the coda, so the
+        agent_logs row is self-describing about being a repair call.
+        """
+        coda = (
+            f"\n\n## SCHEMA REPAIR REQUIRED — NOT A RE-DECISION\n"
+            f"Your previous response was parseable JSON but failed "
+            f"{schema_name} schema validation.\n\n"
+            f"Validation errors:\n{error}\n\n"
+            f"Your previous response was:\n{failed.raw_text}\n\n"
+            f"Re-emit the COMPLETE JSON object, filling in ONLY the "
+            f"missing or invalid schema field(s) named in the validation "
+            f"errors above — typically an empty or omitted narrative "
+            f"field. Do NOT reconsider, add, remove, or change the value "
+            f"of any decision-bearing field: every target/symbol/weight, "
+            f"every approved/modifications/scale_all_buys/reason_category "
+            f"value must be returned EXACTLY as in your previous response. "
+            f"This is schema completion only. Respond ONLY with the JSON "
+            f"object."
+        )
+        logger.warning(
+            "Agent %s: %s validation failed — attempting one repair reprompt",
+            self.name, schema_name,
+        )
+        return self._execute(failed.user_message + coda)
+
+    @staticmethod
+    def validation_error_touches(error, field_names: tuple[str, ...]) -> bool:
+        """True if a pydantic ValidationError is rooted at one of the
+        named top-level fields.
+
+        Used to skip `repair_reprompt` entirely when the validation
+        failure concerns DECISION-bearing content (e.g. `approved` has
+        the wrong type, `modifications[0].new_value` isn't numeric) rather
+        than a narrative field — a repair call cannot fix that without
+        re-deciding, so the caller should fail closed immediately instead
+        of spending a call the fix-closed comparison would reject anyway.
+        """
+        try:
+            errors = error.errors()
+        except AttributeError:
+            return False
+        return any(
+            err.get("loc", (None,))[:1] and err["loc"][0] in field_names
+            for err in errors
+        )
 
     def _execute(self, user_message: str) -> AgentResult:
         """The retry / cross-provider-failover / cost / parse loop, decoupled

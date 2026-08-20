@@ -296,6 +296,7 @@ class PortfolioConstructor:
         # position_$ = qty_by_risk * entry_price
         # allocation_by_risk_pct = position_$ / total_value * 100
         #                        = (risk_dollars_allowed / risk_per_share) * entry_price / total_value * 100
+        cap_note = ""
         if risk_per_share > 0:
             alloc_cap_by_risk = (
                 risk_dollars_allowed * entry_price / risk_per_share / total_value * 100
@@ -306,6 +307,20 @@ class PortfolioConstructor:
                     "(delta %.2f%% → %.2f%% at %.1f%% risk budget)",
                     target.symbol, allocation_pct, alloc_cap_by_risk,
                     self.cfg.risk_budget_pct,
+                )
+                # Provenance for the AI Risk Manager: it audits the
+                # CONSTRUCTED order against PM's prose. Without this note
+                # a capped allocation reads as PM claiming one size and
+                # proposing another — on 2026-08-20 the RM called exactly
+                # that mismatch (PM 15% vs constructed 10.65%) "plan
+                # inconsistency", scored the reasoning chain incoherent
+                # and issued a full-plan veto over deterministic math.
+                cap_note = (
+                    f" [constructor: PM target delta {allocation_pct:.2f}% "
+                    f"capped to {alloc_cap_by_risk:.2f}% by the "
+                    f"{self.cfg.risk_budget_pct:.1f}% risk budget — the size "
+                    f"difference vs PM's stated weight is deterministic, "
+                    f"not PM inconsistency]"
                 )
                 allocation_pct = alloc_cap_by_risk
 
@@ -326,7 +341,9 @@ class PortfolioConstructor:
             entry_price=entry_price,
             stop_loss=stop_loss,   # already rounded + validated above
             take_profit=take_profit,
-            reasoning=reasoning[:500],
+            # Cap note appended AFTER the truncation so provenance never
+            # gets sliced off by a long thesis.
+            reasoning=reasoning[:500] + cap_note,
         )
 
     def _resolve_stop(

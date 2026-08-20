@@ -426,3 +426,55 @@ def test_current_weights_zero_or_negative_total_value_returns_empty():
     )
     assert PortfolioConstructor._current_weights([pos], total_value=0) == {}
     assert PortfolioConstructor._current_weights([pos], total_value=-100) == {}
+
+
+def test_risk_budget_cap_carries_provenance_note_for_rm():
+    """2026-08-20 veto forensic: the RM read 'PM said 15%, order says
+    10.65%' as plan incoherence and issued a full-plan rejection —
+    nobody had told it the constructor's risk budget capped the size.
+    A capped BUY's reasoning must carry the [constructor: ...] note."""
+    from src.models import TargetPosition, TechAnalysisResult
+
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="XLE", target_weight_pct=15.0, conviction="high",
+        thesis="Energy geopolitical tailwind.", thesis_invalid_if="", catalyst="",
+    )
+    # Wide stop: entry 100, stop 90 -> risk 10/share. 0.5% risk budget on
+    # 10_000 equity = $50 -> 5 shares -> $500 = 5% alloc, well under 15%.
+    analysis = TechAnalysisResult(
+        symbol="XLE", rating="buy", entry_price=100.0, stop_loss=90.0,
+        reference_target=130.0, reasoning="r", reasoning_chain=_tech_rc(),
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[], analyses=[analysis],
+        total_value=10_000.0, price_map={"XLE": 100.0},
+    )
+
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.allocation_pct < 15.0
+    assert "[constructor:" in d.reasoning
+    assert "not PM inconsistency" in d.reasoning
+
+
+def test_uncapped_buy_has_no_provenance_note():
+    from src.models import TargetPosition, TechAnalysisResult
+
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="XLF", target_weight_pct=5.0, conviction="medium",
+        thesis="Financials steepener.", thesis_invalid_if="", catalyst="",
+    )
+    # Tight stop: entry 100, stop 99 -> cap = 0.5%*100/1 = 50% >> 5%.
+    analysis = TechAnalysisResult(
+        symbol="XLF", rating="buy", entry_price=100.0, stop_loss=99.0,
+        reference_target=110.0, reasoning="r", reasoning_chain=_tech_rc(),
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[], analyses=[analysis],
+        total_value=10_000.0, price_map={"XLF": 100.0},
+    )
+
+    assert len(decisions) == 1
+    assert "[constructor:" not in decisions[0].reasoning

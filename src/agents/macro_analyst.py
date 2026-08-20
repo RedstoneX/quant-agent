@@ -36,9 +36,26 @@ class MacroAnalystAgent(BaseAgent):
         une = macro_summary.get("unemployment", {}) or {}
         hy = macro_summary.get("credit_spread", {}) or {}
 
-        def _stale(d: dict) -> str:
+        def _stale(d: dict, monthly: bool = False) -> str:
+            """Per-cadence staleness label.
+
+            Daily series (VIX, yields, DFF, HY OAS): >3 business days
+            without a print is genuinely stale. Monthly series (CPI/PCE,
+            UNRATE) are indexed at the reference-month START and released
+            weeks later — their staleness_days runs 20-51 business days
+            when the data is the freshest print that EXISTS. Labeling
+            that "(stale 36d)" taught the model to treat normal BLS/BEA
+            cadence as degraded data: 2026-08-18..20 production runs
+            cited "stale inflation figures" among the reasons for
+            low-confidence / 55%-cash guidance. Monthly series are only
+            flagged once a release cycle has actually been missed.
+            """
             s = d.get("staleness_days")
-            return f" (stale {s}d)" if isinstance(s, int) and s > 3 else ""
+            if not isinstance(s, int):
+                return ""
+            if monthly:
+                return f" (stale {s}d — release cycle missed)" if s > 55 else ""
+            return f" (stale {s}d)" if s > 3 else ""
 
         universe_text = ", ".join(universe) if universe else "N/A"
 
@@ -78,12 +95,12 @@ class MacroAnalystAgent(BaseAgent):
 - Current: {fed.get('current', 'N/A')}%
 - 30-day change: {fed.get('change_30d', 'N/A')}
 
-### Inflation{_stale(infl)}
+### Inflation{_stale(infl, monthly=True)}
 - Headline CPI YoY: {infl.get('headline_cpi_yoy', 'N/A')}% (MoM: {infl.get('headline_cpi_mom', 'N/A')}%)
 - Core CPI YoY: {infl.get('core_cpi_yoy', 'N/A')}% (MoM: {infl.get('core_cpi_mom', 'N/A')}%)
 - PCE YoY: {infl.get('pce_yoy', 'N/A')}%
 
-### Unemployment (UNRATE){_stale(une)}
+### Unemployment (UNRATE){_stale(une, monthly=True)}
 - Current: {une.get('current', 'N/A')}%
 - Change 3m: {une.get('change_3m', 'N/A')}pp
 - Change 12m: {une.get('change_12m', 'N/A')}pp
@@ -153,22 +170,20 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         """Soft Python-side floor for two `macro_analyst.md` discipline
         rules the LLM occasionally violates by self-inflating.
 
-        The prompt teaches stricter rules than what we enforce here —
-        the prompt says "ANY indicator with staleness_days > 3, or
-        null: confidence MUST be 'low'". In practice the BLS / BEA
-        release cadence means inflation + unemployment are basically
-        ALWAYS staleness>3d (monthly prints arriving 2-6 weeks after
-        the reference month). Enforcing the literal rule would peg
-        confidence at "low" essentially every session and make the
-        signal useless. So we enforce only the two most flagrant
-        violations:
+        Prompt and code now share the same PER-CADENCE staleness
+        semantics (see the Confidence Calibration section of the prompt
+        and `_stale()` above): daily series are stale past 3 business
+        days; monthly series (CPI/PCE, UNRATE) only once a release cycle
+        has been missed (> 55 business days) — their staleness_days runs
+        20-51 on perfectly-normal BLS/BEA cadence. We enforce only the
+        two most flagrant violations:
 
         1. `confidence == "high"` requires ALL six primary indicators
-           to have `staleness_days <= 3` AND be non-null in
-           `macro_summary`. Any null / stale → downgrade to "medium".
-           ("high" is the LLM's most-impactful confidence call; PM's
-           Step 1 evening-tilt scales sizing by it, so a self-inflated
-           "high" with stale data leaks into position size.)
+           non-null and fresh BY THEIR OWN CADENCE. Any null / stale →
+           downgrade to "medium". ("high" is the LLM's most-impactful
+           confidence call; PM's Step 1 evening-tilt scales sizing by
+           it, so a self-inflated "high" with stale data leaks into
+           position size.)
 
         2. `regime_shift == True` requires ≥ 2 primary indicators with
            `staleness_days <= 1` per the prompt's "Regime-Shift
@@ -199,16 +214,33 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
             s = d.get("staleness_days")
             staleness[key] = s if isinstance(s, int) else None
 
+        # Per-cadence staleness thresholds, matching `_stale()` in the
+        # user-message builder and the prompt's Confidence Calibration
+        # section. Monthly series (CPI/PCE, UNRATE) are indexed at the
+        # reference-month start and print weeks later, so their
+        # staleness_days runs 20-51 business days when the data is the
+        # freshest print that EXISTS. The old flat `> 3` gate therefore
+        # made confidence='high' UNREACHABLE in production — every 'high'
+        # was silently downgraded on normal BLS/BEA cadence, and PM's
+        # evening-tilt sizing never saw a high-confidence macro call.
+        _MONTHLY = {"inflation", "unemployment"}
+        _monthly_stale_after = 55
+
+        def _is_stale(key: str, v: int | None) -> bool:
+            if v is None:
+                return True
+            return v > (_monthly_stale_after if key in _MONTHLY else 3)
+
         null_or_stale = [
-            k for k, v in staleness.items()
-            if v is None or v > 3
+            k for k, v in staleness.items() if _is_stale(k, v)
         ]
 
-        # Rule 1: high confidence requires all indicators fresh and present.
+        # Rule 1: high confidence requires every indicator present and
+        # fresh by its own cadence.
         if analysis.confidence == "high" and null_or_stale:
             logger.warning(
                 "Macro sanity-check: LLM emitted confidence='high' but "
-                "indicator(s) %s have staleness_days > 3 or are null/"
+                "indicator(s) %s are stale by their own cadence or null/"
                 "missing — downgrading to 'medium' per macro_analyst.md "
                 "Confidence Calibration rule.",
                 ", ".join(null_or_stale),

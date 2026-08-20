@@ -1,54 +1,82 @@
 # QAMC Current Work
 
-Status: **FINISH LINE REACHED — PAPER SOAK RUNNING ON THE ACCEPTED TARGET**
+Status: **TRADING-UTILITY RECOVERY — EXTERNALLY REVIEWED; PR #56 OPEN; AWAITING MERGE AND GOVERNED DEPLOYMENT**
 
-The stage-gated finish-line rollout is complete. Production is pinned at `775296e1d516279381a4c516dfb3e783b33a7495` with the single authorized local config delta `intraday_scan.enabled: true`. Stage E acceptance passed in the same guarded run. See `docs/STATE.md` for the accepted production state and rollback point.
+## Current integration truth
 
-## Current work — observe the soak
+- Recovery branch: `fix/trading-utility-conversion`.
+- GitHub PR: **#56 — `fix(qamc): restore trading-utility conversion path`**, targeting `main`.
+- The trading-utility code has completed external review, including follow-up fixes to schema-repair decision integrity and macro/pipeline-order prompt consistency.
+- Production is **not** yet running this recovery. `docs/STATE.md` remains authoritative for the deployed SHA.
+- A temporary branch note claiming PR #56 was unrelated was based on a stale/incorrect repository view and is superseded by current GitHub state.
 
-Do not manufacture activity. Let the existing seven-timer paper schedule produce evidence naturally.
+## Product/architecture principle
 
-Immediate observations to capture:
+QAMC is an autonomous Alpaca trading system, not a separate “paper-trading architecture.” Alpaca Paper is the **currently authorized execution environment** used to validate the system before any future live-capital authorization.
 
-1. the first live Tech batch line (`Batch: N/M symbols analyzed`) from a scheduled research run;
-2. the first live enabled `intra_check` tick during the regular 09:30–16:00 ET window;
-3. across subsequent ticks, how often symbols qualify, what cooldown/candidate-cap guards suppress, whether candidates reach PM/Risk, and the incremental model/market-data cost.
+The same trading-critical architecture must apply across environments:
 
-These are **observations, not deployment gates**. A lack of qualifying trade candidates is not itself a defect. If the evidence shows an unexpected shape, investigate within the accepted architecture; do not force a trade or widen trading authority to create activity.
+**discovery → Specialists → Portfolio Manager → AI Risk Manager → deterministic gate → funding → broker execution → position/exit management → reflection.**
 
-## Accepted baseline for soak review
+Paper/live differences belong at the broker/configuration boundary (credentials, endpoint/account selection and genuine execution-mechanics differences). Do not create paper-specific decision logic, weaker safety, alternate position management, or shortcuts that would require a later live-trading rearchitecture.
 
-- Alpaca Paper only.
-- Intraday threshold 3.0%, per-symbol cooldown 3.0h, cap 5 candidates per tick.
-- Existing `quant-agent-intra_check.service` / `quant-agent-intra_check.timer`; no new scheduler or daemon.
-- Approved bearish expression through `SH`, `SDS`, `PSQ`, `SQQQ` only.
-- Specialists → Portfolio Manager → AI Risk Manager → deterministic Python/broker gate remains the decision chain.
-- SGOV remains deterministic cash-equivalent sweep parking.
-- Mission Control remains private and GET-only; Telegram remains output-only.
+## Recovery finding and accepted changes
 
-## Bounded, non-blocking product debt
+Production forensics across the natural validation runs found that QAMC was often analyzing legitimate opportunities without converting them into exposure for mechanical reasons rather than deliberate investment judgment. The reviewed recovery addresses the evidenced blockers:
 
-The read-only Mission Control liquidity API currently uses `liquidity.deployable_cash` for **raw broker cash above the reserve floor**, while `total_liquidity` carries raw cash plus sweep-parked value and the trading engine can fund buys from convertible SGOV. The values are not currently wrong, but the field name can cause an operator to read “cash immediately free” as “total capital QAMC can put to work.”
+1. **PM parse destruction** — nested `targets` fragments could outscore and replace the complete PM decision. Parser selection is corrected and production payloads are regression-pinned.
+2. **SGOV funding race** — approved BUYs could be abandoned before the funding SELL completed. Funding now waits/polls within a bounded fail-closed window and execution still requires confirmed broker cash.
+3. **Schema-complete decisions rejected** — approving PM/Risk decisions could die on missing narrative schema fields. One bounded repair is allowed only for non-decision fields; decision-bearing content is strictly preserved or the run fails closed.
+4. **Invisible execution kills** — deterministic BUY skips were log-only. Skip reasons are now durable evidence, surfaced in the funnel, and fully unfunded approved mornings become safely retryable through the full decision chain.
+5. **Artificial macro conservatism** — transient FRED failures and impossible freshness rules suppressed confidence. FRED gets bounded retry/breaker behavior and staleness now follows each series' actual cadence.
+6. **Risk misread deterministic sizing** — constructor risk-budget caps are now explicitly identified so AI Risk does not mistake deterministic sizing for PM inconsistency.
 
-Do not change that field's meaning in place during the soak. A clean correction should be a coordinated read-only API/schema + cockpit change (for example, rename the raw-cash field and expose an explicit engine-deployable figure), followed by frontend rebuild and browser verification.
+Full branch suite reported after final review fixes: **1997 passed**.
 
-## Next product tranche — after initial soak evidence
+## Goal
 
-1. Review several live enabled intraday ticks and Tech batches: qualification frequency, candidate flow, guard suppression and added cost.
-2. Then address the liquidity API naming/presentation issue together with the Mission Control cockpit so the UI answers the operator's actual question: **how much capital can QAMC put to work, and why is it currently parked or not deployed?**
-3. Continue the broader Mission Control product/visual review only against truthful live data; do not turn the cockpit into a write/control surface.
+After merge and governed deployment, use natural market evidence to determine whether QAMC reliably:
+
+**finds opportunity → evaluates it → makes a defensible bullish, bearish or neutral decision → executes when eligible → manages/exits the position → measures the result.**
+
+Success is **not** “more trades.” Do not force activity, weaken safety, or hindsight-tune. When QAMC does not trade, the reason must be specific and defensible.
+
+## Next authorized work
+
+1. Complete external GitHub integration of PR #56.
+2. Deploy the exact accepted merged SHA through the existing governed production rollout path, preserving the current Alpaca Paper authorization and production-specific intraday enablement.
+3. Verify services/timers/API/Telegram/provider wiring and the new recovery behavior, then allow natural sessions to provide the actual trading evidence.
+
+Deployment passing proves the machinery, not trading success.
+
+## Natural validation required
+
+Before declaring the recovery successful, natural market sessions should demonstrate:
+
+- worthwhile opportunities can survive discovery and reach PM/Risk;
+- defensible eligible trades can reach funded broker submission;
+- supported bearish opportunities can be expressed through the approved inverse ETFs;
+- no-trade decisions remain possible and explainable;
+- position management and exits behave coherently after entry;
+- execution/funding failures are visible rather than silently interpreted as investment decisions;
+- observed performance and missed opportunities can be measured without hindsight tuning.
+
+## Remaining uncertainty
+
+The fixes are strongly supported by recorded production evidence and deterministic tests but have not yet been validated as a complete chain after deployment. Two lower-priority observed issues remain outside this recovery gate unless they materially distort validation: news-narrative factual drift and `actual_provider` attribution oddity.
+
+## Secondary product debt
+
+Mission Control still has semantic/usability debt, including candidate/run attribution and liquidity presentation. Read-side correctness needed for trading diagnosis is valid; broad dashboard redesign remains secondary to proving trading utility.
 
 ## Hard boundaries
 
-- Alpaca **Paper only**.
-- No margin, options or direct stock shorting.
-- Bearish expression remains through the approved inverse ETFs.
-- Deterministic Python/broker protections remain final.
-- No broker-write Mission Control controls.
-- Telegram remains output-only; no command/control plane.
-- No new daemon/service/database/proxy/security/credential architecture without a new architectural decision.
-- Preserve `dev` / `qamc` / `ubuntu` isolation.
-- Do not expose QAMC or OneCLI publicly.
-- Do not weaken OneCLI secret handling or put real provider/Telegram credentials into repository/runtime logs.
-- Do not force or manufacture paper trades for verification.
-- Claude does not merge its own work; GitHub integration remains externally reviewed.
+- **Current execution authorization is Alpaca Paper only.** Live-broker order submission requires a separate future authorization; this is an environment/safety gate, not a separate trading architecture.
+- No margin, options or direct stock shorting. Bearish expression remains through approved inverse ETFs.
+- Deterministic Python/broker protections remain final safety authority.
+- Do not force/manufacture trades or weaken safeguards merely to increase activity.
+- Do not introduce paper-only trading semantics that would need replacement for live-capital operation.
+- No new daemon/service/database/proxy/security/credential architecture without explicit approval.
+- Preserve `dev` / `qamc` / `ubuntu` isolation and OneCLI secret handling.
+- Mission Control remains private/read-only; Telegram remains output-only.
+- Claude does not merge or deploy its own work; external integration and governed deployment remain required.

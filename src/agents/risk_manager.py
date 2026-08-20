@@ -400,9 +400,135 @@ Review these proposed trades and provide your verdict as JSON."""
             parsed = self._drop_invalid_modifications(parsed)
         try:
             return RiskVerdict(**parsed), result
+        except ValidationError as e:
+            # 2026-08-18 incident: an APPROVING verdict with three sound
+            # modifications died because two reasoning_chain prose fields
+            # were omitted — recorded as "REJECTED: parse error", trading
+            # day over. One bounded repair reprompt names the exact
+            # validation errors; a second failure keeps the fail-closed
+            # None → reject path exactly as before.
+            #
+            # External review (post-implementation): a schema repair must
+            # never become a re-decision. If the validation failure is
+            # itself rooted in a DECISION-bearing field, a repair call
+            # can't fix it without the model re-deciding — skip repair
+            # and fail closed immediately. Otherwise, after repair,
+            # decision-bearing fields must be byte-identical to the
+            # pre-repair parse; any drift is treated as an unauthorized
+            # re-decision and also fails closed.
+            if self.validation_error_touches(e, self._DECISION_FIELDS):
+                logger.error(
+                    "Risk verdict validation failure is rooted in a "
+                    "decision-bearing field (%s) — not schema-repairable; "
+                    "failing closed: %s",
+                    ", ".join(self._DECISION_FIELDS), e,
+                )
+                return None, result
+            repaired = self.repair_reprompt(result, e, "RiskVerdict")
+            reparsed = repaired.parse_json()
+            if isinstance(reparsed, dict):
+                reparsed = self._drop_invalid_modifications(reparsed)
+                if not self._decision_fields_unchanged(parsed, reparsed):
+                    logger.error(
+                        "Risk verdict repair changed decision-bearing "
+                        "content (approved/modifications/scale_all_buys/"
+                        "reason_category) instead of only completing the "
+                        "schema — treating as an unauthorized re-decision "
+                        "and failing closed.",
+                    )
+                    return None, repaired
+                try:
+                    verdict = RiskVerdict(**reparsed)
+                    logger.info(
+                        "Risk verdict repair succeeded (approved=%s, %d mods)",
+                        verdict.approved, len(verdict.modifications),
+                    )
+                    return verdict, repaired
+                except Exception as e2:  # noqa: BLE001
+                    logger.error(
+                        "Failed to parse risk verdict after repair: %s", e2,
+                    )
+                    return None, repaired
+            logger.error(
+                "Risk verdict repair returned %s, not an object",
+                type(reparsed).__name__,
+            )
+            return None, repaired
         except Exception as e:
             logger.error("Failed to parse risk verdict: %s", e)
             return None, result
+
+    _DECISION_FIELDS = ("approved", "modifications", "scale_all_buys", "reason_category")
+
+    @staticmethod
+    def _canonical_modifications(mods) -> list[tuple] | None:
+        """Full RiskModification decision payload (symbol, field,
+        original_value, new_value, reason), order-insensitive. Built by
+        re-validating each entry through the `RiskModification` model
+        itself, so numeric coercion is the schema's own — not a second
+        ad-hoc `float()` path — and `reason` (part of what THIS
+        modification decided, unlike the top-level narrative
+        `reasoning_chain`/`reasoning`) is preserved rather than dropped.
+        Returns None — never `==` to anything — when the shape doesn't
+        validate, so a malformed side fails closed instead of comparing
+        (incorrectly) equal.
+        """
+        if mods is None:
+            mods = []
+        if not isinstance(mods, list):
+            return None
+        models: list[RiskModification] = []
+        for m in mods:
+            if not isinstance(m, dict):
+                return None
+            try:
+                models.append(RiskModification(**m))
+            except Exception:  # noqa: BLE001 — any shape failure fails closed
+                return None
+        return sorted(
+            (
+                (m.symbol, m.field, m.original_value, m.new_value, m.reason)
+                for m in models
+            ),
+            key=lambda row: (row[0], row[1]),
+        )
+
+    @classmethod
+    def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
+        """True iff every decision-bearing field survived a schema
+        repair unchanged. `original` and `repaired` are both already
+        post-`_drop_invalid_modifications` for a fair comparison.
+
+        Strict and type-safe by construction — no `bool()` coercion (a
+        repair emitting the JSON STRING `"false"` for `approved` must
+        fail closed, not compare equal to `True` because `bool("false")`
+        is truthy) and no `or 1.0` fallback on `scale_all_buys` (0.0 is
+        a real, meaningful value — RM's explicit "kill all BUYs" veto —
+        not an absent one; collapsing it to 1.0 would silently accept a
+        repair that reinstated every BUY the original verdict killed).
+        """
+        orig_approved = original.get("approved")
+        rep_approved = repaired.get("approved")
+        if type(orig_approved) is not bool or type(rep_approved) is not bool:
+            return False
+        if orig_approved != rep_approved:
+            return False
+
+        orig_mods = cls._canonical_modifications(original.get("modifications"))
+        rep_mods = cls._canonical_modifications(repaired.get("modifications"))
+        if orig_mods is None or rep_mods is None or orig_mods != rep_mods:
+            return False
+
+        orig_scale = original.get("scale_all_buys", 1.0)
+        rep_scale = repaired.get("scale_all_buys", 1.0)
+        if isinstance(orig_scale, bool) or isinstance(rep_scale, bool):
+            return False
+        if not isinstance(orig_scale, (int, float)) or not isinstance(rep_scale, (int, float)):
+            return False
+        if round(float(orig_scale), 6) != round(float(rep_scale), 6):
+            return False
+
+        return original.get("reason_category") == repaired.get("reason_category")
 
     @staticmethod
     def _drop_invalid_modifications(parsed: dict) -> dict:

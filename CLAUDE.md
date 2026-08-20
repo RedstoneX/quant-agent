@@ -1,6 +1,6 @@
 # QAMC — Claude Code Contract
 
-QAMC is a private Alpaca paper-trading experiment built around `yebof/quant-agent`.
+QAMC is a private autonomous AI-assisted Alpaca trading system built around `yebof/quant-agent`. Its currently authorized execution environment is Alpaca Paper.
 
 ## Start
 
@@ -22,7 +22,8 @@ Any `docs/FUTURE_*` file is conceptual only and never implementation authorizati
 
 ## Hard boundaries
 
-- Alpaca **Paper only**; live trading is not authorized.
+- **Current execution authorization:** Alpaca Paper only. Live-broker order submission is not authorized until a separate future authorization.
+- **One trading architecture:** Paper vs live is a broker/runtime environment distinction, not a separate decision architecture. Specialist reasoning, Portfolio Manager intent, AI Risk review, deterministic risk/execution, position management, exits, journaling, telemetry and Mission Control semantics must not use paper-specific shortcuts or materially different logic. Genuine broker-environment differences (for example fill behavior, credentials or endpoints) belong at the broker/configuration boundary.
 - `yebof/quant-agent` remains the authoritative trading engine.
 - Specialist agents → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution remains the decision chain.
 - Deterministic Python and broker protections own final safety/execution eligibility; uncertainty fails closed.

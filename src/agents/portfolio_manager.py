@@ -576,6 +576,19 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         if parsed is None:
             logger.error("Portfolio manager returned non-JSON response")
             return None, result
+        if not isinstance(parsed, dict):
+            # A PortfolioDecision is an OBJECT. A bare list here means the
+            # candidate scan surfaced a fragment (historically: the plan's own
+            # `targets` array) instead of the decision — treat as a parse
+            # failure so the session retries, never as a deliberate hold.
+            # `PortfolioDecision(**list)` below would raise anyway; this makes
+            # the failure mode explicit and greppable.
+            logger.error(
+                "Portfolio manager parse produced %s, not a decision object — "
+                "treating as parse failure (fragment selected over full plan?)",
+                type(parsed).__name__,
+            )
+            return None, result
         # Per-entry isolation for targets: a single malformed TargetPosition
         # (e.g. target_weight_pct=30 violating the 0-25 range, or empty
         # thesis on a Field with no min_length but PortfolioConstructor's
@@ -590,6 +603,59 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             parsed = self._drop_invalid_targets(parsed)
         try:
             return PortfolioDecision(**parsed), result
+        except ValidationError as e:
+            # Mirror of the RiskManager repair path (2026-08-18 incident
+            # class): a decision that parsed as JSON but failed schema
+            # validation (typically an omitted mandatory reasoning_chain
+            # field) costs a FULL research re-run 30 minutes later via
+            # analysis_error. One immediate ~$0.006 repair call naming the
+            # validation errors is strictly cheaper; a second failure keeps
+            # today's fail-closed None → analysis_error path.
+            #
+            # External review (post-implementation): a schema repair must
+            # never become a re-decision. `targets` is the decision — if
+            # the validation failure is rooted there, repair can't fix it
+            # without the model re-deciding, so skip repair and fail
+            # closed. Otherwise, after repair, the target set (symbol +
+            # weight) must be byte-identical to the pre-repair parse; any
+            # drift fails closed too.
+            if self.validation_error_touches(e, self._DECISION_FIELDS):
+                logger.error(
+                    "Portfolio decision validation failure is rooted in a "
+                    "decision-bearing field (%s) — not schema-repairable; "
+                    "failing closed: %s",
+                    ", ".join(self._DECISION_FIELDS), e,
+                )
+                return None, result
+            repaired = self.repair_reprompt(result, e, "PortfolioDecision")
+            reparsed = repaired.parse_json()
+            if isinstance(reparsed, dict):
+                reparsed = self._drop_invalid_targets(reparsed)
+                if not self._decision_fields_unchanged(parsed, reparsed):
+                    logger.error(
+                        "Portfolio decision repair changed target symbols/"
+                        "weights instead of only completing the schema — "
+                        "treating as an unauthorized re-decision and "
+                        "failing closed.",
+                    )
+                    return None, repaired
+                try:
+                    decision = PortfolioDecision(**reparsed)
+                    logger.info(
+                        "Portfolio decision repair succeeded (%d targets)",
+                        len(decision.targets),
+                    )
+                    return decision, repaired
+                except Exception as e2:  # noqa: BLE001
+                    logger.error(
+                        "Failed to parse portfolio decision after repair: %s", e2,
+                    )
+                    return None, repaired
+            logger.error(
+                "Portfolio decision repair returned %s, not an object",
+                type(reparsed).__name__,
+            )
+            return None, repaired
         except Exception as e:
             logger.error("Failed to parse portfolio decision: %s", e)
             return None, result
@@ -634,3 +700,55 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             valid.append(item)
         parsed["targets"] = valid
         return parsed
+
+    _DECISION_FIELDS = ("targets",)
+
+    @staticmethod
+    def _canonical_targets(targets) -> list[tuple] | None:
+        """Full TargetPosition decision payload (symbol, target_weight_pct,
+        conviction, thesis, thesis_invalid_if, suggested_stop_price,
+        catalyst), order-insensitive. Built by re-validating each entry
+        through the `TargetPosition` model itself — its own field
+        normalization (symbol case, conviction case, numeric coercion)
+        is the single source of truth for what "the same value" means,
+        rather than a second, ad-hoc coercion path that can drift out of
+        sync with the schema (or hide a real change behind a bug, as the
+        prior `round(float(...))`-only / symbol+weight-only comparison
+        did). Returns None — never `==` to anything, including itself —
+        when the shape doesn't validate, so a malformed side fails closed
+        instead of comparing (incorrectly) equal.
+        """
+        if targets is None:
+            targets = []
+        if not isinstance(targets, list):
+            return None
+        models: list[TargetPosition] = []
+        for t in targets:
+            if not isinstance(t, dict):
+                return None
+            try:
+                models.append(TargetPosition(**t))
+            except Exception:  # noqa: BLE001 — any shape failure fails closed
+                return None
+        return sorted(
+            (
+                (
+                    m.symbol, m.target_weight_pct, m.conviction, m.thesis,
+                    m.thesis_invalid_if, m.suggested_stop_price, m.catalyst,
+                )
+                for m in models
+            ),
+            key=lambda row: row[0],
+        )
+
+    @classmethod
+    def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
+        """True iff the ENTIRE target set — every field of every
+        TargetPosition, not just symbol/weight — survived a schema repair
+        unchanged. `original` and `repaired` are both already post-
+        `_drop_invalid_targets` for a fair comparison."""
+        orig = cls._canonical_targets(original.get("targets"))
+        rep = cls._canonical_targets(repaired.get("targets"))
+        if orig is None or rep is None:
+            return False
+        return orig == rep

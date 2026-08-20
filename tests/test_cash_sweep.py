@@ -25,7 +25,23 @@ recheck remains the final authority.
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
+import src.execution.cash_sweep as cash_sweep_module
 from src.config import CashSweepConfig
+
+
+@pytest.fixture(autouse=True)
+def _fast_funding_budgets(monkeypatch):
+    """Shrink the funding-confirmation budgets so tests never real-sleep.
+
+    Production values (180s terminal wait, 30s cash-settle poll) exist for
+    the 2026-08-19 slow-fill incident; with MagicMock brokers the poll loop
+    would otherwise spin the full window in tests that exercise the
+    unconfirmed path."""
+    monkeypatch.setattr(cash_sweep_module, "_FUND_TERMINAL_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(cash_sweep_module, "_FUND_CASH_SETTLE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(cash_sweep_module, "_FUND_CASH_SETTLE_POLL_S", 0.01)
 from src.execution.cash_sweep import CashSweeper
 from src.models import Position, TradeDecision
 from src.pipeline import TradingPipeline
@@ -237,6 +253,65 @@ def test_fund_buys_noop_without_vehicle_position():
     ctx.cash = 0.0
     ctx.positions = [NVDA]
     assert p.cash_sweeper.fund_buys(ctx, planned_notional=10_000.0) == 0.0
+
+
+def test_fund_buys_slow_fill_confirmed_by_settle_poll(monkeypatch):
+    """2026-08-19 incident regression: the funding sell filled 51s after
+    submit — past the old 15s wait — so a single account read saw pre-fill
+    cash and every risk-approved BUY was skipped as unfunded. The settle
+    poll must keep re-reading cash until the credit appears (or budget
+    runs out), not conclude from one pre-fill snapshot."""
+    monkeypatch.setattr(cash_sweep_module, "_FUND_CASH_SETTLE_TIMEOUT_S", 5.0)
+    p = _funding_pipeline()
+    p.broker.wait_for_order_terminal.return_value = "filled"
+    # First two account reads land BEFORE the cash credit; third sees it.
+    pre = {"cash": 1_000.0, "portfolio_value": 100_000.0}
+    post = {"cash": 31_000.0, "portfolio_value": 100_000.0}
+    p.broker.get_account.side_effect = [pre, pre, post]
+    ctx = RunContext.start("morning")
+    ctx.cash = 1_000.0
+    ctx.positions = [SGOV, NVDA]
+
+    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=25_000.0)
+
+    assert freed == pytest.approx(30_000.0)
+    assert ctx.cash == 31_000.0
+    assert p.broker.get_account.call_count == 3
+    # Terminal wait for the funding sell used the extended budget, not the default.
+    kwargs = p.broker.wait_for_order_terminal.call_args.kwargs
+    assert kwargs.get("timeout_seconds") == cash_sweep_module._FUND_TERMINAL_TIMEOUT_S
+
+
+def test_fund_buys_unconfirmed_cash_reports_zero(monkeypatch):
+    """Sale never credits within the budget → confirmed $0, fail closed:
+    the BUY phase must be governed by the deterministic cash check."""
+    p = _funding_pipeline()
+    p.broker.wait_for_order_terminal.return_value = "canceled"
+    p.broker.get_account.return_value = {
+        "cash": 1_000.0, "portfolio_value": 100_000.0,
+    }
+    ctx = RunContext.start("morning")
+    ctx.cash = 1_000.0
+    ctx.positions = [SGOV, NVDA]
+
+    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=25_000.0)
+
+    assert freed == 0.0
+    assert ctx.cash == 1_000.0  # refreshed, pre-sale value — no phantom credit
+
+
+def test_fund_buys_broker_down_whole_window_fails_closed():
+    p = _funding_pipeline()
+    p.broker.wait_for_order_terminal.side_effect = RuntimeError("api down")
+    p.broker.get_account.side_effect = RuntimeError("api down")
+    ctx = RunContext.start("morning")
+    ctx.cash = 1_000.0
+    ctx.positions = [SGOV, NVDA]
+
+    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=25_000.0)
+
+    assert freed == 0.0
+    assert ctx.cash == 1_000.0  # never overwritten with an estimate
 
 
 # ---------- park_excess ----------

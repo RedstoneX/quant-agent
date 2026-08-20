@@ -25,8 +25,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # (no_trades / market_holiday / executed / reviewed / ...) are NOT
 # here — those are successful completions and must exit 0. (audit F2)
 _RETRYABLE_RESULT_STATUSES = frozenset(
-    {"broker_error", "fetch_error", "analysis_error"}
+    {"broker_error", "fetch_error", "analysis_error", "buys_unfunded"}
 )
+# `buys_unfunded`: the morning had risk-approved BUYs but submitted
+# nothing because the sweep-funding proceeds were not confirmed in time
+# (2026-08-19: the funding sell filled 36s after the session stopped
+# looking — a transient race, not a decision). Retrying re-runs the FULL
+# chain including a fresh RM review, so this is never a veto bypass.
 
 logging.basicConfig(
     level=logging.INFO,

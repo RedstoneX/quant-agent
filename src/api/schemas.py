@@ -472,6 +472,14 @@ class CandidateFunnelItem(BaseModel):
     risk_modified: bool = False
     executed: bool = False
     trade_action: str | None = None
+    # Why the execution phase deterministically dropped this candidate's
+    # approved order, when it did — quoted from the `execution_skip`
+    # evidence row the trading process wrote at the skip site (e.g.
+    # "insufficient_cash", "stale_entry"). None when no skip was recorded.
+    # Closes the 2026-08-19 gap where `proposed_not_executed` was
+    # indistinguishable from a deliberate no-trade.
+    execution_skip_reason: str | None = None
+    execution_skip_detail: str | None = None
 
 
 class RunFunnelResponse(BaseModel):

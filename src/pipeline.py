@@ -5721,11 +5721,50 @@ class TradingPipeline:
                 except Exception as e:
                     logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
 
+            # Truthful terminal status. 2026-08-19: three risk-approved BUYs
+            # were skipped as unfunded (the funding sell filled 36s after the
+            # session gave up), yet the run reported status='executed' with
+            # orders=[] — the day read as done and nothing retried while the
+            # freed cash sat idle until midday re-parked it. When the session
+            # had approved BUYs, submitted NOTHING, and at least one skip was
+            # the transient funding race, report `buys_unfunded` — a
+            # retryable status (main.py) so the next 30-min tick re-runs the
+            # full chain (research → PM → RM re-review: no veto bypass) on
+            # fresh prices and by-then-settled cash.
+            approved_buys = [
+                d for d in (portfolio_decision.decisions or [])
+                if d.action == "BUY"
+            ]
+            unfunded = [
+                s for s in ctx.execution_skips
+                if s.get("reason") == "insufficient_cash"
+            ]
+            # Sweep bookkeeping orders are not "the session traded" — only
+            # real BUY/SELL submissions count against the retry decision.
+            real_orders = [
+                o for o in orders
+                if not (isinstance(o, dict)
+                        and str(o.get("action", "")).startswith("SWEEP_"))
+            ]
+            if approved_buys and unfunded and not real_orders:
+                logger.warning(
+                    "=== Morning run: %d approved BUY(s), 0 submitted, "
+                    "%d unfunded skip(s) — reporting buys_unfunded for "
+                    "retry ===", len(approved_buys), len(unfunded),
+                )
+                return {
+                    "status": "buys_unfunded", "orders": orders,
+                    "run_id": run_id,
+                    "data_status": dict(ctx.data_status),
+                    "stop_coverage_gaps": coverage_gaps,
+                    "execution_skips": list(ctx.execution_skips),
+                }
             logger.info("=== Morning run complete: %d orders executed ===", len(orders))
             return {
                 "status": "executed", "orders": orders, "run_id": run_id,
                 "data_status": dict(ctx.data_status),
                 "stop_coverage_gaps": coverage_gaps,
+                "execution_skips": list(ctx.execution_skips),
             }
         finally:
             # Phase 3: ask broker which of today's submitted orders actually filled.
