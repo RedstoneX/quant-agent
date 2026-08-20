@@ -216,8 +216,12 @@ def test_convergence_is_recursion_safe(text: str) -> None:
     assert "IN_CONVERGE" in body, "no recursion guard"
     assert re.search(r"if \(\( IN_CONVERGE \)\); then return 0; fi", body), \
         "the recursion guard must return early, not re-enter"
-    assert "trap - ERR INT TERM HUP" in body, \
-        "convergence must disarm traps so a failure inside it cannot re-enter"
+    assert "trap - ERR" in body, \
+        "convergence must reset the ERR trap so a failure inside it cannot re-enter"
+    assert "trap '' INT TERM HUP" in body, \
+        "convergence must IGNORE (not merely reset) INT/TERM/HUP — resetting them " \
+        "lets a second real signal kill the process mid-convergence with the " \
+        "recursion guard still set, which is the second-signal defect this pins"
 
 
 def test_convergence_reports_failure_instead_of_claiming_success(text: str) -> None:
@@ -446,15 +450,20 @@ def test_editor_does_not_escape_the_block_into_a_later_section(tmp_path: Path, e
 def override_verifier(text: str) -> str:
     return _extract(
         text,
-        r"verify_intraday_override_only\(\).*?python3 -c '\n(.*?)\n' \"\$committed\"",
+        r"verify_intraday_override_only\(\).*?python3 -c '\n(.*?)\n' \"\$tmp_committed\"",
         "verify_intraday_override_only",
     )
 
 
 def _verify(verifier: str, committed: str, working: str, tmp_path: Path):
+    """Exercises just the embedded Python, both sides as real files — the
+    committed side used to be passed as a bash $(...) string (the bug); it is
+    a file argument now, so this helper writes one, matching the real call."""
+    c = tmp_path / "committed.yaml"
+    c.write_text(committed)
     p = tmp_path / "working.yaml"
     p.write_text(working)
-    return _run_py(verifier, committed, str(p))
+    return _run_py(verifier, str(c), str(p))
 
 
 def test_verifier_accepts_the_exact_authorized_delta(tmp_path, override_verifier) -> None:
@@ -501,6 +510,198 @@ def test_verifier_rejects_a_line_count_mismatch(tmp_path, override_verifier) -> 
     r = _verify(override_verifier, SETTINGS, working, tmp_path)
     assert r.returncode != 0
     assert "line count differs" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# 3c. The real shell function, not just its embedded Python — a real git
+#     repo, a real qgit()/as_qamc(), and the exact bug: `git show` piped
+#     through bash `$(...)` silently drops the trailing newline that an
+#     ordinary tracked file always has, desyncing the line count from a
+#     perfectly valid working tree. The Python-level tests above prove the
+#     comparison LOGIC is right; this proves the SHELL PLUMBING feeding it
+#     doesn't quietly break that logic before it ever sees real input, and
+#     is the regression test for the exact defect an external reviewer
+#     found in production plumbing the Python-only tests could not see.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def verify_function_src(text: str) -> str:
+    return _extract(
+        text,
+        r"(verify_intraday_override_only\(\) \{.*?\n\})\n",
+        "verify_intraday_override_only (whole function)",
+    )
+
+
+def _real_repo_harness(tmp_path: Path, verify_src: str, committed: str, working: str):
+    """A REAL git repo as QAMC_REPO, a REAL qgit()/as_qamc() running real
+    git/python3 — nothing about the newline-handling path is stubbed. Only
+    `sudo -u <user> -H` is intercepted (this sandbox has no passwordless sudo
+    and does not need real privilege separation to prove a string-handling
+    bug is fixed), and TMPD is a real, real-permission scratch directory
+    exactly like the one the live script creates.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "config").mkdir()
+    (repo / "config" / "settings.yaml").write_text(committed)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "baseline"], cwd=repo, check=True)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    # The working tree now diverges from what was committed — exactly what
+    # Gate A/convergence sees in real production (baseline + local delta).
+    (repo / "config" / "settings.yaml").write_text(working)
+
+    tmpd = tmp_path / "tmpd"
+    tmpd.mkdir(mode=0o711)
+
+    harness = f"""
+set -Eeuo pipefail
+QAMC_USER="{__import__('getpass').getuser()}"
+QAMC_REPO="{repo}"
+TMPD="{tmpd}"
+sudo() {{ [[ "$1" == "-u" ]] && shift 2; [[ "$1" == "-H" ]] && shift; "$@"; }}
+as_qamc() {{ sudo -u "$QAMC_USER" -H bash -c "$1"; }}
+qgit()    {{ as_qamc "cd '$QAMC_REPO' && git $1"; }}
+{verify_src}
+verify_intraday_override_only "{sha}"
+"""
+    proc = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+    return proc, sha
+
+
+def test_real_function_accepts_the_exact_delta_with_a_trailing_newline(tmp_path, verify_function_src) -> None:
+    """The exact bug: committed content (read via a REAL `git show`, through
+    the REAL qgit()) has a trailing newline like every ordinary tracked
+    file. Before the fix this always failed with "line count differs" no
+    matter how correct the delta was — this must now return 0."""
+    committed = SETTINGS
+    working = SETTINGS.replace("enabled: false", "enabled: true", 1)
+    assert committed.endswith("\n") and working.endswith("\n"), \
+        "the fixture must have a trailing newline for this test to mean anything"
+    proc, sha = _real_repo_harness(tmp_path, verify_function_src, committed, working)
+    assert proc.returncode == 0, (
+        f"real verify_intraday_override_only rejected a genuinely valid baseline+override:\n"
+        f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    assert proc.stdout == ""
+
+
+def test_real_function_still_rejects_a_genuinely_clean_tree(tmp_path, verify_function_src) -> None:
+    """Same real git/qgit/as_qamc plumbing — confirms the fix didn't
+    accidentally make the function pass everything."""
+    proc, sha = _real_repo_harness(tmp_path, verify_function_src, SETTINGS, SETTINGS)
+    assert proc.returncode != 0
+    assert "expected exactly 1 line different" in proc.stderr
+
+
+def test_real_function_still_rejects_an_unrelated_second_change(tmp_path, verify_function_src) -> None:
+    working = SETTINGS.replace("enabled: false", "enabled: true", 1)
+    working = working.replace("move_threshold_pct: 3.0", "move_threshold_pct: 5.0")
+    proc, sha = _real_repo_harness(tmp_path, verify_function_src, SETTINGS, working)
+    assert proc.returncode != 0
+    assert "expected exactly 1 line different" in proc.stderr
+
+
+def test_real_function_cleans_up_its_scratch_directory(tmp_path, verify_function_src) -> None:
+    """The qamc-owned scratch dir it creates under TMPD must not be left
+    behind — TMPD is cleaned up on script exit in production, but the
+    function itself should not depend on that for a file this ephemeral."""
+    committed = SETTINGS
+    working = SETTINGS.replace("enabled: false", "enabled: true", 1)
+    proc, sha = _real_repo_harness(tmp_path, verify_function_src, committed, working)
+    assert proc.returncode == 0
+    leftovers = list((tmp_path / "tmpd").glob("verify-override.*"))
+    assert leftovers == [], f"scratch directory not cleaned up: {leftovers}"
+
+
+SETTINGS_ENABLED_NOT_FIRST = SETTINGS.replace(
+    "intraday_scan:\n  enabled: false",
+    "intraday_scan:\n  # a comment ahead of it\n  enabled: false",
+)
+
+
+def test_verifier_finds_enabled_even_when_not_the_first_line_in_the_block(tmp_path, override_verifier) -> None:
+    """Found during self-review, not by the external reviewer: the first draft
+    of this scanner had an unconditional `break` after the FIRST line inside
+    intraday_scan:, copy-drifted from EDITOR_PY's structurally similar but
+    conditionally-breaking loop. It only "worked" because `enabled:` happens
+    to be literally the first key in the real file today — a comment or
+    reordered key ahead of it would make a genuinely valid delta fail this
+    check for a reason that has nothing to do with production being wrong.
+    The scanner must continue past non-matching lines, exactly like the
+    mutator it mirrors."""
+    working = SETTINGS_ENABLED_NOT_FIRST.replace("enabled: false", "enabled: true", 1)
+    r = _verify(override_verifier, SETTINGS_ENABLED_NOT_FIRST, working, tmp_path)
+    assert r.returncode == 0, (
+        f"verifier rejected a valid delta merely because enabled: was not the "
+        f"first line in the block:\nstdout={r.stdout!r}\nstderr={r.stderr!r}"
+    )
+
+
+SETTINGS_ENABLED_WITH_COMMENT = SETTINGS.replace(
+    "enabled: false", "enabled: false  # flip after reviewing this PR", 1,
+)
+
+
+def test_verifier_accepts_the_delta_when_the_enabled_line_carries_a_comment(tmp_path, override_verifier) -> None:
+    """Found by independent adversarial review: EDITOR_PY preserves whatever
+    follows the value (its own capture group 3, most likely an inline
+    comment) when it flips false -> true — it does not require the line to
+    end right after the value. A verifier that DOES require that would
+    correctly recognize the committed false line, then reject the mutator's
+    own correct true-with-comment output as "not exactly true": the same
+    false-block class as the block-scan bug above, one line down. The real
+    config/settings.yaml already has this exact commenting style immediately
+    above the block (see the review-note comment there) — not yet inside it,
+    but plausible."""
+    working = SETTINGS_ENABLED_WITH_COMMENT.replace(
+        "enabled: false  # flip after reviewing this PR",
+        "enabled: true  # flip after reviewing this PR", 1,
+    )
+    r = _verify(override_verifier, SETTINGS_ENABLED_WITH_COMMENT, working, tmp_path)
+    assert r.returncode == 0, (
+        f"verifier rejected the mutator's own correct output merely because "
+        f"the enabled: line carries an inline comment:\n"
+        f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
+    )
+
+
+def test_verifier_rejects_a_changed_trailing_comment(tmp_path, override_verifier) -> None:
+    """The trailing content must be preserved VERBATIM, not merely present —
+    a working line whose comment differs from the committed one is not what
+    EDITOR_PY would have produced, and must not be waved through just because
+    the value itself correctly reads true."""
+    working = SETTINGS_ENABLED_WITH_COMMENT.replace(
+        "enabled: false  # flip after reviewing this PR",
+        "enabled: true  # a completely different comment", 1,
+    )
+    r = _verify(override_verifier, SETTINGS_ENABLED_WITH_COMMENT, working, tmp_path)
+    assert r.returncode != 0
+    assert "trailing content changed unexpectedly" in r.stderr
+
+
+def test_real_function_accepts_the_delta_when_the_enabled_line_carries_a_comment(tmp_path, verify_function_src) -> None:
+    """Same case, through the real shell function + real git."""
+    working = SETTINGS_ENABLED_WITH_COMMENT.replace(
+        "enabled: false  # flip after reviewing this PR",
+        "enabled: true  # flip after reviewing this PR", 1,
+    )
+    proc, sha = _real_repo_harness(tmp_path, verify_function_src, SETTINGS_ENABLED_WITH_COMMENT, working)
+    assert proc.returncode == 0, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+
+
+def test_real_function_finds_enabled_even_when_not_the_first_line_in_the_block(tmp_path, verify_function_src) -> None:
+    """Same case, through the real shell function + real git, not just the
+    embedded Python — the class of bug this whole section exists to catch."""
+    working = SETTINGS_ENABLED_NOT_FIRST.replace("enabled: false", "enabled: true", 1)
+    proc, sha = _real_repo_harness(tmp_path, verify_function_src, SETTINGS_ENABLED_NOT_FIRST, working)
+    assert proc.returncode == 0, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +1098,14 @@ sysctl_user() {
   esac
 }
 health_field() { echo "ok"; }
-wait_healthy() { echo "wait_healthy" >> "$TRACE"; return "${HEALTH_RC:-0}"; }
+wait_healthy() {
+  echo "wait_healthy" >> "$TRACE"
+  # Opt-in pause so a test can land a second signal WHILE convergence is
+  # inside this call, rather than only ever before/after it. 0 by default —
+  # every existing test stays instant.
+  [[ "${WAIT_HEALTHY_SLEEP:-0}" == "0" ]] || sleep "$WAIT_HEALTHY_SLEEP"
+  return "${HEALTH_RC:-0}"
+}
 # The real functions shell out to `sudo -u qamc` and touch a real
 # config/settings.yaml, neither of which exists in this harness — like every
 # other external effect here, they are stubbed and traced rather than run for
@@ -1008,6 +1216,56 @@ def test_a_failed_convergence_can_still_be_retried(text, tmp_path) -> None:
     )
     assert trace.count("qgit checkout --detach 'BASE'") == 2, \
         f"a failed convergence was not retryable:\n{trace}"
+
+
+def test_second_signal_during_convergence_does_not_abort_it(text, tmp_path) -> None:
+    """Found by independent adversarial review, not by the earlier external
+    review: convergence used to reset (`trap -`) INT/TERM/HUP rather than
+    ignore them, so a SECOND real signal arriving while convergence was still
+    running (e.g. an impatient double Ctrl-C during the restart/health wait)
+    killed the process with IN_CONVERGE still 1 and CONVERGED still "" —
+    on_exit's belt-and-braces retry saw the guard set and silently returned,
+    so NOTHING was ever reported. This drives a REAL second SIGTERM, from a
+    background job, into the middle of convergence's own wait_healthy call
+    (paused via WAIT_HEALTHY_SLEEP), and requires that convergence still
+    completes and reports normally."""
+    proc, trace, errs = _harness(
+        text, tmp_path,
+        'DEPLOY_STATE="restarted"\n'
+        '( sleep 0.3; kill -TERM $$ ) &\n'
+        'converge "first"\n'
+        'echo "CONVERGED=$CONVERGED IN_CONVERGE=$IN_CONVERGE"\n'
+        'exit 0',
+        env={"WAIT_HEALTHY_SLEEP": "1"},
+    )
+    assert proc.returncode == 0, (
+        f"the second signal was not ignored — process died mid-convergence:\n"
+        f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}\ntrace={trace!r}"
+    )
+    assert "CONVERGED=yes IN_CONVERGE=0" in proc.stdout, (
+        f"convergence did not complete/report normally despite the second signal:\n"
+        f"stdout={proc.stdout!r}"
+    )
+    assert "PRODUCTION CONVERGED" in errs
+
+
+def test_stuck_convergence_guard_is_reported_loudly_not_silently(text, tmp_path) -> None:
+    """Defense in depth for the same finding: if IN_CONVERGE is ever found
+    still set to 1 when the script is exiting (however that happened — the
+    fix above should make it unreachable via INT/TERM/HUP specifically, but
+    this must not depend on that being the only way in), on_exit must not
+    silently return via the recursion guard. It must say plainly that a
+    previous attempt was interrupted and that production's actual state is
+    unknown, never claim PRODUCTION CONVERGED, and never look like nothing
+    happened."""
+    proc, trace, errs = _harness(
+        text, tmp_path,
+        'DEPLOY_STATE="enabled"\nIN_CONVERGE=1\nfalse',
+    )
+    assert "PRODUCTION CONVERGED" not in errs
+    assert "previous convergence attempt" in errs.lower() or "PREVIOUS convergence" in errs
+    assert "UNKNOWN" in errs
+    assert "CONVERGENCE INCOMPLETE" in errs
 
 
 def test_incomplete_convergence_is_reported_not_papered_over(text, tmp_path) -> None:

@@ -200,12 +200,30 @@ apply_intraday_override() {  # writes config/settings.yaml in place; idempotent
 # (committed) vs true (working). Prints nothing and exits 0 on match; on any
 # mismatch exits non-zero with the reason on stdout. Never writes anything.
 verify_intraday_override_only() {  # $1 = SHA to diff the working tree against
-  local committed
-  committed="$(qgit "show $1:config/settings.yaml" 2>/dev/null)" || {
-    echo "could not read config/settings.yaml at $1"; return 1; }
+  # The committed content must be read as a FILE, not a bash $(...) command
+  # substitution — command substitution strips every trailing newline, but
+  # the working file (an ordinary tracked YAML file) always keeps its own.
+  # Comparing "stripped" against "not stripped" desyncs the line count by
+  # exactly one and falsely rejects a perfectly valid baseline every time,
+  # regardless of content — an external reviewer caught this before any
+  # rollout ran. Reading both sides the same way (open().read(), no shell
+  # transformation on either) removes the asymmetry instead of compensating
+  # for it. The scratch dir is qamc-owned so no chmod/chown-after-write is
+  # needed — same pattern Gate C's EXPORTDIR already uses.
+  local scratch tmp_committed rc
+  scratch="$TMPD/verify-override.$$"
+  install -d -o "$QAMC_USER" -g "$QAMC_USER" -m 0700 "$scratch" || {
+    echo "could not create a qamc-owned scratch dir for verification"; return 1; }
+  tmp_committed="$scratch/committed-config.yaml"
+  qgit "show $1:config/settings.yaml > '$tmp_committed'" 2>/dev/null || {
+    rm -rf "$scratch"
+    echo "could not read config/settings.yaml at $1"
+    return 1
+  }
   sudo -u "$QAMC_USER" -H python3 -c '
 import re, sys
-committed = sys.argv[1].split("\n")
+with open(sys.argv[1]) as fh:
+    committed = fh.read().split("\n")
 with open(sys.argv[2]) as fh:
     working = fh.read().split("\n")
 if len(committed) != len(working):
@@ -219,8 +237,19 @@ line_no, c_line, w_line = diffs[0]
 # Confirm the one differing line is intraday_scan.enabled specifically, by
 # re-scanning the COMMITTED text for the block with the same rule the
 # mutator uses, so a coincidental one-line diff elsewhere can never pass.
+# Must SCAN THROUGH the block for the enabled: line, not just look at the
+# first line inside it and give up. The first draft of this loop did exactly
+# that: an unconditional break after one line, unlike the EDITOR_PY loop it
+# mirrors, whose break only fires inside the match branch. That draft only
+# "worked" because enabled: happens to be the first key in the block today.
+# A future reorder, or a comment or blank line ahead of it, would have made a
+# genuinely valid delta fail this check for a reason that has nothing to do
+# with production being wrong. Note: no apostrophes anywhere in this comment
+# block on purpose — it lives inside the single-quoted python3 -c string
+# below, which has no escape mechanism at all for a literal quote character.
 in_block = False
 is_the_enabled_line = False
+c_trailing = None
 for i, line in enumerate(committed):
     if re.match(r"^intraday_scan:\s*$", line):
         in_block = True
@@ -228,15 +257,39 @@ for i, line in enumerate(committed):
     if in_block:
         if line and not line[0].isspace() and not line.lstrip().startswith("#"):
             break
-        if i + 1 == line_no and re.match(r"^(\s*)enabled:\s*false\s*$", line):
-            is_the_enabled_line = True
-        break
+        # Same capture shape as the EDITOR_PY match (trailing (.*) group, not
+        # anchored to end-of-value) — EDITOR_PY PRESERVES that trailing
+        # content when it flips the line (found in the same review pass that
+        # found the unconditional break above): an inline comment on the
+        # enabled: line survives the flip. A stricter end-of-line anchor here
+        # would recognize the committed false line fine, but then reject the
+        # correct true-with-comment output the mutator produces as "not
+        # exactly true" below — the same false-block class, one line down.
+        m = re.match(r"^(\s*)enabled:\s*(\S+)(.*)$", line)
+        if m:
+            if i + 1 == line_no and m.group(2) == "false":
+                is_the_enabled_line = True
+                c_trailing = m.group(3)
+            break
 if not is_the_enabled_line:
     sys.exit("the one differing line (line %d) is not the committed intraday_scan.enabled: "
               "false line: committed=%r working=%r" % (line_no, c_line, w_line))
-if not re.match(r"^(\s*)enabled:\s*true\s*$", w_line):
+# Same shape check on the working side, and the trailing content (anything
+# after the value — an inline comment, most likely) must be UNCHANGED from
+# the committed line: EDITOR_PY preserves it verbatim (its own group(3)),
+# only the value token flips. Checking value and trailing separately, rather
+# than one end-anchored pattern, is what makes this symmetric with EDITOR_PY
+# instead of merely similar to it.
+w_match = re.match(r"^(\s*)enabled:\s*(\S+)(.*)$", w_line)
+if not w_match or w_match.group(2) != "true":
     sys.exit("intraday_scan.enabled in the working tree is not exactly \"true\": %r" % w_line)
-' "$committed" "$QAMC_REPO/config/settings.yaml"
+if w_match.group(3) != c_trailing:
+    sys.exit("intraday_scan.enabled trailing content changed unexpectedly: "
+              "committed=%r working=%r" % (c_trailing, w_match.group(3)))
+' "$tmp_committed" "$QAMC_REPO/config/settings.yaml"
+  rc=$?
+  rm -rf "$scratch"
+  return $rc
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -273,8 +326,20 @@ converge() {  # $1 = why. Idempotent, recursion-safe, never raises.
   [[ "$CONVERGED" != "yes" ]] || return 0
   IN_CONVERGE=1
   # Inside convergence, nothing may re-enter a trap: a failing command here
-  # must be reported, not turned into another abort.
-  trap - ERR INT TERM HUP
+  # must be reported, not turned into another abort. ERR is reset to default
+  # (set +e below makes that moot) rather than ignored, since nothing here
+  # should keep running past an unexpected error. INT/TERM/HUP are IGNORED
+  # ('' — not '-') rather than reset to default: an external reviewer found
+  # that resetting them let a SECOND signal (a second Ctrl-C, a second HUP)
+  # kill the process mid-convergence while IN_CONVERGE was still 1 — the
+  # process would die with the default disposition, on_exit's belt-and-braces
+  # retry would see IN_CONVERGE still set and return immediately (line 299),
+  # and CONVERGED would stay "" forever: a root-privileged rollback tool going
+  # completely silent about whether production converged. Ignoring the signal
+  # instead means convergence always runs to completion (bounded by
+  # wait_healthy's 90s timeout below) and always reports a real status.
+  trap - ERR
+  trap '' INT TERM HUP
   set +e
 
   err ""
@@ -288,7 +353,8 @@ converge() {  # $1 = why. Idempotent, recursion-safe, never raises.
     return 0
   fi
 
-  local converged=1 head_after dirty_after pid_after override_out override_err
+  local converged=1 head_after dirty_after pid_after
+  local override_out override_err override_rc override_verify_rc
 
   qgit "checkout -- config/settings.yaml" >/dev/null 2>&1
   if qgit "checkout --detach '$BASELINE_SHA'" >/dev/null 2>&1; then
@@ -362,10 +428,34 @@ on_exit() {
   # Same reasoning as converge(): a subshell must never tear down the shared
   # temp directory or claim the run finished.
   [[ "$BASHPID" == "$$" ]] || return 0
-  # Belt and braces: any exit path that mutated production but never ran
-  # convergence gets it here.
-  if [[ "$DEPLOY_STATE" != "pristine" && -z "$CONVERGED" && "$rc" -ne 0 ]]; then
-    converge "script exited (status $rc) without converging"
+  if [[ "$DEPLOY_STATE" != "pristine" && -z "$CONVERGED" ]]; then
+    if (( IN_CONVERGE )); then
+      # A previous convergence attempt was itself killed before it could
+      # finish and reset this guard — INT/TERM/HUP are ignored during
+      # convergence now (see converge()), so this should be unreachable via
+      # those three, but this is deliberately not relied upon: SIGQUIT or any
+      # other signal this script does not explicitly handle could still land
+      # here. Do not silently return (the guard exists to stop RECURSIVE
+      # re-entry from a still-running call, not to swallow this) and do not
+      # blindly re-run convergence's mutations on top of an unknown partial
+      # state — the checkout, the config edit and the restart could each be
+      # mid-flight. Report loudly; a human must inspect and finish by hand.
+      err ""
+      err "[ROLLBACK] a PREVIOUS convergence attempt was itself interrupted before finishing"
+      err "[ROLLBACK] deployment state at exit: $DEPLOY_STATE — actual production state is UNKNOWN. Do not assume it is baseline or target."
+      err "[ROLLBACK] CONVERGENCE INCOMPLETE — INSPECT BEFORE DOING ANYTHING ELSE:"
+      err "  sudo -u $QAMC_USER -H git -C $QAMC_REPO status"
+      err "  sudo -u $QAMC_USER -H git -C $QAMC_REPO rev-parse HEAD"
+      err "  sudo -u $QAMC_USER -H git -C $QAMC_REPO diff -- config/settings.yaml"
+      err "  curl -s $API_HEALTH"
+      err "  Then finish by hand per ops/review/README-recovery-rollout.md, or re-run this"
+      err "  script's manual recovery steps once the actual state above is known."
+      CONVERGED="no"
+    elif [[ "$rc" -ne 0 ]]; then
+      # Belt and braces: any exit path that mutated production but never ran
+      # convergence gets it here.
+      converge "script exited (status $rc) without converging"
+    fi
   fi
   [[ -n "${TMPD:-}" && -d "$TMPD" ]] && rm -rf "$TMPD"
   printf '\n   full transcript: %s\n' "$LOG"

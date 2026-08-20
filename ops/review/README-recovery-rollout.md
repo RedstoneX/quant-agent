@@ -44,6 +44,77 @@ independently re-verifies it before ever reporting `PRODUCTION CONVERGED`.
 Every failure/rollback path now restores `775296e1` **plus** the override,
 not bare baseline.
 
+## Second review round — four more defects, found before any rollout ran
+
+External review then found one more real bug in the fix above, which
+triggered a full adversarial self-review of the whole script (mine, plus an
+independent fresh pass by a reviewer that did not author any of this). Five
+things were found and fixed, all before this script was ever run against
+production:
+
+1. **Newline asymmetry in the fix itself** (the reported bug):
+   `verify_intraday_override_only` read the committed content via bash
+   `$(...)` command substitution, which strips every trailing newline — the
+   real working file always keeps its own, so the two sides' line counts
+   were off by exactly one, unconditionally, regardless of content. The
+   accepted baseline would have been rejected every single time. Fixed at
+   the file/stream boundary: the committed blob is now written to a real
+   file (`>` redirection, not `$(...)`) in a qamc-owned scratch dir, and both
+   sides are read via `open().read()` in Python — symmetric, no shell
+   transformation on either side. New regression test drives the REAL shell
+   function against a REAL git repo, not just the embedded Python in
+   isolation (`test_real_function_accepts_the_exact_delta_with_a_trailing_newline`
+   and neighbors).
+2. **Block-scan gives up after one line** (found independently by both the
+   self-review and the fresh-eyes review): the verifier's re-scan for the
+   `enabled:` line inside `intraday_scan:` had an unconditional `break`
+   after the FIRST line in the block, copy-drifted from `EDITOR_PY`'s
+   structurally similar loop, whose `break` only fires inside the match
+   branch. It only worked because `enabled:` happens to be literally the
+   first key in the block today — a comment or reordered key ahead of it
+   would have made a genuinely valid delta fail for a reason unrelated to
+   production being wrong. Fixed to scan through the block exactly like
+   `EDITOR_PY` does.
+3. **Trailing content asymmetry, one line down** (found by the fresh-eyes
+   review): `EDITOR_PY` preserves whatever follows the value on the
+   `enabled:` line (an inline comment, most likely) when it flips
+   false→true; the verifier's regexes were anchored to end-of-line right
+   after the value, so it would reject the mutator's own correct
+   true-with-comment output. Fixed to capture and compare that trailing
+   content explicitly rather than anchor past it.
+4. **A second interrupting signal during convergence went completely
+   silent** (found by the fresh-eyes review, confirmed by direct empirical
+   test of bash's own EXIT-trap-on-signal-termination behavior before
+   fixing): `converge()` reset INT/TERM/HUP to default disposition rather
+   than ignoring them, so a second Ctrl-C/TERM/HUP arriving while
+   convergence was still running (e.g. during the up-to-90s restart/health
+   wait) killed the process with the recursion guard (`IN_CONVERGE`) still
+   set. `on_exit`'s belt-and-braces retry saw the guard set and returned
+   immediately — a root-privileged rollback tool going silent about whether
+   production converged, with no report at all. Fixed two ways: `converge()`
+   now ignores (`trap ''`, not `trap -`) INT/TERM/HUP for its own duration,
+   so this class of interruption cannot happen in the first place; `on_exit`
+   also now checks for the guard still being set and, if so, reports loudly
+   that a previous attempt was interrupted and production's actual state is
+   unknown, rather than silently returning — defense in depth for any other
+   signal this script does not explicitly trap. New test drives a REAL
+   second `SIGTERM`, via a background job, into the middle of an in-progress
+   `converge()` call, and requires the process survive and report normally.
+5. Two smaller findings from the same passes: `override_rc`/
+   `override_verify_rc` were assigned in `converge()` without `local`
+   (harmless here, no name collision, but inconsistent with the rest of the
+   file's discipline); and, while fixing #2, a possessive apostrophe in a
+   prose comment landed inside the single-quoted `python3 -c '...'` string
+   it documents — bash single quotes have no escape mechanism at all, so it
+   silently truncated the string and left following Python text to be
+   parsed as bash. Caught by `bash -n`, which is now run after every edit to
+   this file rather than periodically.
+
+Every fix has a dedicated regression test exercising the real bash
+(`_real_repo_harness` against a real git repo for #1–#3, the same
+stub-and-trace `converge()` harness the rest of the suite uses for #4), not
+only the embedded Python or a re-reading of the diff.
+
 ## Pinned identities
 
 | Item | Value |
@@ -73,45 +144,55 @@ could not honestly represent that. Instead, this script is the reviewed
 source **plus a bounded, fully-listed diff**, verifiable the same way the
 original was reviewed: read the diff below, or run
 `diff ops/review/qamc-finish-line-rollout.sh ops/review/qamc-recovery-rollout.sh`
-against the two blobs. The diff is 354 changed lines out of 1442 total. Every
-changed region is one of: the six pinned constants; the header/phase
+against the two blobs. This script is 1532 lines total, versus 1262 in the
+original finish-line script it derives from; growth is almost entirely the
+shared editor/verifier functions, their doc comments, and the second review
+round's fixes above.
+Every changed region is one of: the six pinned constants; the header/phase
 comments; the Gate-A baseline-delta fix and the matching convergence fix
-described above (both new, both directly tested — see below); the seven new
-fix-marker checks (added in three places, mirroring the file's own existing
-defense-in-depth style for the PR #48 markers); the Gate C test-file list,
-its expected count, and its PR #48 → recovery wording; Gate D now calls the
-shared editor instead of carrying its own copy (one definition, three call
-sites, so Gate A/Gate D/convergence cannot silently drift apart). Gate B and
-Gate E's provider/OneCLI/Tailscale/timer checks are byte-identical.
+(both directly tested — see below); the seven new fix-marker checks (added
+in three places, mirroring the file's own existing defense-in-depth style
+for the PR #48 markers); the Gate C test-file list, its expected count, and
+its PR #48 → recovery wording; Gate D now calls the shared editor instead of
+carrying its own copy (one definition, three call sites, so Gate A/Gate
+D/convergence cannot silently drift apart); the four defects from the second
+review round. Gate B and Gate E's provider/OneCLI/Tailscale/timer checks are
+byte-identical.
 
 `tests/test_recovery_rollout_script.py` (adapted from the finish-line
 script's own `tests/test_rollout_script.py`, brought onto this branch rather
 than left behind) covers this exact script. Diffed by test-function name
-against the original: 114 of 116 untouched; 1 (`test_dirty_tree_after_rollback_is_reported`)
-repurposed into two — its old premise (a dirty tree after rollback is always
-wrong) was exactly backwards once the fix landed, so it split into
+against the original (verified with `comm`, not estimated): of 73 original
+test functions, 72 are untouched by name, 1
+(`test_dirty_tree_after_rollback_is_reported`) was repurposed into two —
+its old premise (a dirty tree after rollback is always wrong) was exactly
+backwards once the fix landed, so it split into
 `test_unexpectedly_clean_tree_after_rollback_is_reported` (the direct
 regression test for the reported defect) and
 `test_unexpectedly_dirty_tree_after_rollback_is_reported` (dirty-but-still-wrong
-stays rejected); 1 (`test_state_is_set_before_the_config_edit_not_after`)
-had its call-site pattern updated for Gate D now calling the shared function.
-19 more new test functions were added (2 of them parametrized across the
-three real failure-injection points, `deployed`/`restarted`/`enabled`): 6
-direct behavioural tests of `verify_intraday_override_only` (accepts the
-exact delta; rejects clean, a second unrelated change, the cash-sweep switch
-flipped instead, a non-`true` value, a line-count mismatch), 6 structural
-tests pinning the Gate-A/Phase-3/Gate-D wiring, and 9 functional harness
-tests driving convergence's actual bash — via stubs, not just reading the
-text — through the override-missing, override-corrupted,
-override-apply-failed and override-verify-failed cases. Net effect: 116 →
-139 collected tests. **139/139 passed.**
+stays rejected). Two of the 72 untouched-by-name functions had their bodies
+adjusted for deliberate changes: `test_state_is_set_before_the_config_edit_not_after`'s
+call-site pattern (Gate D now calls the shared function) and
+`test_convergence_is_recursion_safe`'s trap-string assertion (`trap ''
+INT TERM HUP`, not `trap - ... INT TERM HUP`). 31 new test functions were
+added across both review rounds, several parametrized across the three real
+failure-injection points (`deployed`/`restarted`/`enabled`) — behavioural
+tests of `verify_intraday_override_only` and `apply_intraday_override`
+(exact delta, clean tree, unrelated change, cash-sweep switch, non-`true`
+value, line-count mismatch, not-first-line, trailing-comment preservation),
+structural tests pinning the Gate-A/Phase-3/Gate-D wiring, and functional
+harness tests driving convergence's actual bash — via stubs, not just
+reading the text — through every override failure mode plus a real
+in-flight second `SIGTERM`. Net effect: 116 → **150 collected tests, 150/150
+passed**, re-run against the exact committed bytes on this branch, not a
+local copy.
 
 ## Single operator command
 
 Run **as `ubuntu`**:
 
 ```bash
-sudo bash -o pipefail -c '[[ "$(stat -c "%U:%G:%a" /root)" == "root:root:700" ]] && sudo -u dev -H git -C /home/dev/projects/quant-agent fetch --no-tags origin "+refs/heads/claude/trading-utility-recovery-rollout:refs/remotes/origin/claude/trading-utility-recovery-rollout" && sudo -u dev -H git -C /home/dev/projects/quant-agent cat-file blob 38263ccfdcf503873e377c96da30041ecb6b443f | install -o root -g root -m 0700 /dev/stdin /root/qamc-recovery-rollout.sh && echo "5bd50739bf5f6d38a59f2ce705dcdfea1f05f0e6c8bfa35dddcf91aa282b8d30  /root/qamc-recovery-rollout.sh" | sha256sum -c - && /root/qamc-recovery-rollout.sh'
+sudo bash -o pipefail -c '[[ "$(stat -c "%U:%G:%a" /root)" == "root:root:700" ]] && sudo -u dev -H git -C /home/dev/projects/quant-agent fetch --no-tags origin "+refs/heads/claude/trading-utility-recovery-rollout:refs/remotes/origin/claude/trading-utility-recovery-rollout" && sudo -u dev -H git -C /home/dev/projects/quant-agent cat-file blob 13661bdad8d6df83dd2cee048b6d6727f3e5c582 | install -o root -g root -m 0700 /dev/stdin /root/qamc-recovery-rollout.sh && echo "f77d7ee2512016a9fb0cf718a6dc4877c0e2077a771cf0ac2af80c7521417712  /root/qamc-recovery-rollout.sh" | sha256sum -c - && /root/qamc-recovery-rollout.sh'
 ```
 
 The command fetches the review branch **without touching the dev working
