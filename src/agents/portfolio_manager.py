@@ -704,26 +704,51 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     _DECISION_FIELDS = ("targets",)
 
     @staticmethod
-    def _canonical_targets(targets) -> list[tuple]:
+    def _canonical_targets(targets) -> list[tuple] | None:
+        """Full TargetPosition decision payload (symbol, target_weight_pct,
+        conviction, thesis, thesis_invalid_if, suggested_stop_price,
+        catalyst), order-insensitive. Built by re-validating each entry
+        through the `TargetPosition` model itself — its own field
+        normalization (symbol case, conviction case, numeric coercion)
+        is the single source of truth for what "the same value" means,
+        rather than a second, ad-hoc coercion path that can drift out of
+        sync with the schema (or hide a real change behind a bug, as the
+        prior `round(float(...))`-only / symbol+weight-only comparison
+        did). Returns None — never `==` to anything, including itself —
+        when the shape doesn't validate, so a malformed side fails closed
+        instead of comparing (incorrectly) equal.
+        """
+        if targets is None:
+            targets = []
         if not isinstance(targets, list):
-            return []
-        out = []
+            return None
+        models: list[TargetPosition] = []
         for t in targets:
             if not isinstance(t, dict):
-                continue
+                return None
             try:
-                weight = round(float(t.get("target_weight_pct")), 6)
-            except (TypeError, ValueError):
-                weight = t.get("target_weight_pct")
-            sym = str(t.get("symbol") or "").strip().upper()
-            out.append((sym, weight))
-        return sorted(out, key=lambda t: t[0])
+                models.append(TargetPosition(**t))
+            except Exception:  # noqa: BLE001 — any shape failure fails closed
+                return None
+        return sorted(
+            (
+                (
+                    m.symbol, m.target_weight_pct, m.conviction, m.thesis,
+                    m.thesis_invalid_if, m.suggested_stop_price, m.catalyst,
+                )
+                for m in models
+            ),
+            key=lambda row: row[0],
+        )
 
     @classmethod
     def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
-        """True iff the target set (symbol + weight — the actual decision
-        that reaches PortfolioConstructor) survived a schema repair
+        """True iff the ENTIRE target set — every field of every
+        TargetPosition, not just symbol/weight — survived a schema repair
         unchanged. `original` and `repaired` are both already post-
         `_drop_invalid_targets` for a fair comparison."""
-        return cls._canonical_targets(original.get("targets")) == \
-            cls._canonical_targets(repaired.get("targets"))
+        orig = cls._canonical_targets(original.get("targets"))
+        rep = cls._canonical_targets(repaired.get("targets"))
+        if orig is None or rep is None:
+            return False
+        return orig == rep

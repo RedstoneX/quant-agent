@@ -461,39 +461,73 @@ Review these proposed trades and provide your verdict as JSON."""
     _DECISION_FIELDS = ("approved", "modifications", "scale_all_buys", "reason_category")
 
     @staticmethod
-    def _canonical_modifications(mods) -> list[tuple]:
+    def _canonical_modifications(mods) -> list[tuple] | None:
+        """Full RiskModification decision payload (symbol, field,
+        original_value, new_value, reason), order-insensitive. Built by
+        re-validating each entry through the `RiskModification` model
+        itself, so numeric coercion is the schema's own — not a second
+        ad-hoc `float()` path — and `reason` (part of what THIS
+        modification decided, unlike the top-level narrative
+        `reasoning_chain`/`reasoning`) is preserved rather than dropped.
+        Returns None — never `==` to anything — when the shape doesn't
+        validate, so a malformed side fails closed instead of comparing
+        (incorrectly) equal.
+        """
+        if mods is None:
+            mods = []
         if not isinstance(mods, list):
-            return []
-        out = []
+            return None
+        models: list[RiskModification] = []
         for m in mods:
             if not isinstance(m, dict):
-                continue
+                return None
             try:
-                orig = round(float(m.get("original_value")), 6)
-                new = round(float(m.get("new_value")), 6)
-            except (TypeError, ValueError):
-                orig = m.get("original_value")
-                new = m.get("new_value")
-            out.append((m.get("symbol"), m.get("field"), orig, new))
-        return sorted(out, key=lambda t: (str(t[0]), str(t[1])))
+                models.append(RiskModification(**m))
+            except Exception:  # noqa: BLE001 — any shape failure fails closed
+                return None
+        return sorted(
+            (
+                (m.symbol, m.field, m.original_value, m.new_value, m.reason)
+                for m in models
+            ),
+            key=lambda row: (row[0], row[1]),
+        )
 
     @classmethod
     def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
         """True iff every decision-bearing field survived a schema
         repair unchanged. `original` and `repaired` are both already
-        post-`_drop_invalid_modifications` for a fair comparison."""
-        if bool(original.get("approved")) != bool(repaired.get("approved")):
+        post-`_drop_invalid_modifications` for a fair comparison.
+
+        Strict and type-safe by construction — no `bool()` coercion (a
+        repair emitting the JSON STRING `"false"` for `approved` must
+        fail closed, not compare equal to `True` because `bool("false")`
+        is truthy) and no `or 1.0` fallback on `scale_all_buys` (0.0 is
+        a real, meaningful value — RM's explicit "kill all BUYs" veto —
+        not an absent one; collapsing it to 1.0 would silently accept a
+        repair that reinstated every BUY the original verdict killed).
+        """
+        orig_approved = original.get("approved")
+        rep_approved = repaired.get("approved")
+        if type(orig_approved) is not bool or type(rep_approved) is not bool:
             return False
-        if cls._canonical_modifications(original.get("modifications")) != \
-                cls._canonical_modifications(repaired.get("modifications")):
+        if orig_approved != rep_approved:
             return False
-        try:
-            orig_scale = round(float(original.get("scale_all_buys", 1.0) or 1.0), 6)
-            new_scale = round(float(repaired.get("scale_all_buys", 1.0) or 1.0), 6)
-        except (TypeError, ValueError):
+
+        orig_mods = cls._canonical_modifications(original.get("modifications"))
+        rep_mods = cls._canonical_modifications(repaired.get("modifications"))
+        if orig_mods is None or rep_mods is None or orig_mods != rep_mods:
             return False
-        if orig_scale != new_scale:
+
+        orig_scale = original.get("scale_all_buys", 1.0)
+        rep_scale = repaired.get("scale_all_buys", 1.0)
+        if isinstance(orig_scale, bool) or isinstance(rep_scale, bool):
             return False
+        if not isinstance(orig_scale, (int, float)) or not isinstance(rep_scale, (int, float)):
+            return False
+        if round(float(orig_scale), 6) != round(float(rep_scale), 6):
+            return False
+
         return original.get("reason_category") == repaired.get("reason_category")
 
     @staticmethod
