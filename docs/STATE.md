@@ -6,12 +6,13 @@ This file records what is accepted and true **now**. Git history preserves prior
 
 ## Accepted production state
 
-- QAMC remains an **Alpaca Paper-only** trading experiment. Live trading, margin, options and direct stock shorting are not authorized.
+- QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission, margin, options and direct stock shorting are not authorized.
+- Paper vs live is an execution-environment boundary, not a separate trading architecture. The accepted Specialist → PM → AI Risk → deterministic risk/execution → position-management path is intended to remain the same if live-capital operation is later authorized; genuine environment differences stay at the broker/configuration boundary.
 - Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development/Claude Code by `dev`. These account boundaries remain hard.
 - Mission Control/API remain private, read-only and non-critical to trading. `/cockpit`, `/ui` and `/health` are deployed and healthy.
 - Private operator access uses Tailscale. Canonical VPS MagicDNS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
 - OneCLI remains the accepted credential-delivery layer. Docker publishes OneCLI only on loopback (`127.0.0.1:10254-10255`); the dashboard may also be reached through `tailscaled` on this host's exact tailnet addresses. The credential gateway itself remains loopback-only. No public listener is authorized.
-- The Alpaca Paper soak remains active under the existing seven `qamc` user timers.
+- The current Alpaca Paper validation run remains active under the existing seven `qamc` user timers.
 
 ## Production code position
 
@@ -63,7 +64,7 @@ Accepted live configuration:
 
 Before enablement, the scanner's own Alpaca snapshot path returned usable previous/current SPY pricing in a read-only smoke test. The same Specialist → Portfolio Manager → AI Risk Manager → deterministic Python/broker chain remains authoritative. Existing process/session locks, cooldown, candidate cap and current-session incomplete-data labeling remain intact.
 
-The first naturally scheduled live Tech batch line and first naturally scheduled enabled intraday tick are **soak observations, not acceptance gates**. They must not be manufactured by forcing a trade or session.
+The first naturally scheduled Tech batch line and first naturally scheduled enabled intraday tick are validation observations, not acceptance gates. They must not be manufactured by forcing a trade or session.
 
 ## Accepted decision/model policy
 
@@ -72,6 +73,7 @@ The first naturally scheduled live Tech batch line and first naturally scheduled
 - OpenRouter remains the model-provider path.
 - Current accepted routing uses two model IDs across the nine seats: `google/gemini-2.5-flash-lite` and `qwen/qwen3-235b-a22b-2507` according to the per-seat policy.
 - Cost-optimized routing and the accepted decision-chain audit remain in force.
+- Trading-critical behavior is environment-neutral by design; Paper mode must not justify weaker or alternate agent/risk/position-management semantics.
 
 ## Directionality
 
@@ -81,17 +83,18 @@ The first naturally scheduled live Tech batch line and first naturally scheduled
 
 ## Not authorized
 
-- Live-broker trading.
+- Live-broker order submission or live-capital activation.
 - Direct stock shorting, options/theta strategies, or margin.
 - New timers, daemons, services, databases, proxies, credential systems or other durable infrastructure outside accepted architecture.
 - Deterministic risk/execution semantic redesign.
+- Paper-specific shortcuts or a separate Paper-only trading logic path that would require re-architecting for live operation later.
 - Broker-write Mission Control controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
 - Replacing upstream OneCLI or adding a new durable routing/security/credential platform without an accepted architectural decision.
-- Forcing/manufacturing a paper trade merely to prove behavior.
+- Forcing/manufacturing a trade merely to prove behavior.
 
 ## Handoff
 
-The finish-line rollout remains accepted. Current work is the trading-utility recovery defined in `docs/WORK.md`; production continues running naturally while that investigation proceeds.
+The finish-line rollout remains accepted. Trading-utility recovery is under external integration in PR #56 from `fix/trading-utility-conversion`; production remains on the accepted SHA above until that PR is merged and a separately governed deployment occurs. See `docs/WORK.md`.
