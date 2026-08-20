@@ -2,440 +2,89 @@
 
 Updated: 2026-08-19
 
-This file says what is accepted and authorized **now**. Git history preserves prior detail.
+This file records what is accepted and true **now**. Git history preserves prior implementation detail; do not turn this file into a changelog.
 
-## Accepted
+## Accepted production state
 
-- Stages 0, 0.5, 1, 2, 3, 4 and 5 are accepted.
-- Mission Control/API and browser cockpit are deployed under `qamc`, private, read-only and non-critical to trading.
-- The OVH account boundary remains: `ubuntu` = administration/recovery, `qamc` = runtime, `dev` = development/Claude Code.
-- VPS baseline hardening and upstream OneCLI credential-gateway deployment are complete.
-- QAMC reaches Alpaca Paper through the approved OneCLI path; runtime checks report `broker_reachable: true`, `db_reachable: true`, `paper: true`.
-- Alpaca Paper-only is enforced in code.
-- Cost-optimized model routing and the decision-chain audit are accepted on `main`.
-- PR #33 fixed the commissioning timer-state false positive and merged to `main` as `aa52f5f9fd5912914a1640f74bdab84d1e30cd51`.
-- PR #37 recorded the verified private Tailscale/Orca access path and merged to `main` on 2026-08-18.
+- QAMC remains an **Alpaca Paper-only** trading experiment. Live trading, margin, options and direct stock shorting are not authorized.
+- Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development/Claude Code by `dev`. These account boundaries remain hard.
+- Mission Control/API remain private, read-only and non-critical to trading. `/cockpit` and `/ui` are deployed and healthy.
+- Private operator access uses Tailscale. Canonical VPS MagicDNS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
+- OneCLI remains the accepted credential-delivery layer, loopback-only on ports 10254/10255.
+- The Alpaca Paper soak remains active under the existing seven `qamc` user timers.
 
-### Runtime commissioning accepted
+## Production code position
 
-The final privileged `qamc` live verifier run against current `main` passed on 2026-08-14:
+Production is currently pinned at `9c736c158fec84129765c25a9429254d3602ad6b` (`9c736c1`). That production hotfix contains the reviewed Telegram restoration/security diff on top of the prior Mission Control production baseline and deliberately excludes PR #48.
 
-- **37 PASS / 0 FAIL / 0 WARN / 1 SKIP**
-- `COMMISSIONING ACCEPTANCE: PASS`
-- process exit `0`
-- config/routing validation PASS
-- OneCLI gateway/wiring/provider injection PASS
-- Mission Control DB/paper/broker health PASS
-- OpenRouter completions for both accepted policy models PASS
-- Alpaca Paper account/data/quote/calendar PASS
-- FRED PASS
-- trading timers disabled PASS before activation
-- no committed secrets PASS
-- Mission Control read-only PASS
+GitHub `main` contains the accepted PR #48 fixes, the Telegram restoration, and current governance/documentation. The finish-line rollout contract in `docs/WORK.md` now authorizes production convergence to a **pinned, verified exact `main` SHA** after preflight; Claude must not deploy a moving branch tip blindly.
 
-The remaining `qamc` SKIP is the intentionally off-account isolation check. The already-green `dev` commissioning run proves that boundary. **Full commissioning acceptance is the union of those two green account runs and is complete.**
+## Telegram notification restoration — complete
 
-### Alpaca Paper soak activated
+The bounded Telegram restoration tranche is closed and active in production.
 
-On 2026-08-14 the operator activated all seven existing `qamc` user timers after commissioning acceptance:
+- Notifier request failures redact the bot token before logging.
+- OneCLI 1.45.0 stores the real Telegram bot token and injects it into `api.telegram.org` requests with `pathTemplate: /bot{value}`.
+- The real bot token is stored only in OneCLI; `qamc/.env` contains only a harmless placeholder plus `TELEGRAM_CHAT_ID`.
+- Preflight `getMe` returned HTTP 200 before activation.
+- Exactly one non-trading Telegram delivery probe returned `DELIVERED`.
+- Existing scheduled wrappers were verified to source the same runtime `.env` path.
+- Telegram remains notification/status output only. Commands, callbacks, webhooks and broker-write controls are not authorized.
 
-- `quant-agent-morning.timer`
-- `quant-agent-midday.timer`
-- `quant-agent-intra_check.timer`
-- `quant-agent-close.timer`
-- `quant-agent-evening.timer`
-- `quant-agent-earnings_preprocess.timer`
-- `quant-agent-daily.timer`
+## PR #48 — accepted, rollout authorized
 
-Systemd reported all seven as `enabled`. The six trading-stage timers are scheduled every 30 minutes and self-gate to their intended ET windows. Their first scheduled post-activation tick was **2026-08-14 18:30 UTC / 14:30 ET**. The daily P&L CSV export is scheduled for **Mon–Fri 09:00 America/New_York**.
+PR #48 (`fix/sgov-liquidity-intraday-batch`) is merged and accepted. Its production rollout is now authorized under the stage-gated finish-line contract in `docs/WORK.md`.
 
-This marks the start of the authorized **Alpaca Paper soak**. It does **not** authorize live-money trading.
+It contains three accepted changes:
 
-## Private operator access
+1. **SGOV funding semantics** — deployable cash uses owned raw cash plus convertible sweep value, while `CashSweeper.fund_buys()` reports only confirmed broker-cash increase after the sweep sale; execution's final raw-cash recheck remains authoritative.
+2. **Intraday opportunity discovery** — bounded discovery on the existing `intra_check` cadence, including explicit current-session incomplete evidence and existing inverse ETFs for bearish expression.
+3. **Tech batch-response completeness** — every submitted symbol reaches an explicit terminal outcome; missing batch results receive one bounded retry instead of silently disappearing.
 
-The OVH host's private operator path was completed and verified on 2026-08-14:
+The intraday scan is still disabled at the start of the tranche. The operator has now explicitly authorized enabling it **after** the preceding deployment and behavior-verification gates pass. No new timer/service/daemon is authorized.
 
-- Tailscale is authenticated, enabled and healthy.
-- The **tailnet DNS name** is `wallaby-bowfin.ts.net`.
-- The OVH VPS **Tailscale machine name is `ovh-vps`**, verified from live `tailscale status` on 2026-08-18.
-- Therefore the VPS's canonical MagicDNS FQDN is **`ovh-vps.wallaby-bowfin.ts.net`**. Use that FQDN for explicit SSH/HTTPS configuration; the shorter `ovh-vps` may also resolve on clients where MagicDNS search domains are active.
-- Older `redstone-vps` references are obsolete and must not be used for current Tailscale access.
-- `wallaby-bowfin.ts.net` by itself names the tailnet DNS namespace, not the VPS node, and must not be used as the SSH host.
-- Tailscale Serve provides tailnet-only HTTPS to Mission Control while the API remains bound to `127.0.0.1:8800`; ports 443 and 8800 are not publicly reachable.
-- Existing OpenSSH key authentication for `ubuntu` and `dev` was verified over the tailnet. Tailscale SSH remains disabled so the existing key-based OpenSSH path stays authoritative.
-- Public port 22 remains temporarily available as the recovery path until the operator validates SSH from the other regular Tailscale clients; it must not be removed before that validation.
-- Orca development tooling runs under `dev` from `/home/dev/projects`; host-administration work is isolated under `ubuntu` in `/home/ubuntu/orca-admin`; `qamc` remains runtime-only.
-- Only `ubuntu` has sudo administration. `dev` and `qamc` have neither sudo nor Docker-group membership, and no foreign-owned files were found in the three account homes.
-- OneCLI remains healthy and loopback-only on ports 10254/10255.
+## Directionality and paper-soak evidence
 
-## Accepted model policy
+- QAMC is not intended to be structurally long-only.
+- Approved bearish expression remains through inverse ETFs already in the universe (`SH`, `SDS`, `PSQ`, `SQQQ`).
+- Direct stock shorting, options/theta strategies and margin remain outside the accepted architecture.
+- SGOV is deterministic cash-equivalent sweep parking, not a Portfolio Manager investment thesis.
+- The Aug 17–18 forensic found no suppressed bearish signal: sampled technical evidence did not produce a qualified inverse-ETF setup, so no prompt/intelligence correction was made.
 
+## Accepted decision/model policy
+
+- Decision chain remains: Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker.
+- Deterministic Python and broker protections remain final safety authority.
 - OpenRouter remains the model-provider path.
-- Eight seats run `google/gemini-2.5-flash-lite`.
-- `risk_manager` runs `qwen/qwen3-235b-a22b-2507` for decision-chain independence at measured-equal RM quality.
-- Three seats (`earnings_analyst`, `evening_analyst`, `meta_reflector`) remain assigned by analogy rather than direct seat measurement; this is a known limitation.
-- Projected LLM spend is approximately **$72.10 → $1.14/month** under the measured workload assumptions.
-- Full contract: `docs/architecture/MODEL_ROUTING_POLICY.md`.
+- Cost-optimized model routing and the accepted decision-chain audit remain in force.
 
-## Accepted decision-chain audit
+## Current authorization — finish-line paper rollout
 
-- Risk Manager receives position-age/drawdown evidence needed to audit its rules.
-- RM reads primary evidence before PM narrative; PM claims are not treated as primary evidence.
-- Missing PM audit steps are observable through explicit rendering and a non-blocking advisory.
-- Unsourced valuation claims are detected/logged rather than contaminating cached filing evidence.
-- Inherited Apr–Jul 2026 behavioural priors retain provenance and lose precedence to current-account evidence once available.
-- **No deterministic risk or execution semantics changed.** Alpaca remains Paper-only.
-- Full record: `docs/architecture/DECISION_CHAIN_AUDIT.md`.
+The operator has explicitly authorized one coordinated, outcome-driven tranche to reach the finished paper-trading operating state described in `docs/WORK.md`.
 
-## Paper-soak findings now accepted as work-driving evidence
+Claude may use a lead/orchestrator subagent to delegate work, verify stage gates and advance automatically through routine stages. **Do not return to the operator for micro-approval after every successful stage.** Stop only for operator-only privilege/credential actions, a material architecture/safety conflict, an unresolved product/value fork, or another boundary explicitly listed in `docs/WORK.md`.
 
-The first operator review of real soak behaviour and Mission Control on 2026-08-18 exposed issues that are now legitimate post-start work rather than speculative polish:
+The authorized end state includes:
 
-- **SGOV is deterministic cash parking, not a Portfolio Manager investment thesis.** The cash-sweep subsystem parks excess raw cash in SGOV, hides it from LLM-facing portfolio views, treats it as cash-equivalent for risk, and releases it before real BUYs. Mission Control currently presents SGOV like an ordinary position, which can materially mislead the operator about risk posture and deployable liquidity.
-- **QAMC has an existing bearish path but is not currently a direct-short system.** `SH`, `SDS`, `PSQ` and `SQQQ` are already in the trading universe and deterministic risk code handles their signed inverse exposure and leverage. The Portfolio Manager cannot emit negative target weights; SELLs reduce/close owned positions. Direct stock shorting, options/theta strategies and margin are therefore outside the current implementation and remain unauthorized.
-- **The product must not be structurally long-only.** Within the currently supported instrument set, QAMC is expected to consider and exploit credible bearish opportunities as well as bullish ones. This is now explicit in `docs/OUTCOME.md`. It does not require a trade every down day and does not authorize hindsight-driven chasing.
-- **A possible long/caution bias requires evidence-based audit.** The PM and Evening prompts are intentionally swing/position oriented and still contain inherited Apr–Jul 2026 priors aimed at correcting predecessor-account under-investment and missed leaders. Those priors are provenance-tagged, but the running account has little history. The Aug 17–18 decline therefore warrants a forensic check of whether bearish/inverse-ETF evidence reached Tech → PM → RM correctly before changing intelligence.
+- deployment of the accepted PR #48 fixes;
+- production verification of SGOV funding and Tech batch completeness;
+- staged enablement of the already-accepted intraday opportunity scanner on the existing cadence after its prerequisite gates pass;
+- end-to-end health/observability verification across the existing paper-trading system;
+- clean final governance/state closeout.
 
-  **Forensic outcome (2026-08-19, one-pass reconstruction against the live `qamc` runtime via the read-only Mission Control API):** no genuine blind spot found; no correction made. Sampled six of the eighteen 2026-08-17/18 scheduled runs (open/mid/close on each day) plus a full-window `/search` sweep of every `tech_analyst` universe-scan log line. `tech_analyst` rated `SQQQ` (the -3x Nasdaq inverse ETF already in the universe) `sell` or `neutral` on every sampled run — never `buy` — with reasoning tied to `SQQQ`'s own bearish trend/momentum plus an explicit volume-confirmation caution; `SPY`/`IWM`/`DIA`/`XLE`/`XLF` were themselves rated `buy`/`neutral` throughout both days, i.e. the system's own technical evidence read bullish-to-neutral on the broad market, not bearish. `macro_analyst` reported regime `transitional`, equity outlook `neutral`, confidence `low`, explicitly citing missing VIX data and stale inflation figures — an honestly-disclosed data-freshness gap, not a suppressed or misrepresented signal. `news_analyst` sentiment was `neutral` (Middle East tensions / rising yields as headwinds, not a decline narrative). Because `tech_analyst` never emitted a `buy` rating on `SQQQ`, `portfolio_manager` never received a target/proposed-order for it on any sampled run — the PM stage was never reached because no qualified bearish setup existed upstream, not because evidence was dropped or discounted. The account was flat both days (+$0.98 and +$1.96 on ~$10k, zero positions, zero trades) and both evening reflections recorded an explicit, coherent rationale ("cautious stance amidst significant geopolitical and macroeconomic headwinds") with empty `missed_opportunities_json`. Classification: **no qualified bearish setup existed** — a legitimate, evidence-consistent neutral/cash outcome, not a directional or prompt-level blind spot. Per the "do not hindsight-fit" instruction, no intelligence/prompt correction was made; Workstream A closes as investigated-and-clean rather than investigated-and-corrected.
-- **Mission Control buries the useful explanation.** Existing API/UI code already records per-candidate specialist evidence, PM reasoning/targets, RM verdict/modifications, deterministic gate records and execution. The current top-level dashboard still makes the operator drill into run/candidate modals to answer the basic question “why did QAMC do nothing?” A 2026-08-18 morning run visibly considered candidates while producing no decision, making this an observed usability gap.
-- **Missed-opportunity data exists but is not prominent enough.** The Evening Analyst can review notable UP or DOWN moves and the journal can render `missed_opportunities`; the operator should not need to infer from an empty trade table whether the system recognized a significant move.
+## Not authorized
 
-## Mission Control cockpit rebuild (Stage 6) — implemented, pending review/cutover
-
-Branch `claude/mission-control-cockpit-redesign` implements the final-cockpit
-tranche `docs/WORK.md` authorized (superseding the prior generic
-framework-migration prohibition for this bounded case):
-
-- Backend: `/account.liquidity` (raw cash / sweep-parked / reserve /
-  deployable), `/positions[].direction`
-  (`long`/`bearish_hedge`/`cash_equivalent`), `GET /runs/{id}/funnel`
-  (structural decision funnel + quoted PM/RM/macro context), and
-  `GET /prices/{symbol}` (daily OHLCV, Alpaca's market-data client) — all
-  bounded, read-only, GET-only, isolation-tested. Full suite: 1857
-  passed, 0 failed.
-- Frontend: evaluated the vanilla-JS prototype built earlier this
-  tranche (preserved at commit `73c68bf`) against React+Vite+Tailwind+
-  TradingView Lightweight Charts per `docs/WORK.md`'s explicit direction
-  to evaluate that stack first. The prototype proved the information
-  architecture but could not economically deliver real charting, a true
-  multi-pane layout, or Orallexa-style consensus visualization without
-  hand-building equivalent infrastructure — so the cockpit was rebuilt in
-  React (source in `frontend/`, compiled output replacing
-  `src/api/static_cockpit/`, same `/cockpit` static mount, same
-  no-runtime-dependency deployment model as `/ui`).
-- `/ui` (Stage 3-5 dashboard) is untouched and remains the fallback per
-  the parallel-build/cutover rule — no cutover has happened yet.
-- Browser-verified desktop + iPad + dark mode against seeded
-  representative data: `docs/verification/stage-6-react/`.
-- The Aug 17–18 directionality forensic (Workstream A) is closed:
-  investigated, no blind spot found, no correction made — see the
-  "Paper-soak findings" section above for the full evidence trail.
-
-### Stage 6b — agent deliberation, journal narrative, directional bias
-
-A follow-on same-branch tranche, orchestrated as three parallel isolated-
-worktree workstreams then integrated and visually polished by the lead:
-
-- **Agent deliberation UX**: `SpecialistCards` (one card per specialist
-  that actually produced evidence, with identity, direction, conviction,
-  reasoning, an honestly-derived aligned/diverges indicator) replaces the
-  old flat consensus list; a reusable `DecisionFlowDiagram` (Specialists →
-  PM → AI Risk → Deterministic Gate → Execution) is used both in the
-  candidate drill-down and, aggregated, in the main funnel panel.
-- **Decision-process observability**: `reason_category`, the full RM/PM
-  reasoning-chain breakdowns, PM's continuity/premortem disclosure flags,
-  and a derived clean/modified/rejected state are now surfaced — all data
-  that was already flowing through the API, previously untyped/unrendered.
-- **Journal rebuilt into a real day-by-day narrative**: morning regime,
-  per-run decision cards (candidates with direction tags, PM/RM text,
-  explicit trade/no-trade), full evening-reflection fields, prev/next
-  date navigation.
-- **Directional-bias observability panel**: bullish/bearish/neutral
-  candidate and proposal counts, inverse-ETF consideration, AI Risk
-  approve/reject breakdown by direction (explicitly caveated as run-level
-  not per-candidate), and a dominant-outcome histogram — aggregated
-  client-side from existing endpoints, no new backend surface, explicitly
-  framed as observability only ("not a trading signal or recommendation").
-- **Visual QA pass**: increased panel contrast/depth (the flat/monochrome
-  weakness was real), agent-identity badges, and two genuine responsive
-  bugs found and fixed (a `sm:`-breakpoint 4-column grid squeezed inside
-  a half-width panel at iPad width; the top stat strip hid 4 of 5 stats
-  behind an undiscoverable horizontal scroll).
-
-Evidence: `docs/verification/stage-6b-deliberation-journal-bias/`. Full
-backend suite unaffected throughout (1857 passed, 0 failed) — this
-tranche is frontend-only.
-
-### Stage 6c — directional exposure semantics fix (external review finding)
-
-`CandidateFunnelItem.direction` is the instrument's own signal, not
-resulting portfolio exposure — for an approved inverse ETF, a bullish
-instrument signal expresses bearish market exposure. The Directional Bias
-panel was conflating the two. Fixed: `exposureDirection()` flips
-bullish/bearish only when `is_bearish_hedge` is true (derived from that
-API flag, never a symbol heuristic); candidate and PM-proposal direction
-aggregation now show both series, clearly labeled. 8 new Vitest tests
-(dev-only dependency, confirmed absent from the production bundle).
-Evidence: `docs/verification/stage-6c-directional-exposure-fix/`.
-
-### Stage 6d — operator branch-preview endpoint
-
-`ops/preview/branch_preview.py`: an ephemeral (no systemd unit, no
-auto-start), GET-only, `dev`-account process letting the operator review
-this branch's actual `/cockpit` and `/ui` frontend from any tailnet
-device before merge, proxying real (never faked/duplicated) `qamc`
-production data via loopback GET requests to `127.0.0.1:8800` — the only
-data source available without weakening the `dev`/`qamc` account
-boundary. Binds only to the VPS's Tailscale IP (`100.111.170.97` /
-`ovh-vps.wallaby-bowfin.ts.net:8810`) — verified structurally
-unreachable via the public IP and even `127.0.0.1`. Verified `qamc`'s
-Mission Control process untouched (identical PID/uptime/health before
-and after). Documented known limitation: panels depending on this
-branch's not-yet-deployed backend endpoints degrade honestly rather than
-faking data. Evidence: `docs/verification/stage-6d-branch-preview/`.
-
-### Stage 6e — branch-preview API contract fix (real data, end-to-end)
-
-Fixed the blocker recorded in Stage 6d: old `qamc` production predates
-this branch's Stage 6 backend additions (`AccountResponse.liquidity`,
-`PositionItem.direction`/`is_cash_equivalent`, `GET /runs/{id}/funnel`),
-so the decision funnel, directional bias, liquidity, and position-
-direction panels rendered blank against the proxy. `ops/preview/
-branch_preview.py` now reconstructs exactly those missing fields/routes
-from data upstream **already** exposes (`/account`, `/positions`,
-`/runs/{id}`, `/runs/{id}/candidates(/{symbol})`, all already deployed),
-using the same typed schemas and pure derivation rules this branch's own
-backend uses — never a direct DB/broker-credential read from the `dev`
-account, and self-obsoleting once production actually deploys this
-branch. `GET /prices/{symbol}` (the one field needing real Alpaca
-market-data credentials `dev` doesn't have) continues to degrade
-honestly, as before.
-
-Verified interactively in a real connected browser (zero failed requests,
-zero console errors) and independently with a local headless Playwright
-script (zero console errors across desktop/iPad/legacy-`/ui`) against the
-live preview serving real `qamc` production data — Decision Room funnel,
-Directional Bias, Cash & Risk Exposure, positions direction, run detail
-(81 real candidates), candidate drill-down, and the day-narrative Journal
-all confirmed populated with genuine account/run data, not fabricated.
-`qamc` production `/health` confirmed identical before/after (untouched,
-never restarted). Full backend suite: 1857 passed, 0 failed (unchanged).
-Frontend Vitest: 8 passed (unchanged — no `frontend/`/`src/api/` files
-were touched this tranche). Evidence:
-`docs/verification/stage-6e-preview-contract-fix/`.
-
-### Stage 6f — cockpit information architecture + visual redesign
-
-Operator review of the Stage 6e cockpit found it still read as a long
-telemetry/admin page (a flat stacked two-column layout, including an
-unbounded ~80-ticker flat pill dump) rather than a compact Mission
-Control cockpit. Frontend-only restructure, no backend/API changes:
-
-- `App.tsx` rebuilt into a real cockpit grid — candidate rail (left) /
-  chart + selected-symbol context (center) / Decision Room (right) at
-  desktop width, collapsing to an explicit `Candidates / Chart /
-  Decision Room` tab strip below the `xl` (1280px) breakpoint (covers
-  every iPad size) instead of a squeezed 3-column layout. Nine
-  previously-stacked full-width panels (positions, orders, trades, runs,
-  directional bias, missed opportunities, search, health) are now a
-  single tabbed support area below the cockpit. Cockpit vs Journal is
-  its own top-level view switch.
-- `CandidateRail` (replaces `WatchlistPanel`): the candidate universe is
-  bucketed by the furthest funnel stage each candidate reached
-  (rejected by specialist / reached PM / proposed / modified-or-blocked
-  by risk / executed), with clickable filter chips, a funnel-bars
-  visualization, a symbol filter, and a height-bounded scrollable list
-  — no more unbounded flat pill dump.
-- `DecisionRoomPanel` (replaces the old full-width decision-funnel
-  panel): a narrow-column Specialists → PM → AI Risk → Deterministic
-  Gate → Execution chain, rendered **vertically** so all 5 stages are
-  visible without scrolling, with the deterministic gate visually
-  marked "Final authority" (thicker border, explicit label) rather than
-  reading as just another agent step.
-- Real visual toolbox added where the cockpit was plain text/tables:
-  conviction meter bars on specialist cards, segmented exposure/
-  liquidity bars on the cash & risk panel, an always-visible header
-  exposure gauge (`ExposureStrip`, real long/hedge/cash split from
-  already-fetched account+positions data), a real-data equity sparkline
-  on the Journal view.
-- Two real bugs found and fixed during this same pass: a CSS Grid `1fr`
-  track without `min-width:0` let the price chart's content width push
-  the Decision Room column off-screen; `lightweight-charts`' `autoSize`
-  resized the chart canvas correctly when its pane went from hidden to
-  visible but never re-fit the visible time range, rendering bars
-  compressed into a sliver — replaced with an explicit `ResizeObserver`
-  that resizes and fits together.
-- Verified against real `qamc` production data (honest current empty
-  state — zero candidates, zero non-cash positions) via the existing
-  `ops/preview/branch_preview.py`, and against a throwaway seeded
-  scenario (not committed) spanning every candidate-funnel bucket, both
-  desktop and iPad, zero console/page errors across 12 scripted
-  Playwright captures. `qamc` production `/health` confirmed unaffected
-  (same PID, untouched). `npm run build` + `npm run test` (8/8) pass.
-  Evidence: `docs/verification/stage-6f-cockpit-ia/`.
-
-Awaiting ChatGPT/operator review and a cutover decision (replace `/ui`'s
-default, or keep both mounted). Claude does not cut over or merge its
-own work.
-
-### Stage 6g — cockpit visual identity system + stale-data correctness fix
-
-A real Stage 6f screenshot the operator captured exposed two problems Stage
-6f's information-architecture fix didn't reach: the cockpit still read as a
-generic dark admin panel (weak typography, plain bordered cards, a
-Decision Room that was five stacked rectangles), and a genuine correctness
-bug — a failed API poll could leave old `funnel`/`positions`/`account` data
-rendering as if current, underneath a separate visible error message
-elsewhere on the same page. This tranche fixed both, after a dedicated
-research pass (external component-ecosystem and product-pattern research,
-including a public MIT React+Vite AI-trading-frontend project
-(`sh1ftmaker/helm`) read directly for its decision-card visual grammar) the
-operator reviewed and explicitly authorized a small, coherent set of mature
-visualization libraries for — deliberately **not** minimizing dependency
-count, on the operator's explicit instruction that best-in-class UX
-outweighs dependency-count minimization for this product:
-
-- **Design tokens**: a color grammar where hue carries meaning (cyan =
-  system/brand, green/red = market truth only, violet = AI reasoning,
-  amber = attention, magenta = bearish-hedge flag), IBM Plex Sans/Mono
-  typography, a subtle vignette/dot-grid background replacing flat black.
-- **Hero band** + a full-width **decision-state banner** (EXECUTED / NO
-  TRADE / REJECTED / DETERMINISTIC GATE BLOCKED) promoted above the
-  primary cockpit body — WORK.md's "what do I own / what's the market
-  doing / why did it (not) trade" questions are now answered before any
-  interaction, not just after opening the Decision Room.
-- **Decision Room rebuilt on React Flow**: the Specialists → PM → AI Risk →
-  Deterministic Gate → Execution chain is a real node/edge graph with
-  genuine per-specialist fan-in (one node per specialist that actually
-  produced evidence, not a flattened "Specialists" box), and the
-  Deterministic Gate is a categorically different node **shape** (a
-  hexagonal hard-interlock outline with a hazard-stripe fill), not just a
-  thicker border — the single most-requested fix ("not five prettier
-  rectangles").
-- **CandidateRail** on TanStack Table (real column sort + expandable rows)
-  and an ECharts native funnel series; real BUY/SELL trade markers wired
-  onto the price chart via `lightweight-charts`' existing (previously
-  unused) marker API.
-- **Desktop-only Dockview support workspace** — explicit, scoped operator
-  approval for this one new architectural dependency: resizable/
-  draggable/poppable, default layout matching the old tab order, never
-  wraps the primary cockpit, never instantiated below the `xl` (iPad)
-  breakpoint, layout persists to `localStorage` only (non-authoritative).
-- **Stale-data correctness fix**: every polled resource now tracks data +
-  error + last-good timestamp separately; a failed poll never overwrites
-  good data, and every affected panel renders an explicit "STALE — last
-  known data as of HH:MM" state instead of silently continuing to show old
-  data as current. Verified with a real forced-failure → recovery cycle
-  (Playwright route-blocking), not a mock.
-
-Frontend-only (`git diff --stat` confirms zero changes under `src/` outside
-the pre-existing compiled `src/api/static_cockpit/` bundle); `/ui` and real
-`qamc` production confirmed untouched. Full details, the library-by-library
-authorization record, and the stale→recovery screenshots:
-`docs/verification/stage-6g-cockpit-visual-system/`.
-
-Deferred to a follow-on tranche (scoped but not implemented this pass): the
-ECharts Sankey candidate-branching detail view and the missed-opportunities
-scatter chart, both explicitly secondary/detail-view items in the design
-plan.
-
-### Stage 6h — mature-visualization upgrade + chart dead-space fix
-
-A follow-on external review of a real Stage 6g screenshot found the
-information architecture and visual-identity work sound but flagged three
-concrete defects and asked for a bounded, evidence-based research pass
-(information → best visualization pattern → best available mature
-component → KEEP/TRANSFORM/REPLACE/CONSOLIDATE/REMOVE) rather than another
-prettifying pass over homemade primitives:
-
-- **Chart dead-space fix**: the cockpit's three-column row now shares one
-  explicit viewport-bounded height (`xl:h-[calc(100vh-150px)]`) instead of
-  an unconstrained grid cell; the candidate rail and Decision Room scroll
-  independently within it, and the chart's `flex-1 min-h-0` wrapper lets it
-  fill whatever vertical space is actually available (240px floor) instead
-  of the old hard-coded 260px that left a large dead region below it on
-  any taller viewport. `PriceChartPanel`'s `ResizeObserver` now reads
-  height as well as width. Verified at two desktop heights (1000px,
-  760px) — no dead region at either.
-- **Liquidity + Real-Risk-Exposure donuts** (`DonutMeter.tsx`, ECharts
-  `pie` in donut mode, sharing `ArcGauge`'s token/substrate) replace both
-  `SegmentedBar` thin bars the operator had already rejected once. SGOV
-  sweep-parking keeps a distinct, truthful `dim` category — never
-  market-status green/red, never the brand-accent cyan.
-- **Positions treemap** (`PositionsTreemap.tsx`, new): block area = market
-  value (concentration), block color = real unrealized P&L sign — a
-  treemap rather than another donut because holdings are a real,
-  unbucketed hierarchy, not a 2–3-category composition.
-- **Missed-opportunities scatter**: `MissedOpportunitiesPanel` now
-  aggregates the last 20 journal days (existing endpoints, no new backend
-  surface) into an ECharts scatter — date × signed move % × genuine-miss/
-  disciplined-pass coloring — so the up/down miss balance `docs/
-  OUTCOME.md` cares about is visible longitudinally instead of inferred
-  from one day's text. Previously deferred pending a real case for it;
-  this is that case.
-- **Decision Room re-assessed against the review's explicit 9-question
-  bar and found already sufficient** (Stage 6g's React Flow graph +
-  existing `CandidateDetailModal` drill-down) — deliberately **not**
-  rebuilt, to avoid the "prettier homemade primitive" failure mode the
-  review warned against. Sankey reassessed and still deferred: current
-  candidate volumes don't yet make the case for it over the existing
-  funnel bars + table.
-- **Two real bugs found and fixed**: the in-flight (uncommitted at pass
-  start) `DonutMeter` work was typecheck-broken (`GaugeTone` missing the
-  just-added `"hedge"` member; two ECharts `graphic` text elements used
-  the nonexistent `textAlign` instead of `align`) and, once compiling,
-  `LiquidityPanel` had been silently re-pointed to `tone: "neg"` (market-
-  loss red) for bearish-hedge and `tone: "accent"` (brand cyan) for
-  cash-equivalent — both violate this project's own color-grammar
-  contract. Fixed by extending `DonutMeter`'s tone set and restoring the
-  correct semantic tones. Separately, this pass's own verification
-  fixture had an invalid `RiskVerdict.reason_category` enum value and a
-  `RiskModification` missing its required `symbol` field, which Pydantic
-  silently degraded to a missing verdict (confirming, not breaking, the
-  production degrade-don't-crash contract) — fixed in the fixture.
-
-Frontend-only; `git diff --stat -- src/` confirms zero backend/trading
-changes beyond the compiled `src/api/static_cockpit/` bundle, and `/ui` is
-byte-for-byte untouched. Verified with a seeded throwaway fixture spanning
-six days and every decision state (same monkeypatch-at-the-broker/db-read-
-seam convention as Stage 6f/6g), captured via a local headless Playwright
-script at two desktop heights and iPad width, zero console/page errors
-across every scenario. `npm run build`/`npm test` and the backend safety/
-isolation test subset (`test_api_safety.py`, `test_api_isolation.py`,
-`test_api_no_secrets.py`, 41 tests) all pass. Full details, the color-
-grammar bug writeup, and screenshots:
-`docs/verification/stage-6h-visualization-upgrade/`.
-
-Awaiting ChatGPT/operator review alongside Stage 6f/6g. Claude does not cut
-over or merge its own work.
-
-## Current product priority: directionality + explainability during the live paper soak
-
-The paper soak continues uninterrupted. The next authorized tranche is to use actual Aug 17–18 evidence to determine whether the system's lack of risk deployment was intentional, a candidate-generation/agent bias, a risk veto, or simply no qualified setup, while simultaneously fixing the dashboard presentation defects that make that distinction difficult.
-
-Priority order:
-
-1. forensic reconstruction of bearish opportunities through specialist → PM → RM → deterministic gate → execution;
-2. make raw cash, SGOV sweep liquidity, real risk exposure and deployable liquidity visually distinct;
-3. put a latest-run decision funnel / “why no trade?” explanation on the main Mission Control view;
-4. surface directional posture, inverse-ETF consideration and missed opportunities using existing read-only evidence where practical;
-5. change prompt/agent behaviour only if the forensic evidence demonstrates a real directional blind spot.
-
-## ChatGPT GitHub integration role
-
-ChatGPT owns GitHub review/integration and should use the connected GitHub plugin directly for supported repository reads/writes, PR creation/review, merges and routine administration. Claude does not merge its own work. The operator should not be asked to perform routine GitHub housekeeping that ChatGPT can perform.
-
-## Not authorized without a new contract
-
-- Any live-broker trading.
-- Direct stock shorting, options trading/theta strategies, or enabling margin.
-- Any second model provider or silent fallback model.
+- Live-broker trading.
+- Direct stock shorting, options/theta strategies, or margin.
+- New timers, daemons, services, databases, proxies, credential systems or other durable infrastructure outside accepted architecture.
 - Deterministic risk/execution semantic redesign.
 - Broker-write Mission Control controls.
+- Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
-- Replacing upstream OneCLI or adding a new durable routing platform without a new architectural decision.
+- Replacing upstream OneCLI or adding a new durable routing/security/credential platform without an accepted architectural decision.
+- Forcing/manufacturing a paper trade merely to prove the rollout.
 
 ## Handoff
 
-Paper soak remains active. Execute the authorized autonomous product-improvement tranche in `docs/WORK.md`, preserving existing deterministic safety semantics and requiring evidence before any intelligence correction.
+Execute the stage-gated finish-line paper rollout in `docs/WORK.md`. The correct completion condition is operational readiness and verified wiring on the accepted architecture, not guaranteed trade generation.

@@ -15,10 +15,12 @@ def _make_mock_position(symbol, qty, avg_entry, current_price, market_value, unr
     return pos
 
 
-def _make_mock_account(cash="5000.0", portfolio_value="10000.0"):
+def _make_mock_account(cash="5000.0", portfolio_value="10000.0",
+                        non_marginable_buying_power="5000.0"):
     acct = MagicMock()
     acct.cash = cash
     acct.portfolio_value = portfolio_value
+    acct.non_marginable_buying_power = non_marginable_buying_power
     return acct
 
 
@@ -32,6 +34,47 @@ def test_get_account(mock_tc_cls):
     account = broker.get_account()
     assert account["cash"] == 5000.0
     assert account["portfolio_value"] == 10000.0
+
+
+@patch("src.execution.broker.TradingClient")
+def test_get_account_reads_non_marginable_buying_power(mock_tc_cls):
+    """2026-08-19 SGOV/deployable-liquidity forensic: get_account() must
+    surface Alpaca's settled, non-margin buying-power figure — the
+    truthful "safe to spend right now, no margin" number — distinct from
+    `cash`, which can include same-day unsettled sale proceeds."""
+    mock_client = MagicMock()
+    mock_client.get_account.return_value = _make_mock_account(
+        cash="10145.0", non_marginable_buying_power="145.0",
+    )
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    account = broker.get_account()
+    assert account["cash"] == 10145.0
+    assert account["non_marginable_buying_power"] == 145.0
+
+
+@patch("src.execution.broker.TradingClient")
+def test_get_account_falls_back_to_cash_when_nmbp_field_absent(mock_tc_cls):
+    """Defensive fallback for an account payload that genuinely lacks the
+    field (older alpaca-py / unexpected broker response shape) — degrade
+    to `cash` rather than raising, matching the existing `last_equity`
+    fallback convention just above it in get_account()."""
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    # A real object (not MagicMock) so a missing attribute actually raises
+    # AttributeError instead of auto-vivifying — the case getattr's
+    # default argument exists to handle.
+    mock_client.get_account.return_value = SimpleNamespace(
+        cash="250.0", portfolio_value="10000.0", last_equity="9800.0",
+    )
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    account = broker.get_account()
+    assert account["cash"] == 250.0
+    assert account["non_marginable_buying_power"] == 250.0
 
 
 @patch("src.execution.broker.TradingClient")

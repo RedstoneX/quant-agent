@@ -18,6 +18,44 @@ _BARS_PER_SYMBOL = 20
 _MAX_SYMBOLS_PER_CALL = 30
 _CHUNK_SIZE = 25
 
+# 2026-08-19 Tech batch-response symbol-loss fix: bounded re-ask for
+# symbols a chunk's first response dropped (non-JSON response, LLM
+# returned fewer rows than submitted, or a row failed schema validation).
+# Small and fixed — this is a recovery pass for a parsing/response
+# hiccup, not a retry-until-success loop; a symbol still missing after
+# this many extra attempts gets an explicit failed outcome instead.
+_MAX_MISSING_RETRIES = 1
+
+
+def _merge_agent_results(first: AgentResult, second: AgentResult) -> AgentResult:
+    """Combine two sequential LLM-call results into one for cost/telemetry
+    accounting — same merge semantics `analyze_batch` already uses to
+    stitch its chunk-loop AgentResults into a single reported call, reused
+    here so a `_analyze_chunk` retry's tokens/cost/latency are never
+    silently dropped from what gets logged and billed against."""
+    merged_cost: float | None
+    if first.cost_usd is None or second.cost_usd is None:
+        merged_cost = None
+    else:
+        merged_cost = first.cost_usd + second.cost_usd
+    return AgentResult(
+        raw_text=f"{first.raw_text}\n\n--- retry ---\n{second.raw_text}",
+        tokens_used=first.tokens_used + second.tokens_used,
+        model=second.model,
+        user_message=f"{first.user_message}\n\n--- retry ---\n{second.user_message}",
+        input_tokens=first.input_tokens + second.input_tokens,
+        output_tokens=first.output_tokens + second.output_tokens,
+        cost_usd=merged_cost,
+        finish_reason=second.finish_reason,
+        truncated=bool(first.truncated or second.truncated),
+        requested_model=first.requested_model,
+        requested_provider=second.requested_provider or first.requested_provider,
+        actual_provider=second.actual_provider,
+        used_fallback=bool(first.used_fallback or second.used_fallback),
+        prompt_version=second.prompt_version or first.prompt_version,
+        latency_s=first.latency_s + second.latency_s,
+    )
+
 
 class TechAnalystAgent(BaseAgent):
     @property
@@ -40,6 +78,14 @@ class TechAnalystAgent(BaseAgent):
         # overnight, so this is a cheap additional context.
         prior_macro_regime: str | None = kwargs.get("prior_macro_regime")
         prior_macro_outlook: str | None = kwargs.get("prior_macro_outlook")
+        # Current-session (TODAY, still forming) facts per symbol, from the
+        # intraday scan's snapshot call. Rendered as its own clearly-labelled
+        # INCOMPLETE block — never merged into the completed-daily-bar
+        # series, and never used to overwrite the last completed close
+        # (2026-08-19: the intraday scan detected candidates on live prices
+        # but then handed Tech only bars ending at yesterday's close, so the
+        # very move that triggered the scan was invisible to the analyst).
+        intraday_context: dict[str, dict] = kwargs.get("intraday_context") or {}
 
         # How many days ago did the cached rating first appear?
         from datetime import date as _date
@@ -79,6 +125,44 @@ class TechAnalystAgent(BaseAgent):
                 f"\nValuation: trailing PE {t} | forward PE {f} | P/S {ps}"
             )
 
+        def _intraday_block(symbol: str, last_completed_close) -> str:
+            ic = intraday_context.get(symbol)
+            if not ic:
+                return ""
+            last = ic.get("last_price")
+            prev = ic.get("prev_close")
+            if not isinstance(last, (int, float)) or last <= 0:
+                return ""
+            # Move is measured against the prior COMPLETED close, which is
+            # what "today's move" means; fall back to the last bar in the
+            # series when the snapshot didn't carry one.
+            base = prev if isinstance(prev, (int, float)) and prev > 0 else None
+            if base is None and isinstance(last_completed_close, (int, float)):
+                base = last_completed_close if last_completed_close > 0 else None
+            move_str = "n/a"
+            if base:
+                move_str = f"{(last - base) / base * 100:+.2f}% vs prior close ${base:,.2f}"
+
+            def _fmt(key, prefix="$"):
+                v = ic.get(key)
+                if not isinstance(v, (int, float)) or v <= 0:
+                    return "n/a"
+                return f"{prefix}{v:,.2f}" if prefix else f"{v:,.0f}"
+
+            return (
+                f"\n⚠️ CURRENT SESSION (TODAY, INCOMPLETE — this trading day has "
+                f"NOT closed; these are live intraday figures, NOT a finished "
+                f"daily bar and NOT part of the completed series above):"
+                f"\n  Last trade: ${last:,.2f} ({move_str})"
+                f"\n  Session so far: O={_fmt('session_open')} "
+                f"H={_fmt('session_high')} L={_fmt('session_low')} "
+                f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
+                f"\n  The indicators above are computed from COMPLETED daily "
+                f"bars only and therefore do NOT yet reflect this move. Judge "
+                f"the setup on today's live price action against those levels, "
+                f"and say so explicitly in your reasoning_chain."
+            )
+
         sections = []
         for item in symbols_data:
             symbol = item["symbol"]
@@ -89,12 +173,12 @@ class TechAnalystAgent(BaseAgent):
                 f"  {b.date}: O={b.open} H={b.high} L={b.low} C={b.close} V={b.volume}"
                 for b in recent_bars
             )
-            current_price = recent_bars[-1].close if recent_bars else "N/A"
+            last_close = recent_bars[-1].close if recent_bars else "N/A"
             sections.append(f"""### {symbol}{_prior_line(symbol)}{_valuation_line(symbol)}
-Price (last {len(recent_bars)} daily bars):
+Price (last {len(recent_bars)} COMPLETED daily bars):
 {bars_text}
 Indicators: MA20={indicators.ma_20} MA50={indicators.ma_50} MA200={indicators.ma_200} | RSI={indicators.rsi_14} | MACD={indicators.macd}/{indicators.macd_signal}/{indicators.macd_hist} | BB={indicators.bb_lower}/{indicators.bb_middle}/{indicators.bb_upper} | ATR={indicators.atr_14} | Vol%={indicators.volume_change_pct}
-Current close: {current_price}""")
+Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
 
         macro_context = ""
         if prior_macro_regime:
@@ -125,9 +209,20 @@ Current close: {current_price}""")
         valuations: dict[str, dict] | None = None,
         prior_macro_regime: str | None = None,
         prior_macro_outlook: str | None = None,
-    ) -> tuple[dict[str, TechAnalysisResult], "AgentResult | None"]:
+        intraday_context: dict[str, dict] | None = None,
+    ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
         """Batch analyze multiple symbols. Auto-chunks when > 30 symbols to avoid
         context overflow on the LLM call. Returns ({symbol: result}, merged AgentResult).
+
+        Every symbol in `symbols_data` is guaranteed to be a key in the
+        returned dict (2026-08-19 Tech batch-response symbol-loss fix) —
+        `None` marks a symbol that failed to resolve even after a bounded
+        retry within its chunk. Callers MUST filter `None` values out
+        before treating the dict's values as a list of real analyses
+        (e.g. `[a for a in result.values() if a is not None]`), and should
+        surface the None count rather than silently dropping it — that
+        silent drop, at the pipeline_stages.py call site, was the original
+        production incident this fix addresses.
 
         prior_ratings: optional {symbol: {rating, conviction, first_seen_date, ...}}
           from TechStore. When supplied, each symbol's user-message section prefaces
@@ -147,7 +242,7 @@ Current close: {current_price}""")
         if len(symbols_data) <= _MAX_SYMBOLS_PER_CALL:
             return self._analyze_chunk(
                 symbols_data, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
             )
 
         # Chunk and stitch.
@@ -160,7 +255,7 @@ Current close: {current_price}""")
             len(symbols_data), len(chunks), _CHUNK_SIZE,
         )
 
-        merged: dict[str, TechAnalysisResult] = {}
+        merged: dict[str, TechAnalysisResult | None] = {}
         combined_raw: list[str] = []
         combined_msg: list[str] = []
         total_tokens = 0
@@ -192,7 +287,7 @@ Current close: {current_price}""")
         for i, chunk in enumerate(chunks, 1):
             chunk_analyses, chunk_result = self._analyze_chunk(
                 chunk, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
             )
             merged.update(chunk_analyses)
             if chunk_result is not None:
@@ -245,22 +340,33 @@ Current close: {current_price}""")
         valuations: dict[str, dict] | None = None,
         prior_macro_regime: str | None = None,
         prior_macro_outlook: str | None = None,
-    ) -> tuple[dict[str, TechAnalysisResult], "AgentResult | None"]:
-        """Single-call variant used inside the chunking loop."""
+        intraday_context: dict[str, dict] | None = None,
+        _retries_left: int = _MAX_MISSING_RETRIES,
+    ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
+        """Single-call variant used inside the chunking loop.
+
+        2026-08-19 Tech batch-response symbol-loss fix: every symbol in
+        `symbols_data` is guaranteed to be a key in the returned dict —
+        a `TechAnalysisResult` for a successfully parsed rating (including
+        `neutral`/`sell`; a considered-and-passed symbol is a terminal
+        outcome too, not a loss), or `None` for a symbol that could not be
+        resolved even after a bounded retry (visibly failed, never
+        silently absent). Previously a chunk that came back short (one
+        production incident parsed 1/10 submitted symbols) just had
+        nothing in the dict for the other 9 — logged once at WARNING and
+        otherwise indistinguishable from "never asked".
+        """
         result = self.run(
             symbols_data=symbols_data,
             prior_ratings=prior_ratings or {},
             valuations=valuations or {},
             prior_macro_regime=prior_macro_regime,
             prior_macro_outlook=prior_macro_outlook,
+            intraday_context=intraday_context or {},
         )
         parsed = result.parse_json()
 
-        if parsed is None:
-            logger.error("Tech analyst returned non-JSON for batch analysis")
-            return {}, result
-
-        items = parsed if isinstance(parsed, list) else [parsed]
+        submitted = {s.get("symbol") for s in symbols_data if isinstance(s, dict)}
         # Index input by symbol so we can attach atr_14 back to each
         # TechAnalysisResult (the LLM doesn't echo ATR; we preserve it from
         # the indicators that fed the prompt so PortfolioConstructor's
@@ -273,39 +379,92 @@ Current close: {current_price}""")
             indicators = s.get("indicators")
             if sym and indicators is not None:
                 input_indicators_by_sym[sym] = getattr(indicators, "atr_14", None)
-        submitted = {s.get("symbol") for s in symbols_data if isinstance(s, dict)}
+
         analyses: dict[str, TechAnalysisResult] = {}
         failed_symbols: list[str] = []
         unsubmitted_symbols: list[str] = []
-        for item in items:
-            try:
-                analysis = TechAnalysisResult(**item)
-                # audit round 2 #23: drop rows for symbols never submitted in
-                # this chunk. Production showed the LLM inventing phantom keys
-                # like "AAPL_CORRECTION" / "ZS_FINAL" — those rows leaked into
-                # PM/RM prompts and were persisted forever in the tech store,
-                # while the superseded original row survived as the real key.
-                if analysis.symbol not in submitted:
-                    unsubmitted_symbols.append(analysis.symbol)
-                    continue
-                # Carry ATR through from the input data (LLM doesn't emit it).
-                atr = input_indicators_by_sym.get(analysis.symbol)
-                if atr is not None:
-                    analysis.atr_14 = atr
-                analyses[analysis.symbol] = analysis
-            except Exception as e:
-                bad_symbol = str((item or {}).get("symbol", "?")) if isinstance(item, dict) else "?"
-                failed_symbols.append(bad_symbol)
-                logger.error("Failed to parse tech analysis item for %s: %s", bad_symbol, e)
-        if unsubmitted_symbols:
-            logger.warning(
-                "Tech analyst emitted %d row(s) for symbols not in the submitted "
-                "chunk — dropped: %s", len(unsubmitted_symbols), unsubmitted_symbols,
+
+        if parsed is None:
+            logger.error(
+                "Tech analyst returned non-JSON for batch analysis (%d symbols "
+                "submitted: %s)", len(submitted), sorted(submitted),
             )
+        else:
+            items = parsed if isinstance(parsed, list) else [parsed]
+            for item in items:
+                try:
+                    analysis = TechAnalysisResult(**item)
+                    # audit round 2 #23: drop rows for symbols never submitted in
+                    # this chunk. Production showed the LLM inventing phantom keys
+                    # like "AAPL_CORRECTION" / "ZS_FINAL" — those rows leaked into
+                    # PM/RM prompts and were persisted forever in the tech store,
+                    # while the superseded original row survived as the real key.
+                    if analysis.symbol not in submitted:
+                        unsubmitted_symbols.append(analysis.symbol)
+                        continue
+                    # Carry ATR through from the input data (LLM doesn't emit it).
+                    atr = input_indicators_by_sym.get(analysis.symbol)
+                    if atr is not None:
+                        analysis.atr_14 = atr
+                    analyses[analysis.symbol] = analysis
+                except Exception as e:
+                    bad_symbol = str((item or {}).get("symbol", "?")) if isinstance(item, dict) else "?"
+                    failed_symbols.append(bad_symbol)
+                    logger.error("Failed to parse tech analysis item for %s: %s", bad_symbol, e)
+            if unsubmitted_symbols:
+                logger.warning(
+                    "Tech analyst emitted %d row(s) for symbols not in the submitted "
+                    "chunk — dropped: %s", len(unsubmitted_symbols), unsubmitted_symbols,
+                )
+
         missing = submitted - set(analyses.keys())
-        if missing or failed_symbols:
+        if missing and _retries_left > 0:
+            retry_data = [
+                s for s in symbols_data
+                if isinstance(s, dict) and s.get("symbol") in missing
+            ]
             logger.warning(
-                "Tech batch incomplete: submitted=%d, parsed=%d, validation-failed=%s, missing-from-response=%s",
+                "Tech batch incomplete: submitted=%d, parsed=%d, validation-failed=%s, "
+                "missing-from-response=%s — retrying the %d missing symbol(s) "
+                "(%d retry attempt(s) left)",
                 len(submitted), len(analyses), failed_symbols, sorted(missing),
+                len(retry_data), _retries_left,
             )
-        return analyses, result
+            retry_analyses, retry_result = self._analyze_chunk(
+                retry_data, prior_ratings, valuations,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
+                _retries_left=_retries_left - 1,
+            )
+            analyses.update({
+                sym: a for sym, a in retry_analyses.items() if a is not None
+            })
+            if retry_result is not None:
+                result = _merge_agent_results(result, retry_result)
+            missing = submitted - set(analyses.keys())
+
+        # Only the outermost call logs the final missing/resolved verdict —
+        # a nested retry call already logged its own "retrying" warning
+        # above, and would otherwise double-log the same symbols' final
+        # outcome once per stack frame as the recursion unwinds.
+        if _retries_left == _MAX_MISSING_RETRIES:
+            if missing:
+                logger.error(
+                    "Tech batch: %d symbol(s) unresolved after%s — recording an "
+                    "explicit failed outcome (never silently dropped): %s",
+                    len(missing),
+                    " retry" if _MAX_MISSING_RETRIES > 0 else " parsing",
+                    sorted(missing),
+                )
+            elif failed_symbols:
+                logger.info(
+                    "Tech batch: all %d initially-missing/invalid symbol(s) resolved "
+                    "on retry: %s", len(failed_symbols), failed_symbols,
+                )
+
+        # Every submitted symbol is a key: TechAnalysisResult on success,
+        # None for an explicit, visible, terminal failure — no key is ever
+        # simply absent.
+        out: dict[str, TechAnalysisResult | None] = {
+            sym: analyses.get(sym) for sym in submitted
+        }
+        return out, result

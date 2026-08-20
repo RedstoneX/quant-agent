@@ -1,13 +1,26 @@
 """Idle-cash sweep (SGOV parking) invariants.
 
 The sweep vehicle is CASH-EQUIVALENT everywhere:
-  1. Hidden from LLM views (split_positions), counted as cash by the risk
-     filter, excluded from net-exposure math.
+  1. Hidden from LLM views (split_positions) and excluded from
+     net-exposure math.
   2. force_delever liquidates it FIRST (tier -1, before real longs).
   3. _reconcile_stop_coverage never flags it (deliberately stopless).
-  4. fund_buys releases exactly enough parked cash before the BUY phase;
-     park_excess parks only cash above reserve + open-BUY holds.
+  4. fund_buys releases parked cash before the BUY phase; park_excess
+     parks only cash above reserve + open-BUY holds.
   5. Disabled / unconfigured / MagicMock'd pipelines are structural no-ops.
+
+Cash-equivalent DOES mean spendable this session, but only once the sale
+actually fills. Verified Alpaca semantics (2026-08-19): `cash` is credited
+as soon as a SELL fills — settlement at T+1 gates only withdrawal/transfer
+and the non-marginable (crypto) figure — so a filled SGOV liquidation
+genuinely funds an equity BUY the same session.
+
+The real defect was never the crediting; it was assuming the sale filled.
+`fund_buys` now reports the CONFIRMED rise in raw broker cash rather than
+the notional of the order it submitted, and `_compute_deployable_cash`
+(cash + convertible sweep value, never a margin buying-power field) is the
+planning figure PM/RM/the pre-trade gate see. ExecutionStage's raw-cash
+recheck remains the final authority.
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -88,17 +101,21 @@ def _buy(symbol="AAPL", alloc=10.0):
                          reasoning="test")
 
 
-def test_filter_credits_parked_value_as_cash():
-    """A BUY that raw cash can't cover passes when parked SGOV covers it
-    (ExecutionStage releases the cash before the BUY submits)."""
+def test_filter_does_not_itself_credit_parked_value_as_cash():
+    """The gate must take the `cash` figure it is GIVEN and not inflate it
+    further. Crediting the sweep vehicle is the caller's job
+    (`_compute_deployable_cash`), done once; the gate double-counting it
+    on top would re-introduce approvals execution cannot fund. Here the
+    caller passed a deliberately un-credited $1k, so a $10k BUY must be
+    blocked."""
     p = _sweep_pipeline()
-    # $100k book: $9.5k NVDA, $80.5k SGOV, $1k raw cash. 10% BUY = $10k.
+    # $100k book: $9.5k NVDA, $80.5k SGOV, $1k deployable cash. 10% BUY = $10k.
     allowed, _, blocked = p._filter_hard_risk_decisions(
         [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0,
         daily_pnl=0.0, baseline=100_000.0, cash=1_000.0,
     )
-    assert [d.symbol for d in allowed] == ["AAPL"]
-    assert not blocked
+    assert allowed == [], "SGOV's value must not fund a BUY the gate approves"
+    assert any("cash" in r for r in blocked)
 
 
 def test_filter_blocks_same_buy_when_sweep_disabled():
@@ -406,6 +423,7 @@ def test_risk_stage_rm_view_excludes_vehicle():
     ctx.total_value = 100_000.0
     ctx.last_equity = 100_000.0
     ctx.cash = 10_000.0
+    ctx.deployable_cash = 10_000.0
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=ReasoningChain(
             macro_filter="x", news_check="x", earnings_check="x",
@@ -421,7 +439,235 @@ def test_risk_stage_rm_view_excludes_vehicle():
 
     rm_seen = p.risk_manager.review.call_args.kwargs["positions"]
     assert [x.symbol for x in rm_seen] == ["NVDA"], "RM must not see SGOV"
-    # but the HARD filter received the RAW list (it derives the parked-cash
-    # credit from finding the vehicle itself)
+    # but the HARD filter received the RAW list (it still needs to find the
+    # vehicle to exclude it from net-exposure math)
     filter_positions = p._filter_hard_risk_decisions.call_args_list[0].args[1]
     assert any(x.symbol == "SGOV" for x in filter_positions)
+
+    # 2026-08-19 SGOV/deployable-liquidity forensic: RM must receive
+    # ctx.deployable_cash untouched (10,000), NEVER inflated by SGOV's
+    # $80,480 market value (which the old `ctx.cash + parked_value` credit
+    # would have produced: 10,000 + 80,480 = 90,480). The parked value is
+    # still surfaced, but only via the separate `reserve_balance` kwarg.
+    assert p.risk_manager.review.call_args.kwargs["cash"] == 10_000.0
+    assert p.risk_manager.review.call_args.kwargs["reserve_balance"] == SGOV.market_value
+    # and the hard gate (both pre- and post-RM calls) must be checked
+    # against deployable_cash too, never ctx.cash + SGOV.
+    for call in p._filter_hard_risk_decisions.call_args_list:
+        assert call.kwargs["cash"] == 10_000.0
+
+
+def test_decision_stage_pm_view_gets_deployable_cash_not_sgov_inflated():
+    """2026-08-19 SGOV/deployable-liquidity forensic, PM side: the exact
+    incident this regresses is PM being told ~$10K was "cash" (really
+    ~$145 deployable + ~$9.8K parked SGOV), sizing BUYs against the
+    inflated figure that execution could never actually fund. PM must now
+    receive ctx.deployable_cash verbatim as cash_balance, with SGOV's
+    value surfaced only informationally via reserve_balance."""
+    from src.pipeline_stages import DecisionStage
+    from src.pipeline_context import RunContext
+
+    p = _sweep_pipeline()
+    p.db = MagicMock()
+    p.db.get_latest_insights.return_value = None
+    p._compute_recent_performance = MagicMock(return_value={})
+    p._build_position_history = MagicMock(return_value={})
+    p._build_weekly_narrative = MagicMock(return_value="")
+    p._build_macro_trajectory = MagicMock(return_value="")
+    p._build_active_state_changes = MagicMock(return_value="")
+    p._build_rm_recent_verdicts = MagicMock(return_value="")
+    p._build_pm_recent_decisions = MagicMock(return_value="")
+    p._build_projected_portfolio = MagicMock(return_value="")
+    p._build_calibration_note = MagicMock(return_value="")
+    p._build_macro_tech_alignment = MagicMock(return_value="")
+    p._build_recent_missed_lessons = MagicMock(return_value="")
+    p._build_recent_loss_pits = MagicMock(return_value="")
+    p._build_pm_facts = MagicMock(return_value=MagicMock())
+    p.portfolio_manager = MagicMock()
+    # Early-return path: DecisionStage bails right after `decide()` when
+    # portfolio_decision is falsy, so the assertion below doesn't need to
+    # mock the constructor / evidence-persistence tail.
+    p.portfolio_manager.decide.return_value = (
+        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                        input_tokens=1, output_tokens=1, cost_usd=0.0,
+                        model="test-model"),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = [SGOV, NVDA]
+    ctx.analyses = []
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 145.0
+    ctx.deployable_cash = 145.0  # the incident's real deployable figure
+
+    DecisionStage(pipeline=p).run(ctx)
+
+    kwargs = p.portfolio_manager.decide.call_args.kwargs
+    assert kwargs["cash_balance"] == 145.0, (
+        "PM must size against real deployable cash, not cash + SGOV"
+    )
+    assert kwargs["reserve_balance"] == SGOV.market_value
+    pm_positions = p.portfolio_manager.decide.call_args.kwargs["positions"]
+    assert [x.symbol for x in pm_positions] == ["NVDA"], "PM must not see SGOV as a position"
+
+
+# ---------- decision-time vs execution-time cash coherence ----------
+
+def test_approved_buys_are_not_designed_around_unusable_liquidity():
+    """The 2026-08-19 incident's defining symptom, regressed end-to-end:
+    the deterministic gate APPROVED BUYs at decision time, then execution's
+    own raw-cash recheck skipped every one of them, because the two were
+    comparing against different money. The gate was crediting SGOV's
+    ~$9.8K market value as spendable cash; execution (correctly) was not.
+
+    The gate now evaluates the same truthful figure execution will see, so
+    a BUY it approves is one execution can actually fund — and a BUY that
+    can't be funded is blocked UP FRONT with a visible reason, rather than
+    approved and then silently skipped at the broker.
+
+    Note what is deliberately NOT changed: execution's raw-cash recheck
+    remains the final authority. This test asserts the two agree, never
+    that the recheck was relaxed."""
+    p = _sweep_pipeline()
+    # The incident's book: ~$145 truly deployable, ~$9,855 parked in SGOV.
+    parked = Position(symbol="SGOV", qty=98, avg_entry=100.5, current_price=100.6,
+                      market_value=9_855.0, unrealized_pnl=10.0, sector="Unknown")
+    deployable_cash = 145.0
+    total_value = 10_000.0
+
+    # PM proposes a 20% BUY ($2,000) — comfortably covered by "cash" under
+    # the old SGOV-crediting view ($145 + $9,855 = $10,000), not remotely
+    # covered by what execution can actually spend.
+    allowed, _violations, blocked = p._filter_hard_risk_decisions(
+        [_buy(symbol="AAPL", alloc=20.0)], [parked],
+        total_value=total_value, daily_pnl=0.0, baseline=total_value,
+        cash=deployable_cash,
+    )
+
+    assert allowed == [], (
+        "the gate must not approve a BUY that execution's cash recheck "
+        "would then skip"
+    )
+    assert any("cash" in r for r in blocked), (
+        "the block must be visible and attributed to cash, not silent"
+    )
+
+    # And the complement: a BUY that DOES fit real deployable cash is
+    # approved — the fix must not have simply blocked everything.
+    small_allowed, _v, small_blocked = p._filter_hard_risk_decisions(
+        [_buy(symbol="AAPL", alloc=1.0)], [parked],   # $100 of $10k book
+        total_value=total_value, daily_pnl=0.0, baseline=total_value,
+        cash=deployable_cash,
+    )
+    assert [d.symbol for d in small_allowed] == ["AAPL"], small_blocked
+
+
+# ---------- Alpaca account-field semantics (2026-08-19 Blocker 1) ----------
+#
+# Verified against Alpaca's official documentation:
+#   - `cash` is credited as soon as a SELL FILLS ("The cash is updated post
+#     the SELL trade is filled, but the cash_withdrawable and
+#     cash_transferable are updated post T+1"). So a filled SGOV
+#     liquidation DOES fund an equity BUY in the same session.
+#   - `non_marginable_buying_power` is the settled/non-margin (crypto)
+#     figure and LAGS a same-day equity sale by one business day.
+#   - Every Alpaca account is a margin account; at this account's equity the
+#     multiplier is 2, so `buying_power`/`regt_buying_power` are ~2x equity
+#     and represent BORROWED capacity.
+
+def test_deployable_cash_is_raw_cash_plus_convertible_sweep():
+    """Deployable = cash + sweep value. Both are owned assets, so the sum
+    can never exceed equity and never implies margin."""
+    p = _sweep_pipeline()
+    assert p._compute_deployable_cash(145.0, [SGOV, NVDA]) == 145.0 + SGOV.market_value
+
+
+def test_deployable_cash_ignores_sweep_when_disabled():
+    p = _sweep_pipeline(enabled=False)
+    assert p._compute_deployable_cash(145.0, [SGOV, NVDA]) == 145.0
+
+
+def test_deployable_cash_never_uses_margin_buying_power_fields():
+    """Regression on the no-leverage boundary: whatever Alpaca reports as
+    `buying_power` / `regt_buying_power` (2x equity on a margin account,
+    which is every Alpaca account) must never influence sizing."""
+    import inspect
+    src = inspect.getsource(TradingPipeline._compute_deployable_cash)
+    body = src.split('"""')[-1]   # ignore the explanatory docstring
+    for forbidden in ("buying_power", "regt_buying_power", "multiplier"):
+        assert forbidden not in body, (
+            f"deployable cash must never be derived from {forbidden}"
+        )
+
+
+def test_deployable_cash_never_exceeds_owned_assets():
+    """No-leverage invariant stated numerically: deployable is bounded by
+    cash + the sweep vehicle, so it cannot reach into margin."""
+    p = _sweep_pipeline()
+    cash, equity = 145.0, 10_000.0
+    deployable = p._compute_deployable_cash(cash, [SGOV, NVDA])
+    assert deployable == cash + SGOV.market_value
+    # SGOV ($80,480 in this fixture) + cash is what's owned; the point is
+    # that a 2x margin figure (2 * equity) is never reachable.
+    assert deployable < 2 * (cash + SGOV.market_value + NVDA.market_value)
+
+
+def test_deployable_cash_fails_closed_on_non_finite_cash():
+    p = _sweep_pipeline()
+    assert p._compute_deployable_cash(float("nan"), [SGOV]) == 0.0
+
+
+def test_fund_buys_reports_only_confirmed_proceeds():
+    """The execution condition QAMC must verify: raw broker `cash`
+    actually rose after the funding sale. fund_buys reports the OBSERVED
+    increase, not the notional of the order it submitted."""
+    p = _funding_pipeline()
+    # Broker confirms only $12,000 landed even though a larger sale was sent.
+    p.broker.get_account.return_value = {
+        "cash": 13_000.0, "portfolio_value": 100_000.0,
+    }
+    ctx = RunContext.start("morning")
+    ctx.cash = 1_000.0
+    ctx.positions = [SGOV, NVDA]
+
+    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
+
+    assert freed == 12_000.0, "must report the confirmed delta, not the order size"
+    assert ctx.cash == 13_000.0
+
+
+def test_fund_buys_reports_zero_when_the_sale_did_not_fill():
+    """The incident's failure mode: the funding sale doesn't fill, so cash
+    never rises. fund_buys must report $0 rather than claiming the order's
+    notional was freed — otherwise the BUY phase sizes against money the
+    broker never credited."""
+    p = _funding_pipeline()
+    p.broker.get_account.return_value = {   # unchanged cash: no fill
+        "cash": 1_000.0, "portfolio_value": 100_000.0,
+    }
+    ctx = RunContext.start("morning")
+    ctx.cash = 1_000.0
+    ctx.positions = [SGOV, NVDA]
+
+    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
+
+    assert freed == 0.0
+    assert ctx.cash == 1_000.0, "cash must not be optimistically inflated"
+
+
+def test_fund_buys_fails_closed_when_it_cannot_confirm():
+    """If the post-sale account refresh fails we cannot CONFIRM proceeds
+    landed, so report $0 and leave cash at its pre-sale value — the
+    deterministic cash check then governs the BUY phase. The old code
+    optimistically set cash = cash + estimate here."""
+    p = _funding_pipeline()
+    p.broker.get_account.side_effect = ConnectionError("broker unreachable")
+    ctx = RunContext.start("morning")
+    ctx.cash = 1_000.0
+    ctx.positions = [SGOV, NVDA]
+
+    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
+
+    assert freed == 0.0
+    assert ctx.cash == 1_000.0

@@ -258,6 +258,14 @@ class MorningResearchStage:
                     except Exception as e:
                         logger.warning("valuation fetch crashed for %s: %s", sym, e)
             ctx.valuations = valuations
+            # analyses_map is guaranteed to carry every symbol in
+            # symbols_data as a key (2026-08-19 Tech batch-response
+            # symbol-loss fix) — a TechAnalysisResult on success, or None
+            # for a symbol that failed to resolve even after tech_analyst's
+            # own bounded retry. Filter before touching real analyses;
+            # `analyses_map` itself (None values intact) is still returned
+            # so the caller can see and report the failed count instead of
+            # it silently vanishing.
             analyses_map, ta_res = self.tech_analyst.analyze_batch(
                 symbols_data,
                 prior_ratings=prior_ratings,
@@ -265,15 +273,16 @@ class MorningResearchStage:
                 prior_macro_regime=prior_macro_state.get("regime"),
                 prior_macro_outlook=prior_macro_state.get("equity_outlook"),
             )
-            if analyses_map:
+            resolved = [a for a in analyses_map.values() if a is not None]
+            if resolved:
                 try:
-                    self.tech_store.update(list(analyses_map.values()))
+                    self.tech_store.update(resolved)
                 except Exception as e:
                     logger.warning("TechStore.update failed: %s", e)
-                ages = self.tech_store.compute_ages(list(analyses_map.keys()))
-                for sym, analysis in analyses_map.items():
-                    if sym in ages:
-                        analysis.signal_age_days = ages[sym]
+                ages = self.tech_store.compute_ages([a.symbol for a in resolved])
+                for analysis in resolved:
+                    if analysis.symbol in ages:
+                        analysis.signal_age_days = ages[analysis.symbol]
             return analyses_map, ta_res
 
         def _load_earnings():
@@ -353,12 +362,38 @@ class MorningResearchStage:
         analyses: list[TechAnalysisResult] = []
         try:
             analyses_map, ta_result = tech_future.result()
-            analyses = list(analyses_map.values())
-            data_status["tech"] = "ok" if analyses else "empty"
+            # analyses_map carries every pre-filtered symbol as a key
+            # (2026-08-19 Tech batch-response symbol-loss fix); None marks
+            # a symbol tech_analyst could not resolve even after its own
+            # bounded retry. Filter before building the real analyses
+            # list, and surface the failed count explicitly rather than
+            # letting it disappear into a plain "ok".
+            analyses = [a for a in analyses_map.values() if a is not None]
+            failed_count = len(analyses_map) - len(analyses)
+            if not analyses_map:
+                data_status["tech"] = "empty"
+            elif failed_count == 0:
+                data_status["tech"] = "ok"
+            elif analyses:
+                data_status["tech"] = "partial"
+                logger.warning(
+                    "Tech batch partial: %d/%d symbols resolved, %d failed "
+                    "even after retry — proceeding with the resolved subset",
+                    len(analyses), len(analyses_map), failed_count,
+                )
+            else:
+                data_status["tech"] = "failed"
+                logger.error(
+                    "Tech batch: all %d submitted symbol(s) failed even after retry",
+                    len(analyses_map),
+                )
             if ta_result:
                 self.db.insert_agent_log(
                     agent_name="tech_analyst", run_id=ctx.run_id,
-                    input_summary=f"Batch: {len(analyses)} symbols analyzed",
+                    input_summary=(
+                        f"Batch: {len(analyses)}/{len(analyses_map)} symbols "
+                        f"analyzed" + (f", {failed_count} failed" if failed_count else "")
+                    ),
                     input_message=ta_result.user_message,
                     output_summary=", ".join(f"{a.symbol}:{a.rating}" for a in analyses),
                     full_response=ta_result.raw_text,
@@ -443,25 +478,28 @@ class DecisionStage:
         earnings_results = ctx.earnings_results
         macro_analysis = ctx.macro_analysis
         total_value = ctx.total_value
-        cash = ctx.cash
+        # 2026-08-19 SGOV/deployable-liquidity forensic: PM used to size
+        # deployment against `cash + parked SGOV value`, which overstated
+        # what was actually spendable this session by orders of magnitude
+        # (observed: ~$10K shown, ~$145 truly settled) — SGOV must be sold
+        # and Alpaca settlement (T+1) does not make the proceeds usable
+        # same-day. PM now sizes against `ctx.deployable_cash` (Alpaca's
+        # settled non-margin buying power) and is told the parked reserve
+        # separately/informationally via `reserve_balance`, never folded
+        # into "cash".
+        cash = ctx.deployable_cash
         last_equity = ctx.last_equity
 
-        # Cash-sweep view for the PM: the parked T-bill vehicle is presented
-        # as CASH, not as a position — PM sizes deployment against
-        # cash + parked (ExecutionStage liquidates the vehicle before BUYs
-        # submit), and never reasons about the vehicle itself.
         # isinstance guard: stage tests stub `pipeline` with MagicMock, whose
         # auto-attrs would otherwise duck-type as an enabled sweeper.
         from src.execution.cash_sweep import CashSweeper
         sweeper = getattr(pipeline, "_sweeper", None)
         sweeper = sweeper() if callable(sweeper) else None
+        reserve_balance = 0.0
         if isinstance(sweeper, CashSweeper):
             positions, parked = sweeper.split_positions(positions)
             if parked is not None:
-                import math as _math
-                mv = parked.market_value
-                if isinstance(mv, (int, float)) and _math.isfinite(mv) and mv > 0:
-                    cash = cash + mv
+                reserve_balance = sweeper.parked_value(ctx.positions)
 
         yesterday_insights = pipeline.db.get_latest_insights(before_date=session_date_key())
         recent_performance = pipeline._compute_recent_performance(last_equity)
@@ -506,6 +544,7 @@ class DecisionStage:
             positions=positions,
             macro_analysis=(macro_analysis.model_dump() if macro_analysis else None),
             cash_balance=cash,
+            reserve_balance=reserve_balance,
             total_value=total_value,
             news_intel=news_intel,
             earnings_analyses=earnings_results,
@@ -660,13 +699,14 @@ class RiskStage:
         data_status = ctx.data_status
 
         # Cash-sweep view — same contract as DecisionStage: the RiskManager
-        # must see parked T-bills as CASH, never as an 84%-of-book "position"
-        # (review finding: PM and RM otherwise get contradictory views of the
-        # same dollars in the same run, and RM's veto acts on the corrupted
-        # one). IMPORTANT: only the LLM-facing uses (RM prompt, correlation
-        # pool, has_book_to_check) take the scrubbed list — the hard filter
-        # keeps RAW positions because it derives the parked-cash credit from
-        # finding the vehicle in the list itself.
+        # must never see parked T-bills as an 84%-of-book "position" (review
+        # finding: PM and RM otherwise get contradictory views of the same
+        # dollars in the same run). IMPORTANT: only the LLM-facing uses (RM
+        # prompt, correlation pool, has_book_to_check) take the scrubbed
+        # list — the hard filter keeps RAW positions because it still needs
+        # to find the vehicle in the list to exclude it from net-exposure /
+        # cluster math (it no longer credits any cash from it — see the
+        # 2026-08-19 SGOV/deployable-liquidity forensic note below).
         from src.execution.cash_sweep import CashSweeper
         sweeper = getattr(pipeline, "_sweeper", None)
         sweeper = sweeper() if callable(sweeper) else None
@@ -726,7 +766,7 @@ class RiskStage:
                 baseline=last_equity,
                 macro_target_invested_pct=macro_target_pct,
                 correlation_matrix=correlation_matrix,
-                cash=ctx.cash,
+                cash=ctx.deployable_cash,
             )
         )
         if blocked_reasons:
@@ -821,11 +861,16 @@ class RiskStage:
                     ", ".join(missing_audit_steps), run_id,
                 )
 
-        # Sweep-adjusted cash: parked T-bill value counts as cash for RM,
-        # consistent with the PM's view and the hard filter's credit.
-        rm_cash = ctx.cash
+        # 2026-08-19 SGOV/deployable-liquidity forensic: RM used to be told
+        # `cash + parked SGOV value`, the same overstated figure PM saw —
+        # RM's cash_only / sizing_sanity audit was therefore auditing PM
+        # against a number neither of them could actually spend same-day.
+        # RM now gets `ctx.deployable_cash` (settled, non-margin) plus the
+        # parked reserve separately/informationally via `reserve_balance`.
+        rm_cash = ctx.deployable_cash
+        rm_reserve_balance = 0.0
         if isinstance(sweeper, CashSweeper):
-            rm_cash = ctx.cash + sweeper.parked_value(ctx.positions)
+            rm_reserve_balance = sweeper.parked_value(ctx.positions)
 
         # Holding ages + system-drawdown state for the RM audit (2026-08-13
         # agent audit). Normally DecisionStage already published both. On the
@@ -869,6 +914,7 @@ class RiskStage:
             # ran blind — no equity, no cash, no weights.
             total_value=total_value,
             cash=rm_cash,
+            reserve_balance=rm_reserve_balance,
             position_history=rm_position_history,
             recent_performance=rm_recent_performance,
         )
@@ -928,7 +974,7 @@ class RiskStage:
                     baseline=last_equity,
                     macro_target_invested_pct=macro_target_pct,
                     correlation_matrix=correlation_matrix,
-                    cash=ctx.cash,
+                    cash=ctx.deployable_cash,
                 )
             )
             if blocked_reasons:
@@ -1086,6 +1132,7 @@ class ExecutionStage:
             total_value = account["portfolio_value"]
             ctx.positions = positions
             ctx.cash = cash
+            ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
             ctx.total_value = total_value
             logger.info(
                 "Post-sell refresh: $%.2f total, $%.2f cash, %d positions",
@@ -1120,6 +1167,7 @@ class ExecutionStage:
                 total_value = account["portfolio_value"]
                 ctx.positions = positions
                 ctx.cash = cash
+                ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 price_map = {**price_map, **fresh_prices}
             daily_pnl_now = total_value - ctx.last_equity
@@ -1134,11 +1182,20 @@ class ExecutionStage:
                 )
                 buy_decisions = []
 
-        # Cash-sweep funding: the risk filter counted the parked T-bill
-        # vehicle's value as cash (cash-equivalent contract), so BUYs that
-        # passed it may exceed RAW cash. Release just enough parked cash
-        # to cover the planned notional before the BUY loop sizes against
-        # `available_cash`. Waits for the fill and refreshes ctx.
+        # Cash-sweep funding: PM/RM/the hard gate now size and approve BUYs
+        # against `deployable_cash` (never SGOV's parked value — 2026-08-19
+        # forensic), so this is no longer routinely load-bearing for a
+        # typical single trade. It remains a best-effort bridge for the
+        # ordinary gap between decision-time and execution-time (price
+        # drift, an intervening SELL) and for the reserve_pct raw-cash
+        # cushion running thin on a busy day. Release just enough parked
+        # cash to cover the planned notional before the BUY loop sizes
+        # against `available_cash` — but because same-day SGOV liquidation
+        # is NOT reliably settled/spendable by the time execution rechecks
+        # (Alpaca T+1 equity settlement), this is still only an attempt:
+        # `available_cash` below is always re-read from the broker after,
+        # and a BUY this doesn't actually fund is safely skipped, same as
+        # before. Waits for the fill and refreshes ctx.
         # isinstance guard: stage tests stub `pipeline` with MagicMock.
         if buy_decisions:
             from src.execution.cash_sweep import CashSweeper

@@ -848,6 +848,87 @@ def test_morning_research_stage_populates_ctx_on_success():
 
 
 @patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_compute_indicators):
+    """2026-08-19 Tech batch-response symbol-loss fix, pipeline-level: when
+    tech_analyst.analyze_batch comes back with some symbols unresolved
+    (None), MorningResearchStage must (a) still populate ctx.analyses with
+    the symbols that DID resolve — never crash on the None entries when
+    updating tech_store/computing ages — and (b) set
+    data_status['tech'] = 'partial' rather than a plain 'ok' that hides
+    the loss. This is the exact production incident (1/10 symbols parsed)
+    reaching the pipeline layer, not just the agent layer."""
+    mock_compute_indicators.return_value = MagicMock()
+
+    mock_config = MagicMock()
+    mock_config.trading.universe = ["AAPL", "MSFT"]
+    mock_config.trading.lookback_days = 30
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = [MagicMock()]
+
+    tech_analyst = MagicMock()
+    from src.models import TechAnalysisResult, TechReasoningChain
+    resolved = TechAnalysisResult(
+        symbol="AAPL", rating="buy", conviction="medium",
+        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+        reasoning_chain=TechReasoningChain(
+            trend="x", momentum="x", volatility="x", volume="x",
+            support_resistance="x",
+        ),
+        reasoning="test",
+    )
+    # AAPL resolved, MSFT explicitly failed even after tech_analyst's own
+    # retry — the sentinel this whole fix introduces.
+    tech_analyst.analyze_batch.return_value = (
+        {"AAPL": resolved, "MSFT": None},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+    tech_store = MagicMock()
+    tech_store.load.return_value = {}
+    tech_store.compute_ages.return_value = {}
+
+    stage = MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=MagicMock(),
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=tech_store,
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=tech_analyst,
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: True,
+        run_news_update_fn=lambda run_id, session: None,
+        load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    # AAPL (resolved) is a real analysis; MSFT (None) never becomes a fake
+    # TechAnalysisResult and never crashes tech_store.update/compute_ages.
+    assert [a.symbol for a in result_ctx.analyses] == ["AAPL"]
+    assert result_ctx.data_status["tech"] == "partial"
+    tech_store.update.assert_called_once_with([resolved])
+
+
+@patch("src.pipeline_stages.compute_indicators")
 def test_morning_research_stage_persists_specialist_evidence(mock_compute_indicators, tmp_path):
     """Stage 4: MorningResearchStage persists already-validated macro/news/
     tech evidence into `specialist_evidence` with natural scope (run for

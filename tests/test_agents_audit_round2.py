@@ -148,7 +148,7 @@ def test_idx5_rm_account_header_and_position_weights():
         cash=20_000.0,
     )
     assert "Total equity: $100,000" in msg
-    assert "Cash: $20,000 (20.0%)" in msg
+    assert "Cash (deployable this session): $20,000 (20.0%)" in msg
     assert "Value: $30,000 (30.0% of book)" in msg
 
 
