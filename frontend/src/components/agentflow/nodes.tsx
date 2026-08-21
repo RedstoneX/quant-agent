@@ -1,3 +1,4 @@
+import { Badge, Card, type Color } from "@tremor/react";
 import { Handle, Position } from "@xyflow/react";
 import { Pill } from "../ui/Pill";
 import { LevelBar } from "../ui/Meter";
@@ -34,21 +35,13 @@ const TONE_BORDER: Record<NodeTone, string> = {
   dim: "border-border-strong",
   agent: "border-agent/60",
 };
-const TONE_BG: Record<NodeTone, string> = {
-  pos: "bg-pos/10",
-  warn: "bg-warn/10",
-  neg: "bg-neg/10",
-  dim: "bg-panel-alt",
-  agent: "bg-agent/10",
+const TONE_COLOR: Record<NodeTone, Color> = {
+  pos: "emerald",
+  warn: "amber",
+  neg: "rose",
+  dim: "slate",
+  agent: "violet",
 };
-const TONE_TEXT: Record<NodeTone, string> = {
-  pos: "text-pos",
-  warn: "text-warn",
-  neg: "text-neg",
-  dim: "text-dim",
-  agent: "text-agent",
-};
-
 const CONVICTION_TONE: Record<string, NodeTone> = { high: "pos", medium: "warn", low: "neg" };
 function confidenceTone(conviction: string | null): NodeTone {
   return conviction ? CONVICTION_TONE[conviction] ?? "dim" : "dim";
@@ -77,36 +70,36 @@ export function SpecialistNode({ data }: { data: SpecialistNodeData }) {
   const targetPos = data.vertical ? Position.Top : Position.Left;
   const sourcePos = data.vertical ? Position.Bottom : Position.Right;
   return (
-    <div
+    <Card
       role={data.onClick ? "button" : undefined}
       onClick={data.onClick}
-      className={`w-[260px] rounded-lg border-l-4 border ${TONE_BORDER[tone]} border-l-agent bg-panel px-3 py-2.5 shadow-sm ${
-        data.onClick ? "cursor-pointer hover:border-agent/70" : ""
-      }`}
+      decoration="left"
+      decorationColor="violet"
+      className={`w-[260px] !bg-panel !p-3 !ring-border ${data.onClick ? "cursor-pointer hover:!ring-violet-500/70" : ""}`}
     >
       <Handle type="target" position={targetPos} className={INVISIBLE_HANDLE} />
       <Handle type="source" position={sourcePos} className={INVISIBLE_HANDLE} />
       <div className="flex items-center justify-between gap-1.5">
         <span className="font-bold text-[0.8125rem] leading-tight truncate">{data.role}</span>
-        <span className={`text-[0.875rem] font-bold ${dirColor}`}>
-          {data.direction === "bullish" ? "▲" : data.direction === "bearish" ? "▼" : "•"}
-        </span>
+        <Badge color={data.direction === "bullish" ? "emerald" : data.direction === "bearish" ? "rose" : "slate"} size="xs">
+          <span className={dirColor}>{data.direction === "bullish" ? "▲" : data.direction === "bearish" ? "▼" : "•"} {data.direction}</span>
+        </Badge>
       </div>
       {data.subtitle && <div className="text-[0.8125rem] text-dim truncate mt-0.5">{data.subtitle}</div>}
       {data.conviction && (
         <div className="mt-1.5">
           <div className="flex items-center justify-between text-meta mb-0.5">
             <span>Confidence</span>
-            <span className={`font-bold ${TONE_TEXT[tone]}`}>{data.conviction.toUpperCase()}</span>
+            <Badge color={TONE_COLOR[tone]} size="xs">{data.conviction}</Badge>
           </div>
           <LevelBar level={data.conviction} tone={tone === "pos" ? "pos" : tone === "warn" ? "warn" : tone === "neg" ? "neg" : "dim"} />
         </div>
       )}
       <p className="text-[0.8125rem] text-dim leading-snug mt-1.5 line-clamp-2">{data.reasoning}</p>
       {data.alignment && (
-        <div className={`text-[0.7rem] font-semibold mt-1 ${TONE_TEXT[data.alignment.tone]}`}>{data.alignment.label}</div>
+        <Badge color={TONE_COLOR[data.alignment.tone]} size="xs" className="mt-2">{data.alignment.label}</Badge>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -123,13 +116,17 @@ export function StageNode({ data }: { data: StageNodeData }) {
   const targetPos = data.vertical ? Position.Top : Position.Left;
   const sourcePos = data.vertical ? Position.Bottom : Position.Right;
   return (
-    <div className={`w-[240px] rounded-lg border ${TONE_BORDER[data.tone]} ${TONE_BG[data.tone]} px-3 py-2.5`}>
+    <Card
+      decoration="left"
+      decorationColor={TONE_COLOR[data.tone]}
+      className="w-[240px] !bg-panel !p-3 !ring-border"
+    >
       <Handle type="target" position={targetPos} className={INVISIBLE_HANDLE} />
       <Handle type="source" position={sourcePos} className={INVISIBLE_HANDLE} />
       <div className="font-bold text-[0.875rem] leading-tight">{data.label}</div>
-      <div className={`text-[0.7rem] font-semibold uppercase tracking-wide mt-0.5 ${TONE_TEXT[data.tone]}`}>{data.statusText}</div>
+      <Badge color={TONE_COLOR[data.tone]} size="xs" className="mt-1">{data.statusText}</Badge>
       {data.caption && <div className="text-[0.75rem] text-dim mt-1 leading-snug line-clamp-2">{data.caption}</div>}
-    </div>
+    </Card>
   );
 }
 
@@ -169,7 +166,7 @@ export function GateNode({ data }: { data: GateNodeData }) {
       <div className="text-center">
         <div className="text-[0.7rem] uppercase tracking-wider text-dim font-bold">Deterministic gate</div>
         <div className="text-[0.7rem] uppercase tracking-wide text-faint font-semibold">Final authority</div>
-        <div className={`text-[0.75rem] font-extrabold uppercase tracking-wide mt-1 ${TONE_TEXT[data.tone]}`}>{data.statusText}</div>
+        <Badge color={TONE_COLOR[data.tone]} size="xs" className="mt-1">{data.statusText}</Badge>
       </div>
     </div>
   );

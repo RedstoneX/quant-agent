@@ -1,3 +1,4 @@
+import { Badge, Callout, type Color } from "@tremor/react";
 import { RunFunnelResponse, TradeItem } from "../api/client";
 import { fmtTime } from "../lib/format";
 import { STATE_LABELS, isSweepOnlyExecution } from "./funnelShared";
@@ -10,15 +11,12 @@ import { STATE_LABELS, isSweepOnlyExecution } from "./funnelShared";
  * truthfulness fix: a failed poll never lets an old EXECUTED/REJECTED
  * verdict read as current without an explicit STALE treatment. */
 
-const STATE_TONE: Record<
-  RunFunnelResponse["decision_state"],
-  { border: string; bg: string; text: string; icon: string }
-> = {
-  executed: { border: "border-pos/50", bg: "bg-pos/8", text: "text-pos", icon: "●" },
-  proposed_not_executed: { border: "border-warn/50", bg: "bg-warn/8", text: "text-warn", icon: "◐" },
-  hard_risk_block: { border: "border-neg/50", bg: "bg-neg/8", text: "text-neg", icon: "■" },
-  no_proposal: { border: "border-border-strong", bg: "bg-panel-alt", text: "text-dim", icon: "○" },
-  no_candidates: { border: "border-border-strong", bg: "bg-panel-alt", text: "text-dim", icon: "○" },
+const STATE_TONE: Record<RunFunnelResponse["decision_state"], Color> = {
+  executed: "emerald",
+  proposed_not_executed: "amber",
+  hard_risk_block: "rose",
+  no_proposal: "slate",
+  no_candidates: "slate",
 };
 
 function whySummary(funnel: RunFunnelResponse, sweepOnly: boolean): string {
@@ -73,45 +71,38 @@ export function DecisionStateBanner({
       // report yet — see docs/OUTCOME.md's "empty/no-trade states should
       // look intentional" principle.
       return (
-        <div className="mx-3 mt-3 rounded-xl border border-border-strong bg-panel-alt px-4 py-3 text-dim text-[0.875rem]">
+        <Callout title="No decision yet" color="slate" className="mx-3 mt-3 !bg-panel-alt !ring-border">
           No sessions recorded yet today.
-        </div>
+        </Callout>
       );
     }
     return (
-      <div className="mx-3 mt-3 rounded-xl border border-neg/40 bg-neg/8 px-4 py-3 text-neg text-[0.875rem]">
+      <Callout title="Decision unavailable" color="rose" className="mx-3 mt-3 !bg-panel-alt">
         Could not load the latest decision: {error}
-      </div>
+      </Callout>
     );
   }
 
   const sweepOnly =
     funnel.decision_state === "executed" &&
     isSweepOnlyExecution(trades.filter((t) => t.run_id === funnel.run_id));
-  const tone = sweepOnly
-    ? { border: "border-border-strong", bg: "bg-panel-alt", text: "text-dim", icon: "○" }
-    : STATE_TONE[funnel.decision_state];
+  const tone: Color = sweepOnly ? "slate" : STATE_TONE[funnel.decision_state];
   const label = sweepOnly ? "CASH SWEEP ONLY" : STATE_LABELS[funnel.decision_state];
   const stale = Boolean(error);
 
   return (
-    <div className={`mx-3 mt-3 rounded-xl border-2 ${tone.border} ${tone.bg} px-4 py-3`}>
+    <Callout title={label} color={tone} className="mx-3 mt-3 !bg-panel-alt !ring-border">
       {stale && (
-        <div className="mb-1.5 flex items-center gap-1.5 text-warn text-[0.75rem] font-bold uppercase tracking-wide">
-          <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse" />
+        <div className="mb-1.5 flex items-center gap-2 text-warn text-xs font-semibold">
+          <Badge color="amber" size="xs">stale</Badge>
           Stale — last known data{updatedAt ? ` as of ${updatedAt.toLocaleTimeString()}` : ""}, fresh fetch failed ({error})
         </div>
       )}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className={`text-[1.125rem] font-extrabold tracking-tight ${tone.text}`}>
-          {tone.icon} {label}
-        </span>
-        <span className="text-dim text-[0.8125rem] font-mono num">
-          run {funnel.run_id}
-          {funnel.session_prefix ? ` · ${funnel.session_prefix}` : ""} · {fmtTime(funnel.timestamp)}
-        </span>
-      </div>
-      <p className="text-[0.875rem] mt-1 leading-snug">{whySummary(funnel, sweepOnly)}</p>
-    </div>
+      <span className="font-mono text-xs text-dim">
+        run {funnel.run_id}
+        {funnel.session_prefix ? ` · ${funnel.session_prefix}` : ""} · {fmtTime(funnel.timestamp)}
+      </span>
+      <span className="mt-1 block text-sm leading-snug text-ink">{whySummary(funnel, sweepOnly)}</span>
+    </Callout>
   );
 }

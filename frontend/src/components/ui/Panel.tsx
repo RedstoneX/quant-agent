@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { Badge, Card, type Color } from "@tremor/react";
 
 export type PanelStatus = "ok" | "degraded" | "error" | "loading" | "stale";
 
@@ -23,28 +24,28 @@ export function Panel({
   accent?: boolean;
   children: ReactNode;
 }) {
-  const statusColor =
-    status === "error" ? "text-neg" : status === "stale" || status === "degraded" ? "text-warn" : status === "ok" ? "text-pos" : "text-dim";
+  const statusColor: Color =
+    status === "error" ? "rose" : status === "stale" || status === "degraded" ? "amber" : status === "ok" ? "emerald" : "slate";
   const statusLabel =
     status === "loading" ? "…" : status === "stale" ? `stale${staleSince ? ` · ${staleSince.toLocaleTimeString()}` : ""}` : status || "";
   return (
-    <section
-      className={`panel ${full ? "md:col-span-2" : ""} ${
-        accent ? "border-accent/40 shadow-[0_10px_28px_-12px_rgb(var(--c-accent)/0.4)]" : ""
-      } ${status === "stale" ? "border-warn/50" : ""}`}
+    <Card
+      decoration={accent ? "top" : undefined}
+      decorationColor={accent ? "cyan" : undefined}
+      className={`!p-0 !bg-panel !ring-border rounded-xl overflow-hidden flex flex-col h-full ${full ? "md:col-span-2" : ""} ${
+        status === "stale" ? "!ring-warn/60" : ""
+      }`}
     >
       <div className="panel-head">
         <h2>{title}</h2>
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          <span className={`text-[0.75rem] font-semibold uppercase tracking-wide whitespace-nowrap ${statusColor}`}>
-            {statusLabel}
-          </span>
+          {statusLabel && <Badge color={statusColor} size="xs">{statusLabel}</Badge>}
         </div>
         {subtitle && <span className="basis-full text-[0.8125rem] text-dim">{subtitle}</span>}
       </div>
       <div className="panel-body">{children}</div>
-    </section>
+    </Card>
   );
 }
 

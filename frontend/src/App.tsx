@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button, Card } from "@tremor/react";
 import {
   api,
   AccountResponse,
@@ -101,7 +102,7 @@ function SelectedSymbolContext({
   if (!symbol) return null;
   const c = funnel?.candidates.find((x) => x.symbol === symbol);
   return (
-    <div className="flex items-center gap-2 flex-wrap px-3.5 py-2 mb-3 rounded-lg border border-border bg-panel-alt">
+    <Card className="mb-3 flex !w-auto flex-wrap items-center gap-2 !bg-panel-alt !p-2.5 !ring-border">
       <span className="font-bold text-[0.95rem]">{symbol}</span>
       {c ? (
         <>
@@ -114,16 +115,16 @@ function SelectedSymbolContext({
           ) : c.reached_pm_target ? (
             <Pill text="reached_pm" />
           ) : null}
-          <button type="button" onClick={onOpenDetail} className="ml-auto text-accent underline text-[0.8125rem]">
+          <Button type="button" variant="light" size="xs" color="cyan" onClick={onOpenDetail} className="ml-auto">
             Full drill-down &rarr;
-          </button>
+          </Button>
         </>
       ) : (
         <span className="text-dim text-[0.8125rem]">
           {funnel ? "not among the latest run’s candidates" : "broad-market context — no session today yet"}
         </span>
       )}
-    </div>
+    </Card>
   );
 }
 

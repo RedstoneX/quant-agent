@@ -1,3 +1,4 @@
+import { Badge, type Color } from "@tremor/react";
 import { AccountResponse, HealthResponse } from "../api/client";
 
 function healthColor(health: HealthResponse | null): { dot: string; label: string } {
@@ -26,10 +27,10 @@ export function TopStrip({
   const paper = account?.paper;
   const modeBadge =
     paper === true
-      ? { text: "PAPER", cls: "bg-pos/15 text-pos border-pos/40" }
+      ? { text: "PAPER", color: "emerald" as Color }
       : paper === false
-      ? { text: "LIVE — REAL MONEY", cls: "bg-neg/15 text-neg border-neg/40" }
-      : { text: "MODE UNKNOWN", cls: "bg-dim/15 text-dim border-border" };
+      ? { text: "LIVE — REAL MONEY", color: "rose" as Color }
+      : { text: "MODE UNKNOWN", color: "slate" as Color };
   const { dot, label } = healthColor(health);
 
   return (
@@ -38,7 +39,7 @@ export function TopStrip({
         <h1 className="text-[0.95rem] font-bold whitespace-nowrap m-0">
           QAMC <span className="text-dim font-normal">Mission Control</span>
         </h1>
-        <span className={`pill border ${modeBadge.cls}`}>{modeBadge.text}</span>
+        <Badge color={modeBadge.color} size="sm">{modeBadge.text}</Badge>
         <span className={`inline-block w-2.5 h-2.5 rounded-full ${dot}`} title={label} />
       </div>
 

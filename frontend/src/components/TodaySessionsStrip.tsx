@@ -1,29 +1,27 @@
+import { Badge, Button, Tab, TabGroup, TabList, Text, type Color } from "@tremor/react";
 import { RunFunnelResponse, RunSummary, TradeItem } from "../api/client";
 import { fmtTime } from "../lib/format";
-import { STATE_LABELS, STATE_COLORS, isSweepOnlyExecution } from "./funnelShared";
+import { STATE_LABELS, isSweepOnlyExecution } from "./funnelShared";
 
-/* Compact same-day session picker, sitting above the primary Candidates /
- * Chart / Decision Room workstation. QAMC runs several session types a
- * day — opportunity-scan sessions alongside position-review-only sessions
- * (midday/close) that structurally carry zero candidates — and the
- * workstation below can only show ONE run's funnel at a time. Without
- * this strip, whichever run happens to be literal-latest (often an
- * afternoon position review) silently stands in for "today," erasing a
- * real morning scan's candidates/decisions from view. This strip keeps
- * every real session for the day visible and selectable, so nothing that
- * actually happened is hidden — see funnelShared.ts::bestPrimaryRunId for
- * the default-selection half of this fix. */
+const STATE_BADGE_COLOR: Record<RunFunnelResponse["decision_state"], Color> = {
+  executed: "emerald",
+  proposed_not_executed: "amber",
+  hard_risk_block: "rose",
+  no_proposal: "slate",
+  no_candidates: "slate",
+};
 
-function ChipLabel({ funnel, runTrades }: { funnel: RunFunnelResponse; runTrades: TradeItem[] }) {
+function SessionBadge({ funnel, runTrades }: { funnel: RunFunnelResponse; runTrades: TradeItem[] }) {
   const sweepOnly = funnel.decision_state === "executed" && isSweepOnlyExecution(runTrades);
-  if (sweepOnly) {
-    return <span className="px-1.5 py-0.5 rounded text-[0.7rem] font-bold border bg-dim/15 text-dim border-border">sweep only</span>;
-  }
-  const text = funnel.candidates_considered > 0 ? `${funnel.candidates_considered} candidate${funnel.candidates_considered === 1 ? "" : "s"}` : STATE_LABELS[funnel.decision_state];
+  const text = sweepOnly
+    ? "sweep only"
+    : funnel.candidates_considered > 0
+      ? `${funnel.candidates_considered} candidate${funnel.candidates_considered === 1 ? "" : "s"}`
+      : STATE_LABELS[funnel.decision_state];
   return (
-    <span className={`px-1.5 py-0.5 rounded text-[0.7rem] font-bold border ${STATE_COLORS[funnel.decision_state]}`}>
+    <Badge color={sweepOnly ? "slate" : STATE_BADGE_COLOR[funnel.decision_state]} size="xs">
       {text}
-    </span>
+    </Badge>
   );
 }
 
@@ -49,44 +47,43 @@ export function TodaySessionsStrip({
   onFollowLatest: () => void;
 }) {
   if (runs.length === 0) {
-    if (loading) return <div className="mx-3 mt-3 text-[0.8125rem] text-dim">Loading today&rsquo;s sessions&hellip;</div>;
-    if (error) return <div className="mx-3 mt-3 text-[0.8125rem] text-neg">Could not load today&rsquo;s sessions: {error}</div>;
+    if (loading) return <Text className="mx-3 mt-3">Loading today&rsquo;s sessions&hellip;</Text>;
+    if (error) return <Text className="mx-3 mt-3 text-neg">Could not load today&rsquo;s sessions: {error}</Text>;
     return null;
   }
 
   const sorted = [...runs].sort((a, b) => (a.first_timestamp || "").localeCompare(b.first_timestamp || ""));
+  const activeIndex = Math.max(0, sorted.findIndex((run) => run.run_id === selectedRunId));
 
   return (
-    <div className="mx-3 mt-3 flex items-center gap-2 overflow-x-auto pb-1">
-      <span className="text-[0.7rem] text-dim uppercase tracking-wide font-semibold flex-shrink-0">Today&rsquo;s sessions</span>
-      {sorted.map((r) => {
-        const f = funnels[r.run_id];
-        const active = r.run_id === selectedRunId;
-        return (
-          <button
-            key={r.run_id}
-            type="button"
-            onClick={() => onSelect(r.run_id)}
-            className={`flex-shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-md border text-[0.8125rem] ${
-              active ? "border-accent bg-accent/10" : "border-border bg-panel-alt hover:border-accent/50"
-            }`}
-          >
-            <span className="font-semibold uppercase">{r.session_prefix || "run"}</span>
-            <span className="text-dim font-mono num">{fmtTime(r.first_timestamp)}</span>
-            {f ? (
-              <ChipLabel funnel={f} runTrades={trades.filter((t) => t.run_id === r.run_id)} />
-            ) : (
-              <span className="text-dim">&hellip;</span>
-            )}
-          </button>
-        );
-      })}
-      {!autoFollow && (
-        <button type="button" onClick={onFollowLatest} className="flex-shrink-0 text-accent underline text-[0.7rem] ml-1">
-          Follow latest
-        </button>
-      )}
-      {error && <span className="flex-shrink-0 text-warn text-[0.75rem]">stale ({error})</span>}
-    </div>
+    <section className="mx-3 mt-3" aria-label="Today’s sessions">
+      <div className="mb-1.5 flex items-center gap-2">
+        <Text className="uppercase tracking-wide">Today&rsquo;s sessions</Text>
+        {error && <Badge color="amber" size="xs">stale</Badge>}
+        {!autoFollow && (
+          <Button variant="light" size="xs" color="cyan" onClick={onFollowLatest} className="ml-auto">
+            Follow latest
+          </Button>
+        )}
+      </div>
+      <TabGroup index={activeIndex} onIndexChange={(index) => onSelect(sorted[index].run_id)}>
+        <TabList variant="solid" color="cyan" className="max-w-full overflow-x-auto rounded-lg bg-panel-alt p-1 ring-1 ring-border">
+          {sorted.map((run) => {
+            const funnel = funnels[run.run_id];
+            return (
+              <Tab key={run.run_id} className="gap-2 whitespace-nowrap px-3 py-2">
+                <span className="font-semibold uppercase">{run.session_prefix || "run"}</span>
+                <span className="font-mono text-dim">{fmtTime(run.first_timestamp)}</span>
+                {funnel ? (
+                  <SessionBadge funnel={funnel} runTrades={trades.filter((trade) => trade.run_id === run.run_id)} />
+                ) : (
+                  <span className="text-dim">&hellip;</span>
+                )}
+              </Tab>
+            );
+          })}
+        </TabList>
+      </TabGroup>
+    </section>
   );
 }

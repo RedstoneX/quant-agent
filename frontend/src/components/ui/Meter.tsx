@@ -4,13 +4,15 @@
  * and CandidateRail (funnel). Every value rendered here comes from the
  * caller's own real data; these components never invent a number. */
 
-const TONE_BAR: Record<string, string> = {
-  pos: "bg-pos",
-  neg: "bg-neg",
-  warn: "bg-warn",
-  accent: "bg-accent",
-  hedge: "bg-hedge",
-  dim: "bg-dim",
+import { CategoryBar, Legend, ProgressBar, Tracker, type Color } from "@tremor/react";
+
+const TONE_BAR: Record<string, Color> = {
+  pos: "emerald",
+  neg: "rose",
+  warn: "amber",
+  accent: "cyan",
+  hedge: "fuchsia",
+  dim: "slate",
 };
 
 export function Meter({ value, tone = "accent", label }: { value: number; tone?: keyof typeof TONE_BAR; label?: string }) {
@@ -18,9 +20,7 @@ export function Meter({ value, tone = "accent", label }: { value: number; tone?:
   return (
     <div className="w-full">
       {label && <div className="text-[0.7rem] text-dim uppercase tracking-wide mb-0.5">{label}</div>}
-      <div className="h-1.5 w-full rounded-full bg-panel-alt overflow-hidden border border-border/60">
-        <div className={`h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${pct}%` }} />
-      </div>
+      <ProgressBar value={pct} color={TONE_BAR[tone]} className="mt-1" />
     </div>
   );
 }
@@ -39,14 +39,11 @@ const LEVEL_RANK: Record<string, number> = { low: 1, medium: 2, high: 3 };
 export function LevelBar({ level, tone = "accent" }: { level: string | null | undefined; tone?: keyof typeof TONE_BAR }) {
   const rank = level ? LEVEL_RANK[level.toLowerCase()] ?? 0 : 0;
   return (
-    <div className="flex items-center gap-0.5 w-full" role="img" aria-label={level ? `${level} level` : "level unknown"}>
-      {[1, 2, 3].map((i) => (
-        <span
-          key={i}
-          className={`h-1.5 flex-1 rounded-full ${i <= rank ? TONE_BAR[tone] : "bg-panel-alt border border-border/60"}`}
-        />
-      ))}
-    </div>
+    <Tracker
+      className="!h-1.5"
+      aria-label={level ? `${level} level` : "level unknown"}
+      data={[1, 2, 3].map((i) => ({ color: i <= rank ? TONE_BAR[tone] : "slate", tooltip: i <= rank ? level || undefined : "not reached" }))}
+    />
   );
 }
 
@@ -70,26 +67,12 @@ export function SegmentedBar({
   const total = positive.reduce((sum, s) => sum + s.value, 0);
   return (
     <div>
-      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-panel-alt border border-border">
-        {total > 0 &&
-          positive.map((s) => (
-            <div
-              key={s.label}
-              className={TONE_BAR[s.tone]}
-              style={{ width: `${(s.value / total) * 100}%` }}
-              title={`${s.label}: ${formatValue(s.value)}`}
-            />
-          ))}
-      </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[0.75rem]">
-        {segments.map((s) => (
-          <span key={s.label} className="inline-flex items-center gap-1.5">
-            <span className={`w-1.5 h-1.5 rounded-full inline-block flex-shrink-0 ${TONE_BAR[s.tone]}`} />
-            <span className="text-dim">{s.label}</span>
-            <span className="font-semibold tabular-nums">{formatValue(s.value)}</span>
-          </span>
-        ))}
-      </div>
+      <CategoryBar
+        values={total > 0 ? positive.map((s) => (s.value / total) * 100) : [100]}
+        colors={total > 0 ? positive.map((s) => TONE_BAR[s.tone]) : ["slate"]}
+        className="mt-1"
+      />
+      <Legend categories={segments.map((s) => `${s.label} ${formatValue(s.value)}`)} colors={segments.map((s) => TONE_BAR[s.tone])} className="mt-2" />
     </div>
   );
 }
