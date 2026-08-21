@@ -17,19 +17,17 @@ API=http://127.0.0.1:8800
 [[ $(id -u) -eq 0 ]] || { echo 'run as root' >&2; exit 1; }
 qgit(){ sudo -u "$QAMC" -H git -C "$REPO" "$@"; }
 
-# Fetch the reviewed source script and the exact deployment target.
 qgit fetch --no-tags origin \
   "+refs/heads/${OLD_BRANCH}:refs/remotes/origin/${OLD_BRANCH}" \
   "+refs/heads/main:refs/remotes/origin/main"
 qgit cat-file -e "${TARGET}^{commit}"
 [[ $(qgit show -s --format=%T "$TARGET") == "$TREE" ]] || { echo 'target tree mismatch' >&2; exit 1; }
 qgit show "origin/${OLD_BRANCH}:${OLD_PATH}" > "$RUN"
-[[ $(qgit hash-object "$RUN") == "$SOURCE_BLOB" ]] || { echo 'reviewed rollout source blob mismatch' >&2; exit 1; }
+[[ $(git hash-object "$RUN") == "$SOURCE_BLOB" ]] || { echo 'reviewed rollout source blob mismatch' >&2; exit 1; }
 
 COUNT=$(qgit diff --name-only "$BASE" "$TARGET" | grep -c . || true)
 LIST_SHA=$(qgit diff --name-only "$BASE" "$TARGET" | sha256sum | awk '{print $1}')
 
-# Patch only immutable target metadata and its derived delta guards.
 python3 - "$RUN" "$TARGET" "$TREE" "$COUNT" "$LIST_SHA" <<'PY'
 from pathlib import Path
 import re,sys
@@ -48,11 +46,8 @@ PY
 chown root:root "$RUN"; chmod 0700 "$RUN"
 bash -n "$RUN"
 
-# The reviewed script owns preflight, rollback, paper-mode checks, timer preservation,
-# focused tests, API restart, commissioning and Telegram preservation.
 "$RUN"
 
-# PR #63-specific live acceptance: every advertised chart timeframe must work.
 for spec in '5m:1' '15m:5' '1h:30' '1d:5'; do
   tf=${spec%%:*}; days=${spec##*:}
   if ! curl -fsS --max-time 30 "${API}/prices/SPY?lookback_days=${days}&timeframe=${tf}" \
