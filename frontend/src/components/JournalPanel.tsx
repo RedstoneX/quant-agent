@@ -17,6 +17,46 @@ import { Pill } from "./ui/Pill";
 import { Card, CardText, EvidenceSection, KV } from "./ui/Evidence";
 import { useModalActions } from "../context/ModalContext";
 
+// Concise per-candidate decision-ledger line — candidate -> PM decision ->
+// AI Risk outcome -> deterministic/execution outcome -> final result ->
+// recorded reason, e.g. "PM BUY · Risk APPROVED · EXECUTED (BUY)" or
+// "PM BUY · Risk APPROVED · SKIPPED — stale entry · NOT EXECUTED" (2026-08-21
+// Mission Control correctness tranche, section C: the operator should not
+// have to read several reasoning blocks to see where a candidate stopped).
+// Risk attribution mirrors CandidateRail's candidateStage: risk_verdict is
+// recorded per run, not per candidate, so a run-wide rejected/blocked
+// verdict is attributed only to candidates that actually reached a
+// proposed order in that run — the same precedent already accepted there.
+export function ledgerLine(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
+  const pm = c.proposed_action
+    ? `PM ${c.proposed_action}`
+    : c.reached_pm_target
+    ? "PM target, no order"
+    : "PM no proposal";
+
+  let risk = "Risk —";
+  if (c.reached_proposed_order) {
+    const verdict = funnel.risk_verdict?.verdict;
+    if (c.risk_modified) risk = "Risk MODIFIED";
+    else if (funnel.hard_risk_block) risk = "Risk BLOCKED (hard gate)";
+    else if (verdict?.approved === false) risk = "Risk REJECTED";
+    else if (verdict?.approved === true) risk = "Risk APPROVED";
+  }
+
+  let outcome: string;
+  if (c.executed) {
+    outcome = `EXECUTED${c.trade_action ? ` (${c.trade_action})` : ""}`;
+  } else if (c.execution_skip_reason) {
+    outcome = `SKIPPED — ${c.execution_skip_reason.replace(/_/g, " ")} · NOT EXECUTED`;
+  } else if (c.reached_proposed_order) {
+    outcome = "NOT EXECUTED";
+  } else {
+    outcome = "no order reached";
+  }
+
+  return `${pm} · ${risk} · ${outcome}`;
+}
+
 // Mirrors DecisionFunnelPanel's STATE_LABELS/STATE_COLORS mapping so the
 // language is consistent across the cockpit, duplicated locally (rather
 // than imported) to keep this file's per-day-multi-run layout independent
@@ -261,15 +301,7 @@ function RunNarrativeCard({
               {funnel.candidates.map((c) => (
                 <div key={c.symbol} className="flex items-start gap-2 text-[0.79rem] flex-wrap">
                   <CandidateChip symbol={c.symbol} info={c} onClick={() => onOpenCandidate(dayRuns, c.symbol)} />
-                  <span className="text-dim">
-                    {c.proposed_action ? `PM: ${c.proposed_action}` : "PM: no proposal"}
-                    {c.risk_modified ? " · risk-modified" : ""}
-                    {c.executed
-                      ? ` · executed${c.trade_action ? ` (${c.trade_action})` : ""}`
-                      : c.reached_proposed_order
-                      ? " · not executed"
-                      : ""}
-                  </span>
+                  <span className="text-dim">{ledgerLine(c, funnel)}</span>
                 </div>
               ))}
             </div>

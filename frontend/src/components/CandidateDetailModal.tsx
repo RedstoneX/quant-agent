@@ -254,7 +254,16 @@ function riskOutcome(detail: CandidateDetailResponse): "clean" | "modified" | "r
   return hasMods ? "modified" : "clean";
 }
 
-function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
+// Humanizes a persisted execution_skip_reason/detail pair (e.g.
+// "insufficient_cash" -> "insufficient cash") into one caption fragment.
+// Never invents a reason — only ever renders what was actually persisted.
+export function skipText(reason: string | null, detail: string | null): string | null {
+  if (!reason) return null;
+  const words = reason.replace(/_/g, " ");
+  return detail ? `${words} — ${detail}` : words;
+}
+
+export function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
   const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
   const specialistsReached = specialistCount > 0;
 
@@ -276,6 +285,12 @@ function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnel
   const hardBlocked = funnel?.hard_risk_block === true;
   const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
   const executed = funnelCandidate ? funnelCandidate.executed : isExecutedTrade(detail.trade);
+  // The specific, persisted reason the deterministic execution phase
+  // dropped this candidate's approved order — e.g. "stale_entry", quoted
+  // from an `execution_skip` evidence row, never a Mission-Control-authored
+  // guess. `null` when no skip was recorded (2026-08-21 fix: this used to
+  // be unavailable to the frontend at all — see client.ts CandidateFunnelItem).
+  const skip = funnelCandidate ? skipText(funnelCandidate.execution_skip_reason, funnelCandidate.execution_skip_detail) : null;
 
   let gateStatus: FlowStatus = "not_reached";
   let gateCaption: string | undefined;
@@ -285,9 +300,12 @@ function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnel
   } else if (detail.trade) {
     gateStatus = "reached";
     gateCaption = "Cleared for execution.";
+  } else if (skip) {
+    gateStatus = "blocked";
+    gateCaption = `Deterministic gate skipped this order — ${skip}.`;
   } else if (verdict?.approved === true) {
     gateStatus = "pending";
-    gateCaption = "Approved upstream; no trade recorded — gate outcome not separately exposed to Mission Control.";
+    gateCaption = "Approved upstream; no trade recorded and no execution-skip reason was persisted for this candidate.";
   } else if (verdict?.approved === false) {
     gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
   } else {
@@ -301,10 +319,13 @@ function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnel
     execCaption = detail.trade
       ? `${detail.trade.action}${detail.trade.qty !== null && detail.trade.qty !== undefined ? ` ${fmtNum(detail.trade.qty)}sh` : ""}`
       : undefined;
+  } else if (skip) {
+    execStatus = "blocked";
+    execCaption = `Execution skipped — ${skip}.`;
   } else if (verdict?.approved === false) {
     execCaption = "No trade — rejected by the AI Risk Manager before execution.";
   } else if (detail.pm_proposed_order) {
-    execCaption = "Proposed but not executed this run (or a HOLD).";
+    execCaption = "Proposed but not executed this run (or a HOLD) — candidate-specific reason was not recorded.";
   } else {
     execCaption = "No proposal reached execution.";
   }
@@ -321,6 +342,61 @@ function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnel
     { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
     { key: "exec", label: "Execution", status: execStatus, caption: execCaption },
   ];
+}
+
+/* The core acceptance question ("why wasn't NVDA purchased?") answered in
+ * one glance, above all the forensic evidence below rather than requiring
+ * it to be read first — ANSWER FIRST, EVIDENCE SECOND. Purely derived from
+ * `stages` (itself derived only from real recorded evidence above); never
+ * invents a cause. When the furthest-reached stage has no caption at all,
+ * says so explicitly rather than fabricating one. */
+export function furthestReachedStage(stages: FlowStage[]): FlowStage | null {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i].status !== "not_reached") return stages[i];
+  }
+  return null;
+}
+
+function OutcomeBanner({ detail, stages, executed }: { detail: CandidateDetailResponse; stages: FlowStage[]; executed: boolean }) {
+  // A funnel candidate isn't always a BUY (position-exit SELLs can appear
+  // here too) — the headline names the actual recorded action instead of
+  // assuming "purchased," which would misstate a SELL/exit outcome.
+  const actionWord = detail.trade?.action || detail.pm_proposed_order?.action;
+
+  if (executed) {
+    const t = detail.trade;
+    return (
+      <div className="rounded-xl border-2 border-pos/50 bg-pos/8 px-4 py-3 mb-3.5">
+        <div className="text-[1.05rem] font-extrabold text-pos tracking-tight">
+          ● EXECUTED{actionWord ? ` — ${actionWord}` : ""}
+        </div>
+        {t && (
+          <p className="text-[0.85rem] mt-1">
+            {t.qty !== null && t.qty !== undefined ? `${fmtNum(t.qty)} sh` : ""} @ {fmtMoney(t.price)}
+            {t.fill_status ? ` (${t.fill_status})` : ""}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const furthest = furthestReachedStage(stages);
+  const reason = furthest?.caption || "Candidate-specific reason was not recorded.";
+  return (
+    <div className="rounded-xl border-2 border-warn/50 bg-warn/8 px-4 py-3 mb-3.5">
+      <div className="text-[1.05rem] font-extrabold text-warn tracking-tight">
+        ○ NOT EXECUTED{actionWord ? ` (proposed ${actionWord})` : ""}
+      </div>
+      <p className="text-[0.82rem] mt-1">
+        <span className="text-dim">Stopped at: </span>
+        <span className="font-semibold">{furthest ? furthest.label : "Specialists"}</span>
+      </p>
+      <p className="text-[0.85rem] mt-0.5">
+        <span className="text-dim">Reason: </span>
+        {reason}
+      </p>
+    </div>
+  );
 }
 
 // PM's 7(+2)-step CoT (src/models.py::ReasoningChain) and the Risk
@@ -398,12 +474,13 @@ function DecisionDetail({
   detail,
   funnel,
   riskLog,
+  stages,
 }: {
   detail: CandidateDetailResponse;
   funnel: RunFunnelResponse | null;
   riskLog: AgentLogItem | null;
+  stages: FlowStage[];
 }) {
-  const stages = buildCandidateStages(detail, funnel);
   const gate = stages.find((s) => s.key === "gate");
   const exec = stages.find((s) => s.key === "exec");
   const pmReached = stages.find((s) => s.key === "pm")?.status !== "not_reached";
@@ -598,6 +675,11 @@ export function CandidateDetailModal({
   }, [runId, symbol]);
 
   const riskLog = runDetail?.agent_logs.find((a) => a.agent_name === "risk_manager") ?? null;
+  // Computed once here (not inside DecisionDetail) so the outcome banner
+  // below and the full decision-flow section read the identical derivation
+  // — never two independently-computed "why" answers that could disagree.
+  const stages = detail ? buildCandidateStages(detail, funnel) : null;
+  const executed = stages?.find((s) => s.key === "exec")?.status === "executed";
 
   return (
     <Modal
@@ -612,8 +694,14 @@ export function CandidateDetailModal({
     >
       {error && <StateMessage text={`Could not load ${symbol}: ${error}`} error />}
       {!error && !detail && <StateMessage text={`Loading ${symbol}…`} />}
-      {detail && (
+      {detail && stages && (
         <div>
+          {/* Core acceptance question first — was it purchased, and if not,
+              where did it stop and why — before any forensic evidence.
+              ANSWER FIRST, EVIDENCE SECOND (2026-08-21 Mission Control
+              correctness tranche, section D). */}
+          <OutcomeBanner detail={detail} stages={stages} executed={executed} />
+
           {/* Specialist identity/direction/confidence now lives in the
               agent-topology graph inside "Decision flow" below (real
               fan-in, not a separate near-duplicate card grid) — clicking a
@@ -631,7 +719,7 @@ export function CandidateDetailModal({
             {[<MacroCard key="macro" macro={detail.macro_context} />, <NewsContextCard key="newsctx" news={detail.news_context} />]}
           </EvidenceSection>
           <EvidenceSection title="Decision flow: Specialists &rarr; PM &rarr; AI Risk &rarr; gate &rarr; execution">
-            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} />]}
+            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} stages={stages} />]}
           </EvidenceSection>
         </div>
       )}

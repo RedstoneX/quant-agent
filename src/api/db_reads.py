@@ -23,7 +23,7 @@ their signatures.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -510,20 +510,42 @@ def get_run_funnel(run_id: str) -> dict:
 
 def get_journal_dates(limit: int = 60) -> list[str]:
     """ET trading-day dates with any journal-worthy activity (Stage 5),
-    newest first: the union of `insights.date` (evening reflection ran)
-    and `daily_pnl.date` (an equity snapshot was recorded) — both already
+    newest first: the union of `insights.date` (evening reflection ran),
+    `daily_pnl.date` (an equity snapshot was recorded) — both already
     ET-day-keyed strings (see `Database.save_evening_snapshot` /
-    `session_date_key`), so no UTC->ET conversion is needed here."""
+    `session_date_key`), so no UTC->ET conversion is needed for those two —
+    and every ET calendar date that has at least one recorded run
+    (`agent_logs`, converted from its naive-UTC `timestamp`).
+
+    The run-derived third source is not optional (2026-08-21 Mission
+    Control correctness finding): a day with real runs/candidates but
+    neither an evening reflection nor an equity snapshot yet was
+    previously invisible here even though `/journal/{date}` already
+    rendered it correctly once selected directly — a trading run must
+    stay discoverable in history regardless of whether evening reflection
+    or the daily equity snapshot ran."""
     conn = None
     try:
         conn = _connect()
-        rows = conn.execute(
-            "SELECT date FROM insights "
-            "UNION SELECT date FROM daily_pnl "
-            "ORDER BY date DESC LIMIT ?",
-            (limit,),
+        dates: set[str] = set()
+        rows = conn.execute("SELECT date FROM insights UNION SELECT date FROM daily_pnl").fetchall()
+        dates.update(r[0] for r in rows if r[0])
+
+        run_rows = conn.execute(
+            "SELECT MIN(timestamp) as first_ts FROM agent_logs "
+            "WHERE run_id IS NOT NULL GROUP BY run_id"
         ).fetchall()
-        return [r[0] for r in rows]
+        for r in run_rows:
+            ts = r["first_ts"]
+            if not ts:
+                continue
+            try:
+                naive_utc = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            dates.add(naive_utc.replace(tzinfo=UTC).astimezone(ET).date().isoformat())
+
+        return sorted(dates, reverse=True)[:limit]
     except sqlite3.Error:
         return []
     finally:

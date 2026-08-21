@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import {
   api,
   AccountResponse,
@@ -17,6 +17,7 @@ import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { CandidateRail } from "./components/CandidateRail";
 import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
+import { RunTimeline, runsToday } from "./components/RunTimeline";
 import { SupportTabs } from "./components/SupportTabs";
 import { DockviewSupportWorkspace } from "./components/DockviewSupportWorkspace";
 import { SupportWorkspaceProvider } from "./context/SupportWorkspaceContext";
@@ -156,9 +157,76 @@ export default function App() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [view, setView] = useState<View>("cockpit");
   const [mobilePane, setMobilePane] = useState<MobilePane>("watchlist");
+  // null = following LIVE (the latest run); a run_id = pinned to that run's
+  // own funnel until "Return to Live" (2026-08-21 Mission Control
+  // correctness tranche, section B — a new run arriving must never
+  // silently replace a run the operator is actively reviewing).
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [latestRunId, setLatestRunId] = useState<string | null>(null);
 
   const { state: modalState, value: modalActions } = useModalState();
   const isDesktop = useIsDesktop();
+
+  // Read inside the live-mode poll without forcing that poll's interval to
+  // restart on every latest-run change — only `selectedRunId` (an explicit
+  // pin/unpin) should ever restart the pinned-mode poll below.
+  const latestRunIdRef = useRef<string | null>(null);
+  // Mirrors `selectedRunId` for the account/positions/.../runs poll below,
+  // which intentionally has an empty usePoll dependency array (it must not
+  // restart on every unrelated state change) — its closure is created once
+  // at mount, so reading `selectedRunId` directly inside it would always
+  // see the mount-time value (`null`), never a later pin. `pinRun` keeps
+  // this ref and the state in sync in the same tick.
+  const selectedRunIdRef = useRef<string | null>(null);
+  function pinRun(runId: string | null) {
+    selectedRunIdRef.current = runId;
+    setSelectedRunId(runId);
+  }
+  // Tracks which run_id `funnel` currently displays, so a change (a new
+  // run while live, or a pin/unpin) resets `chartSymbol` to the newly
+  // displayed run's own candidates instead of carrying over a symbol that
+  // may not even be one of them — the "don't mix candidates from one run
+  // with decision context from another" requirement.
+  const lastDisplayedRunId = useRef<string | null>(null);
+
+  function displayFunnel(f: RunFunnelResponse) {
+    setFunnel(f);
+    setFunnelError(null);
+    setFunnelLoading(false);
+    setFunnelUpdatedAt(new Date());
+    if (lastDisplayedRunId.current !== f.run_id) {
+      lastDisplayedRunId.current = f.run_id;
+      setChartSymbol(f.candidates.length ? f.candidates[0].symbol : null);
+    }
+  }
+
+  function fetchFunnel(runId: string) {
+    api
+      .runFunnel(runId)
+      .then((f) => {
+        // A fetch in flight (network latency) can resolve after the
+        // operator has since changed what OUGHT to be displayed — pinned
+        // to a different run, or returned to Live while an older pinned
+        // fetch was still outstanding. Re-check relevance at resolution
+        // time, not just at dispatch time, against whichever mode is
+        // current right now: pinned wants exactly that run; live wants
+        // exactly the current latest. Anything else is a stale response
+        // and must be discarded, never silently applied — the same
+        // "new/old run must never silently replace what's on screen"
+        // invariant this section exists to enforce, just at the network
+        // layer instead of the polling layer.
+        const wanted = selectedRunIdRef.current ?? latestRunIdRef.current;
+        if (f.run_id !== wanted) return;
+        displayFunnel(f);
+      })
+      .catch((err) => {
+        // Deliberately does NOT clear `funnel` — CandidateRail/
+        // DecisionRoomPanel render the retained data with an explicit
+        // "stale" Panel status instead of a blank error.
+        setFunnelError(err.message);
+        setFunnelLoading(false);
+      });
+  }
 
   usePoll(() => {
     api
@@ -208,32 +276,36 @@ export default function App() {
       })
       .catch((err) => setHealthError(err.message));
 
+    // Drives both the run timeline (today's runs) and, while following
+    // LIVE, the displayed funnel itself — a pinned historical run is never
+    // touched by this poll (see the selectedRunId-scoped poll below).
     api
-      .runs(1)
+      .runs(50)
       .then((r) => {
-        if (!r.runs.length) {
+        setRuns(r.runs);
+        setRunsError(null);
+        const latest = r.runs[0] ?? null;
+        setLatestRunId(latest?.run_id ?? null);
+        latestRunIdRef.current = latest?.run_id ?? null;
+        if (selectedRunIdRef.current !== null) return; // pinned — the other poll owns funnel
+        if (!latest) {
           setFunnel(null);
           setFunnelError(null);
           setFunnelLoading(false);
           setFunnelUpdatedAt(new Date());
           return;
         }
-        return api.runFunnel(r.runs[0].run_id).then((f) => {
-          setFunnel(f);
-          setFunnelError(null);
-          setFunnelLoading(false);
-          setFunnelUpdatedAt(new Date());
-          if (!chartSymbol && f.candidates.length) setChartSymbol(f.candidates[0].symbol);
-        });
+        fetchFunnel(latest.run_id);
       })
-      .catch((err) => {
-        // Deliberately does NOT clear `funnel` — see the freshness comment
-        // above. CandidateRail/DecisionRoomPanel render the retained data
-        // with an explicit "stale" Panel status instead of a blank error.
-        setFunnelError(err.message);
-        setFunnelLoading(false);
-      });
+      .catch((err) => setRunsError(err.message));
   }, []);
+
+  // Only fetches while pinned (selectedRunId !== null) — restarts (and so
+  // fetches immediately, per usePoll) exactly when the operator pins a
+  // different run or returns to Live, never on every latest-run tick.
+  usePoll(() => {
+    if (selectedRunId !== null) fetchFunnel(selectedRunId);
+  }, [selectedRunId]);
 
   usePoll(() => {
     api
@@ -245,12 +317,10 @@ export default function App() {
       .catch((err) => setOrdersError(err.message));
   }, [orderStatus]);
 
-  useEffect(() => {
-    api
-      .runs(25)
-      .then((r) => setRuns(r.runs))
-      .catch((err) => setRunsError(err.message));
-  }, []);
+  function returnToLive() {
+    pinRun(null);
+    if (latestRunIdRef.current) fetchFunnel(latestRunIdRef.current);
+  }
 
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
     if (!dayRuns.length) return;
@@ -296,6 +366,14 @@ export default function App() {
               columns while the price chart inside it stayed hard-coded to
               260px — a large dead gap below the chart on any viewport
               taller than ~550px. */}
+          <RunTimeline
+            todayRuns={runsToday(runs)}
+            selectedRunId={selectedRunId}
+            latestRunId={latestRunId}
+            onSelect={pinRun}
+            onReturnToLive={returnToLive}
+          />
+
           <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_360px] gap-3 p-3 items-stretch">
             <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
               <CandidateRail
@@ -334,7 +412,13 @@ export default function App() {
             </div>
 
             <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
-              <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
+              <DecisionRoomPanel
+                funnel={funnel}
+                loading={funnelLoading}
+                error={funnelError}
+                updatedAt={funnelUpdatedAt}
+                isLive={selectedRunId === null}
+              />
             </div>
           </div>
 

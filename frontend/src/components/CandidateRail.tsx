@@ -35,9 +35,9 @@ import { fmtNum } from "../lib/format";
  * fetch) is a genuine watchlist-grid upgrade a hand-rolled list wouldn't
  * get for free. */
 
-type Stage = "rejected" | "reached_pm" | "proposed" | "risk_action" | "executed";
+export type Stage = "rejected" | "reached_pm" | "proposed" | "risk_action" | "executed";
 
-const STAGE_META: Record<Stage, { label: string; dotClass: string; textClass: string; short: string; rank: number }> = {
+export const STAGE_META: Record<Stage, { label: string; dotClass: string; textClass: string; short: string; rank: number }> = {
   executed: { label: "Executed", dotClass: "bg-pos", textClass: "text-pos", short: "executed", rank: 0 },
   risk_action: { label: "Modified / blocked by risk", dotClass: "bg-neg", textClass: "text-neg", short: "risk", rank: 1 },
   proposed: { label: "Proposed", dotClass: "bg-warn", textClass: "text-warn", short: "proposed", rank: 2 },
@@ -57,7 +57,7 @@ const STAGE_ORDER: Stage[] = ["executed", "risk_action", "proposed", "reached_pm
 // reached a proposed order in that run; risk_modified is already exact
 // per-candidate. This is the same run-level-attribution precedent already
 // accepted elsewhere in this codebase, not a new inference.
-function candidateStage(c: CandidateFunnelItem, funnel: RunFunnelResponse): Stage {
+export function candidateStage(c: CandidateFunnelItem, funnel: RunFunnelResponse): Stage {
   if (c.executed) return "executed";
   const verdict = funnel.risk_verdict?.verdict;
   const riskActed =
@@ -162,6 +162,16 @@ function ExpandedSummary({ c }: { c: CandidateFunnelItem }) {
   if (c.reached_proposed_order && c.proposed_action) parts.push(`Proposed ${c.proposed_action}`);
   if (c.risk_modified) parts.push("Modified by AI Risk Manager");
   if (c.executed && c.trade_action) parts.push(`Executed ${c.trade_action}`);
+  // The specific persisted reason execution skipped this candidate's
+  // approved order — closes the gap where "proposed but not executed" hid
+  // a real recorded reason (e.g. "stale_entry") from the operator.
+  if (!c.executed && c.execution_skip_reason) {
+    parts.push(
+      `Execution skipped — ${c.execution_skip_reason.replace(/_/g, " ")}${
+        c.execution_skip_detail ? `: ${c.execution_skip_detail}` : ""
+      }`
+    );
+  }
   if (!parts.length) parts.push("Rejected by specialist screening — never reached the Portfolio Manager.");
   return <div className="px-2 pb-1.5 pt-0.5 text-[0.7rem] text-dim leading-snug">{parts.join(" · ")}</div>;
 }

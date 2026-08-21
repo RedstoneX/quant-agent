@@ -26,11 +26,15 @@ export function DecisionRoomPanel({
   loading,
   error,
   updatedAt,
+  isLive = true,
 }: {
   funnel: RunFunnelResponse | null;
   loading: boolean;
   error: string | null;
   updatedAt?: Date | null;
+  /** false when the Cockpit is pinned to an explicit historical run
+   * instead of following the latest one — see App.tsx / RunTimeline. */
+  isLive?: boolean;
 }) {
   const { openRunDetail } = useModalActions();
   // A failed poll never blanks previously-loaded funnel data — it renders
@@ -41,7 +45,7 @@ export function DecisionRoomPanel({
   const status = error ? (funnel ? "stale" : "error") : loading ? "loading" : "ok";
 
   return (
-    <Panel title="Decision Room — latest run" status={status} staleSince={updatedAt} accent>
+    <Panel title={isLive ? "Decision Room — latest run" : "Decision Room — pinned run"} status={status} staleSince={updatedAt} accent>
       {error && !funnel && <StateMessage text={`Could not load latest decision: ${error}`} error />}
       {!error && !funnel && <StateMessage text="Loading…" />}
       {funnel && (

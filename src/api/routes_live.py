@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException, Query
 from src.api.broker_reads import (
     check_broker_reachable,
     read_account,
+    read_live_quotes,
     read_orders,
     read_positions,
     read_price_bars,
@@ -46,6 +47,8 @@ from src.api.schemas import (
     DailyPnlPoint,
     HealthResponse,
     LiquidityBreakdown,
+    LiveQuote,
+    LiveQuotesResponse,
     OrderItem,
     OrdersResponse,
     PositionItem,
@@ -53,6 +56,8 @@ from src.api.schemas import (
     PriceBar,
     PriceBarsResponse,
 )
+
+_MAX_QUOTE_SYMBOLS = 25
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +297,32 @@ def get_orders(
         raise
     except Exception as exc:
         return OrdersResponse(orders=[], error=str(exc))
+
+
+@router.get("/quotes", response_model=LiveQuotesResponse)
+def get_quotes(symbols: str = Query(..., description="Comma-separated symbols, e.g. AAPL,MSFT")) -> LiveQuotesResponse:
+    """Current-session quote facts (last trade, previous close, today's
+    still-forming session range) for one or more symbols — market-data
+    read only, never account/order/trading state. Distinct from
+    `/positions`' broker-marked current_price (held positions only) and
+    `/prices`' historical daily bars; lets a chart/candidate view label a
+    true current price instead of implying a historical bar is "now."
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        syms = syms[:_MAX_QUOTE_SYMBOLS]
+        if not syms:
+            return LiveQuotesResponse(quotes=[], as_of=now, error="no symbols requested")
+        result = read_live_quotes(syms)
+        result_quotes = result.get("quotes", {})
+        quotes = [
+            LiveQuote(symbol=sym, **(result_quotes.get(sym) or {}))
+            for sym in syms
+        ]
+        return LiveQuotesResponse(quotes=quotes, as_of=now, error=result.get("error"))
+    except Exception as exc:
+        return LiveQuotesResponse(quotes=[], as_of=now, error=str(exc))
 
 
 @router.get("/prices/{symbol}", response_model=PriceBarsResponse)

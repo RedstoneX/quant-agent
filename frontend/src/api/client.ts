@@ -137,6 +137,30 @@ export interface PriceBarsResponse {
 }
 
 // ---------------------------------------------------------------------
+// /quotes — current-session quote facts, distinct from PositionItem's
+// broker-marked current_price (held positions only) and PriceBar's
+// historical daily bars (up to one session behind during market hours).
+// See docs/architecture/MISSION_CONTROL_API.md "Mission Control
+// data-truth" tranche.
+// ---------------------------------------------------------------------
+
+export interface LiveQuote {
+  symbol: string;
+  last_price: number | null;
+  prev_close: number | null;
+  session_open: number | null;
+  session_high: number | null;
+  session_low: number | null;
+}
+
+export interface LiveQuotesResponse {
+  quotes: LiveQuote[];
+  as_of: string;
+  source: string;
+  error: string | null;
+}
+
+// ---------------------------------------------------------------------
 // /runs, /runs/{id}, /runs/{id}/candidates(/{symbol}), /runs/{id}/funnel
 // ---------------------------------------------------------------------
 
@@ -358,6 +382,15 @@ export interface CandidateFunnelItem {
   risk_modified: boolean;
   executed: boolean;
   trade_action: string | null;
+  // Why the execution phase deterministically dropped this candidate's
+  // approved order, when it did — quoted from the persisted `execution_skip`
+  // evidence (e.g. "insufficient_cash", "stale_entry"). None when no skip
+  // was recorded (src/api/schemas.py::CandidateFunnelItem — this was
+  // already returned by the backend; the frontend contract just didn't
+  // expose it, so the UI fell back to a generic "proposed but not
+  // executed" even when a specific reason existed).
+  execution_skip_reason: string | null;
+  execution_skip_detail: string | null;
 }
 
 export interface RunFunnelResponse {
@@ -450,6 +483,8 @@ export const api = {
   trades: (limit = 30) => getJSON<TradesResponse>(`/trades?limit=${limit}`),
   prices: (symbol: string, lookbackDays = 120) =>
     getJSON<PriceBarsResponse>(`/prices/${encodeURIComponent(symbol)}?lookback_days=${lookbackDays}`),
+  quotes: (symbols: string[]) =>
+    getJSON<LiveQuotesResponse>(`/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
   runs: (limit = 25) => getJSON<RunsResponse>(`/runs?limit=${limit}`),
   runDetail: (runId: string) => getJSON<RunDetailResponse>(`/runs/${encodeURIComponent(runId)}`),
   runCandidates: (runId: string) =>

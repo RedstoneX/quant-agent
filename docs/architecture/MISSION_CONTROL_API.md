@@ -95,3 +95,50 @@ distinct read-only client from the trading client `broker_reads.py`
 already uses for account/positions/orders. Never places, cancels, or
 references an order; degrades to `{"bars": [], "error": "..."}` on any
 failure rather than raising. Powers the cockpit's price chart panel.
+During market hours these bars run up to one session behind (the current
+day's bar is not yet a completed historical bar) — see `/quotes` below
+for the true current price this chart is deliberately never mistaken for.
+
+## Mission Control data-truth / run-history / decision-explainability tranche (2026-08-21)
+
+Operator-authorized, bounded read-side correctness tranche. Additive
+only — no new authoritative state, no broker-write surface, no change to
+`src/execution/broker.py` / `src/pipeline*.py` / `src/risk/*`.
+
+`GET /quotes?symbols=AAPL,MSFT` (`LiveQuotesResponse`): current-session
+quote facts (last trade price, previous session close, today's
+still-forming session open/high/low) for up to 25 symbols in one call.
+Wraps `AlpacaBroker.get_intraday_snapshots` — the SAME read-only bulk
+Alpaca snapshot call (`StockHistoricalDataClient.get_stock_snapshot`)
+the already-accepted, already-enabled intraday opportunity scanner uses;
+no new broker capability. `as_of` is a Mission-Control fetch-time
+timestamp (not a per-trade exchange timestamp), so a consumer can label
+a quote "as of HH:MM:SS" rather than presenting it as unqualified live.
+Distinct from `/positions`' broker-marked `current_price` (held
+positions only) and `/prices`' historical daily bars — exists so the
+cockpit chart/candidate context can show a genuinely current price
+without ever implying a historical bar is "now" (the 2026-08-21 pricing-
+reconciliation finding this tranche addresses).
+
+`GET /journal/dates` now additionally unions in every ET calendar date
+that has at least one recorded run (`agent_logs`), not only dates with an
+evening reflection (`insights`) or an equity snapshot (`daily_pnl`) — a
+day with real runs/candidates but neither of those was previously
+invisible in the date list even though `/journal/{date}` already
+rendered it correctly once selected directly. See `src/api/db_reads.py`
+`get_journal_dates`.
+
+`CandidateFunnelItem`'s `execution_skip_reason`/`execution_skip_detail`
+(already returned by `GET /runs/{run_id}/funnel` since Stage 6) are now
+also exposed in the frontend TypeScript contract
+(`frontend/src/api/client.ts`) and surfaced in the Cockpit, the Candidate
+Detail modal's outcome summary, and the Journal's per-candidate ledger
+line — closing a frontend-only contract gap where a specific persisted
+skip reason existed but the UI fell back to a generic "proposed but not
+executed."
+
+Frontend-only, no backend change: the Cockpit can now pin its primary
+view (Candidates / Decision Room / chart) to an explicit historical run
+from today's run timeline instead of always following the latest run,
+with an explicit "Return to Live" control — a new run arriving no longer
+silently replaces the run an operator is actively reviewing.

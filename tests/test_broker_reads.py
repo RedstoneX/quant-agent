@@ -343,6 +343,76 @@ def test_read_orders_degrades_when_the_query_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# read_live_quotes (2026-08-21 Mission Control correctness tranche)
+# ---------------------------------------------------------------------------
+
+def _snapshot_broker(snapshots: dict, capture: list | None = None):
+    def _get_intraday_snapshots(symbols):
+        if capture is not None:
+            capture.append(list(symbols))
+        return snapshots
+
+    return _broker(get_intraday_snapshots=_get_intraday_snapshots)
+
+
+def test_read_live_quotes_flattens_snapshot_data(monkeypatch):
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({
+        "NVDA": {"last_price": 121.5, "prev_close": 119.0, "session_open": 120.0, "session_high": 122.0, "session_low": 118.5},
+    }))
+    out = broker_reads.read_live_quotes(["NVDA"])
+    assert out["error"] is None
+    assert out["quotes"]["NVDA"] == {
+        "last_price": 121.5, "prev_close": 119.0,
+        "session_open": 120.0, "session_high": 122.0, "session_low": 118.5,
+    }
+
+
+def test_read_live_quotes_never_drops_a_requested_symbol_with_no_snapshot(monkeypatch):
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({
+        "NVDA": {"last_price": 121.5, "prev_close": 119.0, "session_open": None, "session_high": None, "session_low": None},
+    }))
+    out = broker_reads.read_live_quotes(["NVDA", "ZZZZ"])
+    assert set(out["quotes"]) == {"NVDA", "ZZZZ"}
+    assert out["quotes"]["ZZZZ"] == {
+        "last_price": None, "prev_close": None,
+        "session_open": None, "session_high": None, "session_low": None,
+    }
+    # One priced symbol in the batch — not the "every symbol empty" pattern.
+    assert out["error"] is None
+
+
+def test_read_live_quotes_reports_an_error_when_every_symbol_comes_back_empty(monkeypatch):
+    """`AlpacaBroker.get_intraday_snapshots` degrades a total batch failure
+    (bad/absent credentials, market-data outage) to `{}` — on the wire
+    identical to "no data for any of these symbols." Every requested
+    symbol coming back completely empty is the honest signal that this was
+    a read failure, not a coincidence, so it must not render as a silent
+    absence of a live-quote caption on the frontend."""
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({}))
+    out = broker_reads.read_live_quotes(["NVDA", "AAPL"])
+    assert out["error"] == "no quote data returned for any requested symbol"
+    assert set(out["quotes"]) == {"NVDA", "AAPL"}
+    assert out["quotes"]["NVDA"]["last_price"] is None
+
+
+def test_read_live_quotes_degrades_to_error_when_the_broker_raises(monkeypatch):
+    def _raise(symbols):
+        raise _Boom("market data client unreachable")
+
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(get_intraday_snapshots=_raise))
+    out = broker_reads.read_live_quotes(["NVDA"])
+    assert "market data client unreachable" in out["error"]
+    assert out["quotes"] == {"NVDA": {}}
+
+
+def test_read_live_quotes_empty_symbol_list_is_not_treated_as_a_failure(monkeypatch):
+    captured: list = []
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({}, captured))
+    out = broker_reads.read_live_quotes([])
+    assert out == {"quotes": {}, "error": None}
+
+
+# ---------------------------------------------------------------------------
 # _get_broker — construction is narrow by design
 # ---------------------------------------------------------------------------
 

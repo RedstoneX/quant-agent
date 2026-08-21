@@ -168,6 +168,35 @@ class PriceBarsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# /quotes
+# ---------------------------------------------------------------------------
+
+class LiveQuote(BaseModel):
+    """One symbol's current-session quote facts — distinct from a
+    PositionItem's broker-marked current_price (held positions only) and
+    from a PriceBar (historical, one row per completed/forming day).
+    Any field is None when Alpaca had nothing to report for this symbol,
+    never fabricated."""
+    symbol: str
+    last_price: float | None = None
+    prev_close: float | None = None
+    session_open: float | None = None
+    session_high: float | None = None
+    session_low: float | None = None
+
+
+class LiveQuotesResponse(BaseModel):
+    quotes: list[LiveQuote] = []
+    # When Mission Control read Alpaca for this response — a fetch-time
+    # timestamp, not a per-trade exchange timestamp (Alpaca's snapshot SDK
+    # object doesn't expose one cleanly here). Lets the client label a
+    # quote "as of HH:MM:SS" instead of presenting it as unqualified live.
+    as_of: str
+    source: str = "alpaca_market_data"
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # /trades
 # ---------------------------------------------------------------------------
 

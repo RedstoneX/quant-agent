@@ -23,13 +23,11 @@ Live-money trading is **not authorized**.
 
 Commissioning is complete and accepted, all seven paper timers remain armed, and private operator access is available through Tailscale. The tailnet DNS name is **`wallaby-bowfin.ts.net`** and the verified OVH VPS Tailscale machine is **`ovh-vps`**, giving the explicit MagicDNS FQDN **`ovh-vps.wallaby-bowfin.ts.net`**.
 
-The first real soak review has already produced useful evidence:
+The trading-utility recovery (7 fixes: PM parse destruction, SGOV funding race, schema-complete decisions, invisible execution kills, unfunded-BUY loss, macro conservatism, sizing-cap provenance) is deployed to production and verified as machinery. It is not yet accepted as a working recovery — that needs natural Alpaca Paper sessions demonstrating the real discovery → decision → execution → exit chain, not forced trades.
 
-- the dashboard makes deterministic SGOV cash parking look like an AI-selected investment;
-- a real morning run considered candidates but the top-level cockpit did not explain why no trade resulted;
-- the recent market decline creates a useful test of whether the existing inverse-ETF bearish path is actually being considered rather than merely existing in code.
+### 🧭 Mission Control correctness tranche — implemented, awaiting external review
 
-That evidence is enough to authorize the next tranche without stopping the soak.
+A bounded, read-side-only fix for six confirmed dashboard-truth defects (pricing/chart data truth, Cockpit run-history silently replacing what an operator was reviewing, Journal decision-ledger legibility, "why wasn't it purchased?" explainability, a real frontend/backend contract gap on execution-skip reasons, and Journal date discoverability) is implemented on `claude/mission-control-data-correctness`, backed by new backend + frontend tests, and pushed. **Awaiting ChatGPT/operator review and merge — Claude does not self-accept this.**
 
 ---
 
@@ -47,7 +45,8 @@ That evidence is enough to authorize the next tranche without stopping the soak.
 | ✅ DONE | Runtime commissioning | 37 PASS / 0 FAIL / EXIT 0, combined with prior green dev isolation evidence. |
 | ✅ DONE | Private operator access | Tailscale/Orca path recorded; explicit VPS FQDN is `ovh-vps.wallaby-bowfin.ts.net`. |
 | ✅ ACTIVE | Scheduled Alpaca Paper soak | Autonomous paper schedule remains armed. |
-| 🟨 NOW | Autonomous product improvement | Directionality evidence, cockpit redesign, explainability and justified intelligence fixes. |
+| ✅ DONE | Trading-utility recovery | 7 evidenced fixes deployed and verified as machinery; natural-validation evidence still pending. |
+| 🟨 NOW | Mission Control data-truth tranche | Implemented + tested on `claude/mission-control-data-correctness`; pushed, awaiting external review/merge. |
 
 ## 📊 Mission Control
 
@@ -71,12 +70,12 @@ The prior Mission Control visual board is being made a durable repository refere
 
 ## ⏭️ NEXT MOVES
 
-1. Preserve and commit the Mission Control visual board at `docs/visual/MISSION_CONTROL_VISION_BOARD.png`, then use it as an explicit redesign reference.
-2. Execute the authorized autonomous product-improvement tranche through a meaningful implementation checkpoint, not another audit-only stop.
-3. Push the implementation branch for independent ChatGPT review; Claude does not merge its own work.
+1. ChatGPT/operator review the `claude/mission-control-data-correctness` diff and evidence, then merge if accepted — Claude does not merge its own work.
+2. Continue observing natural Alpaca Paper sessions against the trading-utility recovery's validation criteria; do not force trades to manufacture evidence.
+3. Preserve and commit the Mission Control visual board at `docs/visual/MISSION_CONTROL_VISION_BOARD.png` for future redesign reference.
 
 ## 🚧 CURRENT BLOCKERS
 
-No architecture blocker. Runtime/database evidence and the newly staged visual board are available to the VPS-side development workflow; the paper soak should continue while improvements are built and verified.
+No architecture blocker. The Mission Control data-truth tranche is implemented, tested and pushed but not yet externally reviewed or merged — that review is the current gate, not a Claude-side blocker. Browser-rendered visual QA for that tranche could not be performed in this sandbox (the browser tool runs on infrastructure separate from this VPS and cannot reach a locally-bound dev server); verified instead via direct API calls against a seeded fixture DB, plus full backend/frontend test suites and a production build. The paper soak continues unaffected.
 
-_Last refreshed: 2026-08-18 EDT (America/Toronto) — active project view only; retired detail lives in Git history._
+_Last refreshed: 2026-08-21 EDT (America/Toronto) — active project view only; retired detail lives in Git history._
