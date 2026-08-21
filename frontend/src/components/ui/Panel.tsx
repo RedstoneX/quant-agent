@@ -16,8 +16,11 @@ export function Panel({
   title: string;
   subtitle?: string;
   status?: PanelStatus;
-  /** When `status === "stale"`, the last-known-good fetch time — rendered
-   * next to the status word so "stale" is never a bare unqualified claim. */
+  /** The last-known-good fetch time. Rendered next to the status word
+   * whenever known — not only when `status === "stale"` — so a value on
+   * screen is never an unqualified "this is current right now" claim;
+   * see docs/architecture/MISSION_CONTROL_API.md "Mission Control
+   * data-truth" tranche ("source it explicitly and timestamp it"). */
   staleSince?: Date | null;
   actions?: ReactNode;
   full?: boolean;
@@ -27,7 +30,13 @@ export function Panel({
   const statusColor: Color =
     status === "error" ? "rose" : status === "stale" || status === "degraded" ? "amber" : status === "ok" ? "emerald" : "slate";
   const statusLabel =
-    status === "loading" ? "…" : status === "stale" ? `stale${staleSince ? ` · ${staleSince.toLocaleTimeString()}` : ""}` : status || "";
+    status === "loading"
+      ? "…"
+      : status === "stale"
+      ? `stale${staleSince ? ` · ${staleSince.toLocaleTimeString()}` : ""}`
+      : status
+      ? `${status}${staleSince ? ` · ${staleSince.toLocaleTimeString()}` : ""}`
+      : "";
   return (
     <Card
       decoration={accent ? "top" : undefined}

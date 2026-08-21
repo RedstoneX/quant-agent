@@ -87,12 +87,12 @@ export function DecisionRoomPanel({
 
   return (
     <Panel
-      title={detailReady ? `Decision Room — ${symbol}` : "Decision Room — latest run"}
+      title={detailReady ? `Decision Room — ${symbol}` : "Decision Room — selected run"}
       status={status}
       staleSince={updatedAt}
       accent
     >
-      {error && !funnel && <StateMessage text={`Could not load latest decision: ${error}`} error hero glyph="■" />}
+      {error && !funnel && <StateMessage text={`Could not load selected decision: ${error}`} error hero glyph="■" />}
       {!error && !funnel && loading && <StateMessage text="Loading…" hero />}
       {!error && !funnel && !loading && (
         <StateMessage

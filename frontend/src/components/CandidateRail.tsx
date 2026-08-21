@@ -60,13 +60,28 @@ interface Row {
   stage: Stage;
 }
 
-function expandedSummary(c: CandidateFunnelItem): string {
+function expandedSummary(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
   const parts: string[] = [];
   if (c.reached_pm_target && c.pm_target_weight_pct !== null) parts.push(`PM target ${fmtNum(c.pm_target_weight_pct)}%`);
   if (c.reached_proposed_order && c.proposed_action) parts.push(`Proposed ${c.proposed_action}`);
   if (c.risk_modified) parts.push("Modified by AI Risk Manager");
   if (c.executed && c.trade_action) parts.push(`Executed ${c.trade_action}`);
-  if (!parts.length) parts.push("Screened but never reached a Portfolio Manager target this run.");
+  if (!c.executed && c.execution_skip_reason) {
+    parts.push(
+      `Execution skipped — ${c.execution_skip_reason.replace(/_/g, " ")}${
+        c.execution_skip_detail ? `: ${c.execution_skip_detail}` : ""
+      }`
+    );
+  } else if (c.reached_proposed_order && funnel.hard_risk_block) {
+    parts.push("Blocked by the deterministic hard-risk gate.");
+  } else if (c.reached_proposed_order && funnel.risk_verdict?.verdict?.approved === false) {
+    parts.push("Rejected by the AI Risk Manager.");
+  } else if (c.reached_proposed_order && !c.executed) {
+    parts.push("Not executed; execution reason was not recorded for this candidate.");
+  } else if (c.reached_pm_target && !c.reached_proposed_order) {
+    parts.push("No order was constructed; candidate-specific reason was not recorded.");
+  }
+  if (!parts.length) parts.push("Screened but never reached a Portfolio Manager target this run; candidate-specific reason was not recorded.");
   return parts.join(" · ");
 }
 
@@ -156,7 +171,7 @@ export function CandidateRail({
         <StateMessage text="No session yet today. Candidates populate once QAMC's first scan completes." hero glyph="○" />
       )}
       {!error && !funnel && loading && <StateMessage text="Loading…" hero />}
-      {funnel && total === 0 && <StateMessage text="No candidates considered in the latest run." />}
+      {funnel && total === 0 && <StateMessage text="No candidates considered in the selected run." />}
       {funnel && total > 0 && (
         <div className="flex min-h-0 flex-col gap-3">
           {error && (
@@ -254,7 +269,7 @@ export function CandidateRail({
                         {row.getIsExpanded() && (
                           <TableRow className="bg-panel-alt/70">
                             <TableCell colSpan={2} className="!whitespace-normal !px-3 !py-2 text-xs leading-snug text-dim">
-                              {expandedSummary(candidate)}
+                              {expandedSummary(candidate, funnel)}
                             </TableCell>
                           </TableRow>
                         )}

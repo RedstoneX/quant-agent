@@ -44,6 +44,8 @@ function candidate(overrides: Partial<CandidateFunnelItem>): CandidateFunnelItem
     risk_modified: false,
     executed: false,
     trade_action: null,
+    execution_skip_reason: null,
+    execution_skip_detail: null,
     ...overrides,
   };
 }

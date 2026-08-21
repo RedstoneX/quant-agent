@@ -88,7 +88,7 @@ function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePan
 }
 
 // Center-column header for whichever symbol is currently charted — derived
-// only from the latest run's already-fetched funnel data (no extra
+// only from the selected run's already-fetched funnel data (no extra
 // fetch), so the chart never sits contextless above a bare candlestick.
 function SelectedSymbolContext({
   funnel,
@@ -121,7 +121,7 @@ function SelectedSymbolContext({
         </>
       ) : (
         <span className="text-dim text-[0.8125rem]">
-          {funnel ? "not among the latest run’s candidates" : "broad-market context — no session today yet"}
+          {funnel ? "not among the selected run’s candidates" : "broad-market context — no session today yet"}
         </span>
       )}
     </Card>
@@ -180,6 +180,7 @@ export default function App() {
   // the poll callback a way to read the CURRENT autoFollow/selectedRunId.
   const autoFollowRef = useRef(autoFollow);
   const selectedRunIdRef = useRef(selectedRunId);
+  const todaysRequestIdRef = useRef(0);
   useEffect(() => {
     autoFollowRef.current = autoFollow;
     selectedRunIdRef.current = selectedRunId;
@@ -306,6 +307,7 @@ export default function App() {
   // primary run each tick unless the operator has pinned a different one
   // via TodaySessionsStrip.
   usePoll(() => {
+    const requestId = ++todaysRequestIdRef.current;
     // Deliberately today's literal ET calendar date, NOT journalDates(1)
     // (the most recent day the journal listing considers "complete" —
     // JournalPanel's own default view). During market hours today has
@@ -326,6 +328,7 @@ export default function App() {
               .catch((): [string, RunFunnelResponse | null] => [r.run_id, null])
           )
         ).then((pairs) => {
+          if (requestId !== todaysRequestIdRef.current) return;
           const funnels = Object.fromEntries(pairs);
           setTodaysRuns(day.runs);
           setTodaysFunnels(funnels);
@@ -337,11 +340,13 @@ export default function App() {
           const best = bestPrimaryRunId(day.runs, funnels);
           const stillExists = selectedRunIdRef.current && day.runs.some((r) => r.run_id === selectedRunIdRef.current);
           if (autoFollowRef.current || !stillExists) {
+            selectedRunIdRef.current = best;
             setSelectedRunId(best);
           }
         })
       )
       .catch((err) => {
+        if (requestId !== todaysRequestIdRef.current) return;
         if (err.status === 404) {
           setTodaysRuns([]);
           setTodaysFunnels({});
@@ -349,7 +354,10 @@ export default function App() {
           setTodaysError(null);
           setTodaysLoading(false);
           setTodaysUpdatedAt(new Date());
-          if (autoFollowRef.current) setSelectedRunId(null);
+          if (autoFollowRef.current) {
+            selectedRunIdRef.current = null;
+            setSelectedRunId(null);
+          }
           return;
         }
         // Deliberately does NOT clear todaysRuns/todaysFunnels — the
@@ -394,13 +402,18 @@ export default function App() {
   }, []);
 
   function selectSession(runId: string) {
+    autoFollowRef.current = false;
+    selectedRunIdRef.current = runId;
     setAutoFollow(false);
     setSelectedRunId(runId);
   }
 
-  function followLatestSession() {
+  function followPrimarySession() {
+    const best = bestPrimaryRunId(todaysRuns, todaysFunnels);
+    autoFollowRef.current = true;
+    selectedRunIdRef.current = best;
     setAutoFollow(true);
-    setSelectedRunId(bestPrimaryRunId(todaysRuns, todaysFunnels));
+    setSelectedRunId(best);
   }
 
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
@@ -444,7 +457,7 @@ export default function App() {
               selectedRunId={selectedRunId}
               autoFollow={autoFollow}
               onSelect={selectSession}
-              onFollowLatest={followLatestSession}
+              onFollowLatest={followPrimarySession}
             />
             <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
           </>

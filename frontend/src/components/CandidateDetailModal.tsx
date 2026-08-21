@@ -24,6 +24,7 @@ import type { FlowStage } from "./agentflow/types";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
 import { buildCandidateGraph } from "./agentflow/buildGraph";
 import { buildCandidateStages } from "./funnelShared";
+export { buildCandidateStages, skipText } from "./funnelShared";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
   if (!tech) return null;
@@ -243,6 +244,51 @@ function riskOutcome(detail: CandidateDetailResponse): "clean" | "modified" | "r
   return hasMods ? "modified" : "clean";
 }
 
+export function furthestReachedStage(stages: FlowStage[]): FlowStage | null {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i].status !== "not_reached") return stages[i];
+  }
+  return null;
+}
+
+function OutcomeBanner({ detail, stages, executed }: { detail: CandidateDetailResponse; stages: FlowStage[]; executed: boolean }) {
+  const actionWord = detail.trade?.action || detail.pm_proposed_order?.action;
+  if (executed) {
+    const trade = detail.trade;
+    return (
+      <div className="rounded-xl border-2 border-pos/50 bg-pos/8 px-4 py-3 mb-3.5">
+        <div className="text-[1.05rem] font-extrabold text-pos tracking-tight">
+          FINAL OUTCOME · EXECUTED{actionWord ? ` — ${actionWord}` : ""}
+        </div>
+        {trade && (
+          <p className="text-[0.85rem] mt-1">
+            {trade.qty !== null && trade.qty !== undefined ? `${fmtNum(trade.qty)} sh` : ""} @ {fmtMoney(trade.price)}
+            {trade.fill_status ? ` (${trade.fill_status})` : ""}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const furthest = furthestReachedStage(stages);
+  const reason = furthest?.caption || "Candidate-specific reason was not recorded.";
+  return (
+    <div className="rounded-xl border-2 border-warn/50 bg-warn/8 px-4 py-3 mb-3.5">
+      <div className="text-[1.05rem] font-extrabold text-warn tracking-tight">
+        FINAL OUTCOME · NOT EXECUTED{actionWord ? ` (proposed ${actionWord})` : ""}
+      </div>
+      <p className="text-[0.82rem] mt-1">
+        <span className="text-dim">Stopped at: </span>
+        <span className="font-semibold">{furthest ? furthest.label : "Specialists"}</span>
+      </p>
+      <p className="text-[0.85rem] mt-0.5">
+        <span className="text-dim">Recorded reason: </span>
+        {reason}
+      </p>
+    </div>
+  );
+}
+
 
 // PM's 7(+2)-step CoT (src/models.py::ReasoningChain) and the Risk
 // Manager's 6-step CoT (src/models.py::RiskReasoningChain) — human labels
@@ -319,15 +365,17 @@ function DecisionDetail({
   detail,
   funnel,
   riskLog,
+  stages,
 }: {
   detail: CandidateDetailResponse;
   funnel: RunFunnelResponse | null;
   riskLog: AgentLogItem | null;
+  stages: FlowStage[];
 }) {
-  const stages = buildCandidateStages(detail, funnel);
   const gate = stages.find((s) => s.key === "gate");
   const exec = stages.find((s) => s.key === "exec");
   const pmReached = stages.find((s) => s.key === "pm")?.status !== "not_reached";
+  const reachedProposedOrder = !!detail.pm_proposed_order;
 
   const verdict = detail.risk_verdict?.verdict ?? null;
   const outcome = riskOutcome(detail);
@@ -388,7 +436,9 @@ function DecisionDetail({
 
         <div>
           <div className="font-bold text-[0.85rem] mb-1">AI Risk Manager</div>
-          {detail.risk_verdict ? (
+          {!reachedProposedOrder ? (
+            <StateMessage text="This candidate never reached a Portfolio Manager proposed order — the AI Risk Manager evaluates proposed orders, so it did not evaluate this candidate. Any Risk verdict recorded for this run belongs to a different, proposed candidate." />
+          ) : detail.risk_verdict ? (
             verdict ? (
               <div className="card">
                 <div className="kv-row">
@@ -519,6 +569,8 @@ export function CandidateDetailModal({
   }, [runId, symbol]);
 
   const riskLog = runDetail?.agent_logs.find((a) => a.agent_name === "risk_manager") ?? null;
+  const stages = detail ? buildCandidateStages(detail, funnel) : null;
+  const executed = stages?.find((stage) => stage.key === "exec")?.status === "executed";
 
   return (
     <Modal
@@ -533,8 +585,10 @@ export function CandidateDetailModal({
     >
       {error && <StateMessage text={`Could not load ${symbol}: ${error}`} error />}
       {!error && !detail && <StateMessage text={`Loading ${symbol}…`} />}
-      {detail && (
+      {detail && stages && (
         <div>
+          <OutcomeBanner detail={detail} stages={stages} executed={executed} />
+
           {/* Specialist identity/direction/confidence now lives in the
               agent-topology graph inside "Decision flow" below (real
               fan-in, not a separate near-duplicate card grid) — clicking a
@@ -552,7 +606,7 @@ export function CandidateDetailModal({
             {[<MacroCard key="macro" macro={detail.macro_context} />, <NewsContextCard key="newsctx" news={detail.news_context} />]}
           </EvidenceSection>
           <EvidenceSection title="Decision flow: Specialists &rarr; PM &rarr; AI Risk &rarr; gate &rarr; execution">
-            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} />]}
+            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} stages={stages} />]}
           </EvidenceSection>
         </div>
       )}

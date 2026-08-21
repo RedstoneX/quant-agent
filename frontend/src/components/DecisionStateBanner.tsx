@@ -78,7 +78,7 @@ export function DecisionStateBanner({
     }
     return (
       <Callout title="Decision unavailable" color="rose" className="mx-3 mt-3 !bg-panel-alt">
-        Could not load the latest decision: {error}
+        Could not load the selected decision: {error}
       </Callout>
     );
   }

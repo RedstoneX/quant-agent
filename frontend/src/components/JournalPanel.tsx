@@ -21,6 +21,45 @@ import { useModalActions } from "../context/ModalContext";
 import { Stage, STAGE_META, STAGE_ORDER, candidateStage, isSweepOnlyExecution } from "./funnelShared";
 import { buildEntries } from "./agentflow/buildGraph";
 
+export function ledgerLine(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
+  const pm = c.proposed_action
+    ? `PM ${c.proposed_action}`
+    : c.reached_pm_target
+    ? "PM target, no order — reason not recorded"
+    : "PM no proposal";
+
+  let risk = "Risk —";
+  let riskExplainsNonExecution = false;
+  if (c.reached_proposed_order) {
+    const verdict = funnel.risk_verdict?.verdict;
+    if (c.risk_modified) {
+      risk = "Risk MODIFIED";
+    } else if (funnel.hard_risk_block) {
+      risk = "Risk BLOCKED (hard gate)";
+      riskExplainsNonExecution = true;
+    } else if (verdict?.approved === false) {
+      risk = "Risk REJECTED";
+      riskExplainsNonExecution = true;
+    } else if (verdict?.approved === true) {
+      risk = "Risk APPROVED";
+    }
+  }
+
+  let outcome: string;
+  if (c.executed) {
+    outcome = `EXECUTED${c.trade_action ? ` (${c.trade_action})` : ""}`;
+  } else if (c.execution_skip_reason) {
+    outcome = `SKIPPED — ${c.execution_skip_reason.replace(/_/g, " ")} · NOT EXECUTED`;
+  } else if (c.reached_proposed_order && !riskExplainsNonExecution) {
+    outcome = "NOT EXECUTED — execution reason not recorded";
+  } else if (c.reached_proposed_order) {
+    outcome = "NOT EXECUTED";
+  } else {
+    outcome = "no order reached";
+  }
+  return `${pm} · ${risk} · ${outcome}`;
+}
+
 // Mirrors DecisionFunnelPanel's STATE_LABELS/STATE_COLORS mapping so the
 // language is consistent across the cockpit, duplicated locally (rather
 // than imported) to keep this file's per-day-multi-run layout independent
@@ -419,12 +458,10 @@ function DayAgentAnalysis({
 // symbols with zero PM target) while building this.
 function RunCandidateList({
   funnel,
-  dayRuns,
   onOpenCandidate,
 }: {
   funnel: RunFunnelResponse;
-  dayRuns: RunSummary[];
-  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
+  onOpenCandidate: (symbol: string) => void;
 }) {
   const buckets: Record<Stage, CandidateFunnelItem[]> = {
     executed: [],
@@ -448,12 +485,9 @@ function RunCandidateList({
         const stage = candidateStage(c, funnel);
         return (
           <div key={c.symbol} className="flex items-start gap-2 text-[0.79rem] flex-wrap">
-            <CandidateChip symbol={c.symbol} info={c} onClick={() => onOpenCandidate(dayRuns, c.symbol)} />
+            <CandidateChip symbol={c.symbol} info={c} onClick={() => onOpenCandidate(c.symbol)} />
             <span className={STAGE_META[stage].textClass}>{STAGE_META[stage].label}</span>
-            <span className="text-dim">
-              {c.proposed_action ? `PM: ${c.proposed_action}` : ""}
-              {c.executed ? ` · executed${c.trade_action ? ` (${c.trade_action})` : ""}` : ""}
-            </span>
+            <span className="text-dim">{ledgerLine(c, funnel)}</span>
           </div>
         );
       })}
@@ -464,7 +498,7 @@ function RunCandidateList({
           </summary>
           <div className="flex flex-wrap gap-1.5 mt-1.5">
             {screened.map((c) => (
-              <CandidateChip key={c.symbol} symbol={c.symbol} info={c} onClick={() => onOpenCandidate(dayRuns, c.symbol)} />
+              <CandidateChip key={c.symbol} symbol={c.symbol} info={c} onClick={() => onOpenCandidate(c.symbol)} />
             ))}
           </div>
         </details>
@@ -473,23 +507,20 @@ function RunCandidateList({
   );
 }
 
-function RunNarrativeCard({
+export function RunNarrativeCard({
   run,
   funnel,
   funnelLoading,
-  dayRuns,
   dayTrades,
-  onOpenCandidate,
   onOpenRun,
 }: {
   run: RunSummary;
   funnel: RunFunnelResponse | null | undefined;
   funnelLoading: boolean;
-  dayRuns: RunSummary[];
   dayTrades: TradeItem[];
-  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
   onOpenRun: (runId: string) => void;
 }) {
+  const { openCandidateDetail } = useModalActions();
   const runTrades = dayTrades.filter((t) => t.run_id === run.run_id);
   const sweepOnly = funnel?.decision_state === "executed" && isSweepOnlyExecution(runTrades);
 
@@ -534,7 +565,7 @@ function RunNarrativeCard({
           {funnel.candidates.length === 0 ? (
             <StateMessage text="No candidates considered this run." />
           ) : (
-            <RunCandidateList funnel={funnel} dayRuns={dayRuns} onOpenCandidate={onOpenCandidate} />
+            <RunCandidateList funnel={funnel} onOpenCandidate={(symbol) => openCandidateDetail(run.run_id, symbol)} />
           )}
 
           {funnel.pm_reasoning?.portfolio_view && (
@@ -824,9 +855,7 @@ export function JournalPanel({
                 run={r}
                 funnel={funnels[r.run_id]}
                 funnelLoading={funnelsLoading}
-                dayRuns={day.runs}
                 dayTrades={day.trades}
-                onOpenCandidate={onOpenCandidate}
                 onOpenRun={openRunDetail}
               />
             ))}

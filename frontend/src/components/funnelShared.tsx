@@ -194,28 +194,41 @@ export function bestPrimaryRunId(
  * supplementary fetch succeeds) — never a fabricated guess about a stage
  * with no evidence.
  * ------------------------------------------------------------------ */
+export function skipText(reason: string | null, detail: string | null): string | null {
+  if (!reason) return null;
+  const words = reason.replace(/_/g, " ");
+  return detail ? `${words} — ${detail}` : words;
+}
+
 export function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
   const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
   const specialistsReached = specialistCount > 0;
-
-  const pmReached = !!(detail.pm_target || detail.pm_proposed_order || detail.pm_reasoning?.portfolio_view);
-  const pmCaption = detail.pm_target
-    ? `Target ${fmtNum(detail.pm_target.target_weight_pct)}%`
-    : detail.pm_proposed_order
+  const reachedProposedOrder = !!detail.pm_proposed_order;
+  const pmReached = !!detail.pm_target || reachedProposedOrder;
+  const pmCaption = detail.pm_proposed_order
     ? detail.pm_proposed_order.action
+    : detail.pm_target
+    ? `PM set a target of ${fmtNum(detail.pm_target.target_weight_pct)}% for this candidate, but no order was constructed. Candidate-specific reason for not constructing an order was not recorded.`
     : undefined;
 
-  const verdict = detail.risk_verdict?.verdict ?? null;
+  // The Risk verdict and hard block are run-scoped. Attribute either to
+  // this candidate only when it actually reached a symbol-specific order.
+  const verdict = reachedProposedOrder ? detail.risk_verdict?.verdict ?? null : null;
+  const hardBlocked = reachedProposedOrder && funnel?.hard_risk_block === true;
   let riskStatus: FlowStatus = "not_reached";
+  let riskCaption: string | undefined;
   if (verdict) {
     const hasMods = !!detail.risk_modification || verdict.modifications.length > 0;
     riskStatus = verdict.approved === false ? "rejected" : hasMods ? "modified" : "approved";
+    riskCaption = verdict.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
+  } else if (hardBlocked) {
+    riskStatus = "blocked";
+    riskCaption = "Deterministic hard-risk gate blocked this run before the AI Risk Manager was called.";
   }
-  const riskCaption = verdict?.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
 
-  const hardBlocked = funnel?.hard_risk_block === true;
   const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
   const executed = funnelCandidate ? funnelCandidate.executed : !!detail.trade && isExecutedTrade(detail.trade);
+  const skip = funnelCandidate ? skipText(funnelCandidate.execution_skip_reason, funnelCandidate.execution_skip_detail) : null;
 
   let gateStatus: FlowStatus = "not_reached";
   let gateCaption: string | undefined;
@@ -225,12 +238,15 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
   } else if (detail.trade) {
     gateStatus = "reached";
     gateCaption = "Cleared for execution.";
+  } else if (skip) {
+    gateStatus = "blocked";
+    gateCaption = `Deterministic gate skipped this order — ${skip}.`;
   } else if (verdict?.approved === true) {
     gateStatus = "pending";
-    gateCaption = "Approved upstream; no trade recorded — gate outcome not separately exposed to Mission Control.";
+    gateCaption = "Approved upstream; no trade recorded and no execution-skip reason was persisted for this candidate.";
   } else if (verdict?.approved === false) {
     gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
-  } else {
+  } else if (reachedProposedOrder) {
     gateCaption = "Not reached — no usable AI Risk Manager verdict recorded for this run.";
   }
 
@@ -241,12 +257,13 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
     execCaption = detail.trade
       ? `${detail.trade.action}${detail.trade.qty !== null && detail.trade.qty !== undefined ? ` ${fmtNum(detail.trade.qty)}sh` : ""}`
       : undefined;
+  } else if (skip) {
+    execStatus = "blocked";
+    execCaption = `Execution skipped — ${skip}.`;
   } else if (verdict?.approved === false) {
     execCaption = "No trade — rejected by the AI Risk Manager before execution.";
-  } else if (detail.pm_proposed_order) {
-    execCaption = "Proposed but not executed this run (or a HOLD).";
-  } else {
-    execCaption = "No proposal reached execution.";
+  } else if (reachedProposedOrder) {
+    execCaption = "Proposed but not executed this run (or a HOLD). Execution reason was not recorded.";
   }
 
   return [
@@ -254,7 +271,11 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
       key: "specialists",
       label: "Specialists",
       status: specialistsReached ? "reached" : "not_reached",
-      caption: specialistsReached ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}` : "No evidence recorded",
+      caption: !specialistsReached
+        ? "No evidence recorded"
+        : pmReached
+        ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}`
+        : `${specialistCount} signal${specialistCount === 1 ? "" : "s"} recorded — the Portfolio Manager did not select this candidate; a candidate-specific reason was not recorded.`,
     },
     { key: "pm", label: "Portfolio Manager", status: pmReached ? "reached" : "not_reached", caption: pmCaption },
     { key: "risk", label: "AI Risk Manager", status: riskStatus, caption: riskCaption },

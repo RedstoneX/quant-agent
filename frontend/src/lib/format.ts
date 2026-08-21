@@ -64,3 +64,14 @@ export function pnlClass(v: number | null | undefined): string {
   if (v === null || v === undefined) return "";
   return v > 0 ? "text-pos" : v < 0 ? "text-neg" : "";
 }
+
+// ET calendar-day key ("YYYY-MM-DD") for a UTC timestamp/Date — same
+// convention src/api/db_reads.py's ET-day math uses server-side. Shared by
+// the Cockpit's today's-runs timeline (App.tsx) and the price chart's
+// "bars run through <date>, today's live price is separate" staleness
+// label (PriceChartPanel.tsx) so both derive "today" the same way.
+export function etDateKey(input: string | Date): string {
+  const d = typeof input === "string" ? new Date(input.endsWith("Z") || input.includes("+") ? input : input + "Z") : input;
+  if (isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}

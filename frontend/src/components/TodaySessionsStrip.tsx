@@ -62,9 +62,10 @@ export function TodaySessionsStrip({
         {error && <Badge color="amber" size="xs">stale</Badge>}
         {!autoFollow && (
           <Button variant="light" size="xs" color="cyan" onClick={onFollowLatest} className="ml-auto">
-            Follow latest
+            AUTO / PRIMARY
           </Button>
         )}
+        {autoFollow && <Badge color="cyan" size="xs" className="ml-auto">AUTO / PRIMARY</Badge>}
       </div>
       <TabGroup index={activeIndex} onIndexChange={(index) => onSelect(sorted[index].run_id)}>
         <TabList variant="solid" color="cyan" className="max-w-full overflow-x-auto rounded-lg bg-panel-alt p-1 ring-1 ring-border">
