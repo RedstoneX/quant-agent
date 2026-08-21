@@ -1,14 +1,12 @@
 # QAMC Current Work
 
-Status: **TRADING-UTILITY RECOVERY — EXTERNALLY REVIEWED; PR #56 OPEN; AWAITING MERGE AND GOVERNED DEPLOYMENT**
+Status: **TRADING-UTILITY RECOVERY — DEPLOYED AND VERIFIED; AWAITING NATURAL PAPER-MARKET EVIDENCE**
 
 ## Current integration truth
 
-- Recovery branch: `fix/trading-utility-conversion`.
-- GitHub PR: **#56 — `fix(qamc): restore trading-utility conversion path`**, targeting `main`.
-- The trading-utility code has completed external review, including follow-up fixes to schema-repair decision integrity and macro/pipeline-order prompt consistency.
-- Production is **not** yet running this recovery. `docs/STATE.md` remains authoritative for the deployed SHA.
-- A temporary branch note claiming PR #56 was unrelated was based on a stale/incorrect repository view and is superseded by current GitHub state.
+PR #56 (trading-utility recovery) is merged to `main` and deployed to production at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df`, via the governed rollout script (`ops/review/qamc-recovery-rollout.sh` on `claude/trading-utility-recovery-rollout`), run by the operator as `ubuntu` on 2026-08-20 23:58:56 UTC and ending `GATE E / FINISH LINE PASSED`. It was independently corroborated live from `dev` immediately after (`health=ok`, `paper=true`, `/cockpit` and `/ui` 200). Full deployment evidence and rollout-review history are recorded in `docs/STATE.md` and `ops/review/README-recovery-rollout.md`; they are not duplicated here.
+
+Deployment proves the machinery is wired correctly. It does not prove the recovery works — see Goal and Natural validation required below.
 
 ## Product/architecture principle
 
@@ -22,20 +20,21 @@ Paper/live differences belong at the broker/configuration boundary (credentials,
 
 ## Recovery finding and accepted changes
 
-Production forensics across the natural validation runs found that QAMC was often analyzing legitimate opportunities without converting them into exposure for mechanical reasons rather than deliberate investment judgment. The reviewed recovery addresses the evidenced blockers:
+Production forensics across the natural validation runs found that QAMC was often analyzing legitimate opportunities without converting them into exposure for mechanical reasons rather than deliberate investment judgment. The reviewed recovery addresses seven evidenced blockers:
 
 1. **PM parse destruction** — nested `targets` fragments could outscore and replace the complete PM decision. Parser selection is corrected and production payloads are regression-pinned.
 2. **SGOV funding race** — approved BUYs could be abandoned before the funding SELL completed. Funding now waits/polls within a bounded fail-closed window and execution still requires confirmed broker cash.
 3. **Schema-complete decisions rejected** — approving PM/Risk decisions could die on missing narrative schema fields. One bounded repair is allowed only for non-decision fields; decision-bearing content is strictly preserved or the run fails closed.
-4. **Invisible execution kills** — deterministic BUY skips were log-only. Skip reasons are now durable evidence, surfaced in the funnel, and fully unfunded approved mornings become safely retryable through the full decision chain.
-5. **Artificial macro conservatism** — transient FRED failures and impossible freshness rules suppressed confidence. FRED gets bounded retry/breaker behavior and staleness now follows each series' actual cadence.
-6. **Risk misread deterministic sizing** — constructor risk-budget caps are now explicitly identified so AI Risk does not mistake deterministic sizing for PM inconsistency.
+4. **Invisible execution kills** — deterministic BUY skips were log-only. Skip reasons are now durable evidence and surfaced in the funnel.
+5. **Fully unfunded approved BUYs lost** — approved morning runs that could not obtain funding now return a safely retryable status through the full decision chain rather than silently terminating as if no investment opportunity existed.
+6. **Artificial macro conservatism** — transient FRED failures and impossible freshness rules suppressed confidence. FRED gets bounded retry/breaker behavior and staleness now follows each series' actual cadence.
+7. **Risk misread deterministic sizing** — constructor risk-budget caps are now explicitly identified so AI Risk does not mistake deterministic sizing for PM inconsistency.
 
-Full branch suite reported after final review fixes: **1997 passed**.
+Full reviewed recovery suite: **1997 passed**. The deployed Gate C focused suite passed **163/163**.
 
 ## Goal
 
-After merge and governed deployment, use natural market evidence to determine whether QAMC reliably:
+Use natural market evidence to determine whether QAMC reliably:
 
 **finds opportunity → evaluates it → makes a defensible bullish, bearish or neutral decision → executes when eligible → manages/exits the position → measures the result.**
 
@@ -43,11 +42,11 @@ Success is **not** “more trades.” Do not force activity, weaken safety, or h
 
 ## Next authorized work
 
-1. Complete external GitHub integration of PR #56.
-2. Deploy the exact accepted merged SHA through the existing governed production rollout path, preserving the current Alpaca Paper authorization and production-specific intraday enablement.
-3. Verify services/timers/API/Telegram/provider wiring and the new recovery behavior, then allow natural sessions to provide the actual trading evidence.
+1. ~~Complete external GitHub integration of PR #56.~~ Done — merged to `main` at `d14e28d`.
+2. ~~Deploy the exact accepted merged SHA through the existing governed rollout path.~~ Done — `GATE E / FINISH LINE PASSED`, verified live and recorded in `docs/STATE.md`.
+3. Observe natural Alpaca Paper sessions against the criteria below. No forcing, manufacturing or hindsight tuning. The next engineering work should be justified by observed evidence rather than by a target trade count.
 
-Deployment passing proves the machinery, not trading success.
+Deployment passing proved the machinery, not trading success.
 
 ## Natural validation required
 
