@@ -190,6 +190,32 @@ def test_get_bars_returns_empty_when_the_data_api_raises():
     assert b.get_bars("NVDA") == []
 
 
+def test_get_intraday_chart_bars_preserves_timestamp_and_timeframe():
+    b = _broker()
+    b._data_client = _bars_client(
+        SimpleNamespace(data={"MRVL": [_bar(
+            21, close=237.07,
+            timestamp=datetime(2026, 8, 21, 13, 30, tzinfo=timezone.utc),
+        )]})
+    )
+    bars = b.get_intraday_chart_bars("MRVL", timeframe="5m", lookback_days=1)
+    assert bars == [{
+        "date": "2026-08-21",
+        "timestamp": "2026-08-21T13:30:00+00:00",
+        "open": 9.0, "high": 11.0, "low": 8.0,
+        "close": 237.07, "volume": 1000,
+    }]
+    request = b._data_client.get_stock_bars.call_args.args[0]
+    assert str(request.timeframe) == "5Min"
+
+
+def test_get_intraday_chart_bars_rejects_unknown_timeframe_without_a_call():
+    b = _broker()
+    b._data_client = _bars_client(SimpleNamespace(data={"MRVL": [_bar(21)]}))
+    assert b.get_intraday_chart_bars("MRVL", timeframe="2m", lookback_days=1) == []
+    b._data_client.get_stock_bars.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # open_buy_notional — the None-vs-0.0 distinction the cash sweeper relies on
 # ---------------------------------------------------------------------------

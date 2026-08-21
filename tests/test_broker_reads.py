@@ -343,6 +343,32 @@ def test_read_orders_degrades_when_the_query_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# read_price_bars
+# ---------------------------------------------------------------------------
+
+def test_read_price_bars_uses_timestamped_intraday_read(monkeypatch):
+    captured = []
+
+    def _intraday(symbol, timeframe, lookback_days):
+        captured.append((symbol, timeframe, lookback_days))
+        return [{
+            "date": "2026-08-21",
+            "timestamp": "2026-08-21T13:30:00+00:00",
+            "open": 100.0, "high": 101.0, "low": 99.0,
+            "close": 100.5, "volume": 500,
+        }]
+
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: _broker(get_intraday_chart_bars=_intraday),
+    )
+    out = broker_reads.read_price_bars("MRVL", lookback_days=1, timeframe="5m")
+    assert captured == [("MRVL", "5m", 1)]
+    assert out["error"] is None
+    assert out["bars"][0]["timestamp"] == "2026-08-21T13:30:00+00:00"
+
+
+# ---------------------------------------------------------------------------
 # read_live_quotes (2026-08-21 Mission Control correctness tranche)
 # ---------------------------------------------------------------------------
 

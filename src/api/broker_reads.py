@@ -232,8 +232,10 @@ def read_orders(status: str = "open", limit: int = 50) -> dict:
         return {"orders": [], "error": str(exc)}
 
 
-def read_price_bars(symbol: str, lookback_days: int = 120) -> dict:
-    """Best-effort read of daily OHLCV bars for one symbol.
+def read_price_bars(
+    symbol: str, lookback_days: int = 120, timeframe: str = "1d"
+) -> dict:
+    """Best-effort read of chart OHLCV bars for one symbol/timeframe.
 
     Wraps `AlpacaBroker.get_bars` — a market-data read (Alpaca's
     `StockHistoricalDataClient.get_stock_bars`), not a trading/account
@@ -244,18 +246,30 @@ def read_price_bars(symbol: str, lookback_days: int = 120) -> dict:
     """
     try:
         broker = _get_broker()
-        bars = broker.get_bars(symbol, lookback_days=lookback_days)
+        if timeframe == "1d":
+            bars = broker.get_bars(symbol, lookback_days=lookback_days)
+        else:
+            bars = broker.get_intraday_chart_bars(
+                symbol, timeframe=timeframe, lookback_days=lookback_days
+            )
         out = [
             {
-                "date": b.date.isoformat(),
-                "open": b.open, "high": b.high, "low": b.low,
-                "close": b.close, "volume": b.volume,
+                "date": b.date.isoformat() if timeframe == "1d" else b["date"],
+                "timestamp": None if timeframe == "1d" else b["timestamp"],
+                "open": b.open if timeframe == "1d" else b["open"],
+                "high": b.high if timeframe == "1d" else b["high"],
+                "low": b.low if timeframe == "1d" else b["low"],
+                "close": b.close if timeframe == "1d" else b["close"],
+                "volume": b.volume if timeframe == "1d" else b["volume"],
             }
             for b in bars
         ]
         return {"bars": out, "error": None}
     except Exception as exc:
-        logger.warning("broker_reads.read_price_bars failed for %s: %s", symbol, exc)
+        logger.warning(
+            "broker_reads.read_price_bars failed for %s/%s: %s",
+            symbol, timeframe, exc,
+        )
         return {"bars": [], "error": str(exc)}
 
 

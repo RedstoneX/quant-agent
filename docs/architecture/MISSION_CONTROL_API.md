@@ -88,16 +88,20 @@ state, no broker-write surface, no new external dependency.
 
 ## Stage 6 — price bars (chart panel)
 
-`GET /prices/{symbol}?lookback_days=120` (`PriceBarsResponse`): daily
-OHLCV bars for one symbol, wrapping `AlpacaBroker.get_bars` — Alpaca's
-market-data client (`StockHistoricalDataClient.get_stock_bars`), a
+`GET /prices/{symbol}?lookback_days=120&timeframe=1d`
+(`PriceBarsResponse`): OHLCV bars for one symbol at `5m`, `15m`, `1h`,
+or `1d`. Daily bars wrap `AlpacaBroker.get_bars`; intraday bars use the
+timestamp-preserving, read-only
+`AlpacaBroker.get_intraday_chart_bars` — Alpaca's market-data client
+(`StockHistoricalDataClient.get_stock_bars`), a
 distinct read-only client from the trading client `broker_reads.py`
 already uses for account/positions/orders. Never places, cancels, or
 references an order; degrades to `{"bars": [], "error": "..."}` on any
-failure rather than raising. Powers the cockpit's price chart panel.
-During market hours these bars run up to one session behind (the current
-day's bar is not yet a completed historical bar) — see `/quotes` below
-for the true current price this chart is deliberately never mistaken for.
+failure rather than raising. `5m` is scoped to today's ET session; the
+other controls use bounded chart lookbacks. Powers the cockpit's price
+chart panel and timestamp-aligned execution markers. During market hours
+daily bars can run one session behind — see `/quotes` below for the true
+current price this chart is deliberately never mistaken for.
 
 ## Mission Control data-truth / run-history / decision-explainability tranche (2026-08-21)
 
