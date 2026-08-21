@@ -30,7 +30,7 @@ export function Modal({
     >
       <div className="bg-panel border border-border rounded-lg w-full max-w-4xl max-h-[92vh] sm:max-h-[92vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-border sticky top-0 bg-panel">
-          <div className="flex items-center gap-1.5 flex-wrap text-[0.85rem] min-w-0">{breadcrumb}</div>
+          <div className="flex items-center gap-1.5 flex-wrap text-[0.875rem] min-w-0">{breadcrumb}</div>
           <button
             type="button"
             onClick={onClose}
@@ -48,7 +48,7 @@ export function Modal({
 
 export function CrumbLink({ text, onClick }: { text: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="text-accent underline text-[0.85rem]">
+    <button type="button" onClick={onClick} className="text-accent underline text-[0.875rem]">
       {text}
     </button>
   );

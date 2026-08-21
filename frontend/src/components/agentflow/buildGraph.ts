@@ -69,13 +69,21 @@ export function buildRunGraph(
 
 function stageToNode(s: FlowStage, index: number, direction: "vertical" | "horizontal" = "vertical"): Node {
   const tone = STATUS_TONE[s.status];
-  const x = direction === "vertical" ? 90 : 40 + index * 190;
-  const y = direction === "vertical" ? 40 + index * 110 : 60;
+  const vertical = direction === "vertical";
+  // Fix 5 (visual convergence plan §2.6): x=48 keeps the now-wider
+  // StageNode/GateNode (240px/248px, up from 184px/192px — see nodes.tsx)
+  // centered in the ~340px Decision Room lane (170 - ~244/2 ≈ 48). Row
+  // pitch is 105 (measured: a real rendered StageNode/GateNode with a
+  // caption line is ~76-96px tall at this width — a plain 110->95 cut per
+  // the plan's starting value actually undershot and had to be verified/
+  // corrected against real render, per §2.6's own note).
+  const x = vertical ? 48 : 40 + index * 190;
+  const y = vertical ? 40 + index * 105 : 60;
   if (s.key === "gate") {
-    const data: GateNodeData = { tone, statusText: STATUS_TEXT[s.status], caption: s.caption };
+    const data: GateNodeData = { tone, statusText: STATUS_TEXT[s.status], caption: s.caption, vertical };
     return { id: s.key, type: "gate", position: { x: x - 4, y }, data: data as unknown as Record<string, unknown>, draggable: false };
   }
-  const data: StageNodeData = { label: s.label, tone, statusText: STATUS_TEXT[s.status], caption: s.caption };
+  const data: StageNodeData = { label: s.label, tone, statusText: STATUS_TEXT[s.status], caption: s.caption, vertical };
   return { id: s.key, type: "stage", position: { x, y }, data: data as unknown as Record<string, unknown>, draggable: false };
 }
 
@@ -194,9 +202,27 @@ export function buildCandidateGraph(
 
   const specialistsReached = candidateStages.find((s) => s.key === "specialists")?.status !== "not_reached";
   const vertical = direction === "vertical";
-  const specX = vertical ? 60 : 20;
-  const chainStartX = vertical ? 60 : 240;
-  const rowSpacing = vertical ? 150 : 96;
+  // Fix 5 (visual convergence plan §2.6, Finding B): specialist cards
+  // widened 208px->260px (nodes.tsx) so specX shifts 60->40 to keep them
+  // centered in the ~340px lane (170 - 260/2 = 40); chainStartX shifts
+  // 60->48 for the same reason against the chain's own new widths
+  // (240px/248px).
+  //
+  // rowSpacing: the plan's starting value (150->130) was verified against
+  // real render per §2.6's own instruction and had to be corrected upward.
+  // A real SpecialistNode with confidence + a 2-line reasoning clamp +
+  // an alignment tag (measured live on 2026-08-20's AAPL, Tech/Earnings)
+  // renders ~139px tall — taller than 130, which produced actual negative
+  // gaps (cards overlapping, confirmed via getBoundingClientRect) instead
+  // of the intended tight-but-positive rhythm. 165 leaves a real ~25-26px
+  // gap for that measured case and still comfortably fits the plan's ≤32px
+  // ceiling, with enough margin that a taller card (e.g. a News specialist
+  // with its extra subtitle line — no such candidate existed in the real
+  // 2026-08-20 data available to verify against) stays non-overlapping
+  // rather than just barely fitting today's shortest real case.
+  const specX = vertical ? 40 : 20;
+  const chainStartX = vertical ? 48 : 240;
+  const rowSpacing = vertical ? 165 : 96;
   const specTop = vertical ? 40 : entries.length ? 40 + ((3 - entries.length) * rowSpacing) / 2 : 40;
 
   entries.forEach((e, i) => {
@@ -208,6 +234,7 @@ export function buildCandidateGraph(
       reasoning: e.reasoning,
       alignment: alignments[i],
       onClick: onSpecialistClick ? () => onSpecialistClick(e.key) : undefined,
+      vertical,
     };
     nodes.push({
       id: `spec-${e.key}`,
@@ -223,7 +250,7 @@ export function buildCandidateGraph(
     // No specialist evidence recorded — still show a single dim placeholder
     // node so the chain reads "not reached," not a mysteriously missing
     // first column.
-    const data: StageNodeData = { label: "Specialists", tone: "dim", statusText: "Not reached", caption: "No evidence recorded" };
+    const data: StageNodeData = { label: "Specialists", tone: "dim", statusText: "Not reached", caption: "No evidence recorded", vertical };
     nodes.push({ id: "spec-none", type: "stage", position: { x: specX, y: 40 }, data: data as unknown as Record<string, unknown>, draggable: false });
     edges.push(edgeFor("e-spec-none", "spec-none", "pm", "not_reached"));
   }
@@ -233,8 +260,8 @@ export function buildCandidateGraph(
   chainKeys.forEach((key, i) => {
     const s = candidateStages.find((st) => st.key === key);
     if (!s) return;
-    const node = stageToNode(s, 0);
-    node.position = vertical ? { x: chainStartX, y: chainTop + i * 110 } : { x: chainStartX + i * 190, y: 96 };
+    const node = stageToNode(s, 0, direction);
+    node.position = vertical ? { x: chainStartX, y: chainTop + i * 105 } : { x: chainStartX + i * 190, y: 96 };
     nodes.push(node);
     if (i > 0) {
       const prev = chainKeys[i - 1];

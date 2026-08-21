@@ -73,13 +73,13 @@ export function DecisionStateBanner({
       // report yet — see docs/OUTCOME.md's "empty/no-trade states should
       // look intentional" principle.
       return (
-        <div className="mx-3 mt-3 rounded-xl border border-border-strong bg-panel-alt px-4 py-3 text-dim text-[0.85rem]">
+        <div className="mx-3 mt-3 rounded-xl border border-border-strong bg-panel-alt px-4 py-3 text-dim text-[0.875rem]">
           No sessions recorded yet today.
         </div>
       );
     }
     return (
-      <div className="mx-3 mt-3 rounded-xl border border-neg/40 bg-neg/8 px-4 py-3 text-neg text-[0.85rem]">
+      <div className="mx-3 mt-3 rounded-xl border border-neg/40 bg-neg/8 px-4 py-3 text-neg text-[0.875rem]">
         Could not load the latest decision: {error}
       </div>
     );
@@ -97,21 +97,21 @@ export function DecisionStateBanner({
   return (
     <div className={`mx-3 mt-3 rounded-xl border-2 ${tone.border} ${tone.bg} px-4 py-3`}>
       {stale && (
-        <div className="mb-1.5 flex items-center gap-1.5 text-warn text-[0.68rem] font-bold uppercase tracking-wide">
+        <div className="mb-1.5 flex items-center gap-1.5 text-warn text-[0.75rem] font-bold uppercase tracking-wide">
           <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse" />
           Stale — last known data{updatedAt ? ` as of ${updatedAt.toLocaleTimeString()}` : ""}, fresh fetch failed ({error})
         </div>
       )}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className={`text-[1.15rem] font-extrabold tracking-tight ${tone.text}`}>
+        <span className={`text-[1.125rem] font-extrabold tracking-tight ${tone.text}`}>
           {tone.icon} {label}
         </span>
-        <span className="text-dim text-[0.72rem] font-mono num">
+        <span className="text-dim text-[0.8125rem] font-mono num">
           run {funnel.run_id}
           {funnel.session_prefix ? ` · ${funnel.session_prefix}` : ""} · {fmtTime(funnel.timestamp)}
         </span>
       </div>
-      <p className="text-[0.85rem] mt-1 leading-snug">{whySummary(funnel, sweepOnly)}</p>
+      <p className="text-[0.875rem] mt-1 leading-snug">{whySummary(funnel, sweepOnly)}</p>
     </div>
   );
 }

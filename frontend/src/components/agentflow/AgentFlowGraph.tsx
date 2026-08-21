@@ -31,7 +31,7 @@ export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; 
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
       if (!rect || rect.width <= 0 || rect.height <= 0) return;
-      instanceRef.current?.fitView({ padding: 0.2 });
+      instanceRef.current?.fitView({ padding: 0.08 });
     });
     observer.observe(containerRef.current);
     resizeObserverRef.current = observer;
@@ -55,7 +55,7 @@ export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; 
         edges={edges}
         nodeTypes={NODE_TYPES}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: 0.08 }}
         onInit={handleInit}
         nodesDraggable={false}
         nodesConnectable={false}

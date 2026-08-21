@@ -43,12 +43,12 @@ export function TopStrip({
       </div>
 
       {accountError && (
-        <div className={`text-[0.82rem] ${account ? "text-warn" : "text-neg"}`}>
+        <div className={`text-[0.875rem] ${account ? "text-warn" : "text-neg"}`}>
           {account ? `Account: showing last known data — ${accountError}` : `Account unavailable: ${accountError}`}
         </div>
       )}
 
-      <div className="ml-auto flex items-center gap-3 flex-shrink-0 text-[0.72rem] text-dim">
+      <div className="ml-auto flex items-center gap-3 flex-shrink-0 text-[0.8125rem] text-dim">
         <span>{label}</span>
         {updatedAt && <span>updated {updatedAt.toLocaleTimeString()}</span>}
         <a href="/ui/" className="underline hover:text-accent" title="Original Stage 3-5 dashboard">

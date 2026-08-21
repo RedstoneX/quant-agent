@@ -61,11 +61,19 @@ function CandidateFunnelChart({ funnel }: { funnel: RunFunnelResponse }) {
     series: [
       {
         type: "funnel" as const,
-        left: 24,
-        right: 24,
+        left: 16,
+        right: 16,
         top: 6,
         bottom: 6,
-        minSize: "30%",
+        // 58%, not the default value-proportional shrink to a 30% floor —
+        // "Reached PM"/"Proposed"/"Executed" counts are typically tiny
+        // relative to "Considered" (95 vs. 5), so a strictly value-scaled
+        // funnel clamped the three narrowest bands to the smallest usable
+        // width, clipping their own count label against the trapezoid
+        // edge (e.g. "Reached PM 5" losing its "5"). A higher floor keeps
+        // the funnel SHAPE (still visibly narrowing) while guaranteeing
+        // every label has room to render in full.
+        minSize: "58%",
         maxSize: "100%",
         gap: 4,
         sort: "none" as const,
@@ -75,7 +83,7 @@ function CandidateFunnelChart({ funnel }: { funnel: RunFunnelResponse }) {
           color: theme.bg,
           fontFamily: "'IBM Plex Sans', sans-serif",
           fontWeight: 700,
-          fontSize: 10.5,
+          fontSize: 11.5,
         },
         itemStyle: {
           borderColor: theme.panelInset,
@@ -111,8 +119,8 @@ function StageChip({
       }`}
     >
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotClass}`} />
-      <span className="text-[0.62rem] uppercase tracking-wide text-dim leading-tight flex-1">{label}</span>
-      <span className="text-[0.82rem] font-extrabold tabular-nums flex-shrink-0">{count}</span>
+      <span className="text-[0.7rem] uppercase tracking-wide text-dim leading-tight flex-1">{label}</span>
+      <span className="text-[0.875rem] font-extrabold tabular-nums flex-shrink-0">{count}</span>
     </button>
   );
 }
@@ -193,7 +201,7 @@ export function CandidateRail({
             <span className="flex items-center gap-1.5">
               <DirGlyph direction={c.direction} />
               <span className="font-semibold">{c.symbol}</span>
-              {c.is_bearish_hedge && <span className="text-hedge text-[0.58rem] font-bold uppercase">hedge</span>}
+              {c.is_bearish_hedge && <span className="text-hedge text-[0.7rem] font-bold uppercase">hedge</span>}
             </span>
           );
         },
@@ -203,7 +211,7 @@ export function CandidateRail({
         header: "Stage",
         cell: (info) => {
           const meta = STAGE_META[info.row.original.stage];
-          return <span className={`text-[0.64rem] font-semibold uppercase tracking-wide ${meta.textClass}`}>{meta.short}</span>;
+          return <span className={`text-[0.7rem] font-semibold uppercase tracking-wide ${meta.textClass}`}>{meta.short}</span>;
         },
       }),
       // Heterogeneous accessor return types (string vs number) make the
@@ -239,12 +247,20 @@ export function CandidateRail({
       status={status}
       staleSince={updatedAt}
     >
-      {error && !funnel && <StateMessage text={`Could not load candidates: ${error}`} error />}
+      {error && !funnel && <StateMessage text={`Could not load candidates: ${error}`} error hero glyph="■" />}
+      {!error && !funnel && !loading && (
+        <StateMessage
+          text="No session yet today. Candidates populate once QAMC's first scan completes."
+          hero
+          glyph="○"
+        />
+      )}
+      {!error && !funnel && loading && <StateMessage text="Loading…" hero />}
       {funnel && total === 0 && <StateMessage text="No candidates considered in the latest run." />}
       {funnel && total > 0 && (
         <div>
           {error && (
-            <div className="text-warn text-[0.72rem] bg-warn/10 border border-warn/30 rounded-md px-2 py-1.5 mb-2.5">
+            <div className="text-warn text-[0.8125rem] bg-warn/10 border border-warn/30 rounded-md px-2 py-1.5 mb-2.5">
               Stale — last known as of {updatedAt ? updatedAt.toLocaleTimeString() : "an earlier fetch"} ({error})
             </div>
           )}
@@ -252,7 +268,7 @@ export function CandidateRail({
           {funnel.bearish_hedge_considered && (
             <div className="inline-flex items-center gap-1.5 mb-2.5 mt-1 px-2 py-1 rounded-md bg-hedge/10 border border-hedge/30">
               <span className="w-1.5 h-1.5 rounded-full bg-hedge flex-shrink-0" />
-              <span className="text-hedge text-[0.66rem] font-bold uppercase tracking-wide">Bearish-hedge candidate in this run</span>
+              <span className="text-hedge text-[0.7rem] font-bold uppercase tracking-wide">Bearish-hedge candidate in this run</span>
             </div>
           )}
           <div className="grid grid-cols-2 gap-1.5 mb-2.5">
@@ -276,13 +292,13 @@ export function CandidateRail({
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Filter symbol…"
-            className="w-full bg-panel-alt border border-border rounded text-[0.78rem] px-2 py-1 mb-2"
+            className="w-full bg-panel-alt border border-border rounded text-[0.8125rem] px-2 py-1 mb-2"
           />
 
           {/* Column headers double as sort toggles — real multi-key sort
               (symbol / furthest stage reached) a hand-rolled list wouldn't
               get for free. */}
-          <div className="flex items-center gap-2 px-2 pb-1 text-[0.62rem] text-dim uppercase tracking-wide font-semibold">
+          <div className="flex items-center gap-2 px-2 pb-1 text-[0.7rem] text-dim uppercase tracking-wide font-semibold">
             {table.getHeaderGroups()[0].headers.map((h) => (
               <button
                 key={h.id}
@@ -304,7 +320,7 @@ export function CandidateRail({
               return (
                 <div key={row.id}>
                   <div
-                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-left text-[0.79rem] border ${
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-left text-[0.875rem] border ${
                       active ? "border-accent bg-accent/10" : "border-transparent hover:bg-panel-alt"
                     }`}
                   >

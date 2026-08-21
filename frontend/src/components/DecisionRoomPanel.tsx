@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, CandidateDetailResponse, RunFunnelResponse } from "../api/client";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
-import { Card, KV } from "./ui/Evidence";
+import { Card } from "./ui/Evidence";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
 import { buildRunGraph, buildCandidateGraph } from "./agentflow/buildGraph";
 import { buildCandidateStages } from "./funnelShared";
@@ -32,7 +32,7 @@ import { useModalActions } from "../context/ModalContext";
 // using it. Long PM/Risk narrative text is exactly what would otherwise
 // make this rail as tall as the old page-dump it replaces.
 function ClampText({ text }: { text: string }) {
-  return <p className="text-[0.8rem] mt-1.5 leading-snug line-clamp-5">{text}</p>;
+  return <p className="text-[0.875rem] mt-1.5 leading-snug line-clamp-5">{text}</p>;
 }
 
 export function DecisionRoomPanel({
@@ -92,12 +92,19 @@ export function DecisionRoomPanel({
       staleSince={updatedAt}
       accent
     >
-      {error && !funnel && <StateMessage text={`Could not load latest decision: ${error}`} error />}
-      {!error && !funnel && <StateMessage text="Loading…" />}
+      {error && !funnel && <StateMessage text={`Could not load latest decision: ${error}`} error hero glyph="■" />}
+      {!error && !funnel && loading && <StateMessage text="Loading…" hero />}
+      {!error && !funnel && !loading && (
+        <StateMessage
+          text="No session yet today. The chain populates once QAMC's first scan of the day completes."
+          hero
+          glyph="○"
+        />
+      )}
       {funnel && (
         <div className="flex flex-col gap-3">
           {error && (
-            <div className="text-warn text-[0.78rem] bg-warn/10 border border-warn/30 rounded-md px-2.5 py-1.5">
+            <div className="text-warn text-[0.8125rem] bg-warn/10 border border-warn/30 rounded-md px-2.5 py-1.5">
               Showing last known decision as of {updatedAt ? updatedAt.toLocaleTimeString() : "an earlier fetch"} — a fresh
               fetch failed: {error}
             </div>
@@ -119,18 +126,29 @@ export function DecisionRoomPanel({
                 // single column — see buildGraph.ts's "vertical" mode. A
                 // fixed height here would clip a candidate with several
                 // news items or crush one with none; this sizes to what
-                // this specific candidate actually has.
+                // this specific candidate actually has. The 165/105
+                // multipliers must match buildGraph.ts's own rowSpacing
+                // (specialist rows) and chain-row pitch exactly (Fix 5,
+                // visual convergence plan §2.6 — verified and corrected
+                // against real render, see buildGraph.ts's own comment) —
+                // this is a real fitView container height, not just a
+                // cosmetic value: React Flow's fitView scales the whole
+                // layout uniformly to fit this box, so a mismatched
+                // estimate here re-introduces exactly the void Fix 5
+                // removes (an under-tall box over-zooms out to compensate,
+                // an over-tall one leaves dead space around the fitted
+                // graph).
                 height={
                   40 +
-                  Math.max(1, (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length) * 150 +
-                  4 * 110 +
+                  Math.max(1, (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length) * 165 +
+                  4 * 105 +
                   60
                 }
               />
               <button
                 type="button"
                 onClick={() => openCandidateDetail(funnel.run_id, symbol)}
-                className="text-accent underline text-[0.78rem] text-left -mt-1.5"
+                className="text-accent underline text-[0.8125rem] text-left -mt-1.5"
               >
                 Full drill-down — evidence, target &amp; modification &rarr;
               </button>
@@ -145,21 +163,24 @@ export function DecisionRoomPanel({
             <div className="state-message">A bearish inverse-ETF candidate was considered this run.</div>
           )}
 
-          <Card title="Market regime" broader>
-            {funnel.macro_context ? (
-              <>
-                <div className="kv-row">
-                  <span className="text-dim">Regime</span>
-                  <Pill text={funnel.macro_context.regime} />
-                </div>
-                <KV label="Equity outlook" value={funnel.macro_context.equity_outlook} />
-                <KV label="Confidence" value={funnel.macro_context.confidence} />
-                {funnel.macro_context.summary && <ClampText text={funnel.macro_context.summary} />}
-              </>
-            ) : (
-              <StateMessage text="No macro regime evidence recorded for this run." />
-            )}
-          </Card>
+          {/* Fix 4 (visual convergence plan §2.5, Finding F): this used to
+              repeat HeroBand's RegimeBadge in full (pill + outlook +
+              confidence + the identical summary sentence) — 100% content
+              duplication on the same unscrolled screen, wasting ~110-140px
+              of this column's budget on run-wide context that's already
+              stated, more prominently, above the fold. HeroBand's
+              RegimeBadge stays the single canonical "what does QAMC think
+              the market is doing" location; this is now a one-line
+              cross-reference, not a second full treatment — and renders
+              nothing at all when there's no regime to reference (the
+              "no evidence" case is already covered by HeroBand). */}
+          {funnel.macro_context?.regime && (
+            <div className="text-meta">
+              Regime: <span className="font-semibold text-ink">{funnel.macro_context.regime.toUpperCase()}</span>
+              {funnel.macro_context.equity_outlook ? ` · ${funnel.macro_context.equity_outlook.toUpperCase()}` : ""}
+              {" — see hero band above"}
+            </div>
+          )}
 
           {/* Explicitly labeled "run-wide" — this run can cover several
               candidates under one PM/Risk pass, and this panel may now be
@@ -195,7 +216,7 @@ export function DecisionRoomPanel({
           <button
             type="button"
             onClick={() => openRunDetail(funnel.run_id)}
-            className="text-accent underline text-[0.78rem] text-left"
+            className="text-accent underline text-[0.8125rem] text-left"
           >
             Open full run detail &rarr;
           </button>

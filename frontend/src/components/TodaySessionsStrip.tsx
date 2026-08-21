@@ -17,11 +17,11 @@ import { STATE_LABELS, STATE_COLORS, isSweepOnlyExecution } from "./funnelShared
 function ChipLabel({ funnel, runTrades }: { funnel: RunFunnelResponse; runTrades: TradeItem[] }) {
   const sweepOnly = funnel.decision_state === "executed" && isSweepOnlyExecution(runTrades);
   if (sweepOnly) {
-    return <span className="px-1.5 py-0.5 rounded text-[0.62rem] font-bold border bg-dim/15 text-dim border-border">sweep only</span>;
+    return <span className="px-1.5 py-0.5 rounded text-[0.7rem] font-bold border bg-dim/15 text-dim border-border">sweep only</span>;
   }
   const text = funnel.candidates_considered > 0 ? `${funnel.candidates_considered} candidate${funnel.candidates_considered === 1 ? "" : "s"}` : STATE_LABELS[funnel.decision_state];
   return (
-    <span className={`px-1.5 py-0.5 rounded text-[0.62rem] font-bold border ${STATE_COLORS[funnel.decision_state]}`}>
+    <span className={`px-1.5 py-0.5 rounded text-[0.7rem] font-bold border ${STATE_COLORS[funnel.decision_state]}`}>
       {text}
     </span>
   );
@@ -49,8 +49,8 @@ export function TodaySessionsStrip({
   onFollowLatest: () => void;
 }) {
   if (runs.length === 0) {
-    if (loading) return <div className="mx-3 mt-3 text-[0.72rem] text-dim">Loading today&rsquo;s sessions&hellip;</div>;
-    if (error) return <div className="mx-3 mt-3 text-[0.72rem] text-neg">Could not load today&rsquo;s sessions: {error}</div>;
+    if (loading) return <div className="mx-3 mt-3 text-[0.8125rem] text-dim">Loading today&rsquo;s sessions&hellip;</div>;
+    if (error) return <div className="mx-3 mt-3 text-[0.8125rem] text-neg">Could not load today&rsquo;s sessions: {error}</div>;
     return null;
   }
 
@@ -58,7 +58,7 @@ export function TodaySessionsStrip({
 
   return (
     <div className="mx-3 mt-3 flex items-center gap-2 overflow-x-auto pb-1">
-      <span className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold flex-shrink-0">Today&rsquo;s sessions</span>
+      <span className="text-[0.7rem] text-dim uppercase tracking-wide font-semibold flex-shrink-0">Today&rsquo;s sessions</span>
       {sorted.map((r) => {
         const f = funnels[r.run_id];
         const active = r.run_id === selectedRunId;
@@ -67,7 +67,7 @@ export function TodaySessionsStrip({
             key={r.run_id}
             type="button"
             onClick={() => onSelect(r.run_id)}
-            className={`flex-shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-md border text-[0.72rem] ${
+            className={`flex-shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-md border text-[0.8125rem] ${
               active ? "border-accent bg-accent/10" : "border-border bg-panel-alt hover:border-accent/50"
             }`}
           >
@@ -86,7 +86,7 @@ export function TodaySessionsStrip({
           Follow latest
         </button>
       )}
-      {error && <span className="flex-shrink-0 text-warn text-[0.68rem]">stale ({error})</span>}
+      {error && <span className="flex-shrink-0 text-warn text-[0.75rem]">stale ({error})</span>}
     </div>
   );
 }

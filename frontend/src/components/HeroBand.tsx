@@ -25,23 +25,25 @@ function RegimeBadge({ funnel }: { funnel: RunFunnelResponse | null }) {
   const macro = funnel?.macro_context;
   if (!macro || !macro.regime) {
     return (
-      <div className="flex flex-col gap-1">
-        <div className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold">Market regime</div>
-        <div className="text-dim text-[0.8rem]">No macro regime evidence for the latest run.</div>
+      <div className="flex flex-col gap-1.5 h-full justify-center">
+        <div className="label-xs">Market regime</div>
+        <p className="text-dim text-[0.875rem] leading-relaxed max-w-[28ch]">
+          No macro regime evidence yet. This reads once a run's macro specialist reports.
+        </p>
       </div>
     );
   }
   const outlookTone = macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim";
   return (
-    <div className="flex flex-col gap-1.5 h-full">
-      <div className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold">Market regime</div>
+    <div className="flex flex-col gap-1.5 h-full justify-center">
+      <div className="label-xs">Market regime</div>
       <div className="flex items-center gap-2 flex-wrap">
         <Pill text={macro.regime} />
-        <span className={`text-[0.82rem] font-bold ${outlookTone}`}>{(macro.equity_outlook || "unknown").toUpperCase()}</span>
+        <span className={`text-[0.875rem] font-bold ${outlookTone}`}>{(macro.equity_outlook || "unknown").toUpperCase()}</span>
       </div>
       {macro.confidence && (
         <div>
-          <div className="flex items-center justify-between text-[0.66rem] text-dim mb-0.5">
+          <div className="flex items-center justify-between text-meta mb-0.5">
             <span>Confidence</span>
             <span className="font-semibold text-ink">{macro.confidence.toUpperCase()}</span>
           </div>
@@ -71,7 +73,7 @@ export function HeroBand({
 }) {
   if (!account) {
     return (
-      <div className="mx-3 mt-3 rounded-xl border border-border bg-panel px-4 py-6 text-center text-dim text-[0.85rem]">
+      <div className="mx-3 mt-3 rounded-xl border border-border bg-panel px-4 py-6 text-center text-dim text-[0.875rem]">
         {accountError ? `Account unavailable: ${accountError}` : "Loading account…"}
       </div>
     );
@@ -113,9 +115,9 @@ export function HeroBand({
     >
       {/* Equity / P&L */}
       <div className="flex flex-col gap-1 min-w-0">
-        <div className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold">Equity</div>
+        <div className="label-xs">Equity</div>
         <div className="hero-num">{fmtMoney(account.portfolio_value)}</div>
-        <div className="flex items-center gap-3 flex-wrap text-[0.8rem]">
+        <div className="flex items-center gap-3 flex-wrap text-[0.8125rem]">
           <span className={`font-mono num font-semibold ${pnlClass(account.daily_pnl)}`}>
             {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
           </span>
@@ -133,7 +135,7 @@ export function HeroBand({
             />
           </div>
         )}
-        <div className="flex items-center gap-3 flex-wrap text-[0.72rem] text-dim mt-0.5">
+        <div className="flex items-center gap-3 flex-wrap text-[0.8125rem] text-dim mt-0.5">
           <span>
             Deployable <span className="text-ink font-semibold font-mono num">{fmtMoneyCompact(liq?.deployable_cash)}</span>
           </span>
@@ -146,19 +148,29 @@ export function HeroBand({
         </div>
       </div>
 
-      {/* Risk exposure gauge */}
-      <div className="flex flex-col items-center border-l border-border/70 pl-4 lg:pl-4 -ml-1">
+      {/* Risk exposure gauge — Fix 2 (visual convergence plan §2.3): the
+          gauge was rendering at height=132 inside a ~250px-tall cell,
+          leaving 70-90px of flat empty padding on each side (the plan's
+          Finding A, the clearest literal instance of "graphics appearing
+          comically undersized relative to their containers"). Enlarged to
+          ~205px (the top of the plan's recommended 200-210px range) and
+          the previous asymmetric `pl-4 lg:pl-4 -ml-1` (padding on the left
+          only, further pulled left by a negative margin) replaced with
+          symmetric `px-4` so the flex column's `items-center` actually
+          centers the gauge within the true cell width instead of a
+          left-shrunk one. */}
+      <div className="flex flex-col items-center justify-center h-full border-l border-border/70 px-4">
         <ArcGauge
           value={riskDeployedPct}
           label="Risk deployed"
           valueLabel={`${riskDeployedPct.toFixed(0)}%`}
           bands={gaugeBands}
-          height={112}
+          height={205}
         />
         {maxTotalPct !== null && (
-          <div className="text-[0.62rem] text-dim mt-0.5">vs. {maxTotalPct.toFixed(0)}% deterministic ceiling</div>
+          <div className="text-meta -mt-1">vs. {maxTotalPct.toFixed(0)}% deterministic ceiling</div>
         )}
-        <div className="flex items-center gap-3 flex-wrap justify-center text-[0.68rem] mt-1.5">
+        <div className="flex items-center gap-3 flex-wrap justify-center text-[0.75rem] mt-1.5">
           <span className="inline-flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-pos" />
             <span className="text-dim">Long</span>

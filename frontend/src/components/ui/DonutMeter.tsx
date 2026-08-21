@@ -120,7 +120,7 @@ export function DonutMeter({
         {segments.map((s) => {
           const pct = total > 0 ? (s.value / total) * 100 : 0;
           return (
-            <div key={s.label} className="flex items-center gap-1.5 text-[0.72rem] min-w-0">
+            <div key={s.label} className="flex items-center gap-1.5 text-[0.8125rem] min-w-0">
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
                 style={{ background: toneColor[s.tone] }}

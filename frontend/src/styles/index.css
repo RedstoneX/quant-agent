@@ -29,6 +29,42 @@
   --c-red: 251 90 90;
   --c-amber: 255 176 32;
   --c-hedge: 255 111 176;
+
+  /* 7-tier typography scale — replaces the ~17 previously ad hoc
+     text-[…rem] arbitrary values scattered across the primary cockpit with
+     one consistent set of sizes. --fs-micro is a hard floor: nothing in
+     the primary cockpit should render smaller than this (11.2px @ 16px
+     root — the html root font-size is never overridden by Tailwind's
+     Preflight, so rem here means real browser rem, not body's 14px). */
+  --fs-micro: 0.7rem; /* 11.2px */
+  --fs-label: 0.75rem; /* 12px — uppercase eyebrows/section labels; consolidates .label-xs */
+  --fs-meta: 0.8125rem; /* 13px — secondary/meta text, KV rows; consolidates .text-meta */
+  --fs-body: 0.875rem; /* 14px — primary body/table/list text */
+  --fs-subhead: 0.95rem; /* 15.2px — card/panel titles, symbol headers */
+  --fs-stat: 1.125rem; /* 18px — secondary numeric emphasis */
+  --fs-hero: clamp(1.5rem, 2.4vw, 2.25rem); /* 24-36px — equity figure only */
+
+  /* Decorative icon size — StateMessage's large empty-state glyph (the
+     ●/◐/■/○ marks, reusing DecisionStateBanner's existing vocabulary, never
+     a new icon system). Deliberately its own token, outside the --fs-*
+     reading-text scale above: a big decorative glyph is a different kind of
+     thing than reading text, so it does not belong on the micro..hero
+     progression, and it must not reuse --fs-hero, which stays reserved for
+     the equity figure only. */
+  --glyph-hero: 2.75rem; /* 44px — StateMessage's hero-variant empty-state glyph only */
+
+  /* Fix 1 (viewport height budget): real measured height of the chrome
+     stack above the primary 3-column row (TopStrip..DecisionStateBanner),
+     plus the primary row's own top+bottom p-3 padding (24px), kept live by
+     a ResizeObserver in App.tsx — see chromeRef there. This :root value is
+     only the pre-JS fallback for first paint; it is overwritten within
+     milliseconds of mount and never relied on after that. Value matches
+     this build's actual measured chrome height post-Fix-2 (526px, with
+     the enlarged risk gauge — HeroBand is genuinely taller than the
+     423px pre-fix baseline now, since Fix 2 grows the gauge and Fix 4's
+     regime-dedup saving lands in the Decision Room column, not the chrome
+     stack). */
+  --chrome-h: 526px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -91,7 +127,8 @@ body {
 }
 
 .panel-head h2 {
-  @apply text-[0.8rem] uppercase tracking-wide text-dim font-semibold m-0;
+  @apply uppercase tracking-wide text-dim font-semibold m-0;
+  font-size: var(--fs-label);
 }
 
 .panel-body {
@@ -99,11 +136,12 @@ body {
 }
 
 table {
-  @apply w-full border-collapse text-[0.82rem];
+  @apply w-full border-collapse text-[0.875rem];
 }
 
 th {
-  @apply text-left text-dim font-semibold text-[0.68rem] uppercase tracking-wide px-2 py-1.5 border-b border-border whitespace-nowrap;
+  @apply text-left text-dim font-semibold uppercase tracking-wide px-2 py-1.5 border-b border-border whitespace-nowrap;
+  font-size: var(--fs-label);
 }
 
 td {
@@ -115,7 +153,8 @@ tr:last-child td {
 }
 
 .pill {
-  @apply inline-block px-2 py-0.5 rounded-full text-[0.66rem] font-bold uppercase tracking-wide whitespace-nowrap;
+  @apply inline-block px-2 py-0.5 rounded-full font-bold uppercase tracking-wide whitespace-nowrap;
+  font-size: var(--fs-micro);
 }
 
 .card {
@@ -123,11 +162,28 @@ tr:last-child td {
 }
 
 .state-message {
-  @apply text-dim text-[0.83rem] py-1.5;
+  @apply text-dim py-1.5;
+  font-size: var(--fs-meta);
+}
+
+/* Two-tier label system used across the primary cockpit so every small-caps
+   micro-label (section eyebrows like "Equity"/"Market regime") and every
+   secondary annotation (units, thresholds, "vs. X% ceiling") converges on
+   exactly two sizes instead of the six-odd ad hoc values (0.58rem-0.72rem)
+   that previously made supporting text read as randomly sized rather than
+   deliberately tiered. */
+.label-xs {
+  @apply text-dim uppercase tracking-wide font-semibold;
+  font-size: var(--fs-label);
+}
+.text-meta {
+  @apply text-dim;
+  font-size: var(--fs-meta);
 }
 
 .kv-row {
-  @apply flex gap-2 justify-between text-[0.8rem] py-1 border-b border-dashed border-border last:border-b-0;
+  @apply flex gap-2 justify-between py-1 border-b border-dashed border-border last:border-b-0;
+  font-size: var(--fs-meta);
 }
 
 .kv-row > span:last-child {
@@ -135,7 +191,8 @@ tr:last-child td {
 }
 
 .candidate-chip {
-  @apply inline-flex items-center gap-1.5 px-2.5 py-1 mr-1.5 mb-1.5 rounded-full border border-border bg-panel-alt text-[0.78rem] font-semibold cursor-pointer hover:border-accent hover:text-accent transition-colors;
+  @apply inline-flex items-center gap-1.5 px-2.5 py-1 mr-1.5 mb-1.5 rounded-full border border-border bg-panel-alt font-semibold cursor-pointer hover:border-accent hover:text-accent transition-colors;
+  font-size: var(--fs-meta);
 }
 
 /* Hero-band KPI numeral — the single largest, most confident text in the
@@ -143,7 +200,7 @@ tr:last-child td {
    should land on. */
 .hero-num {
   @apply font-mono num font-semibold tracking-tight;
-  font-size: clamp(1.5rem, 2.4vw, 2.15rem);
+  font-size: var(--fs-hero);
   line-height: 1.05;
 }
 

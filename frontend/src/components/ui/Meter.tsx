@@ -17,7 +17,7 @@ export function Meter({ value, tone = "accent", label }: { value: number; tone?:
   const pct = Math.max(0, Math.min(100, value));
   return (
     <div className="w-full">
-      {label && <div className="text-[0.6rem] text-dim uppercase tracking-wide mb-0.5">{label}</div>}
+      {label && <div className="text-[0.7rem] text-dim uppercase tracking-wide mb-0.5">{label}</div>}
       <div className="h-1.5 w-full rounded-full bg-panel-alt overflow-hidden border border-border/60">
         <div className={`h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${pct}%` }} />
       </div>
@@ -81,7 +81,7 @@ export function SegmentedBar({
             />
           ))}
       </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[0.68rem]">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[0.75rem]">
         {segments.map((s) => (
           <span key={s.label} className="inline-flex items-center gap-1.5">
             <span className={`w-1.5 h-1.5 rounded-full inline-block flex-shrink-0 ${TONE_BAR[s.tone]}`} />

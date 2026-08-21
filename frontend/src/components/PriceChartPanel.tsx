@@ -213,12 +213,12 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   // pill over a blank chart would misrepresent a known data gap as
   // everything-fine.
   const status = error ? "error" : loading ? "loading" : symbol && barCount === 0 ? "degraded" : "ok";
-  const overlayText = !symbol
-    ? "Click a candidate to chart it."
+  const overlay = !symbol
+    ? { heading: "No symbol charted", detail: "Click a candidate to chart it." }
     : error
-    ? `Could not load ${symbol} price history: ${error}`
+    ? { heading: `${symbol} price history unavailable`, detail: error }
     : !loading && barCount === 0
-    ? `No daily bars available for ${symbol}.`
+    ? { heading: `No daily bars for ${symbol}`, detail: "Market-data provider returned no bars for this symbol/range." }
     : null;
 
   return (
@@ -237,15 +237,16 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
           waste on a blank "OK" box. */}
       <div className="relative h-[320px] xl:h-full min-h-[240px]">
         <div ref={containerRef} className="w-full h-full" />
-        {overlayText && (
+        {overlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-            <span
-              className={`text-[0.82rem] text-center px-3 py-1.5 rounded-md border ${
-                error ? "text-neg border-neg/40 bg-neg/10" : "text-dim border-border bg-panel/85"
+            <div
+              className={`text-center px-5 py-4 rounded-xl border max-w-[34ch] ${
+                error ? "border-neg/40 bg-panel/95" : "border-border bg-panel/95"
               }`}
             >
-              {overlayText}
-            </span>
+              <div className={`text-[0.95rem] font-bold ${error ? "text-neg" : "text-ink"}`}>{overlay.heading}</div>
+              <div className="text-[0.8125rem] text-dim mt-1 leading-snug">{overlay.detail}</div>
+            </div>
           </div>
         )}
       </div>
