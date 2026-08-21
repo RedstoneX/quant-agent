@@ -28,19 +28,34 @@ import { useModalActions } from "../context/ModalContext";
 // verdict is attributed only to candidates that actually reached a
 // proposed order in that run — the same precedent already accepted there.
 export function ledgerLine(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
+  // "PM target, no order" is a fact, not a reason — say so explicitly
+  // rather than let a bare stage name read as if it were the explanation
+  // (external review finding, 2026-08-21, regression test #1).
   const pm = c.proposed_action
     ? `PM ${c.proposed_action}`
     : c.reached_pm_target
-    ? "PM target, no order"
+    ? "PM target, no order — reason not recorded"
     : "PM no proposal";
 
   let risk = "Risk —";
+  // Whether the Risk column ITSELF already explains why this candidate
+  // never executed (rejected, or the whole run hard-blocked) — a
+  // "MODIFIED" or "APPROVED" verdict does not explain a subsequent
+  // non-execution, only a rejection/block does.
+  let riskExplainsNonExecution = false;
   if (c.reached_proposed_order) {
     const verdict = funnel.risk_verdict?.verdict;
-    if (c.risk_modified) risk = "Risk MODIFIED";
-    else if (funnel.hard_risk_block) risk = "Risk BLOCKED (hard gate)";
-    else if (verdict?.approved === false) risk = "Risk REJECTED";
-    else if (verdict?.approved === true) risk = "Risk APPROVED";
+    if (c.risk_modified) {
+      risk = "Risk MODIFIED";
+    } else if (funnel.hard_risk_block) {
+      risk = "Risk BLOCKED (hard gate)";
+      riskExplainsNonExecution = true;
+    } else if (verdict?.approved === false) {
+      risk = "Risk REJECTED";
+      riskExplainsNonExecution = true;
+    } else if (verdict?.approved === true) {
+      risk = "Risk APPROVED";
+    }
   }
 
   let outcome: string;
@@ -48,6 +63,13 @@ export function ledgerLine(c: CandidateFunnelItem, funnel: RunFunnelResponse): s
     outcome = `EXECUTED${c.trade_action ? ` (${c.trade_action})` : ""}`;
   } else if (c.execution_skip_reason) {
     outcome = `SKIPPED — ${c.execution_skip_reason.replace(/_/g, " ")} · NOT EXECUTED`;
+  } else if (c.reached_proposed_order && !riskExplainsNonExecution) {
+    // A genuinely unexplained gap: proposed, not executed, no skip
+    // reason, and the Risk column above doesn't already account for it
+    // (external review finding, 2026-08-21, regression test #2). When
+    // Risk REJECTED/BLOCKED it, that already-shown outcome IS the
+    // reason, so this suffix is deliberately withheld there.
+    outcome = "NOT EXECUTED — execution reason not recorded";
   } else if (c.reached_proposed_order) {
     outcome = "NOT EXECUTED";
   } else {
@@ -252,7 +274,7 @@ export function RunNarrativeCard({
 }) {
   // This card already knows exactly which run it's rendering (`run.run_id`)
   // — open that candidate's detail directly rather than re-deriving it by
-  // searching the day's runs (external review finding, 2026-08-22): the
+  // searching the day's runs (external review finding, 2026-08-21): the
   // same symbol can legitimately appear in more than one run in a day
   // (e.g. NVDA considered both in the morning run and again at 13:00), and
   // a day-wide search has no way to know which one the operator actually

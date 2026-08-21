@@ -5,7 +5,7 @@ import { RunNarrativeCard } from "./JournalPanel";
 import { ModalProvider } from "../context/ModalContext";
 import { CandidateFunnelItem, RunFunnelResponse, RunSummary } from "../api/client";
 
-/* External review finding (2026-08-22): the Journal's per-run candidate
+/* External review finding (2026-08-21): the Journal's per-run candidate
  * chip previously called onOpenCandidate(dayRuns, symbol) and let App.tsx
  * search the WHOLE day for the first run containing that symbol — wrong
  * whenever the same symbol appears in more than one run that day, since it

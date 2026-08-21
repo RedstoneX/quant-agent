@@ -273,14 +273,21 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
   // portfolio_view is RUN-scoped narrative (the same text for every
   // candidate in the run) and must never by itself imply the Portfolio
   // Manager specifically considered this candidate — the same class of
-  // bug fixed for AI Risk below, one stage earlier (2026-08-22
+  // bug fixed for AI Risk below, one stage earlier (2026-08-21
   // candidate-specific-attribution fix, external review finding).
   const reachedProposedOrder = !!detail.pm_proposed_order;
   const pmReached = !!detail.pm_target || reachedProposedOrder;
-  const pmCaption = detail.pm_target
-    ? `Target ${fmtNum(detail.pm_target.target_weight_pct)}%`
-    : detail.pm_proposed_order
+  // A target weight ("Target 5%") is evidence, not a reason — it says what
+  // PM set, not why nothing followed. When a target exists but no order
+  // was ever constructed, this candidate's journey necessarily ends here
+  // (nothing downstream — risk/gate/exec — can be reached without a
+  // proposed order), so the caption states that plainly instead of
+  // silently reusing the target figure as if it explained the outcome
+  // (external review finding, 2026-08-21).
+  const pmCaption = detail.pm_proposed_order
     ? detail.pm_proposed_order.action
+    : detail.pm_target
+    ? `PM set a target of ${fmtNum(detail.pm_target.target_weight_pct)}% for this candidate, but no order was constructed. Candidate-specific reason for not constructing an order was not recorded.`
     : undefined;
 
   // risk_verdict / hard_risk_block are RUN-scoped facts: the AI Risk
@@ -352,7 +359,11 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
   } else if (verdict?.approved === false) {
     execCaption = "No trade — rejected by the AI Risk Manager before execution.";
   } else if (reachedProposedOrder) {
-    execCaption = "Proposed but not executed this run (or a HOLD) — candidate-specific reason was not recorded.";
+    // Reached here only when nothing upstream (hard block, skip, Risk
+    // rejection) already explains the absence of a trade — a genuinely
+    // unexplained gap, stated as such rather than left to read as if
+    // "not executed this run" were itself the reason.
+    execCaption = "Proposed but not executed this run (or a HOLD). Execution reason was not recorded.";
   }
   // else: no proposed order for this candidate — nothing to report at the
   // execution stage; the real "why" lives at whichever earlier stage this

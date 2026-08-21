@@ -112,17 +112,64 @@ describe("buildCandidateStages — execution_skip_reason surfacing (section D/E)
     expect(exec.status).toBe("blocked");
     expect(exec.caption).toContain("stale entry");
     expect(exec.caption).toContain("price moved 2.1%");
-    expect(exec.caption).not.toContain("candidate-specific reason was not recorded");
+    expect(exec.caption).not.toMatch(/execution reason was not recorded/i);
     expect(gate.status).toBe("blocked");
     expect(gate.caption).toContain("stale entry");
   });
 
-  it("states plainly that no reason was recorded when none was persisted", () => {
+  it("states plainly that the execution reason was not recorded when a proposed order went unexecuted with no skip reason (external review finding, 2026-08-21)", () => {
+    // Regression test #2 from external review: proposed order exists, not
+    // executed, execution_skip_reason absent. Must not invent a reason —
+    // and must not read as if "not executed this run" were itself an
+    // explanation.
     const c = candidate({ execution_skip_reason: null, execution_skip_detail: null });
     const d = detail({ pm_proposed_order: { action: "BUY", symbol: "NVDA", allocation_pct: 5, entry_price: 100, stop_loss: 90, take_profit: 120, reasoning: "r" } });
     const stages = buildCandidateStages(d, funnel([c]));
     const exec = stages.find((s) => s.key === "exec")!;
-    expect(exec.caption).toContain("candidate-specific reason was not recorded");
+    expect(exec.caption).toMatch(/execution reason was not recorded/i);
+  });
+
+  it("keeps the exact persisted skip reason as authoritative over the generic unknown-execution-reason text (external review finding, 2026-08-21, regression test #3)", () => {
+    const withReason = candidate({ execution_skip_reason: "insufficient_cash", execution_skip_detail: "needed $637.80, had $145.11" });
+    const d = detail({ pm_proposed_order: { action: "BUY", symbol: "NVDA", allocation_pct: 10, entry_price: 63.78, stop_loss: 59, take_profit: 73.34, reasoning: "r" } });
+    const stages = buildCandidateStages(d, funnel([withReason]));
+    const exec = stages.find((s) => s.key === "exec")!;
+    expect(exec.caption).toContain("insufficient cash");
+    expect(exec.caption).toContain("$145.11");
+    expect(exec.caption).not.toMatch(/execution reason was not recorded/i);
+  });
+
+  it("states plainly that no candidate-specific reason was recorded for a target with no order — never restates the target itself as the reason (external review finding, 2026-08-21, regression test #1)", () => {
+    // "Target 5%" is evidence (what PM set), not a reason (why nothing
+    // followed) — this pins the exact wrong-before/right-after behavior
+    // external review flagged.
+    const c = candidate({ reached_proposed_order: false, proposed_action: null });
+    const d = detail({ pm_target: { symbol: "NVDA", target_weight_pct: 5, conviction: "high", thesis: "t", thesis_invalid_if: "x" } });
+    const stages = buildCandidateStages(d, funnel([c]));
+    const pm = stages.find((s) => s.key === "pm")!;
+    expect(pm.status).toBe("reached");
+    expect(pm.caption).not.toBe("Target 5%");
+    expect(pm.caption).toMatch(/set a target of 5%/i);
+    expect(pm.caption).toMatch(/no order was constructed/i);
+    expect(pm.caption).toMatch(/candidate-specific reason for not constructing an order was not recorded/i);
+
+    // This candidate's journey necessarily ends at PM (nothing downstream
+    // is reachable without a proposed order), so the OutcomeBanner's
+    // "Reason" text is this same explicit, truthful caption.
+    const furthest = furthestReachedStage(stages);
+    expect(furthest?.key).toBe("pm");
+    expect(furthest?.caption).toBe(pm.caption);
+  });
+
+  it("shows the constructed order's action, not the target weight, once an order actually exists", () => {
+    const c = candidate({ proposed_action: "BUY" });
+    const d = detail({
+      pm_target: { symbol: "NVDA", target_weight_pct: 9, conviction: "high", thesis: "t", thesis_invalid_if: "x" },
+      pm_proposed_order: { action: "BUY", symbol: "NVDA", allocation_pct: 9, entry_price: 121.4, stop_loss: 112, take_profit: 138, reasoning: "r" },
+    });
+    const stages = buildCandidateStages(d, funnel([c]));
+    const pm = stages.find((s) => s.key === "pm")!;
+    expect(pm.caption).toBe("BUY");
   });
 
   it("marks the execution stage EXECUTED when the funnel says so, with action/qty", () => {
@@ -188,7 +235,7 @@ describe("buildCandidateStages — execution_skip_reason surfacing (section D/E)
   });
 });
 
-describe("buildCandidateStages — candidate-specific risk/PM attribution (external review finding, 2026-08-22)", () => {
+describe("buildCandidateStages — candidate-specific risk/PM attribution (external review finding, 2026-08-21)", () => {
   // risk_verdict (and hard_risk_block) are RUN-scoped: the AI Risk Manager
   // evaluates one run's whole batch of proposed orders together. A
   // candidate that never itself reached a PM proposed order was never
