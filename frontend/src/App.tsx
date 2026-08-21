@@ -187,6 +187,9 @@ export default function App() {
   }, [autoFollow, selectedRunId]);
 
   const funnel = selectedRunId ? todaysFunnels[selectedRunId] ?? null : null;
+  const selectedSessionTrades = selectedRunId
+    ? todaysTrades.filter((trade) => trade.run_id === selectedRunId)
+    : [];
 
   // Fix 1 (visual convergence plan §2.2, Finding D): the primary 3-column
   // row below claims a fixed viewport-bounded height so it's a real
@@ -416,6 +419,15 @@ export default function App() {
     setSelectedRunId(best);
   }
 
+  function selectSessionTrade(trade: TradeItem) {
+    // A trade row is scoped to the currently selected run. Make that
+    // selection explicitly manual before changing the chart so the next
+    // poll cannot auto-promote a different session out from under it.
+    if (selectedRunId) selectSession(selectedRunId);
+    setChartSymbol(trade.symbol);
+    setMobilePane("chart");
+  }
+
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
     if (!dayRuns.length) return;
     if (dayRuns.length === 1) {
@@ -458,6 +470,7 @@ export default function App() {
               autoFollow={autoFollow}
               onSelect={selectSession}
               onFollowLatest={followPrimarySession}
+              onSelectTrade={selectSessionTrade}
             />
             <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
           </>
@@ -534,7 +547,7 @@ export default function App() {
                   size, which would silently defeat the resize-to-fill
                   behavior on a short viewport. */}
               <div className="flex-1 min-h-0">
-                <PriceChartPanel symbol={chartSymbol} trades={trades} />
+                <PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} />
               </div>
             </div>
 

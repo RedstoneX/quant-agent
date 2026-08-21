@@ -548,7 +548,7 @@ def test_orders_rejects_invalid_status(client, stub_broker):
 # ---------------------------------------------------------------------------
 
 def test_prices_returns_seeded_bars(client, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120: {
+    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120, timeframe="1d": {
         "bars": [
             {"date": "2026-08-17", "open": 100.0, "high": 105.0, "low": 99.0, "close": 104.0, "volume": 1_000_000},
             {"date": "2026-08-18", "open": 104.0, "high": 106.0, "low": 103.0, "close": 105.5, "volume": 900_000},
@@ -559,13 +559,14 @@ def test_prices_returns_seeded_bars(client, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["symbol"] == "AAPL"
+    assert body["timeframe"] == "1d"
     assert len(body["bars"]) == 2
     assert body["bars"][0]["close"] == 104.0
     assert body["error"] is None
 
 
 def test_prices_degrades_to_error_without_crashing(client, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120: {
+    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120, timeframe="1d": {
         "bars": [], "error": "data client unreachable",
     })
     r = client.get("/prices/NVDA")
@@ -573,6 +574,35 @@ def test_prices_degrades_to_error_without_crashing(client, monkeypatch):
     body = r.json()
     assert body["bars"] == []
     assert body["error"] == "data client unreachable"
+
+
+def test_prices_returns_intraday_timestamps(client, monkeypatch):
+    seen = []
+
+    def _bars(symbol, lookback_days=120, timeframe="1d"):
+        seen.append((symbol, lookback_days, timeframe))
+        return {
+            "bars": [{
+                "date": "2026-08-21",
+                "timestamp": "2026-08-21T13:30:00+00:00",
+                "open": 100.0, "high": 101.0, "low": 99.5,
+                "close": 100.5, "volume": 5000,
+            }],
+            "error": None,
+        }
+
+    monkeypatch.setattr(routes_live, "read_price_bars", _bars)
+    r = client.get(
+        "/prices/MRVL", params={"timeframe": "5m", "lookback_days": 1}
+    )
+    assert r.status_code == 200
+    assert seen == [("MRVL", 1, "5m")]
+    assert r.json()["timeframe"] == "5m"
+    assert r.json()["bars"][0]["timestamp"] == "2026-08-21T13:30:00+00:00"
+
+
+def test_prices_rejects_unknown_timeframe(client):
+    assert client.get("/prices/AAPL", params={"timeframe": "2m"}).status_code == 422
 
 
 # ---------------------------------------------------------------------------

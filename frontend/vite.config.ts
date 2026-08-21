@@ -18,7 +18,7 @@ export default defineConfig({
     // API so the cockpit can be developed against real read-only data
     // without a build step.
     proxy: {
-      "^/(account|positions|orders|trades|runs|decisions|agents|reflections|candidates|journal|search|health|prices)": {
+      "^/(account|positions|orders|trades|runs|decisions|agents|reflections|candidates|journal|search|health|prices|quotes)": {
         target: "http://127.0.0.1:8800",
         changeOrigin: true,
       },

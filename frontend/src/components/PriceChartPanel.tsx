@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { createChart, IChartApi, ISeriesApi, CandlestickData, HistogramData, SeriesMarker, Time } from "lightweight-charts";
-import { api, LiveQuote, PriceBar, TradeItem } from "../api/client";
+import {
+  createChart,
+  IChartApi,
+  IPriceLine,
+  ISeriesApi,
+  CandlestickData,
+  HistogramData,
+  LineStyle,
+  SeriesMarker,
+  Time,
+} from "lightweight-charts";
+import { Button } from "@tremor/react";
+import { api, ChartTimeframe, LiveQuote, PriceBar, TradeItem } from "../api/client";
 import { Panel } from "./ui/Panel";
 import { isExecutedTrade, etDateKey, fmtMoney } from "../lib/format";
 import { usePoll } from "../lib/usePoll";
@@ -19,69 +30,140 @@ function readThemeColors() {
   const border = rgb("--c-border");
   const green = rgb("--c-green");
   const red = rgb("--c-red");
+  const accent = rgb("--c-accent");
   return {
     text: solid(text),
     border: solid(border),
     green: solid(green),
     red: solid(red),
+    accent: solid(accent),
     greenAlpha: alpha(green, 0.35),
     redAlpha: alpha(red, 0.35),
   };
 }
 
-function toCandles(bars: PriceBar[]): CandlestickData[] {
-  return bars.map((b) => ({ time: b.date, open: b.open, high: b.high, low: b.low, close: b.close }));
+function barTime(bar: PriceBar, timeframe: ChartTimeframe): Time {
+  if (timeframe === "1d" || !bar.timestamp) return bar.date as Time;
+  return Math.floor(new Date(bar.timestamp).getTime() / 1000) as Time;
 }
 
-function toVolume(bars: PriceBar[], colors: { greenAlpha: string; redAlpha: string }): HistogramData[] {
+function toCandles(bars: PriceBar[], timeframe: ChartTimeframe): CandlestickData[] {
   return bars.map((b) => ({
-    time: b.date,
+    time: barTime(b, timeframe), open: b.open, high: b.high,
+    low: b.low, close: b.close,
+  }));
+}
+
+/** Add/replace today's still-forming daily candle only when the quote
+ * supplies a complete, non-fabricated OHLC set. The live price line is
+ * rendered independently, so partial snapshots still show current price. */
+export function chartCandles(
+  bars: PriceBar[],
+  quote: LiveQuote | null,
+  today = etDateKey(new Date()),
+  timeframe: ChartTimeframe = "1d"
+): CandlestickData[] {
+  const candles = toCandles(bars, timeframe);
+  if (timeframe !== "1d") return candles;
+  const values = [quote?.session_open, quote?.session_high, quote?.session_low, quote?.last_price];
+  if (!today || values.some((value) => value == null || !Number.isFinite(value))) return candles;
+
+  const open = quote!.session_open!;
+  const close = quote!.last_price!;
+  const high = Math.max(quote!.session_high!, open, close);
+  const low = Math.min(quote!.session_low!, open, close);
+  const forming: CandlestickData = { time: today, open, high, low, close };
+  const todayIndex = candles.findIndex((candle) => candle.time === today);
+  if (todayIndex >= 0) candles[todayIndex] = forming;
+  else if (!candles.length || String(candles[candles.length - 1].time) < today) candles.push(forming);
+  return candles;
+}
+
+function toVolume(
+  bars: PriceBar[],
+  timeframe: ChartTimeframe,
+  colors: { greenAlpha: string; redAlpha: string }
+): HistogramData[] {
+  return bars.map((b) => ({
+    time: barTime(b, timeframe),
     value: b.volume,
     color: b.close >= b.open ? colors.greenAlpha : colors.redAlpha,
   }));
 }
 
-// TradeItem.timestamp is a naive-UTC full datetime string
-// ("YYYY-MM-DD HH:MM:SS"); the daily-bar chart's time axis only has a date
-// component, so a marker's `time` must be truncated to match — otherwise
-// lightweight-charts silently drops any marker whose exact timestamp isn't
-// one of the series' existing data points.
-function tradeMarkers(
+// TradeItem.timestamp is naive UTC. Daily markers use the run's ET trading
+// date; intraday markers snap backward to the exact candle that contains
+// the fill, since Lightweight Charts only renders markers on existing data
+// points (a 13:34:46 fill belongs on the 13:30 five-minute candle).
+export function tradeMarkers(
   symbol: string,
   trades: TradeItem[],
-  colors: { green: string; red: string }
+  colors: { green: string; red: string },
+  timeframe: ChartTimeframe,
+  availableTimes: Time[]
 ): SeriesMarker<Time>[] {
+  const intradayTimes = availableTimes
+    .filter((time) => typeof time === "number")
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  const markerTime = (timestamp: string): Time | null => {
+    if (timeframe === "1d") return etDateKey(timestamp) as Time;
+    const fillSeconds = Math.floor(
+      new Date(timestamp.endsWith("Z") || timestamp.includes("+") ? timestamp : `${timestamp}Z`).getTime() / 1000
+    );
+    if (!Number.isFinite(fillSeconds)) return null;
+    let containing: number | null = null;
+    for (const time of intradayTimes) {
+      if (time > fillSeconds) break;
+      containing = time;
+    }
+    return containing as Time | null;
+  };
+
   return trades
     .filter((t) => t.symbol === symbol && t.timestamp && isExecutedTrade(t) && (t.action === "BUY" || t.action === "SELL"))
-    .map(
-      (t): SeriesMarker<Time> => ({
-        time: t.timestamp!.slice(0, 10) as Time,
+    .flatMap((t): SeriesMarker<Time>[] => {
+      const time = markerTime(t.timestamp!);
+      const quantity = t.fill_qty ?? t.qty;
+      return time == null ? [] : [{
+        time,
         position: t.action === "BUY" ? "belowBar" : "aboveBar",
         color: t.action === "BUY" ? colors.green : colors.red,
         shape: t.action === "BUY" ? "arrowUp" : "arrowDown",
-        text: `${t.action}${t.qty ? ` ${t.qty}` : ""}`,
-      })
-    )
-    .sort((a, b) => (a.time as string).localeCompare(b.time as string));
+        text: `${t.action}${quantity ? ` ${quantity}` : ""}`,
+      }];
+    })
+    .sort((a, b) => String(a.time).localeCompare(String(b.time)));
 }
 
 // The chart must always resize to a real, non-trivial height even on a
 // short/laptop viewport where `calc(100vh-150px)` leaves less room than a
 // tall desktop monitor — never so short the candles become unreadable.
 const MIN_CHART_HEIGHT = 240;
+const TIMEFRAMES: Array<{ value: ChartTimeframe; label: string; lookbackDays: number }> = [
+  { value: "5m", label: "5m Today", lookbackDays: 1 },
+  { value: "15m", label: "15m", lookbackDays: 5 },
+  { value: "1h", label: "1h", lookbackDays: 30 },
+  { value: "1d", label: "1D", lookbackDays: 120 },
+];
 
 export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null; trades?: TradeItem[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const livePriceLineRef = useRef<IPriceLine | null>(null);
+  const previousCloseLineRef = useRef<IPriceLine | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [barCount, setBarCount] = useState(0);
+  const [bars, setBars] = useState<PriceBar[]>([]);
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>("1d");
   // Last historical bar's date — used only to tell the operator the chart
   // is running behind today (during market hours the daily bar for "today"
   // isn't a completed historical bar yet), never to infer a current price.
-  const [lastBarDate, setLastBarDate] = useState<string | null>(null);
+  const [lastBarTime, setLastBarTime] = useState<string | null>(null);
   // Genuinely live quote (GET /quotes), deliberately a separate fetch/state
   // from the historical bars above — see docs/architecture/
   // MISSION_CONTROL_API.md "Mission Control data-truth" tranche. Stale-not-
@@ -110,6 +192,11 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
       borderVisible: false,
       wickUpColor: colors.green,
       wickDownColor: colors.red,
+      // The series' default last-value line would label the final
+      // historical close as if it were current. Only the explicitly
+      // sourced LIVE and PREV CLOSE lines below may make that claim.
+      priceLineVisible: false,
+      lastValueVisible: false,
     });
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
@@ -159,6 +246,7 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   function clearChart() {
     candleSeriesRef.current?.setData([]);
     volumeSeriesRef.current?.setData([]);
+    setBars([]);
   }
 
   useEffect(() => {
@@ -170,8 +258,12 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setBars([]);
+    setBarCount(0);
+    setLastBarTime(null);
+    const selectedTimeframe = TIMEFRAMES.find((item) => item.value === timeframe)!;
     api
-      .prices(symbol, 120)
+      .prices(symbol, selectedTimeframe.lookbackDays, timeframe)
       .then((resp) => {
         if (cancelled) return;
         if (resp.error) {
@@ -182,21 +274,18 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
         }
         if (!resp.bars.length) {
           setBarCount(0);
-          setLastBarDate(null);
+          setLastBarTime(null);
           clearChart();
           return;
         }
-        const colors = readThemeColors();
-        candleSeriesRef.current?.setData(toCandles(resp.bars));
-        volumeSeriesRef.current?.setData(toVolume(resp.bars, colors));
-        chartRef.current?.timeScale().fitContent();
-        setBarCount(resp.bars.length);
-        setLastBarDate(resp.bars[resp.bars.length - 1].date);
+        setBars(resp.bars);
+        const last = resp.bars[resp.bars.length - 1];
+        setLastBarTime(last.timestamp || last.date);
       })
       .catch((err) => {
         if (!cancelled) {
           setError(err.message);
-          setLastBarDate(null);
+          setLastBarTime(null);
           clearChart();
         }
       })
@@ -206,6 +295,12 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
     return () => {
       cancelled = true;
     };
+  }, [symbol, timeframe]);
+
+  useEffect(() => {
+    setQuote(null);
+    setQuoteError(null);
+    setQuoteAsOf(null);
   }, [symbol]);
 
   // Genuinely live quote for the charted symbol — GET /quotes, wrapping the
@@ -231,11 +326,57 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
         } else {
           setQuote(q);
           setQuoteError(null);
-          setQuoteAsOf(new Date());
+          const asOf = new Date(resp.as_of);
+          setQuoteAsOf(Number.isNaN(asOf.getTime()) ? null : asOf);
         }
       })
       .catch((err) => setQuoteError(err.message));
   }, [symbol]);
+
+  // Plot truth: completed historical candles, an optional forming candle
+  // from current-session OHLC, and independently labeled live/previous-
+  // close lines. This prevents yesterday's final candle from visually
+  // masquerading as today's current price when the two diverge.
+  useEffect(() => {
+    const candleSeries = candleSeriesRef.current;
+    const volumeSeries = volumeSeriesRef.current;
+    if (!candleSeries || !volumeSeries) return;
+    const colors = readThemeColors();
+    const candles = chartCandles(bars, quote, etDateKey(new Date()), timeframe);
+    candleSeries.setData(candles);
+    volumeSeries.setData(toVolume(bars, timeframe, colors));
+    chartRef.current?.applyOptions({
+      timeScale: { timeVisible: timeframe !== "1d", secondsVisible: false },
+    });
+    setBarCount(candles.length);
+
+    if (livePriceLineRef.current) candleSeries.removePriceLine(livePriceLineRef.current);
+    if (previousCloseLineRef.current) candleSeries.removePriceLine(previousCloseLineRef.current);
+    livePriceLineRef.current = null;
+    previousCloseLineRef.current = null;
+
+    if (quote?.prev_close != null) {
+      previousCloseLineRef.current = candleSeries.createPriceLine({
+        price: quote.prev_close,
+        color: colors.text,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "PREV CLOSE",
+      });
+    }
+    if (quote?.last_price != null) {
+      livePriceLineRef.current = candleSeries.createPriceLine({
+        price: quote.last_price,
+        color: colors.accent,
+        lineWidth: 2,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: "LIVE",
+      });
+    }
+    chartRef.current?.timeScale().fitContent();
+  }, [bars, quote, timeframe]);
 
   // Real BUY/SELL execution markers on the price series — the vision
   // board's chart mockup shows these; `lightweight-charts` already
@@ -250,20 +391,38 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
       return;
     }
     const colors = readThemeColors();
-    candleSeriesRef.current.setMarkers(tradeMarkers(symbol, trades, { green: colors.green, red: colors.red }));
-  }, [symbol, trades, barCount]);
+    const availableTimes = chartCandles(
+      bars, quote, etDateKey(new Date()), timeframe
+    ).map((candle) => candle.time);
+    candleSeriesRef.current.setMarkers(
+      tradeMarkers(
+        symbol, trades, { green: colors.green, red: colors.red },
+        timeframe, availableTimes
+      )
+    );
+  }, [symbol, trades, barCount, bars, quote, timeframe]);
 
   // "degraded", not "ok" — a symbol is selected but no real bars rendered
   // (e.g. no Alpaca market-data credentials in this environment). An "OK"
   // pill over a blank chart would misrepresent a known data gap as
   // everything-fine.
-  const status = error ? "error" : loading ? "loading" : symbol && barCount === 0 ? "degraded" : "ok";
+  const status = error
+    ? "error"
+    : loading
+    ? "loading"
+    : quoteError
+    ? quote
+      ? "stale"
+      : "degraded"
+    : symbol && barCount === 0
+    ? "degraded"
+    : "ok";
   const overlay = !symbol
     ? { heading: "No symbol charted", detail: "Click a candidate to chart it." }
     : error
     ? { heading: `${symbol} price history unavailable`, detail: error }
     : !loading && barCount === 0
-    ? { heading: `No daily bars for ${symbol}`, detail: "Market-data provider returned no bars for this symbol/range." }
+    ? { heading: `No ${timeframe} bars for ${symbol}`, detail: "Market-data provider returned no bars for this symbol/range." }
     : null;
 
   // The candlesticks are historical bars (up to one session behind during
@@ -272,21 +431,52 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   // and timestamped separately (GET /quotes) so it's never confused with —
   // or silently mismatched against — the chart itself. Never fabricated:
   // absent/errored quote data says so instead of going blank.
-  const barsRunBehindToday = Boolean(symbol && lastBarDate && lastBarDate !== etDateKey(new Date()));
+  const barsRunBehindToday = Boolean(
+    timeframe === "1d" && symbol && lastBarTime && lastBarTime !== etDateKey(new Date())
+  );
+  const hasFormingCandle = timeframe === "1d" && chartCandles([], quote).length === 1;
+  const intradayThrough = timeframe !== "1d" && lastBarTime
+    ? new Date(lastBarTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
   const quoteLine = !symbol
     ? undefined
     : quote?.last_price != null
-    ? `Live ${fmtMoney(quote.last_price)}${quoteAsOf ? ` · as of ${quoteAsOf.toLocaleTimeString()}` : ""}${
-        barsRunBehindToday ? ` · chart history through ${lastBarDate}` : ""
+    ? `${quoteError ? "Last live" : "Live"} ${fmtMoney(quote.last_price)}${
+        quoteAsOf ? ` · as of ${quoteAsOf.toLocaleTimeString()}` : ""
+      }${quoteError ? ` · stale (refresh failed: ${quoteError})` : ""}${
+        hasFormingCandle ? " · today’s forming candle" : " · live price line"
+      }${barsRunBehindToday ? ` · completed history through ${lastBarTime}` : ""}${
+        intradayThrough ? ` · ${timeframe} bars through ${intradayThrough}` : ""
       }`
     : quoteError
     ? `Live quote unavailable (${quoteError})`
     : barsRunBehindToday
-    ? `Chart history through ${lastBarDate} — no live quote loaded yet`
+    ? `Chart history through ${lastBarTime} — no live quote loaded yet`
     : undefined;
 
   return (
-    <Panel title={symbol ? `Price — ${symbol}` : "Price chart"} status={status} subtitle={quoteLine} full>
+    <Panel
+      title={symbol ? `Price — ${symbol}` : "Price chart"}
+      status={status}
+      subtitle={quoteLine}
+      actions={
+        <div className="flex items-center gap-1" aria-label="Chart timeframe">
+          {TIMEFRAMES.map((item) => (
+            <Button
+              key={item.value}
+              type="button"
+              size="xs"
+              color="cyan"
+              variant={timeframe === item.value ? "primary" : "secondary"}
+              onClick={() => setTimeframe(item.value)}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </div>
+      }
+      full
+    >
       {/* Always mounted at a real size, never display:none — the chart
           object is created once against this container at mount time and
           the manual ResizeObserver above needs a real box to measure from

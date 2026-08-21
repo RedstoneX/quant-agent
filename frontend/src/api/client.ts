@@ -118,7 +118,11 @@ export interface TradeItem {
   reasoning: string | null;
   run_id: string | null;
   decision_id: string | null;
+  broker_order_id?: string | null;
   fill_status: string | null;
+  fill_qty?: number | null;
+  fill_price?: number | null;
+  fill_reconciled_at?: string | null;
   timestamp: string | null;
   stop_loss: number | null;
   take_profit: number | null;
@@ -131,6 +135,7 @@ export interface TradesResponse {
 
 export interface PriceBar {
   date: string;
+  timestamp?: string | null;
   open: number;
   high: number;
   low: number;
@@ -140,9 +145,12 @@ export interface PriceBar {
 
 export interface PriceBarsResponse {
   symbol: string;
+  timeframe: ChartTimeframe;
   bars: PriceBar[];
   error: string | null;
 }
+
+export type ChartTimeframe = "5m" | "15m" | "1h" | "1d";
 
 // ---------------------------------------------------------------------
 // /quotes — current-session quote facts, distinct from PositionItem's
@@ -489,8 +497,10 @@ export const api = {
   orders: (status: "open" | "closed" | "all" = "open") =>
     getJSON<OrdersResponse>(`/orders?status=${status}`),
   trades: (limit = 30) => getJSON<TradesResponse>(`/trades?limit=${limit}`),
-  prices: (symbol: string, lookbackDays = 120) =>
-    getJSON<PriceBarsResponse>(`/prices/${encodeURIComponent(symbol)}?lookback_days=${lookbackDays}`),
+  prices: (symbol: string, lookbackDays = 120, timeframe: ChartTimeframe = "1d") =>
+    getJSON<PriceBarsResponse>(
+      `/prices/${encodeURIComponent(symbol)}?lookback_days=${lookbackDays}&timeframe=${timeframe}`
+    ),
   quotes: (symbols: string[]) =>
     getJSON<LiveQuotesResponse>(`/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
   runs: (limit = 25) => getJSON<RunsResponse>(`/runs?limit=${limit}`),

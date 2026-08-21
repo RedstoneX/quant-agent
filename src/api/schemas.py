@@ -167,6 +167,7 @@ class OrdersResponse(BaseModel):
 
 class PriceBar(BaseModel):
     date: str
+    timestamp: str | None = None
     open: float
     high: float
     low: float
@@ -176,6 +177,7 @@ class PriceBar(BaseModel):
 
 class PriceBarsResponse(BaseModel):
     symbol: str
+    timeframe: str = "1d"
     bars: list[PriceBar] = []
     source: str = "alpaca_market_data"
     error: str | None = None

@@ -348,15 +348,26 @@ def get_quotes(symbols: str = Query(..., description="Comma-separated symbols, e
 
 
 @router.get("/prices/{symbol}", response_model=PriceBarsResponse)
-def get_prices(symbol: str, lookback_days: int = Query(120, ge=1, le=500)) -> PriceBarsResponse:
-    """Daily OHLCV bars for one symbol — market-data read only (Alpaca's
+def get_prices(
+    symbol: str,
+    lookback_days: int = Query(120, ge=1, le=500),
+    timeframe: Literal["5m", "15m", "1h", "1d"] = Query("1d"),
+) -> PriceBarsResponse:
+    """OHLCV bars for one symbol/timeframe — market-data read only (Alpaca's
     historical data client), never account/order/trading state. Powers
     the cockpit's price chart panel; never places, cancels or references
     an order."""
     try:
         symbol = symbol.strip().upper()
-        result = read_price_bars(symbol, lookback_days=lookback_days)
+        result = read_price_bars(
+            symbol, lookback_days=lookback_days, timeframe=timeframe
+        )
         bars = [PriceBar(**b) for b in result.get("bars", [])]
-        return PriceBarsResponse(symbol=symbol, bars=bars, error=result.get("error"))
+        return PriceBarsResponse(
+            symbol=symbol, timeframe=timeframe, bars=bars,
+            error=result.get("error"),
+        )
     except Exception as exc:
-        return PriceBarsResponse(symbol=symbol, bars=[], error=str(exc))
+        return PriceBarsResponse(
+            symbol=symbol, timeframe=timeframe, bars=[], error=str(exc)
+        )

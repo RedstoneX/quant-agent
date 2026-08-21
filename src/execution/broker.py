@@ -543,7 +543,9 @@ class AlpacaBroker:
         try:
             if self._data_client is None:
                 from alpaca.data.historical.stock import StockHistoricalDataClient
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+                self._data_client = StockHistoricalDataClient(
+                    self.api_key, self.secret_key
+                )
                 _install_http_timeout(self._data_client)
 
             from alpaca.data.requests import StockBarsRequest
@@ -586,6 +588,91 @@ class AlpacaBroker:
             return out
         except Exception as e:
             logger.warning("broker.get_bars failed for %s: %s", symbol, e)
+            return []
+
+    def get_intraday_chart_bars(
+        self, symbol: str, timeframe: str, lookback_days: int
+    ) -> list[dict]:
+        """Fetch read-only intraday OHLCV bars for Mission Control.
+
+        This deliberately does not participate in trading decisions or
+        execution. It uses the same Alpaca historical-data client as
+        ``get_bars`` but preserves each bar's timestamp so Lightweight
+        Charts can render 5m/15m/1h candles and align execution markers.
+        Returns [] on any failure, matching the broker's other market-data
+        degradation contracts.
+        """
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from src.util.time import ET
+
+        try:
+            if self._data_client is None:
+                from alpaca.data.historical.stock import StockHistoricalDataClient
+                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+                _install_http_timeout(self._data_client)
+
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+            timeframe_value = {
+                "5m": TimeFrame(5, TimeFrameUnit.Minute),
+                "15m": TimeFrame(15, TimeFrameUnit.Minute),
+                "1h": TimeFrame.Hour,
+            }.get(timeframe)
+            if timeframe_value is None:
+                return []
+
+            now = _dt.now(_tz.utc)
+            if timeframe == "5m":
+                # "5m" is explicitly today's session. Starting at ET
+                # midnight naturally includes the full regular session
+                # without relying on the host's timezone.
+                start = _dt.combine(
+                    now.astimezone(ET).date(), _dt.min.time(), tzinfo=ET
+                )
+            else:
+                start = now - _td(days=lookback_days)
+            req = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=timeframe_value,
+                start=start,
+                end=now,
+            )
+            raw = self._data_client.get_stock_bars(req)
+            if hasattr(raw, "data") and isinstance(raw.data, dict):
+                bars_list = raw.data.get(symbol)
+            elif isinstance(raw, dict):
+                bars_list = raw.get(symbol)
+            else:
+                bars_list = None
+            if not bars_list:
+                return []
+
+            out: list[dict] = []
+            for bar in bars_list:
+                ts = getattr(bar, "timestamp", None)
+                if ts is None:
+                    continue
+                try:
+                    out.append(
+                        {
+                            "date": ts.astimezone(ET).date().isoformat(),
+                            "timestamp": ts.isoformat(),
+                            "open": float(getattr(bar, "open", 0) or 0),
+                            "high": float(getattr(bar, "high", 0) or 0),
+                            "low": float(getattr(bar, "low", 0) or 0),
+                            "close": float(getattr(bar, "close", 0) or 0),
+                            "volume": int(getattr(bar, "volume", 0) or 0),
+                        }
+                    )
+                except (TypeError, ValueError):
+                    continue
+            return out
+        except Exception as exc:
+            logger.warning(
+                "broker.get_intraday_chart_bars failed for %s/%s: %s",
+                symbol, timeframe, exc,
+            )
             return []
 
     def get_current_stop_price(self, symbol: str) -> float | None:
