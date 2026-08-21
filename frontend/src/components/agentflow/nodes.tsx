@@ -1,5 +1,6 @@
 import { Handle, Position } from "@xyflow/react";
 import { Pill } from "../ui/Pill";
+import { LevelBar } from "../ui/Meter";
 
 /* Custom React Flow node types for the QAMC agent-topology graph — the
  * Decision Room's replacement for "five stacked rectangles." Two node
@@ -48,12 +49,9 @@ const TONE_TEXT: Record<NodeTone, string> = {
   agent: "text-agent",
 };
 
-const CONVICTION_PCT: Record<string, number> = { high: 92, medium: 58, low: 28 };
-function confidenceTone(pct: number | undefined): NodeTone {
-  if (pct === undefined) return "dim";
-  if (pct >= 70) return "pos";
-  if (pct >= 40) return "warn";
-  return "neg";
+const CONVICTION_TONE: Record<string, NodeTone> = { high: "pos", medium: "warn", low: "neg" };
+function confidenceTone(conviction: string | null): NodeTone {
+  return conviction ? CONVICTION_TONE[conviction] ?? "dim" : "dim";
 }
 
 export interface SpecialistNodeData extends Record<string, unknown> {
@@ -67,8 +65,7 @@ export interface SpecialistNodeData extends Record<string, unknown> {
 }
 
 export function SpecialistNode({ data }: { data: SpecialistNodeData }) {
-  const pct = data.conviction ? CONVICTION_PCT[data.conviction] : undefined;
-  const tone = confidenceTone(pct);
+  const tone = confidenceTone(data.conviction);
   const dirColor = data.direction === "bullish" ? "text-pos" : data.direction === "bearish" ? "text-neg" : "text-dim";
   return (
     <div
@@ -87,15 +84,13 @@ export function SpecialistNode({ data }: { data: SpecialistNodeData }) {
         </span>
       </div>
       {data.subtitle && <div className="text-[0.62rem] text-dim truncate mt-0.5">{data.subtitle}</div>}
-      {pct !== undefined && (
+      {data.conviction && (
         <div className="mt-1.5">
           <div className="flex items-center justify-between text-[0.58rem] text-dim mb-0.5">
             <span>Confidence</span>
-            <span className={`font-bold ${TONE_TEXT[tone]}`}>{data.conviction?.toUpperCase()}</span>
+            <span className={`font-bold ${TONE_TEXT[tone]}`}>{data.conviction.toUpperCase()}</span>
           </div>
-          <div className="h-1 w-full rounded-full bg-panel-inset overflow-hidden">
-            <div className={`h-full rounded-full ${tone === "pos" ? "bg-pos" : tone === "warn" ? "bg-warn" : "bg-neg"}`} style={{ width: `${pct}%` }} />
-          </div>
+          <LevelBar level={data.conviction} tone={tone === "pos" ? "pos" : tone === "warn" ? "warn" : tone === "neg" ? "neg" : "dim"} />
         </div>
       )}
       <p className="text-[0.66rem] text-dim leading-snug mt-1.5 line-clamp-2">{data.reasoning}</p>

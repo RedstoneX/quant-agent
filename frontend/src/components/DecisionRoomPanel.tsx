@@ -1,9 +1,11 @@
-import { RunFunnelResponse } from "../api/client";
+import { useEffect, useState } from "react";
+import { api, CandidateDetailResponse, RunFunnelResponse } from "../api/client";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 import { Card, KV } from "./ui/Evidence";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
-import { buildRunGraph } from "./agentflow/buildGraph";
+import { buildRunGraph, buildCandidateGraph } from "./agentflow/buildGraph";
+import { buildCandidateStages } from "./funnelShared";
 import { useModalActions } from "../context/ModalContext";
 
 /* The cockpit's "Decision Room" — a narrow-column condensation of what
@@ -11,7 +13,19 @@ import { useModalActions } from "../context/ModalContext";
  * (RunFunnelResponse, same buildFunnelStages derivation), just laid out
  * for a ~340px rail: single-column cards, clamped excerpt text, and a
  * link into RunDetailModal for the uncondensed version rather than
- * inlining everything here. */
+ * inlining everything here.
+ *
+ * The primary graph is whichever symbol is currently charted: real
+ * per-specialist fan-in (buildCandidateGraph — Oralexa-style agent cards
+ * with a genuine disagreement/alignment computation), the same
+ * component CandidateDetailModal's drill-down uses, not a second
+ * implementation. This is deliberate: the vision board's "compact
+ * graphical story" — specialist stances -> PM -> Risk -> gate ->
+ * execution — is meant to be visible on the primary screen for whatever
+ * is charted, not only after an extra click into a modal. Falls back to
+ * the run-level aggregate (always exactly 5 stage boxes, no specialist
+ * fan-in) only when no candidate is selected or the per-candidate fetch
+ * hasn't resolved yet. */
 
 // Local, not shared ui/Evidence.tsx's CardText — that component has no
 // line-clamp option, and adding one there would affect every other panel
@@ -23,16 +37,21 @@ function ClampText({ text }: { text: string }) {
 
 export function DecisionRoomPanel({
   funnel,
+  symbol,
   loading,
   error,
   updatedAt,
 }: {
   funnel: RunFunnelResponse | null;
+  /** Whichever symbol is currently charted (App.tsx's chartSymbol) — drives
+   * the real per-specialist agent graph below when it's among this run's
+   * candidates. */
+  symbol: string | null;
   loading: boolean;
   error: string | null;
   updatedAt?: Date | null;
 }) {
-  const { openRunDetail } = useModalActions();
+  const { openRunDetail, openCandidateDetail } = useModalActions();
   // A failed poll never blanks previously-loaded funnel data — it renders
   // as "stale" instead, with a timestamp, so the reader is never shown an
   // old EXECUTED/REJECTED verdict looking exactly like a current one. Only
@@ -40,8 +59,39 @@ export function DecisionRoomPanel({
   // bare error.
   const status = error ? (funnel ? "stale" : "error") : loading ? "loading" : "ok";
 
+  const candidateEligible = !!(funnel && symbol && funnel.candidates.some((c) => c.symbol === symbol));
+  const [detail, setDetail] = useState<CandidateDetailResponse | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!candidateEligible || !funnel || !symbol) return;
+    let cancelled = false;
+    api
+      .candidateDetail(funnel.run_id, symbol)
+      .then((d) => {
+        if (cancelled) return;
+        setDetail(d);
+        setDetailKey(`${funnel.run_id}:${symbol}`);
+        setDetailError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setDetailError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [candidateEligible, funnel?.run_id, symbol]);
+
+  const detailReady = candidateEligible && detail && funnel && symbol && detailKey === `${funnel.run_id}:${symbol}`;
+
   return (
-    <Panel title="Decision Room — latest run" status={status} staleSince={updatedAt} accent>
+    <Panel
+      title={detailReady ? `Decision Room — ${symbol}` : "Decision Room — latest run"}
+      status={status}
+      staleSince={updatedAt}
+      accent
+    >
       {error && !funnel && <StateMessage text={`Could not load latest decision: ${error}`} error />}
       {!error && !funnel && <StateMessage text="Loading…" />}
       {funnel && (
@@ -55,7 +105,41 @@ export function DecisionRoomPanel({
           {/* The terminal state pill itself now lives in the full-width
               DecisionStateBanner above the cockpit body — this graph is the
               "how it got there," not a second place to restate "what." */}
-          <AgentFlowGraph {...buildRunGraph(funnel)} height={420} />
+          {detailReady && detail && symbol ? (
+            <>
+              <AgentFlowGraph
+                {...buildCandidateGraph(
+                  detail,
+                  buildCandidateStages(detail, funnel),
+                  () => openCandidateDetail(funnel.run_id, symbol),
+                  "vertical"
+                )}
+                // Tall enough for every specialist row (Tech/Earnings/each
+                // News item) plus the 4-stage chain below it, stacked in a
+                // single column — see buildGraph.ts's "vertical" mode. A
+                // fixed height here would clip a candidate with several
+                // news items or crush one with none; this sizes to what
+                // this specific candidate actually has.
+                height={
+                  40 +
+                  Math.max(1, (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length) * 150 +
+                  4 * 110 +
+                  60
+                }
+              />
+              <button
+                type="button"
+                onClick={() => openCandidateDetail(funnel.run_id, symbol)}
+                className="text-accent underline text-[0.78rem] text-left -mt-1.5"
+              >
+                Full drill-down — evidence, target &amp; modification &rarr;
+              </button>
+            </>
+          ) : candidateEligible && !detailError ? (
+            <StateMessage text={`Loading ${symbol}'s decision flow…`} />
+          ) : (
+            <AgentFlowGraph {...buildRunGraph(funnel)} height={360} />
+          )}
 
           {funnel.bearish_hedge_considered && (
             <div className="state-message">A bearish inverse-ETF candidate was considered this run.</div>
@@ -77,14 +161,20 @@ export function DecisionRoomPanel({
             )}
           </Card>
 
+          {/* Explicitly labeled "run-wide" — this run can cover several
+              candidates under one PM/Risk pass, and this panel may now be
+              titled for a specific symbol above; these cards must never
+              read as if they were derived for that symbol alone. See
+              docs/WORK.md's "Candidate Detail can misattribute run-wide
+              PM/Risk evidence to an individual ticker" debt item. */}
           {funnel.pm_reasoning?.portfolio_view && (
-            <Card title="Portfolio Manager">
+            <Card title="Portfolio Manager — run-wide">
               <ClampText text={funnel.pm_reasoning.portfolio_view} />
             </Card>
           )}
 
           {funnel.risk_verdict?.verdict && (
-            <Card title="AI Risk Manager">
+            <Card title="AI Risk Manager — run-wide">
               <div className="kv-row">
                 <span className="text-dim">Verdict</span>
                 <div className="flex gap-1.5 flex-wrap justify-end">

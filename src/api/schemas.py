@@ -81,6 +81,19 @@ class LiquidityBreakdown(BaseModel):
     total_liquidity: float | None = None     # raw_cash + sweep_parked_value
 
 
+class RiskLimits(BaseModel):
+    """The deterministic risk gate's own configured percentage limits
+    (config/settings.yaml's `risk` section, src.risk.rules.RiskConfig) —
+    read-only display context, never a risk decision computed here. Lets a
+    UI exposure gauge scale against QAMC's actual hard-block thresholds
+    instead of an arbitrary UI-only banding. None when the config read
+    fails — never a guessed/default limit standing in for the real one."""
+    max_position_pct: float | None = None
+    max_total_position_pct: float | None = None
+    max_daily_loss_pct: float | None = None
+    max_sector_pct: float | None = None
+
+
 class AccountResponse(BaseModel):
     cash: float | None = None
     portfolio_value: float | None = None
@@ -91,6 +104,7 @@ class AccountResponse(BaseModel):
     source: str = "alpaca_live"
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
     liquidity: LiquidityBreakdown | None = None
+    risk_limits: RiskLimits | None = None
     error: str | None = None             # set (fields above null) when the broker read failed
 
 

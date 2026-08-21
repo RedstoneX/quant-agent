@@ -49,6 +49,13 @@ export interface LiquidityBreakdown {
   total_liquidity: number | null;
 }
 
+export interface RiskLimits {
+  max_position_pct: number | null;
+  max_total_position_pct: number | null;
+  max_daily_loss_pct: number | null;
+  max_sector_pct: number | null;
+}
+
 export interface AccountResponse {
   cash: number | null;
   portfolio_value: number | null;
@@ -58,6 +65,7 @@ export interface AccountResponse {
   paper: boolean | null;
   history: DailyPnlPoint[];
   liquidity: LiquidityBreakdown | null;
+  risk_limits: RiskLimits | null;
   error: string | null;
 }
 

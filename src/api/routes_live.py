@@ -40,6 +40,7 @@ from src.api.deps import (
     get_cash_sweep_enabled,
     get_cash_sweep_reserve_pct,
     get_cash_sweep_symbol,
+    get_risk_limits,
 )
 from src.api.schemas import (
     AccountResponse,
@@ -52,6 +53,7 @@ from src.api.schemas import (
     PositionsResponse,
     PriceBar,
     PriceBarsResponse,
+    RiskLimits,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,6 +188,24 @@ def _compute_liquidity(cash: float | None, portfolio_value: float | None) -> Liq
     )
 
 
+def _compute_risk_limits() -> RiskLimits:
+    """Degrades to an honest empty RiskLimits() on any config read
+    failure — never a guessed/default limit standing in for the real
+    configured one. Mirrors _compute_liquidity's fail-closed-to-empty
+    posture."""
+    try:
+        limits = get_risk_limits()
+    except Exception as exc:
+        logger.warning("routes_live._compute_risk_limits: could not read risk config: %s", exc)
+        return RiskLimits()
+    return RiskLimits(
+        max_position_pct=limits.max_position_pct,
+        max_total_position_pct=limits.max_total_position_pct,
+        max_daily_loss_pct=limits.max_daily_loss_pct,
+        max_sector_pct=limits.max_sector_pct,
+    )
+
+
 @router.get("/account", response_model=AccountResponse)
 def get_account() -> AccountResponse:
     try:
@@ -216,6 +236,7 @@ def get_account() -> AccountResponse:
             history = []
 
         liquidity = _compute_liquidity(cash, portfolio_value) if acct.get("error") is None else None
+        risk_limits = _compute_risk_limits()
 
         return AccountResponse(
             cash=cash,
@@ -226,6 +247,7 @@ def get_account() -> AccountResponse:
             paper=get_alpaca_paper(),
             history=history,
             liquidity=liquidity,
+            risk_limits=risk_limits,
             error=acct.get("error"),
         )
     except Exception as exc:

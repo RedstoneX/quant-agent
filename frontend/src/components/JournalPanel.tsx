@@ -2,6 +2,7 @@ import { KeyboardEvent, useEffect, useMemo, useState } from "react";
 import {
   api,
   AccountResponse,
+  CandidateDetailResponse,
   CandidateFunnelItem,
   DailyPnlPoint,
   DecisionState,
@@ -15,8 +16,10 @@ import { parseJsonArray, summarizeBlobItem } from "../lib/blobJson";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 import { Card, CardText, EvidenceSection, KV } from "./ui/Evidence";
+import { LevelBar } from "./ui/Meter";
 import { useModalActions } from "../context/ModalContext";
 import { Stage, STAGE_META, STAGE_ORDER, candidateStage, isSweepOnlyExecution } from "./funnelShared";
+import { buildEntries } from "./agentflow/buildGraph";
 
 // Mirrors DecisionFunnelPanel's STATE_LABELS/STATE_COLORS mapping so the
 // language is consistent across the cockpit, duplicated locally (rather
@@ -253,6 +256,155 @@ function DayCandidateList({
             ))}
           </div>
         </details>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Agent Analysis & Disagreements — docs/OUTCOME.md's Journal Day
+ * sections 3-4. Real per-specialist views and the backend's own
+ * consensus.agreement computation for each candidate that reached the
+ * Portfolio Manager today (the "screened, no PM target" majority has no
+ * PM-relevant disagreement to report and is left in the collapsed
+ * Watchlist bucket above). Never a fabricated summary: same buildEntries
+ * derivation the cockpit's per-candidate agent graph uses, one
+ * CandidateDetailResponse fetch per notable candidate — typically a
+ * handful a day, the same bounded-fan-out pattern this file already uses
+ * for per-run funnels.
+ * ------------------------------------------------------------------ */
+
+interface NotableCandidate {
+  runId: string;
+  symbol: string;
+  stage: Stage;
+}
+
+function collectNotableCandidates(runs: RunSummary[], funnels: Record<string, RunFunnelResponse | null>): NotableCandidate[] {
+  const map: Record<string, NotableCandidate> = {};
+  for (const r of runs) {
+    const f = funnels[r.run_id];
+    if (!f) continue;
+    for (const c of f.candidates) {
+      const stage = candidateStage(c, f);
+      if (stage === "rejected") continue;
+      if (!map[c.symbol] || c.executed) map[c.symbol] = { runId: r.run_id, symbol: c.symbol, stage };
+    }
+  }
+  return Object.values(map);
+}
+
+const AGREEMENT_LABEL: Record<CandidateDetailResponse["consensus"]["agreement"], string> = {
+  aligned: "Aligned",
+  mixed: "Diverges",
+  no_directional_signal: "No directional signal",
+  insufficient_data: "Insufficient data",
+};
+
+const AGREEMENT_CLASS: Record<CandidateDetailResponse["consensus"]["agreement"], string> = {
+  aligned: "bg-pos/15 text-pos border-pos/40",
+  mixed: "bg-warn/15 text-warn border-warn/40",
+  no_directional_signal: "bg-dim/15 text-dim border-border",
+  insufficient_data: "bg-dim/15 text-dim border-border",
+};
+
+function DayAgentAnalysis({
+  candidates,
+  dayRuns,
+  onOpenCandidate,
+}: {
+  candidates: NotableCandidate[];
+  dayRuns: RunSummary[];
+  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
+}) {
+  const [details, setDetails] = useState<Record<string, CandidateDetailResponse | null>>({});
+  const [loading, setLoading] = useState(true);
+  const key = candidates.map((c) => `${c.runId}:${c.symbol}`).join(",");
+
+  useEffect(() => {
+    if (!candidates.length) {
+      setDetails({});
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all(
+      candidates.map((c) =>
+        api
+          .candidateDetail(c.runId, c.symbol)
+          .then((d): [string, CandidateDetailResponse | null] => [c.symbol, d])
+          .catch((): [string, CandidateDetailResponse | null] => [c.symbol, null])
+      )
+    ).then((pairs) => {
+      if (cancelled) return;
+      setDetails(Object.fromEntries(pairs));
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  if (!candidates.length) {
+    return <StateMessage text="No candidates reached the Portfolio Manager today — nothing for specialists to have agreed or disagreed on." />;
+  }
+  if (loading) return <StateMessage text="Loading specialist analysis…" />;
+
+  const disagreements = candidates.filter((c) => details[c.symbol]?.consensus.agreement === "mixed");
+
+  return (
+    <div className="flex flex-col gap-2">
+      {candidates.map((c) => {
+        const d = details[c.symbol];
+        if (!d) return null;
+        const entries = buildEntries(d);
+        return (
+          <div key={c.symbol} className="card">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <button
+                type="button"
+                className="font-bold text-accent underline text-[0.82rem]"
+                onClick={() => onOpenCandidate(dayRuns, c.symbol)}
+              >
+                {c.symbol}
+              </button>
+              <span className={`text-[0.68rem] font-semibold uppercase tracking-wide ${STAGE_META[c.stage].textClass}`}>
+                {STAGE_META[c.stage].label}
+              </span>
+              <span className={`ml-auto pill border text-[0.68rem] px-2 py-0.5 ${AGREEMENT_CLASS[d.consensus.agreement]}`}>
+                {AGREEMENT_LABEL[d.consensus.agreement]}
+              </span>
+            </div>
+            {entries.length === 0 ? (
+              <StateMessage text="No specialist evidence recorded for this candidate." />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                {entries.map((e) => (
+                  <div key={e.key} className="bg-panel-alt rounded-md px-2 py-1.5">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[0.68rem] font-semibold truncate">{e.role}</span>
+                      <span
+                        className={`text-[0.78rem] font-bold ${
+                          e.direction === "bullish" ? "text-pos" : e.direction === "bearish" ? "text-neg" : "text-dim"
+                        }`}
+                      >
+                        {e.direction === "bullish" ? "▲" : e.direction === "bearish" ? "▼" : "•"}
+                      </span>
+                    </div>
+                    {e.conviction && <LevelBar level={e.conviction} tone="accent" />}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {disagreements.length > 0 && (
+        <div className="px-3 py-2 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[0.8rem] font-semibold">
+          Specialists genuinely disagreed on: {disagreements.map((c) => c.symbol).join(", ")}.
+        </div>
       )}
     </div>
   );
@@ -533,6 +685,8 @@ export function JournalPanel({
     return map;
   }, [sortedRuns, funnels]);
 
+  const notableCandidates = useMemo(() => collectNotableCandidates(sortedRuns, funnels), [sortedRuns, funnels]);
+
   const anyHardBlock = sortedRuns.some((r) => funnels[r.run_id]?.hard_risk_block);
 
   // Prev/next navigation over `dates` — computed via a lexically sorted
@@ -650,6 +804,17 @@ export function JournalPanel({
               every run has already been read in detail. */}
           <EvidenceSection title="Watchlist / candidates considered" emptyText="No candidates recorded for this day.">
             {day.candidates.length ? [<DayCandidateList key="chips" symbols={day.candidates} info={candidateInfo} dayRuns={day.runs} onOpenCandidate={onOpenCandidate} />] : []}
+          </EvidenceSection>
+
+          <EvidenceSection title="Agent analysis &amp; disagreements">
+            {[
+              <DayAgentAnalysis
+                key="agent-analysis"
+                candidates={notableCandidates}
+                dayRuns={day.runs}
+                onOpenCandidate={onOpenCandidate}
+              />,
+            ]}
           </EvidenceSection>
 
           <EvidenceSection title="Runs this day — decisions" emptyText="No runs recorded for this day.">

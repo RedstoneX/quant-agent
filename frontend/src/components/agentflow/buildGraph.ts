@@ -81,7 +81,7 @@ function stageToNode(s: FlowStage, index: number, direction: "vertical" | "horiz
 
 // --- Per-candidate real fan-in graph -------------------------------------
 
-type Direction = "bullish" | "bearish" | "neutral";
+export type Direction = "bullish" | "bearish" | "neutral";
 
 const TECH_DIRECTION: Record<string, Direction> = {
   strong_buy: "bullish",
@@ -91,7 +91,7 @@ const TECH_DIRECTION: Record<string, Direction> = {
   strong_sell: "bearish",
 };
 
-interface SpecialistEntry {
+export interface SpecialistEntry {
   key: string;
   role: string;
   subtitle?: string;
@@ -100,7 +100,11 @@ interface SpecialistEntry {
   reasoning: string;
 }
 
-function buildEntries(detail: CandidateDetailResponse): SpecialistEntry[] {
+// Exported for reuse outside the graph builder — JournalPanel's day-level
+// Agent Analysis section lists the same real per-specialist entries
+// (never a fabricated summary) without needing a second parallel
+// implementation of "what specialists actually said about this candidate".
+export function buildEntries(detail: CandidateDetailResponse): SpecialistEntry[] {
   const entries: SpecialistEntry[] = [];
   if (detail.tech) {
     entries.push({
@@ -166,12 +170,22 @@ function edgeToneForDirection(dir: Direction): string {
 /** Per-candidate graph — real fan-in: one node per specialist that actually
  * produced evidence this run (never a fabricated card for one that
  * didn't), converging on PM, then the same PM -> Risk -> Gate -> Execution
- * chain the run-level graph uses. Horizontal: specialists in a left
- * column, the linear chain running left-to-right. */
+ * chain the run-level graph uses.
+ *
+ * `"horizontal"` (default, for the wide CandidateDetailModal): specialists
+ * in a left column, the linear chain running left-to-right.
+ * `"vertical"` (for DecisionRoomPanel's ~300px cockpit rail): a single
+ * column — every specialist card gets its own row, then the PM/Risk/Gate/
+ * Execution chain continues stacked below. The horizontal layout's ~600px
+ * natural width does not degrade gracefully into a narrow rail (React
+ * Flow's `fitView` can only zoom the whole layout uniformly, so a wide
+ * sparse layout either clips or shrinks specialist text to unreadable —
+ * this is a real, different node ARRANGEMENT, not a zoom-level fix). */
 export function buildCandidateGraph(
   detail: CandidateDetailResponse,
   candidateStages: FlowStage[],
-  onSpecialistClick?: (key: string) => void
+  onSpecialistClick?: (key: string) => void,
+  direction: "horizontal" | "vertical" = "horizontal"
 ): { nodes: Node[]; edges: Edge[] } {
   const entries = buildEntries(detail);
   const alignments = computeAlignments(entries, detail.consensus);
@@ -179,10 +193,11 @@ export function buildCandidateGraph(
   const edges: Edge[] = [];
 
   const specialistsReached = candidateStages.find((s) => s.key === "specialists")?.status !== "not_reached";
-  const specX = 20;
-  const chainStartX = 240;
-  const rowSpacing = 96;
-  const specTop = entries.length ? 40 + ((3 - entries.length) * rowSpacing) / 2 : 40;
+  const vertical = direction === "vertical";
+  const specX = vertical ? 60 : 20;
+  const chainStartX = vertical ? 60 : 240;
+  const rowSpacing = vertical ? 150 : 96;
+  const specTop = vertical ? 40 : entries.length ? 40 + ((3 - entries.length) * rowSpacing) / 2 : 40;
 
   entries.forEach((e, i) => {
     const data: SpecialistNodeData = {
@@ -213,12 +228,13 @@ export function buildCandidateGraph(
     edges.push(edgeFor("e-spec-none", "spec-none", "pm", "not_reached"));
   }
 
+  const chainTop = vertical ? specTop + Math.max(entries.length, 1) * rowSpacing : 96;
   const chainKeys: FlowStage["key"][] = ["pm", "risk", "gate", "exec"];
   chainKeys.forEach((key, i) => {
     const s = candidateStages.find((st) => st.key === key);
     if (!s) return;
     const node = stageToNode(s, 0);
-    node.position = { x: chainStartX + i * 190, y: 96 };
+    node.position = vertical ? { x: chainStartX, y: chainTop + i * 110 } : { x: chainStartX + i * 190, y: 96 };
     nodes.push(node);
     if (i > 0) {
       const prev = chainKeys[i - 1];

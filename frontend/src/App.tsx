@@ -441,7 +441,7 @@ export default function App() {
             </div>
 
             <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
-              <DecisionRoomPanel funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
+              <DecisionRoomPanel funnel={funnel} symbol={chartSymbol} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
             </div>
           </div>
 

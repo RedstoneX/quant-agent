@@ -1,5 +1,5 @@
-import { CandidateFunnelItem, DecisionState, RunFunnelResponse, RunSummary, TradeItem } from "../api/client";
-import { fmtNum } from "../lib/format";
+import { CandidateDetailResponse, CandidateFunnelItem, DecisionState, RunFunnelResponse, RunSummary, TradeItem } from "../api/client";
+import { fmtNum, isExecutedTrade } from "../lib/format";
 import { FlowStage, FlowStatus } from "./agentflow/types";
 
 // Shared Specialists -> PM -> AI Risk -> Deterministic Gate -> Execution
@@ -179,4 +179,86 @@ export function bestPrimaryRunId(
   const sorted = [...runs].sort((a, b) => (b.first_timestamp || "").localeCompare(a.first_timestamp || ""));
   const withCandidates = sorted.find((r) => (funnels[r.run_id]?.candidates_considered ?? 0) > 0);
   return (withCandidates ?? sorted[0]).run_id;
+}
+
+/* ------------------------------------------------------------------ *
+ * Per-candidate Specialists -> PM -> AI Risk -> Deterministic Gate ->
+ * Execution stage derivation. Originally CandidateDetailModal-local; moved
+ * here so DecisionRoomPanel (the primary, non-modal cockpit view) can
+ * render the same real per-specialist agent graph for whichever candidate
+ * is currently charted, not only behind a drill-down click — the vision
+ * board's "compact graphical story" is meant to be visible on the primary
+ * screen. Every stage's reached/outcome status comes purely from fields
+ * CandidateDetailResponse already carries (cross-checked against the run
+ * funnel's per-candidate `executed`/`hard_risk_block` when that
+ * supplementary fetch succeeds) — never a fabricated guess about a stage
+ * with no evidence.
+ * ------------------------------------------------------------------ */
+export function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
+  const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
+  const specialistsReached = specialistCount > 0;
+
+  const pmReached = !!(detail.pm_target || detail.pm_proposed_order || detail.pm_reasoning?.portfolio_view);
+  const pmCaption = detail.pm_target
+    ? `Target ${fmtNum(detail.pm_target.target_weight_pct)}%`
+    : detail.pm_proposed_order
+    ? detail.pm_proposed_order.action
+    : undefined;
+
+  const verdict = detail.risk_verdict?.verdict ?? null;
+  let riskStatus: FlowStatus = "not_reached";
+  if (verdict) {
+    const hasMods = !!detail.risk_modification || verdict.modifications.length > 0;
+    riskStatus = verdict.approved === false ? "rejected" : hasMods ? "modified" : "approved";
+  }
+  const riskCaption = verdict?.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
+
+  const hardBlocked = funnel?.hard_risk_block === true;
+  const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
+  const executed = funnelCandidate ? funnelCandidate.executed : !!detail.trade && isExecutedTrade(detail.trade);
+
+  let gateStatus: FlowStatus = "not_reached";
+  let gateCaption: string | undefined;
+  if (hardBlocked) {
+    gateStatus = "blocked";
+    gateCaption = "Hard-risk gate blocked every candidate this run before the AI Risk Manager was called.";
+  } else if (detail.trade) {
+    gateStatus = "reached";
+    gateCaption = "Cleared for execution.";
+  } else if (verdict?.approved === true) {
+    gateStatus = "pending";
+    gateCaption = "Approved upstream; no trade recorded — gate outcome not separately exposed to Mission Control.";
+  } else if (verdict?.approved === false) {
+    gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
+  } else {
+    gateCaption = "Not reached — no usable AI Risk Manager verdict recorded for this run.";
+  }
+
+  let execStatus: FlowStatus = "not_reached";
+  let execCaption: string | undefined;
+  if (executed) {
+    execStatus = "executed";
+    execCaption = detail.trade
+      ? `${detail.trade.action}${detail.trade.qty !== null && detail.trade.qty !== undefined ? ` ${fmtNum(detail.trade.qty)}sh` : ""}`
+      : undefined;
+  } else if (verdict?.approved === false) {
+    execCaption = "No trade — rejected by the AI Risk Manager before execution.";
+  } else if (detail.pm_proposed_order) {
+    execCaption = "Proposed but not executed this run (or a HOLD).";
+  } else {
+    execCaption = "No proposal reached execution.";
+  }
+
+  return [
+    {
+      key: "specialists",
+      label: "Specialists",
+      status: specialistsReached ? "reached" : "not_reached",
+      caption: specialistsReached ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}` : "No evidence recorded",
+    },
+    { key: "pm", label: "Portfolio Manager", status: pmReached ? "reached" : "not_reached", caption: pmCaption },
+    { key: "risk", label: "AI Risk Manager", status: riskStatus, caption: riskCaption },
+    { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
+    { key: "exec", label: "Execution", status: execStatus, caption: execCaption },
+  ];
 }

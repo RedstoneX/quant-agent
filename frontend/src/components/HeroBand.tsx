@@ -1,8 +1,9 @@
 import { SparkAreaChart } from "@tremor/react";
 import { AccountResponse, PositionItem, RunFunnelResponse } from "../api/client";
 import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
-import { ArcGauge } from "./ui/ArcGauge";
+import { ArcGauge, GaugeBand } from "./ui/ArcGauge";
 import { Pill } from "./ui/Pill";
+import { LevelBar } from "./ui/Meter";
 
 /* The cockpit's first-glance surface — WORK.md's questions 1 ("what do I
  * own / how much real risk is deployed") and 2 ("what does QAMC think the
@@ -30,7 +31,6 @@ function RegimeBadge({ funnel }: { funnel: RunFunnelResponse | null }) {
       </div>
     );
   }
-  const confidencePct: Record<string, number> = { high: 92, medium: 58, low: 28 };
   const outlookTone = macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim";
   return (
     <div className="flex flex-col gap-1.5 h-full">
@@ -45,12 +45,12 @@ function RegimeBadge({ funnel }: { funnel: RunFunnelResponse | null }) {
             <span>Confidence</span>
             <span className="font-semibold text-ink">{macro.confidence.toUpperCase()}</span>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-panel-inset overflow-hidden border border-border/60">
-            <div
-              className="h-full rounded-full bg-agent"
-              style={{ width: `${confidencePct[macro.confidence] ?? 0}%` }}
-            />
-          </div>
+          {/* Discrete 3-segment level, not a fabricated percentage fill —
+              the macro agent only ever reports high/medium/low, and a
+              precise-looking width (e.g. "58%") would claim a measurement
+              that was never made. See docs/OUTCOME.md's agent-card
+              principle / ui/Meter.tsx's LevelBar. */}
+          <LevelBar level={macro.confidence} tone="accent" />
         </div>
       )}
       {macro.summary && <p className="text-[0.75rem] text-dim leading-snug line-clamp-2">{macro.summary}</p>}
@@ -84,6 +84,24 @@ export function HeroBand({
   const hedgeMv = positions.filter((p) => p.direction === "bearish_hedge").reduce((s, p) => s + (p.market_value || 0), 0);
   const cashMv = Math.max(total - longMv - hedgeMv, 0);
   const riskDeployedPct = total > 0 ? ((longMv + hedgeMv) / total) * 100 : 0;
+  // Gauge bands scaled against the deterministic risk gate's OWN
+  // configured hard-block ceiling (config/settings.yaml's
+  // risk.max_total_position_pct — src/risk/rules.py's actual limit, never
+  // recomputed here) rather than an arbitrary UI-only split. Genuinely
+  // informational only: this display never feeds back into risk/execution
+  // eligibility. Falls back to a single neutral tone (no red/amber/green
+  // judgment at all) when the limit isn't available, rather than reverting
+  // to a made-up threshold — see docs/WORK.md's "arbitrary UI risk
+  // thresholds must be removed or tied to authoritative data".
+  const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
+  const gaugeBands: GaugeBand[] =
+    maxTotalPct !== null && maxTotalPct > 0
+      ? [
+          { upTo: Math.min(maxTotalPct * 0.67, 100), tone: "pos" },
+          { upTo: Math.min(maxTotalPct, 100), tone: "warn" },
+          { upTo: 100, tone: "neg" },
+        ]
+      : [{ upTo: 100, tone: "accent" }];
   const history = equityHistorySeries(account);
   const stale = Boolean(accountError);
 
@@ -134,14 +152,13 @@ export function HeroBand({
           value={riskDeployedPct}
           label="Risk deployed"
           valueLabel={`${riskDeployedPct.toFixed(0)}%`}
-          bands={[
-            { upTo: 40, tone: "pos" },
-            { upTo: 75, tone: "warn" },
-            { upTo: 100, tone: "neg" },
-          ]}
+          bands={gaugeBands}
           height={112}
         />
-        <div className="flex items-center gap-3 flex-wrap justify-center text-[0.68rem] -mt-2">
+        {maxTotalPct !== null && (
+          <div className="text-[0.62rem] text-dim mt-0.5">vs. {maxTotalPct.toFixed(0)}% deterministic ceiling</div>
+        )}
+        <div className="flex items-center gap-3 flex-wrap justify-center text-[0.68rem] mt-1.5">
           <span className="inline-flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-pos" />
             <span className="text-dim">Long</span>

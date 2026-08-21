@@ -25,6 +25,31 @@ export function Meter({ value, tone = "accent", label }: { value: number; tone?:
   );
 }
 
+const LEVEL_RANK: Record<string, number> = { low: 1, medium: 2, high: 3 };
+
+// A discrete 3-segment level indicator for qualitative low/medium/high
+// fields (specialist conviction, macro-regime confidence) that the backend
+// never expresses as a number. Deliberately NOT a continuous percentage
+// fill: mapping "high"/"medium"/"low" to an invented width like 92%/58%/
+// 28% would imply a measured precision the model never produced — exactly
+// what docs/OUTCOME.md's agent-card principle warns against ("do not
+// invent pseudo-confidence percentages... show the actual qualitative
+// state rather than manufacturing precision"). Filled segment count (1/2/3)
+// still reads as "more/less" at a glance without claiming a number.
+export function LevelBar({ level, tone = "accent" }: { level: string | null | undefined; tone?: keyof typeof TONE_BAR }) {
+  const rank = level ? LEVEL_RANK[level.toLowerCase()] ?? 0 : 0;
+  return (
+    <div className="flex items-center gap-0.5 w-full" role="img" aria-label={level ? `${level} level` : "level unknown"}>
+      {[1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className={`h-1.5 flex-1 rounded-full ${i <= rank ? TONE_BAR[tone] : "bg-panel-alt border border-border/60"}`}
+        />
+      ))}
+    </div>
+  );
+}
+
 export interface Segment {
   label: string;
   value: number;
