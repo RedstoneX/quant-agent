@@ -5,7 +5,7 @@ set -Eeuo pipefail
 
 REPO=/home/qamc/quant-agent
 QAMC=qamc
-BASE=e113f5c6255925f1a93f0f8c242dcd5facbaf41a
+BASE=52c19c3912504412f47e4088e48c9b3b6296ba0c
 TARGET=2b3faaf69c0b842a08f991a9ca517a3989bdaf93
 TREE=c75eb6b7a06c87b1743b82230e62dc5a221cda12
 SOURCE_BLOB=517de90412e8cb3607add69a26909810fa3bf1e8
@@ -28,13 +28,13 @@ qgit show "origin/${OLD_BRANCH}:${OLD_PATH}" > "$RUN"
 COUNT=$(qgit diff --name-only "$BASE" "$TARGET" | grep -c . || true)
 LIST_SHA=$(qgit diff --name-only "$BASE" "$TARGET" | sha256sum | awk '{print $1}')
 
-python3 - "$RUN" "$TARGET" "$TREE" "$COUNT" "$LIST_SHA" <<'PY'
+python3 - "$RUN" "$BASE" "$TARGET" "$TREE" "$COUNT" "$LIST_SHA" <<'PY'
 from pathlib import Path
 import re,sys
 p=Path(sys.argv[1]); s=p.read_text()
 vals={
- 'TARGET_SHA':sys.argv[2], 'TARGET_TREE':sys.argv[3],
- 'EXPECTED_CHANGED_FILES':sys.argv[4], 'EXPECTED_FILELIST_SHA':sys.argv[5],
+ 'BASELINE_SHA':sys.argv[2], 'TARGET_SHA':sys.argv[3], 'TARGET_TREE':sys.argv[4],
+ 'EXPECTED_CHANGED_FILES':sys.argv[5], 'EXPECTED_FILELIST_SHA':sys.argv[6],
 }
 for key,val in vals.items():
     pat=rf'^{key}="[^"]*"$' if key!='EXPECTED_CHANGED_FILES' else rf'^{key}=\d+$'
