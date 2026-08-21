@@ -1,16 +1,16 @@
 # QAMC Current Work
 
-Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | MISSION CONTROL + TELEGRAM MAIN CONVERGENCE PENDING**
+Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | MISSION CONTROL + TELEGRAM PRODUCTION CONVERGENCE PENDING**
 
 ## Current integration truth
 
 - Trading-utility recovery PR #56 is deployed to production at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` and accepted as machinery.
 - Production remains intentionally detached at that exact SHA with one governed local delta: `intraday_scan.enabled: true`.
-- Current `main` is `c0edf5f24ee5771d37587aa9188f28857c6fee57`.
 - `main` now includes:
   - `e113f5c` — enriched Telegram trader decision feed;
-  - PR #60 — integrated professional Mission Control cockpit plus data truth / run-history / explainability.
-- PR #59 is superseded by PR #60 and must not be deployed or merged separately.
+  - PR #60 — integrated professional Mission Control cockpit plus data truth / run-history / explainability, code-merged at `c0edf5f24ee5771d37587aa9188f28857c6fee57`;
+  - subsequent documentation-only reconciliation commits.
+- PR #59 is superseded by PR #60 and must not be deployed separately.
 - The read-side improvements are merged but **not yet deployed to production**.
 
 ## Product / architecture principle
@@ -35,15 +35,21 @@ When QAMC does not trade, the reason must be specific and defensible.
 
 ## Next authorized work
 
-### 1. Governed production convergence to current `main`
+### 1. Resolve the exact deployment target
 
-Prepare and execute a bounded deployment of exact target:
+Before any production cutover, read current `main` and record the exact target SHA. Do not hard-code a self-referential “current main” SHA into governance docs because documentation merges themselves advance `main`.
 
-`c0edf5f24ee5771d37587aa9188f28857c6fee57`
+The deployment target must contain the already-accepted:
 
-This deployment should bring production forward from `d14e28d` and therefore include the already-accepted Telegram enrichment plus PR #60 Mission Control changes.
+- Telegram enrichment (`e113f5c`);
+- PR #60 Mission Control integration (`c0edf5f` code merge);
+- only intentional subsequent documentation changes.
 
-Before cutover, verify the exact production delta and confirm that no trading-critical semantics, timers, account boundaries or credential architecture changed beyond already accepted code.
+Verify the exact production delta from `d14e28d` to that target before cutover.
+
+### 2. Governed production convergence
+
+Deploy the exact reviewed target through the existing governed rollout path.
 
 Preserve the authorized local production override:
 
@@ -51,7 +57,9 @@ Preserve the authorized local production override:
 
 Do not change the seven existing `qamc` user timers.
 
-### 2. Post-deploy acceptance
+Confirm no trading-critical semantics, account boundaries or credential architecture changed beyond already accepted code.
+
+### 3. Post-deploy acceptance
 
 After deployment, verify at minimum:
 
@@ -69,7 +77,7 @@ After deployment, verify at minimum:
 
 If the private browser is available to the operator after deployment, perform the missing combined visual pass at desktop and iPad widths. This is a product verification item, not permission to expose the preview publicly.
 
-### 3. Continue natural trading validation
+### 4. Continue natural trading validation
 
 Do not stop or manufacture the Alpaca Paper soak for the dashboard deployment.
 
