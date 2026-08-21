@@ -135,6 +135,22 @@ Each state must remain truthful when data is absent, partial or degraded; an emp
 - **Maximum useful reuse, minimum custom infrastructure** — adapt the donor ideas and existing product before inventing new durable systems.
 - **Desktop + iPad first** — phone is secondary to a strong cockpit experience on the operator's primary surfaces.
 
+### Professional visual-composition standard
+
+Functional correctness is necessary but not sufficient. The Dashboard must also satisfy basic professional interface-design fundamentals in the rendered product.
+
+- **Coherent hierarchy:** typography, scale, weight and placement must make the most important trading state visually dominant. Brand/header, primary metrics, section titles, labels, body text and metadata should form a deliberate readable type hierarchy rather than unrelated font sizes.
+- **Readable typography:** routine labels and explanatory text must remain comfortably legible on desktop and iPad; small text must not be used merely to make dense panels fit.
+- **Proportion:** a component must visually justify the space allocated to it. Important graphics such as risk deployment, decision flow and agent analysis should scale to their containers rather than appearing as tiny islands inside large empty rectangles.
+- **Intentional whitespace:** empty space should create hierarchy and breathing room, not dominate the page because fixed containers remain large when content is absent.
+- **Adaptive sparse states:** no-candidate, no-position and low-information states should collapse, rebalance or repurpose space so the cockpit remains composed and useful instead of becoming a sea of empty panels.
+- **Grid and rhythm:** columns, card edges, baselines, gaps and repeated structures should align to a coherent layout/spacing system. Unequal proportions should be intentional and reflect information importance.
+- **Information density:** the cockpit should use its canvas efficiently. Avoid both extremes: cramped micro-text and oversized containers with very little content.
+- **Designed surfaces, not generic breakpoints:** desktop and iPad should each look deliberately composed, not simply like the same grid squeezed or stretched.
+- **Visual acceptance is empirical:** implementation is not complete merely because it builds, tests pass or nothing overlaps. Rendered screenshots must be inspected at target desktop and iPad sizes against the vision board and professional trading-dashboard standards; obvious hierarchy, typography, proportion, balance or empty-state defects remain product bugs.
+
+The target is a credible professional trading cockpit, not a technically correct dashboard shell containing miniature widgets.
+
 The visual reference is directional, not blanket feature authorization. Mockup concepts that conflict with current safety boundaries — including broker-write PAUSE/KILL controls, direct trade controls, or other write paths — remain unimplemented unless separately authorized. Do not fabricate unsupported data merely to match a mockup.
 
 ## MVP lifecycle principle
