@@ -1,36 +1,27 @@
 # QAMC Current Work
 
-Status: **TRADING-UTILITY RECOVERY — DEPLOYED AND VERIFIED; AWAITING NATURAL PAPER-MARKET EVIDENCE**
+Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | MISSION CONTROL + TELEGRAM MAIN CONVERGENCE PENDING**
 
 ## Current integration truth
 
-PR #56 (trading-utility recovery) is merged to `main` and deployed to production at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df`, via the governed rollout script (`ops/review/qamc-recovery-rollout.sh` on `claude/trading-utility-recovery-rollout`), run by the operator as `ubuntu` on 2026-08-20 23:58:56 UTC and ending `GATE E / FINISH LINE PASSED`. It was independently corroborated live from `dev` immediately after (`health=ok`, `paper=true`, `/cockpit` and `/ui` 200). Full deployment evidence and rollout-review history are recorded in `docs/STATE.md` and `ops/review/README-recovery-rollout.md`; they are not duplicated here.
+- Trading-utility recovery PR #56 is deployed to production at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` and accepted as machinery.
+- Production remains intentionally detached at that exact SHA with one governed local delta: `intraday_scan.enabled: true`.
+- Current `main` is `c0edf5f24ee5771d37587aa9188f28857c6fee57`.
+- `main` now includes:
+  - `e113f5c` — enriched Telegram trader decision feed;
+  - PR #60 — integrated professional Mission Control cockpit plus data truth / run-history / explainability.
+- PR #59 is superseded by PR #60 and must not be deployed or merged separately.
+- The read-side improvements are merged but **not yet deployed to production**.
 
-Deployment proves the machinery is wired correctly. It does not prove the recovery works — see Goal and Natural validation required below.
+## Product / architecture principle
 
-## Product/architecture principle
+QAMC is one autonomous Alpaca trading system. Alpaca Paper is the currently authorized execution environment, not a separate trading architecture.
 
-QAMC is an autonomous Alpaca trading system, not a separate “paper-trading architecture.” Alpaca Paper is the **currently authorized execution environment** used to validate the system before any future live-capital authorization.
+Trading-critical path remains:
 
-The same trading-critical architecture must apply across environments:
+**discovery → Specialists → Portfolio Manager → AI Risk Manager → deterministic gate → funding → broker execution → position/exit management → reflection**.
 
-**discovery → Specialists → Portfolio Manager → AI Risk Manager → deterministic gate → funding → broker execution → position/exit management → reflection.**
-
-Paper/live differences belong at the broker/configuration boundary (credentials, endpoint/account selection and genuine execution-mechanics differences). Do not create paper-specific decision logic, weaker safety, alternate position management, or shortcuts that would require a later live-trading rearchitecture.
-
-## Recovery finding and accepted changes
-
-Production forensics across the natural validation runs found that QAMC was often analyzing legitimate opportunities without converting them into exposure for mechanical reasons rather than deliberate investment judgment. The reviewed recovery addresses seven evidenced blockers:
-
-1. **PM parse destruction** — nested `targets` fragments could outscore and replace the complete PM decision. Parser selection is corrected and production payloads are regression-pinned.
-2. **SGOV funding race** — approved BUYs could be abandoned before the funding SELL completed. Funding now waits/polls within a bounded fail-closed window and execution still requires confirmed broker cash.
-3. **Schema-complete decisions rejected** — approving PM/Risk decisions could die on missing narrative schema fields. One bounded repair is allowed only for non-decision fields; decision-bearing content is strictly preserved or the run fails closed.
-4. **Invisible execution kills** — deterministic BUY skips were log-only. Skip reasons are now durable evidence and surfaced in the funnel.
-5. **Fully unfunded approved BUYs lost** — approved morning runs that could not obtain funding now return a safely retryable status through the full decision chain rather than silently terminating as if no investment opportunity existed.
-6. **Artificial macro conservatism** — transient FRED failures and impossible freshness rules suppressed confidence. FRED gets bounded retry/breaker behavior and staleness now follows each series' actual cadence.
-7. **Risk misread deterministic sizing** — constructor risk-budget caps are now explicitly identified so AI Risk does not mistake deterministic sizing for PM inconsistency.
-
-Full reviewed recovery suite: **1997 passed**. The deployed Gate C focused suite passed **163/163**.
+Mission Control, Journal, search and Telegram output are observational/read-side surfaces. They must not become authoritative trading state or broker-write control paths.
 
 ## Goal
 
@@ -38,44 +29,98 @@ Use natural market evidence to determine whether QAMC reliably:
 
 **finds opportunity → evaluates it → makes a defensible bullish, bearish or neutral decision → executes when eligible → manages/exits the position → measures the result.**
 
-Success is **not** “more trades.” Do not force activity, weaken safety, or hindsight-tune. When QAMC does not trade, the reason must be specific and defensible.
+Success is not “more trades.” Do not force activity, weaken safety or hindsight-tune.
+
+When QAMC does not trade, the reason must be specific and defensible.
 
 ## Next authorized work
 
-1. ~~Complete external GitHub integration of PR #56.~~ Done — merged to `main` at `d14e28d`.
-2. ~~Deploy the exact accepted merged SHA through the existing governed rollout path.~~ Done — `GATE E / FINISH LINE PASSED`, verified live and recorded in `docs/STATE.md`.
-3. Observe natural Alpaca Paper sessions against the criteria below. No forcing, manufacturing or hindsight tuning. The next engineering work should be justified by observed evidence rather than by a target trade count.
+### 1. Governed production convergence to current `main`
 
-Deployment passing proved the machinery, not trading success.
+Prepare and execute a bounded deployment of exact target:
 
-## Natural validation required
+`c0edf5f24ee5771d37587aa9188f28857c6fee57`
 
-Before declaring the recovery successful, natural market sessions should demonstrate:
+This deployment should bring production forward from `d14e28d` and therefore include the already-accepted Telegram enrichment plus PR #60 Mission Control changes.
 
-- worthwhile opportunities can survive discovery and reach PM/Risk;
-- defensible eligible trades can reach funded broker submission;
-- supported bearish opportunities can be expressed through the approved inverse ETFs;
+Before cutover, verify the exact production delta and confirm that no trading-critical semantics, timers, account boundaries or credential architecture changed beyond already accepted code.
+
+Preserve the authorized local production override:
+
+`intraday_scan.enabled: true`
+
+Do not change the seven existing `qamc` user timers.
+
+### 2. Post-deploy acceptance
+
+After deployment, verify at minimum:
+
+- production pin equals the exact reviewed target SHA;
+- `/health` is healthy and reports `paper=true`;
+- `/cockpit` and `/ui` return 200;
+- `/quotes` is available and read-only;
+- Mission Control rejects POST/PUT/PATCH/DELETE writes;
+- account/position/price views remain truthful and do not present historical daily close as current quote;
+- Today Sessions / `AUTO / PRIMARY` behavior loads against real production read-side data;
+- Telegram output still sends through the accepted OneCLI path;
+- existing timers remain active/unchanged;
+- `dev` / `qamc` / `ubuntu` account boundaries remain intact;
+- no secret material appears in logs or repository state.
+
+If the private browser is available to the operator after deployment, perform the missing combined visual pass at desktop and iPad widths. This is a product verification item, not permission to expose the preview publicly.
+
+### 3. Continue natural trading validation
+
+Do not stop or manufacture the Alpaca Paper soak for the dashboard deployment.
+
+Natural sessions still need to demonstrate:
+
+- worthwhile opportunities survive discovery and reach PM/Risk;
+- eligible trades can reach funded broker submission;
+- supported bearish opportunities can be expressed through approved inverse ETFs;
 - no-trade decisions remain possible and explainable;
-- position management and exits behave coherently after entry;
-- execution/funding failures are visible rather than silently interpreted as investment decisions;
-- observed performance and missed opportunities can be measured without hindsight tuning.
+- positions and exits behave coherently after entry;
+- funding/execution failures are visible rather than mistaken for investment judgment;
+- outcomes and missed opportunities can be measured without hindsight tuning.
+
+## Mission Control acceptance now carried by `main`
+
+The merged PR #60 establishes the accepted read-side product direction:
+
+- professional ordinary UI primitives via Tremor/TanStack;
+- Lightweight Charts for market-price visualization and trade markers;
+- Dockview for the desktop support workspace;
+- custom visualization only where QAMC-specific decision topology justifies it;
+- separate current-session quote vs historical daily-bar semantics;
+- pinned session/run context that cannot be silently overwritten by stale polls;
+- truthful `AUTO / PRIMARY` behavior;
+- candidate-correct PM/Risk attribution;
+- persisted execution-skip explanations and explicit reason-not-recorded states;
+- Journal decision ledger and exact-run navigation;
+- no ArcGauge, handmade RunTimeline or old ECharts candidate funnel.
+
+Do not reopen those resolved product decisions without new evidence.
 
 ## Remaining uncertainty
 
-The fixes are strongly supported by recorded production evidence and deterministic tests but have not yet been validated as a complete chain after deployment. Two lower-priority observed issues remain outside this recovery gate unless they materially distort validation: news-narrative factual drift and `actual_provider` attribution oddity.
+The trading recovery is strongly supported by production forensics and deterministic tests, but the complete opportunity→decision→execution→management chain still needs natural market validation after deployment.
 
-## Secondary product debt
+Two lower-priority core issues remain outside the current gate unless they materially distort validation:
 
-Mission Control still has semantic/usability debt, including candidate/run attribution and liquidity presentation. Read-side correctness needed for trading diagnosis is valid; broad dashboard redesign remains secondary to proving trading utility.
+- news-narrative factual drift;
+- `actual_provider` attribution oddity.
+
+The combined Mission Control branch lacked a fresh automated browser pass because the available browser environment could not reach the private Tailscale preview. Code/API/unit/build verification passed; post-deploy operator-side browser inspection should close that visual evidence gap.
 
 ## Hard boundaries
 
-- **Current execution authorization is Alpaca Paper only.** Live-broker order submission requires a separate future authorization; this is an environment/safety gate, not a separate trading architecture.
-- No margin, options or direct stock shorting. Bearish expression remains through approved inverse ETFs.
+- **Current execution authorization is Alpaca Paper only.**
+- No margin, options or direct stock shorting; bearish expression remains through approved inverse ETFs.
 - Deterministic Python/broker protections remain final safety authority.
-- Do not force/manufacture trades or weaken safeguards merely to increase activity.
-- Do not introduce paper-only trading semantics that would need replacement for live-capital operation.
+- Do not force/manufacture trades or weaken safeguards to increase activity.
+- Do not create paper-only trading semantics.
 - No new daemon/service/database/proxy/security/credential architecture without explicit approval.
 - Preserve `dev` / `qamc` / `ubuntu` isolation and OneCLI secret handling.
 - Mission Control remains private/read-only; Telegram remains output-only.
-- Claude does not merge or deploy its own work; external integration and governed deployment remain required.
+- No public exposure of QAMC or OneCLI.
+- Production deployment is a separate governed task; merging code is not deployment proof.
