@@ -118,7 +118,11 @@ export interface TradeItem {
   reasoning: string | null;
   run_id: string | null;
   decision_id: string | null;
+  broker_order_id?: string | null;
   fill_status: string | null;
+  fill_qty?: number | null;
+  fill_price?: number | null;
+  fill_reconciled_at?: string | null;
   timestamp: string | null;
   stop_loss: number | null;
   take_profit: number | null;
