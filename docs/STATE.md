@@ -6,11 +6,10 @@ This file records what is accepted and true **now**. Git history preserves prior
 
 ## Accepted production state
 
-- **Terminology:** **QAMC / Mission Control** means the whole product/system. **Dashboard** means the browser/iPad read-side UI and its frontend/UX workstream. **Core recovery** means trading/backend deployment and natural-validation work.
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission, margin, options and direct stock shorting are not authorized.
 - Paper vs live is an execution-environment boundary, not a separate trading architecture. The accepted Specialist → PM → AI Risk → deterministic risk/execution → position-management path is intended to remain the same if live-capital operation is later authorized; genuine environment differences stay at the broker/configuration boundary.
 - Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development/Claude Code by `dev`. These account boundaries remain hard.
-- Dashboard/API remain private, read-only and non-critical to trading. `/cockpit`, `/ui` and `/health` are deployed and healthy.
+- Mission Control/API remain private, read-only and non-critical to trading. `/cockpit`, `/ui` and `/health` are deployed and healthy.
 - Private operator access uses Tailscale. Canonical VPS MagicDNS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
 - OneCLI remains the accepted credential-delivery layer. Docker publishes OneCLI only on loopback (`127.0.0.1:10254-10255`); the dashboard may also be reached through `tailscaled` on this host's exact tailnet addresses. The credential gateway itself remains loopback-only. No public listener is authorized.
 - The current Alpaca Paper validation run remains active under the existing seven `qamc` user timers.
@@ -23,14 +22,6 @@ The checkout carries exactly **one** intended local delta: `config/settings.yaml
 
 Rollback point is the immediately prior production SHA, `775296e1d516279381a4c516dfb3e783b33a7495` (`775296e1`). The accepted rollout transcript is `/root/qamc-rollout-20260820T235856Z.log` on the VPS (root-only); the deployment script and its full defect history are `ops/review/qamc-recovery-rollout.sh` and `ops/review/README-recovery-rollout.md` on branch `claude/trading-utility-recovery-rollout`.
 
-## Trading-utility recovery — merged, deployment pending
-
-PR **#56 — `fix(qamc): restore trading-utility conversion path`** merged into `main` on 2026-08-20. Merge commit: `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df`; reviewed recovery head: `04f6f76a65f7c02891449a243320977695523117`.
-
-The merged recovery repairs evidenced opportunity→decision→execution blockers including PM parse-fragment selection, SGOV funding latency, bounded fail-closed PM/Risk schema repair, execution-skip observability, FRED/staleness conservatism and deterministic sizing provenance to AI Risk.
-
-**Production has not been declared converged to this merge.** The deployed SHA above remains authoritative until governed rollout evidence records a new production pin.
-
 ## Finish-line acceptance — complete
 
 The governed Gate A→E rollout completed successfully in one guarded run and ended with `GATE E / FINISH LINE PASSED`, independently corroborated live from `dev` (`/health` reachable, `status=ok`, `paper=true`, `/cockpit` and `/ui` both 200) immediately after.
@@ -39,14 +30,14 @@ Accepted evidence from that run:
 
 - exact target SHA/tree and reviewed 30-file production delta verified before checkout, including all seven trading-utility recovery fix markers and the inherited PR #48 markers;
 - production import/config smoke passed with `paper=True`, SGOV sweep enabled, the four approved inverse ETFs present, and intraday still OFF at cutover;
-- Dashboard/API restarted healthy on the target;
-- commissioning verifier: 23/23 checks PASS across config, OneCLI, wiring, providers and Dashboard/API;
+- Mission Control restarted healthy on the target;
+- commissioning verifier: 23/23 checks PASS across config, gateway, wiring, providers and Mission Control;
 - live provider preflight: 9/9 checks PASS, including both accepted OpenRouter models, Alpaca Paper account/market-data/calendar/quote paths and FRED;
 - Telegram `getMe` returned 200 through OneCLI; the real bot token remained only in OneCLI and no token-shaped string was found in the runtime log;
 - Gate C focused deterministic suite: **163 passed**, 0 failed/error/skipped/xfailed (reviewed full recovery suite: 1997 passed, 0 failed);
 - SGOV live reconciliation: raw cash $144.92, parked $9858.31, reserve $100.03, backed by one real SGOV position row, zero non-sweep risk positions;
 - seven existing timers remained active and unchanged, with zero failed units;
-- `/cockpit`, `/ui` and `/health` all returned 200 and Dashboard/API rejected POST/PUT/DELETE/PATCH writes;
+- `/cockpit`, `/ui` and `/health` all returned 200 and Mission Control rejected POST/PUT/DELETE/PATCH writes;
 - `dev` / `qamc` / `ubuntu` account boundaries remained intact.
 
 No order was placed, cancelled or modified by the rollout.
@@ -91,12 +82,6 @@ The first naturally scheduled Tech batch line and first naturally scheduled enab
 - Cost-optimized routing and the accepted decision-chain audit remain in force.
 - Trading-critical behavior is environment-neutral by design; Paper mode must not justify weaker or alternate agent/risk/position-management semantics.
 
-## Dashboard product direction
-
-Dashboard product convergence is authorized to proceed concurrently with the trading-utility deployment/validation so long as it remains private, read-only and non-critical to trading.
-
-`docs/visual/MISSION_CONTROL_VISION_BOARD.png` remains the durable product reference. The accepted direction includes the donor concepts recorded in `docs/OUTCOME.md`, especially Oralexa-style agent cards/debate/signal fusion/PM-Risk decision presentation, OpenTradex-style cockpit shell/layout ideas, TradingView Lightweight Charts-style chart context, and the structured Journal Day experience. Later semantic audits refine these ideas; they do not silently discard them.
-
 ## Directionality
 
 - QAMC is not intended to be structurally long-only.
@@ -110,7 +95,7 @@ Dashboard product convergence is authorized to proceed concurrently with the tra
 - New timers, daemons, services, databases, proxies, credential systems or other durable infrastructure outside accepted architecture.
 - Deterministic risk/execution semantic redesign.
 - Paper-specific shortcuts or a separate Paper-only trading logic path that would require re-architecting for live operation later.
-- Broker-write Dashboard controls.
+- Broker-write Mission Control controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
@@ -119,4 +104,4 @@ Dashboard product convergence is authorized to proceed concurrently with the tra
 
 ## Handoff
 
-The trading-utility recovery (PR #56) is deployed, verified and accepted as *machinery* — production is running the exact reviewed SHA, all seven fixes are confirmed present and wired, and every existing safety/observability gate passed. It is **not yet accepted as a working recovery**: that requires natural Alpaca Paper market sessions demonstrating the actual goal in `docs/WORK.md` — opportunity discovered → evaluated → a defensible decision → executed when eligible → managed/exited → measured — including defensible no-trade outcomes. Do not force, manufacture or accelerate that evidence. Dashboard product convergence continues concurrently on an isolated branch/worktree under `docs/WORK.md`, without altering or delaying the trading-critical validation path. See `docs/WORK.md`.
+The trading-utility recovery (PR #56) is deployed, verified and accepted as *machinery* — production is running the exact reviewed SHA, all seven fixes are confirmed present and wired, and every existing safety/observability gate passed. It is **not yet accepted as a working recovery**: that requires natural Alpaca Paper market sessions demonstrating the actual goal in `docs/WORK.md` — opportunity discovered → evaluated → a defensible decision → executed when eligible → managed/exited → measured — including defensible no-trade outcomes. Do not force, manufacture or accelerate that evidence. See `docs/WORK.md`.
