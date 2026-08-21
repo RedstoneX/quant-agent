@@ -5,8 +5,9 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from src.config import AppConfig
-from src.notifier import TelegramNotifier, format_session_result
+from src.notifier import TelegramNotifier
 from src.pipeline import TradingPipeline
+from src.trader_feed import format_session_result
 from src.trading_calendar import ET, SESSION_WINDOWS
 
 logger = logging.getLogger(__name__)

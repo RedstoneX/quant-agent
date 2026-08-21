@@ -7,9 +7,10 @@ from pathlib import Path
 
 from src.config import load_config
 from src.cost_table import refresh_pricing
-from src.notifier import TelegramNotifier, format_session_result
+from src.notifier import TelegramNotifier
 from src.pipeline import TradingPipeline
 from src.scheduler import TradingScheduler
+from src.trader_feed import format_session_result
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
