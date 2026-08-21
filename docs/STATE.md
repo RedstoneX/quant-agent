@@ -1,107 +1,124 @@
 # QAMC Current State
 
-Updated: 2026-08-20
+Updated: 2026-08-21
 
-This file records what is accepted and true **now**. Git history preserves prior implementation detail; do not turn this file into a changelog.
+This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
-## Accepted production state
+## Accepted product / architecture
 
-- QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission, margin, options and direct stock shorting are not authorized.
-- Paper vs live is an execution-environment boundary, not a separate trading architecture. The accepted Specialist → PM → AI Risk → deterministic risk/execution → position-management path is intended to remain the same if live-capital operation is later authorized; genuine environment differences stay at the broker/configuration boundary.
-- Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development/Claude Code by `dev`. These account boundaries remain hard.
-- Mission Control/API remain private, read-only and non-critical to trading. `/cockpit`, `/ui` and `/health` are deployed and healthy.
-- Private operator access uses Tailscale. Canonical VPS MagicDNS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
-- OneCLI remains the accepted credential-delivery layer. Docker publishes OneCLI only on loopback (`127.0.0.1:10254-10255`); the dashboard may also be reached through `tailscaled` on this host's exact tailnet addresses. The credential gateway itself remains loopback-only. No public listener is authorized.
-- The current Alpaca Paper validation run remains active under the existing seven `qamc` user timers.
+- **QAMC / Mission Control** is the whole product/system. **Dashboard** is the browser/iPad read-side UI.
+- QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission is not authorized.
+- Paper vs live is an execution-environment boundary, not a separate trading architecture. Trading-critical reasoning, risk, execution, position management and journaling remain environment-neutral; genuine broker differences stay at the broker/configuration boundary.
+- Decision chain remains: **Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker**.
+- Deterministic Python and broker protections remain final safety authority; uncertainty fails closed.
+- Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
+- Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development by `dev`. These account boundaries remain hard.
+- OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
+- Private operator access uses Tailscale. Canonical VPS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
 
-## Production code position
+## Production position
 
-Production is pinned at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` (tree `7a795888f7794bbd7049ecd5468bf0aa3f419d86`), deployed 2026-08-20 23:58:56 UTC (PR #56, the trading-utility recovery, merged to `main`). The checkout is intentionally detached at that exact SHA rather than following `main`.
+Production remains pinned at:
 
-The checkout carries exactly **one** intended local delta: `config/settings.yaml`, `intraday_scan.enabled: false -> true`. That is the authorized intraday enablement and the only production-vs-commit difference observed at Gate E.
+`d14e28dfc63ca6e4da920229b0ab5ba0f33b93df`
 
-Rollback point is the immediately prior production SHA, `775296e1d516279381a4c516dfb3e783b33a7495` (`775296e1`). The accepted rollout transcript is `/root/qamc-rollout-20260820T235856Z.log` on the VPS (root-only); the deployment script and its full defect history are `ops/review/qamc-recovery-rollout.sh` and `ops/review/README-recovery-rollout.md` on branch `claude/trading-utility-recovery-rollout`.
+This is the deployed PR #56 trading-utility recovery, accepted as machinery after the governed Gate A→E rollout on 2026-08-20.
 
-## Finish-line acceptance — complete
+The production checkout is intentionally detached at that SHA and carries one intended local configuration delta:
 
-The governed Gate A→E rollout completed successfully in one guarded run and ended with `GATE E / FINISH LINE PASSED`, independently corroborated live from `dev` (`/health` reachable, `status=ok`, `paper=true`, `/cockpit` and `/ui` both 200) immediately after.
+- `config/settings.yaml`: `intraday_scan.enabled: true`
 
-Accepted evidence from that run:
+That intraday enablement uses the existing `quant-agent-intra_check.timer` / service; no new daemon or timer was introduced.
 
-- exact target SHA/tree and reviewed 30-file production delta verified before checkout, including all seven trading-utility recovery fix markers and the inherited PR #48 markers;
-- production import/config smoke passed with `paper=True`, SGOV sweep enabled, the four approved inverse ETFs present, and intraday still OFF at cutover;
-- Mission Control restarted healthy on the target;
-- commissioning verifier: 23/23 checks PASS across config, gateway, wiring, providers and Mission Control;
-- live provider preflight: 9/9 checks PASS, including both accepted OpenRouter models, Alpaca Paper account/market-data/calendar/quote paths and FRED;
-- Telegram `getMe` returned 200 through OneCLI; the real bot token remained only in OneCLI and no token-shaped string was found in the runtime log;
-- Gate C focused deterministic suite: **163 passed**, 0 failed/error/skipped/xfailed (reviewed full recovery suite: 1997 passed, 0 failed);
-- SGOV live reconciliation: raw cash $144.92, parked $9858.31, reserve $100.03, backed by one real SGOV position row, zero non-sweep risk positions;
-- seven existing timers remained active and unchanged, with zero failed units;
-- `/cockpit`, `/ui` and `/health` all returned 200 and Mission Control rejected POST/PUT/DELETE/PATCH writes;
-- `dev` / `qamc` / `ubuntu` account boundaries remained intact.
+## Current `main`
 
-No order was placed, cancelled or modified by the rollout.
+Current `main` is:
 
-## Trading-utility recovery (PR #56) — deployed and verified
+`c0edf5f24ee5771d37587aa9188f28857c6fee57`
 
-All seven reviewed recovery fixes were confirmed present in the deployed tree three times (pre-checkout content verification, post-checkout re-check, post-enablement final check):
+This is ahead of production and now contains two accepted read-side/observability improvements that are **merged but not yet deployed to production**:
 
-1. **PM decision parsing** — nested `targets` fragments can no longer outscore and replace the complete PM decision.
-2. **SGOV funding race** — funding SELL confirmation now waits/polls within a bounded fail-closed window before dependent BUYs proceed.
-3. **Schema-complete decisions** — a bounded repair is allowed only for non-decision narrative fields; decision-bearing content is preserved or the run fails closed.
-4. **Execution-skip telemetry** — deterministic BUY skips are durable evidence rather than log-only.
-5. **Unfunded approved-BUY retry** — fully unfunded approved morning runs return a safely retryable status through the full decision chain rather than being silently lost.
-6. **Macro conservatism** — FRED gets bounded retry/breaker behavior; staleness follows each series' actual publication cadence.
-7. **Constructor sizing-cap provenance** — deterministic risk-budget caps carry an explicit note so AI Risk does not mistake them for PM inconsistency.
+1. `e113f5c6255925f1a93f0f8c242dcd5facbaf41a` — enriched Telegram trader decision feed.
+2. PR #60 — integrated Mission Control professional cockpit + data-truth/explainability work, merged at `c0edf5f24ee5771d37587aa9188f28857c6fee57`.
 
-PR #48's three fixes (SGOV funding semantics, Tech batch completeness, intraday discovery) are inherited in this tree and were re-verified, not merely assumed carried forward.
+Production therefore must not be described as already running the PR #60 cockpit or `/quotes` endpoint until a governed deployment records a new production pin.
 
-Deployment passing proves the machinery is wired correctly. It does not by itself prove the recovery works — that requires natural Alpaca Paper market evidence; see Handoff below.
+## Mission Control integrated state — merged, deployment pending
 
-## Intraday opportunity discovery — enabled
+PR #60 combines the previously separate professional UI and data-correctness streams into one accepted read-only implementation.
 
-`intraday_scan.enabled: true`, using the existing `quant-agent-intra_check.service` scheduled by `quant-agent-intra_check.timer`. No timer, service, daemon or other durable component was added. This override has now survived one full redeployment (finish-line → trading-utility recovery), re-established by the deployment script's governed Gate D rather than assumed to persist.
+Accepted behavior includes:
+
+- professional cockpit composition using Tremor/TanStack where ordinary UI primitives are needed;
+- TradingView Lightweight Charts retained for price candles/volume and BUY/SELL markers;
+- Dockview retained for the desktop support workspace;
+- QAMC-specific decision-chain topology retained as the justified custom visualization;
+- current-session quote context exposed separately from historical daily bars and broker position marks through GET `/quotes`;
+- historical daily candles are never presented as a live/current quote;
+- day/session selection can pin an earlier run without a later poll silently replacing it;
+- automatic mode truthfully follows the best primary run and is labeled `AUTO / PRIMARY`, not literal latest;
+- Candidate / Decision Room / chart context remains synchronized to the same run;
+- candidate outcomes surface stopping stage, persisted execution-skip reason when present, and explicit “reason not recorded” wording when candidate-specific evidence is absent;
+- run-scoped PM/Risk evidence is not attributed to a candidate that never reached that stage;
+- Journal presents a decision ledger and exact-run candidate navigation;
+- `ArcGauge`, the handmade `RunTimeline`, and the old ECharts candidate funnel are removed.
+
+Integration verification reported:
+
+- backend/API correctness + GET-only suite: **149 passed**;
+- frontend: **50 passed**;
+- production TypeScript/Vite build: passed;
+- branch preview served cockpit/assets successfully and rejected write methods with 405.
+
+A fresh browser-automation pass of the combined branch was not available because the browser environment could not reach the private Tailscale preview. The accepted UI baseline has repository screenshot evidence; no combined screenshot was fabricated.
+
+## Trading-utility recovery — natural validation still required
+
+PR #56 fixed the evidenced mechanical blockers between opportunity discovery and execution and is deployed/verified as machinery.
+
+That does **not** yet prove the recovery works as a complete trading system. Acceptance still requires natural Alpaca Paper sessions demonstrating the real chain:
+
+**opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
+
+No trade may be forced or manufactured to create evidence.
+
+## Intraday opportunity discovery
+
+Production intraday discovery remains enabled by the one governed local config override.
 
 Accepted live configuration:
 
 - move threshold: **3.0%** absolute move from previous close;
 - per-symbol cooldown: **3.0 hours**;
 - maximum candidates per tick: **5**;
-- approved bearish-expression ETFs present: `SH`, `SDS`, `PSQ`, `SQQQ`.
+- approved bearish-expression ETFs: `SH`, `SDS`, `PSQ`, `SQQQ`.
 
-Before enablement, the scanner's own Alpaca snapshot path returned usable previous/current SPY pricing in a read-only smoke test. The same Specialist → Portfolio Manager → AI Risk Manager → deterministic Python/broker chain remains authoritative. Existing process/session locks, cooldown, candidate cap and current-session incomplete-data labeling remain intact.
+Bearish expression remains through approved inverse ETFs. Direct stock shorts, options/theta strategies and margin remain outside the accepted architecture.
 
-The first naturally scheduled Tech batch line and first naturally scheduled enabled intraday tick are validation observations, not acceptance gates. They must not be manufactured by forcing a trade or session.
+## Model / provider policy
 
-## Accepted decision/model policy
-
-- Decision chain remains: Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker.
-- Deterministic Python and broker protections remain final safety authority.
 - OpenRouter remains the model-provider path.
-- Current accepted routing uses two model IDs across the nine seats: `google/gemini-2.5-flash-lite` and `qwen/qwen3-235b-a22b-2507` according to the per-seat policy.
+- Current accepted routing uses `google/gemini-2.5-flash-lite` and `qwen/qwen3-235b-a22b-2507` according to the per-seat policy.
 - Cost-optimized routing and the accepted decision-chain audit remain in force.
-- Trading-critical behavior is environment-neutral by design; Paper mode must not justify weaker or alternate agent/risk/position-management semantics.
-
-## Directionality
-
-- QAMC is not intended to be structurally long-only.
-- Bearish expression remains through approved inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`).
-- Direct stock shorting, options/theta strategies and margin remain outside the accepted architecture.
 
 ## Not authorized
 
 - Live-broker order submission or live-capital activation.
 - Direct stock shorting, options/theta strategies, or margin.
-- New timers, daemons, services, databases, proxies, credential systems or other durable infrastructure outside accepted architecture.
+- New timers, daemons, databases, proxies, credential systems or durable infrastructure without explicit architectural approval.
 - Deterministic risk/execution semantic redesign.
-- Paper-specific shortcuts or a separate Paper-only trading logic path that would require re-architecting for live operation later.
+- Paper-specific trading shortcuts.
 - Broker-write Mission Control controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
-- Replacing upstream OneCLI or adding a new durable routing/security/credential platform without an accepted architectural decision.
-- Forcing/manufacturing a trade merely to prove behavior.
+- Forcing/manufacturing trades for validation.
 
 ## Handoff
 
-The trading-utility recovery (PR #56) is deployed, verified and accepted as *machinery* — production is running the exact reviewed SHA, all seven fixes are confirmed present and wired, and every existing safety/observability gate passed. It is **not yet accepted as a working recovery**: that requires natural Alpaca Paper market sessions demonstrating the actual goal in `docs/WORK.md` — opportunity discovered → evaluated → a defensible decision → executed when eligible → managed/exited → measured — including defensible no-trade outcomes. Do not force, manufacture or accelerate that evidence. See `docs/WORK.md`.
+Two workstreams continue without being conflated:
+
+1. **Core recovery:** continue natural Alpaca Paper validation; do not force activity.
+2. **Merged read-side improvements:** current `main` at `c0edf5f` is ready for a separate governed production-convergence task covering the accepted Telegram enrichment and PR #60 Mission Control changes. Deployment must preserve account isolation, the intraday enablement override, existing timers, read-only Mission Control semantics and the exact reviewed target SHA.
+
+See `docs/WORK.md` for the current authorized next work.
