@@ -2,6 +2,8 @@
 
 QAMC is a private autonomous AI-assisted Alpaca trading system built around `yebof/quant-agent`. Its currently authorized execution environment is Alpaca Paper.
 
+**Terminology:** **QAMC / Mission Control** means the whole product/system. **Dashboard** means the browser/iPad read-side UI and its concurrent frontend/UX workstream. **Core recovery** means the trading/backend deployment-and-validation workstream. Do not use “Mission Control workstream” as shorthand for dashboard-only work.
+
 ## Start
 
 Read `docs/STATE.md` first.
@@ -23,11 +25,11 @@ Any `docs/FUTURE_*` file is conceptual only and never implementation authorizati
 ## Hard boundaries
 
 - **Current execution authorization:** Alpaca Paper only. Live-broker order submission is not authorized until a separate future authorization.
-- **One trading architecture:** Paper vs live is a broker/runtime environment distinction, not a separate decision architecture. Specialist reasoning, Portfolio Manager intent, AI Risk review, deterministic risk/execution, position management, exits, journaling, telemetry and Mission Control semantics must not use paper-specific shortcuts or materially different logic. Genuine broker-environment differences (for example fill behavior, credentials or endpoints) belong at the broker/configuration boundary.
+- **One trading architecture:** Paper vs live is a broker/runtime environment distinction, not a separate decision architecture. Specialist reasoning, Portfolio Manager intent, AI Risk review, deterministic risk/execution, position management, exits, journaling, telemetry and Dashboard semantics must not use paper-specific shortcuts or materially different logic. Genuine broker-environment differences (for example fill behavior, credentials or endpoints) belong at the broker/configuration boundary.
 - `yebof/quant-agent` remains the authoritative trading engine.
 - Specialist agents → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution remains the decision chain.
 - Deterministic Python and broker protections own final safety/execution eligibility; uncertainty fails closed.
-- Mission Control/API/journal/search/UI remain non-critical to trading and read-only unless a future accepted work contract explicitly says otherwise.
+- Dashboard/API/journal/search/UI remain non-critical to trading and read-only unless a future accepted work contract explicitly says otherwise.
 - No secrets or fake production trading state in API/UI/client artifacts.
 - Derived UI/search/journal state is rebuildable and non-authoritative.
 - Avoid unnecessary infrastructure and gratuitous trading-core rewrites; preserve upstream mergeability.

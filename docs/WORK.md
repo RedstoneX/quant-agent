@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **TRADING-UTILITY RECOVERY — MERGED; GOVERNED DEPLOYMENT + NATURAL VALIDATION PENDING | MISSION CONTROL PRODUCT CONVERGENCE AUTHORIZED CONCURRENTLY**
+Status: **TRADING-UTILITY RECOVERY — MERGED; GOVERNED DEPLOYMENT + NATURAL VALIDATION PENDING | DASHBOARD PRODUCT CONVERGENCE AUTHORIZED CONCURRENTLY**
 
 ## Current integration truth
 
@@ -10,6 +10,13 @@ Status: **TRADING-UTILITY RECOVERY — MERGED; GOVERNED DEPLOYMENT + NATURAL VAL
 - Reviewed recovery head before merge: `04f6f76a65f7c02891449a243320977695523117`.
 - Production is **not yet assumed to be running the recovery**; `docs/STATE.md` remains authoritative for the deployed SHA until governed deployment evidence says otherwise.
 - The earlier temporary note claiming PR #56 was unrelated is superseded by GitHub's authoritative PR record.
+
+## Terminology / workstream separation
+
+- **QAMC / Mission Control** = the whole product/system.
+- **Dashboard** = the browser/iPad read-side UI and the concurrent frontend/UX workstream.
+- **Core recovery** = the trading/backend deployment-and-natural-validation workstream.
+- Keep Dashboard and core recovery isolated in separate branches/worktrees. Do not call the Dashboard workstream “Mission Control” because that name refers to the whole product.
 
 ## Product/architecture principle
 
@@ -56,15 +63,15 @@ Before declaring the recovery successful, natural market sessions should demonst
 
 Success is **not** “more trades.” Do not force activity, weaken safety, or hindsight-tune. When QAMC does not trade, the reason must be specific and defensible.
 
-## Concurrent Mission Control product convergence — authorized
+## Concurrent Dashboard product convergence — authorized
 
-Mission Control work may proceed **concurrently** with core deployment/validation on a separate branch/worktree because it is read-side/product work and should not block natural trading evidence.
+Dashboard work may proceed **concurrently** with core deployment/validation on a separate branch/worktree because it is read-side/product work and should not block natural trading evidence.
 
 The governing reference is `docs/visual/MISSION_CONTROL_VISION_BOARD.png` together with `docs/OUTCOME.md`. The earlier donor work is part of the intended product direction and must not be silently lost while fixing semantic correctness.
 
 ### Separation from the core recovery
 
-The concurrent dashboard stream may change Mission Control frontend/read-side presentation and read-only API/schema support needed to represent existing authoritative trading evidence correctly.
+The concurrent Dashboard stream may change frontend/read-side presentation and read-only API/schema support needed to represent existing authoritative trading evidence correctly.
 
 It must **not**:
 - change trading decisions, risk thresholds, execution eligibility, broker writes or position-management semantics;
@@ -73,11 +80,11 @@ It must **not**:
 - collide with the production-deployment worktree/branch;
 - use broad dashboard redesign as a reason to delay the merged recovery's deployment or natural validation.
 
-If a dashboard requirement exposes missing trading telemetry, add only the minimum read-side evidence/contract needed to expose already-authoritative state; escalate if satisfying the UI would require a material trading-core change.
+If a Dashboard requirement exposes missing trading telemetry, add only the minimum read-side evidence/contract needed to expose already-authoritative state; escalate if satisfying the UI would require a material trading-core change.
 
 ### Product priorities
 
-Mission Control should converge toward the vision board's **graphical trading cockpit**, not a cleaner admin/log page.
+The QAMC Dashboard should converge toward the vision board's **graphical trading cockpit**, not a cleaner admin/log page.
 
 Prioritize:
 1. **Truth and attribution** — fix candidate/run attribution, execution provenance, capital/liquidity semantics and misleading labels before decoration.
@@ -127,6 +134,6 @@ The trading fixes are strongly supported by recorded production evidence and det
 - Do not introduce paper-only trading semantics that would need replacement for live-capital operation.
 - No new daemon/service/database/proxy/security/credential architecture without explicit approval.
 - Preserve `dev` / `qamc` / `ubuntu` isolation and OneCLI secret handling.
-- Mission Control remains private/read-only; Telegram remains output-only.
+- Dashboard remains private/read-only; Telegram remains output-only.
 - Dashboard work must remain non-critical to trading and must not delay core validation.
 - Claude does not merge or deploy its own work; external integration and governed deployment remain required.
