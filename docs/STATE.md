@@ -16,44 +16,51 @@ This file records what is accepted and true **now**. Git history preserves prior
 
 ## Production code position
 
-Production is pinned at `775296e1d516279381a4c516dfb3e783b33a7495` (tree `988cdbffb469c1a48737b9a2db876b05b29e2f90`), deployed 2026-08-20 05:27:56 UTC. The checkout is intentionally detached at that exact SHA rather than following `main`.
+Production is pinned at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` (tree `7a795888f7794bbd7049ecd5468bf0aa3f419d86`), deployed 2026-08-20 23:58:56 UTC (PR #56, the trading-utility recovery, merged to `main`). The checkout is intentionally detached at that exact SHA rather than following `main`.
 
-The checkout carries exactly **one** intended local delta: `config/settings.yaml`, `intraday_scan.enabled: false -> true`. That is the authorized Stage D enablement and the only production-vs-commit difference observed at Gate E.
+The checkout carries exactly **one** intended local delta: `config/settings.yaml`, `intraday_scan.enabled: false -> true`. That is the authorized intraday enablement and the only production-vs-commit difference observed at Gate E.
 
-Rollback point remains `9c736c158fec84129765c25a9429254d3602ad6b` (`9c736c1`). The accepted rollout transcript is `/root/qamc-rollout-20260820T052756Z.log` on the VPS (root-only).
+Rollback point is the immediately prior production SHA, `775296e1d516279381a4c516dfb3e783b33a7495` (`775296e1`). The accepted rollout transcript is `/root/qamc-rollout-20260820T235856Z.log` on the VPS (root-only); the deployment script and its full defect history are `ops/review/qamc-recovery-rollout.sh` and `ops/review/README-recovery-rollout.md` on branch `claude/trading-utility-recovery-rollout`.
 
 ## Finish-line acceptance — complete
 
-The coordinated Stage A→E rollout completed successfully in one guarded run and ended with `GATE E / FINISH LINE PASSED`.
+The governed Gate A→E rollout completed successfully in one guarded run and ended with `GATE E / FINISH LINE PASSED`, independently corroborated live from `dev` (`/health` reachable, `status=ok`, `paper=true`, `/cockpit` and `/ui` both 200) immediately after.
 
 Accepted evidence from that run:
 
-- exact target SHA/tree and reviewed 23-file production delta verified before checkout;
+- exact target SHA/tree and reviewed 30-file production delta verified before checkout, including all seven trading-utility recovery fix markers and the inherited PR #48 markers;
 - production import/config smoke passed with `paper=True`, SGOV sweep enabled, the four approved inverse ETFs present, and intraday still OFF at cutover;
 - Mission Control restarted healthy on the target;
-- commissioning verifier: 23/23 checks PASS across config, OneCLI, wiring, providers and Mission Control;
+- commissioning verifier: 23/23 checks PASS across config, gateway, wiring, providers and Mission Control;
 - live provider preflight: 9/9 checks PASS, including both accepted OpenRouter models, Alpaca Paper account/market-data/calendar/quote paths and FRED;
 - Telegram `getMe` returned 200 through OneCLI; the real bot token remained only in OneCLI and no token-shaped string was found in the runtime log;
-- Gate C focused deterministic suite: **246 passed**, 0 failed/error/skipped/xfailed (62 warnings);
+- Gate C focused deterministic suite: **163 passed**, 0 failed/error/skipped/xfailed (reviewed full recovery suite: 1997 passed, 0 failed);
+- SGOV live reconciliation: raw cash $144.92, parked $9858.31, reserve $100.03, backed by one real SGOV position row, zero non-sweep risk positions;
 - seven existing timers remained active and unchanged, with zero failed units;
 - `/cockpit`, `/ui` and `/health` all returned 200 and Mission Control rejected POST/PUT/DELETE/PATCH writes;
 - `dev` / `qamc` / `ubuntu` account boundaries remained intact.
 
 No order was placed, cancelled or modified by the rollout.
 
-## PR #48 — deployed and verified
+## Trading-utility recovery (PR #56) — deployed and verified
 
-PR #48 is active in production and its three accepted changes were verified on the deployed tree:
+All seven reviewed recovery fixes were confirmed present in the deployed tree three times (pre-checkout content verification, post-checkout re-check, post-enablement final check):
 
-1. **SGOV funding semantics** — deployable liquidity uses owned raw cash plus convertible sweep value; `CashSweeper.fund_buys()` reports only confirmed broker-cash increase; execution's final raw-cash gate remains authoritative. Gate C live/read-only reconciliation showed raw cash `$144.97`, SGOV parked `$9857.82`, reserve `$100.03`, and the parked amount backed by one real SGOV position row with zero non-sweep risk positions at that snapshot.
-2. **Tech batch-response completeness** — every submitted symbol reaches an explicit terminal outcome, missing results get one bounded retry, and partial/failed outcomes are surfaced rather than silently dropped.
-3. **Intraday opportunity discovery** — enabled on the existing cadence after Gates A–C passed.
+1. **PM decision parsing** — nested `targets` fragments can no longer outscore and replace the complete PM decision.
+2. **SGOV funding race** — funding SELL confirmation now waits/polls within a bounded fail-closed window before dependent BUYs proceed.
+3. **Schema-complete decisions** — a bounded repair is allowed only for non-decision narrative fields; decision-bearing content is preserved or the run fails closed.
+4. **Execution-skip telemetry** — deterministic BUY skips are durable evidence rather than log-only.
+5. **Unfunded approved-BUY retry** — fully unfunded approved morning runs return a safely retryable status through the full decision chain rather than being silently lost.
+6. **Macro conservatism** — FRED gets bounded retry/breaker behavior; staleness follows each series' actual publication cadence.
+7. **Constructor sizing-cap provenance** — deterministic risk-budget caps carry an explicit note so AI Risk does not mistake them for PM inconsistency.
 
-SGOV remains deterministic cash-equivalent sweep parking, not a Portfolio Manager thesis.
+PR #48's three fixes (SGOV funding semantics, Tech batch completeness, intraday discovery) are inherited in this tree and were re-verified, not merely assumed carried forward.
+
+Deployment passing proves the machinery is wired correctly. It does not by itself prove the recovery works — that requires natural Alpaca Paper market evidence; see Handoff below.
 
 ## Intraday opportunity discovery — enabled
 
-`intraday_scan.enabled: true` since the 2026-08-20 rollout, using the existing `quant-agent-intra_check.service` scheduled by `quant-agent-intra_check.timer`. No timer, service, daemon or other durable component was added.
+`intraday_scan.enabled: true`, using the existing `quant-agent-intra_check.service` scheduled by `quant-agent-intra_check.timer`. No timer, service, daemon or other durable component was added. This override has now survived one full redeployment (finish-line → trading-utility recovery), re-established by the deployment script's governed Gate D rather than assumed to persist.
 
 Accepted live configuration:
 
@@ -97,4 +104,4 @@ The first naturally scheduled Tech batch line and first naturally scheduled enab
 
 ## Handoff
 
-The finish-line rollout remains accepted. Trading-utility recovery is under external integration in PR #56 from `fix/trading-utility-conversion`; production remains on the accepted SHA above until that PR is merged and a separately governed deployment occurs. See `docs/WORK.md`.
+The trading-utility recovery (PR #56) is deployed, verified and accepted as *machinery* — production is running the exact reviewed SHA, all seven fixes are confirmed present and wired, and every existing safety/observability gate passed. It is **not yet accepted as a working recovery**: that requires natural Alpaca Paper market sessions demonstrating the actual goal in `docs/WORK.md` — opportunity discovered → evaluated → a defensible decision → executed when eligible → managed/exited → measured — including defensible no-trade outcomes. Do not force, manufacture or accelerate that evidence. See `docs/WORK.md`.
