@@ -347,7 +347,13 @@ def _execution_rows(snap: dict[str, Any]) -> tuple[list[dict], list[dict]]:
     return sweep, real
 
 
-def _append_gate_and_execution(lines: list[str], result: dict, snap: dict[str, Any]) -> None:
+def _append_gate_and_execution(
+    lines: list[str],
+    result: dict,
+    snap: dict[str, Any],
+    *,
+    explain_no_trade: bool = True,
+) -> None:
     status = str(result.get("status", "unknown"))
     skips = [row for row in (result.get("execution_skips") or []) if isinstance(row, dict)]
     if not skips:
@@ -389,7 +395,7 @@ def _append_gate_and_execution(lines: list[str], result: dict, snap: dict[str, A
             qty_text = f" {qty:g}" if qty is not None else ""
             price_text = f" @ ${price:,.2f}" if price is not None and price > 0 else ""
             lines.append(f"   • {action} {symbol}{qty_text}{price_text} · {fill_status}")
-    else:
+    elif explain_no_trade:
         _append_no_trade_reason(lines, result, snap, skips)
 
 
@@ -515,15 +521,15 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
             lines.append(text)
 
     _append_book(lines, snap)
-    _append_gate_and_execution(lines, result, snap)
+    _append_gate_and_execution(lines, result, snap, explain_no_trade=False)
     _, real = _execution_rows(snap)
     if not real:
         if actions and holds and not actionable:
-            lines.append("   ↳ Reviewer explicitly held the book; no management trade warranted")
+            lines.append("⏸️ NO ACTION — reviewer explicitly held the book")
         elif not actions and positions == 0:
-            lines.append("   ↳ No market-risk positions required review")
+            lines.append("⏸️ NO ACTION — no market-risk positions required review")
         elif not actions and status == "reviewed":
-            lines.append("   ↳ Review completed with no broker action")
+            lines.append("⏸️ NO ACTION — review completed with no broker action")
 
     _append_footer(lines, run_id, snap, elapsed)
     return "\n".join(lines)
