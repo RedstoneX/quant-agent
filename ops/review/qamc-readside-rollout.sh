@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # QAMC read-side production convergence.
-# Deploys accepted Telegram + Mission Control read-side changes only.
-# Must be installed root:root 0700 from an immutable reviewed Git blob.
+# Deploys the already-accepted Mission Control read-side integration from the
+# production Telegram baseline to the exact reviewed main target.
+# Install root:root 0700 from the immutable Git blob recorded in the operator runbook.
 set -Eeuo pipefail
 
-BASELINE_SHA="d14e28dfc63ca6e4da920229b0ab5ba0f33b93df"
+BASELINE_SHA="e113f5c6255925f1a93f0f8c242dcd5facbaf41a"
 TARGET_SHA="52c19c3912504412f47e4088e48c9b3b6296ba0c"
 TARGET_TREE="226469380ca38dbcae5c2d31c3b55162ed2f0ed3"
-EXPECTED_CHANGED_FILES=82
-EXPECTED_FILELIST_SHA="ce341de01ef91f6789f4bce52cb5978d7a67738529a5e7b96e25cb986cd68988"
+EXPECTED_CHANGED_FILES=78
+EXPECTED_FILELIST_SHA="b56ccf7eeb58ddb9e5a706625a48e4d7c0a91f4a9d1944ef96fb1954e68ed114"
 
 QAMC_USER="qamc"
 QAMC_REPO="/home/qamc/quant-agent"
@@ -82,14 +83,34 @@ assert_timers_healthy() {
   [[ -z "${failed//[[:space:]]/}" ]]
 }
 
+# Production log rotation leaves untracked quant_agent.log.N files in the repo.
+# They are runtime evidence, not code. Permit only that exact numeric family;
+# any other untracked path still fails closed.
+verify_allowed_untracked() {
+  local untracked path
+  untracked="$(qgit "ls-files --others --exclude-standard")"
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    [[ "$path" =~ ^quant_agent\.log\.[0-9]+$ ]] || return 1
+    as_qamc "test -f '$QAMC_REPO/$path' && test ! -L '$QAMC_REPO/$path' && test \"\$(stat -c %U '$QAMC_REPO/$path')\" = '$QAMC_USER'" \
+      || return 1
+  done <<<"$untracked"
+}
+
+verify_no_tracked_delta() {
+  [[ -z "$(qgit "diff --name-only")" ]] || return 1
+  [[ -z "$(qgit "diff --cached --name-only")" ]] || return 1
+  verify_allowed_untracked
+}
+
 verify_override_only() {
-  local sha changed staged untracked diff mod_count
+  local sha changed staged diff mod_count
   sha="$1"
   changed="$(qgit "diff --name-only '$sha'")"
   staged="$(qgit "diff --cached --name-only")"
-  untracked="$(qgit "ls-files --others --exclude-standard")"
   [[ "$changed" == "config/settings.yaml" ]] || return 1
-  [[ -z "$staged" && -z "$untracked" ]] || return 1
+  [[ -z "$staged" ]] || return 1
+  verify_allowed_untracked || return 1
   diff="$(qgit "diff --unified=0 '$sha' -- config/settings.yaml")"
   mod_count="$(printf '%s\n' "$diff" | grep -E '^[+-][^+-]' | wc -l | tr -d ' ')"
   [[ "$mod_count" == "2" ]] || return 1
@@ -168,7 +189,7 @@ say "GATE A — immutable target and production preflight"
 [[ -d "$QAMC_REPO/.git" ]] || die "production repo missing"
 [[ -x "$QAMC_REPO/.venv/bin/python" ]] || die "production venv missing"
 [[ "$(qgit "rev-parse HEAD")" == "$BASELINE_SHA" ]] || die "production HEAD is not expected baseline"
-verify_override_only "$BASELINE_SHA" || die "production working tree is not exactly baseline + intraday enabled override"
+verify_override_only "$BASELINE_SHA" || die "production working tree is not baseline + intraday override + permitted rotated logs only"
 [[ "$(committed_intraday_state "$BASELINE_SHA")" == "false" ]] || die "baseline committed intraday default is not false"
 [[ "$(health_field status)" == "ok" ]] || die "Mission Control unhealthy before rollout"
 [[ "$(health_field paper)" == "True" ]] || die "production is not Alpaca Paper"
@@ -178,7 +199,7 @@ sysctl_user "is-active --quiet '$API_UNIT'" || die "Mission Control systemd user
 TIMERS_BEFORE="$(timer_snapshot)"
 UNITS_BEFORE="$(unit_snapshot)"
 assert_timers_healthy || die "the seven-timer surface is not healthy before rollout"
-ok "baseline, paper mode, idle session, API service, and seven timers verified"
+ok "Telegram baseline e113f5c, paper mode, idle session, API service, intraday override, and seven timers verified"
 
 say "GATE B — fetch and verify exact reviewed target"
 qgit "fetch --no-tags origin '+${TARGET_SHA}:refs/qamc/readside-target'" >/dev/null 2>&1 \
@@ -197,15 +218,15 @@ qgit "grep -qF '@router.get(\"/quotes\"' '$TARGET_SHA' -- src/api/routes_live.py
   || die "target missing accepted /quotes route"
 qgit "grep -qF 'AUTO / PRIMARY' '$TARGET_SHA' -- frontend/src/components/TodaySessionsStrip.tsx" \
   || die "target missing accepted AUTO / PRIMARY UI"
-qgit "cat-file -e '$TARGET_SHA:src/trader_feed.py'" || die "target missing accepted trader feed"
-ok "target SHA/tree and exact 82-file reviewed delta verified"
+qgit "cat-file -e '$TARGET_SHA:src/trader_feed.py'" || die "target lost the already-deployed trader feed"
+ok "target SHA/tree and exact 78-file Mission Control delta verified"
 
 say "GATE C — deploy exact target and run focused deterministic tests"
 qgit "checkout -- config/settings.yaml"
 MUTATED=1
 qgit "checkout --detach '$TARGET_SHA'"
 [[ "$(qgit "rev-parse HEAD")" == "$TARGET_SHA" ]] || die "checkout did not land on target"
-[[ -z "$(qgit "status --porcelain")" ]] || die "target checkout is unexpectedly dirty"
+verify_no_tracked_delta || die "target checkout has an unexpected tracked or untracked code delta"
 timeout 300 sudo -u "$QAMC_USER" -H bash -c \
   "cd '$QAMC_REPO' && .venv/bin/python -m pytest -q tests/test_api_quotes.py tests/test_api_journal.py tests/test_broker_reads.py tests/test_trader_feed.py" \
   || die "focused read-side/Telegram tests failed on deployed target"
@@ -286,7 +307,7 @@ if as_qamc "grep -qE '/bot[0-9]{6,}:[A-Za-z0-9_-]{20,}' '$QAMC_REPO/quant_agent.
 fi
 
 [[ "$(qgit "rev-parse HEAD")" == "$TARGET_SHA" ]] || die "final HEAD moved away from target"
-verify_override_only "$TARGET_SHA" || die "final working tree is not exactly target + intraday override"
+verify_override_only "$TARGET_SHA" || die "final working tree is not target + intraday override + permitted rotated logs only"
 [[ "$(timer_snapshot)" == "$TIMERS_BEFORE" ]] || die "final timer set differs from preflight"
 [[ "$(unit_snapshot)" == "$UNITS_BEFORE" ]] || die "final unit set differs from preflight"
 assert_timers_healthy || die "final timer health check failed"
@@ -299,9 +320,10 @@ trap - EXIT INT TERM HUP
 say "FINISH LINE PASSED"
 printf 'Production SHA       : %s\n' "$TARGET_SHA"
 printf 'Production tree      : %s\n' "$TARGET_TREE"
-printf 'Local delta          : config/settings.yaml intraday_scan.enabled=true only\n'
+printf 'Local tracked delta  : config/settings.yaml intraday_scan.enabled=true only\n'
+printf 'Permitted runtime log: quant_agent.log.N rotated files only\n'
 printf 'Mission Control      : health/cockpit/ui/quotes/account/prices PASS; GET-only\n'
-printf 'Telegram             : OneCLI getMe 200; no message sent\n'
+printf 'Telegram             : existing feed preserved; OneCLI getMe 200; no message sent\n'
 printf 'Timers               : 7 enabled/active; unit surface unchanged\n'
 printf 'Trading authorization: Alpaca Paper only; no order submitted/cancelled/modified\n'
 printf 'Transcript            : %s\n' "$LOG"
