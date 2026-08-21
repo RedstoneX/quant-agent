@@ -44,7 +44,9 @@ def _make_db(tmp_path, monkeypatch):
         );
         CREATE TABLE agent_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name TEXT NOT NULL,
             run_id TEXT NOT NULL,
+            output_summary TEXT,
             cost_usd REAL
         );
         """
@@ -86,16 +88,24 @@ def _trade(db, run_id, symbol, action, qty=1, price=100, status="filled"):
     conn.close()
 
 
-def test_morning_feed_surfaces_market_signal_pm_risk_funding_and_execution(tmp_path, monkeypatch):
+def _agent_log(db, run_id, agent, summary, cost=0.001):
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO agent_logs(agent_name, run_id, output_summary, cost_usd) "
+        "VALUES (?, ?, ?, ?)",
+        (agent, run_id, summary, cost),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-rich"
-
     _evidence(
         db, run, "macro_analyst", "analysis",
         {
-            "regime": "risk-off",
-            "equity_outlook": "bearish",
-            "confidence": "high",
+            "regime": "risk-off", "equity_outlook": "bearish", "confidence": "high",
             "position_guidance": {"target_invested_pct": 40},
         },
     )
@@ -113,34 +123,29 @@ def test_morning_feed_surfaces_market_signal_pm_risk_funding_and_execution(tmp_p
     )
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
-        {
-            "action": "BUY", "symbol": "SQQQ", "allocation_pct": 8,
-            "reasoning": "Defined-risk bearish expression",
-        },
+        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8,
+         "reasoning": "Defined-risk bearish expression"},
         symbol="SQQQ",
     )
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
-        {
-            "action": "HOLD", "symbol": "NVDA", "allocation_pct": 0,
-            "reasoning": "No clean entry after the move",
-        },
+        {"action": "HOLD", "symbol": "NVDA", "allocation_pct": 0,
+         "reasoning": "No clean entry after the move"},
         symbol="NVDA",
     )
     _evidence(
         db, run, "risk_manager", "verdict",
-        {
-            "approved": True, "reason_category": "clean",
-            "scale_all_buys": 1.0, "reasoning": "Sizing acceptable.",
-        },
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
+         "reasoning": "Sizing acceptable."},
     )
     _trade(db, run, "SGOV", "SWEEP_SELL", qty=3, price=100.5)
     _trade(db, run, "SQQQ", "BUY", qty=4, price=25.02)
     conn = sqlite3.connect(db)
     conn.execute("INSERT INTO positions VALUES ('SGOV', 90, 100, 100.5, 9045, 5)")
-    conn.execute("INSERT INTO agent_logs(run_id, cost_usd) VALUES (?, ?)", (run, 0.012))
     conn.commit()
     conn.close()
+    _agent_log(db, run, "portfolio_manager", "Bearish tape", 0.006)
+    _agent_log(db, run, "risk_manager", "Approved: True", 0.006)
 
     msg = trader_feed.format_session_result(
         "morning",
@@ -149,38 +154,30 @@ def test_morning_feed_surfaces_market_signal_pm_risk_funding_and_execution(tmp_p
         61.0,
     )
 
-    assert msg is not None
     assert "📊 Market: risk-off / bearish / high" in msg
     assert "SQQQ: STRONG_BUY/high" in msg
     assert "BUY SQQQ 8%" in msg
     assert "PASS NVDA" in msg
     assert "🛡️ Risk: APPROVED" in msg
-    assert "T-bill funding sell" in msg
+    assert "T-bill cash release" in msg
     assert "BUY SQQQ" in msg and "filled" in msg
-    assert "LLM $0.01/1 call" in msg
+    assert "LLM $0.01/2 calls" in msg
 
 
-def test_morning_no_trade_explains_hold_instead_of_only_orders_zero(tmp_path, monkeypatch):
+def test_morning_hold_explains_no_trade_in_investment_terms(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-hold"
-    _evidence(
-        db, run, "portfolio_manager", "reasoning",
-        {"portfolio_view": "No setup clears the bar today."},
-    )
+    _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "No setup clears the bar."})
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
-        {
-            "action": "HOLD", "symbol": "AAPL", "allocation_pct": 0,
-            "reasoning": "R/R insufficient after the opening move",
-        },
+        {"action": "HOLD", "symbol": "AAPL", "allocation_pct": 0,
+         "reasoning": "R/R insufficient after the opening move"},
         symbol="AAPL",
     )
     _evidence(
         db, run, "risk_manager", "verdict",
-        {
-            "approved": True, "reason_category": "clean",
-            "scale_all_buys": 1.0, "reasoning": "No risk objection.",
-        },
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
+         "reasoning": "No risk objection."},
     )
 
     msg = trader_feed.format_session_result(
@@ -191,36 +188,43 @@ def test_morning_no_trade_explains_hold_instead_of_only_orders_zero(tmp_path, mo
     assert "orders: 0" not in msg
 
 
+def test_morning_pm_no_change_uses_agent_summary_when_structured_evidence_absent(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-pm-none"
+    _agent_log(db, run, "portfolio_manager", "no trades")
+    msg = trader_feed.format_session_result(
+        "morning", {"status": "executed", "run_id": run, "orders": []}, 20.0,
+    )
+    assert "PM produced no executable portfolio change" in msg
+    assert "detailed PM evidence unavailable" not in msg
+
+
 def test_risk_veto_is_distinguished_from_pm_no_trade(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-veto"
-    _evidence(
-        db, run, "portfolio_manager", "reasoning",
-        {"portfolio_view": "One candidate qualifies."},
-    )
+    _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "One candidate qualifies."})
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "NVDA", "allocation_pct": 10, "reasoning": "Setup qualifies"},
+        {"action": "BUY", "symbol": "NVDA", "allocation_pct": 10,
+         "reasoning": "Setup qualifies"},
         symbol="NVDA",
     )
     _evidence(
         db, run, "risk_manager", "verdict",
-        {
-            "approved": False, "reason_category": "event_risk",
-            "scale_all_buys": 1.0, "reasoning": "Earnings event risk is too close.",
-        },
+        {"approved": False, "reason_category": "event_risk", "scale_all_buys": 1.0,
+         "reasoning": "Earnings event risk is too close."},
     )
-
     msg = trader_feed.format_session_result(
         "morning",
-        {"status": "rejected", "run_id": run, "orders": [], "reason": "Earnings event risk is too close."},
+        {"status": "rejected", "run_id": run, "orders": [],
+         "reason": "Earnings event risk is too close."},
         30.0,
     )
     assert "Risk: REJECTED" in msg
     assert "NO TRADE — Risk vetoed the plan" in msg
 
 
-def test_execution_skip_is_distinguished_from_investment_decision(tmp_path, monkeypatch):
+def test_execution_skip_is_not_misreported_as_investment_hold(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-unfunded"
     _evidence(
@@ -230,19 +234,16 @@ def test_execution_skip_is_distinguished_from_investment_decision(tmp_path, monk
     )
     _evidence(
         db, run, "risk_manager", "verdict",
-        {
-            "approved": True, "reason_category": "clean",
-            "scale_all_buys": 1.0, "reasoning": "Approved.",
-        },
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
+         "reasoning": "Approved."},
     )
-
-    result = {
-        "status": "buys_unfunded", "run_id": run, "orders": [],
-        "execution_skips": [
-            {"symbol": "AMD", "reason": "insufficient_cash", "detail": "funding sale not confirmed"}
-        ],
-    }
-    msg = trader_feed.format_session_result("morning", result, 50.0)
+    msg = trader_feed.format_session_result(
+        "morning",
+        {"status": "buys_unfunded", "run_id": run, "orders": [],
+         "execution_skips": [{"symbol": "AMD", "reason": "insufficient_cash",
+                               "detail": "funding sale not confirmed"}]},
+        50.0,
+    )
     assert "Execution gate: 1 skip" in msg
     assert "insufficient_cash" in msg
     assert "decision(s) survived review but execution could not complete" in msg
@@ -253,38 +254,29 @@ def test_intraday_scan_result_is_not_hidden_behind_outer_ok(tmp_path, monkeypatc
     run = "intra_check-demo"
     _evidence(
         db, run, "tech_analyst", "analysis",
-        {
-            "symbol": "SDS", "rating": "buy", "conviction": "medium",
-            "risk_reward": 1.8, "reasoning": "Broad downside move triggered scan",
-        },
+        {"symbol": "SDS", "rating": "buy", "conviction": "medium", "risk_reward": 1.8,
+         "reasoning": "Broad downside move triggered scan"},
         symbol="SDS",
     )
-    _evidence(
-        db, run, "portfolio_manager", "reasoning",
-        {"portfolio_view": "Review downside hedge but do not chase."},
-    )
+    _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "Review hedge; do not chase."})
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
-        {"action": "HOLD", "symbol": "SDS", "allocation_pct": 0, "reasoning": "Move too extended"},
+        {"action": "HOLD", "symbol": "SDS", "allocation_pct": 0,
+         "reasoning": "Move too extended"},
         symbol="SDS",
     )
     _evidence(
         db, run, "risk_manager", "verdict",
-        {
-            "approved": True, "reason_category": "clean",
-            "scale_all_buys": 1.0, "reasoning": "No action to veto.",
-        },
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
+         "reasoning": "No action to veto."},
     )
-
     outer = {
         "status": "ok", "run_id": run, "daily_pnl": -42.0, "daily_return_pct": -0.42,
         "positions": 0,
-        "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": run, "candidates": ["SDS"], "orders": [],
-        },
+        "intraday_scan": {"status": "intraday_no_trades", "run_id": run,
+                          "candidates": ["SDS"], "orders": []},
     }
     msg = trader_feed.format_session_result("intra_check", outer, 12.0)
-    assert msg is not None
     assert "⚡ INTRADAY OPPORTUNITY" in msg
     assert "SDS: BUY/medium" in msg
     assert "PASS SDS" in msg
@@ -301,7 +293,7 @@ def test_normal_intraday_ok_tick_remains_silent(tmp_path, monkeypatch):
     assert msg is None
 
 
-def test_midday_review_surfaces_actions_and_hold_reasons(tmp_path, monkeypatch):
+def test_midday_review_surfaces_actions_and_holds(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "midday-demo"
     _trade(db, run, "AAPL", "REDUCE", qty=2, price=210.0)
@@ -322,18 +314,53 @@ def test_midday_review_surfaces_actions_and_hold_reasons(tmp_path, monkeypatch):
     assert "risk moderate" in msg
     assert "REDUCE AAPL" in msg
     assert "HOLD NVDA" in msg
-    assert "Execution: 1 market-risk action" in msg
+    assert "Execution: 1 broker action" in msg
+
+
+def test_midday_without_structured_review_is_not_mislabelled_as_pm_failure(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    msg = trader_feed.format_session_result(
+        "midday",
+        {"status": "reviewed", "run_id": "midday-empty", "positions": 0,
+         "orders": [], "review": None},
+        8.0,
+    )
+    assert "MIDDAY REVIEW" in msg
+    assert "NO ACTION — no market-risk positions required review" in msg
+    assert "PM" not in msg
+
+
+def test_emergency_position_review_has_explicit_circuit_breaker_banner(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "close-emergency"
+    _trade(db, run, "AAPL", "EMERGENCY_SELL", qty=5, price=180.0)
+    msg = trader_feed.format_session_result(
+        "close",
+        {"status": "emergency_sold", "run_id": run, "positions": 1,
+         "orders": [{"symbol": "AAPL"}], "review": None},
+        6.0,
+    )
+    assert "DAILY-LOSS CIRCUIT BREAKER" in msg
+    assert "EMERGENCY_SELL AAPL" in msg
+
+
+def test_early_close_uses_established_formatter_not_trader_review(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    msg = trader_feed.format_session_result(
+        "close",
+        {"status": "early_close", "run_id": "close-early", "positions": 0, "orders": []},
+        1.0,
+    )
+    assert "status: early_close" in msg
+    assert "CLOSE REVIEW" not in msg
 
 
 def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-ro"
-    _evidence(
-        db, run, "portfolio_manager", "reasoning",
-        {"portfolio_view": "Nothing to do."},
-    )
+    _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "Nothing to do."})
     conn = sqlite3.connect(db)
-    count_before = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
+    before = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
     conn.close()
 
     trader_feed.format_session_result(
@@ -341,6 +368,6 @@ def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
     )
 
     conn = sqlite3.connect(db)
-    count_after = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
+    after = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
     conn.close()
-    assert count_after == count_before
+    assert after == before
