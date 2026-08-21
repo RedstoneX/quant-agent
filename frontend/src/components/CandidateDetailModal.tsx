@@ -267,22 +267,46 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
   const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
   const specialistsReached = specialistCount > 0;
 
-  const pmReached = !!(detail.pm_target || detail.pm_proposed_order || detail.pm_reasoning?.portfolio_view);
+  // Candidate-specific only: pm_target/pm_proposed_order are symbol-scoped
+  // evidence rows (queried by this exact symbol — see
+  // src/api/routes_evidence.py::get_candidate_detail). pm_reasoning.
+  // portfolio_view is RUN-scoped narrative (the same text for every
+  // candidate in the run) and must never by itself imply the Portfolio
+  // Manager specifically considered this candidate — the same class of
+  // bug fixed for AI Risk below, one stage earlier (2026-08-22
+  // candidate-specific-attribution fix, external review finding).
+  const reachedProposedOrder = !!detail.pm_proposed_order;
+  const pmReached = !!detail.pm_target || reachedProposedOrder;
   const pmCaption = detail.pm_target
     ? `Target ${fmtNum(detail.pm_target.target_weight_pct)}%`
     : detail.pm_proposed_order
     ? detail.pm_proposed_order.action
     : undefined;
 
-  const verdict = detail.risk_verdict?.verdict ?? null;
+  // risk_verdict / hard_risk_block are RUN-scoped facts: the AI Risk
+  // Manager evaluates one run's whole BATCH of proposed orders together,
+  // and the deterministic gate can block an entire run before
+  // risk_manager is ever called. Neither may be attributed to THIS
+  // candidate unless it actually reached a candidate-specific proposed
+  // order — otherwise a candidate PM never even proposed anything for
+  // would wrongly appear to have been evaluated (or blocked) by Risk
+  // merely because some OTHER candidate in the same run was. Mirrors
+  // CandidateRail.tsx's candidateStage(), which gates the identical
+  // run-level signals behind `reached_proposed_order` for the same reason.
+  const verdict = reachedProposedOrder ? detail.risk_verdict?.verdict ?? null : null;
+  const hardBlocked = reachedProposedOrder && funnel?.hard_risk_block === true;
+
   let riskStatus: FlowStatus = "not_reached";
+  let riskCaption: string | undefined;
   if (verdict) {
     const hasMods = !!detail.risk_modification || verdict.modifications.length > 0;
     riskStatus = verdict.approved === false ? "rejected" : hasMods ? "modified" : "approved";
+    riskCaption = verdict.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
+  } else if (hardBlocked) {
+    riskStatus = "blocked";
+    riskCaption = "Deterministic hard-risk gate blocked this run before the AI Risk Manager was called.";
   }
-  const riskCaption = verdict?.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
 
-  const hardBlocked = funnel?.hard_risk_block === true;
   const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
   const executed = funnelCandidate ? funnelCandidate.executed : isExecutedTrade(detail.trade);
   // The specific, persisted reason the deterministic execution phase
@@ -308,9 +332,12 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
     gateCaption = "Approved upstream; no trade recorded and no execution-skip reason was persisted for this candidate.";
   } else if (verdict?.approved === false) {
     gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
-  } else {
+  } else if (reachedProposedOrder) {
     gateCaption = "Not reached — no usable AI Risk Manager verdict recorded for this run.";
   }
+  // else: this candidate never reached a proposed order at all — the gate
+  // stage has nothing candidate-specific to report, so it stays
+  // not_reached with no caption rather than borrowing the run's verdict.
 
   let execStatus: FlowStatus = "not_reached";
   let execCaption: string | undefined;
@@ -324,18 +351,23 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
     execCaption = `Execution skipped — ${skip}.`;
   } else if (verdict?.approved === false) {
     execCaption = "No trade — rejected by the AI Risk Manager before execution.";
-  } else if (detail.pm_proposed_order) {
+  } else if (reachedProposedOrder) {
     execCaption = "Proposed but not executed this run (or a HOLD) — candidate-specific reason was not recorded.";
-  } else {
-    execCaption = "No proposal reached execution.";
   }
+  // else: no proposed order for this candidate — nothing to report at the
+  // execution stage; the real "why" lives at whichever earlier stage this
+  // candidate's journey actually ended (see the specialists/pm captions).
 
   return [
     {
       key: "specialists",
       label: "Specialists",
       status: specialistsReached ? "reached" : "not_reached",
-      caption: specialistsReached ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}` : "No evidence recorded",
+      caption: !specialistsReached
+        ? "No evidence recorded"
+        : pmReached
+        ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}`
+        : `${specialistCount} signal${specialistCount === 1 ? "" : "s"} recorded — the Portfolio Manager did not select this candidate; a candidate-specific reason was not recorded.`,
     },
     { key: "pm", label: "Portfolio Manager", status: pmReached ? "reached" : "not_reached", caption: pmCaption },
     { key: "risk", label: "AI Risk Manager", status: riskStatus, caption: riskCaption },
@@ -484,6 +516,13 @@ function DecisionDetail({
   const gate = stages.find((s) => s.key === "gate");
   const exec = stages.find((s) => s.key === "exec");
   const pmReached = stages.find((s) => s.key === "pm")?.status !== "not_reached";
+  // detail.risk_verdict is RUN-scoped (the same verdict object for every
+  // candidate in the run — see buildCandidateStages' identical reasoning
+  // above). It may only be rendered as THIS candidate's Risk outcome when
+  // this candidate actually reached a proposed order; otherwise the AI
+  // Risk Manager never evaluated it at all, regardless of what the run's
+  // verdict says about a DIFFERENT candidate's proposed order.
+  const reachedProposedOrder = !!detail.pm_proposed_order;
 
   const verdict = detail.risk_verdict?.verdict ?? null;
   const outcome = riskOutcome(detail);
@@ -544,7 +583,9 @@ function DecisionDetail({
 
         <div>
           <div className="font-bold text-[0.85rem] mb-1">AI Risk Manager</div>
-          {detail.risk_verdict ? (
+          {!reachedProposedOrder ? (
+            <StateMessage text="This candidate never reached a Portfolio Manager proposed order — the AI Risk Manager evaluates proposed orders, so it did not evaluate this candidate. Any Risk verdict recorded for this run belongs to a different, proposed candidate." />
+          ) : detail.risk_verdict ? (
             verdict ? (
               <div className="card">
                 <div className="kv-row">

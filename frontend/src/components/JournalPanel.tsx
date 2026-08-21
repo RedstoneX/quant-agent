@@ -237,23 +237,29 @@ function EquitySparkline({ history }: { history: DailyPnlPoint[] | undefined }) 
   );
 }
 
-function RunNarrativeCard({
+export function RunNarrativeCard({
   run,
   funnel,
   funnelLoading,
-  dayRuns,
   dayTrades,
-  onOpenCandidate,
   onOpenRun,
 }: {
   run: RunSummary;
   funnel: RunFunnelResponse | null | undefined;
   funnelLoading: boolean;
-  dayRuns: RunSummary[];
   dayTrades: TradeItem[];
-  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
   onOpenRun: (runId: string) => void;
 }) {
+  // This card already knows exactly which run it's rendering (`run.run_id`)
+  // — open that candidate's detail directly rather than re-deriving it by
+  // searching the day's runs (external review finding, 2026-08-22): the
+  // same symbol can legitimately appear in more than one run in a day
+  // (e.g. NVDA considered both in the morning run and again at 13:00), and
+  // a day-wide search has no way to know which one the operator actually
+  // clicked — it previously always opened the first match, which silently
+  // opened the wrong run's evidence whenever the clicked run wasn't that
+  // first match.
+  const { openCandidateDetail } = useModalActions();
   const runTrades = dayTrades.filter((t) => t.run_id === run.run_id);
 
   return (
@@ -300,7 +306,7 @@ function RunNarrativeCard({
             <div className="flex flex-col gap-1.5">
               {funnel.candidates.map((c) => (
                 <div key={c.symbol} className="flex items-start gap-2 text-[0.79rem] flex-wrap">
-                  <CandidateChip symbol={c.symbol} info={c} onClick={() => onOpenCandidate(dayRuns, c.symbol)} />
+                  <CandidateChip symbol={c.symbol} info={c} onClick={() => openCandidateDetail(run.run_id, c.symbol)} />
                   <span className="text-dim">{ledgerLine(c, funnel)}</span>
                 </div>
               ))}
@@ -572,9 +578,7 @@ export function JournalPanel({
                 run={r}
                 funnel={funnels[r.run_id]}
                 funnelLoading={funnelsLoading}
-                dayRuns={day.runs}
                 dayTrades={day.trades}
-                onOpenCandidate={onOpenCandidate}
                 onOpenRun={openRunDetail}
               />
             ))}

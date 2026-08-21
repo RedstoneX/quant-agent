@@ -135,9 +135,17 @@ describe("buildCandidateStages — execution_skip_reason surfacing (section D/E)
     expect(exec.caption).toContain("10");
   });
 
-  it("attributes a hard-risk-block run's gate caption to the deterministic gate, not AI Risk", () => {
+  it("attributes a hard-risk-block run's gate caption to the deterministic gate, not AI Risk — for a candidate that reached a proposed order", () => {
+    // PM can construct a proposed order before the deterministic gate
+    // blocks the whole run (the gate runs after PM, before risk_manager —
+    // see the risk_gate forensic-row docs in src/api/schemas.py). Without
+    // pm_proposed_order set, this candidate would never have reached a
+    // proposed order at all, in which case the hard block must NOT be
+    // attributed to it either — see the next describe block.
     const c = candidate({});
-    const d = detail({});
+    const d = detail({
+      pm_proposed_order: { action: "BUY", symbol: "NVDA", allocation_pct: 5, entry_price: 100, stop_loss: 90, take_profit: 120, reasoning: "r" },
+    });
     const stages = buildCandidateStages(d, funnel([c], { hard_risk_block: true }));
     const gate = stages.find((s) => s.key === "gate")!;
     expect(gate.status).toBe("blocked");
@@ -160,9 +168,10 @@ describe("buildCandidateStages — execution_skip_reason surfacing (section D/E)
     expect(exec.caption).toContain("SELL");
   });
 
-  it("attributes an AI-Risk rejection to the risk stage, distinct from an execution skip", () => {
+  it("attributes an AI-Risk rejection to the risk stage, distinct from an execution skip — for a candidate that reached a proposed order", () => {
     const c = candidate({});
     const d = detail({
+      pm_proposed_order: { action: "BUY", symbol: "NVDA", allocation_pct: 8, entry_price: 248, stop_loss: 232, take_profit: 280, reasoning: "r" },
       risk_verdict: {
         verdict: {
           approved: false, reasoning: "R/R failed", reasoning_chain: {}, reason_category: "rr_fail",
@@ -176,5 +185,96 @@ describe("buildCandidateStages — execution_skip_reason surfacing (section D/E)
     const exec = stages.find((s) => s.key === "exec")!;
     expect(risk.status).toBe("rejected");
     expect(exec.caption).toMatch(/rejected by the ai risk manager/i);
+  });
+});
+
+describe("buildCandidateStages — candidate-specific risk/PM attribution (external review finding, 2026-08-22)", () => {
+  // risk_verdict (and hard_risk_block) are RUN-scoped: the AI Risk Manager
+  // evaluates one run's whole batch of proposed orders together. A
+  // candidate that never itself reached a PM proposed order was never
+  // evaluated by Risk, no matter what the run's verdict says about a
+  // DIFFERENT candidate's proposed order. These pin the exact regression
+  // scenario external review specified: specialist evidence present, no
+  // PM target, no PM proposed order, a run-wide verdict exists for other
+  // candidates — this candidate must not show a Risk outcome or "stopped
+  // at AI Risk" for either an approved or a rejected run-wide verdict.
+  function specialistOnlyDetail(verdictApproved: boolean): CandidateDetailResponse {
+    return detail({
+      tech: {
+        symbol: "NVDA", rating: "neutral", conviction: "low",
+        entry_price: null, reference_target: null, stop_loss: null,
+        reasoning_chain: {}, reasoning: "Chopping in a range, no clean signal.",
+        thesis_invalid_if: "n/a", signal_age_days: 3,
+      },
+      pm_target: null,
+      pm_proposed_order: null,
+      risk_verdict: {
+        verdict: {
+          approved: verdictApproved,
+          reasoning: verdictApproved ? "Other proposed orders this run were clean approvals." : "Other proposed orders this run failed the R/R audit.",
+          reasoning_chain: {}, reason_category: verdictApproved ? "clean" : "rr_fail",
+          modifications: [], scale_all_buys: 1,
+        },
+        timestamp: "2026-08-21 12:00:00",
+      },
+    });
+  }
+
+  function specialistOnlyFunnelCandidate(): CandidateFunnelItem {
+    return candidate({ reached_pm_target: false, reached_proposed_order: false, proposed_action: null });
+  }
+
+  it("does not attribute a run-wide APPROVED verdict to a candidate that never reached a proposed order", () => {
+    const d = specialistOnlyDetail(true);
+    const f = funnel([specialistOnlyFunnelCandidate()], {
+      risk_verdict: { verdict: { approved: true, reasoning: "x", reasoning_chain: {}, reason_category: "clean", modifications: [], scale_all_buys: 1 }, timestamp: null },
+    });
+    const stages = buildCandidateStages(d, f);
+
+    const pm = stages.find((s) => s.key === "pm")!;
+    const risk = stages.find((s) => s.key === "risk")!;
+    expect(pm.status).toBe("not_reached");
+    expect(risk.status).toBe("not_reached");
+    expect(risk.caption).toBeUndefined();
+
+    const furthest = furthestReachedStage(stages);
+    expect(furthest?.key).toBe("specialists");
+    expect(furthest?.label).not.toMatch(/risk/i);
+    expect(furthest?.caption).toContain("did not select this candidate");
+    expect(furthest?.caption).toContain("candidate-specific reason was not recorded");
+  });
+
+  it("does not attribute a run-wide REJECTED verdict to a candidate that never reached a proposed order", () => {
+    const d = specialistOnlyDetail(false);
+    const f = funnel([specialistOnlyFunnelCandidate()], {
+      risk_verdict: { verdict: { approved: false, reasoning: "x", reasoning_chain: {}, reason_category: "rr_fail", modifications: [], scale_all_buys: 1 }, timestamp: null },
+    });
+    const stages = buildCandidateStages(d, f);
+
+    const risk = stages.find((s) => s.key === "risk")!;
+    const gate = stages.find((s) => s.key === "gate")!;
+    const exec = stages.find((s) => s.key === "exec")!;
+    expect(risk.status).toBe("not_reached");
+    expect(risk.caption).toBeUndefined();
+    // The gate/exec captions must not borrow the run's rejection either —
+    // this candidate never reached the gate or execution at all, so there
+    // is nothing candidate-specific to report at either stage.
+    expect(gate.caption).toBeUndefined();
+    expect(exec.caption).toBeUndefined();
+
+    const furthest = furthestReachedStage(stages);
+    expect(furthest?.key).toBe("specialists");
+    expect(furthest?.label).not.toMatch(/risk/i);
+  });
+
+  it("still attributes hard_risk_block to a candidate ONLY when it reached a proposed order (mirrors CandidateRail.candidateStage)", () => {
+    const d = specialistOnlyDetail(true); // risk_verdict present is irrelevant once hard-blocked
+    const f = funnel([specialistOnlyFunnelCandidate()], { hard_risk_block: true });
+    const stages = buildCandidateStages(d, f);
+    const risk = stages.find((s) => s.key === "risk")!;
+    const gate = stages.find((s) => s.key === "gate")!;
+    expect(risk.status).toBe("not_reached");
+    expect(gate.status).toBe("not_reached");
+    expect(gate.caption).toBeUndefined();
   });
 });
