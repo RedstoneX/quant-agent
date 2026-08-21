@@ -1,5 +1,5 @@
-import { DecisionState, RunFunnelResponse } from "../api/client";
-import { fmtNum } from "../lib/format";
+import { CandidateDetailResponse, CandidateFunnelItem, DecisionState, RunFunnelResponse, RunSummary, TradeItem } from "../api/client";
+import { fmtNum, isExecutedTrade } from "../lib/format";
 import { FlowStage, FlowStatus } from "./agentflow/types";
 
 // Shared Specialists -> PM -> AI Risk -> Deterministic Gate -> Execution
@@ -90,5 +90,196 @@ export function buildFunnelStages(funnel: RunFunnelResponse): FlowStage[] {
     },
     { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
     { key: "exec", label: "Execution", status: execCount > 0 ? "executed" : "not_reached", caption: `${fmtNum(execCount, 0)} executed` },
+  ];
+}
+
+/* ------------------------------------------------------------------ *
+ * Per-candidate furthest-stage bucketing — shared by CandidateRail (the
+ * live cockpit rail) and JournalPanel (the day narrative's per-run
+ * candidate list), so both surfaces classify and label candidates
+ * identically instead of maintaining two copies that could drift.
+ * ------------------------------------------------------------------ */
+
+export type Stage = "rejected" | "reached_pm" | "proposed" | "risk_action" | "executed";
+
+export const STAGE_META: Record<Stage, { label: string; dotClass: string; textClass: string; short: string; rank: number }> = {
+  executed: { label: "Executed", dotClass: "bg-pos", textClass: "text-pos", short: "executed", rank: 0 },
+  risk_action: { label: "Modified / blocked by risk", dotClass: "bg-neg", textClass: "text-neg", short: "risk", rank: 1 },
+  proposed: { label: "Proposed", dotClass: "bg-warn", textClass: "text-warn", short: "proposed", rank: 2 },
+  reached_pm: { label: "Reached PM", dotClass: "bg-accent", textClass: "text-accent", short: "PM", rank: 3 },
+  // Deliberately NOT "Rejected by specialist" (the label this replaced):
+  // a candidate in this bucket only failed to reach a PM target. That can
+  // mean a specialist flagged it negatively, but just as often means PM
+  // passed on portfolio-balance/cash-target/conviction grounds despite a
+  // fine specialist read — the data available here cannot tell those
+  // apart, so the label must not claim specialist rejection specifically.
+  // See docs/WORK.md's "Known dashboard correctness debt" list.
+  rejected: { label: "No PM target", dotClass: "bg-dim", textClass: "text-dim", short: "—", rank: 4 },
+};
+
+// Furthest-stage first, so the default (unfiltered) ordering surfaces the
+// most decision-relevant candidates before the majority that never left
+// specialist screening.
+export const STAGE_ORDER: Stage[] = ["executed", "risk_action", "proposed", "reached_pm", "rejected"];
+
+// risk_verdict is recorded per run, not per candidate (the AI Risk Manager
+// evaluates a run's proposed orders as one batch — see DirectionalBiasPanel's
+// identical caveat). A run-wide hard-risk block or rejected verdict is
+// therefore attributed to every candidate that reached a proposed order in
+// that run; risk_modified is already exact per-candidate.
+export function candidateStage(c: CandidateFunnelItem, funnel: RunFunnelResponse): Stage {
+  if (c.executed) return "executed";
+  const verdict = funnel.risk_verdict?.verdict;
+  const riskActed =
+    c.risk_modified ||
+    (c.reached_proposed_order && funnel.hard_risk_block) ||
+    (c.reached_proposed_order && verdict?.approved === false);
+  if (riskActed) return "risk_action";
+  if (c.reached_proposed_order) return "proposed";
+  if (c.reached_pm_target) return "reached_pm";
+  return "rejected";
+}
+
+// True only when a run's entire recorded trade activity is cash-sweep
+// housekeeping (SWEEP_BUY/SWEEP_SELL — deterministic SGOV parking, never a
+// Portfolio Manager investment thesis; see docs/architecture/
+// MISSION_CONTROL_API.md's Stage 6 liquidity section). A run whose ONLY
+// trade is a sweep fill still reports decision_state "executed" from the
+// backend (any trade row counts), which reads exactly like a real strategy
+// entry unless the UI distinguishes them — this is that distinction, kept
+// as a pure display-layer correction over already-fetched trade rows
+// rather than a change to `decision_state` itself.
+export function isSweepOnlyExecution(trades: TradeItem[]): boolean {
+  return trades.length > 0 && trades.every((t) => (t.action || "").startsWith("SWEEP_"));
+}
+
+// Which of today's runs should drive the cockpit's primary Candidates /
+// Chart / Decision Room view. QAMC runs several session types a day
+// (opportunity-scan sessions alongside position-review-only sessions like
+// midday/close — see src/pipeline.py's run_midday/run_close, both
+// `run_position_review`, structurally distinct from a full specialist scan
+// and near-always reporting zero candidates in the funnel sense). Always
+// picking the single literal-latest run means a routine afternoon
+// position-review silently blanks out a real morning scan's candidates/
+// decisions for the rest of the day — the "latest empty runs can erase
+// more meaningful session context" debt item in docs/WORK.md, reproduced
+// live against real production data while building this.
+//
+// Deliberately a DATA-driven rule (candidates_considered > 0), not a
+// hardcoded session-type allowlist: a hardcoded list of "scanning" prefixes
+// would silently misclassify if a session type is ever added/renamed
+// upstream, which would be a worse truth bug than the one this fixes. If
+// every run today genuinely had zero candidates, this honestly falls back
+// to the literal latest run rather than inventing a different answer.
+export function bestPrimaryRunId(
+  runs: RunSummary[],
+  funnels: Record<string, RunFunnelResponse | null | undefined>
+): string | null {
+  if (!runs.length) return null;
+  const sorted = [...runs].sort((a, b) => (b.first_timestamp || "").localeCompare(a.first_timestamp || ""));
+  const withCandidates = sorted.find((r) => (funnels[r.run_id]?.candidates_considered ?? 0) > 0);
+  return (withCandidates ?? sorted[0]).run_id;
+}
+
+/* ------------------------------------------------------------------ *
+ * Per-candidate Specialists -> PM -> AI Risk -> Deterministic Gate ->
+ * Execution stage derivation. Originally CandidateDetailModal-local; moved
+ * here so DecisionRoomPanel (the primary, non-modal cockpit view) can
+ * render the same real per-specialist agent graph for whichever candidate
+ * is currently charted, not only behind a drill-down click — the vision
+ * board's "compact graphical story" is meant to be visible on the primary
+ * screen. Every stage's reached/outcome status comes purely from fields
+ * CandidateDetailResponse already carries (cross-checked against the run
+ * funnel's per-candidate `executed`/`hard_risk_block` when that
+ * supplementary fetch succeeds) — never a fabricated guess about a stage
+ * with no evidence.
+ * ------------------------------------------------------------------ */
+export function skipText(reason: string | null, detail: string | null): string | null {
+  if (!reason) return null;
+  const words = reason.replace(/_/g, " ");
+  return detail ? `${words} — ${detail}` : words;
+}
+
+export function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
+  const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
+  const specialistsReached = specialistCount > 0;
+  const reachedProposedOrder = !!detail.pm_proposed_order;
+  const pmReached = !!detail.pm_target || reachedProposedOrder;
+  const pmCaption = detail.pm_proposed_order
+    ? detail.pm_proposed_order.action
+    : detail.pm_target
+    ? `PM set a target of ${fmtNum(detail.pm_target.target_weight_pct)}% for this candidate, but no order was constructed. Candidate-specific reason for not constructing an order was not recorded.`
+    : undefined;
+
+  // The Risk verdict and hard block are run-scoped. Attribute either to
+  // this candidate only when it actually reached a symbol-specific order.
+  const verdict = reachedProposedOrder ? detail.risk_verdict?.verdict ?? null : null;
+  const hardBlocked = reachedProposedOrder && funnel?.hard_risk_block === true;
+  let riskStatus: FlowStatus = "not_reached";
+  let riskCaption: string | undefined;
+  if (verdict) {
+    const hasMods = !!detail.risk_modification || verdict.modifications.length > 0;
+    riskStatus = verdict.approved === false ? "rejected" : hasMods ? "modified" : "approved";
+    riskCaption = verdict.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
+  } else if (hardBlocked) {
+    riskStatus = "blocked";
+    riskCaption = "Deterministic hard-risk gate blocked this run before the AI Risk Manager was called.";
+  }
+
+  const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
+  const executed = funnelCandidate ? funnelCandidate.executed : !!detail.trade && isExecutedTrade(detail.trade);
+  const skip = funnelCandidate ? skipText(funnelCandidate.execution_skip_reason, funnelCandidate.execution_skip_detail) : null;
+
+  let gateStatus: FlowStatus = "not_reached";
+  let gateCaption: string | undefined;
+  if (hardBlocked) {
+    gateStatus = "blocked";
+    gateCaption = "Hard-risk gate blocked every candidate this run before the AI Risk Manager was called.";
+  } else if (detail.trade) {
+    gateStatus = "reached";
+    gateCaption = "Cleared for execution.";
+  } else if (skip) {
+    gateStatus = "blocked";
+    gateCaption = `Deterministic gate skipped this order — ${skip}.`;
+  } else if (verdict?.approved === true) {
+    gateStatus = "pending";
+    gateCaption = "Approved upstream; no trade recorded and no execution-skip reason was persisted for this candidate.";
+  } else if (verdict?.approved === false) {
+    gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
+  } else if (reachedProposedOrder) {
+    gateCaption = "Not reached — no usable AI Risk Manager verdict recorded for this run.";
+  }
+
+  let execStatus: FlowStatus = "not_reached";
+  let execCaption: string | undefined;
+  if (executed) {
+    execStatus = "executed";
+    execCaption = detail.trade
+      ? `${detail.trade.action}${detail.trade.qty !== null && detail.trade.qty !== undefined ? ` ${fmtNum(detail.trade.qty)}sh` : ""}`
+      : undefined;
+  } else if (skip) {
+    execStatus = "blocked";
+    execCaption = `Execution skipped — ${skip}.`;
+  } else if (verdict?.approved === false) {
+    execCaption = "No trade — rejected by the AI Risk Manager before execution.";
+  } else if (reachedProposedOrder) {
+    execCaption = "Proposed but not executed this run (or a HOLD). Execution reason was not recorded.";
+  }
+
+  return [
+    {
+      key: "specialists",
+      label: "Specialists",
+      status: specialistsReached ? "reached" : "not_reached",
+      caption: !specialistsReached
+        ? "No evidence recorded"
+        : pmReached
+        ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}`
+        : `${specialistCount} signal${specialistCount === 1 ? "" : "s"} recorded — the Portfolio Manager did not select this candidate; a candidate-specific reason was not recorded.`,
+    },
+    { key: "pm", label: "Portfolio Manager", status: pmReached ? "reached" : "not_reached", caption: pmCaption },
+    { key: "risk", label: "AI Risk Manager", status: riskStatus, caption: riskCaption },
+    { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
+    { key: "exec", label: "Execution", status: execStatus, caption: execCaption },
   ];
 }

@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { Badge, Card as TremorCard } from "@tremor/react";
 
 export function Card({
   title,
@@ -10,15 +11,19 @@ export function Card({
   children: ReactNode;
 }) {
   return (
-    <div className={`card ${broader ? "border-dashed border-accent bg-accent/5" : ""}`}>
+    <TremorCard
+      decoration={broader ? "left" : undefined}
+      decorationColor={broader ? "cyan" : undefined}
+      className="!p-3 !bg-panel-alt !ring-border"
+    >
       <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-        <span className="font-bold text-[0.85rem]">{title}</span>
+        <span className="font-bold text-[0.95rem]">{title}</span>
         {broader && (
-          <span className="pill border border-accent/40 bg-accent/15 text-accent">Market-wide</span>
+          <Badge color="cyan" size="xs">Market-wide</Badge>
         )}
       </div>
       {children}
-    </div>
+    </TremorCard>
   );
 }
 
@@ -33,7 +38,7 @@ export function KV({ label, value }: { label: string; value: ReactNode }) {
 }
 
 export function CardText({ text, dim }: { text: string; dim?: boolean }) {
-  return <p className={`text-[0.8rem] mt-1.5 leading-snug ${dim ? "text-dim" : ""}`}>{text}</p>;
+  return <p className={`text-[0.875rem] mt-1.5 leading-snug ${dim ? "text-dim" : ""}`}>{text}</p>;
 }
 
 export function EvidenceSection({

@@ -20,9 +20,11 @@ import { Pill } from "./ui/Pill";
 import { Card, KV, CardText, EvidenceSection } from "./ui/Evidence";
 import { StateMessage } from "./ui/Panel";
 import { useModalActions } from "../context/ModalContext";
-import type { FlowStage, FlowStatus } from "./agentflow/types";
+import type { FlowStage } from "./agentflow/types";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
 import { buildCandidateGraph } from "./agentflow/buildGraph";
+import { buildCandidateStages } from "./funnelShared";
+export { buildCandidateStages, skipText } from "./funnelShared";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
   if (!tech) return null;
@@ -221,27 +223,15 @@ function ProposedVsExecuted({ proposed, trade }: { proposed: TradeDecision | nul
   );
 }
 
-/* ------------------------------------------------------------------ *
- * Decision flow: Specialists -> Portfolio Manager -> AI Risk Manager ->
- * Deterministic Gate -> Execution. buildCandidateStages derives every
- * stage's reached/outcome status purely from fields CandidateDetailResponse
- * already carries (cross-checked against the run funnel's per-candidate
- * `executed`/`hard_risk_block` when that supplementary fetch succeeds) —
- * never a fabricated guess about a stage Mission Control has no evidence
- * for. See src/api/db_reads.py::is_executed_trade for the exact predicate
- * `isExecutedTrade` below mirrors.
- * ------------------------------------------------------------------ */
-
-// TradeItem (the Mission Control API's trade shape) doesn't expose the raw
-// `fill_qty` column src/api/db_reads.py::is_executed_trade also checks —
-// only fill_status/action are visible here, so this fallback uses those two
-// (still exact for the common no-fill-tracking and explicit-fill cases; the
-// funnel's own per-candidate `executed` boolean is preferred over this
-// fallback whenever the supplementary funnel fetch succeeds).
-function isExecutedTrade(trade: TradeItem | null): boolean {
-  if (!trade) return false;
-  return (trade.fill_status === null && trade.action !== "HOLD") || trade.fill_status === "filled";
-}
+/* Decision flow: Specialists -> Portfolio Manager -> AI Risk Manager ->
+ * Deterministic Gate -> Execution. funnelShared.buildCandidateStages
+ * derives every stage's reached/outcome status purely from fields
+ * CandidateDetailResponse already carries (cross-checked against the run
+ * funnel's per-candidate `executed`/`hard_risk_block` when that
+ * supplementary fetch succeeds) — never a fabricated guess about a stage
+ * Mission Control has no evidence for. Shared with DecisionRoomPanel,
+ * which reuses the same derivation for the cockpit's primary (non-modal)
+ * per-candidate agent graph. */
 
 // "clean" = approved untouched, "modified" = approved with a modification,
 // "rejected" = not approved. Exactly the derivation the product brief
@@ -254,74 +244,51 @@ function riskOutcome(detail: CandidateDetailResponse): "clean" | "modified" | "r
   return hasMods ? "modified" : "clean";
 }
 
-function buildCandidateStages(detail: CandidateDetailResponse, funnel: RunFunnelResponse | null): FlowStage[] {
-  const specialistCount = (detail.tech ? 1 : 0) + (detail.earnings ? 1 : 0) + detail.news_symbol.length;
-  const specialistsReached = specialistCount > 0;
-
-  const pmReached = !!(detail.pm_target || detail.pm_proposed_order || detail.pm_reasoning?.portfolio_view);
-  const pmCaption = detail.pm_target
-    ? `Target ${fmtNum(detail.pm_target.target_weight_pct)}%`
-    : detail.pm_proposed_order
-    ? detail.pm_proposed_order.action
-    : undefined;
-
-  const verdict = detail.risk_verdict?.verdict ?? null;
-  let riskStatus: FlowStatus = "not_reached";
-  if (verdict) {
-    const hasMods = !!detail.risk_modification || verdict.modifications.length > 0;
-    riskStatus = verdict.approved === false ? "rejected" : hasMods ? "modified" : "approved";
+export function furthestReachedStage(stages: FlowStage[]): FlowStage | null {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i].status !== "not_reached") return stages[i];
   }
-  const riskCaption = verdict?.reason_category ? verdict.reason_category.replace(/_/g, " ") : undefined;
-
-  const hardBlocked = funnel?.hard_risk_block === true;
-  const funnelCandidate = funnel?.candidates.find((c) => c.symbol === detail.symbol) ?? null;
-  const executed = funnelCandidate ? funnelCandidate.executed : isExecutedTrade(detail.trade);
-
-  let gateStatus: FlowStatus = "not_reached";
-  let gateCaption: string | undefined;
-  if (hardBlocked) {
-    gateStatus = "blocked";
-    gateCaption = "Hard-risk gate blocked every candidate this run before the AI Risk Manager was called.";
-  } else if (detail.trade) {
-    gateStatus = "reached";
-    gateCaption = "Cleared for execution.";
-  } else if (verdict?.approved === true) {
-    gateStatus = "pending";
-    gateCaption = "Approved upstream; no trade recorded — gate outcome not separately exposed to Mission Control.";
-  } else if (verdict?.approved === false) {
-    gateCaption = "Rejected upstream by the AI Risk Manager — never reached the deterministic gate.";
-  } else {
-    gateCaption = "Not reached — no usable AI Risk Manager verdict recorded for this run.";
-  }
-
-  let execStatus: FlowStatus = "not_reached";
-  let execCaption: string | undefined;
-  if (executed) {
-    execStatus = "executed";
-    execCaption = detail.trade
-      ? `${detail.trade.action}${detail.trade.qty !== null && detail.trade.qty !== undefined ? ` ${fmtNum(detail.trade.qty)}sh` : ""}`
-      : undefined;
-  } else if (verdict?.approved === false) {
-    execCaption = "No trade — rejected by the AI Risk Manager before execution.";
-  } else if (detail.pm_proposed_order) {
-    execCaption = "Proposed but not executed this run (or a HOLD).";
-  } else {
-    execCaption = "No proposal reached execution.";
-  }
-
-  return [
-    {
-      key: "specialists",
-      label: "Specialists",
-      status: specialistsReached ? "reached" : "not_reached",
-      caption: specialistsReached ? `${specialistCount} signal${specialistCount === 1 ? "" : "s"}` : "No evidence recorded",
-    },
-    { key: "pm", label: "Portfolio Manager", status: pmReached ? "reached" : "not_reached", caption: pmCaption },
-    { key: "risk", label: "AI Risk Manager", status: riskStatus, caption: riskCaption },
-    { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
-    { key: "exec", label: "Execution", status: execStatus, caption: execCaption },
-  ];
+  return null;
 }
+
+function OutcomeBanner({ detail, stages, executed }: { detail: CandidateDetailResponse; stages: FlowStage[]; executed: boolean }) {
+  const actionWord = detail.trade?.action || detail.pm_proposed_order?.action;
+  if (executed) {
+    const trade = detail.trade;
+    return (
+      <div className="rounded-xl border-2 border-pos/50 bg-pos/8 px-4 py-3 mb-3.5">
+        <div className="text-[1.05rem] font-extrabold text-pos tracking-tight">
+          FINAL OUTCOME · EXECUTED{actionWord ? ` — ${actionWord}` : ""}
+        </div>
+        {trade && (
+          <p className="text-[0.85rem] mt-1">
+            {trade.qty !== null && trade.qty !== undefined ? `${fmtNum(trade.qty)} sh` : ""} @ {fmtMoney(trade.price)}
+            {trade.fill_status ? ` (${trade.fill_status})` : ""}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const furthest = furthestReachedStage(stages);
+  const reason = furthest?.caption || "Candidate-specific reason was not recorded.";
+  return (
+    <div className="rounded-xl border-2 border-warn/50 bg-warn/8 px-4 py-3 mb-3.5">
+      <div className="text-[1.05rem] font-extrabold text-warn tracking-tight">
+        FINAL OUTCOME · NOT EXECUTED{actionWord ? ` (proposed ${actionWord})` : ""}
+      </div>
+      <p className="text-[0.82rem] mt-1">
+        <span className="text-dim">Stopped at: </span>
+        <span className="font-semibold">{furthest ? furthest.label : "Specialists"}</span>
+      </p>
+      <p className="text-[0.85rem] mt-0.5">
+        <span className="text-dim">Recorded reason: </span>
+        {reason}
+      </p>
+    </div>
+  );
+}
+
 
 // PM's 7(+2)-step CoT (src/models.py::ReasoningChain) and the Risk
 // Manager's 6-step CoT (src/models.py::RiskReasoningChain) — human labels
@@ -398,15 +365,17 @@ function DecisionDetail({
   detail,
   funnel,
   riskLog,
+  stages,
 }: {
   detail: CandidateDetailResponse;
   funnel: RunFunnelResponse | null;
   riskLog: AgentLogItem | null;
+  stages: FlowStage[];
 }) {
-  const stages = buildCandidateStages(detail, funnel);
   const gate = stages.find((s) => s.key === "gate");
   const exec = stages.find((s) => s.key === "exec");
   const pmReached = stages.find((s) => s.key === "pm")?.status !== "not_reached";
+  const reachedProposedOrder = !!detail.pm_proposed_order;
 
   const verdict = detail.risk_verdict?.verdict ?? null;
   const outcome = riskOutcome(detail);
@@ -467,7 +436,9 @@ function DecisionDetail({
 
         <div>
           <div className="font-bold text-[0.85rem] mb-1">AI Risk Manager</div>
-          {detail.risk_verdict ? (
+          {!reachedProposedOrder ? (
+            <StateMessage text="This candidate never reached a Portfolio Manager proposed order — the AI Risk Manager evaluates proposed orders, so it did not evaluate this candidate. Any Risk verdict recorded for this run belongs to a different, proposed candidate." />
+          ) : detail.risk_verdict ? (
             verdict ? (
               <div className="card">
                 <div className="kv-row">
@@ -598,6 +569,8 @@ export function CandidateDetailModal({
   }, [runId, symbol]);
 
   const riskLog = runDetail?.agent_logs.find((a) => a.agent_name === "risk_manager") ?? null;
+  const stages = detail ? buildCandidateStages(detail, funnel) : null;
+  const executed = stages?.find((stage) => stage.key === "exec")?.status === "executed";
 
   return (
     <Modal
@@ -612,8 +585,10 @@ export function CandidateDetailModal({
     >
       {error && <StateMessage text={`Could not load ${symbol}: ${error}`} error />}
       {!error && !detail && <StateMessage text={`Loading ${symbol}…`} />}
-      {detail && (
+      {detail && stages && (
         <div>
+          <OutcomeBanner detail={detail} stages={stages} executed={executed} />
+
           {/* Specialist identity/direction/confidence now lives in the
               agent-topology graph inside "Decision flow" below (real
               fan-in, not a separate near-duplicate card grid) — clicking a
@@ -631,7 +606,7 @@ export function CandidateDetailModal({
             {[<MacroCard key="macro" macro={detail.macro_context} />, <NewsContextCard key="newsctx" news={detail.news_context} />]}
           </EvidenceSection>
           <EvidenceSection title="Decision flow: Specialists &rarr; PM &rarr; AI Risk &rarr; gate &rarr; execution">
-            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} />]}
+            {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} stages={stages} />]}
           </EvidenceSection>
         </div>
       )}

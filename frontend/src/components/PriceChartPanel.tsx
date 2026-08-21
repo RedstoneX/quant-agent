@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, IChartApi, ISeriesApi, CandlestickData, HistogramData, SeriesMarker, Time } from "lightweight-charts";
-import { api, PriceBar, TradeItem } from "../api/client";
+import { api, LiveQuote, PriceBar, TradeItem } from "../api/client";
 import { Panel } from "./ui/Panel";
-import { isExecutedTrade } from "../lib/format";
+import { isExecutedTrade, etDateKey, fmtMoney } from "../lib/format";
+import { usePoll } from "../lib/usePoll";
 
 // Theme vars are space-separated "R G B" (Tailwind's arbitrary-alpha
 // convention, valid modern CSS) — lightweight-charts' internal color
@@ -77,6 +78,18 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [barCount, setBarCount] = useState(0);
+  // Last historical bar's date — used only to tell the operator the chart
+  // is running behind today (during market hours the daily bar for "today"
+  // isn't a completed historical bar yet), never to infer a current price.
+  const [lastBarDate, setLastBarDate] = useState<string | null>(null);
+  // Genuinely live quote (GET /quotes), deliberately a separate fetch/state
+  // from the historical bars above — see docs/architecture/
+  // MISSION_CONTROL_API.md "Mission Control data-truth" tranche. Stale-not-
+  // blank: a failed refresh keeps the last-known quote on screen, tagged
+  // with its own fetch error, rather than silently showing nothing.
+  const [quote, setQuote] = useState<LiveQuote | null>(null);
+  const [quoteAsOf, setQuoteAsOf] = useState<Date | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -169,6 +182,7 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
         }
         if (!resp.bars.length) {
           setBarCount(0);
+          setLastBarDate(null);
           clearChart();
           return;
         }
@@ -177,10 +191,12 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
         volumeSeriesRef.current?.setData(toVolume(resp.bars, colors));
         chartRef.current?.timeScale().fitContent();
         setBarCount(resp.bars.length);
+        setLastBarDate(resp.bars[resp.bars.length - 1].date);
       })
       .catch((err) => {
         if (!cancelled) {
           setError(err.message);
+          setLastBarDate(null);
           clearChart();
         }
       })
@@ -190,6 +206,35 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
     return () => {
       cancelled = true;
     };
+  }, [symbol]);
+
+  // Genuinely live quote for the charted symbol — GET /quotes, wrapping the
+  // same read-only Alpaca snapshot the accepted intraday scanner uses.
+  // Deliberately never derived from the candlestick bars above: a daily bar
+  // is historical (possibly up to one session behind during market hours),
+  // this is Mission Control's actual current-price source. Polled on the
+  // same cadence as the rest of the cockpit; a failed poll keeps the last
+  // known quote on screen tagged with its own error, never silently blank.
+  usePoll(() => {
+    if (!symbol) {
+      setQuote(null);
+      setQuoteError(null);
+      setQuoteAsOf(null);
+      return;
+    }
+    api
+      .quotes([symbol])
+      .then((resp) => {
+        const q = resp.quotes.find((x) => x.symbol === symbol) ?? null;
+        if (resp.error) {
+          setQuoteError(resp.error);
+        } else {
+          setQuote(q);
+          setQuoteError(null);
+          setQuoteAsOf(new Date());
+        }
+      })
+      .catch((err) => setQuoteError(err.message));
   }, [symbol]);
 
   // Real BUY/SELL execution markers on the price series — the vision
@@ -213,16 +258,35 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   // pill over a blank chart would misrepresent a known data gap as
   // everything-fine.
   const status = error ? "error" : loading ? "loading" : symbol && barCount === 0 ? "degraded" : "ok";
-  const overlayText = !symbol
-    ? "Click a candidate to chart it."
+  const overlay = !symbol
+    ? { heading: "No symbol charted", detail: "Click a candidate to chart it." }
     : error
-    ? `Could not load ${symbol} price history: ${error}`
+    ? { heading: `${symbol} price history unavailable`, detail: error }
     : !loading && barCount === 0
-    ? `No daily bars available for ${symbol}.`
+    ? { heading: `No daily bars for ${symbol}`, detail: "Market-data provider returned no bars for this symbol/range." }
     : null;
 
+  // The candlesticks are historical bars (up to one session behind during
+  // market hours — Alpaca's "today" daily bar isn't complete yet); this
+  // line is the one place on this panel that claims to be current, sourced
+  // and timestamped separately (GET /quotes) so it's never confused with —
+  // or silently mismatched against — the chart itself. Never fabricated:
+  // absent/errored quote data says so instead of going blank.
+  const barsRunBehindToday = Boolean(symbol && lastBarDate && lastBarDate !== etDateKey(new Date()));
+  const quoteLine = !symbol
+    ? undefined
+    : quote?.last_price != null
+    ? `Live ${fmtMoney(quote.last_price)}${quoteAsOf ? ` · as of ${quoteAsOf.toLocaleTimeString()}` : ""}${
+        barsRunBehindToday ? ` · chart history through ${lastBarDate}` : ""
+      }`
+    : quoteError
+    ? `Live quote unavailable (${quoteError})`
+    : barsRunBehindToday
+    ? `Chart history through ${lastBarDate} — no live quote loaded yet`
+    : undefined;
+
   return (
-    <Panel title={symbol ? `Price — ${symbol}` : "Price chart"} status={status} full>
+    <Panel title={symbol ? `Price — ${symbol}` : "Price chart"} status={status} subtitle={quoteLine} full>
       {/* Always mounted at a real size, never display:none — the chart
           object is created once against this container at mount time and
           the manual ResizeObserver above needs a real box to measure from
@@ -237,15 +301,16 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
           waste on a blank "OK" box. */}
       <div className="relative h-[320px] xl:h-full min-h-[240px]">
         <div ref={containerRef} className="w-full h-full" />
-        {overlayText && (
+        {overlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-            <span
-              className={`text-[0.82rem] text-center px-3 py-1.5 rounded-md border ${
-                error ? "text-neg border-neg/40 bg-neg/10" : "text-dim border-border bg-panel/85"
+            <div
+              className={`text-center px-5 py-4 rounded-xl border max-w-[34ch] ${
+                error ? "border-neg/40 bg-panel/95" : "border-border bg-panel/95"
               }`}
             >
-              {overlayText}
-            </span>
+              <div className={`text-[0.95rem] font-bold ${error ? "text-neg" : "text-ink"}`}>{overlay.heading}</div>
+              <div className="text-[0.8125rem] text-dim mt-1 leading-snug">{overlay.detail}</div>
+            </div>
           </div>
         )}
       </div>

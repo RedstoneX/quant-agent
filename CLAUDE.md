@@ -2,6 +2,8 @@
 
 QAMC is a private autonomous AI-assisted Alpaca trading system built around `yebof/quant-agent`. Its currently authorized execution environment is Alpaca Paper.
 
+**Terminology:** **QAMC / Mission Control** means the whole product/system. **Dashboard** means the browser/iPad read-side UI and its concurrent frontend/UX workstream. **Core recovery** means the trading/backend deployment-and-validation workstream. Do not use “Mission Control workstream” as shorthand for dashboard-only work.
+
 ## Start
 
 Read `docs/STATE.md` first.
@@ -23,11 +25,11 @@ Any `docs/FUTURE_*` file is conceptual only and never implementation authorizati
 ## Hard boundaries
 
 - **Current execution authorization:** Alpaca Paper only. Live-broker order submission is not authorized until a separate future authorization.
-- **One trading architecture:** Paper vs live is a broker/runtime environment distinction, not a separate decision architecture. Specialist reasoning, Portfolio Manager intent, AI Risk review, deterministic risk/execution, position management, exits, journaling, telemetry and Mission Control semantics must not use paper-specific shortcuts or materially different logic. Genuine broker-environment differences (for example fill behavior, credentials or endpoints) belong at the broker/configuration boundary.
+- **One trading architecture:** Paper vs live is a broker/runtime environment distinction, not a separate decision architecture. Specialist reasoning, Portfolio Manager intent, AI Risk review, deterministic risk/execution, position management, exits, journaling, telemetry and Dashboard semantics must not use paper-specific shortcuts or materially different logic. Genuine broker-environment differences (for example fill behavior, credentials or endpoints) belong at the broker/configuration boundary.
 - `yebof/quant-agent` remains the authoritative trading engine.
 - Specialist agents → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution remains the decision chain.
 - Deterministic Python and broker protections own final safety/execution eligibility; uncertainty fails closed.
-- Mission Control/API/journal/search/UI remain non-critical to trading and read-only unless a future accepted work contract explicitly says otherwise.
+- Dashboard/API/journal/search/UI remain non-critical to trading and read-only unless a future accepted work contract explicitly says otherwise.
 - No secrets or fake production trading state in API/UI/client artifacts.
 - Derived UI/search/journal state is rebuildable and non-authoritative.
 - Avoid unnecessary infrastructure and gratuitous trading-core rewrites; preserve upstream mergeability.
@@ -81,6 +83,7 @@ For substantial work with a measurable end state, prefer **outcome-driven execut
 
 - Use `/goal <verifiable completion condition>` when the installed Claude Code version supports it. State the end state, hard boundaries, and a check Claude can actually run; do not prescribe every implementation step.
 - Give Claude a verification loop before implementation. Prefer tests, health checks, builds, screenshots, or other deterministic pass/fail evidence. Completion means showing the evidence, not asserting that the work looks done.
+- **Dashboard visual work has an additional acceptance gate:** builds/tests and absence of overlap are not sufficient. Inspect rendered desktop and iPad screenshots against `docs/OUTCOME.md` and the vision board. Typography hierarchy, proportion, spacing/grid rhythm, information density, component-to-container scale and sparse/empty-state composition are product correctness; obvious visual imbalance remains unfinished work.
 - `/goal` controls persistence across turns; permission/autonomy modes control tool approvals. Treat them as separate concerns. Never weaken QAMC safety boundaries merely to remove approval friction.
 - Use `/plan` or discovery mode when architecture or authorization is unresolved; once implementation is authorized, avoid repeatedly returning to planning for routine engineering choices.
 - Protect the main context aggressively. Use subagents for file-heavy investigation and fresh-context/adversarial verification; use `/btw` for disposable side questions; use targeted `/compact` when continuity matters; use `/clear` between unrelated tasks or after repeated failed/corrected approaches.

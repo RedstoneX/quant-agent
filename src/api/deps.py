@@ -17,7 +17,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from src.config import AGENT_NAMES, AppConfig, load_config
+from src.config import AGENT_NAMES, AppConfig, RiskConfig, load_config
 
 # Display-only duplicate of src/risk/rules.py::_ETF_LEVERAGE's negative-
 # multiplier entries (the inverse/short ETFs already in the trading
@@ -78,6 +78,17 @@ def get_cash_sweep_symbol() -> str:
 
 def get_cash_sweep_reserve_pct() -> float:
     return get_config().cash_sweep.reserve_pct
+
+
+def get_risk_limits() -> RiskConfig:
+    """The deterministic risk gate's own configured limits (percentages
+    only — max_position_pct/max_total_position_pct/max_daily_loss_pct/
+    max_sector_pct — never a secret or credential). Read-only display
+    context for Mission Control so a UI exposure gauge can be scaled
+    against QAMC's actual hard-block thresholds instead of an arbitrary
+    UI-only banding; this accessor computes no risk decision itself and
+    src.risk.rules remains the sole authority that enforces these limits."""
+    return get_config().risk
 
 
 def get_agent_model(agent_name: str) -> str | None:

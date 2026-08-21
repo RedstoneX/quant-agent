@@ -259,6 +259,62 @@ def read_price_bars(symbol: str, lookback_days: int = 120) -> dict:
         return {"bars": [], "error": str(exc)}
 
 
+def read_live_quotes(symbols: list[str]) -> dict:
+    """Best-effort read of current-session quote facts for one or more
+    symbols — last trade price, previous session close, and today's
+    still-forming session range.
+
+    Wraps `AlpacaBroker.get_intraday_snapshots` — the SAME read-only bulk
+    Alpaca snapshot call (`StockHistoricalDataClient.get_stock_snapshot`,
+    a market-data read, never an account/order call) the already-accepted,
+    already-enabled intraday opportunity scanner uses (`src/pipeline.py`'s
+    `_run_intraday_opportunity_scan`). No new broker capability, no new
+    external dependency — this only gives Mission Control's read side a
+    second consumer of an existing, already-safety-reviewed method.
+
+    Distinct from `read_positions`' `current_price` (held positions only,
+    from the trading client) and `read_price_bars`' historical daily bars
+    (`/prices`) — this is what lets a chart/candidate view label a true
+    current price instead of a historical close implying "now" (2026-08-21
+    Mission Control correctness finding).
+
+    Never raises. `{"quotes": {SYMBOL: {...}}, "error": None|str}`. A
+    symbol Alpaca couldn't price at all still comes back with every field
+    `None` (never dropped), so the caller can tell "no data for this
+    symbol" from "didn't ask."
+    """
+    try:
+        broker = _get_broker()
+        raw = broker.get_intraday_snapshots(symbols)
+        quotes = {}
+        any_data = False
+        for sym in symbols:
+            snap = raw.get(sym) or {}
+            if snap.get("last_price") is not None or snap.get("prev_close") is not None:
+                any_data = True
+            quotes[sym] = {
+                "last_price": snap.get("last_price"),
+                "prev_close": snap.get("prev_close"),
+                "session_open": snap.get("session_open"),
+                "session_high": snap.get("session_high"),
+                "session_low": snap.get("session_low"),
+            }
+        # get_intraday_snapshots itself never raises — a total read failure
+        # (bad/absent credentials, market-data outage) degrades to `{}` for
+        # every symbol, identical on the wire to "Alpaca genuinely has no
+        # snapshot for any of these." That ambiguity is a real degraded
+        # state ("Preserve explicit stale/error states" — do not let it
+        # render as a silent absence of a live-quote caption): every
+        # requested symbol coming back completely empty is the honest
+        # signal to surface, since one bad symbol in an otherwise-healthy
+        # batch would not zero out every other symbol too.
+        error = None if any_data or not symbols else "no quote data returned for any requested symbol"
+        return {"quotes": quotes, "error": error}
+    except Exception as exc:
+        logger.warning("broker_reads.read_live_quotes failed for %d symbol(s): %s", len(symbols), exc)
+        return {"quotes": {sym: {} for sym in symbols}, "error": str(exc)}
+
+
 def check_broker_reachable() -> bool | None:
     """Best-effort connectivity ping.
 

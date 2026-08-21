@@ -1,7 +1,6 @@
 import type { EChartsOption } from "echarts";
 import { EChart } from "./EChart";
 import { readQamcTheme } from "../../lib/theme";
-import type { GaugeTone } from "./ArcGauge";
 
 /* Part-to-whole composition donut (ECharts `pie` in donut mode) — the
  * replacement for the flat SegmentedBar liquidity/exposure bars, per
@@ -12,9 +11,7 @@ import type { GaugeTone } from "./ArcGauge";
  * exposure: long/hedge/cash) — donuts are the right tool exactly there
  * ("keep it simple, limit categories"); a treemap earns its place instead
  * for the *positions* list (more holdings, a real hierarchy), not here.
- * Shares ArcGauge's tone system and EChart/theme substrate so the donut
- * and gauge read as one visual family, not two different chart libraries'
- * chrome bolted together. */
+ * Uses the same QAMC semantic color vocabulary as the rest of the cockpit. */
 
 // Donuts render category composition, not a scalar gauge band, so "dim"
 // (the same muted `--c-ink-dim` swatch the old SegmentedBar used via
@@ -22,7 +19,7 @@ import type { GaugeTone } from "./ArcGauge";
 // funds — deliberately neither a semantic status color (pos/warn/neg)
 // nor the brand/chrome accent cyan, so SGOV sweep-parking never reads as
 // either a market outcome or an interactive affordance.
-export type DonutTone = GaugeTone | "dim";
+export type DonutTone = "pos" | "warn" | "neg" | "accent" | "agent" | "hedge" | "dim";
 
 export interface DonutSegment {
   label: string;
@@ -120,7 +117,7 @@ export function DonutMeter({
         {segments.map((s) => {
           const pct = total > 0 ? (s.value / total) * 100 : 0;
           return (
-            <div key={s.label} className="flex items-center gap-1.5 text-[0.72rem] min-w-0">
+            <div key={s.label} className="flex items-center gap-1.5 text-[0.8125rem] min-w-0">
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
                 style={{ background: toneColor[s.tone] }}

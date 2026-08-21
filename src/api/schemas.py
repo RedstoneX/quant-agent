@@ -81,6 +81,19 @@ class LiquidityBreakdown(BaseModel):
     total_liquidity: float | None = None     # raw_cash + sweep_parked_value
 
 
+class RiskLimits(BaseModel):
+    """The deterministic risk gate's own configured percentage limits
+    (config/settings.yaml's `risk` section, src.risk.rules.RiskConfig) —
+    read-only display context, never a risk decision computed here. Lets a
+    UI exposure gauge scale against QAMC's actual hard-block thresholds
+    instead of an arbitrary UI-only banding. None when the config read
+    fails — never a guessed/default limit standing in for the real one."""
+    max_position_pct: float | None = None
+    max_total_position_pct: float | None = None
+    max_daily_loss_pct: float | None = None
+    max_sector_pct: float | None = None
+
+
 class AccountResponse(BaseModel):
     cash: float | None = None
     portfolio_value: float | None = None
@@ -91,6 +104,7 @@ class AccountResponse(BaseModel):
     source: str = "alpaca_live"
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
     liquidity: LiquidityBreakdown | None = None
+    risk_limits: RiskLimits | None = None
     error: str | None = None             # set (fields above null) when the broker read failed
 
 
@@ -163,6 +177,35 @@ class PriceBar(BaseModel):
 class PriceBarsResponse(BaseModel):
     symbol: str
     bars: list[PriceBar] = []
+    source: str = "alpaca_market_data"
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# /quotes
+# ---------------------------------------------------------------------------
+
+class LiveQuote(BaseModel):
+    """One symbol's current-session quote facts — distinct from a
+    PositionItem's broker-marked current_price (held positions only) and
+    from a PriceBar (historical, one row per completed/forming day).
+    Any field is None when Alpaca had nothing to report for this symbol,
+    never fabricated."""
+    symbol: str
+    last_price: float | None = None
+    prev_close: float | None = None
+    session_open: float | None = None
+    session_high: float | None = None
+    session_low: float | None = None
+
+
+class LiveQuotesResponse(BaseModel):
+    quotes: list[LiveQuote] = []
+    # When Mission Control read Alpaca for this response — a fetch-time
+    # timestamp, not a per-trade exchange timestamp (Alpaca's snapshot SDK
+    # object doesn't expose one cleanly here). Lets the client label a
+    # quote "as of HH:MM:SS" instead of presenting it as unqualified live.
+    as_of: str
     source: str = "alpaca_market_data"
     error: str | None = None
 

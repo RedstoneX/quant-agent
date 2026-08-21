@@ -167,6 +167,26 @@ def _cash_sweep_config() -> dict:
         return {"enabled": False, "symbol": "SGOV", "reserve_pct": 1.0}
 
 
+def _risk_limits_config() -> dict:
+    """Real repo config (config/settings.yaml's risk section), read
+    directly for the same reason _cash_sweep_config() is: sidesteps
+    get_config()'s full AppConfig validation (API-key checks this
+    dev-account preview process has no reason to satisfy). Degrades to an
+    honest all-None dict on any read failure — never a guessed limit."""
+    try:
+        raw = yaml.safe_load(SETTINGS_PATH.read_text()) or {}
+        risk = raw.get("risk") or {}
+        return {
+            "max_position_pct": risk.get("max_position_pct"),
+            "max_total_position_pct": risk.get("max_total_position_pct"),
+            "max_daily_loss_pct": risk.get("max_daily_loss_pct"),
+            "max_sector_pct": risk.get("max_sector_pct"),
+        }
+    except Exception as exc:
+        logger.warning("could not read risk config: %s", exc)
+        return {"max_position_pct": None, "max_total_position_pct": None, "max_daily_loss_pct": None, "max_sector_pct": None}
+
+
 def _position_direction(symbol: str, sweep_symbol: str) -> str:
     """Mirrors src/api/broker_reads.py::_position_direction exactly."""
     if symbol == sweep_symbol:
@@ -210,10 +230,15 @@ def create_app() -> FastAPI:
 
     async def _patch_account(data: dict) -> dict:
         """Old production's /account predates this branch's `liquidity`
-        field (Stage 6). Computes the same honest raw-cash/sweep/deployable
-        split _compute_liquidity() in src/api/routes_live.py does, from
-        real upstream /account + /positions data. Self-obsoleting: once
-        upstream already returns `liquidity`, this is a no-op passthrough."""
+        and `risk_limits` fields (Stage 6 / Stage 6j). Computes the same
+        honest raw-cash/sweep/deployable split _compute_liquidity() in
+        src/api/routes_live.py does, from real upstream /account +
+        /positions data, and reconstructs risk_limits from this dev
+        checkout's own non-secret config/settings.yaml risk section.
+        Self-obsoleting: once upstream already returns either field, this
+        is a no-op passthrough for that field."""
+        if data.get("risk_limits") is None and data.get("error") is None:
+            data["risk_limits"] = _risk_limits_config()
         if data.get("liquidity") is not None or data.get("error") is not None:
             return data
         cfg = _cash_sweep_config()

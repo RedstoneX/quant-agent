@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Button, Card } from "@tremor/react";
 import {
   api,
   AccountResponse,
@@ -14,6 +15,7 @@ import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
 import { HeroBand } from "./components/HeroBand";
 import { DecisionStateBanner } from "./components/DecisionStateBanner";
+import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
 import { CandidateRail } from "./components/CandidateRail";
 import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
@@ -26,6 +28,8 @@ import { JournalPanel } from "./components/JournalPanel";
 import { RunDetailModal } from "./components/RunDetailModal";
 import { CandidateDetailModal } from "./components/CandidateDetailModal";
 import { Pill } from "./components/ui/Pill";
+import { bestPrimaryRunId } from "./components/funnelShared";
+import { todayEtDate } from "./lib/format";
 
 type View = "cockpit" | "journal";
 type MobilePane = "watchlist" | "chart" | "decision";
@@ -43,7 +47,7 @@ function ViewNav({ view, onChange }: { view: View; onChange: (v: View) => void }
           key={v}
           type="button"
           onClick={() => onChange(v)}
-          className={`px-3 py-2 text-[0.78rem] font-semibold uppercase tracking-wide border-b-2 -mb-px ${
+          className={`px-3 py-2 text-[0.75rem] font-semibold uppercase tracking-wide border-b-2 -mb-px ${
             view === v ? "border-accent text-accent" : "border-transparent text-dim hover:text-ink"
           }`}
         >
@@ -72,7 +76,7 @@ function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePan
           key={p}
           type="button"
           onClick={() => onChange(p)}
-          className={`flex-1 py-2 text-[0.72rem] font-semibold uppercase tracking-wide border-b-2 ${
+          className={`flex-1 py-2 text-[0.75rem] font-semibold uppercase tracking-wide border-b-2 ${
             pane === p ? "border-accent text-accent" : "border-transparent text-dim"
           }`}
         >
@@ -84,7 +88,7 @@ function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePan
 }
 
 // Center-column header for whichever symbol is currently charted — derived
-// only from the latest run's already-fetched funnel data (no extra
+// only from the selected run's already-fetched funnel data (no extra
 // fetch), so the chart never sits contextless above a bare candlestick.
 function SelectedSymbolContext({
   funnel,
@@ -98,7 +102,7 @@ function SelectedSymbolContext({
   if (!symbol) return null;
   const c = funnel?.candidates.find((x) => x.symbol === symbol);
   return (
-    <div className="flex items-center gap-2 flex-wrap px-3.5 py-2 mb-3 rounded-lg border border-border bg-panel-alt">
+    <Card className="mb-3 flex !w-auto flex-wrap items-center gap-2 !bg-panel-alt !p-2.5 !ring-border">
       <span className="font-bold text-[0.95rem]">{symbol}</span>
       {c ? (
         <>
@@ -111,14 +115,16 @@ function SelectedSymbolContext({
           ) : c.reached_pm_target ? (
             <Pill text="reached_pm" />
           ) : null}
-          <button type="button" onClick={onOpenDetail} className="ml-auto text-accent underline text-[0.78rem]">
+          <Button type="button" variant="light" size="xs" color="cyan" onClick={onOpenDetail} className="ml-auto">
             Full drill-down &rarr;
-          </button>
+          </Button>
         </>
       ) : (
-        <span className="text-dim text-[0.78rem]">not among the latest run&rsquo;s candidates</span>
+        <span className="text-dim text-[0.8125rem]">
+          {funnel ? "not among the selected run’s candidates" : "broad-market context — no session today yet"}
+        </span>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -146,13 +152,97 @@ export default function App() {
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [funnel, setFunnel] = useState<RunFunnelResponse | null>(null);
-  const [funnelError, setFunnelError] = useState<string | null>(null);
-  const [funnelLoading, setFunnelLoading] = useState(true);
-  const [funnelUpdatedAt, setFunnelUpdatedAt] = useState<Date | null>(null);
+
+  // Day-scoped session state — replaces a single "latest run" funnel.
+  // QAMC runs several session types a day, several of which (midday/close
+  // position review) structurally carry zero candidates; always following
+  // the literal latest run means a routine afternoon review silently
+  // blanks the cockpit even when a real morning scan ran. `todaysRuns`/
+  // `todaysFunnels` cover every one of today's runs (reusing the journal
+  // endpoints' existing ET-trading-day grouping — see
+  // docs/architecture/MISSION_CONTROL_API.md's Stage 5 entry — rather than
+  // re-implementing date bucketing here), `selectedRunId` is whichever one
+  // currently drives Candidates/Chart/Decision Room, and `autoFollow`
+  // tracks whether that selection is still automatic (best-primary-run,
+  // see funnelShared.ts::bestPrimaryRunId) or the operator pinned one via
+  // TodaySessionsStrip.
+  const [todaysRuns, setTodaysRuns] = useState<RunSummary[]>([]);
+  const [todaysFunnels, setTodaysFunnels] = useState<Record<string, RunFunnelResponse | null>>({});
+  const [todaysTrades, setTodaysTrades] = useState<TradeItem[]>([]);
+  const [todaysError, setTodaysError] = useState<string | null>(null);
+  const [todaysLoading, setTodaysLoading] = useState(true);
+  const [todaysUpdatedAt, setTodaysUpdatedAt] = useState<Date | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [autoFollow, setAutoFollow] = useState(true);
+  // usePoll(fn, []) freezes `fn`'s closure at mount — reading component
+  // state directly inside it would always see the initial value (a real,
+  // separate bug this same change fixes for chartSymbol below). Refs give
+  // the poll callback a way to read the CURRENT autoFollow/selectedRunId.
+  const autoFollowRef = useRef(autoFollow);
+  const selectedRunIdRef = useRef(selectedRunId);
+  const todaysRequestIdRef = useRef(0);
+  useEffect(() => {
+    autoFollowRef.current = autoFollow;
+    selectedRunIdRef.current = selectedRunId;
+  }, [autoFollow, selectedRunId]);
+
+  const funnel = selectedRunId ? todaysFunnels[selectedRunId] ?? null : null;
+
+  // Fix 1 (visual convergence plan §2.2, Finding D): the primary 3-column
+  // row below claims a fixed viewport-bounded height so it's a real
+  // "answer at a glance" workstation rather than an unboundedly tall page
+  // — but the height BUDGET for that row is "100vh minus everything above
+  // it," and everything above it (TopStrip + ViewNav + HeroBand +
+  // TodaySessionsStrip + DecisionStateBanner) is genuinely variable height:
+  // TodaySessionsStrip renders null with zero sessions, DecisionStateBanner
+  // wraps to 1-2 lines depending on content, a stale-data warning row can
+  // appear/disappear. A single hardcoded constant drifts every time one of
+  // those rows changes shape — exactly how the previous "150px" constant
+  // went stale (real measured chrome was 423px, not 150px). Measuring it
+  // live via ResizeObserver and writing it to the --chrome-h CSS custom
+  // property (see styles/index.css's :root) keeps the row's declared
+  // height honest without forcing a React re-render on every resize tick.
+  const chromeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = chromeRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height;
+      // The grid's own border-box extends past its columns' bottom edge by
+      // its own bottom `p-3` padding (12px) in addition to the 12px top
+      // padding this wrapper's bottom edge already sits above — 24px
+      // total — folded in here so the CSS calc() stays a simple two-term
+      // `100vh - var(--chrome-h)`, the same shape as the constant it
+      // replaces. Confirmed via measurement: without the +24, the grid's
+      // own getBoundingClientRect().bottom lands 12px past the viewport
+      // (its padding-bottom past the fold) even though every column's
+      // actual content is fully reachable.
+      if (h) document.documentElement.style.setProperty("--chrome-h", `${Math.ceil(h) + 24}px`);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Fix 3 (visual convergence plan §2.4, Finding C): when there is
+  // truthfully no session data for the day, the Candidates/Decision Room
+  // side columns stop claiming the full viewport-locked height (which,
+  // with nothing but a centered sentence to show, just produces a large
+  // inert void) and instead collapse to their actual content height; the
+  // price chart — the one column with genuine content in this state, real
+  // SPY market context — claims the width that frees up. See the grid
+  // below.
+  const sparseDay = todaysRuns.length === 0;
+
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runsError, setRunsError] = useState<string | null>(null);
-  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  // Defaults to the broad market rather than null: an unselected chart
+  // previously rendered as a large blank panel with a "click a candidate"
+  // hint floating in it — dead space in the highest-visual-weight column
+  // of the primary cockpit. SPY is always real, always liquid, and gives
+  // chart-led MARKET context (docs/OUTCOME.md) even before any candidate
+  // exists; a real per-run candidate always overrides it once one exists
+  // (see the selectedRunId effect below).
+  const [chartSymbol, setChartSymbol] = useState<string | null>("SPY");
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [view, setView] = useState<View>("cockpit");
   const [mobilePane, setMobilePane] = useState<MobilePane>("watchlist");
@@ -207,33 +297,92 @@ export default function App() {
         setUpdatedAt(new Date());
       })
       .catch((err) => setHealthError(err.message));
+  }, []);
 
+  // Day-scoped session poll — every one of today's runs (via the journal
+  // endpoints' existing ET-trading-day grouping) plus each one's funnel,
+  // in parallel. A single failed run's funnel fetch is caught to `null`
+  // rather than aborting the whole batch (same resilience contract
+  // JournalPanel already established). Auto-follow recomputes the best
+  // primary run each tick unless the operator has pinned a different one
+  // via TodaySessionsStrip.
+  usePoll(() => {
+    const requestId = ++todaysRequestIdRef.current;
+    // Deliberately today's literal ET calendar date, NOT journalDates(1)
+    // (the most recent day the journal listing considers "complete" —
+    // JournalPanel's own default view). During market hours today has
+    // real runs long before it gets a daily_pnl/close snapshot, so
+    // journalDates(1) would keep resolving to YESTERDAY all day — the
+    // exact same erasure this strip exists to fix, just relabeled
+    // "Today's sessions" while actually showing a stale prior day. A 404
+    // (no runs recorded yet today — before the first session, or a
+    // non-trading day) is an honest empty state, not an error.
     api
-      .runs(1)
-      .then((r) => {
-        if (!r.runs.length) {
-          setFunnel(null);
-          setFunnelError(null);
-          setFunnelLoading(false);
-          setFunnelUpdatedAt(new Date());
+      .journalDay(todayEtDate())
+      .then((day) =>
+        Promise.all(
+          day.runs.map((r) =>
+            api
+              .runFunnel(r.run_id)
+              .then((f): [string, RunFunnelResponse | null] => [r.run_id, f])
+              .catch((): [string, RunFunnelResponse | null] => [r.run_id, null])
+          )
+        ).then((pairs) => {
+          if (requestId !== todaysRequestIdRef.current) return;
+          const funnels = Object.fromEntries(pairs);
+          setTodaysRuns(day.runs);
+          setTodaysFunnels(funnels);
+          setTodaysTrades(day.trades);
+          setTodaysError(null);
+          setTodaysLoading(false);
+          setTodaysUpdatedAt(new Date());
+
+          const best = bestPrimaryRunId(day.runs, funnels);
+          const stillExists = selectedRunIdRef.current && day.runs.some((r) => r.run_id === selectedRunIdRef.current);
+          if (autoFollowRef.current || !stillExists) {
+            selectedRunIdRef.current = best;
+            setSelectedRunId(best);
+          }
+        })
+      )
+      .catch((err) => {
+        if (requestId !== todaysRequestIdRef.current) return;
+        if (err.status === 404) {
+          setTodaysRuns([]);
+          setTodaysFunnels({});
+          setTodaysTrades([]);
+          setTodaysError(null);
+          setTodaysLoading(false);
+          setTodaysUpdatedAt(new Date());
+          if (autoFollowRef.current) {
+            selectedRunIdRef.current = null;
+            setSelectedRunId(null);
+          }
           return;
         }
-        return api.runFunnel(r.runs[0].run_id).then((f) => {
-          setFunnel(f);
-          setFunnelError(null);
-          setFunnelLoading(false);
-          setFunnelUpdatedAt(new Date());
-          if (!chartSymbol && f.candidates.length) setChartSymbol(f.candidates[0].symbol);
-        });
-      })
-      .catch((err) => {
-        // Deliberately does NOT clear `funnel` — see the freshness comment
-        // above. CandidateRail/DecisionRoomPanel render the retained data
-        // with an explicit "stale" Panel status instead of a blank error.
-        setFunnelError(err.message);
-        setFunnelLoading(false);
+        // Deliberately does NOT clear todaysRuns/todaysFunnels — the
+        // strip/rail/decision-room render the retained data tagged stale
+        // instead of blanking real information on a transient poll error.
+        setTodaysError(err.message);
+        setTodaysLoading(false);
       });
   }, []);
+
+  // Re-chart whenever the SELECTED run changes (auto-follow promoting a
+  // different primary run, or an operator's manual pick) — a normal effect
+  // with `selectedRunId` in its deps, not logic inside the poll callback
+  // above, which would suffer the same frozen-closure problem the prior
+  // `if (!chartSymbol && ...)` line actually had: usePoll(fn, []) captures
+  // `fn` once at mount, so a read of component state inside it is always
+  // the value from that first render — every poll tick was unconditionally
+  // resetting chartSymbol back to the funnel's first candidate, silently
+  // overriding any candidate the operator had clicked to chart, every 20s.
+  useEffect(() => {
+    if (!selectedRunId) return;
+    const f = todaysFunnels[selectedRunId];
+    setChartSymbol(f && f.candidates.length ? f.candidates[0].symbol : "SPY");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRunId]);
 
   usePoll(() => {
     api
@@ -251,6 +400,21 @@ export default function App() {
       .then((r) => setRuns(r.runs))
       .catch((err) => setRunsError(err.message));
   }, []);
+
+  function selectSession(runId: string) {
+    autoFollowRef.current = false;
+    selectedRunIdRef.current = runId;
+    setAutoFollow(false);
+    setSelectedRunId(runId);
+  }
+
+  function followPrimarySession() {
+    const best = bestPrimaryRunId(todaysRuns, todaysFunnels);
+    autoFollowRef.current = true;
+    selectedRunIdRef.current = best;
+    setAutoFollow(true);
+    setSelectedRunId(best);
+  }
 
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
     if (!dayRuns.length) return;
@@ -272,37 +436,78 @@ export default function App() {
 
   return (
     <ModalProvider value={modalActions}>
-      <TopStrip account={account} accountError={accountError} health={health} updatedAt={updatedAt} />
-      <ViewNav view={view} onChange={setView} />
+      {/* Fix 1: chromeRef wraps exactly the header stack whose real height
+          drives the primary row's viewport budget below (TopStrip through
+          DecisionStateBanner) — see the ResizeObserver effect above. A bare
+          div with no padding/border/margin is transparent to layout and
+          does not interfere with TopStrip's own `sticky` positioning. */}
+      <div ref={chromeRef}>
+        <TopStrip account={account} accountError={accountError} health={health} updatedAt={updatedAt} />
+        <ViewNav view={view} onChange={setView} />
+
+        {view === "cockpit" && (
+          <>
+            <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} />
+            <TodaySessionsStrip
+              runs={todaysRuns}
+              funnels={todaysFunnels}
+              trades={todaysTrades}
+              loading={todaysLoading}
+              error={todaysError}
+              selectedRunId={selectedRunId}
+              autoFollow={autoFollow}
+              onSelect={selectSession}
+              onFollowLatest={followPrimarySession}
+            />
+            <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
+          </>
+        )}
+      </div>
 
       {view === "cockpit" && (
         <>
-          <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} />
-          <DecisionStateBanner funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
-
           <PaneNav pane={mobilePane} onChange={setMobilePane} />
 
           {/* The primary cockpit body — deliberately a fixed, non-dockable
               grid (not Dockview): this is the "answer at a glance" surface,
               customization belongs only to the support workspace below. */}
-          {/* All three columns share one explicit height at desktop width
-              (xl:h-[calc(100vh-150px)], not just a max-height) so the row
-              is a real viewport-bounded workstation, not just capped —
-              Candidates/Decision Room scroll internally within it, and the
-              center column can flex its own children to actually fill it
-              (see the chart's flex-1 wrapper below). Previously the center
-              column had no height rule at all, so CSS Grid's stretch
-              alignment made the grid CELL tall to match the other two
-              columns while the price chart inside it stayed hard-coded to
-              260px — a large dead gap below the chart on any viewport
-              taller than ~550px. */}
-          <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_360px] gap-3 p-3 items-stretch">
-            <div className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
+          {/* All three columns share one explicit height at desktop width,
+              not just a max-height, so the row is a real viewport-bounded
+              workstation, not just capped — Candidates/Decision Room
+              scroll internally within it, and the center column can flex
+              its own children to actually fill it (see the chart's flex-1
+              wrapper below). The height itself is `100vh` minus
+              `--chrome-h`, a CSS custom property kept live by chromeRef's
+              ResizeObserver above (Fix 1) rather than a hardcoded constant
+              — the previous flat "150px" drifted out of sync with the
+              header stack's real (variable) height, silently pushing the
+              highest-stakes part of the Decision Room chain below the
+              fold.
+              Fix 3 (Finding C): on a genuinely no-session day, the two
+              side columns don't have a viewport-locked height to fill in
+              the first place (`sparseDay` below), so they collapse to
+              their actual (small) content height via `self-start` instead
+              of Grid's default stretch-to-row-height, and the grid's own
+              column template narrows to give the chart — the one column
+              with genuine content in this state, real SPY market context —
+              the freed width. The chart column keeps its full viewport
+              height in both states; only the two side columns' height
+              behavior changes. */}
+          <div
+            className={`grid grid-cols-1 ${
+              sparseDay ? "xl:grid-cols-[260px_1fr_260px]" : "xl:grid-cols-[300px_1fr_360px]"
+            } gap-3 p-3 items-stretch`}
+          >
+            <div
+              className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} ${
+                sparseDay ? "xl:self-start" : "xl:h-[calc(100vh_-_var(--chrome-h))] xl:overflow-y-auto"
+              }`}
+            >
               <CandidateRail
                 funnel={funnel}
-                loading={funnelLoading}
-                error={funnelError}
-                updatedAt={funnelUpdatedAt}
+                loading={todaysLoading}
+                error={todaysError}
+                updatedAt={todaysUpdatedAt}
                 selectedSymbol={chartSymbol}
                 onSelectSymbol={setChartSymbol}
               />
@@ -316,7 +521,7 @@ export default function App() {
             <div
               className={`${
                 mobilePane === "chart" ? "flex" : "hidden xl:flex"
-              } min-w-0 flex-col xl:h-[calc(100vh-150px)]`}
+              } min-w-0 flex-col xl:h-[calc(100vh_-_var(--chrome-h))]`}
             >
               <SelectedSymbolContext
                 funnel={funnel}
@@ -333,8 +538,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} xl:h-[calc(100vh-150px)] xl:overflow-y-auto`}>
-              <DecisionRoomPanel funnel={funnel} loading={funnelLoading} error={funnelError} updatedAt={funnelUpdatedAt} />
+            <div
+              className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} ${
+                sparseDay ? "xl:self-start" : "xl:h-[calc(100vh_-_var(--chrome-h))] xl:overflow-y-auto"
+              }`}
+            >
+              <DecisionRoomPanel funnel={funnel} symbol={chartSymbol} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
             </div>
           </div>
 

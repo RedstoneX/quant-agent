@@ -2,6 +2,7 @@ import { KeyboardEvent, useEffect, useMemo, useState } from "react";
 import {
   api,
   AccountResponse,
+  CandidateDetailResponse,
   CandidateFunnelItem,
   DailyPnlPoint,
   DecisionState,
@@ -15,7 +16,49 @@ import { parseJsonArray, summarizeBlobItem } from "../lib/blobJson";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 import { Card, CardText, EvidenceSection, KV } from "./ui/Evidence";
+import { LevelBar } from "./ui/Meter";
 import { useModalActions } from "../context/ModalContext";
+import { Stage, STAGE_META, STAGE_ORDER, candidateStage, isSweepOnlyExecution } from "./funnelShared";
+import { buildEntries } from "./agentflow/buildGraph";
+
+export function ledgerLine(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
+  const pm = c.proposed_action
+    ? `PM ${c.proposed_action}`
+    : c.reached_pm_target
+    ? "PM target, no order — reason not recorded"
+    : "PM no proposal";
+
+  let risk = "Risk —";
+  let riskExplainsNonExecution = false;
+  if (c.reached_proposed_order) {
+    const verdict = funnel.risk_verdict?.verdict;
+    if (c.risk_modified) {
+      risk = "Risk MODIFIED";
+    } else if (funnel.hard_risk_block) {
+      risk = "Risk BLOCKED (hard gate)";
+      riskExplainsNonExecution = true;
+    } else if (verdict?.approved === false) {
+      risk = "Risk REJECTED";
+      riskExplainsNonExecution = true;
+    } else if (verdict?.approved === true) {
+      risk = "Risk APPROVED";
+    }
+  }
+
+  let outcome: string;
+  if (c.executed) {
+    outcome = `EXECUTED${c.trade_action ? ` (${c.trade_action})` : ""}`;
+  } else if (c.execution_skip_reason) {
+    outcome = `SKIPPED — ${c.execution_skip_reason.replace(/_/g, " ")} · NOT EXECUTED`;
+  } else if (c.reached_proposed_order && !riskExplainsNonExecution) {
+    outcome = "NOT EXECUTED — execution reason not recorded";
+  } else if (c.reached_proposed_order) {
+    outcome = "NOT EXECUTED";
+  } else {
+    outcome = "no order reached";
+  }
+  return `${pm} · ${risk} · ${outcome}`;
+}
 
 // Mirrors DecisionFunnelPanel's STATE_LABELS/STATE_COLORS mapping so the
 // language is consistent across the cockpit, duplicated locally (rather
@@ -36,6 +79,9 @@ const STATE_COLORS: Record<DecisionState, string> = {
   no_proposal: "bg-dim/15 text-dim border-border",
   no_candidates: "bg-dim/15 text-dim border-border",
 };
+
+const SWEEP_ONLY_LABEL = "CASH SWEEP ONLY";
+const SWEEP_ONLY_COLOR = "bg-dim/15 text-dim border-border";
 
 const NO_TRADE_REASON: Partial<Record<DecisionState, string>> = {
   hard_risk_block: "Deterministic risk gate blocked this run before any trade could be considered.",
@@ -197,31 +243,293 @@ function EquitySparkline({ history }: { history: DailyPnlPoint[] | undefined }) 
   );
 }
 
-function RunNarrativeCard({
+// Day-level furthest-stage bucket, simplified from funnelShared's
+// candidateStage: this list spans potentially several runs with no single
+// funnel to read hard_risk_block/risk_verdict from, so it deliberately
+// omits candidateStage's run-wide risk-rejection escalation rather than
+// guess which run's verdict would apply to a given symbol. Still exact for
+// executed/risk_modified/reached_proposed_order/reached_pm_target, all of
+// which are precise per-candidate fields.
+function daySimpleStage(c: CandidateFunnelItem | undefined): Stage {
+  if (!c) return "rejected";
+  if (c.executed) return "executed";
+  if (c.risk_modified) return "risk_action";
+  if (c.reached_proposed_order) return "proposed";
+  if (c.reached_pm_target) return "reached_pm";
+  return "rejected";
+}
+
+function DayCandidateList({
+  symbols,
+  info,
+  dayRuns,
+  onOpenCandidate,
+}: {
+  symbols: string[];
+  info: Record<string, CandidateFunnelItem>;
+  dayRuns: RunSummary[];
+  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
+}) {
+  const buckets: Record<Stage, string[]> = { executed: [], risk_action: [], proposed: [], reached_pm: [], rejected: [] };
+  for (const sym of symbols) buckets[daySimpleStage(info[sym])].push(sym);
+  const notable = STAGE_ORDER.filter((s) => s !== "rejected").flatMap((s) => buckets[s]);
+  const screened = buckets.rejected;
+
+  return (
+    <div>
+      {notable.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {notable.map((sym) => (
+            <CandidateChip key={sym} symbol={sym} info={info[sym]} onClick={() => onOpenCandidate(dayRuns, sym)} />
+          ))}
+        </div>
+      )}
+      {screened.length > 0 && (
+        <details className={notable.length > 0 ? "mt-2" : undefined}>
+          <summary className="text-[0.72rem] text-dim cursor-pointer select-none">
+            {screened.length} more screened across the day, no PM target reached &mdash; expand
+          </summary>
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {screened.map((sym) => (
+              <CandidateChip key={sym} symbol={sym} info={info[sym]} onClick={() => onOpenCandidate(dayRuns, sym)} />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Agent Analysis & Disagreements — docs/OUTCOME.md's Journal Day
+ * sections 3-4. Real per-specialist views and the backend's own
+ * consensus.agreement computation for each candidate that reached the
+ * Portfolio Manager today (the "screened, no PM target" majority has no
+ * PM-relevant disagreement to report and is left in the collapsed
+ * Watchlist bucket above). Never a fabricated summary: same buildEntries
+ * derivation the cockpit's per-candidate agent graph uses, one
+ * CandidateDetailResponse fetch per notable candidate — typically a
+ * handful a day, the same bounded-fan-out pattern this file already uses
+ * for per-run funnels.
+ * ------------------------------------------------------------------ */
+
+interface NotableCandidate {
+  runId: string;
+  symbol: string;
+  stage: Stage;
+}
+
+function collectNotableCandidates(runs: RunSummary[], funnels: Record<string, RunFunnelResponse | null>): NotableCandidate[] {
+  const map: Record<string, NotableCandidate> = {};
+  for (const r of runs) {
+    const f = funnels[r.run_id];
+    if (!f) continue;
+    for (const c of f.candidates) {
+      const stage = candidateStage(c, f);
+      if (stage === "rejected") continue;
+      if (!map[c.symbol] || c.executed) map[c.symbol] = { runId: r.run_id, symbol: c.symbol, stage };
+    }
+  }
+  return Object.values(map);
+}
+
+const AGREEMENT_LABEL: Record<CandidateDetailResponse["consensus"]["agreement"], string> = {
+  aligned: "Aligned",
+  mixed: "Diverges",
+  no_directional_signal: "No directional signal",
+  insufficient_data: "Insufficient data",
+};
+
+const AGREEMENT_CLASS: Record<CandidateDetailResponse["consensus"]["agreement"], string> = {
+  aligned: "bg-pos/15 text-pos border-pos/40",
+  mixed: "bg-warn/15 text-warn border-warn/40",
+  no_directional_signal: "bg-dim/15 text-dim border-border",
+  insufficient_data: "bg-dim/15 text-dim border-border",
+};
+
+function DayAgentAnalysis({
+  candidates,
+  dayRuns,
+  onOpenCandidate,
+}: {
+  candidates: NotableCandidate[];
+  dayRuns: RunSummary[];
+  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
+}) {
+  const [details, setDetails] = useState<Record<string, CandidateDetailResponse | null>>({});
+  const [loading, setLoading] = useState(true);
+  const key = candidates.map((c) => `${c.runId}:${c.symbol}`).join(",");
+
+  useEffect(() => {
+    if (!candidates.length) {
+      setDetails({});
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all(
+      candidates.map((c) =>
+        api
+          .candidateDetail(c.runId, c.symbol)
+          .then((d): [string, CandidateDetailResponse | null] => [c.symbol, d])
+          .catch((): [string, CandidateDetailResponse | null] => [c.symbol, null])
+      )
+    ).then((pairs) => {
+      if (cancelled) return;
+      setDetails(Object.fromEntries(pairs));
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  if (!candidates.length) {
+    return <StateMessage text="No candidates reached the Portfolio Manager today — nothing for specialists to have agreed or disagreed on." />;
+  }
+  if (loading) return <StateMessage text="Loading specialist analysis…" />;
+
+  const disagreements = candidates.filter((c) => details[c.symbol]?.consensus.agreement === "mixed");
+
+  return (
+    <div className="flex flex-col gap-2">
+      {candidates.map((c) => {
+        const d = details[c.symbol];
+        if (!d) return null;
+        const entries = buildEntries(d);
+        return (
+          <div key={c.symbol} className="card">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <button
+                type="button"
+                className="font-bold text-accent underline text-[0.82rem]"
+                onClick={() => onOpenCandidate(dayRuns, c.symbol)}
+              >
+                {c.symbol}
+              </button>
+              <span className={`text-[0.68rem] font-semibold uppercase tracking-wide ${STAGE_META[c.stage].textClass}`}>
+                {STAGE_META[c.stage].label}
+              </span>
+              <span className={`ml-auto pill border text-[0.68rem] px-2 py-0.5 ${AGREEMENT_CLASS[d.consensus.agreement]}`}>
+                {AGREEMENT_LABEL[d.consensus.agreement]}
+              </span>
+            </div>
+            {entries.length === 0 ? (
+              <StateMessage text="No specialist evidence recorded for this candidate." />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                {entries.map((e) => (
+                  <div key={e.key} className="bg-panel-alt rounded-md px-2 py-1.5">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[0.68rem] font-semibold truncate">{e.role}</span>
+                      <span
+                        className={`text-[0.78rem] font-bold ${
+                          e.direction === "bullish" ? "text-pos" : e.direction === "bearish" ? "text-neg" : "text-dim"
+                        }`}
+                      >
+                        {e.direction === "bullish" ? "▲" : e.direction === "bearish" ? "▼" : "•"}
+                      </span>
+                    </div>
+                    {e.conviction && <LevelBar level={e.conviction} tone="accent" />}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {disagreements.length > 0 && (
+        <div className="px-3 py-2 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[0.8rem] font-semibold">
+          Specialists genuinely disagreed on: {disagreements.map((c) => c.symbol).join(", ")}.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Same furthest-stage bucketing CandidateRail uses (funnelShared.ts), so a
+// run that screened 80 symbols reads as "the dozen that mattered" plus one
+// collapsed count instead of an 80-line flat dump repeating "PM: no
+// proposal" — the Journal's own instance of the "chronological log dump"
+// docs/OUTCOME.md's Journal Day section warns against, reproduced against
+// real production data (a real trading day here runs long past 60 screened
+// symbols with zero PM target) while building this.
+function RunCandidateList({
+  funnel,
+  onOpenCandidate,
+}: {
+  funnel: RunFunnelResponse;
+  onOpenCandidate: (symbol: string) => void;
+}) {
+  const buckets: Record<Stage, CandidateFunnelItem[]> = {
+    executed: [],
+    risk_action: [],
+    proposed: [],
+    reached_pm: [],
+    rejected: [],
+  };
+  for (const c of funnel.candidates) buckets[candidateStage(c, funnel)].push(c);
+  const notable = STAGE_ORDER.filter((s) => s !== "rejected").flatMap((s) => buckets[s]);
+  const screened = buckets.rejected;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {notable.length === 0 && screened.length > 0 && (
+        <StateMessage
+          text={`${screened.length} candidate${screened.length === 1 ? "" : "s"} screened this run — none reached a Portfolio Manager target.`}
+        />
+      )}
+      {notable.map((c) => {
+        const stage = candidateStage(c, funnel);
+        return (
+          <div key={c.symbol} className="flex items-start gap-2 text-[0.79rem] flex-wrap">
+            <CandidateChip symbol={c.symbol} info={c} onClick={() => onOpenCandidate(c.symbol)} />
+            <span className={STAGE_META[stage].textClass}>{STAGE_META[stage].label}</span>
+            <span className="text-dim">{ledgerLine(c, funnel)}</span>
+          </div>
+        );
+      })}
+      {screened.length > 0 && (
+        <details className="mt-1">
+          <summary className="text-[0.72rem] text-dim cursor-pointer select-none">
+            {screened.length} more screened, no PM target reached &mdash; expand
+          </summary>
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {screened.map((c) => (
+              <CandidateChip key={c.symbol} symbol={c.symbol} info={c} onClick={() => onOpenCandidate(c.symbol)} />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+export function RunNarrativeCard({
   run,
   funnel,
   funnelLoading,
-  dayRuns,
   dayTrades,
-  onOpenCandidate,
   onOpenRun,
 }: {
   run: RunSummary;
   funnel: RunFunnelResponse | null | undefined;
   funnelLoading: boolean;
-  dayRuns: RunSummary[];
   dayTrades: TradeItem[];
-  onOpenCandidate: (runs: RunSummary[], symbol: string) => void;
   onOpenRun: (runId: string) => void;
 }) {
+  const { openCandidateDetail } = useModalActions();
   const runTrades = dayTrades.filter((t) => t.run_id === run.run_id);
+  const sweepOnly = funnel?.decision_state === "executed" && isSweepOnlyExecution(runTrades);
 
   return (
     <div className="card">
       <div className="flex items-center gap-2 flex-wrap mb-2">
         {funnel && (
-          <span className={`pill border text-[0.72rem] px-2.5 py-0.5 ${STATE_COLORS[funnel.decision_state]}`}>
-            {STATE_LABELS[funnel.decision_state]}
+          <span className={`pill border text-[0.72rem] px-2.5 py-0.5 ${sweepOnly ? SWEEP_ONLY_COLOR : STATE_COLORS[funnel.decision_state]}`}>
+            {sweepOnly ? SWEEP_ONLY_LABEL : STATE_LABELS[funnel.decision_state]}
           </span>
         )}
         <button
@@ -257,22 +565,7 @@ function RunNarrativeCard({
           {funnel.candidates.length === 0 ? (
             <StateMessage text="No candidates considered this run." />
           ) : (
-            <div className="flex flex-col gap-1.5">
-              {funnel.candidates.map((c) => (
-                <div key={c.symbol} className="flex items-start gap-2 text-[0.79rem] flex-wrap">
-                  <CandidateChip symbol={c.symbol} info={c} onClick={() => onOpenCandidate(dayRuns, c.symbol)} />
-                  <span className="text-dim">
-                    {c.proposed_action ? `PM: ${c.proposed_action}` : "PM: no proposal"}
-                    {c.risk_modified ? " · risk-modified" : ""}
-                    {c.executed
-                      ? ` · executed${c.trade_action ? ` (${c.trade_action})` : ""}`
-                      : c.reached_proposed_order
-                      ? " · not executed"
-                      : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <RunCandidateList funnel={funnel} onOpenCandidate={(symbol) => openCandidateDetail(run.run_id, symbol)} />
           )}
 
           {funnel.pm_reasoning?.portfolio_view && (
@@ -423,6 +716,8 @@ export function JournalPanel({
     return map;
   }, [sortedRuns, funnels]);
 
+  const notableCandidates = useMemo(() => collectNotableCandidates(sortedRuns, funnels), [sortedRuns, funnels]);
+
   const anyHardBlock = sortedRuns.some((r) => funnels[r.run_id]?.hard_risk_block);
 
   // Prev/next navigation over `dates` — computed via a lexically sorted
@@ -522,13 +817,33 @@ export function JournalPanel({
             </div>
           )}
 
-          <EvidenceSection title="Morning thesis / regime">
+          <EvidenceSection title="Market thesis / morning regime">
             {[
               <MorningRegimeCard
                 key="morning"
                 funnel={firstFunnel}
                 loading={funnelsLoading}
                 runsExist={sortedRuns.length > 0}
+              />,
+            ]}
+          </EvidenceSection>
+
+          {/* Watchlist/candidates ahead of the per-run decision detail below
+              — same day-narrative order as docs/OUTCOME.md's Journal Day
+              section (thesis, then watchlist, then decisions), rather than
+              leaving the day's full candidate set to appear only after
+              every run has already been read in detail. */}
+          <EvidenceSection title="Watchlist / candidates considered" emptyText="No candidates recorded for this day.">
+            {day.candidates.length ? [<DayCandidateList key="chips" symbols={day.candidates} info={candidateInfo} dayRuns={day.runs} onOpenCandidate={onOpenCandidate} />] : []}
+          </EvidenceSection>
+
+          <EvidenceSection title="Agent analysis &amp; disagreements">
+            {[
+              <DayAgentAnalysis
+                key="agent-analysis"
+                candidates={notableCandidates}
+                dayRuns={day.runs}
+                onOpenCandidate={onOpenCandidate}
               />,
             ]}
           </EvidenceSection>
@@ -540,9 +855,7 @@ export function JournalPanel({
                 run={r}
                 funnel={funnels[r.run_id]}
                 funnelLoading={funnelsLoading}
-                dayRuns={day.runs}
                 dayTrades={day.trades}
-                onOpenCandidate={onOpenCandidate}
                 onOpenRun={openRunDetail}
               />
             ))}
@@ -583,24 +896,7 @@ export function JournalPanel({
               : []}
           </EvidenceSection>
 
-          <EvidenceSection title="Candidates considered" emptyText="No candidates recorded for this day.">
-            {day.candidates.length
-              ? [
-                  <div key="chips">
-                    {day.candidates.map((sym) => (
-                      <CandidateChip
-                        key={sym}
-                        symbol={sym}
-                        info={candidateInfo[sym]}
-                        onClick={() => onOpenCandidate(day.runs, sym)}
-                      />
-                    ))}
-                  </div>,
-                ]
-              : []}
-          </EvidenceSection>
-
-          <EvidenceSection title="Missed opportunities & evening reflection">
+          <EvidenceSection title="Daily result — missed opportunities, lessons &amp; tomorrow">
             {[<ReflectionCard key="r" reflection={day.reflection} />]}
           </EvidenceSection>
         </div>

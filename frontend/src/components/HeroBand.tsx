@@ -1,60 +1,65 @@
-import { SparkAreaChart } from "@tremor/react";
+import {
+  Badge,
+  Card,
+  CategoryBar,
+  Legend,
+  Metric,
+  ProgressBar,
+  SparkAreaChart,
+  Text,
+  Title,
+} from "@tremor/react";
 import { AccountResponse, PositionItem, RunFunnelResponse } from "../api/client";
 import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
-import { ArcGauge } from "./ui/ArcGauge";
+import { LevelBar } from "./ui/Meter";
 import { Pill } from "./ui/Pill";
-
-/* The cockpit's first-glance surface — WORK.md's questions 1 ("what do I
- * own / how much real risk is deployed") and 2 ("what does QAMC think the
- * market is doing") answered before any interaction, per the operator-
- * approved Concept C hero-band composition. Three blocks: equity/P&L +
- * sparkline, a real segmented-color-band risk gauge (ECharts) with a
- * long/hedge/cash legend, and the latest run's market-regime read. */
 
 function equityHistorySeries(account: AccountResponse | null): { date: string; equity: number }[] {
   if (!account?.history?.length) return [];
-  // API returns history newest-first; charts read left-to-right chronological.
   return [...account.history]
     .reverse()
     .map((p) => ({ date: p.date, equity: p.equity_close ?? p.total_value ?? 0 }))
     .filter((p) => p.equity > 0);
 }
 
-function RegimeBadge({ funnel }: { funnel: RunFunnelResponse | null }) {
+function RegimeCard({ funnel }: { funnel: RunFunnelResponse | null }) {
   const macro = funnel?.macro_context;
-  if (!macro || !macro.regime) {
+  if (!macro?.regime) {
     return (
-      <div className="flex flex-col gap-1">
-        <div className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold">Market regime</div>
-        <div className="text-dim text-[0.8rem]">No macro regime evidence for the latest run.</div>
-      </div>
+      <Card className="!bg-panel !ring-border h-full">
+        <Text className="uppercase tracking-wide">Market regime</Text>
+        <Title className="mt-2 text-ink">Awaiting macro evidence</Title>
+        <Text className="mt-2 leading-relaxed">This reads once a run&rsquo;s macro specialist reports.</Text>
+      </Card>
     );
   }
-  const confidencePct: Record<string, number> = { high: 92, medium: 58, low: 28 };
-  const outlookTone = macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim";
+
+  const outlookTone =
+    macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim";
+  const confidenceTone = macro.confidence === "high" ? "pos" : macro.confidence === "medium" ? "warn" : "dim";
+
   return (
-    <div className="flex flex-col gap-1.5 h-full">
-      <div className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold">Market regime</div>
-      <div className="flex items-center gap-2 flex-wrap">
+    <Card decoration="top" decorationColor="violet" className="!bg-panel !ring-border h-full">
+      <Text className="uppercase tracking-wide">Market regime</Text>
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
         <Pill text={macro.regime} />
-        <span className={`text-[0.82rem] font-bold ${outlookTone}`}>{(macro.equity_outlook || "unknown").toUpperCase()}</span>
+        <span className={`text-sm font-bold tracking-wide ${outlookTone}`}>
+          {(macro.equity_outlook || "unknown").toUpperCase()}
+        </span>
       </div>
       {macro.confidence && (
-        <div>
-          <div className="flex items-center justify-between text-[0.66rem] text-dim mb-0.5">
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between text-xs text-dim">
             <span>Confidence</span>
-            <span className="font-semibold text-ink">{macro.confidence.toUpperCase()}</span>
+            <Badge color={macro.confidence === "high" ? "emerald" : macro.confidence === "medium" ? "amber" : "slate"} size="xs">
+              {macro.confidence}
+            </Badge>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-panel-inset overflow-hidden border border-border/60">
-            <div
-              className="h-full rounded-full bg-agent"
-              style={{ width: `${confidencePct[macro.confidence] ?? 0}%` }}
-            />
-          </div>
+          <LevelBar level={macro.confidence} tone={confidenceTone} />
         </div>
       )}
-      {macro.summary && <p className="text-[0.75rem] text-dim leading-snug line-clamp-2">{macro.summary}</p>}
-    </div>
+      {macro.summary && <Text className="mt-3 leading-snug line-clamp-2">{macro.summary}</Text>}
+    </Card>
   );
 }
 
@@ -71,99 +76,101 @@ export function HeroBand({
 }) {
   if (!account) {
     return (
-      <div className="mx-3 mt-3 rounded-xl border border-border bg-panel px-4 py-6 text-center text-dim text-[0.85rem]">
-        {accountError ? `Account unavailable: ${accountError}` : "Loading account…"}
-      </div>
+      <Card className="mx-3 mt-3 !bg-panel !ring-border text-center">
+        <Text>{accountError ? `Account unavailable: ${accountError}` : "Loading account…"}</Text>
+      </Card>
     );
   }
 
-  const unrealized = positions.filter((p) => !p.is_cash_equivalent).reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
-  const liq = account.liquidity;
+  const unrealized = positions
+    .filter((p) => !p.is_cash_equivalent)
+    .reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0);
+  const liquidity = account.liquidity;
   const total = account.portfolio_value || 0;
-  const longMv = positions.filter((p) => p.direction === "long").reduce((s, p) => s + (p.market_value || 0), 0);
-  const hedgeMv = positions.filter((p) => p.direction === "bearish_hedge").reduce((s, p) => s + (p.market_value || 0), 0);
+  const longMv = positions.filter((p) => p.direction === "long").reduce((sum, p) => sum + (p.market_value || 0), 0);
+  const hedgeMv = positions
+    .filter((p) => p.direction === "bearish_hedge")
+    .reduce((sum, p) => sum + (p.market_value || 0), 0);
   const cashMv = Math.max(total - longMv - hedgeMv, 0);
   const riskDeployedPct = total > 0 ? ((longMv + hedgeMv) / total) * 100 : 0;
+  const longPct = total > 0 ? (longMv / total) * 100 : 0;
+  const hedgePct = total > 0 ? (hedgeMv / total) * 100 : 0;
+  const cashPct = total > 0 ? (cashMv / total) * 100 : 100;
+  const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
   const history = equityHistorySeries(account);
-  const stale = Boolean(accountError);
 
   return (
-    <div
-      className={`mx-3 mt-3 rounded-xl border bg-panel px-4 py-3.5 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-4 ${
-        stale ? "border-warn/50" : "border-border"
-      }`}
-    >
-      {/* Equity / P&L */}
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="text-[0.62rem] text-dim uppercase tracking-wide font-semibold">Equity</div>
-        <div className="hero-num">{fmtMoney(account.portfolio_value)}</div>
-        <div className="flex items-center gap-3 flex-wrap text-[0.8rem]">
-          <span className={`font-mono num font-semibold ${pnlClass(account.daily_pnl)}`}>
+    <div className="mx-3 mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
+      <Card
+        decoration="top"
+        decorationColor={accountError ? "amber" : "cyan"}
+        className="!bg-panel !ring-border h-full"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <Text className="uppercase tracking-wide">Net liquidation value</Text>
+            <Metric className="mt-1 font-mono !text-3xl tabular-nums text-ink">{fmtMoney(account.portfolio_value)}</Metric>
+          </div>
+          {accountError && <Badge color="amber">stale</Badge>}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 text-sm">
+          <span className={`font-mono font-semibold tabular-nums ${pnlClass(account.daily_pnl)}`}>
             {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
           </span>
-          <span className={`font-mono num ${pnlClass(unrealized)}`}>{fmtMoney(unrealized)} unrealized</span>
+          <span className={`font-mono tabular-nums ${pnlClass(unrealized)}`}>{fmtMoney(unrealized)} unrealized</span>
         </div>
         {history.length > 1 && (
-          <div className="mt-1">
-            <SparkAreaChart
-              data={history}
-              index="date"
-              categories={["equity"]}
-              colors={[pnlClass(account.daily_pnl).includes("neg") ? "rose" : "emerald"]}
-              className="h-10 w-full"
-              showGradient
-            />
-          </div>
+          <SparkAreaChart
+            data={history}
+            index="date"
+            categories={["equity"]}
+            colors={["cyan"]}
+            className="mt-2 h-9"
+            showGradient
+          />
         )}
-        <div className="flex items-center gap-3 flex-wrap text-[0.72rem] text-dim mt-0.5">
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-dim">
           <span>
-            Deployable <span className="text-ink font-semibold font-mono num">{fmtMoneyCompact(liq?.deployable_cash)}</span>
+            Deployable <strong className="font-mono text-ink">{fmtMoneyCompact(liquidity?.deployable_cash)}</strong>
           </span>
           <span>
             Sweep parked{" "}
-            <span className="text-ink font-semibold font-mono num">
-              {liq?.sweep_enabled ? `${fmtMoneyCompact(liq.sweep_parked_value)} ${liq.sweep_symbol || ""}` : "disabled"}
-            </span>
+            <strong className="font-mono text-ink">
+              {liquidity?.sweep_enabled
+                ? `${fmtMoneyCompact(liquidity.sweep_parked_value)} ${liquidity.sweep_symbol || ""}`
+                : "disabled"}
+            </strong>
           </span>
         </div>
-      </div>
+      </Card>
 
-      {/* Risk exposure gauge */}
-      <div className="flex flex-col items-center border-l border-border/70 pl-4 lg:pl-4 -ml-1">
-        <ArcGauge
-          value={riskDeployedPct}
-          label="Risk deployed"
-          valueLabel={`${riskDeployedPct.toFixed(0)}%`}
-          bands={[
-            { upTo: 40, tone: "pos" },
-            { upTo: 75, tone: "warn" },
-            { upTo: 100, tone: "neg" },
-          ]}
-          height={112}
+      <Card decoration="top" decorationColor="cyan" className="!bg-panel !ring-border h-full">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <Text className="uppercase tracking-wide">Portfolio exposure</Text>
+            <Title className="mt-1 font-mono !text-2xl text-ink">{riskDeployedPct.toFixed(0)}% deployed</Title>
+          </div>
+          {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
+        </div>
+        <ProgressBar value={riskDeployedPct} color="cyan" className="mt-3" />
+        <CategoryBar
+          values={[longPct, hedgePct, cashPct]}
+          colors={["emerald", "fuchsia", "slate"]}
+          showLabels={false}
+          className="mt-4"
         />
-        <div className="flex items-center gap-3 flex-wrap justify-center text-[0.68rem] -mt-2">
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-pos" />
-            <span className="text-dim">Long</span>
-            <span className="font-mono num font-semibold">{fmtMoneyCompact(longMv)}</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-hedge" />
-            <span className="text-dim">Hedge</span>
-            <span className="font-mono num font-semibold">{fmtMoneyCompact(hedgeMv)}</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-faint" />
-            <span className="text-dim">Cash</span>
-            <span className="font-mono num font-semibold">{fmtMoneyCompact(cashMv)}</span>
-          </span>
-        </div>
-      </div>
+        <Legend
+          categories={[
+            `Long ${fmtMoneyCompact(longMv)}`,
+            `Hedge ${fmtMoneyCompact(hedgeMv)}`,
+            `Cash ${fmtMoneyCompact(cashMv)}`,
+          ]}
+          colors={["emerald", "fuchsia", "slate"]}
+          className="mt-2"
+        />
+      </Card>
 
-      {/* Regime */}
-      <div className="border-l border-border/70 pl-4 lg:pl-4">
-        <RegimeBadge funnel={funnel} />
-      </div>
+      <RegimeCard funnel={funnel} />
     </div>
   );
 }
