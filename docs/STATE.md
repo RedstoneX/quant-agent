@@ -30,18 +30,16 @@ The production checkout is intentionally detached at that SHA and carries one in
 
 That intraday enablement uses the existing `quant-agent-intra_check.timer` / service; no new daemon or timer was introduced.
 
-## Current `main`
+## Accepted merged read-side code
 
-Current `main` is:
-
-`c0edf5f24ee5771d37587aa9188f28857c6fee57`
-
-This is ahead of production and now contains two accepted read-side/observability improvements that are **merged but not yet deployed to production**:
+`main` now includes two accepted read-side/observability improvements that are **merged but not yet deployed to production**:
 
 1. `e113f5c6255925f1a93f0f8c242dcd5facbaf41a` — enriched Telegram trader decision feed.
-2. PR #60 — integrated Mission Control professional cockpit + data-truth/explainability work, merged at `c0edf5f24ee5771d37587aa9188f28857c6fee57`.
+2. PR #60 — integrated Mission Control professional cockpit + data-truth/explainability work, whose code merge commit is `c0edf5f24ee5771d37587aa9188f28857c6fee57`.
 
-Production therefore must not be described as already running the PR #60 cockpit or `/quotes` endpoint until a governed deployment records a new production pin.
+Subsequent documentation-only commits may advance `main`; the deployment target must therefore be pinned explicitly and reviewed at deployment time rather than inferred from this file.
+
+Production must not be described as already running the PR #60 cockpit or `/quotes` endpoint until a governed deployment records a new production pin.
 
 ## Mission Control integrated state — merged, deployment pending
 
@@ -119,6 +117,6 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 Two workstreams continue without being conflated:
 
 1. **Core recovery:** continue natural Alpaca Paper validation; do not force activity.
-2. **Merged read-side improvements:** current `main` at `c0edf5f` is ready for a separate governed production-convergence task covering the accepted Telegram enrichment and PR #60 Mission Control changes. Deployment must preserve account isolation, the intraday enablement override, existing timers, read-only Mission Control semantics and the exact reviewed target SHA.
+2. **Merged read-side improvements:** the accepted Telegram enrichment and PR #60 Mission Control code are ready for a separate governed production-convergence task. That task must first resolve and record the exact current `main` target SHA, then preserve account isolation, the intraday enablement override, existing timers and read-only Mission Control semantics.
 
 See `docs/WORK.md` for the current authorized next work.
