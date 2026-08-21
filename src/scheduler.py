@@ -45,7 +45,7 @@ class TradingScheduler:
         even when the scheduler itself is set to ET, and the user may
         be running --mode live from any host timezone.
         """
-        lo_min, hi_min = SESSION_WINDOWS["intra_check"]
+        lo_min, hi_min = SESSION_WINDOWS["intra_check"]  # minutes-since-midnight
         triggers: list[CronTrigger] = []
         for tick_min in range(lo_min, hi_min + 1, 30):
             triggers.append(
