@@ -16,79 +16,85 @@ This file records what is accepted and true **now**. Git history preserves imple
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
 - Private operator access uses Tailscale. Canonical VPS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
 
-## Production position
+## Production position — verified 2026-08-24
 
-The last governed production record pins production at:
+Observed VPS production checkout:
 
-`d14e28dfc63ca6e4da920229b0ab5ba0f33b93df`
+`2b3faaf69c0b842a08f991a9ca517a3989bdaf93`
 
-This is the deployed PR #56 trading-utility recovery, accepted as machinery after the governed Gate A→E rollout on 2026-08-20.
+This is the PR #63 merge commit and contains the accepted runtime payload through:
 
-That governed production checkout carries one intended local configuration delta:
+- PR #56 trading-utility recovery;
+- enriched Telegram trader decision feed (`e113f5c`);
+- PR #60 professional Mission Control + data-truth/run-history/explainability work;
+- PR #63 session-specific executions and intraday chart functionality.
+
+The production checkout is owned by `qamc` and carries exactly one intended tracked local configuration delta:
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
-That intraday enablement uses the existing `quant-agent-intra_check.timer` / service; no new daemon or timer was introduced.
+A governed preflight on 2026-08-24 verified:
 
-**Deployment preflight must verify the actual VPS checkout, working tree, services and timers before relying on this recorded pin.** GitHub governance records the last accepted production state; it does not substitute for observing the current VPS.
+- `ubuntu` sudo authority works;
+- `qamc` / `dev` / `ubuntu` account separation remains intact;
+- production tracked files are clean except the governed `config/settings.yaml` override;
+- all seven expected qamc timers remain enabled;
+- `quant-agent-api.service` is active;
+- `/health` reports healthy, broker reachable and `paper=true`;
+- OneCLI remains private on `127.0.0.1:10254` / `127.0.0.1:10255`;
+- the actual production SHA is `2b3faaf...`.
 
-## Accepted merged read-side code
+Comparison against the then-current GitHub `main` showed **no runtime/code/config delta**: only `docs/STATE.md` and `docs/WORK.md` differed. Therefore no application deployment was required to achieve convergence; production was already running the accepted PR #63 runtime payload.
 
-`main` includes three accepted read-side/observability improvements that are **merged but not yet recorded as deployed to production**:
+## Production acceptance — verified 2026-08-24
 
-1. `e113f5c6255925f1a93f0f8c242dcd5facbaf41a` — enriched Telegram trader decision feed.
-2. PR #60 — integrated Mission Control professional cockpit + data-truth/explainability work, whose code merge commit is `c0edf5f24ee5771d37587aa9188f28857c6fee57`.
-3. PR #63 — session-specific executions plus live/intraday chart functionality, merged at `2b3faaf69c0b842a08f991a9ca517a3989bdaf93`.
+A final read-only acceptance pass against actual production completed with **0 failures**:
 
-PR #63 adds read-only session execution rows, BUY/SELL chart markers, explicit live-price versus previous-close presentation, `5m Today` / `15m` / `1h` / `1D` chart timeframes, and timestamp-preserving intraday OHLCV reads through the existing Alpaca market-data client. It does not change trading decisions, risk semantics, order submission/cancellation, timers, credentials or live-trading authorization.
+- `/cockpit` final HTTP 200;
+- `/ui` final HTTP 200;
+- `/quotes?symbols=SPY` works;
+- `/prices/SPY` works for `5m`, `15m`, `1h`, `1d`;
+- session execution read path works;
+- POST / PUT / PATCH / DELETE are rejected by Mission Control;
+- Telegram credentials are present, unmuted and the notifier is enabled under the production `qamc` environment (`--dry-run`, so no test message was sent).
 
-The deployment target must always be resolved explicitly from current `main` at deployment time rather than inferred from this file, because subsequent governance/documentation commits can advance `main` without changing the accepted code payload.
+This closes the read-side / Telegram production-convergence task.
 
-Production must not be described as already running PR #60, PR #63, `/quotes`, intraday chart timeframes, or the enriched Telegram feed until governed production convergence records and verifies a new production pin.
+## Mission Control integrated production state
 
-## Mission Control integrated state — merged, deployment pending
-
-PR #60 established the accepted professional/read-side correctness baseline and PR #63 extends it with session execution/chart capability.
-
-Accepted behavior includes:
+Accepted and production-present behavior includes:
 
 - professional cockpit composition using Tremor/TanStack where ordinary UI primitives are needed;
 - TradingView Lightweight Charts for price candles/volume and BUY/SELL markers;
-- Dockview retained for the desktop support workspace;
-- QAMC-specific decision-chain topology retained as the justified custom visualization;
-- current-session quote context exposed separately from historical daily bars and broker position marks through GET `/quotes`;
+- Dockview for the desktop support workspace;
+- QAMC-specific decision-chain topology as the justified custom visualization;
+- current-session quote context exposed separately from historical bars and broker position marks through GET `/quotes`;
 - historical daily candles are never presented as a live/current quote;
 - day/session selection can pin an earlier run without a later poll silently replacing it;
-- automatic mode truthfully follows the best primary run and is labeled `AUTO / PRIMARY`, not literal latest;
+- automatic mode truthfully follows the best primary run and is labeled `AUTO / PRIMARY`;
 - Candidate / Decision Room / chart context remains synchronized to the same run;
-- candidate outcomes surface stopping stage, persisted execution-skip reason when present, and explicit “reason not recorded” wording when candidate-specific evidence is absent;
+- candidate outcomes surface stopping stage, persisted execution-skip reason when present, and explicit reason-not-recorded wording when candidate-specific evidence is absent;
 - run-scoped PM/Risk evidence is not attributed to a candidate that never reached that stage;
 - Journal presents a decision ledger and exact-run candidate navigation;
 - selected-session execution rows can drive chart context;
-- chart controls support `5m Today`, `15m`, `1h` and `1D` using read-only market data;
+- chart controls support `5m Today`, `15m`, `1h`, `1D` using read-only market data;
 - intraday OHLCV timestamps are preserved so execution markers align to the relevant chart candle;
 - live price, previous close and historical bars remain semantically distinct;
+- stale/degraded read-side data is identified rather than silently represented as current;
 - `ArcGauge`, the handmade `RunTimeline`, and the old ECharts candidate funnel are removed.
 
-PR #60 integration verification reported:
-
-- backend/API correctness + GET-only suite: **149 passed**;
-- frontend: **50 passed**;
-- production TypeScript/Vite build: passed;
-- branch preview served cockpit/assets successfully and rejected write methods with 405.
-
-PR #63 verification reported:
+PR #63 verification before merge reported:
 
 - backend: **2,030 passed**;
 - frontend: **55 passed**;
 - production frontend build: passed;
 - desktop and iPad browser verification completed with zero console/page errors against the branch verification setup.
 
-These are pre-deployment verification results, not production-deployment proof.
+The 2026-08-24 production acceptance above separately verifies the actual production read-side surface.
 
 ## Trading-utility recovery — natural validation still required
 
-PR #56 fixed the evidenced mechanical blockers between opportunity discovery and execution and is deployed/verified as machinery according to the last governed production record.
+The evidenced mechanical blockers between opportunity discovery and execution have been corrected and the accepted machinery is present in production.
 
 That does **not** yet prove the recovery works as a complete trading system. Acceptance still requires natural Alpaca Paper sessions demonstrating the real chain:
 
@@ -98,7 +104,7 @@ No trade may be forced or manufactured to create evidence.
 
 ## Intraday opportunity discovery
 
-The last governed production record has intraday discovery enabled by the one governed local config override.
+Production intraday discovery is enabled by the one governed local config override.
 
 Accepted live configuration:
 
@@ -130,18 +136,11 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 
 ## Handoff
 
-Two workstreams continue without being conflated:
+Production convergence is complete. The primary remaining work is **natural Alpaca Paper validation of the complete trading chain**, without forcing activity or weakening safety.
 
-1. **Core recovery:** continue natural Alpaca Paper validation; do not force activity.
-2. **Merged read-side improvements:** the accepted Telegram enrichment, PR #60 Mission Control/data-correctness work and PR #63 session-execution/intraday-chart work are ready for a single governed production-convergence task.
+Two lower-priority issues remain outside the current gate unless they materially distort validation:
 
-That production-convergence task must:
-
-- first verify the actual VPS production SHA, working tree, services, timers and intentional local configuration;
-- resolve the exact current `main` deployment target and inspect the full delta from actual production;
-- preserve `intraday_scan.enabled: true`, existing account isolation, OneCLI credential handling, current timers and read-only Mission Control semantics;
-- deploy only after the candidate target is understood and preflight passes;
-- verify production behavior after cutover; and
-- update `docs/STATE.md` / `docs/WORK.md` with the actual deployed result.
+- news-narrative factual drift;
+- `actual_provider` attribution oddity.
 
 See `docs/WORK.md` for the current authorized next work.
