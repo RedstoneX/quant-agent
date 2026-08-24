@@ -1,17 +1,18 @@
 # QAMC Current Work
 
-Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | MISSION CONTROL + TELEGRAM PRODUCTION CONVERGENCE PENDING**
+Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | READ-SIDE + TELEGRAM PRODUCTION CONVERGENCE PENDING**
 
 ## Current integration truth
 
-- Trading-utility recovery PR #56 is deployed to production at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` and accepted as machinery.
-- Production remains intentionally detached at that exact SHA with one governed local delta: `intraday_scan.enabled: true`.
-- `main` now includes:
+- The last governed production record pins QAMC at `d14e28dfc63ca6e4da920229b0ab5ba0f33b93df` with one intended local delta: `intraday_scan.enabled: true`.
+- Deployment preflight must verify the actual VPS checkout, working tree, services and timers before relying on that recorded pin.
+- `main` includes the already-accepted:
   - `e113f5c` — enriched Telegram trader decision feed;
   - PR #60 — integrated professional Mission Control cockpit plus data truth / run-history / explainability, code-merged at `c0edf5f24ee5771d37587aa9188f28857c6fee57`;
-  - subsequent documentation-only reconciliation commits.
+  - PR #63 — session-specific executions, BUY/SELL chart markers, live-price distinction and read-only `5m Today` / `15m` / `1h` / `1D` chart data, merged at `2b3faaf69c0b842a08f991a9ca517a3989bdaf93`;
+  - subsequent intentional governance/documentation reconciliation only unless current Git history proves otherwise at deployment time.
 - PR #59 is superseded by PR #60 and must not be deployed separately.
-- The read-side improvements are merged but **not yet deployed to production**.
+- The Telegram / PR #60 / PR #63 read-side improvements are merged but **not yet recorded as deployed to production**.
 
 ## Product / architecture principle
 
@@ -35,17 +36,26 @@ When QAMC does not trade, the reason must be specific and defensible.
 
 ## Next authorized work
 
-### 1. Resolve the exact deployment target
+### 1. Production preflight and exact target resolution
 
-Before any production cutover, read current `main` and record the exact target SHA. Do not hard-code a self-referential “current main” SHA into governance docs because documentation merges themselves advance `main`.
+Before any production cutover:
+
+- verify the actual VPS production SHA, working tree and intended local changes;
+- verify the existing `qamc` user services/timers and current healthy baseline;
+- verify Alpaca Paper, OneCLI and account-isolation boundaries remain intact;
+- read current `main` and record the exact candidate target SHA;
+- inspect the complete delta from actual production to that candidate target.
+
+Do not hard-code a self-referential “current main” SHA into governance docs because documentation merges themselves advance `main`.
 
 The deployment target must contain the already-accepted:
 
 - Telegram enrichment (`e113f5c`);
-- PR #60 Mission Control integration (`c0edf5f` code merge);
-- only intentional subsequent documentation changes.
+- PR #60 Mission Control/data-correctness integration (`c0edf5f` code merge);
+- PR #63 session-execution/intraday-chart integration (`2b3faaf` merge);
+- only intentional later changes confirmed by current Git history.
 
-Verify the exact production delta from `d14e28d` to that target before cutover.
+If current `main` contains a later material code change not represented here, reconcile it before deployment rather than assuming this file is exhaustive.
 
 ### 2. Governed production convergence
 
@@ -55,7 +65,7 @@ Preserve the authorized local production override:
 
 `intraday_scan.enabled: true`
 
-Do not change the seven existing `qamc` user timers.
+Preserve the existing `qamc` user timers unless current repository authority explicitly records an accepted change.
 
 Confirm no trading-critical semantics, account boundaries or credential architecture changed beyond already accepted code.
 
@@ -64,20 +74,40 @@ Confirm no trading-critical semantics, account boundaries or credential architec
 After deployment, verify at minimum:
 
 - production pin equals the exact reviewed target SHA;
+- production working tree contains only intentional governed local configuration;
 - `/health` is healthy and reports `paper=true`;
 - `/cockpit` and `/ui` return 200;
 - `/quotes` is available and read-only;
+- `/prices/{symbol}` supports the accepted `5m` / `15m` / `1h` / `1d` read-only timeframes;
+- session-specific execution rows load against real production read-side data;
+- BUY/SELL execution markers align with intraday chart timestamps;
 - Mission Control rejects POST/PUT/PATCH/DELETE writes;
 - account/position/price views remain truthful and do not present historical daily close as current quote;
+- live price and previous close remain explicitly distinct;
 - Today Sessions / `AUTO / PRIMARY` behavior loads against real production read-side data;
+- selected/pinned historical run context cannot be silently replaced by later polling;
+- Candidate / Chart / Decision Room remain synchronized to the selected run;
+- persisted execution-skip reason/detail survive backend → API → frontend;
+- Journal decision ledger/history remains discoverable and exact-run navigation works;
+- stale/degraded read-side data is explicitly identified rather than silently shown as current;
 - Telegram output still sends through the accepted OneCLI path;
-- existing timers remain active/unchanged;
+- existing timers remain active/correct;
 - `dev` / `qamc` / `ubuntu` account boundaries remain intact;
-- no secret material appears in logs or repository state.
+- no secret material appears in logs or repository state;
+- no trading-critical regression is evident.
 
-If the private browser is available to the operator after deployment, perform the missing combined visual pass at desktop and iPad widths. This is a product verification item, not permission to expose the preview publicly.
+Where private operator/browser access is available, perform a real desktop and iPad/tablet visual pass against production. Do not expose the preview or production publicly merely to enable browser testing.
 
-### 4. Continue natural trading validation
+### 4. Governance closeout
+
+After successful production convergence:
+
+- update `docs/STATE.md` with the actual deployed SHA and verified production state;
+- update `docs/WORK.md` to remove completed convergence work and leave only genuine remaining work;
+- use the normal branch/PR workflow for documentation changes;
+- do not create additional status/handoff documents.
+
+### 5. Continue natural trading validation
 
 Do not stop or manufacture the Alpaca Paper soak for the dashboard deployment.
 
@@ -91,9 +121,11 @@ Natural sessions still need to demonstrate:
 - funding/execution failures are visible rather than mistaken for investment judgment;
 - outcomes and missed opportunities can be measured without hindsight tuning.
 
-## Mission Control acceptance now carried by `main`
+## Mission Control acceptance carried by `main`
 
-The merged PR #60 establishes the accepted read-side product direction:
+The merged PR #60 establishes the accepted read-side product/correctness direction and PR #63 extends its chart/execution observability.
+
+Accepted behavior includes:
 
 - professional ordinary UI primitives via Tremor/TanStack;
 - Lightweight Charts for market-price visualization and trade markers;
@@ -105,9 +137,29 @@ The merged PR #60 establishes the accepted read-side product direction:
 - candidate-correct PM/Risk attribution;
 - persisted execution-skip explanations and explicit reason-not-recorded states;
 - Journal decision ledger and exact-run navigation;
+- session-specific execution rows with click-to-chart behavior;
+- `5m Today`, `15m`, `1h`, `1D` read-only chart timeframes with timestamp-preserving intraday OHLCV;
 - no ArcGauge, handmade RunTimeline or old ECharts candidate funnel.
 
 Do not reopen those resolved product decisions without new evidence.
+
+## Verification already recorded for merged read-side work
+
+PR #60 integration verification reported:
+
+- backend/API correctness + GET-only suite: **149 passed**;
+- frontend: **50 passed**;
+- production TypeScript/Vite build: passed;
+- read-only branch preview returned 200 for cockpit/assets and 405 for write methods.
+
+PR #63 verification reported:
+
+- backend: **2,030 passed**;
+- frontend: **55 passed**;
+- production frontend build: passed;
+- desktop/iPad browser verification completed with zero console/page errors against the branch verification setup.
+
+These results justify convergence review; they are not production-deployment proof.
 
 ## Remaining uncertainty
 
@@ -117,8 +169,6 @@ Two lower-priority core issues remain outside the current gate unless they mater
 
 - news-narrative factual drift;
 - `actual_provider` attribution oddity.
-
-The combined Mission Control branch lacked a fresh automated browser pass because the available browser environment could not reach the private Tailscale preview. Code/API/unit/build verification passed; post-deploy operator-side browser inspection should close that visual evidence gap.
 
 ## Hard boundaries
 
