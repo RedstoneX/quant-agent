@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **DASHBOARD TIMEFRAME REGRESSION AUTHORIZED | CORE RECOVERY IN NATURAL PAPER VALIDATION**
+Status: **DASHBOARD TIMEFRAME REGRESSION AUTHORIZED | PRIVATE DEV HOT-RELOAD AUTHORIZED | CORE RECOVERY IN NATURAL PAPER VALIDATION**
 
 ## Current integration truth
 
@@ -37,6 +37,28 @@ When QAMC does not trade, the reason must be specific and defensible.
 
 ## Next authorized work
 
+### 0. Standing private DEV visual-review workflow
+
+The operator explicitly authorizes a **temporary, development-only Vite hot-reload server** for dashboard work so visual changes can be reviewed immediately while Claude works.
+
+This is the preferred dashboard development loop when practical:
+
+**`dev` checkout/worktree → Vite hot reload → private Tailscale browser view → visual iteration → branch/PR review → separate governed production rollout.**
+
+Boundaries:
+
+- run only as `dev`, from the development checkout or its task worktree;
+- use the repository's existing React/Vite frontend and existing Vite API proxy to the read-only Mission Control API on `127.0.0.1:8800`;
+- bind the Vite server only to the VPS Tailscale interface/address, never `0.0.0.0`, the public VPS interface, or another public listener;
+- session/development process only: **no systemd unit, daemon, boot persistence, new proxy, new service architecture, or production dependency**;
+- do not copy production credentials into the frontend or expose OneCLI;
+- do not add broker-write controls or routes; the existing Mission Control API remains read-only;
+- production under `qamc` remains untouched while DEV work is being reviewed;
+- Claude may start/restart/stop this temporary DEV preview autonomously during an authorized dashboard task and report the private Tailscale URL to the operator;
+- `branch_preview.py` remains available for deterministic built-artifact verification, but is **not required instead of hot reload** during normal visual iteration. Use it when a static-build acceptance check is useful.
+
+This authorization is specifically intended to remove repeated operator friction. Claude does not need to ask again whether it may run the temporary private Vite preview while working on an already-authorized dashboard task, provided these boundaries are preserved.
+
 ### 1. Fix the production chart-timeframe regression
 
 This is an **implementation-authorized bounded dashboard defect** under `/qamc-build`.
@@ -51,6 +73,7 @@ Desired verified outcome:
 Execution guidance:
 
 - begin from current `main` and current repository authority;
+- use the authorized private Vite hot-reload DEV workflow above for rapid visual diagnosis/iteration;
 - investigate why production exposes only `1D` despite accepted source and working API support;
 - distinguish source-code correctness from built/static asset, serving, CSS/layout, caching, responsive, or deployment-state problems using evidence rather than assumption;
 - make the **smallest justified fix**;
