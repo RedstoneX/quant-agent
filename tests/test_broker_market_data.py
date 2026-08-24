@@ -209,6 +209,22 @@ def test_get_intraday_chart_bars_preserves_timestamp_and_timeframe():
     assert str(request.timeframe) == "5Min"
 
 
+def test_get_intraday_chart_bars_requests_the_iex_feed():
+    """2026-08-24 regression: every intraday timeframe (5m/15m/1h) came back
+    empty for every symbol, at every lookback window, while daily bars
+    worked fine — because the request left `feed` unset, which resolves to
+    SIP server-side for sub-daily bars and this account's plan is only
+    entitled to IEX. Pins the fix so it can't silently regress back to the
+    same all-symbols, all-timeframes empty-bars failure."""
+    from alpaca.data.enums import DataFeed
+
+    b = _broker()
+    b._data_client = _bars_client(SimpleNamespace(data={"MRVL": [_bar(21)]}))
+    b.get_intraday_chart_bars("MRVL", timeframe="1h", lookback_days=5)
+    request = b._data_client.get_stock_bars.call_args.args[0]
+    assert request.feed == DataFeed.IEX
+
+
 def test_get_intraday_chart_bars_rejects_unknown_timeframe_without_a_call():
     b = _broker()
     b._data_client = _bars_client(SimpleNamespace(data={"MRVL": [_bar(21)]}))

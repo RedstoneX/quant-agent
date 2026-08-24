@@ -611,6 +611,7 @@ class AlpacaBroker:
                 self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
                 _install_http_timeout(self._data_client)
 
+            from alpaca.data.enums import DataFeed
             from alpaca.data.requests import StockBarsRequest
             from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
@@ -637,6 +638,14 @@ class AlpacaBroker:
                 timeframe=timeframe_value,
                 start=start,
                 end=now,
+                # This account's market-data plan is entitled to IEX, not
+                # SIP. Leaving feed unset resolves to SIP server-side for
+                # sub-daily bars and comes back with zero bars for every
+                # symbol/range — silently, since Alpaca doesn't error, it
+                # just returns nothing. Daily bars (get_bars, above) aren't
+                # feed-gated the same way, which is why only this intraday
+                # path needs it.
+                feed=DataFeed.IEX,
             )
             raw = self._data_client.get_stock_bars(req)
             if hasattr(raw, "data") and isinstance(raw.data, dict):
