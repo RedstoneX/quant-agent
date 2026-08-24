@@ -60,9 +60,20 @@ A final read-only acceptance pass against actual production completed with **0 f
 
 This closes the read-side / Telegram production-convergence task.
 
+## Current operator-observed dashboard discrepancy — 2026-08-24
+
+The operator reports that the actual production price chart currently exposes only the day / `1D` view; minute/hour timeframe controls are not visible or usable in the dashboard.
+
+This conflicts with two verified facts:
+
+- current accepted frontend source defines `5m Today`, `15m`, `1h`, and `1D` controls in `PriceChartPanel`;
+- production API acceptance verified working `5m`, `15m`, `1h`, and `1d` price endpoints.
+
+Treat this as a **bounded production UI/runtime regression or asset/rendering discrepancy**, not as authorization to redesign chart architecture or create another chart implementation. The accepted product expectation remains four usable timeframes. Until actual production browser verification proves otherwise, do not describe the multi-timeframe controls as production-visible.
+
 ## Mission Control integrated production state
 
-Accepted and production-present behavior includes:
+Accepted behavior includes:
 
 - professional cockpit composition using Tremor/TanStack where ordinary UI primitives are needed;
 - TradingView Lightweight Charts for price candles/volume and BUY/SELL markers;
@@ -77,7 +88,7 @@ Accepted and production-present behavior includes:
 - run-scoped PM/Risk evidence is not attributed to a candidate that never reached that stage;
 - Journal presents a decision ledger and exact-run candidate navigation;
 - selected-session execution rows can drive chart context;
-- chart controls support `5m Today`, `15m`, `1h`, `1D` using read-only market data;
+- accepted chart design supports `5m Today`, `15m`, `1h`, `1D` using read-only market data, subject to the current production-visibility regression above;
 - intraday OHLCV timestamps are preserved so execution markers align to the relevant chart candle;
 - live price, previous close and historical bars remain semantically distinct;
 - stale/degraded read-side data is identified rather than silently represented as current;
@@ -90,7 +101,7 @@ PR #63 verification before merge reported:
 - production frontend build: passed;
 - desktop and iPad browser verification completed with zero console/page errors against the branch verification setup.
 
-The 2026-08-24 production acceptance above separately verifies the actual production read-side surface.
+The 2026-08-24 production acceptance separately verified the actual production read-side API surface, but it did not prove that every accepted frontend control was visibly rendered in the operator's production browser.
 
 ## Trading-utility recovery — natural validation still required
 
@@ -136,7 +147,10 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 
 ## Handoff
 
-Production convergence is complete. The primary remaining work is **natural Alpaca Paper validation of the complete trading chain**, without forcing activity or weakening safety.
+Two bounded activities may proceed without being conflated:
+
+1. **Dashboard regression:** restore and verify the already-accepted `5m Today` / `15m` / `1h` / `1D` controls in the actual production UI using the smallest justified fix.
+2. **Core recovery:** continue natural Alpaca Paper validation of the complete trading chain without forcing activity or weakening safety.
 
 Two lower-priority issues remain outside the current gate unless they materially distort validation:
 

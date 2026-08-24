@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | PRODUCTION CONVERGENCE COMPLETE**
+Status: **DASHBOARD TIMEFRAME REGRESSION AUTHORIZED | CORE RECOVERY IN NATURAL PAPER VALIDATION**
 
 ## Current integration truth
 
@@ -11,8 +11,9 @@ Status: **CORE RECOVERY IN NATURAL PAPER VALIDATION | PRODUCTION CONVERGENCE COM
 - All seven expected qamc timers remain enabled.
 - OneCLI remains private and the production API remains private/read-only.
 - Alpaca Paper remains the only authorized execution environment.
-- A 2026-08-24 preflight showed no runtime/code/config delta between production and the then-current `main`; only `docs/STATE.md` and `docs/WORK.md` differed. No application deployment was required.
-- A 2026-08-24 production acceptance pass completed with 0 failures.
+- A 2026-08-24 production acceptance pass completed with 0 failures for the tested API/read-only surface.
+- Current frontend source already defines chart controls for `5m Today`, `15m`, `1h`, and `1D`, and production API calls for `5m`, `15m`, `1h`, `1d` all passed.
+- **New operator evidence:** the actual production dashboard currently exposes only the day / `1D` chart view. Minute/hour controls are not visible or usable. This is the current bounded dashboard defect.
 
 ## Product / architecture principle
 
@@ -36,7 +37,34 @@ When QAMC does not trade, the reason must be specific and defensible.
 
 ## Next authorized work
 
-### 1. Continue natural trading validation
+### 1. Fix the production chart-timeframe regression
+
+This is an **implementation-authorized bounded dashboard defect** under `/qamc-build`.
+
+Desired verified outcome:
+
+- the actual production chart visibly offers `5m Today`, `15m`, `1h`, and `1D`;
+- each control is usable and actually requests/renders its corresponding timeframe;
+- switching timeframes does not break live-price / previous-close truthfulness, BUY/SELL markers, selected symbol/session context, responsive layout, or read-only behavior;
+- desktop and iPad/tablet rendered verification proves the controls are visible and usable in the real UI, not merely present in source or passing unit tests.
+
+Execution guidance:
+
+- begin from current `main` and current repository authority;
+- investigate why production exposes only `1D` despite accepted source and working API support;
+- distinguish source-code correctness from built/static asset, serving, CSS/layout, caching, responsive, or deployment-state problems using evidence rather than assumption;
+- make the **smallest justified fix**;
+- use the existing Vite/React/Tremor/Lightweight-Charts stack and existing API; do not introduce a new chart library, frontend framework, service, proxy, or backend architecture;
+- preserve Mission Control as private/read-only and non-critical to trading;
+- do not alter trading/risk/execution semantics, timers, credentials, account boundaries, OneCLI, or the governed `intraday_scan.enabled: true` production override;
+- run the relevant frontend tests/build and any targeted backend/API checks needed to prove no contract regression;
+- perform rendered desktop and iPad/tablet verification per the frontend verification rules;
+- use routine engineering autonomy, helpers/worktrees if useful, and internal checkpoints without asking the operator for implementation choices;
+- at the external gate, push the implementation branch with evidence and STOP for ChatGPT/operator review. Do not merge the implementation PR from Claude Code.
+
+Do not expand this defect into a broad dashboard redesign. Other dashboard problems require separate evidence/authorization unless they are inseparable from this fix.
+
+### 2. Continue natural trading validation
 
 Observe normal Alpaca Paper sessions without manufacturing trades.
 
@@ -54,9 +82,9 @@ The required end-to-end evidence chain is:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
-### 2. Use Mission Control and Telegram as validation evidence
+### 3. Use Mission Control and Telegram as validation evidence
 
-Mission Control and Telegram are now production-converged observational surfaces. Use them to inspect and explain natural sessions rather than reopening resolved UI/deployment work without new evidence.
+Except for the explicitly authorized chart-timeframe regression above, treat Mission Control and Telegram as production-converged observational surfaces. Use them to inspect and explain natural sessions rather than reopening resolved UI work without new evidence.
 
 Production acceptance verified:
 
@@ -81,7 +109,7 @@ Use these surfaces to answer, from real evidence:
 - what happened after entry;
 - how the result compared with missed opportunities.
 
-### 3. Address lower-priority issues only if they distort validation
+### 4. Address lower-priority issues only if they distort validation
 
 Two known lower-priority issues remain outside the current gate:
 
@@ -90,7 +118,7 @@ Two known lower-priority issues remain outside the current gate:
 
 Do not interrupt natural trading validation for these unless evidence shows they materially damage decision quality, truthfulness or operator understanding.
 
-## Mission Control acceptance now present in production
+## Mission Control acceptance baseline
 
 Accepted behavior includes:
 
@@ -105,7 +133,7 @@ Accepted behavior includes:
 - persisted execution-skip explanations and explicit reason-not-recorded states;
 - Journal decision ledger and exact-run navigation;
 - session-specific execution rows with click-to-chart behavior;
-- `5m Today`, `15m`, `1h`, `1D` read-only chart timeframes with timestamp-preserving intraday OHLCV;
+- accepted `5m Today`, `15m`, `1h`, `1D` read-only chart timeframes with timestamp-preserving intraday OHLCV, subject to the currently authorized production-visibility fix;
 - stale/degraded read-side data identified rather than silently presented as current;
 - no ArcGauge, handmade RunTimeline or old ECharts candidate funnel.
 
@@ -129,15 +157,15 @@ Production preflight on 2026-08-24 additionally verified:
 - `quant-agent-api.service` active;
 - `/health` healthy, DB and broker reachable, `paper=true`;
 - OneCLI private listeners present;
-- no runtime/code/config deployment delta remained.
+- no runtime/code/config deployment delta remained at that checkpoint.
 
-Final production acceptance on 2026-08-24 completed with **0 failures**.
+Final production API/read-only acceptance on 2026-08-24 completed with **0 failures**. The later operator report that only `1D` is visible is new browser-level evidence and is not contradicted by those API checks.
 
 ## Remaining uncertainty
 
-The trading recovery is strongly supported by production forensics, deterministic tests and a converged read-side surface, but the complete opportunity→decision→execution→management chain still needs natural market validation.
+The trading recovery is strongly supported by production forensics, deterministic tests and a converged read-side API surface, but the complete opportunity→decision→execution→management chain still needs natural market validation.
 
-That is now the primary gate.
+Separately, the chart timeframe controls must now be proven visible and functional in the actual production browser before that UI capability is considered production-verified.
 
 ## Hard boundaries
 
