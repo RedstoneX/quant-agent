@@ -69,7 +69,7 @@ Build one coherent intelligence experience, not a sequence of small dashboard tw
 
 The operator should be able to open Mission Control and quickly understand what every research agent learned, where agents agree/disagree, what the Portfolio Manager decided, what AI Risk changed, what deterministic Python allowed/blocked, what actually happened, and what the system learned afterward — **without reading logs or raw JSON**.
 
-The primary experience should feel like an edited private trading publication: concise, specific, visually balanced, easy to scan, and useful even on quiet/no-trade days. Raw structured evidence remains secondary drill-down, never the main reading experience.
+The experience is for one private operator, not customers. It should feel like a sharp internal trading desk: useful, candid, visually interesting, occasionally dry or irreverent, and never corporate. **Say everything useful. Nothing merely decorative.**
 
 Cover the existing research/review seats where their output is relevant — Technical, News, Macro, Earnings, Portfolio Manager, AI Risk Manager, Position Reviewer, Evening Review and Meta-Reflection — and add one new **Smart Money Analyst** specialist seat.
 
@@ -87,9 +87,23 @@ The new seat may inform the Portfolio Manager through the existing specialist-ev
 
 #### Research/reading experience outcome
 
-Desktop should provide a strong default editorial reading order while letting the operator organize the material to suit how they read it. Reuse the already accepted Dockview interaction model so research panels can be moved, resized, tabbed, maximized and persist their layout. iPad should be deliberately composed for reading/navigation rather than a squeezed desktop workspace.
+Desktop should have a strong designed default composition, then let the operator rearrange it. Reuse Dockview so panels can move, resize, tab, maximize and persist their layout. iPad should be composed for reading, not squeezed from desktop.
 
-Favor useful editorial synthesis such as daily market thesis, what changed, agent findings, important evidence, disagreement, PM ruling, Risk response, proposed-versus-executed delta, position review, after-the-bell lessons and tomorrow watch. These are outcomes, not a mandatory screen taxonomy; Codex should choose the simplest coherent composition after inspecting the current product.
+The writing should be **compact but substantive**. Short sentences. Strong editing. No filler, repeated conclusions, forced jokes, fake quotes or generic AI throat-clearing. Wit should come from judgment, not punchlines. Quiet days should stay quiet.
+
+Use visual structure where it genuinely helps:
+- **signal stack** — quick agreement/conflict across relevant agents;
+- **what changed** — the new information since the prior useful read;
+- **tension** — the most important disagreement or contradiction;
+- **why now** — why the item deserves attention today;
+- **evidence strip** — compact factual chips instead of prose where possible;
+- **mini chart/sparkline** — only when it adds immediate market context;
+- **Read / PM / Risk** — clearly separated judgment, portfolio implication and risk consequence;
+- **dry annotation** — occasional, restrained, evidence-based commentary when the situation earns it.
+
+Do not force every device onto every card. The point is rhythm and hierarchy, not decoration. One important story may be visually dominant while supporting research is smaller. Balance matters more than symmetry.
+
+Favor useful editorial synthesis such as daily market thesis, agent findings, disagreement, Smart Money evidence, PM ruling, Risk response, proposed-versus-executed delta, position review, after-the-bell lessons and tomorrow watch. Raw structured evidence remains secondary drill-down.
 
 No fabricated confidence, quotes, history or facts. Sparse, stale, partial, no-news, no-trade and provider-error states must look intentional and remain truthful.
 
@@ -98,13 +112,15 @@ No fabricated confidence, quotes, history or facts. Sparse, stale, partial, no-n
 This tranche is complete when real stored QAMC data demonstrates that:
 
 1. An operator can read a coherent daily story without opening logs or JSON.
-2. Every relevant agent has a useful, visually balanced representation of its belief/findings, strongest evidence, meaningful changes and disagreement where authoritative data supports them.
-3. PM/Risk/execution are understandable as deltas: what PM wanted, what Risk changed, what deterministic code allowed/blocked, and what actually executed.
-4. Desktop research panels are genuinely movable/resizable/tabbable/maximizable with persisted layout and a sensible default workspace.
-5. iPad has a deliberately designed reading/navigation experience with no horizontal overflow or micro-text.
-6. Smart Money Analyst is source-backed, provenance/timestamp/lag-aware, attributable, separates timely from stale evidence, suppresses noise, and reaches PM only through the accepted specialist path.
-7. Empty, stale, partial and provider-error states are truthful and visually composed.
-8. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
+2. Every relevant agent has a useful, visually balanced representation of its findings, strongest evidence, meaningful changes and disagreement where supported.
+3. The writing is substantive without being verbose, visually scannable, and has a restrained private-desk personality rather than corporate/LLM prose.
+4. Signal stacks, change markers, tension, why-now context, evidence strips, mini-chart context, Read/PM/Risk separation and occasional dry annotations are used where they improve comprehension rather than mechanically everywhere.
+5. PM/Risk/execution are understandable as deltas: what PM wanted, what Risk changed, what deterministic code allowed/blocked, and what actually executed.
+6. Desktop research panels are genuinely movable/resizable/tabbable/maximizable with persisted layout and a sensible default workspace.
+7. iPad has a deliberately designed reading/navigation experience with no horizontal overflow or micro-text.
+8. Smart Money Analyst is source-backed, provenance/timestamp/lag-aware, attributable, separates timely from stale evidence, suppresses noise, and reaches PM only through the accepted specialist path.
+9. Empty, stale, partial and provider-error states are truthful and visually composed.
+10. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
 
 #### Engineering and promotion authorization
 
