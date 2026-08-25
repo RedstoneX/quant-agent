@@ -1,8 +1,7 @@
 import {
   Badge,
   Card,
-  CategoryBar,
-  Legend,
+  Grid,
   Metric,
   ProgressBar,
   SparkAreaChart,
@@ -76,7 +75,7 @@ export function HeroBand({
 }) {
   if (!account) {
     return (
-      <Card className="mx-3 mt-3 !bg-panel !ring-border text-center">
+      <Card className="mx-3 mt-3 !w-auto !bg-panel !ring-border text-center">
         <Text>{accountError ? `Account unavailable: ${accountError}` : "Loading account…"}</Text>
       </Card>
     );
@@ -93,9 +92,6 @@ export function HeroBand({
     .reduce((sum, p) => sum + (p.market_value || 0), 0);
   const cashMv = Math.max(total - longMv - hedgeMv, 0);
   const riskDeployedPct = total > 0 ? ((longMv + hedgeMv) / total) * 100 : 0;
-  const longPct = total > 0 ? (longMv / total) * 100 : 0;
-  const hedgePct = total > 0 ? (hedgeMv / total) * 100 : 0;
-  const cashPct = total > 0 ? (cashMv / total) * 100 : 100;
   const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
   const history = equityHistorySeries(account);
 
@@ -153,21 +149,11 @@ export function HeroBand({
           {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
         </div>
         <ProgressBar value={riskDeployedPct} color="cyan" className="mt-3" />
-        <CategoryBar
-          values={[longPct, hedgePct, cashPct]}
-          colors={["emerald", "fuchsia", "slate"]}
-          showLabels={false}
-          className="mt-4"
-        />
-        <Legend
-          categories={[
-            `Long ${fmtMoneyCompact(longMv)}`,
-            `Hedge ${fmtMoneyCompact(hedgeMv)}`,
-            `Cash ${fmtMoneyCompact(cashMv)}`,
-          ]}
-          colors={["emerald", "fuchsia", "slate"]}
-          className="mt-2"
-        />
+        <Grid numItems={3} className="mt-4 gap-2">
+          <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
+          <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
+          <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>
+        </Grid>
       </Card>
 
       <RegimeCard funnel={funnel} />

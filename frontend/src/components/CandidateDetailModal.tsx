@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Card as TremorCard, Grid, Metric, Text, Badge } from "@tremor/react";
 import {
   api,
   AgentLogItem,
@@ -11,8 +12,6 @@ import {
   RunDetailResponse,
   RunFunnelResponse,
   TechAnalysisResult,
-  TradeItem,
-  TradeDecision,
 } from "../api/client";
 import { fmtMoney, fmtNum } from "../lib/format";
 import { Modal, CrumbLink } from "./ui/Modal";
@@ -24,6 +23,8 @@ import type { FlowStage } from "./agentflow/types";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
 import { buildCandidateGraph } from "./agentflow/buildGraph";
 import { buildCandidateStages } from "./funnelShared";
+import { LifecycleTimeline } from "./LifecycleTimeline";
+import { TradeTable } from "./TradesPanel";
 export { buildCandidateStages, skipText } from "./funnelShared";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
@@ -105,26 +106,14 @@ function MacroCard({ macro }: { macro: MacroBroaderContext | null }) {
       <KV label="Confidence" value={macro.confidence} />
       {macro.summary && <CardText text={macro.summary} />}
       {macro.sector_guidance.length > 0 && (
-        <table className="mt-2">
-          <thead>
-            <tr>
-              <th>Sector</th>
-              <th>Stance</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {macro.sector_guidance.map((g, i) => (
-              <tr key={i}>
-                <td>{g.sector}</td>
-                <td>
-                  <Pill text={g.stance} />
-                </td>
-                <td className="whitespace-normal">{g.reason}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {macro.sector_guidance.map((guidance, index) => (
+            <TremorCard key={`${guidance.sector}:${index}`} className="!bg-panel-alt !p-3 !ring-border">
+              <div className="flex items-center justify-between gap-2"><span className="font-semibold">{guidance.sector}</span><Pill text={guidance.stance} /></div>
+              <Text className="mt-1 text-sm text-ink">{guidance.reason}</Text>
+            </TremorCard>
+          ))}
+        </div>
       )}
     </Card>
   );
@@ -146,80 +135,47 @@ function NewsContextCard({ news }: { news: NewsBroaderContext | null }) {
         </ul>
       )}
       {news.relevant_state_changes.length > 0 && (
-        <table className="mt-2">
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th>Transition</th>
-              <th>Market impact</th>
-            </tr>
-          </thead>
-          <tbody>
-            {news.relevant_state_changes.map((s, i) => (
-              <tr key={i}>
-                <td className="whitespace-normal">{s.event}</td>
-                <td className="whitespace-normal">
-                  {s.previous_state} &rarr; {s.new_state}
-                </td>
-                <td className="whitespace-normal">{s.market_impact}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="mt-2 space-y-2">
+          {news.relevant_state_changes.map((change, index) => (
+            <TremorCard key={`${change.event}:${index}`} className="!bg-panel-alt !p-3 !ring-border">
+              <div className="font-semibold">{change.event}</div>
+              <Text className="mt-1">{change.previous_state} &rarr; {change.new_state}</Text>
+              <Text className="mt-1 text-sm text-ink">{change.market_impact}</Text>
+            </TremorCard>
+          ))}
+        </div>
       )}
     </Card>
   );
 }
 
-function numsDiffer(a: number | null | undefined, b: number | null | undefined): boolean {
-  if (a === null || a === undefined || b === null || b === undefined) return false;
-  return Math.abs(a - b) > 0.001;
-}
-
-function DeltaCell({ value, changed, fmt }: { value: number | null | undefined; changed: boolean; fmt: (v: number) => string }) {
+function StopAndExecutionTruth({ detail, funnel }: { detail: CandidateDetailResponse; funnel: RunFunnelResponse | null }) {
+  const proposed = detail.pm_proposed_order;
+  const trade = detail.trades?.find((item) => item.action === proposed?.action) ?? detail.trade;
+  const candidate = funnel?.candidates.find((item) => item.symbol === detail.symbol);
+  const protection = [...(detail.pipeline_events ?? [])].reverse().find((event) => event.stage === "protection");
+  if (!proposed && !trade && !protection) return null;
   return (
-    <td className={changed ? "text-warn font-bold" : ""}>
-      {value === null || value === undefined ? "—" : fmt(value)}
-    </td>
-  );
-}
-
-function ProposedVsExecuted({ proposed, trade }: { proposed: TradeDecision | null; trade: TradeItem | null }) {
-  if (!proposed && !trade) return null;
-  const entryChanged = numsDiffer(proposed?.entry_price, trade?.price);
-  const stopChanged = numsDiffer(proposed?.stop_loss, trade?.stop_loss);
-  return (
-    <table className="mt-2">
-      <thead>
-        <tr>
-          <th></th>
-          <th>Proposed (PM)</th>
-          <th>Executed (trade)</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Action</td>
-          <td>{proposed?.action || "—"}</td>
-          <td>{trade?.action || "—"}</td>
-        </tr>
-        <tr>
-          <td>Size</td>
-          <td>{proposed ? `${fmtNum(proposed.allocation_pct)}% alloc` : "—"}</td>
-          <td>{trade?.qty !== null && trade?.qty !== undefined ? `${fmtNum(trade.qty)} sh` : "—"}</td>
-        </tr>
-        <tr>
-          <td>Entry / Fill price</td>
-          <DeltaCell value={proposed?.entry_price} changed={entryChanged} fmt={fmtMoney} />
-          <DeltaCell value={trade?.price} changed={entryChanged} fmt={fmtMoney} />
-        </tr>
-        <tr>
-          <td>Stop loss</td>
-          <DeltaCell value={proposed?.stop_loss} changed={stopChanged} fmt={fmtMoney} />
-          <DeltaCell value={trade?.stop_loss} changed={stopChanged} fmt={fmtMoney} />
-        </tr>
-      </tbody>
-    </table>
+    <div className="mt-3">
+      <Text className="mb-2 uppercase tracking-wide">Execution and protection truth</Text>
+      <Grid numItems={1} numItemsSm={3} className="gap-2">
+        <TremorCard className="!bg-panel-alt !p-3 !ring-border">
+          <Text>PM proposed stop</Text>
+          <Metric className="font-mono text-lg text-ink">{fmtMoney(proposed?.stop_loss)}</Metric>
+          <Text className="mt-1 text-xs">Model proposal only</Text>
+        </TremorCard>
+        <TremorCard className="!bg-panel-alt !p-3 !ring-border">
+          <Text>Execution-recorded stop</Text>
+          <Metric className="font-mono text-lg text-ink">{fmtMoney(trade?.stop_loss)}</Metric>
+          <Text className="mt-1 text-xs">Persisted trade record; not broker proof</Text>
+        </TremorCard>
+        <TremorCard className="!bg-panel-alt !p-3 !ring-border">
+          <Text>Protection outcome</Text>
+          <div className="mt-1"><Badge color={protection?.outcome === "placed" || candidate?.protection_outcome === "placed" ? "emerald" : "slate"}>{protection?.outcome || candidate?.protection_outcome || "not recorded"}</Badge></div>
+          <Text className="mt-1 text-xs">Canonical protection event; no unproved live-stop claim</Text>
+        </TremorCard>
+      </Grid>
+    </div>
   );
 }
 
@@ -498,13 +454,22 @@ function DecisionDetail({
                 <Pill text={detail.trade.action} />
               </div>
               <KV label="Qty" value={detail.trade.qty !== null && detail.trade.qty !== undefined ? fmtNum(detail.trade.qty) : null} />
-              <KV label="Price" value={fmtMoney(detail.trade.price)} />
+              <KV label="Requested price" value={fmtMoney(detail.trade.price)} />
+              <KV label="Filled quantity" value={fmtNum(detail.trade.fill_qty)} />
+              <KV label="Fill price" value={fmtMoney(detail.trade.fill_price)} />
+              <KV label="Realized P&L" value={detail.trade.realized_pnl === null || detail.trade.realized_pnl === undefined ? null : fmtMoney(detail.trade.realized_pnl)} />
               <div className="kv-row">
                 <span className="text-dim">Fill status</span>
                 <Pill text={detail.trade.fill_status || "unfilled"} />
               </div>
               {detail.trade.reasoning && <CardText text={detail.trade.reasoning} />}
-              <ProposedVsExecuted proposed={detail.pm_proposed_order} trade={detail.trade} />
+              <StopAndExecutionTruth detail={detail} funnel={funnel} />
+              {(detail.trades?.length ?? 0) > 1 && (
+                <div className="mt-3">
+                  <Text className="mb-2 uppercase tracking-wide">All linked trade records</Text>
+                  <TradeTable trades={detail.trades ?? []} />
+                </div>
+              )}
             </div>
           ) : (
             <StateMessage text={exec?.caption || "No trade recorded for this candidate this run."} />
@@ -607,6 +572,9 @@ export function CandidateDetailModal({
           </EvidenceSection>
           <EvidenceSection title="Decision flow: Specialists &rarr; PM &rarr; AI Risk &rarr; gate &rarr; execution">
             {[<DecisionDetail key="chain" detail={detail} funnel={funnel} riskLog={riskLog} stages={stages} />]}
+          </EvidenceSection>
+          <EvidenceSection title="Persisted lifecycle: opportunity &rarr; result">
+            {[<LifecycleTimeline key="lifecycle" events={detail.pipeline_events ?? []} />]}
           </EvidenceSection>
         </div>
       )}

@@ -20,8 +20,9 @@ import { CandidateRail } from "./components/CandidateRail";
 import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
 import { SupportTabs } from "./components/SupportTabs";
-import { DockviewSupportWorkspace } from "./components/DockviewSupportWorkspace";
+import { DesktopCockpitWorkspace } from "./components/DesktopCockpitWorkspace";
 import { SupportWorkspaceProvider } from "./context/SupportWorkspaceContext";
+import { CockpitWorkspaceProvider } from "./context/CockpitWorkspaceContext";
 import { useIsDesktop } from "./lib/useIsDesktop";
 import { useOrderStatus } from "./components/OrdersPanel";
 import { JournalPanel } from "./components/JournalPanel";
@@ -234,8 +235,6 @@ export default function App() {
   // price chart — the one column with genuine content in this state, real
   // SPY market context — claims the width that frees up. See the grid
   // below.
-  const sparseDay = todaysRuns.length === 0;
-
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runsError, setRunsError] = useState<string | null>(null);
   // Defaults to the broad market rather than null: an unselected chart
@@ -428,6 +427,29 @@ export default function App() {
     setMobilePane("chart");
   }
 
+  function inspectSymbol(symbol: string) {
+    setChartSymbol(symbol);
+    setMobilePane("chart");
+    if (funnel?.candidates.some((candidate) => candidate.symbol === symbol)) {
+      modalActions.openCandidateDetail(funnel.run_id, symbol);
+    }
+  }
+
+  function inspectTrade(trade: TradeItem) {
+    setChartSymbol(trade.symbol);
+    setMobilePane("chart");
+    if (trade.run_id) {
+      if (todaysRuns.some((run) => run.run_id === trade.run_id)) selectSession(trade.run_id);
+      modalActions.openCandidateDetail(trade.run_id, trade.symbol);
+    }
+  }
+
+  function inspectOrder(order: OrderItem) {
+    const linkedTrade = trades.find((trade) => trade.broker_order_id === order.id);
+    if (linkedTrade) inspectTrade(linkedTrade);
+    else inspectSymbol(order.symbol);
+  }
+
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
     if (!dayRuns.length) return;
     if (dayRuns.length === 1) {
@@ -479,118 +501,33 @@ export default function App() {
 
       {view === "cockpit" && (
         <>
-          <PaneNav pane={mobilePane} onChange={setMobilePane} />
-
-          {/* The primary cockpit body — deliberately a fixed, non-dockable
-              grid (not Dockview): this is the "answer at a glance" surface,
-              customization belongs only to the support workspace below. */}
-          {/* All three columns share one explicit height at desktop width,
-              not just a max-height, so the row is a real viewport-bounded
-              workstation, not just capped — Candidates/Decision Room
-              scroll internally within it, and the center column can flex
-              its own children to actually fill it (see the chart's flex-1
-              wrapper below). The height itself is `100vh` minus
-              `--chrome-h`, a CSS custom property kept live by chromeRef's
-              ResizeObserver above (Fix 1) rather than a hardcoded constant
-              — the previous flat "150px" drifted out of sync with the
-              header stack's real (variable) height, silently pushing the
-              highest-stakes part of the Decision Room chain below the
-              fold.
-              Fix 3 (Finding C): on a genuinely no-session day, the two
-              side columns don't have a viewport-locked height to fill in
-              the first place (`sparseDay` below), so they collapse to
-              their actual (small) content height via `self-start` instead
-              of Grid's default stretch-to-row-height, and the grid's own
-              column template narrows to give the chart — the one column
-              with genuine content in this state, real SPY market context —
-              the freed width. The chart column keeps its full viewport
-              height in both states; only the two side columns' height
-              behavior changes. */}
-          <div
-            className={`grid grid-cols-1 ${
-              sparseDay ? "xl:grid-cols-[260px_1fr_260px]" : "xl:grid-cols-[300px_1fr_360px]"
-            } gap-3 p-3 items-stretch`}
-          >
-            <div
-              className={`${mobilePane === "watchlist" ? "block" : "hidden xl:block"} ${
-                sparseDay ? "xl:self-start" : "xl:h-[calc(100vh_-_var(--chrome-h))] xl:overflow-y-auto"
-              }`}
-            >
-              <CandidateRail
-                funnel={funnel}
-                loading={todaysLoading}
-                error={todaysError}
-                updatedAt={todaysUpdatedAt}
-                selectedSymbol={chartSymbol}
-                onSelectSymbol={setChartSymbol}
-              />
-            </div>
-
-            {/* min-w-0 is load-bearing: a CSS Grid `1fr` track defaults to
-                minmax(auto, 1fr), so without it this column would size to
-                its widest child's natural content width (the price chart)
-                instead of shrinking to its assigned share of the row,
-                pushing the Decision Room column past the viewport edge. */}
-            <div
-              className={`${
-                mobilePane === "chart" ? "flex" : "hidden xl:flex"
-              } min-w-0 flex-col xl:h-[calc(100vh_-_var(--chrome-h))]`}
-            >
-              <SelectedSymbolContext
-                funnel={funnel}
-                symbol={chartSymbol}
-                onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)}
-              />
-              {/* flex-1 + min-h-0 is the other half of the fix: without
-                  min-h-0 a flex child's default min-height:auto lets its
-                  content (the chart) refuse to shrink below its own natural
-                  size, which would silently defeat the resize-to-fill
-                  behavior on a short viewport. */}
-              <div className="flex-1 min-h-0">
-                <PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} />
+          {isDesktop ? (
+            <SupportWorkspaceProvider value={{
+              account, accountError, positions, positionsError,
+              positionsLoading: !account && !positionsError, positionsUpdatedAt,
+              orders, ordersError, ordersLoading: !account, orderStatus,
+              onOrderStatusChange: setOrderStatus, trades, tradesError,
+              tradesLoading: !account, runs, runsError,
+              runsLoading: runs.length === 0 && !runsError, health, healthError,
+              onSelectSymbol: inspectSymbol, onInspectOrder: inspectOrder, onInspectTrade: inspectTrade,
+            }}>
+              <CockpitWorkspaceProvider value={{
+                funnel, loading: todaysLoading, error: todaysError,
+                updatedAt: todaysUpdatedAt, chartSymbol,
+                chartTrades: selectedSessionTrades, onSelectSymbol: setChartSymbol,
+              }}>
+                <DesktopCockpitWorkspace />
+              </CockpitWorkspaceProvider>
+            </SupportWorkspaceProvider>
+          ) : (
+            <>
+              <PaneNav pane={mobilePane} onChange={setMobilePane} />
+              <div className="p-3">
+                {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
+                {mobilePane === "chart" && <div className="flex min-h-[520px] flex-col"><SelectedSymbolContext funnel={funnel} symbol={chartSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} /><div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} /></div></div>}
+                {mobilePane === "decision" && <DecisionRoomPanel funnel={funnel} symbol={chartSymbol} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />}
               </div>
-            </div>
-
-            <div
-              className={`${mobilePane === "decision" ? "block" : "hidden xl:block"} ${
-                sparseDay ? "xl:self-start" : "xl:h-[calc(100vh_-_var(--chrome-h))] xl:overflow-y-auto"
-              }`}
-            >
-              <DecisionRoomPanel funnel={funnel} symbol={chartSymbol} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
-            </div>
-          </div>
-
-          <div className="px-3 pb-3">
-            {isDesktop ? (
-              // Desktop-only, operator-approved: the support workspace
-              // becomes a real resizable/draggable Dockview surface here.
-              // Never mounted below the `xl` breakpoint — see useIsDesktop.
-              <SupportWorkspaceProvider
-                value={{
-                  account,
-                  accountError,
-                  positions,
-                  positionsError,
-                  positionsLoading: !account && !positionsError,
-                  positionsUpdatedAt,
-                  orders,
-                  ordersError,
-                  ordersLoading: !account,
-                  orderStatus,
-                  onOrderStatusChange: setOrderStatus,
-                  trades,
-                  tradesError,
-                  tradesLoading: !account,
-                  runs,
-                  runsError,
-                  runsLoading: runs.length === 0 && !runsError,
-                  health,
-                  healthError,
-                }}
-              >
-                <DockviewSupportWorkspace />
-              </SupportWorkspaceProvider>
-            ) : (
+              <div className="px-3 pb-3">
               <SupportTabs
                 account={account}
                 accountError={accountError}
@@ -611,9 +548,13 @@ export default function App() {
                 runsLoading={runs.length === 0 && !runsError}
                 health={health}
                 healthError={healthError}
+                onSelectSymbol={inspectSymbol}
+                onInspectOrder={inspectOrder}
+                onInspectTrade={inspectTrade}
               />
-            )}
-          </div>
+              </div>
+            </>
+          )}
         </>
       )}
 

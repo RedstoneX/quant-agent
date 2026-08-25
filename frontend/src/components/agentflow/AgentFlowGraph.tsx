@@ -39,7 +39,7 @@ export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; 
 
   // The observer is created lazily inside `onInit` (React Flow's own init
   // callback, not a React lifecycle hook), so nothing else disconnects it —
-  // same disconnect-on-unmount contract PriceChartPanel/EChart already use
+  // same disconnect-on-unmount contract PriceChartPanel already uses
   // for their own ResizeObservers.
   useEffect(() => {
     return () => {

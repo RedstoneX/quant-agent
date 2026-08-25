@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **FINAL BACKEND RECOVERY (P2 + P3) | UBUNTU ENGINEERING | PR REVIEW GATE | NO PRODUCTION AUTHORITY**
+Status: **FINAL MISSION CONTROL UTILITY | UBUNTU ENGINEERING | PR REVIEW GATE | NO PRODUCTION AUTHORITY**
 
 ## Current integration truth
 
@@ -12,6 +12,8 @@ Status: **FINAL BACKEND RECOVERY (P2 + P3) | UBUNTU ENGINEERING | PR REVIEW GATE
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
 - Priority 1 mechanical recovery is merged to engineering `main` through PR
   #74 (`708cd234`). It has not been deployed to production.
+- Priority 2/3 backend recovery is merged to engineering `main` through PR
+  #75 (`3d79b401`). It has not been deployed to production.
 
 ## Stabilization account model — HARD RULE
 
@@ -49,37 +51,27 @@ Implementation promotion remains reviewable. Claude does not independently merge
 
 ## Active finish line
 
-### Priority 2 PM truthfulness / model suitability
+### Mission Control / dashboard utility
 
-The final engineering tranche now:
+Deliver one read-only frontend tranche that:
 
-- requires structured, machine-checkable specialist provenance on every live
-  PM target and rejects invented coverage/stance/alignment;
-- permits explicit PM disagreement (`relationship=conflicts`) rather than
-  forcing specialist agreement;
-- rejects close/exit targets for symbols not actually held before order
-  construction;
-- records malformed, unparseable, or ungrounded PM output as agent failure,
-  never as a genuine HOLD/REJECT;
-- measures the real PM prompt through a 30-candidate/15-position production-
-  scale scenario. `openai/gpt-5.5` passed both final workloads twice at
-  1.00/1.00; the prior Gemini PM and candidate Luna failed the final grounded
-  contract. Only PM routing changes;
-  Risk remains on `qwen/qwen3-235b-a22b-2507`.
+- uses Tremor/TanStack/Lightweight Charts/Dockview for their accepted roles and
+  removes ECharts, handmade donut/treemap replacements and raw HTML tables;
+- treats SGOV only as cash parking and excludes it from directional-risk and
+  investment-P&L emphasis;
+- exposes the canonical PR #75 lifecycle, terminal order/fill/protection facts
+  and deterministically known realized P&L without creating another evidence
+  system;
+- labels PM proposed stop, execution-recorded stop and persisted protection
+  outcome by source, never inventing broker protection;
+- makes Candidates, Chart, Decision Room and supporting trader panels dockable
+  on desktop, with a sensible persisted default and reset;
+- preserves simple Candidates/Chart/Decision Room tabs on iPad/mobile;
+- is accepted through rendered desktop/iPad checks, frontend tests, production
+  build and committed screenshots.
 
-### Priority 3 canonical lifecycle evidence
-
-The same tranche extends the existing `specialist_evidence` and `trades`
-records (no second memory system) with queryable lifecycle facts for discovery,
-specialist evaluation/failure, PM proposal/omission/failure, Risk outcome,
-deterministic gate, funding, order submission, protection, terminal broker
-status and realized result. Existing candidate/funnel API responses expose the
-events, all symbol trades, fill/cancel/reject state, protection outcome and
-average-cost realized P&L when confirmed fills provide a complete cost basis;
-unknown cost basis stays null.
-
-The engineering tranche stops after verification and a pushed PR. Merge and
-production deployment remain separate operator gates.
+The engineering tranche stops after one pushed PR. Merge and production
+deployment remain separate operator gates.
 
 ### Natural Alpaca Paper validation
 
@@ -123,6 +115,6 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active gate:** the final backend tranche is not accepted until external PR
+**Active gate:** the final Mission Control tranche is not accepted until external PR
 review and explicit merge approval. Production deployment/validation requires
 separate authorization.

@@ -1,9 +1,14 @@
-import { useState } from "react";
-import { api, SearchResponse } from "../api/client";
+import { useMemo, useState } from "react";
+import { legacyCreateColumnHelper as createColumnHelper, type LegacyColumnDef } from "@tanstack/react-table/legacy";
+import { api, SearchAgentLogHit, SearchResponse, SearchTradeHit } from "../api/client";
 import { fmtTime } from "../lib/format";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 import { useModalActions } from "../context/ModalContext";
+import { DataTable } from "./ui/DataTable";
+
+const tradeColumn = createColumnHelper<SearchTradeHit>();
+const agentColumn = createColumnHelper<SearchAgentLogHit>();
 
 export function SearchPanel() {
   const [q, setQ] = useState("");
@@ -11,6 +16,18 @@ export function SearchPanel() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { openRunDetail } = useModalActions();
+  const tradeColumns = useMemo(() => [
+    tradeColumn.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
+    tradeColumn.accessor("symbol", { header: "Symbol" }),
+    tradeColumn.accessor("action", { header: "Action", cell: (info) => <Pill text={info.getValue()} /> }),
+    tradeColumn.accessor("reasoning", { header: "Reasoning", cell: (info) => <span className="block max-w-[36rem] whitespace-normal font-sans">{info.getValue() || "—"}</span> }),
+  ] as LegacyColumnDef<SearchTradeHit, unknown>[], []);
+  const agentColumns = useMemo(() => [
+    agentColumn.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
+    agentColumn.accessor("agent_name", { header: "Agent" }),
+    agentColumn.accessor("model", { header: "Model", cell: (info) => info.getValue() || "—" }),
+    agentColumn.accessor("output_summary", { header: "Summary", cell: (info) => <span className="block max-w-[36rem] whitespace-normal font-sans">{info.getValue() || "—"}</span> }),
+  ] as LegacyColumnDef<SearchAgentLogHit, unknown>[], []);
 
   async function runSearch() {
     const term = q.trim();
@@ -70,32 +87,7 @@ export function SearchPanel() {
               <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-1.5">
                 Trade hits ({result.trades.length})
               </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Symbol</th>
-                    <th>Action</th>
-                    <th>Reasoning</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.trades.map((h) => (
-                    <tr
-                      key={h.id}
-                      className={h.run_id ? "cursor-pointer hover:bg-panel-alt" : ""}
-                      onClick={() => h.run_id && openRunDetail(h.run_id)}
-                    >
-                      <td>{fmtTime(h.timestamp)}</td>
-                      <td>{h.symbol}</td>
-                      <td>
-                        <Pill text={h.action} />
-                      </td>
-                      <td className="whitespace-normal">{h.reasoning || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataTable data={result.trades} columns={tradeColumns} getRowId={(hit) => String(hit.id)} onRowClick={(hit) => hit.run_id && openRunDetail(hit.run_id)} />
             </div>
           )}
           {result.agent_logs.length > 0 && (
@@ -103,30 +95,7 @@ export function SearchPanel() {
               <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-1.5">
                 Agent-call hits ({result.agent_logs.length})
               </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Agent</th>
-                    <th>Model</th>
-                    <th>Summary</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.agent_logs.map((h) => (
-                    <tr
-                      key={h.id}
-                      className={h.run_id ? "cursor-pointer hover:bg-panel-alt" : ""}
-                      onClick={() => h.run_id && openRunDetail(h.run_id)}
-                    >
-                      <td>{fmtTime(h.timestamp)}</td>
-                      <td>{h.agent_name}</td>
-                      <td>{h.model || "—"}</td>
-                      <td className="whitespace-normal">{h.output_summary || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataTable data={result.agent_logs} columns={agentColumns} getRowId={(hit) => String(hit.id)} onRowClick={(hit) => hit.run_id && openRunDetail(hit.run_id)} />
             </div>
           )}
         </div>

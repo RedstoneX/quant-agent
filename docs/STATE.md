@@ -73,7 +73,7 @@ Accepted behavior includes:
 
 - professional cockpit composition using Tremor/TanStack for ordinary UI primitives;
 - TradingView Lightweight Charts for price candles/volume and BUY/SELL markers;
-- Dockview for the desktop support workspace;
+- Dockview for the desktop workspace;
 - QAMC-specific decision-chain topology as the justified custom visualization;
 - current-session quote context exposed separately from historical bars and broker position marks through GET `/quotes`;
 - historical daily candles are not presented as a live/current quote;
@@ -105,7 +105,16 @@ the complete candidate/order/protection/outcome chain and deterministically
 derivable realized P&L are queryable through the existing API. Production-scale
 measurement supports changing only the PM seat to `openai/gpt-5.5`; Risk
 routing and deterministic Python/broker authority remain unchanged. This final
-tranche remains engineering truth until its PR is reviewed and merged.
+tranche is merged to engineering `main` via PR #75 (`3d79b401`). It is not
+production truth until separately authorized and deployed.
+
+The final Mission Control utility tranche is now under engineering review. It
+removes ECharts/handmade allocation visuals, moves ordinary tables to TanStack,
+keeps price history on Lightweight Charts, makes SGOV unambiguously cash
+parking outside directional-risk/P&L emphasis, consumes PR #75 lifecycle facts,
+and turns the desktop Candidates/Chart/Decision Room working surface into a
+persisted Dockview workspace while retaining simple iPad/mobile tabs. This is
+not accepted state until its PR is reviewed and merged.
 
 After promotion, acceptance still requires natural Alpaca Paper sessions
 demonstrating the real chain:
@@ -162,7 +171,7 @@ Current bounded activities:
 
 1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
 2. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
-3. **Backend recovery:** review the final Priority 2/3 engineering tranche;
+3. **Mission Control finish line:** review the final dashboard utility tranche;
    merge and production promotion remain separate explicit gates.
 4. **Evidence-driven follow-up only:** do not reopen dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 

@@ -4,7 +4,7 @@
  * and CandidateRail (funnel). Every value rendered here comes from the
  * caller's own real data; these components never invent a number. */
 
-import { CategoryBar, Legend, ProgressBar, Tracker, type Color } from "@tremor/react";
+import { ProgressBar, Tracker, type Color } from "@tremor/react";
 
 const TONE_BAR: Record<string, Color> = {
   pos: "emerald",
@@ -44,35 +44,5 @@ export function LevelBar({ level, tone = "accent" }: { level: string | null | un
       aria-label={level ? `${level} level` : "level unknown"}
       data={[1, 2, 3].map((i) => ({ color: i <= rank ? TONE_BAR[tone] : "slate", tooltip: i <= rank ? level || undefined : "not reached" }))}
     />
-  );
-}
-
-export interface Segment {
-  label: string;
-  value: number;
-  tone: keyof typeof TONE_BAR;
-}
-
-// A single proportional stacked bar (e.g. "where is the cash") plus a
-// legend row with the real value under each segment — the same shape as
-// DirectionalBiasPanel's DirectionRatioBar, generalized for reuse.
-export function SegmentedBar({
-  segments,
-  formatValue,
-}: {
-  segments: Segment[];
-  formatValue: (v: number) => string;
-}) {
-  const positive = segments.filter((s) => s.value > 0);
-  const total = positive.reduce((sum, s) => sum + s.value, 0);
-  return (
-    <div>
-      <CategoryBar
-        values={total > 0 ? positive.map((s) => (s.value / total) * 100) : [100]}
-        colors={total > 0 ? positive.map((s) => TONE_BAR[s.tone]) : ["slate"]}
-        className="mt-1"
-      />
-      <Legend categories={segments.map((s) => `${s.label} ${formatValue(s.value)}`)} colors={segments.map((s) => TONE_BAR[s.tone])} className="mt-2" />
-    </div>
   );
 }

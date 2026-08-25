@@ -20,6 +20,7 @@ import { LevelBar } from "./ui/Meter";
 import { useModalActions } from "../context/ModalContext";
 import { Stage, STAGE_META, STAGE_ORDER, candidateStage, isSweepOnlyExecution } from "./funnelShared";
 import { buildEntries } from "./agentflow/buildGraph";
+import { TradeTable } from "./TradesPanel";
 
 export function ledgerLine(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
   const pm = c.proposed_action
@@ -862,38 +863,7 @@ export function JournalPanel({
           </EvidenceSection>
 
           <EvidenceSection title="Trades this day" emptyText="No trades recorded for this day.">
-            {day.trades.length
-              ? [
-                  <table key="trades">
-                    <thead>
-                      <tr>
-                        <th>Time</th>
-                        <th>Symbol</th>
-                        <th>Action</th>
-                        <th>Qty</th>
-                        <th>Price</th>
-                        <th>Fill</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {day.trades.map((t) => (
-                        <tr key={t.id}>
-                          <td>{fmtTime(t.timestamp)}</td>
-                          <td>{t.symbol}</td>
-                          <td>
-                            <Pill text={t.action} />
-                          </td>
-                          <td>{fmtNum(t.qty)}</td>
-                          <td>{fmtMoney(t.price)}</td>
-                          <td>
-                            <Pill text={t.fill_status || "unfilled"} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>,
-                ]
-              : []}
+            {day.trades.length ? [<TradeTable key="trades" trades={day.trades} />] : []}
           </EvidenceSection>
 
           <EvidenceSection title="Daily result — missed opportunities, lessons &amp; tomorrow">
