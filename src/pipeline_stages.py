@@ -116,6 +116,19 @@ def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
     )
 
 
+def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
+                           outcome: str, reason: str = "", **details) -> None:
+    """Append one typed lifecycle fact to the existing evidence stream."""
+    import json as _json
+    payload = {"stage": stage, "outcome": outcome, "reason": reason, **details}
+    _persist_evidence(
+        pipeline.db, run_id=ctx.run_id, agent_name="pipeline",
+        kind="pipeline_event", scope="symbol" if symbol else "run",
+        symbol=symbol, decision_id=ctx.decision_id,
+        evidence_json=_json.dumps(payload, sort_keys=True),
+    )
+
+
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     """Apply RiskVerdict.scale_all_buys to BUY decisions.
 
@@ -274,6 +287,11 @@ class MorningResearchStage:
                 "Tech pre-filter: %d/%d symbols have actionable signals",
                 len(symbols_data), len(all_symbols_data),
             )
+            for candidate in symbols_data:
+                _record_pipeline_event(
+                    self, ctx, candidate["symbol"], "opportunity",
+                    "discovered", "actionable_technical_prefilter",
+                )
             if not symbols_data:
                 return {}, None
             prior_ratings = self.tech_store.load()
@@ -438,6 +456,18 @@ class MorningResearchStage:
                         kind="analysis", scope="symbol", symbol=analysis.symbol,
                         evidence_json=analysis.model_dump_json(),
                     )
+                    _record_pipeline_event(
+                        self, ctx, analysis.symbol, "specialist", "evaluated",
+                        "technical_analysis_validated",
+                        specialist="tech_analyst", rating=analysis.rating,
+                    )
+                for symbol, analysis in analyses_map.items():
+                    if analysis is None:
+                        _record_pipeline_event(
+                            self, ctx, symbol, "specialist", "failed",
+                            "technical_analysis_unresolved_after_retry",
+                            specialist="tech_analyst",
+                        )
             logger.info("Technical analysis complete: %d symbols in 1 LLM call", len(analyses))
         except Exception as e:
             logger.error("Tech analyst failed: %s. Continuing without technical data.", e)
@@ -616,11 +646,17 @@ class DecisionStage:
         decision_id = f"{run_id}-dec-{uuid.uuid4().hex[:6]}"
         ctx.decision_id = decision_id
 
+        pm_log_kwargs = agent_log_kwargs(pm_result)
+        if portfolio_decision is None:
+            pm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
-            output_summary=portfolio_decision.portfolio_view if portfolio_decision else "no trades",
+            output_summary=(
+                portfolio_decision.portfolio_view
+                if portfolio_decision else "agent_failure: no valid PM decision"
+            ),
             full_response=pm_result.raw_text,
             model=pm_result.model,
             tokens_used=pm_result.tokens_used,
@@ -628,10 +664,22 @@ class DecisionStage:
             output_tokens=pm_result.output_tokens,
             cost_usd=pm_result.cost_usd,
             decision_id=decision_id,
-            **agent_log_kwargs(pm_result),
+            **pm_log_kwargs,
         )
 
         if not portfolio_decision:
+            _record_pipeline_event(
+                pipeline, ctx, None, "portfolio_manager", "failed",
+                "no_valid_grounded_decision",
+            )
+            _persist_evidence(
+                pipeline.db, run_id=run_id, agent_name="portfolio_manager",
+                kind="agent_failure", scope="run", decision_id=decision_id,
+                evidence_json=(
+                    '{"failure":"no_valid_grounded_decision",'
+                    '"stage":"portfolio_manager","decision":null}'
+                ),
+            )
             ctx.portfolio_decision = None
             return ctx
 
@@ -650,6 +698,13 @@ class DecisionStage:
                 kind="target", scope="symbol", symbol=target.symbol,
                 decision_id=decision_id, evidence_json=target.model_dump_json(),
             )
+        target_symbols = {target.symbol for target in portfolio_decision.targets}
+        for analysis in analyses:
+            if analysis.symbol not in target_symbols:
+                _record_pipeline_event(
+                    pipeline, ctx, analysis.symbol, "portfolio_manager", "omitted",
+                    "candidate_not_selected_for_target",
+                )
 
         price_map = {p.symbol: p.current_price for p in positions}
         for target in portfolio_decision.targets:
@@ -688,6 +743,10 @@ class DecisionStage:
                 pipeline.db, run_id=run_id, agent_name="portfolio_manager",
                 kind="proposed_order", scope="symbol", symbol=decision.symbol,
                 decision_id=decision_id, evidence_json=decision.model_dump_json(),
+            )
+            _record_pipeline_event(
+                pipeline, ctx, decision.symbol, "portfolio_manager", "proposed",
+                "constructor_created_order", action=decision.action,
             )
         ctx.portfolio_decision = portfolio_decision
         return ctx
@@ -741,12 +800,20 @@ class RiskStage:
             rm_positions, _parked = sweeper.split_positions(positions)
 
         # Symbol guard
+        before_symbol_guard = list(portfolio_decision.decisions)
         portfolio_decision.decisions, symbol_blocked_reasons = pipeline._filter_supported_symbols(
             portfolio_decision.decisions, analyses, positions,
         )
         if symbol_blocked_reasons:
             reasons = "; ".join(dict.fromkeys(symbol_blocked_reasons))
             logger.warning("SYMBOL GUARD BLOCK: %s", reasons)
+            allowed_ids = {id(d) for d in portfolio_decision.decisions}
+            for decision in before_symbol_guard:
+                if id(decision) not in allowed_ids:
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "deterministic_gate",
+                        "blocked", "symbol_guard", detail=reasons,
+                    )
             if not portfolio_decision.decisions:
                 return {"status": "symbol_block", "orders": [], "reason": reasons}
             logger.info(
@@ -785,6 +852,7 @@ class RiskStage:
             logger.warning("Failed to build correlation matrix: %s (continuing without)", e)
         ctx.correlation_matrix = correlation_matrix or {}
 
+        before_hard_gate = list(portfolio_decision.decisions)
         portfolio_decision.decisions, rule_violations, blocked_reasons = (
             pipeline._filter_hard_risk_decisions(
                 portfolio_decision.decisions,
@@ -798,6 +866,13 @@ class RiskStage:
         if blocked_reasons:
             reasons = "; ".join(dict.fromkeys(blocked_reasons))
             logger.warning("HARD RISK BLOCK (BUY blocked): %s", reasons)
+            allowed_ids = {id(d) for d in portfolio_decision.decisions}
+            for decision in before_hard_gate:
+                if id(decision) not in allowed_ids:
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "deterministic_gate",
+                        "blocked", "hard_risk", detail=reasons,
+                    )
             if not portfolio_decision.decisions:
                 pipeline._persist_hard_risk_block(ctx, reasons, stage="pre_rm")
                 return {"status": "hard_risk_block", "orders": [], "reason": reasons}
@@ -981,6 +1056,11 @@ class RiskStage:
                 "Risk manager AGENT FAILURE: output remained unparseable after "
                 "bounded repair; no trading verdict exists",
             )
+            for decision in portfolio_decision.decisions:
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "risk", "failed",
+                    "risk_manager_unparseable_output",
+                )
             _persist_evidence(
                 pipeline.db, run_id=run_id, agent_name="risk_manager",
                 kind="agent_failure", scope="run", decision_id=ctx.decision_id,
@@ -999,6 +1079,11 @@ class RiskStage:
                 "Risk manager REJECTED trades: %s",
                 verdict.reasoning,
             )
+            for decision in portfolio_decision.decisions:
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "risk", "rejected",
+                    verdict.reasoning,
+                )
             return {
                 "status": "rejected", "orders": [],
                 "reason": verdict.reasoning,
@@ -1031,6 +1116,17 @@ class RiskStage:
                     pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
                     return {"status": "hard_risk_block", "orders": [], "reason": reasons}
 
+        modified_symbols = {mod.symbol for mod in verdict.modifications}
+        for decision in portfolio_decision.decisions:
+            _record_pipeline_event(
+                pipeline, ctx, decision.symbol, "risk",
+                "modified" if decision.symbol in modified_symbols or scale < 1.0 else "approved",
+                "risk_manager_verdict",
+            )
+            _record_pipeline_event(
+                pipeline, ctx, decision.symbol, "deterministic_gate", "allowed",
+                "post_risk_checks_passed",
+            )
         return None
 
 
@@ -1130,6 +1226,11 @@ class ExecutionStage:
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
                     decision_id=decision_id,
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "order", "submitted",
+                    "broker_accepted", broker_order_id=order.get("id"), qty=qty,
+                    limit_price=sell_limit, side="sell",
                 )
                 logger.info(
                     "Executed: %s %s %s @ limit $%.2f",
@@ -1310,16 +1411,43 @@ class ExecutionStage:
                 planned_notional = sum(
                     fundable_notional.get(d.symbol, 0.0) for d in buy_decisions
                 )
+                for d in buy_decisions:
+                    _record_pipeline_event(
+                        pipeline, ctx, d.symbol, "funding", "attempted",
+                        "cash_sweep_funding", planned_notional=planned_notional,
+                    )
                 try:
                     freed = sweeper.fund_buys(ctx, planned_notional)
                 except Exception as e:
                     logger.warning("cash sweep: fund_buys failed (BUYs will "
                                    "use raw cash only): %s", e)
                     freed = 0.0
+                    for d in buy_decisions:
+                        _record_pipeline_event(
+                            pipeline, ctx, d.symbol, "funding", "failed",
+                            "cash_sweep_exception", detail=str(e),
+                        )
                 if freed > 0:
                     positions = ctx.positions
                     cash = ctx.cash
                     total_value = ctx.total_value
+                    for d in buy_decisions:
+                        _record_pipeline_event(
+                            pipeline, ctx, d.symbol, "funding", "funded",
+                            "cash_sweep_confirmed", freed_cash=freed,
+                        )
+                elif buy_decisions:
+                    for d in buy_decisions:
+                        _record_pipeline_event(
+                            pipeline, ctx, d.symbol, "funding", "no_additional_cash",
+                            "cash_sweep_released_zero", raw_cash=cash,
+                        )
+            else:
+                for d in buy_decisions:
+                    _record_pipeline_event(
+                        pipeline, ctx, d.symbol, "funding", "not_required",
+                        "cash_sweep_disabled", raw_cash=cash,
+                    )
 
         available_cash = cash
         pending_entry_stops: list[dict] = []
@@ -1540,6 +1668,12 @@ class ExecutionStage:
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "funding", "resized",
+                        "confirmed_cash_partially_funded_order",
+                        approved_qty=qty_by_risk if qty_by_risk is not None and qty_by_risk < qty_by_alloc else qty_by_alloc,
+                        resized_qty=qty,
+                    )
 
                 # Write-ahead intent: insert a pending row BEFORE calling
                 # the broker. Closes the BUY-side phantom-fill window the
@@ -1569,7 +1703,7 @@ class ExecutionStage:
                         stop_loss_price=stop_price if stop_price > 0 else None,
                         reference_price=market_price,
                     )
-                except Exception:
+                except Exception as e:
                     # Submit raised — broker may or may not have the
                     # order. Leave the row as 'pending_submit' so the
                     # next session's orphan sweep
@@ -1581,6 +1715,11 @@ class ExecutionStage:
                     # fill_status='pending_submit' — flipping it to
                     # submit_failed silently HID the row from the
                     # recovery path it was supposed to be flagged for.
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "order", "submit_unknown",
+                        "broker_submit_exception", detail=str(e),
+                        trade_row_id=pending_row_id,
+                    )
                     raise
 
                 if not pipeline._order_accepted(order, decision.symbol, "buy"):
@@ -1590,6 +1729,10 @@ class ExecutionStage:
                     # Distinct from the submit-raised case: here we KNOW
                     # the broker rejected, so there's no orphan to sweep.
                     pipeline.db.mark_trade_submit_failed(pending_row_id)
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "order", "rejected",
+                        "broker_rejected", trade_row_id=pending_row_id, qty=qty,
+                    )
                     _record_execution_skip(
                         pipeline, ctx, decision.symbol, "broker_rejected",
                         f"broker rejected buy {qty} @ "
@@ -1601,6 +1744,11 @@ class ExecutionStage:
                 # broker's order_id and flip to 'submitted'.
                 pipeline.db.confirm_trade_submitted(
                     pending_row_id, broker_order_id=order.get("id"),
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "order", "submitted",
+                    "broker_accepted", broker_order_id=order.get("id"), qty=qty,
+                    limit_price=executed_price,
                 )
                 if isinstance(order, dict):
                     order.setdefault("action", "BUY")  # audit F5
@@ -1632,15 +1780,27 @@ class ExecutionStage:
             if not spec.get("order_id"):
                 continue
             try:
-                pipeline.broker.place_entry_protection(
+                protection = pipeline.broker.place_entry_protection(
                     symbol=spec["symbol"], order_id=spec["order_id"],
                     stop_price=spec["stop_price"], requested_qty=spec["qty"],
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, spec["symbol"], "protection",
+                    "placed" if protection else "not_placed",
+                    "protective_stop_result",
+                    entry_order_id=spec["order_id"], stop_price=spec["stop_price"],
+                    protective_order_id=(protection or {}).get("id") if isinstance(protection, dict) else None,
                 )
             except Exception as e:  # noqa: BLE001 — never abort the session here
                 logger.error(
                     "entry protection raised for %s: %s — position may be "
                     "unprotected until the next coverage reconcile",
                     spec["symbol"], e,
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, spec["symbol"], "protection", "failed",
+                    "protective_stop_exception", detail=str(e),
+                    entry_order_id=spec["order_id"],
                 )
 
         ctx.orders = orders

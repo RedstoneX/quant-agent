@@ -464,6 +464,80 @@ def _pm_grade(decision: PortfolioDecision | None) -> list[Check]:
     return checks
 
 
+# Production-sized PM regression derived from the observed 11/17-target
+# failures: enough candidates, holdings and memory text to exercise the real
+# prompt shape rather than a toy two-symbol schema check.
+_PM_PRODUCTION_SYMBOLS = [
+    "SPY", "QQQ", "IWM", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+    "META", "AVGO", "AMD", "ORCL", "MU", "JPM", "GS", "V", "MA",
+    "UNH", "LLY", "XOM", "CVX", "COST", "WMT", "CAT", "GE", "BA",
+    "NEE", "VST", "CEG", "BRK-B",
+]
+_PM_PRODUCTION_ANALYSES = [
+    TechAnalysisResult(
+        symbol=symbol, rating="buy", conviction="medium",
+        entry_price=100.0, stop_loss=94.0, reference_target=112.0,
+        reasoning="Validated uptrend with positive momentum and volume.",
+        reasoning_chain={
+            "trend": "Above rising 20/50-day averages.",
+            "momentum": "RSI and MACD positive.",
+            "volatility": "ATR supports a bounded stop.",
+            "volume": "Accumulation on advance days.",
+            "support_resistance": "Support at 94, target at 112.",
+        },
+    )
+    for symbol in _PM_PRODUCTION_SYMBOLS
+]
+_PM_PRODUCTION_POSITIONS = [
+    Position(
+        symbol=symbol, qty=10, avg_entry=90.0, current_price=100.0,
+        market_value=1_000.0, unrealized_pnl=100.0, sector="Diversified",
+    )
+    for symbol in _PM_PRODUCTION_SYMBOLS[:15]
+]
+
+
+def _pm_production_invoke(agent):
+    decision, _ = agent.decide(
+        analyses=_PM_PRODUCTION_ANALYSES,
+        positions=_PM_PRODUCTION_POSITIONS,
+        macro_analysis={"regime": "risk_on", "equity_outlook": "bullish"},
+        cash_balance=45_000.0, total_value=100_000.0, allow_margin=False,
+        weekly_narrative="Seven-day portfolio narrative. " * 80,
+        macro_trajectory="Regime trajectory evidence. " * 80,
+        active_state_changes="Current state change. " * 80,
+        pm_recent_decisions="Prior grounded target. " * 80,
+        rm_recent_verdicts="Prior risk verdict. " * 80,
+    )
+    return decision
+
+
+def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
+    checks = [Check("parsed_and_grounded", 0.55, decision is not None,
+                    "PortfolioDecision passed live grounding validation")]
+    if decision is None:
+        return checks
+    held = {p.symbol for p in _PM_PRODUCTION_POSITIONS}
+    phantom_exits = [
+        target.symbol for target in decision.targets
+        if target.target_weight_pct == 0 and target.symbol not in held
+    ]
+    checks.append(Check(
+        "no_phantom_exits", 0.20, not phantom_exits,
+        f"phantom exits={phantom_exits}",
+    ))
+    checks.append(Check(
+        "actionable_book", 0.15, len(decision.targets) >= 3,
+        f"{len(decision.targets)} grounded targets",
+    ))
+    checks.append(Check(
+        "provenance_present", 0.10,
+        bool(decision.targets) and all(target.provenance for target in decision.targets),
+        f"{sum(bool(t.provenance) for t in decision.targets)}/{len(decision.targets)} targets",
+    ))
+    return checks
+
+
 # --------------------------------------------------------------------------
 # 4. risk_manager — the last LLM gate before deterministic Python
 # --------------------------------------------------------------------------
@@ -1040,6 +1114,16 @@ SCENARIOS: list[Scenario] = [
         grade=_pm_grade,
         description="Risk-off macro, 5.7% cash, margin OFF. Grades funding "
                     "arithmetic and signal consistency.",
+    ),
+    Scenario(
+        key="pm_production_scale",
+        role="portfolio_manager",
+        agent_path="src.agents.portfolio_manager:PortfolioManagerAgent",
+        invoke=_pm_production_invoke,
+        grade=_pm_production_grade,
+        default=False,
+        description="30 candidates, 15 holdings and production-sized memory. "
+                    "Grades grounded parse, provenance and phantom exits.",
     ),
     Scenario(
         key="risk_rr_breach",

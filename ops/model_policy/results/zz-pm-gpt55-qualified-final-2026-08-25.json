@@ -1,0 +1,287 @@
+{
+  "generated_at": "2026-08-25T04:22:13Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "pm_constrained": {
+      "role": "portfolio_manager",
+      "description": "Risk-off macro, 5.7% cash, margin OFF. Grades funding arithmetic and signal consistency."
+    },
+    "pm_production_scale": {
+      "role": "portfolio_manager",
+      "description": "30 candidates, 15 holdings and production-sized memory. Grades grounded parse, provenance and phantom exits."
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.5": {
+      "input": 5.0,
+      "output": 30.0
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_constrained",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PortfolioDecision validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "7/7 steps"
+        },
+        {
+          "name": "respects_cash_no_margin",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "added=0.0% vs funded=28.9% (cash 5.7% + trims 23.2%)"
+        },
+        {
+          "name": "targets_emitted",
+          "weight": 0.05,
+          "passed": true,
+          "detail": "1 targets"
+        },
+        {
+          "name": "no_signal_contradiction",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "XLE target=None"
+        },
+        {
+          "name": "acts_on_the_actionable_signal",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "targets=['NVDA'] portfolio_view mentions AAPL=True"
+        },
+        {
+          "name": "targets_have_thesis",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "1/1 with thesis"
+        }
+      ],
+      "input_tokens": 11607,
+      "output_tokens": 3280,
+      "cost_usd": 0.156435,
+      "latency_s": 43.44,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Today's macro is risk_off with bearish outlook and target invested 55.0% / cash recommendation 45.0%; with no prior Macro Regime Trajectory snapshots, this is treated as the controlling fresh regime rather than a stable multi-day trend.\",\n    \"news_check\": \"No News Intelligence or Active News State Changes were surfaced, so there is no fresh bullish catalyst to override the risk_off macro filter and no HIGH bearish stock-specific event forcing a full exit.\",\n    \"earnings_check\": \"No recent earnings filings are available, so there is no earnings support for adding exposure; there are also no JUST FILED earnings caps binding today.\",\n    \"signal_conflicts\": \"NVDA: macro=risk_off/bearish, news=n/a, earnings=n/a, tech=n/a for this run. Conflict: current Technology exposure is oversized versus risk_off macro and NVDA Weight is 43.2%, above the 20.0% single-name hard cap. Resolution: trim NVDA to 20.0%, retaining a capped residual position rather than closing because no thesis-invalid or HIGH bearish stock-specific event is present. AAPL: macro=risk_off/bearish, news=n/a, earnings=n/a, tech=buy. Conflict: clean Tech buy conflicts with bearish macro and the need to raise cash; no news or earnings catalyst offsets that. Resolution: skip new BUY. XLE: macro=Energy underweight, news=n/a, earnings=n/a, tech=sell. Conflict: none for avoiding a long; resolution: no position.\",\n    \"sizing_logic\": \"No new BUYs are proposed because the account ",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_constrained",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PortfolioDecision validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "7/7 steps"
+        },
+        {
+          "name": "respects_cash_no_margin",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "added=0.0% vs funded=38.9% (cash 5.7% + trims 33.2%)"
+        },
+        {
+          "name": "targets_emitted",
+          "weight": 0.05,
+          "passed": true,
+          "detail": "1 targets"
+        },
+        {
+          "name": "no_signal_contradiction",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "XLE target=None"
+        },
+        {
+          "name": "acts_on_the_actionable_signal",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "targets=['NVDA'] portfolio_view mentions AAPL=True"
+        },
+        {
+          "name": "targets_have_thesis",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "1/1 with thesis"
+        }
+      ],
+      "input_tokens": 24584,
+      "output_tokens": 6713,
+      "cost_usd": 0.32431,
+      "latency_s": 91.38,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Today's Macro Analysis is risk_off with bearish outlook, target invested 55.0%, and cash recommendation 45.0%; the stated drivers are VIX at the 88th percentile and widening credit spreads. There are no prior Macro Regime Trajectory snapshots, so I am treating this as the only available regime data point rather than assuming stability or a fresh flip.\",\n    \"news_check\": \"News Intelligence reports no news data available, and Active News State Changes reports none surfaced in the rolling 14-day window. Therefore there is no bullish stock-specific catalyst to override the risk_off macro posture or justify adding exposure.\",\n    \"earnings_check\": \"Earnings Analysis reports no recent earnings filings available. There are no JUST FILED queued earnings caps to apply, but there is also no earnings support for a new BUY.\",\n    \"signal_conflicts\": \"NVDA: macro=risk_off/bearish, news=n/a, earnings=n/a, tech=n/a because NVDA does not appear in today's Technical Analysis Reports. Conflict: the position has no fresh technical support today while Current Positions lists NVDA at 43.2% weight, far above the 20.0% single-name cap. Resolution: trim aggressively to 10.0% rather than hold the concentration through a risk_off tape. AAPL: macro=risk_off/bearish, news=n/a, earnings=n/a, tech=buy(high). Conflict: clean technical buy conflicts with bearish macro and the need to raise cash toward Macro's 45.0% recommendation. Resolution: skip the new BUY t",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "9 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "9/9 targets"
+        }
+      ],
+      "input_tokens": 34642,
+      "output_tokens": 10711,
+      "cost_usd": 0.49454,
+      "latency_s": 109.36,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro Analysis shows regime=risk_on and outlook=bullish, with no identified risk factors and no cash recommendation supplied. Account Status shows invested 55.0% and cash 45.0%, so the book is under-deployed for a risk-on tape; because Macro target_invested_pct is N/A, I am not forcing full exposure but am deploying materially while keeping cash above the risk-on floor.\",\n    \"news_check\": \"News Intelligence reports no news data available, so there are no HIGH bearish state changes that override technical buys and no symbol-specific catalysts to justify oversized positions. Active News State Changes are unusable placeholder text rather than actionable symbol-level evidence, so news is treated as n/a rather than bullish or bearish for every traded symbol.\",\n    \"earnings_check\": \"Earnings Analysis reports no recent earnings filings available, so there are no JUST FILED caps and no filing-based revenue, margin, or guidance signal to incorporate. Because earnings coverage is absent, all buys are sized below what a fully aligned 4/4 setup would merit.\",\n    \"signal_conflicts\": \"SPY: macro=risk_on, news=n/a, earnings=n/a, tech=buy. Conflict: no news or earnings confirmation, but no bearish contradiction. Resolution: add to 6.0% as broad risk-on exposure. QQQ: macro=risk_on, news=n/a, earnings=n/a, tech=buy. Conflict: no news or earnings confirmation and overlaps with held mega-cap tech. Resolution: add to 5.0%, below SPY to limit tech ",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "6 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 targets"
+        }
+      ],
+      "input_tokens": 33748,
+      "output_tokens": 8657,
+      "cost_usd": 0.42845,
+      "latency_s": 94.32,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro Analysis reports regime=risk_on and outlook=bullish, with confidence and target-invested guidance unavailable; I treat the broad tape as supportive for adding exposure, but not as enough to max-size single names without news or earnings confirmation.\",\n    \"news_check\": \"News Intelligence reports no news data available, so there are no HIGH-conviction bullish or bearish state changes to override technicals; absence of news is neutral rather than supportive.\",\n    \"earnings_check\": \"Earnings Analysis reports no recent filings available, so there are no JUST FILED caps and no earnings-confirmed upgrades; position sizing is therefore based on macro plus technicals, not a full 4-signal stack.\",\n    \"signal_conflicts\": \"SPY: macro=risk_on, news=n/a, earnings=n/a, tech=buy. Conflict: no news or earnings confirmation. Resolution: add to a broad-market target rather than single-name max size. QQQ: macro=risk_on, news=n/a, earnings=n/a, tech=buy. Conflict: no news or earnings confirmation and growth/tech beta overlaps with existing mega-cap holdings. Resolution: add, but keep below the single-name cap. IWM: macro=risk_on, news=n/a, earnings=n/a, tech=buy. Conflict: no news or earnings confirmation. Resolution: add as diversified cyclical breadth exposure. MSFT: macro=risk_on, news=n/a, earnings=n/a, tech=buy. Conflict: no symbol-specific catalyst. Resolution: add moderately, not aggressively. NVDA: macro=risk_on, news=n/a, earnings=n",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.5|pm_constrained": {
+        "model": "openai/gpt-5.5",
+        "scenario": "pm_constrained",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.240372,
+        "latency_mean": 67.41,
+        "errors": [],
+        "misattributed": []
+      },
+      "openai/gpt-5.5|pm_production_scale": {
+        "model": "openai/gpt-5.5",
+        "scenario": "pm_production_scale",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.461495,
+        "latency_mean": 101.84,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.5": {
+        "scenarios": {
+          "pm_constrained": {
+            "model": "openai/gpt-5.5",
+            "scenario": "pm_constrained",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.240372,
+            "latency_mean": 67.41,
+            "errors": [],
+            "misattributed": []
+          },
+          "pm_production_scale": {
+            "model": "openai/gpt-5.5",
+            "scenario": "pm_production_scale",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.461495,
+            "latency_mean": 101.84,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_total": 0.701867,
+        "quality_per_dollar": 1.42
+      }
+    }
+  }
+}

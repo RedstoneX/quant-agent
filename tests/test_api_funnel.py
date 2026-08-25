@@ -63,6 +63,54 @@ def test_funnel_executed_trade_reports_executed_state(client, seeded_evidence_db
     assert body["macro_context"]["regime"] == "risk-on"
 
 
+def test_funnel_exposes_canonical_lifecycle_events_and_terminal_trade(
+    client, seeded_evidence_db,
+):
+    db = Database(str(seeded_evidence_db))
+    db.initialize()
+    for stage, outcome, reason in (
+        ("opportunity", "discovered", "actionable_technical_prefilter"),
+        ("specialist", "evaluated", "technical_analysis_validated"),
+        ("portfolio_manager", "proposed", "constructor_created_order"),
+        ("risk", "approved", "risk_manager_verdict"),
+        ("deterministic_gate", "allowed", "post_risk_checks_passed"),
+        ("funding", "funded", "cash_available"),
+        ("order", "submitted", "broker_accepted"),
+        ("protection", "placed", "protective_stop_result"),
+        ("position_management", "exited", "validated_exit_fill"),
+    ):
+        db.insert_specialist_evidence(
+            run_id=EXECUTED_RUN_ID, agent_name="pipeline",
+            kind="pipeline_event", scope="symbol", symbol="AAPL",
+            evidence_json=json.dumps({
+                "stage": stage, "outcome": outcome, "reason": reason,
+            }),
+        )
+    db.conn.execute(
+        "UPDATE trades SET fill_qty=10, fill_price=150 WHERE broker_order_id='ord-1'"
+    )
+    db.conn.commit()
+    db.insert_trade(
+        symbol="AAPL", action="SELL", qty=5, price=160,
+        reasoning="position review exit", run_id=EXECUTED_RUN_ID,
+        broker_order_id="ord-exit", fill_status="submitted",
+    )
+    db.update_trade_fill("ord-exit", "filled", fill_qty=5, fill_price=160)
+    db.close()
+
+    body = client.get(f"/runs/{EXECUTED_RUN_ID}/funnel").json()
+    candidate = body["candidates"][0]
+    assert [event["stage"] for event in candidate["pipeline_events"]] == [
+        "opportunity", "specialist", "portfolio_manager", "risk",
+        "deterministic_gate", "funding", "order", "protection",
+        "position_management",
+    ]
+    assert candidate["order_status"] == "filled"
+    assert candidate["protection_outcome"] == "placed"
+    assert candidate["trade_action"] == "SELL"
+    assert candidate["realized_pnl"] == 50.0
+
+
 def test_funnel_hard_risk_block_reports_hard_risk_block_state(client, hard_risk_block_db):
     r = client.get(f"/runs/{HARD_BLOCK_RUN_ID}/funnel")
     assert r.status_code == 200

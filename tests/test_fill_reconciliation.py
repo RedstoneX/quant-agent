@@ -137,6 +137,12 @@ def test_reconcile_fills_updates_filled_orders(tmp_path):
     assert row["fill_status"] == "filled"
     assert row["fill_qty"] == 10.0
     assert row["fill_price"] == 100.25
+    event = db.conn.execute(
+        "SELECT evidence_json FROM specialist_evidence "
+        "WHERE run_id='r1' AND symbol='NVDA' AND kind='pipeline_event'"
+    ).fetchone()
+    assert '"stage": "order"' in event["evidence_json"]
+    assert '"outcome": "filled"' in event["evidence_json"]
 
 
 def test_reconcile_fills_flags_canceled_orders(tmp_path):

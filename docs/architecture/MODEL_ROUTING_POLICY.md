@@ -11,16 +11,17 @@ policy is expressed through and is unchanged by it.
 
 ## The policy
 
-Every agent seat runs `provider: openrouter`. Eight run
-**`google/gemini-2.5-flash-lite`**; the AI Risk Manager runs
-**`qwen/qwen3-235b-a22b-2507`**.
+Every agent seat runs `provider: openrouter`. The Portfolio Manager runs
+**`openai/gpt-5.5`**, the AI Risk Manager runs
+**`qwen/qwen3-235b-a22b-2507`**, and the remaining seats run
+**`google/gemini-2.5-flash-lite`**.
 
 | Seat | Model | Basis |
 |---|---|---|
 | `tech_analyst` | `google/gemini-2.5-flash-lite` | measured — `tech_batch`, `tech_batch_full` |
 | `news_analyst` | `google/gemini-2.5-flash-lite` | measured — `news_intel` |
 | `macro_analyst` | `google/gemini-2.5-flash-lite` | measured — `macro_stress` |
-| `portfolio_manager` | `google/gemini-2.5-flash-lite` | measured — `pm_constrained` |
+| `portfolio_manager` | **`openai/gpt-5.5`** | measured 2026-08-25 — `pm_constrained`, `pm_production_scale` |
 | `risk_manager` | **`qwen/qwen3-235b-a22b-2507`** | measured — `risk_rr_breach`, `risk_drawdown_discipline`; **held apart from PM** |
 | `position_reviewer` | `google/gemini-2.5-flash-lite` | measured — `midday_exit` |
 | `earnings_analyst` | `google/gemini-2.5-flash-lite` | **by analogy** to `news_analyst` |
@@ -40,20 +41,30 @@ directly measured. The price floor would have failed this policy — both
 routed models sit at or below it — while passing any expensive model nobody
 had measured.
 
-### Eight seats on one model is the finding; the ninth is the exception
+### PM recovery re-measurement (2026-08-25)
 
-The tranche was authorized to reserve stronger models for seats that
-demonstrably benefit. On measured quality, **no measured seat did** — no
-candidate outscored the selected model on a measured seat, so no measured
-seat is assigned a more expensive model to buy quality it would not get.
+The original PM scenario did not enforce grounded specialist provenance or
+actual holdings. Once those deterministic checks were added, the configured
+Gemini PM scored **0.00 on both runs**: it omitted provenance and proposed
+exits for names not held. GPT-5.6 Luna was not stable under the final stricter
+contract. GPT-5.5 scored **1.00/1.00 on two `pm_constrained` runs and two
+`pm_production_scale` runs** (30 candidates, 15 holdings, full memory context;
+43–109s, including bounded provenance-only repairs). Raw final evidence is
+committed in `ops/model_policy/results/zz-pm-luna-disqualified-final-2026-08-25.json`
+and `ops/model_policy/results/zz-pm-gpt55-qualified-final-2026-08-25.json`.
+
+This changes only the PM seat. Risk routing and deterministic Python/broker
+authority are unchanged.
+
+### Shared specialist model; decision seats diverge where measured
+
+The tranche reserves a different model for a seat only where current
+measurements demonstrate the benefit. The PM now does; the other seat
+assignments retain their prior evidence.
 Three unmeasured seats are assigned by analogy and remain an explicit known
 limitation rather than evidence of equivalence.
 
-`risk_manager` diverges for a different reason, and only after quality had
-already tied. It is the gate over the Portfolio Manager, so a shared model
-means the reviewer shares the reviewed party's blind spots. When four
-candidates measured identically at that seat, spending the tie on
-independence costs nothing and buys something. See
+`risk_manager` retains its independently measured Qwen route. See
 "Why `risk_manager` is not on PM's model" below.
 
 The per-seat *structure* is what made that a one-line config edit rather
@@ -81,7 +92,7 @@ Explicit per-agent model mapping in `config/settings.yaml`. Nothing else.
 ## Evidence
 
 `ops/model_policy/benchmark_models.py`, 148 graded trials on 2026-08-12:
-12 models x 6 scenarios x 2 repeats, plus a production-scale tech batch and
+12 models x 6 scenarios x 2 repeats, plus production-scale tech and PM cases and
 two corrective re-runs, driven through the **real** agent classes with the
 **real** prompts and graded by deterministic assertions. Raw results in
 `ops/model_policy/results/`; reproduce the table with:
@@ -100,7 +111,7 @@ Quality is the weighted mean of a scenario's graded checks (0–1).
 
 The table below is the **whole-sweep** aggregate across six roles. Read it
 as what it is: a summary of general fitness, useful for choosing one model
-for eight seats. It is **not** evidence about any individual seat, and
+for the originally shared seats. It is **not** evidence about any individual seat, and
 treating it as such is the error PR #30's review caught — see "Why
 `risk_manager` is not on PM's model".
 
@@ -177,7 +188,7 @@ trials, $0.157:
 | model | quality mean | worst run | latency | cost / 2 calls | independent of PM |
 |---|---|---|---|---|---|
 | **`qwen/qwen3-235b-a22b-2507`** | **1.00** | **1.00** | **10.4s** | **$0.00162** | **yes** |
-| `google/gemini-2.5-flash-lite` | 1.00 | 1.00 | 2.8s | $0.00163 | no — PM's model |
+| `google/gemini-2.5-flash-lite` | 1.00 | 1.00 | 2.8s | $0.00163 | no — PM model at measurement time |
 | `z-ai/glm-5.2` | 1.00 | 1.00 | 61.4s | $0.02355 | yes |
 | `deepseek/deepseek-v4-pro-0813` | 1.00 | 1.00 | 113.0s | $0.02035 | yes |
 | `openai/gpt-5-nano` *(control)* | 0.50 | 0.00 | 42.0s | $0.00517 | — |
@@ -266,8 +277,8 @@ explicit about which inputs are measured and which are structural):
 
 | | baseline (all `gpt-5.5`) | policy | cut |
 |---|---|---|---|
-| per trading day | $3.4334 | $0.0543 | 98.4% |
-| per month (21 days) | **$72.10** | **$1.14** | **63.2x cheaper** |
+| per trading day | $3.4334 | $0.2707 | 92.1% |
+| per month (21 days) | **$72.10** | **$5.68** | **12.7x cheaper** |
 
 `tech_analyst` is over half of it: five calls a day at 33,328 input tokens
 each, measured at real chunk size rather than extrapolated.
@@ -373,8 +384,8 @@ prices.
 
 ## Known limitations
 
-1. **Near-monoculture.** Eight of nine seats run one model. `risk_manager`
-   is now split off (see "Why `risk_manager` is not on PM's model"), which
+1. **Shared specialist concentration.** Seven of nine seats run one model.
+   `portfolio_manager` and `risk_manager` are independently measured routes, which
    addresses the case that mattered most — the gate sharing the reviewed
    party's blind spots — but the specialist seats still fail together if
    that model degrades or is withdrawn. There is no fallback, deliberately;
@@ -400,11 +411,12 @@ prices.
    candidate is *clearly* better and therefore that nothing measurable was
    given up by choosing on independence; it is not enough to prove the four
    are equivalent. `--repeats` deepens it when a decision needs more.
-4. **The seats other than `risk_manager` were not re-measured after the
+4. **The specialist/review seats other than `portfolio_manager` and
+   `risk_manager` were not re-measured after the
    2026-08-13 prompt cleanup and this branch's prompt edits.** Their rows
    come from the August sweep against slightly different prompt text. The
-   RM seat was re-run because its prompt and inputs changed materially and
-   because a decision turned on it; the specialist seats changed less and
+   PM and RM seats were re-run because their prompts/inputs changed materially
+   and because a decision turned on them; the specialist seats changed less and
    no decision turns on them, so re-running the full sweep was not worth
    the spend. This is a real gap, and it is the first thing to close if a
    specialist seat starts behaving oddly in paper trading.

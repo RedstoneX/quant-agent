@@ -256,6 +256,29 @@ class ReasoningChain(BaseModel):
     premortem_check: str = ""
 
 
+class AnalystProvenance(BaseModel):
+    """Machine-checkable specialist claim supporting a PM target.
+
+    ``relationship=conflicts`` is an explicit, legitimate PM disagreement;
+    it is not a veto.  The PM boundary verifies that the named specialist
+    actually covered the symbol and that ``observed_stance`` matches its
+    validated output.
+    """
+
+    source: Literal["technical", "news", "earnings", "macro"]
+    observed_stance: str = Field(min_length=1)
+    relationship: Literal["supports", "conflicts", "context"]
+    evidence: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_case(cls, values):
+        return _normalize_enum_case_fields(
+            values,
+            lower_fields=("source", "observed_stance", "relationship"),
+        )
+
+
 class TargetPosition(BaseModel):
     """PM's per-symbol intent — WHAT the book should look like, not HOW to get there.
 
@@ -291,6 +314,10 @@ class TargetPosition(BaseModel):
     # the broker's live price for entry.
     suggested_stop_price: float | None = None
     catalyst: str = ""  # populated when target violates R/R < 1.5 discipline
+    # Default preserves read compatibility for historical agent logs.  New
+    # live PM decisions are required to populate this by the deterministic
+    # PM grounding validator before they may reach PortfolioConstructor.
+    provenance: list[AnalystProvenance] = Field(default_factory=list)
 
     @field_validator("symbol")
     @classmethod
@@ -300,7 +327,13 @@ class TargetPosition(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_enum_case(cls, values):
-        return _normalize_enum_case_fields(values, lower_fields=("conviction",))
+        values = _normalize_enum_case_fields(values, lower_fields=("conviction",))
+        # Common plain-English synonym emitted by otherwise valid PM plans.
+        # This is a confidence label only; mapping moderate→medium changes no
+        # target, holding, risk, or execution authority.
+        if isinstance(values, dict) and values.get("conviction") == "moderate":
+            values["conviction"] = "medium"
+        return values
 
 
 class PortfolioDecision(BaseModel):

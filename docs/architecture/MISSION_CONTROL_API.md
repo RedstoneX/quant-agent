@@ -19,7 +19,8 @@ considered in a run — union of symbol-scoped `specialist_evidence` and
 `trades`), `/runs/{run_id}/candidates/{symbol}` (per-candidate fidelity:
 symbol-specific tech/earnings/news evidence, clearly labeled broader
 macro/news context, PM target/proposed order, RM verdict/modification, the
-resulting trade, and a computed disagreement/consensus summary). Distinct
+resulting trade(s), typed pipeline lifecycle events, and a computed
+disagreement/consensus summary). Distinct
 from `/candidates` (an unrelated Stage 2 universe-expansion watchlist
 concept over `insights`, unchanged).
 
@@ -85,6 +86,24 @@ state, no broker-write surface, no new external dependency.
   all) — a run that legitimately considered zero candidates (e.g. a
   hard-risk-block before `risk_manager` ever ran) still returns 200 with
   `decision_state="hard_risk_block"` and an empty `candidates` list.
+
+## Backend recovery — canonical lifecycle evidence (2026-08-25)
+
+The existing `specialist_evidence` stream now also accepts validated
+`kind="pipeline_event"` rows. These are additive lifecycle facts, not a new
+memory or trading dependency. Symbol events carry `stage`, `outcome`, `reason`
+and structured details for opportunity discovery, specialist success/failure,
+PM proposal/omission/failure, Risk outcome, deterministic gate, funding, order
+submission and protection. Existing evidence kinds remain the canonical agent
+payloads; `trades` remains the canonical broker lifecycle row.
+
+`GET /runs/{run_id}/funnel` and the per-candidate endpoint expose those events,
+all matching trades, terminal `fill_status`/fill facts, protection outcome and
+`realized_pnl`. Realized P&L is written only for confirmed exit fills with a
+complete confirmed average-cost basis; an incomplete legacy basis remains
+`null`. Thus submitted/filled/partially-filled/canceled/expired/rejected state,
+position-management exits and measured outcomes are queryable without parsing
+logs or model prose. API behavior remains read-only and non-authoritative.
 
 ## Stage 6 — price bars (chart panel)
 

@@ -594,7 +594,15 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "conviction": "high",           // drives size scaling + RM audit
   "thesis": "AI capex supercycle, 4/4 signals aligned",
   "thesis_invalid_if": "price breaks MA50 or MACD flips to negative",
-  "catalyst": ""                  // populate only when overriding R/R<1.5 discipline
+  "catalyst": "",                 // populate only when overriding R/R<1.5 discipline
+  "provenance": [
+    {
+      "source": "technical",      // technical | news | earnings | macro
+      "observed_stance": "buy",   // copy the validated stance exactly
+      "relationship": "supports", // supports | conflicts | context
+      "evidence": "Confirmed uptrend and positive momentum"
+    }
+  ]
 }
 ```
 
@@ -636,21 +644,38 @@ Semantics of `target_weight_pct`:
       "conviction": "high",
       "thesis": "AI capex + $15B gov contract. 3/4 signals aligned (news mixed on tariffs).",
       "thesis_invalid_if": "Price closes below MA50 or breaks $180 support",
-      "catalyst": ""
+      "catalyst": "",
+      "provenance": [
+        {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "confirmed uptrend"},
+        {"source": "news", "observed_stance": "bearish", "relationship": "conflicts", "evidence": "tariff risk conflicts with the long thesis"},
+        {"source": "earnings", "observed_stance": "bullish", "relationship": "supports", "evidence": "filing synthesis constructive"},
+        {"source": "macro", "observed_stance": "risk-on", "relationship": "supports", "evidence": "equity regime constructive"}
+      ]
     },
     {
       "symbol": "JPM",
       "target_weight_pct": 10.0,
       "conviction": "high",
       "thesis": "Earnings beat, rate environment favorable, 4/4 aligned.",
-      "thesis_invalid_if": "Guidance pulled or regional-bank contagion headline"
+      "thesis_invalid_if": "Guidance pulled or regional-bank contagion headline",
+      "provenance": [
+        {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "validated buy trend"},
+        {"source": "news", "observed_stance": "bullish", "relationship": "supports", "evidence": "symbol news constructive"},
+        {"source": "earnings", "observed_stance": "bullish", "relationship": "supports", "evidence": "beat and guidance"},
+        {"source": "macro", "observed_stance": "risk-on", "relationship": "supports", "evidence": "rate backdrop supports banks"}
+      ]
     },
     {
       "symbol": "AAPL",
       "target_weight_pct": 0,
       "conviction": "medium",
       "thesis": "Close — tariff risk on hardware weakens thesis. Tech neutral, news bearish. Reallocate to stronger names.",
-      "thesis_invalid_if": ""
+      "thesis_invalid_if": "",
+      "provenance": [
+        {"source": "technical", "observed_stance": "neutral", "relationship": "context", "evidence": "no positive trend confirmation"},
+        {"source": "news", "observed_stance": "bearish", "relationship": "supports", "evidence": "tariff risk is symbol-specific"},
+        {"source": "macro", "observed_stance": "risk-on", "relationship": "conflicts", "evidence": "broad regime does not outweigh hardware risk"}
+      ]
     }
   ],
   "portfolio_view": "Moderately bullish. Targeting 85% invested, 15% cash. Overweight financials + selective tech. Reduced hardware exposure."
@@ -668,6 +693,17 @@ Semantics of `target_weight_pct`:
   = no change).
 - Each target's `thesis` must reference which signals aligned /
   conflicted.
+- Each target MUST include `provenance` for every specialist source it
+  invokes. Never claim coverage from a source that has no symbol-specific
+  record above. Copy `observed_stance` exactly. If you disagree with a
+  specialist, that is allowed: use `relationship: "conflicts"` and explain
+  the disagreement in `evidence`; never relabel disagreement as alignment.
+  Macro is broad context and may use `relationship: "context"`.
+- A shorthand such as `3/4 aligned` is permitted only when provenance has
+  one verified claim from each of technical, news, earnings, and macro and
+  exactly three are marked `supports`. Prefer the explicit provenance over
+  shorthand. `portfolio_view` describes the resulting book; do not put any
+  specialist alignment, agreement, or coverage claims there.
 - **Symbol Discipline**: Only propose `target_weight_pct > 0` for
   symbols that appear in the Technical Analysis Reports section for
   this run. Held positions can always be trimmed/closed regardless of

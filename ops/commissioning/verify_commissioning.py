@@ -87,7 +87,7 @@ EXPECTED_ROUTING: dict[str, str] = {
     "news_analyst":      "google/gemini-2.5-flash-lite",
     "macro_analyst":     "google/gemini-2.5-flash-lite",
     "earnings_analyst":  "google/gemini-2.5-flash-lite",
-    "portfolio_manager": "google/gemini-2.5-flash-lite",
+    "portfolio_manager": "openai/gpt-5.5",
     # Deliberately NOT PM's model — the AI Risk Manager is the gate over the
     # Portfolio Manager, and measured quality at that seat is tied, so the
     # policy buys decision-chain independence rather than spending the tie on

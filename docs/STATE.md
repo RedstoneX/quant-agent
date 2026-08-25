@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
@@ -85,7 +85,7 @@ Accepted behavior includes:
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 
-## Trading-utility recovery — mechanical recovery awaiting promotion
+## Trading-utility recovery — engineering recovery awaiting review/promotion
 
 Production forensics for sessions 2026-08-18 through 2026-08-24 disproved the
 prior claim that all mechanical blockers between opportunity discovery and
@@ -95,9 +95,17 @@ coupled to a 15-second cancel guard, Risk parse failures labeled as rejection,
 zero-order runs labeled executed, and SGOV funding sized before entry viability
 with whole-order drops on partial funding.
 
-The Priority 1 engineering tranche corrects those mechanics on a dedicated
-review branch. It is not accepted in production until its PR is externally
-reviewed, explicitly merged, and separately authorized for deployment.
+Priority 1 is merged to engineering `main` via PR #74 (`708cd234`). It is not
+production truth until separately authorized and deployed.
+
+The final backend tranche adds fail-closed, machine-checkable PM specialist
+provenance and holding validation; records PM model/parse/grounding failures as
+agent failures; and extends the existing `specialist_evidence`/`trades` state so
+the complete candidate/order/protection/outcome chain and deterministically
+derivable realized P&L are queryable through the existing API. Production-scale
+measurement supports changing only the PM seat to `openai/gpt-5.5`; Risk
+routing and deterministic Python/broker authority remain unchanged. This final
+tranche remains engineering truth until its PR is reviewed and merged.
 
 After promotion, acceptance still requires natural Alpaca Paper sessions
 demonstrating the real chain:
@@ -122,7 +130,10 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 ## Model / provider policy
 
 - OpenRouter remains the model-provider path.
-- Current accepted routing uses `google/gemini-2.5-flash-lite` and `qwen/qwen3-235b-a22b-2507` according to the per-seat policy.
+- Current engineering routing uses `openai/gpt-5.5` for Portfolio Manager,
+  `qwen/qwen3-235b-a22b-2507` for Risk Manager, and
+  `google/gemini-2.5-flash-lite` for the remaining seats, according to the
+  measured per-seat policy. Production remains on its separately promoted config.
 
 ## Market-data feed finding — resolved, not an active defect
 
@@ -151,9 +162,8 @@ Current bounded activities:
 
 1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
 2. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
-3. **Mechanical recovery:** review and promote the Priority 1 backend recovery before treating opportunity→execution mechanics as corrected.
+3. **Backend recovery:** review the final Priority 2/3 engineering tranche;
+   merge and production promotion remain separate explicit gates.
 4. **Evidence-driven follow-up only:** do not reopen dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
-Priority 2 PM truthfulness/model-suitability work and Priority 3 stage
-observability remain after this mechanical tranche. See `docs/WORK.md` for the
-active execution contract.
+See `docs/WORK.md` for the active review/promotion contract.

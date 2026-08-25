@@ -1,0 +1,224 @@
+"""Deterministic PM provenance/holding boundary and production-scale context."""
+
+import json
+
+from unittest.mock import patch
+
+from src.agents.portfolio_manager import PortfolioManagerAgent
+from src.agents.base import AgentResult
+from src.models import (
+    NewsIntelligenceReport, PortfolioDecision, Position, TechAnalysisResult,
+    TechReasoningChain,
+)
+
+
+def _analysis(symbol: str, rating: str = "buy") -> TechAnalysisResult:
+    buy = rating in {"buy", "strong_buy"}
+    return TechAnalysisResult(
+        symbol=symbol, rating=rating, conviction="medium", entry_price=100,
+        stop_loss=95 if buy else 105, reference_target=112 if buy else 88,
+        reasoning="validated production-like trend and momentum evidence",
+        reasoning_chain=TechReasoningChain(
+            trend="daily trend", momentum="momentum", volatility="ATR",
+            volume="volume", support_resistance="levels",
+        ),
+    )
+
+
+def _decision(target: dict, conflicts: str = "Explicit source audit.") -> PortfolioDecision:
+    return PortfolioDecision.model_validate({
+        "reasoning_chain": {
+            "macro_filter": "Macro checked.", "news_check": "News checked.",
+            "earnings_check": "Earnings checked.", "signal_conflicts": conflicts,
+            "sizing_logic": "Sizing checked.", "portfolio_balance": "Book checked.",
+            "cash_target": "Cash checked.",
+        },
+        "targets": [target], "portfolio_view": "Grounded target only.",
+    })
+
+
+def test_pm_allows_explicit_disagreement_but_rejects_false_alignment():
+    target = {
+        "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "PM disagrees with the bearish technical signal.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "sell",
+            "relationship": "conflicts", "evidence": "Catalyst outweighs trend",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("AAPL", "sell")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        total_value=100_000,
+    )
+    assert errors == []
+
+    target["provenance"][0]["relationship"] = "supports"
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("AAPL", "sell")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        total_value=100_000,
+    )
+    assert any("does not support" in error for error in errors)
+
+
+def test_pm_rejects_invented_coverage_phantom_exit_and_unproved_ratio():
+    target = {
+        "symbol": "MSFT", "target_weight_pct": 0, "conviction": "low",
+        "thesis": "Close because 4/4 signals aligned.",
+        "provenance": [{
+            "source": "news", "observed_stance": "bearish",
+            "relationship": "supports", "evidence": "claimed headline",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target, "MSFT: 4/4 aligned."),
+        analyses=[_analysis("MSFT")], positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None, total_value=100_000,
+    )
+    assert any("not an actual holding" in error for error in errors)
+    assert any("coverage that does not exist" in error for error in errors)
+    assert any("without all four verified" in error for error in errors)
+
+
+def test_pm_cannot_bypass_grounding_with_legacy_concrete_decisions():
+    decision = PortfolioDecision.model_validate({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b", "cash_target": "c",
+        },
+        "decisions": [{
+            "action": "BUY", "symbol": "AAPL", "allocation_pct": 5,
+            "entry_price": 100, "stop_loss": 95, "take_profit": 110,
+            "reasoning": "bypass targets",
+        }],
+        "portfolio_view": "legacy bypass",
+    })
+    errors = PortfolioManagerAgent.validate_grounding(
+        decision, analyses=[_analysis("AAPL")], positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None, total_value=100_000,
+    )
+    assert any("only grounded targets" in error for error in errors)
+
+
+def test_pm_reasoning_cannot_invent_symbol_coverage_outside_target():
+    target = {
+        "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Technical setup supports the target.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "buy",
+            "relationship": "supports", "evidence": "validated buy rating",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target, "AAPL: technical buy and news bullish."),
+        analyses=[_analysis("AAPL")], positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None, total_value=100_000,
+    )
+    assert any("reasoning invokes news" in error for error in errors)
+
+
+def test_pm_may_truthfully_state_that_symbol_coverage_is_absent():
+    target = {
+        "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Technical setup supports the target; no news/earnings available.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "buy",
+            "relationship": "supports", "evidence": "validated buy rating",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target, "AAPL: tech=buy, news=n/a, earnings=unavailable."),
+        analyses=[_analysis("AAPL")], positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None, total_value=100_000,
+    )
+    assert errors == []
+
+
+def test_grounding_repair_may_fix_claims_but_not_target_intent(monkeypatch):
+    base = {
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "AAPL: technical buy and news bullish.",
+            "sizing_logic": "z", "portfolio_balance": "b", "cash_target": "c",
+        },
+        "targets": [{
+            "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
+            "thesis": "Technical and news support the target.",
+            "provenance": [{
+                "source": "technical", "observed_stance": "buy",
+                "relationship": "supports", "evidence": "validated buy",
+            }],
+        }],
+        "portfolio_view": "Selective long.",
+    }
+    corrected = json.loads(json.dumps(base))
+    corrected["reasoning_chain"]["signal_conflicts"] = "AAPL: tech=buy, news=unavailable."
+    corrected["targets"][0]["thesis"] = "Technical supports; no news available."
+
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    first = AgentResult(raw_text=json.dumps(base), tokens_used=1, model="test", user_message="input")
+    repaired = AgentResult(raw_text=json.dumps(corrected), tokens_used=1, model="test")
+    monkeypatch.setattr(PortfolioManagerAgent, "run", lambda self, **kwargs: first)
+    monkeypatch.setattr(PortfolioManagerAgent, "_execute", lambda self, message: repaired)
+    decision, result = agent.decide(analyses=[_analysis("AAPL")], positions=[])
+    assert decision is not None
+    assert decision.targets[0].target_weight_pct == 5
+    assert result is repaired
+
+    changed = json.loads(json.dumps(corrected))
+    changed["targets"][0]["target_weight_pct"] = 6
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "_execute",
+        lambda self, message: AgentResult(raw_text=json.dumps(changed), tokens_used=1, model="test"),
+    )
+    decision, _ = agent.decide(analyses=[_analysis("AAPL")], positions=[])
+    assert decision is None
+
+
+def test_production_scale_pm_prompt_and_grounding_contract():
+    """Observed production scale: 30 candidates, 15 holdings, memory layers."""
+    symbols = [
+        "SPY", "QQQ", "IWM", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+        "META", "AVGO", "AMD", "ORCL", "MU", "JPM", "GS", "V", "MA",
+        "UNH", "LLY", "XOM", "CVX", "COST", "WMT", "CAT", "GE", "BA",
+        "NEE", "VST", "CEG", "BRK-B",
+    ]
+    analyses = [_analysis(symbol) for symbol in symbols]
+    positions = [
+        Position(
+            symbol=symbol, qty=10, avg_entry=90, current_price=100,
+            market_value=1000, unrealized_pnl=100, sector="Diversified",
+        )
+        for symbol in symbols[:15]
+    ]
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="test")
+        message = agent.build_user_message(
+            analyses=analyses, positions=positions,
+            macro_analysis={"regime": "risk_on", "equity_outlook": "bullish"},
+            cash_balance=50_000, total_value=100_000,
+            weekly_narrative="Seven-day portfolio narrative. " * 80,
+            macro_trajectory="Regime trajectory evidence. " * 80,
+            active_state_changes="Current state change. " * 80,
+            pm_recent_decisions="Prior grounded target. " * 80,
+            rm_recent_verdicts="Prior risk verdict. " * 80,
+        )
+    assert len(message) > 18_000
+    assert all(f"- {symbol}:" in message for symbol in symbols)
+
+    target = {
+        "symbol": "BRK-B", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Technical buy supports a bounded starter.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "buy",
+            "relationship": "supports", "evidence": "validated buy rating",
+        }],
+    }
+    assert PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=analyses, positions=positions,
+        news_intel=None, earnings_analyses=[],
+        macro_analysis={"regime": "risk_on", "equity_outlook": "bullish"},
+        total_value=100_000,
+    ) == []

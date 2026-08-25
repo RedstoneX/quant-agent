@@ -1,0 +1,105 @@
+{
+  "generated_at": "2026-08-25T03:43:17Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "pm_constrained": {
+      "role": "portfolio_manager",
+      "description": "Risk-off macro, 5.7% cash, margin OFF. Grades funding arithmetic and signal consistency."
+    }
+  },
+  "pricing_used": {
+    "google/gemini-2.5-flash-lite": {
+      "input": 0.09999999999999999,
+      "output": 0.39999999999999997
+    }
+  },
+  "trials": [
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "pm_constrained",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "PortfolioDecision validated"
+        }
+      ],
+      "input_tokens": 12040,
+      "output_tokens": 1130,
+      "cost_usd": 0.001656,
+      "latency_s": 5.37,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk_off with a bearish outlook, favoring a 55% target invested% and 45% cash. This is consistent with the overall bearish sentiment.\",\n    \"news_check\": \"No specific news intelligence was provided for today's session.\",\n    \"earnings_check\": \"No recent earnings filings were available for analysis.\",\n    \"signal_conflicts\": \"AAPL: macro=risk_off/bearish, news=N/A, earnings=N/A, tech=buy. Conflict: Macro and Tech signals are diametrically opposed. Resolution: Given the risk-off environment and lack of supporting news/earnings, the bullish tech signal is overridden. Therefore, AAPL will not be initiated as a buy.\",\n    \"sizing_logic\": \"XLE: Tech signal is sell (medium conviction) with R/R 1.53:1. Macro regime is risk-off. This aligns with the sector guidance to underweight Energy. As per Rule 7 (R/R < 1.5 needs catalyst, here it's 1.53 but macro alignment is weak), we will initiate a SELL at 5% target weight due to the risk-off environment and the 'sell' tech signal, despite medium conviction. AAPL: Tech signal is buy (high conviction), but macro is risk_off/bearish. This is a clear conflict. Given the macro overlay, we are not initiating a buy. No other signals provided.\",\n    \"portfolio_balance\": \"Current book: NVDA (43.2%) and XLU (16.0%). Total invested 59.2%. Target invested 55%. Closing NVDA as its weight is over the 20% cap and it's in a risk-off regime. XLU is a defensive name and within limits, will ",
+      "actual_model": "google/gemini-2.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "pm_constrained",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "PortfolioDecision validated"
+        }
+      ],
+      "input_tokens": 12040,
+      "output_tokens": 1466,
+      "cost_usd": 0.0017904000000000002,
+      "latency_s": 5.97,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk_off with a bearish outlook, indicating caution. The target invested percentage is 55%, with a cash recommendation of 45%, emphasizing capital preservation.\",\n    \"news_check\": \"No specific news intelligence or state changes were provided, so this section defaults to neutral. The absence of news means no new directional impetus from this layer.\",\n    \"earnings_check\": \"No earnings analysis data is available for any symbols, so this layer provides no directional input or constraints.\",\n    \"signal_conflicts\": \"NVDA: macro=risk_off, news=N/A, earnings=N/A, tech=N/A (no Tech report provided, but held with positive P&L). Conflict: Macro risk-off suggests caution, but current position is overweight Tech and showing positive P&L. The absence of a Tech report for NVDA is a key missing piece. XLE: macro=risk_off, news=N/A, earnings=N/A, tech=sell. Conflict: Macro risk-off aligns with XLE sell signal, but the sell signal is only medium conviction. Resolution: Given the risk-off macro, we will reduce exposure to XLE as per the sell signal, even if medium conviction. AAPL: macro=risk_off, news=N/A, earnings=N/A, tech=buy. Conflict: Macro risk-off argues against new buys, but Tech is a high conviction buy signal.\",\n    \"sizing_logic\": \"Current invested percentage is 94.3%, significantly above the target invested of 55% and holding 45% cash recommendation. This necessitates significant de-risking. Existing NVDA posi",
+      "actual_model": "google/gemini-2.5-flash-lite",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google/gemini-2.5-flash-lite|pm_constrained": {
+        "model": "google/gemini-2.5-flash-lite",
+        "scenario": "pm_constrained",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.0,
+        "quality_min": 0.0,
+        "cost_mean": 0.001723,
+        "latency_mean": 5.67,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "google/gemini-2.5-flash-lite": {
+        "scenarios": {
+          "pm_constrained": {
+            "model": "google/gemini-2.5-flash-lite",
+            "scenario": "pm_constrained",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.0,
+            "quality_min": 0.0,
+            "cost_mean": 0.001723,
+            "latency_mean": 5.67,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.0,
+        "quality_worst": 0.0,
+        "quality_worst_run": 0.0,
+        "cost_total": 0.001723,
+        "quality_per_dollar": 0.0
+      }
+    }
+  }
+}

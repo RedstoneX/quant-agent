@@ -920,7 +920,7 @@ def test_migration_adds_new_columns_on_legacy_db(tmp_path):
     try:
         trades_cols = {r[1] for r in database.conn.execute("PRAGMA table_info(trades)")}
         agent_logs_cols = {r[1] for r in database.conn.execute("PRAGMA table_info(agent_logs)")}
-        for col in ("decision_id",):
+        for col in ("decision_id", "realized_pnl"):
             assert col in trades_cols
         for col in ("requested_provider", "requested_model", "actual_provider",
                     "prompt_version", "latency_s", "status", "finish_reason",
@@ -946,3 +946,45 @@ def test_migration_is_idempotent_on_already_migrated_db(db):
     db.initialize()
     cols = [r[1] for r in db.conn.execute("PRAGMA table_info(agent_logs)")]
     assert cols.count("decision_id") == 1
+
+
+def test_reconciled_exit_persists_deterministic_realized_pnl(db):
+    db.insert_trade(
+        "AAPL", "BUY", 10, 100, "entry", "run-entry",
+        broker_order_id="buy-1", fill_status="submitted",
+    )
+    db.update_trade_fill("buy-1", "filled", fill_qty=10, fill_price=101)
+    db.insert_trade(
+        "AAPL", "SELL", 4, 110, "trim", "run-exit",
+        broker_order_id="sell-1", fill_status="submitted",
+    )
+    db.update_trade_fill("sell-1", "filled", fill_qty=4, fill_price=111)
+
+    trade = db.get_trades(symbol="AAPL")[0]
+    assert trade["fill_status"] == "filled"
+    assert trade["realized_pnl"] == 40.0
+
+
+def test_realized_pnl_stays_unknown_without_confirmed_cost_basis(db):
+    db.insert_trade(
+        "MSFT", "SELL", 3, 200, "legacy exit", "run-exit",
+        broker_order_id="sell-no-basis", fill_status="submitted",
+    )
+    db.update_trade_fill(
+        "sell-no-basis", "filled", fill_qty=3, fill_price=201,
+    )
+    assert db.get_trades(symbol="MSFT")[0]["realized_pnl"] is None
+
+
+def test_terminal_partial_fill_books_only_confirmed_exit_quantity(db):
+    db.insert_trade(
+        "NVDA", "BUY", 10, 100, "entry", "run-entry",
+        broker_order_id="nv-buy", fill_status="submitted",
+    )
+    db.update_trade_fill("nv-buy", "filled", fill_qty=10, fill_price=100)
+    db.insert_trade(
+        "NVDA", "SELL", 10, 110, "exit attempt", "run-exit",
+        broker_order_id="nv-sell", fill_status="submitted",
+    )
+    db.update_trade_fill("nv-sell", "canceled", fill_qty=3, fill_price=110)
+    assert db.get_trades(symbol="NVDA")[0]["realized_pnl"] == 30.0
