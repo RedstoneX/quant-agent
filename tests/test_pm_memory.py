@@ -4,6 +4,7 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
+from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro_store import MacroStore
 from src.data.news_store import NewsStore
 from src.data.tech_store import TechStore
@@ -306,6 +307,11 @@ def test_run_intra_check_emergency_sells_on_breach(tmp_path):
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
     pipeline.broker.cancel_snapshotted_stops.return_value = True
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
+        "paid path must not precede emergency liquidation"
+    )
 
     result = pipeline.run_intra_check()
     assert result["status"] == "emergency_sold"
@@ -315,6 +321,8 @@ def test_run_intra_check_emergency_sells_on_breach(tmp_path):
     assert kw["side"] == "sell"
     assert kw["qty"] == 50
     assert kw["limit_price"] == round(192 * 0.99, 2)
+    pipeline.cost_circuit.activate_session.assert_called_once()
+    pipeline.cost_circuit.require_paid_analysis.assert_not_called()
 
 
 def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
@@ -341,10 +349,25 @@ def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
         "portfolio_value": 99_000.0, "last_equity": 100_000.0, "cash": 10_000.0,
     }
     pipeline.broker.get_positions.return_value = []
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
+        "prelatched", {"suspended": True},
+    )
+    pipeline._run_intraday_opportunity_scan = MagicMock(
+        side_effect=lambda _ctx: pipeline._require_paid_analysis(
+            "intraday_tech_analyst"
+        )
+    )
 
     result = pipeline.run_intra_check()
     assert result["status"] == "ok"
+    assert result["intraday_scan"]["status"] == "paid_analysis_suspended"
     pipeline.broker.submit_order.assert_not_called()
+    pipeline.cost_circuit.activate_session.assert_called_once()
+    pipeline.cost_circuit.require_paid_analysis.assert_called_once_with(
+        "intraday_tech_analyst"
+    )
 
 
 def test_auto_take_profit_triggers_once_at_30pct(tmp_path):

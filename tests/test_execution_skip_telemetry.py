@@ -7,7 +7,8 @@ run reported status='executed' with zero orders, and the evening analyst
 graded the day as a deliberate no-trade ("need more proactive idea
 generation"). Every deterministic skip now appends to ctx.execution_skips
 and persists an `execution_skip` evidence row; a morning whose approved
-BUYs ALL died on the funding race reports the retryable `buys_unfunded`.
+BUYs ALL died on the funding race reports terminal `buys_unfunded` without
+automatically purchasing another full decision chain.
 """
 from unittest.mock import MagicMock
 
@@ -213,7 +214,7 @@ def test_evidence_failure_never_blocks_the_skip_decision():
     assert [s["reason"] for s in ctx.execution_skips] == ["insufficient_cash"]
 
 
-def test_buys_unfunded_is_retryable_in_main():
+def test_buys_unfunded_does_not_repeat_paid_stack_in_main():
     import main as main_mod
-    assert "buys_unfunded" in main_mod._RETRYABLE_RESULT_STATUSES
-    assert "agent_failure" in main_mod._RETRYABLE_RESULT_STATUSES
+    assert "buys_unfunded" not in main_mod._RETRYABLE_RESULT_STATUSES
+    assert "agent_failure" not in main_mod._RETRYABLE_RESULT_STATUSES

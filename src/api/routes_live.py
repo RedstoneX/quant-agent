@@ -108,35 +108,83 @@ def _session_lock_active() -> bool | None:
 def get_health() -> HealthResponse:
     try:
         try:
-            from src.api.db_reads import session_prefixes_logged_on
+            from src.api.db_reads import get_llm_circuit_health, session_prefixes_logged_on
             sessions_logged_today = session_prefixes_logged_on()
+            llm_health = get_llm_circuit_health()
             db_reachable = True
         except Exception:
             sessions_logged_today = []
+            llm_health = None
             db_reachable = False
 
+        broker_reachable = check_broker_reachable()
+        recent_pm_status = (llm_health or {}).get("recent_pm_status")
+        circuit_suspended = bool((llm_health or {}).get("suspended"))
+        circuit_available = bool((llm_health or {}).get("available"))
+
+        def _failed_status(value) -> bool:
+            if not value:
+                return False
+            status = str(value).lower()
+            return (
+                status.startswith("pm_")
+                or status in {"agent_failure", "failed"}
+                or "parse_error" in status
+                or "analysis_error" in status
+            )
+
+        recent_agent_statuses = (llm_health or {}).get("recent_agent_statuses") or {}
+        failed_agents = sorted(
+            name for name, item in recent_agent_statuses.items()
+            if _failed_status((item or {}).get("status"))
+        )
+        # Compatibility with a database populated before the per-agent health
+        # map existed in this API process.
+        if _failed_status(recent_pm_status) and "portfolio_manager" not in failed_agents:
+            failed_agents.append("portfolio_manager")
+        if not db_reachable:
+            decision_path_status = "unknown_database_unreachable"
+        elif not circuit_available:
+            decision_path_status = "degraded_cost_circuit_unavailable"
+        elif circuit_suspended:
+            decision_path_status = "paid_analysis_suspended"
+        elif failed_agents:
+            decision_path_status = "degraded_recent_agent_failure:" + ",".join(failed_agents)
+        else:
+            decision_path_status = "ok"
+        overall_status = (
+            "degraded"
+            if (not db_reachable or broker_reachable is False
+                or decision_path_status != "ok")
+            else "ok"
+        )
+
         return HealthResponse(
-            status="ok",
+            status=overall_status,
             db_reachable=db_reachable,
-            broker_reachable=check_broker_reachable(),
+            broker_reachable=broker_reachable,
             paper=get_alpaca_paper(),
             sessions_logged_today=list(sessions_logged_today or []),
             last_run_files=_last_run_files(),
             session_lock_active=_session_lock_active(),
+            decision_path_status=decision_path_status,
+            llm_circuit=llm_health,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:
         # Outermost guard: even /health itself must never 500. Report the
-        # process as up ("status=ok" — we did respond) but everything else
+        # process as up but degraded; everything else is explicitly unknown.
         # unknown, rather than leaking a stack trace.
         return HealthResponse(
-            status="ok",
+            status="degraded",
             db_reachable=False,
             broker_reachable=None,
             paper=None,
             sessions_logged_today=[],
             last_run_files={mode: None for mode in _LAST_RUN_MODES},
             session_lock_active=None,
+            decision_path_status="unknown_health_exception",
+            llm_circuit=None,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 

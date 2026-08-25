@@ -79,7 +79,7 @@ def test_pm_rejects_invented_coverage_phantom_exit_and_unproved_ratio():
     )
     assert any("not an actual holding" in error for error in errors)
     assert any("coverage that does not exist" in error for error in errors)
-    assert any("without all four verified" in error for error in errors)
+    assert any("claims denominator 4" in error for error in errors)
 
 
 def test_pm_cannot_bypass_grounding_with_legacy_concrete_decisions():
@@ -103,7 +103,7 @@ def test_pm_cannot_bypass_grounding_with_legacy_concrete_decisions():
     assert any("only grounded targets" in error for error in errors)
 
 
-def test_pm_reasoning_cannot_invent_symbol_coverage_outside_target():
+def test_pm_free_text_does_not_override_structured_provenance():
     target = {
         "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
         "thesis": "Technical setup supports the target.",
@@ -117,7 +117,9 @@ def test_pm_reasoning_cannot_invent_symbol_coverage_outside_target():
         analyses=[_analysis("AAPL")], positions=[], news_intel=None,
         earnings_analyses=[], macro_analysis=None, total_value=100_000,
     )
-    assert any("reasoning invokes news" in error for error in errors)
+    # Free-form prose is not machine interpreted.  The exact structured
+    # provenance is the enforceable boundary and remains grounded.
+    assert errors == []
 
 
 def test_pm_may_truthfully_state_that_symbol_coverage_is_absent():
@@ -146,10 +148,10 @@ def test_grounding_failure_returns_original_result_without_another_llm_call(monk
         },
         "targets": [{
             "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
-            "thesis": "Technical and news support the target.",
+            "thesis": "Technical support is claimed, with a phantom news claim.",
             "provenance": [{
-                "source": "technical", "observed_stance": "buy",
-                "relationship": "supports", "evidence": "validated buy",
+                "source": "news", "observed_stance": "bullish",
+                "relationship": "supports", "evidence": "phantom news",
             }],
         }],
         "portfolio_view": "Selective long.",

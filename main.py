@@ -16,7 +16,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Result statuses that mean "this session did NOT do its job for a
 # transient/recoverable reason" — a broker-API blip at snapshot time,
-# an earnings fetch failure, an LLM analysis failure. The pipeline
+# or an earnings fetch failure. Deterministic model/validation failures are
+# terminal for the slot: repeating the whole paid stack was the cost-amplifier
+# behind the 2026-08-25 incident. Provider calls already have one bounded
+# transient retry inside BaseAgent and the mandatory cost circuit owns the
+# aggregate attempt/spend ceilings.
 # returns these as a result dict WITHOUT raising, so without this the
 # process exits 0, the OS-timer wrapper (scripts/run_if_et_window.sh)
 # writes its last-run marker, and the slot is treated as done for the
@@ -27,18 +31,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # here — those are successful completions and must exit 0. (audit F2)
 _RETRYABLE_RESULT_STATUSES = frozenset(
     {
-        "broker_error", "fetch_error", "analysis_error", "agent_failure",
-        "buys_unfunded",
+        "broker_error", "fetch_error",
     }
 )
-# `buys_unfunded`: the morning had risk-approved BUYs but submitted
-# nothing because the sweep-funding proceeds were not confirmed in time
-# (2026-08-19: the funding sell filled 36s after the session stopped
-# looking — a transient race, not a decision). Retrying re-runs the FULL
-# chain including a fresh RM review, so this is never a veto bypass.
-# `agent_failure`: an agent call exhausted its parse/repair path and produced
-# no validated decision. Retrying is recovery from a system failure, not a
-# retry of a Risk rejection; no trading verdict existed to bypass.
+# `buys_unfunded` is deliberately terminal for the slot.  Re-running it used
+# to repeat the full paid research -> PM -> RM chain merely because a funding
+# sell settled late.  A future execution-only checkpoint may retry that
+# deterministic funding path; until then, repeating paid analysis is less safe
+# than leaving the approved BUY unsubmitted and reporting it truthfully.
 
 logging.basicConfig(
     level=logging.INFO,
@@ -137,8 +137,10 @@ def main():
         # Refresh LLM pricing from LiteLLM's public JSON if our cache is
         # stale (>24h). Best-effort: fetch failure or no-network falls back
         # to the in-memory PRICING dict (cache or hardcoded baseline).
-        # Cost tracking is observability-only — a stale price table never
-        # blocks trading.
+        # This refresh covers direct-provider telemetry. TradingPipeline also
+        # verifies the accepted OpenRouter seats against a fresh official
+        # catalog; that routed-price check is a mandatory breaker input and
+        # fails paid analysis closed while leaving broker safety live.
         try:
             refresh_pricing()
         except Exception as exc:

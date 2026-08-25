@@ -59,7 +59,7 @@ def test_health_reports_all_modes_unknown_when_the_cache_dir_is_missing(
     `/health` must report "nothing known" per mode rather than failing."""
     monkeypatch.setattr(routes_live, "_cache_dir", lambda: tmp_path / "does-not-exist")
     body = client.get("/health").json()
-    assert body["status"] == "ok"
+    assert body["status"] == "degraded"
     assert set(body["last_run_files"]) == set(routes_live._LAST_RUN_MODES)
     assert all(v is None for v in body["last_run_files"].values())
 
@@ -103,7 +103,7 @@ def test_health_reports_the_cache_dir_itself_failing_as_all_unknown(
 
     monkeypatch.setattr(routes_live, "_cache_dir", _boom)
     body = client.get("/health").json()
-    assert body["status"] == "ok"
+    assert body["status"] == "degraded"
     assert all(v is None for v in body["last_run_files"].values())
     # `_session_lock_active` uses the same helper, so it degrades too.
     assert body["session_lock_active"] is None
@@ -269,7 +269,7 @@ def test_health_reports_db_unreachable_when_the_sqlite_read_raises(
 
     monkeypatch.setattr(db_reads, "session_prefixes_logged_on", _boom)
     body = client.get("/health").json()
-    assert body["status"] == "ok"
+    assert body["status"] == "degraded"
     assert body["db_reachable"] is False
     assert body["sessions_logged_today"] == []
     assert body["broker_reachable"] is True   # the broker half is unaffected

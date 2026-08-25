@@ -22,6 +22,7 @@ their signatures.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -86,6 +87,116 @@ def is_executed_trade(row: dict) -> bool:
     action = row.get("action")
     fill_qty = row.get("fill_qty") or 0
     return (fill_status is None and action != "HOLD") or fill_status == "filled" or fill_qty > 0
+
+
+def get_llm_circuit_health() -> dict:
+    """Read decision-path/cost-circuit health without acquiring write access."""
+
+    conn = None
+    try:
+        conn = _connect()
+        tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        result = {
+            "available": "llm_circuit_state" in tables,
+            "suspended": None,
+            "trigger": None,
+            "suspended_at": None,
+            "daily_cost_usd": None,
+            "daily_limit_usd": None,
+            "recent_pm_status": None,
+            "recent_pm_run_id": None,
+            "recent_pm_timestamp": None,
+            "recent_agent_statuses": {},
+        }
+        if "llm_circuit_state" in tables:
+            state = conn.execute(
+                "SELECT suspended, trigger_detail, suspended_at, daily_limit_usd "
+                "FROM llm_circuit_state WHERE singleton=1"
+            ).fetchone()
+            if state:
+                result.update(
+                    available=True,
+                    suspended=bool(state["suspended"]),
+                    trigger=state["trigger_detail"],
+                    suspended_at=state["suspended_at"],
+                    daily_limit_usd=state["daily_limit_usd"],
+                )
+            else:
+                result["available"] = False
+        # Accounting failures use an atomic sidecar because SQLite itself may
+        # be the failed component.  The API is a separate process, so reading
+        # only llm_circuit_state could otherwise report OK while every trading
+        # process is correctly fail-closed on this durable marker.
+        db_file = Path(get_db_path())
+        emergency_latch = db_file.with_name(
+            f"{db_file.name}.llm-circuit-unavailable"
+        )
+        if emergency_latch.exists():
+            try:
+                payload = json.loads(emergency_latch.read_text(encoding="utf-8"))
+                detail = str(payload.get("error") or "persistent accounting failure")
+            except Exception as exc:
+                detail = (
+                    "durable accounting-failure latch is unreadable: "
+                    f"{type(exc).__name__}: {str(exc)[:200]}"
+                )
+            result.update(
+                available=False,
+                suspended=True,
+                trigger=f"cost-circuit infrastructure unavailable: {detail}",
+            )
+        if "llm_budget_days" in tables:
+            row = conn.execute(
+                "SELECT baseline_cost_usd + incremental_cost_usd AS cost "
+                "FROM llm_budget_days WHERE day=?",
+                (et_today().isoformat(),),
+            ).fetchone()
+            if row:
+                result["daily_cost_usd"] = row["cost"]
+        if "agent_logs" in tables:
+            utc_start, utc_end = _et_day_utc_bounds()
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(agent_logs)").fetchall()
+            }
+            status_expr = "status" if "status" in columns else "NULL"
+            row = conn.execute(
+                f"SELECT run_id, timestamp, {status_expr} AS status "
+                "FROM agent_logs WHERE agent_name='portfolio_manager' "
+                "AND timestamp >= ? AND timestamp < ? "
+                "ORDER BY timestamp DESC, id DESC LIMIT 1"
+                , (utc_start, utc_end)
+            ).fetchone()
+            if row:
+                result.update(
+                    recent_pm_status=row["status"],
+                    recent_pm_run_id=row["run_id"],
+                    recent_pm_timestamp=row["timestamp"],
+                )
+            for agent_name in (
+                "portfolio_manager", "risk_manager",
+                "position_reviewer", "evening_analyst",
+            ):
+                latest = conn.execute(
+                    f"SELECT run_id, timestamp, {status_expr} AS status "
+                    "FROM agent_logs WHERE agent_name=? "
+                    "AND timestamp >= ? AND timestamp < ? "
+                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    (agent_name, utc_start, utc_end),
+                ).fetchone()
+                if latest:
+                    result["recent_agent_statuses"][agent_name] = {
+                        "status": latest["status"],
+                        "run_id": latest["run_id"],
+                        "timestamp": latest["timestamp"],
+                    }
+        return result
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def get_trades(

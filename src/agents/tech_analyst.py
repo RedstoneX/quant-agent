@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from src.agents.base import BaseAgent, AgentResult, _provider_for
+from src.agents.base import BaseAgent, AgentResult
 from src.models import TechAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ def _merge_agent_results(first: AgentResult, second: AgentResult) -> AgentResult
         used_fallback=bool(first.used_fallback or second.used_fallback),
         prompt_version=second.prompt_version or first.prompt_version,
         latency_s=first.latency_s + second.latency_s,
+        provider_requests=first.provider_requests + second.provider_requests,
     )
 
 
@@ -283,6 +284,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         any_used_fallback = False
         any_truncated = False
         total_latency = 0.0
+        total_provider_requests = 0
         last_finish_reason: str | None = None
         for i, chunk in enumerate(chunks, 1):
             chunk_analyses, chunk_result = self._analyze_chunk(
@@ -306,6 +308,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
                 any_used_fallback = any_used_fallback or chunk_result.used_fallback
                 any_truncated = any_truncated or chunk_result.truncated
                 total_latency += chunk_result.latency_s
+                total_provider_requests += chunk_result.provider_requests
                 last_finish_reason = chunk_result.finish_reason
 
         merged_cost: float | None
@@ -326,10 +329,11 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
             truncated=any_truncated,
             requested_model=requested_model,
             requested_provider=requested_provider,
-            actual_provider=_provider_for(last_model),
+            actual_provider=("anthropic" if any_used_fallback else requested_provider),
             used_fallback=any_used_fallback,
             prompt_version=prompt_version,
             latency_s=total_latency,
+            provider_requests=total_provider_requests,
         )
         return merged, merged_result
 
@@ -342,6 +346,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         prior_macro_outlook: str | None = None,
         intraday_context: dict[str, dict] | None = None,
         _retries_left: int = _MAX_MISSING_RETRIES,
+        _is_logical_retry: bool = False,
     ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
         """Single-call variant used inside the chunking loop.
 
@@ -356,13 +361,17 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         nothing in the dict for the other 9 — logged once at WARNING and
         otherwise indistinguishable from "never asked".
         """
-        result = self.run(
+        user_message = self.build_user_message(
             symbols_data=symbols_data,
             prior_ratings=prior_ratings or {},
             valuations=valuations or {},
             prior_macro_regime=prior_macro_regime,
             prior_macro_outlook=prior_macro_outlook,
             intraday_context=intraday_context or {},
+        )
+        result = self._execute(
+            user_message,
+            retry_kind="missing_symbol_recovery" if _is_logical_retry else None,
         )
         parsed = result.parse_json()
 
@@ -434,6 +443,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
                 retry_data, prior_ratings, valuations,
                 prior_macro_regime, prior_macro_outlook, intraday_context,
                 _retries_left=_retries_left - 1,
+                _is_logical_retry=True,
             )
             analyses.update({
                 sym: a for sym, a in retry_analyses.items() if a is not None

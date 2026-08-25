@@ -52,6 +52,7 @@ import hashlib
 import json
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -188,12 +189,18 @@ def main():
     # `system_prompt` to return our loaded text so the override doesn't
     # require editing any file.
     from unittest.mock import patch as _patch
-    from src.agents.base import _is_openai_model
+    from src.agents.base import resolve_provider
     from src.agents.evening_analyst import EveningAnalystAgent
 
     model = args.model or config.llm.evening_analyst_model
-    api_key = (config.api_keys.openai if _is_openai_model(model)
-               else config.api_keys.anthropic)
+    provider = config.llm.evening_analyst_provider
+    resolved_provider = resolve_provider(model, provider)
+    api_key = {
+        "openai": config.api_keys.openai,
+        "deepseek": config.api_keys.deepseek,
+        "openrouter": config.api_keys.openrouter,
+        "anthropic": config.api_keys.anthropic,
+    }[resolved_provider]
     max_tokens = config.llm.get_max_tokens("evening_analyst")
 
     # Reconstruct Pydantic inputs
@@ -202,9 +209,18 @@ def main():
     # Monkeypatch system_prompt on the instance to point at the candidate.
     # Cleaner than subclassing — keeps all analyze()/build_user_message
     # behavior identical to production.
-    agent = EveningAnalystAgent(api_key=api_key, model=model, max_tokens=max_tokens)
+    agent = EveningAnalystAgent(
+        api_key=api_key, model=model, max_tokens=max_tokens, provider=provider,
+        fallback_api_key=config.api_keys.anthropic,
+    )
     _orig_prop = type(agent).system_prompt
     type(agent).system_prompt = property(lambda self: prompt_text)
+    from src.cost_circuit import protect_paid_agent
+    protect_paid_agent(
+        agent, config,
+        run_id=f"evening-replay-{uuid.uuid4().hex[:8]}",
+        mode="replay_evening",
+    )
 
     # analyze() can raise on provider/network failure after retries. We still
     # persist a failure artifact so batch replays / sweeps don't lose the

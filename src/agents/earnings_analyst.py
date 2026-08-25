@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import BaseAgent, AgentResult
+from src.cost_circuit import PaidAnalysisSuspended
 from src.data.earnings import EarningsReport
 from src.models import EarningsAnalysis
 
@@ -96,6 +97,8 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
         for report in reports:
             try:
                 results.extend(self._analyze_one(report))
+            except PaidAnalysisSuspended:
+                raise
             except Exception as e:  # noqa: BLE001 — audit round 2: one bad
                 # filing (corrupt text, LLM error escaping _analyze_new, disk
                 # failure in _save_analysis) must not abort the WHOLE batch —

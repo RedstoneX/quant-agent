@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 from src.agents.base import AgentResult
+from src.cost_circuit import PaidAnalysisSuspended
 from src.data.earnings import EarningsReport
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
@@ -67,6 +68,35 @@ def test_preprocess_returns_nothing_new_when_no_filings(tmp_path):
     assert result["status"] == "nothing_new"
     assert result["count"] == 0
     earnings_analyst.analyze_reports.assert_not_called()
+
+
+def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path):
+    new_filing = EarningsReport(
+        symbol="NVDA", form_type="10-Q", filing_date="2026-08-25",
+        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
+        text_excerpt="...", is_new=True,
+    )
+    earnings_provider = MagicMock()
+    earnings_provider.check_and_fetch.return_value = [new_filing]
+    earnings_analyst = MagicMock()
+    pipeline = _mk_pipeline(tmp_path, earnings_provider, earnings_analyst)
+    pipeline._drain_pending_protection_restores = MagicMock()
+    pipeline._reconcile_orphan_pending_submits = MagicMock()
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
+        "prelatched", {"suspended": True},
+    )
+
+    result = pipeline.run_earnings_preprocess()
+
+    assert result["status"] == "paid_analysis_suspended"
+    pipeline._drain_pending_protection_restores.assert_called_once()
+    pipeline._reconcile_orphan_pending_submits.assert_called_once()
+    earnings_provider.check_and_fetch.assert_called_once()
+    earnings_analyst.analyze_reports.assert_not_called()
+    earnings_provider.record_failure.assert_not_called()
+    earnings_provider.confirm_filing.assert_not_called()
 
 
 def test_preprocess_skips_when_market_closed(tmp_path):

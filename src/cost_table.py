@@ -373,8 +373,10 @@ def _fetch_openrouter_pricing() -> dict[str, dict[str, float]] | None:
     descriptions and capability flags we have no use for, and a fat cache
     file is a fat thing to parse on every cold start.
 
-    Never raises: pricing is telemetry, and telemetry must not be able to
-    take a trading session down.
+    Never raises. General cost reporting may fall back when this returns
+    ``None``; the mandatory paid-analysis preflight deliberately interprets
+    ``None`` as a fail-closed prerequisite failure while non-LLM trading
+    safety continues.
     """
     try:
         import requests
@@ -426,6 +428,50 @@ def _openrouter_cache_is_fresh() -> bool:
         return False
     age = time.time() - _OPENROUTER_CACHE_PATH.stat().st_mtime
     return age < _CACHE_MAX_AGE_SECONDS
+
+
+def refresh_openrouter_pricing(force: bool = False) -> bool:
+    """Load current official rates for every accepted OpenRouter model.
+
+    Unlike general cost telemetry, these rates are an input to the mandatory
+    pre-call spending breaker.  A fresh (under 24h) official cache is valid;
+    otherwise the public catalog must be reachable.  Stale pins are never
+    reported as current.  On success ``PRICING`` is updated in place so both
+    reservations and post-call accounting use the same catalog snapshot.
+    """
+
+    rates = None
+    if not force and _openrouter_cache_is_fresh():
+        rates = _read_openrouter_cache()
+    if rates is None:
+        rates = _fetch_openrouter_pricing()
+    if rates is None:
+        logger.error(
+            "OpenRouter pricing provenance unavailable; paid routed calls "
+            "cannot be budgeted safely"
+        )
+        return False
+    missing = [
+        model for model in _PRICING_OPENROUTER
+        if not _valid_rates(rates.get(model))
+    ]
+    if missing:
+        logger.error(
+            "OpenRouter catalog lacks valid rates for accepted models: %s",
+            ", ".join(sorted(missing)),
+        )
+        return False
+    for model in _PRICING_OPENROUTER:
+        live = rates[model]
+        PRICING[model] = {
+            "input": float(live["input"]),
+            "output": float(live["output"]),
+        }
+    logger.info(
+        "Verified current OpenRouter pricing for %d accepted models",
+        len(_PRICING_OPENROUTER),
+    )
+    return True
 
 
 def _memoise(model: str, rates: dict, source: str) -> dict[str, float]:

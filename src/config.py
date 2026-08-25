@@ -351,6 +351,66 @@ class StorageConfig(BaseModel):
     db_path: str
 
 
+class LLMCostCircuitConfig(BaseModel):
+    """Fail-closed limits for every paid model request.
+
+    These are deliberately configuration values (visible and testable), but
+    disabling the breaker is not supported by production settings.  The
+    optional ``enabled`` field exists for isolated unit fixtures and defaults
+    on so older settings files acquire protection automatically.
+    """
+
+    enabled: bool = True
+    require_telegram_alerts: bool = True
+    session_cost_limit_usd: float = Field(default=0.90, gt=0, allow_inf_nan=False)
+    daily_cost_limit_usd: float = Field(default=1.50, gt=0, allow_inf_nan=False)
+    session_reserved_exposure_limit_usd: float = Field(
+        default=1.80, gt=0, allow_inf_nan=False,
+    )
+    daily_reserved_exposure_limit_usd: float = Field(
+        default=1.90, gt=0, allow_inf_nan=False,
+    )
+    max_paid_sessions_per_mode_per_day: int = Field(default=2, ge=1)
+    # Includes the initial request.  Two means one transient retry at most;
+    # a provider failover would be attempt three and is blocked/latches.
+    max_provider_attempts_per_call: int = Field(default=2, ge=1)
+    # Aggregate retries across parallel specialist calls in one run.
+    max_retry_attempts_per_session: int = Field(default=2, ge=0)
+    reservation_ttl_minutes: int = Field(default=30, ge=5, le=180)
+    reservation_multiplier: float = Field(
+        default=1.05, ge=1.0, le=2.0, allow_inf_nan=False,
+    )
+
+    @model_validator(mode="after")
+    def _daily_not_below_session(self):
+        if self.enabled is not True:
+            raise ValueError(
+                "llm_cost_circuit.enabled must remain true; paid-analysis protection is mandatory"
+            )
+        if self.require_telegram_alerts is not True:
+            raise ValueError(
+                "llm_cost_circuit.require_telegram_alerts must remain true; "
+                "shutdown notification is mandatory"
+            )
+        if self.daily_cost_limit_usd < self.session_cost_limit_usd:
+            raise ValueError("daily_cost_limit_usd must be >= session_cost_limit_usd")
+        if self.session_reserved_exposure_limit_usd < self.session_cost_limit_usd:
+            raise ValueError(
+                "session_reserved_exposure_limit_usd must be >= session_cost_limit_usd"
+            )
+        if self.daily_reserved_exposure_limit_usd < self.daily_cost_limit_usd:
+            raise ValueError(
+                "daily_reserved_exposure_limit_usd must be >= daily_cost_limit_usd"
+            )
+        if (self.daily_reserved_exposure_limit_usd
+                < self.session_reserved_exposure_limit_usd):
+            raise ValueError(
+                "daily_reserved_exposure_limit_usd must be >= "
+                "session_reserved_exposure_limit_usd"
+            )
+        return self
+
+
 class EvolutionConfig(BaseModel):
     """Quarterly meta-reflection prompt-evolution settings.
 
@@ -440,6 +500,7 @@ class AppConfig(BaseModel):
     risk: RiskConfig
     trading: TradingConfig
     storage: StorageConfig
+    llm_cost_circuit: LLMCostCircuitConfig = Field(default_factory=LLMCostCircuitConfig)
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
     # Optional section — a settings.yaml without it gets a disabled sweeper
     # (enabled=False default), so older configs keep working unchanged.

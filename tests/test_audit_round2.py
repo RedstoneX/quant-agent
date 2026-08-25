@@ -234,14 +234,18 @@ def test_pm_parse_failure_is_analysis_error_not_no_trades():
         ctx.analyses = [MagicMock()]
         ctx.data_status = {"tech": "ok"}
     p.morning_research_stage.run.side_effect = _research
-    p.decision_stage = MagicMock()   # leaves ctx.portfolio_decision = None (parse fail)
+    p.decision_stage = MagicMock()
+    p.decision_stage.run.side_effect = lambda ctx: (
+        setattr(ctx, "analysis_failure_status", "pm_parse_error"),
+        setattr(ctx, "analysis_failure_error", "PM returned non-JSON body"),
+    )
     p._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
 
     with patch.object(dc, "load", return_value=None), \
          patch.object(dc, "write", return_value=None), \
          patch.object(dc, "write_status"), patch.object(dc, "mark_consumed"):
         result = p.run_morning()
-    assert result["status"] == "analysis_error"
+    assert result["status"] == "pm_parse_error"
 
 
 def test_calibration_matches_sell_to_the_true_old_lot(tmp_path):

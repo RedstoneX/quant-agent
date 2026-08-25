@@ -58,6 +58,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
@@ -1086,40 +1087,134 @@ def _preflight_openrouter(ctx: Ctx, group: str, api_key: str) -> None:
         from openai import OpenAI
 
         from src.agents.base import _OPENROUTER_BASE_URL
+        from src.api.deps import get_config
+        from src.cost_circuit import (
+            PaidAnalysisSuspended,
+            activate_paid_call_session,
+        )
 
         client = OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
                         timeout=120.0, max_retries=0)
+        app_config = get_config()
+        paid_run_id = f"commissioning-{uuid.uuid4().hex[:8]}"
+        cost_circuit = activate_paid_call_session(
+            app_config,
+            run_id=paid_run_id,
+            mode="commissioning_preflight",
+        )
+        cost_circuit.require_paid_analysis("commissioning_preflight_start")
+    except PaidAnalysisSuspended as exc:
+        for model in sorted(set(EXPECTED_ROUTING.values())):
+            ctx.add(
+                group,
+                f"openrouter completes a call ({model})",
+                SKIP,
+                f"mandatory paid-analysis circuit blocked preflight: {exc}",
+            )
+        return
     except Exception as exc:
         ctx.add(group, "openrouter completes a call", FAIL,
-                f"client construction failed: {type(exc).__name__}: {str(exc)[:240]}")
+                f"client/cost-circuit construction failed: "
+                f"{type(exc).__name__}: {str(exc)[:240]}")
         return
 
     for model in sorted(set(EXPECTED_ROUTING.values())):
         label = f"openrouter completes a call ({model})"
+        reservation = None
         try:
+            reservation = cost_circuit.begin_call(
+                agent_name="commissioning_preflight",
+                model=model,
+                system_prompt="",
+                user_message="Reply with exactly: ok",
+                max_output_tokens=512,
+            )
+            cost_circuit.before_provider_attempt(reservation, model=model)
             completion = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": "Reply with exactly: ok"}],
                 max_tokens=512,
             )
+        except PaidAnalysisSuspended as exc:
+            if reservation is not None:
+                try:
+                    cost_circuit.fail_call(reservation, exc)
+                except Exception:
+                    pass
+            ctx.add(group, label, SKIP, f"paid-analysis circuit blocked call: {exc}")
+            continue
         except Exception as exc:
+            if reservation is not None:
+                try:
+                    cost_circuit.fail_call(reservation, exc)
+                except Exception as accounting_exc:
+                    cost_circuit.mark_unavailable(
+                        accounting_exc,
+                        run_id=paid_run_id,
+                        mode="commissioning_preflight",
+                        agent_name="commissioning_preflight",
+                        attempts=1,
+                    )
             ctx.add(group, label, FAIL, f"{type(exc).__name__}: {str(exc)[:300]}")
             continue
 
-        choice = completion.choices[0] if completion.choices else None
-        content = (getattr(getattr(choice, "message", None), "content", "") or "").strip()
-        finish = getattr(choice, "finish_reason", None)
+        accounted = False
+        try:
+            choice = completion.choices[0] if completion.choices else None
+            content = (
+                getattr(getattr(choice, "message", None), "content", "") or ""
+            ).strip()
+            finish = getattr(choice, "finish_reason", None)
+            # `completion.model` is what OpenRouter says actually served the
+            # request. A mismatch means the id was aliased to something else.
+            served = getattr(completion, "model", "") or ""
+            usage = getattr(completion, "usage", None)
+            input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            from src.agents.base import estimate_cost
+            actual_cost = (
+                estimate_cost(served or model, input_tokens, output_tokens)
+                if input_tokens or output_tokens else None
+            )
+            cost_circuit.complete_call(
+                reservation,
+                actual_cost,
+                actual_model=served or model,
+            )
+            accounted = True
+            circuit_state = cost_circuit.status()
+        except PaidAnalysisSuspended as exc:
+            ctx.add(group, label, FAIL,
+                    f"response could not be safely accounted: {exc}")
+            continue
+        except Exception as lifecycle_exc:
+            if not accounted:
+                try:
+                    cost_circuit.fail_call(reservation, lifecycle_exc)
+                except Exception:
+                    pass
+            cost_circuit.mark_unavailable(
+                lifecycle_exc,
+                run_id=paid_run_id,
+                mode="commissioning_preflight",
+                agent_name="commissioning_preflight",
+                attempts=1,
+            )
+            ctx.add(group, label, FAIL,
+                    f"response lifecycle/accounting failed: "
+                    f"{type(lifecycle_exc).__name__}: {str(lifecycle_exc)[:240]}")
+            continue
+        if circuit_state.get("trigger_code") == "unknown_actual_cost":
+            ctx.add(group, label, FAIL,
+                    "model answered but returned no usable billing telemetry; "
+                    "paid analysis was suspended")
+            continue
         if not content:
             ctx.add(group, label, FAIL,
                     f"model answered with no content (finish_reason={finish!r}) — "
                     "every agent call would raise LLMEmptyResponseError and burn "
                     "its retry budget")
             continue
-        # `completion.model` is what OpenRouter says actually served the
-        # request. A mismatch means the id was aliased to something else,
-        # which breaks the attribution contract in
-        # docs/architecture/MODEL_PROVIDER_ARCHITECTURE.md.
-        served = getattr(completion, "model", "") or ""
         if served and served != model:
             ctx.add(group, label, WARN,
                     f"requested {model!r} but OpenRouter served {served!r} — "

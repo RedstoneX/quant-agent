@@ -1,63 +1,102 @@
-"""Smoke: does the relay accept stream=True + stream_options include_usage?
+#!/usr/bin/env python3
+"""Metered smoke check for relay streaming and final usage telemetry.
 
-This is THE load-bearing assumption of the audit-hardening change: if the
-relay 400s on stream_options (some OpenAI-compatible gateways do), every
-production call would fail over to Anthropic. One tiny real call settles it.
-Cost: a few hundred tokens on gpt-5.5.
+This intentionally makes one tiny paid request. It uses BaseAgent's normal
+streaming path and the mandatory cost circuit, so a latched/over-budget run is
+blocked before network I/O and missing usage telemetry suspends paid analysis.
 """
+
+from __future__ import annotations
+
+import argparse
 import os
 import sys
+import uuid
+from pathlib import Path
 
-# Load .env the same way the app does (no external deps needed).
-for line in open("/home/yebo/quant-agent/.env"):
-    line = line.strip()
-    if line.startswith("export "):
-        line = line[len("export "):]
-    if line and not line.startswith("#") and "=" in line:
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from openai import OpenAI
 
-base_url = os.environ.get("OPENAI_BASE_URL") or None
-print(f"base_url: {base_url or 'api.openai.com (default)'}")
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=base_url,
-                timeout=60.0, max_retries=0)
+def _load_env_file() -> None:
+    """Best-effort load of this checkout's .env without printing secrets."""
 
-stream = client.chat.completions.create(
-    model="gpt-5.5",
-    max_completion_tokens=512,
-    messages=[
-        {"role": "system", "content": "You are a smoke test."},
-        {"role": "user", "content": "Reply with exactly: OK"},
-    ],
-    stream=True,
-    stream_options={"include_usage": True},
-)
+    path = PROJECT_ROOT / ".env"
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export "):]
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
-parts, finish_reason, usage, n_chunks = [], None, None, 0
-for chunk in stream:
-    n_chunks += 1
-    if getattr(chunk, "usage", None) is not None:
-        usage = chunk.usage
-    choices = getattr(chunk, "choices", None) or []
-    if not choices:
-        continue
-    delta = getattr(choices[0], "delta", None)
-    piece = getattr(delta, "content", None) if delta is not None else None
-    if piece:
-        parts.append(piece)
-    fr = getattr(choices[0], "finish_reason", None)
-    if isinstance(fr, str):
-        finish_reason = fr
 
-content = "".join(parts)
-print(f"chunks: {n_chunks}")
-print(f"content: {content!r}")
-print(f"finish_reason: {finish_reason!r}")
-print(f"usage: {usage!r}")
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default="config/settings.yaml")
+    parser.add_argument("--model", default="gpt-5.5")
+    args = parser.parse_args()
 
-ok = bool(content) and finish_reason == "stop" and usage is not None
-print("RESULT:", "PASS — relay supports streaming + include_usage" if ok else
-      "PARTIAL — see fields above (usage None means the estimate fallback will engage)")
-sys.exit(0 if content and finish_reason else 1)
+    _load_env_file()
+    from src.agents.base import BaseAgent
+    from src.config import load_config
+    from src.cost_circuit import PaidAnalysisSuspended, protect_paid_agent
+
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+    config = load_config(config_path)
+
+    class RelaySmokeAgent(BaseAgent):
+        @property
+        def name(self) -> str:
+            return "relay_stream_smoke"
+
+        @property
+        def system_prompt(self) -> str:
+            return "You are a smoke test."
+
+        def build_user_message(self, **_kwargs) -> str:
+            return "Reply with exactly: OK"
+
+    agent = RelaySmokeAgent(
+        api_key=config.api_keys.openai,
+        model=args.model,
+        max_tokens=512,
+        provider="openai",
+    )
+    try:
+        protect_paid_agent(
+            agent,
+            config,
+            run_id=f"relay-smoke-{uuid.uuid4().hex[:8]}",
+            mode="relay_stream_smoke",
+        )
+        result = agent.run()
+    except PaidAnalysisSuspended as exc:
+        print(f"BLOCKED: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"base_url: {os.environ.get('OPENAI_BASE_URL') or 'api.openai.com (default)'}")
+    print(f"content: {result.raw_text!r}")
+    print(f"finish_reason: {result.finish_reason!r}")
+    print(f"usage: in={result.input_tokens} out={result.output_tokens}")
+    ok = (
+        bool(result.raw_text.strip())
+        and result.finish_reason == "stop"
+        and result.input_tokens > 0
+        and result.output_tokens > 0
+    )
+    print(
+        "RESULT: PASS — relay supports streaming + exact usage"
+        if ok else
+        "RESULT: FAIL — content, finish reason, or exact usage was missing"
+    )
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

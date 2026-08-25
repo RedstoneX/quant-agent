@@ -536,7 +536,7 @@ def test_format_evening_does_not_expand_suggested_actions_on_moderate():
 
 def test_format_includes_session_cost_when_db_has_rows(tmp_path, monkeypatch):
     """When a run_id matches rows in agent_logs with cost_usd populated,
-    the notifier should surface 💵 cost: $X.XX (N calls)."""
+    the notifier should surface cost and the actual provider-request count."""
     # Redirect the notifier's DB lookup at the module-level constant.
     # (Pre-2026-05-13 the notifier used Path("data/..."), so chdir
     # alone worked; the fix anchored the path to project root, so we
@@ -573,7 +573,7 @@ def test_format_includes_session_cost_when_db_has_rows(tmp_path, monkeypatch):
     msg = format_session_result("morning", result, 600.0)
     assert msg is not None
     assert "💵 cost: $4.53" in msg  # 3.45 + 0.90 + 0.18
-    assert "(3 calls)" in msg
+    assert "(3 provider requests)" in msg
 
 
 def test_format_omits_cost_line_when_no_db(tmp_path, monkeypatch):

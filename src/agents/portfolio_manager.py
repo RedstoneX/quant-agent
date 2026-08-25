@@ -10,7 +10,7 @@ from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
     TechAnalysisResult, SmartMoneyFinding,
 )
-from src.risk.rules import _gross_multiplier
+from src.risk.rules import _effective_multiplier, _gross_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,96 @@ class PortfolioManagerAgent(BaseAgent):
             return PROMPT_PATH.read_text()
         return "You are a portfolio manager. Respond with JSON."
 
+    @staticmethod
+    def _collapse_stances(values) -> str | None:
+        cleaned = {
+            str(value).strip().lower().replace(" ", "_")
+            for value in values if str(value).strip()
+        }
+        if not cleaned:
+            return None
+        if len(cleaned) == 1:
+            return next(iter(cleaned))
+        positive = {"strong_buy", "buy", "bullish", "positive", "risk_on", "overweight", "favorable"}
+        negative = {"strong_sell", "sell", "bearish", "negative", "risk_off", "underweight", "unfavorable"}
+        if cleaned <= positive:
+            return "bullish"
+        if cleaned <= negative:
+            return "bearish"
+        if cleaned <= {"neutral", "mixed"}:
+            return "neutral" if cleaned == {"neutral"} else "mixed"
+        return "mixed"
+
+    @classmethod
+    def build_evidence_registry(
+        cls,
+        *,
+        analyses: list[TechAnalysisResult],
+        positions: list[Position],
+        news_intel: NewsIntelligenceReport | None,
+        earnings_analyses: list[dict],
+        macro_analysis: dict | None,
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
+        symbol_sectors: dict[str, str] | None = None,
+        session_type: str = "morning",
+    ) -> dict[str, dict[str, str]]:
+        """Canonical source/stance records shared by prompt and validator.
+
+        Display decorations such as conviction and signal age never enter the
+        stance. Historical narrative/memory is intentionally excluded. The
+        intraday path has only current-session Tech evidence, so it cannot
+        cite yesterday's macro/news/earnings as if they ran this tick.
+        """
+
+        registry: dict[str, dict[str, str]] = {}
+
+        def put(symbol: str, source: str, stance: str | None) -> None:
+            if symbol and stance:
+                registry.setdefault(symbol.strip().upper(), {})[source] = stance
+
+        for analysis in analyses:
+            put(analysis.symbol, "technical", cls._collapse_stances([analysis.rating]))
+
+        if session_type == "intra_check":
+            return {symbol: sources for symbol, sources in registry.items() if sources}
+
+        if news_intel is not None:
+            for symbol, items in news_intel.stock_news.items():
+                put(symbol, "news", cls._collapse_stances(i.sentiment for i in items))
+
+        for item in earnings_analyses:
+            analysis = item.get("analysis") or {}
+            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
+            put(str(item.get("symbol") or ""), "earnings", cls._collapse_stances([sentiment]))
+
+        smart_money_stances: dict[str, list[str]] = {}
+        for finding in smart_money_findings or []:
+            smart_money_stances.setdefault(finding.symbol.upper(), []).append(finding.stance)
+        for symbol, stances in smart_money_stances.items():
+            put(symbol, "smart_money", cls._collapse_stances(stances))
+
+        if macro_analysis:
+            sectors = {str(k).upper(): str(v) for k, v in (symbol_sectors or {}).items()}
+            for position in positions:
+                if position.sector:
+                    sectors.setdefault(position.symbol.upper(), position.sector)
+            guidance: dict[str, list[str]] = {}
+            for row in macro_analysis.get("sector_guidance", []) or []:
+                sector = str(row.get("sector") or "").strip().lower()
+                stance = row.get("stance")
+                if sector and stance:
+                    guidance.setdefault(sector, []).append(str(stance))
+            broad = cls._collapse_stances([
+                macro_analysis.get("equity_outlook") or macro_analysis.get("regime")
+            ])
+            symbols = set(registry) | {p.symbol.upper() for p in positions}
+            for symbol in symbols:
+                sector = sectors.get(symbol, "").strip().lower()
+                stance = cls._collapse_stances(guidance.get(sector, [])) if sector else None
+                put(symbol, "macro", stance or broad)
+
+        return {symbol: sources for symbol, sources in registry.items() if sources}
+
     def build_user_message(self, **kwargs) -> str:
         analyses: list[TechAnalysisResult] = kwargs["analyses"]
         positions: list[Position] = kwargs["positions"]
@@ -43,6 +133,19 @@ class PortfolioManagerAgent(BaseAgent):
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses", [])
         smart_money_findings: list[SmartMoneyFinding] = kwargs.get("smart_money_findings", [])
+        evidence_registry = self.build_evidence_registry(
+            analyses=analyses,
+            positions=positions,
+            news_intel=news_intel,
+            earnings_analyses=earnings_analyses,
+            macro_analysis=macro_analysis,
+            smart_money_findings=smart_money_findings,
+            symbol_sectors=kwargs.get("symbol_sectors") or {},
+            session_type=kwargs.get("session_type") or "morning",
+        )
+        evidence_registry_text = json.dumps(
+            evidence_registry, sort_keys=True, indent=2,
+        )
 
         def _fmt_tech(a):
             rr = a.risk_reward
@@ -350,7 +453,6 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         # Yesterday's insights section
         yesterday_insights: dict | None = kwargs.get("yesterday_insights")
         if yesterday_insights and yesterday_insights.get("tomorrow_outlook"):
-            import json
             actions = yesterday_insights.get("suggested_actions", "")
             if isinstance(actions, str):
                 try:
@@ -536,7 +638,20 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 ## Technical Analysis Reports
 {analyses_text}
 
+## Canonical Current Evidence Registry (authoritative for provenance)
+{evidence_registry_text}
+
+For every target, cite only source/stance pairs present for that exact symbol
+in this registry and copy the stance string exactly. Omit unavailable sources.
+Memory and narrative sections are context, never current specialist coverage.
+
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
+
+    @staticmethod
+    def _semantic_failure(result, status: str, error: object):
+        result.semantic_status = status
+        result.semantic_error = str(error)
+        return None, result
 
     def decide(self, analyses: list[TechAnalysisResult], positions: list[Position],
                macro_analysis: dict | None = None, cash_balance: float = 0,
@@ -559,7 +674,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                recent_missed_lessons: str = "",
                recent_loss_pits: str = "",
                facts=None,
-               allow_margin: bool = True) -> tuple[PortfolioDecision | None, "AgentResult"]:
+               allow_margin: bool = True,
+               symbol_sectors: dict[str, str] | None = None,
+               session_type: str = "morning") -> tuple[PortfolioDecision | None, "AgentResult"]:
         result = self.run(
             analyses=analyses,
             positions=positions,
@@ -585,11 +702,15 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             recent_loss_pits=recent_loss_pits,
             facts=facts,
             allow_margin=allow_margin,
+            symbol_sectors=symbol_sectors or {},
+            session_type=session_type,
         )
         parsed = result.parse_json()
         if parsed is None:
             logger.error("Portfolio manager returned non-JSON response")
-            return None, result
+            return self._semantic_failure(
+                result, "pm_parse_error", "response did not contain a valid decision JSON object",
+            )
         if not isinstance(parsed, dict):
             # A PortfolioDecision is an OBJECT. A bare list here means the
             # candidate scan surfaced a fragment (historically: the plan's own
@@ -602,7 +723,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "treating as parse failure (fragment selected over full plan?)",
                 type(parsed).__name__,
             )
-            return None, result
+            return self._semantic_failure(
+                result, "pm_parse_error", f"parsed {type(parsed).__name__}, expected object",
+            )
         # Per-entry isolation for targets: a single malformed TargetPosition
         # (e.g. target_weight_pct=30 violating the 0-25 range, or empty
         # thesis on a Field with no min_length but PortfolioConstructor's
@@ -628,19 +751,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "treating as agent failure, not a no-action decision",
                     parsed_target_count,
                 )
-                return None, result
+                return self._semantic_failure(
+                    result, "pm_schema_error",
+                    f"all {parsed_target_count} emitted targets were invalid",
+                )
             errors = self.validate_grounding(
                 decision, analyses=analyses, positions=positions,
                 news_intel=news_intel,
                 earnings_analyses=earnings_analyses or [],
-                macro_analysis=macro_analysis, smart_money_findings=smart_money_findings or [], total_value=total_value,
+                macro_analysis=macro_analysis, total_value=total_value,
+                smart_money_findings=smart_money_findings or [],
+                symbol_sectors=symbol_sectors or {}, session_type=session_type,
             )
             if errors:
                 logger.error(
                     "Portfolio decision failed deterministic grounding: %s",
                     "; ".join(errors),
                 )
-                return None, result
+                return self._semantic_failure(
+                    result, "pm_grounding_error", "; ".join(errors),
+                )
             return decision, result
         except ValidationError as e:
             # Mirror of the RiskManager repair path (2026-08-18 incident
@@ -665,7 +795,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "failing closed: %s",
                     ", ".join(self._DECISION_FIELDS), e,
                 )
-                return None, result
+                return self._semantic_failure(result, "pm_schema_error", e)
             repaired = self.repair_reprompt(result, e, "PortfolioDecision")
             reparsed = repaired.parse_json()
             if isinstance(reparsed, dict):
@@ -681,7 +811,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         "treating as an unauthorized re-decision and "
                         "failing closed.",
                     )
-                    return None, repaired
+                    return self._semantic_failure(
+                        repaired, "pm_repair_changed_decision",
+                        "schema repair changed target symbols or weights",
+                    )
                 try:
                     decision = PortfolioDecision(**reparsed)
                     if repaired_target_count > 0 and not decision.targets:
@@ -690,19 +823,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                             "invalid; failing closed",
                             repaired_target_count,
                         )
-                        return None, repaired
+                        return self._semantic_failure(
+                            repaired, "pm_schema_error",
+                            f"all {repaired_target_count} repaired targets were invalid",
+                        )
                     errors = self.validate_grounding(
                         decision, analyses=analyses, positions=positions,
                         news_intel=news_intel,
                         earnings_analyses=earnings_analyses or [],
-                        macro_analysis=macro_analysis, smart_money_findings=smart_money_findings or [], total_value=total_value,
+                        macro_analysis=macro_analysis, total_value=total_value,
+                        smart_money_findings=smart_money_findings or [],
+                        symbol_sectors=symbol_sectors or {}, session_type=session_type,
                     )
                     if errors:
                         logger.error(
                             "Repaired portfolio decision failed deterministic "
                             "grounding: %s", "; ".join(errors),
                         )
-                        return None, repaired
+                        return self._semantic_failure(
+                            repaired, "pm_grounding_error", "; ".join(errors),
+                        )
                     logger.info(
                         "Portfolio decision repair succeeded (%d targets)",
                         len(decision.targets),
@@ -712,99 +852,67 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     logger.error(
                         "Failed to parse portfolio decision after repair: %s", e2,
                     )
-                    return None, repaired
+                    return self._semantic_failure(repaired, "pm_schema_error", e2)
             logger.error(
                 "Portfolio decision repair returned %s, not an object",
                 type(reparsed).__name__,
             )
-            return None, repaired
+            return self._semantic_failure(
+                repaired, "pm_parse_error",
+                f"repair parsed {type(reparsed).__name__}, expected object",
+            )
         except Exception as e:
             logger.error("Failed to parse portfolio decision: %s", e)
-            return None, result
+            return self._semantic_failure(result, "pm_schema_error", e)
 
-    @staticmethod
+    @classmethod
     def validate_grounding(
-        decision: PortfolioDecision, *, analyses: list[TechAnalysisResult],
+        cls, decision: PortfolioDecision, *, analyses: list[TechAnalysisResult],
         positions: list[Position], news_intel: NewsIntelligenceReport | None,
         earnings_analyses: list[dict], macro_analysis: dict | None,
-        total_value: float,
+        total_value: float, symbol_sectors: dict[str, str] | None = None,
+        session_type: str = "morning",
         smart_money_findings: list[SmartMoneyFinding] | None = None,
     ) -> list[str]:
-        """Reject invented specialist coverage/alignment and phantom exits.
+        """Validate only machine-readable claims against the prompt registry.
 
-        This validates claims, not judgment: a PM may oppose any specialist
-        by recording ``relationship=conflicts``.  Historical rows remain
-        readable because the model field has a default; only a new live
-        decision crossing this boundary must satisfy the contract.
+        Prompt and validator now consume the exact same canonical records.
+        This removes the former impossible contract (decorated display text
+        versus undecorated validation values) and brittle regex interpretation
+        of free-form narrative while retaining phantom-exit, source-existence,
+        exact-stance, uniqueness, relationship, and alignment checks.
         """
+
         errors: list[str] = []
         if decision.decisions:
             errors.append(
                 "portfolio manager supplied concrete decisions; only grounded targets "
                 "may cross the PM boundary"
             )
-        tech = {a.symbol.upper(): {a.rating.lower()} for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
-        news: dict[str, set[str]] = {}
-        if news_intel is not None:
-            for symbol, items in news_intel.stock_news.items():
-                news[symbol.upper()] = {i.sentiment.lower() for i in items}
-        earnings: dict[str, set[str]] = {}
-        for item in earnings_analyses:
-            analysis = item.get("analysis") or {}
-            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
-            if item.get("symbol") and sentiment:
-                earnings.setdefault(item["symbol"].upper(), set()).add(str(sentiment).lower())
-        macro_stances: set[str] = set()
-        if macro_analysis:
-            for key in ("regime", "equity_outlook", "confidence"):
-                if macro_analysis.get(key):
-                    macro_stances.add(str(macro_analysis[key]).lower())
-        smart_money_findings = smart_money_findings or []
-        smart_money = {f.symbol.upper(): {f.stance.lower()} for f in smart_money_findings}
-        smart_money_eligible = {f.symbol.upper(): f.support_eligible for f in smart_money_findings}
-
-        bullish = {"strong_buy", "buy", "bullish", "positive", "risk_on", "risk-on"}
-        bearish = {"strong_sell", "sell", "bearish", "negative", "risk_off", "risk-off"}
+        registry = cls.build_evidence_registry(
+            analyses=analyses, positions=positions, news_intel=news_intel,
+            earnings_analyses=earnings_analyses, macro_analysis=macro_analysis,
+            smart_money_findings=smart_money_findings or [],
+            symbol_sectors=symbol_sectors or {}, session_type=session_type,
+        )
+        smart_money_eligible: dict[str, bool] = {}
+        for finding in smart_money_findings or []:
+            symbol = finding.symbol.upper()
+            smart_money_eligible[symbol] = (
+                smart_money_eligible.get(symbol, False) or finding.support_eligible
+            )
+        bullish = {
+            "strong_buy", "buy", "bullish", "positive", "risk_on",
+            "overweight", "favorable",
+        }
+        bearish = {
+            "strong_sell", "sell", "bearish", "negative", "risk_off",
+            "underweight", "unfavorable",
+        }
         reasoning_text = "\n".join(
             str(value) for value in decision.reasoning_chain.model_dump().values()
         )
-        if re.search(r"\b(align(?:ed|ment)?|analysts? agree|coverage)\b",
-                     decision.portfolio_view, flags=re.IGNORECASE):
-            errors.append(
-                "portfolio_view may not assert specialist alignment/coverage; "
-                "use per-target structured provenance"
-            )
-
-        def _asserts_source_view(text: str, terms: tuple[str, ...]) -> bool:
-            """True for a directional/agreement claim, not "no coverage"."""
-            claim_words = re.compile(
-                r"\b(bullish|bearish|buy|sell|positive|negative|supports?|"
-                r"conflicts?|align(?:ed|ment)?|constructive|weak|strong)\b",
-                flags=re.IGNORECASE,
-            )
-            lowered = text.lower()
-            for term in terms:
-                start = 0
-                while True:
-                    index = lowered.find(term, start)
-                    if index < 0:
-                        break
-                    prefix = lowered[max(0, index - 24):index]
-                    suffix = lowered[index + len(term):index + len(term) + 30]
-                    explicit_absence = bool(re.search(
-                        r"(?:\bno\b(?:\s+(?:fresh|material|relevant|adverse|new))?|\bwithout\b|\bunavailable\b|"
-                        r"\bnot available\b|\bn/?a\b)\s*$", prefix,
-                    )) or bool(re.match(
-                        r"\s*(?:=|:)?\s*(?:n/?a|unavailable|absent|none|unconfirmed)\b",
-                        suffix,
-                    )) or bool(re.search(r"\bno\b[^.;:\n]{0,40}$", prefix))
-                    if not explicit_absence:
-                        window = text[max(0, index - 60):index + len(term) + 60]
-                        if claim_words.search(window):
-                            return True
-                    start = index + len(term)
-            return False
 
         for target in decision.targets:
             symbol = target.symbol.upper()
@@ -819,33 +927,36 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             if pos is not None and total_value > 0:
                 current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
             intent = "buy" if target.target_weight_pct > current_weight + 0.01 else "sell"
+            expected_sources = registry.get(symbol, {})
             seen_sources: set[str] = set()
             supporting_sources: set[str] = set()
             for claim in target.provenance:
                 source = claim.source
-                stance = claim.observed_stance.strip().lower()
-                expected = (
-                    tech.get(symbol, set()) if source == "technical" else
-                    news.get(symbol, set()) if source == "news" else
-                    earnings.get(symbol, set()) if source == "earnings" else
-                    macro_stances if source == "macro" else smart_money.get(symbol, set())
-                )
-                if not expected:
+                stance = claim.observed_stance.strip().lower().replace(" ", "_")
+                expected = expected_sources.get(source)
+                if expected is None:
                     errors.append(f"{symbol}: claims {source} coverage that does not exist")
                     continue
-                if stance not in expected:
+                if stance != expected:
                     errors.append(
-                        f"{symbol}: claims {source} stance {stance!r}; observed "
-                        f"stance is {sorted(expected)!r}"
+                        f"{symbol}: claims {source} stance {stance!r}; canonical "
+                        f"stance is {expected!r}"
                     )
                     continue
                 if source in seen_sources:
                     errors.append(f"{symbol}: duplicate {source} provenance claim")
                     continue
                 seen_sources.add(source)
+
+                stance_is_bullish = stance in bullish
+                stance_is_bearish = stance in bearish
+                if source == "macro" and _effective_multiplier(symbol) < 0:
+                    # A risk-off macro view supports owning an inverse ETF;
+                    # the technical rating still describes the ETF itself.
+                    stance_is_bullish, stance_is_bearish = stance_is_bearish, stance_is_bullish
                 polarity_supports = (
-                    (intent == "buy" and stance in bullish)
-                    or (intent == "sell" and stance in bearish)
+                    (intent == "buy" and stance_is_bullish)
+                    or (intent == "sell" and stance_is_bearish)
                 )
                 if claim.relationship == "supports":
                     if source == "smart_money" and not smart_money_eligible.get(symbol, False):
@@ -854,68 +965,61 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     if not polarity_supports:
                         errors.append(
                             f"{symbol}: {source} stance {stance!r} does not support "
-                            f"the proposed {intent}; record an explicit conflict instead"
+                            f"the proposed {intent}; record a conflict or context"
                         )
                     else:
                         supporting_sources.add(source)
-                elif claim.relationship == "context" and source != "macro" and stance not in {"neutral", "mixed"}:
+                elif claim.relationship == "conflicts" and polarity_supports:
+                    errors.append(
+                        f"{symbol}: {source} stance {stance!r} supports the proposed "
+                        f"{intent}; it cannot be labelled conflicts"
+                    )
+                elif (
+                    claim.relationship == "context"
+                    and stance not in {"neutral", "mixed"}
+                    and source != "macro"
+                    and not (
+                        source == "smart_money"
+                        and not smart_money_eligible.get(symbol, False)
+                    )
+                ):
                     errors.append(
                         f"{symbol}: directional {source} stance {stance!r} must be "
                         "marked supports or conflicts, not context"
                     )
 
-            thesis_lower = target.thesis.lower()
-            source_terms = {
-                "technical": ("technical", "tech ", "tech-"),
-                "news": ("news", "headline"),
-                "earnings": ("earnings", "filing"),
-                "macro": ("macro", "regime"),
-                "smart_money": ("smart money", "congress", "insider", "13f"),
-            }
-            for source, terms in source_terms.items():
-                if _asserts_source_view(thesis_lower, terms) and source not in seen_sources:
-                    errors.append(
-                        f"{symbol}: thesis invokes {source} without verified provenance"
-                    )
-
-            symbol_segments = [
-                match.group(0) for match in re.finditer(
-                    rf"\b{re.escape(symbol)}\b\s*:\s*.*?"
-                    rf"(?=\b[A-Z][A-Z0-9.\-]{{0,7}}\s*:|[.\n]|$)",
-                    reasoning_text, flags=re.IGNORECASE,
-                )
-            ]
-            for segment in symbol_segments:
-                segment_lower = segment.lower()
-                for source, terms in source_terms.items():
-                    if (_asserts_source_view(segment_lower, terms)
-                            and source not in seen_sources):
-                        errors.append(
-                            f"{symbol}: reasoning invokes {source} without "
-                            "verified provenance"
-                        )
-
-            # Alignment shorthand is allowed only when the structured claims
-            # prove the exact numerator and all four distinct seats exist.
+            # Dynamic N/M alignment covers the core evidence sources actually
+            # available for this symbol. Optional smart-money context remains
+            # explicit provenance but does not dilute the established
+            # technical/news/earnings/macro denominator.
             texts = [target.thesis]
             texts.extend(
                 m.group(0) for m in re.finditer(
-                    rf"\b{re.escape(symbol)}\b[^.\n]{{0,240}}\b[0-4]/4\b",
+                    rf"\b{re.escape(symbol)}\b[^.\n]{{0,240}}\b\d+/\d+\b",
                     reasoning_text, flags=re.IGNORECASE,
                 )
             )
             for text in texts:
-                for match in re.finditer(r"\b([0-4])/4\b", text):
-                    stated = int(match.group(1))
-                    if seen_sources != {"technical", "news", "earnings", "macro"}:
+                for match in re.finditer(r"\b(\d+)/(\d+)\b", text):
+                    stated_support, stated_available = map(int, match.groups())
+                    available_sources = set(expected_sources) - {"smart_money"}
+                    seen_alignment_sources = seen_sources & available_sources
+                    supporting_alignment_sources = supporting_sources & available_sources
+                    if stated_available != len(available_sources):
                         errors.append(
-                            f"{symbol}: {stated}/4 alignment claimed without all four "
-                            "verified source records"
+                            f"{symbol}: claims denominator {stated_available}, but "
+                            f"{len(available_sources)} current source(s) are available"
                         )
-                    elif stated != len(supporting_sources):
+                    elif seen_alignment_sources != available_sources:
                         errors.append(
-                            f"{symbol}: claims {stated}/4 aligned but structured "
-                            f"provenance proves {len(supporting_sources)}/4"
+                            f"{symbol}: alignment shorthand requires provenance for all "
+                            f"available sources {sorted(available_sources)!r}"
+                        )
+                    elif stated_support != len(supporting_alignment_sources):
+                        errors.append(
+                            f"{symbol}: claims {stated_support}/{stated_available} aligned "
+                            f"but provenance proves "
+                            f"{len(supporting_alignment_sources)}/{stated_available}"
                         )
         return errors
 

@@ -42,3 +42,10 @@ def _isolate_cwd(tmp_path, monkeypatch):
     # assertions. Tests that exercise relay routing set them via monkeypatch.
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_CA_BUNDLE", raising=False)
+
+    # Most unit tests exercise an agent in isolation with a fully mocked SDK
+    # and no real provider request. Production defaults fail closed when an
+    # agent lacks the persistent cost circuit; focused breaker tests override
+    # this flag to verify that boundary explicitly.
+    from src.agents.base import BaseAgent
+    monkeypatch.setattr(BaseAgent, "_allow_unmetered_for_tests", True)

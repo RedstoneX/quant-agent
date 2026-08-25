@@ -92,6 +92,11 @@ class RunContext:
     recent_performance: dict = field(default_factory=dict)
 
     portfolio_decision: "PortfolioDecision | None" = None
+    # Transport-successful model output can still fail deterministic parsing,
+    # schema, or grounding. Preserve the exact subtype for session status and
+    # Telegram instead of collapsing every case to "unparseable".
+    analysis_failure_status: str | None = None
+    analysis_failure_error: str | None = None
     correlation_matrix: dict = field(default_factory=dict)
     daily_pnl: float = 0.0
     macro_target_pct: float | None = None

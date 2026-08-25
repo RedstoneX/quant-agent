@@ -631,7 +631,7 @@ def test_health_never_crashes_when_db_path_is_bogus(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     body = r.json()
-    assert body["status"] == "ok"
+    assert body["status"] == "degraded"
     assert body["db_reachable"] is False
     assert body["sessions_logged_today"] == []
 
@@ -670,5 +670,5 @@ def test_health_never_crashes_when_broker_check_raises_unexpectedly(client, seed
     r = client.get("/health")
     assert r.status_code == 200
     body = r.json()
-    assert body["status"] == "ok"
+    assert body["status"] == "degraded"
     assert body["broker_reachable"] is None

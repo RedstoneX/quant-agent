@@ -83,19 +83,19 @@ llm:
   evening_analyst_provider: "openrouter"
   evening_analyst_model: "google/gemini-2.5-flash-lite"
   # Global fallback — any per-agent override below takes precedence.
-  max_tokens: 128000
-  # Per-agent caps. Set generously so no agent silently truncates: PM and
-  # Evening emit the heaviest outputs (7-step / 6-step CoT + many list fields);
-  # Macro is the lightest. Leave `null` to inherit `max_tokens` above.
-  tech_analyst_max_tokens: 128000
-  news_analyst_max_tokens: 128000
-  macro_analyst_max_tokens: 128000
-  earnings_analyst_max_tokens: 128000
-  smart_money_analyst_max_tokens: 128000
-  portfolio_manager_max_tokens: 128000
-  risk_manager_max_tokens: 128000
-  position_reviewer_max_tokens: 128000
-  evening_analyst_max_tokens: 128000
+  # Hard output ceiling used by the pre-call cost reservation.  16K covers
+  # the observed production PM payload (~11K output tokens) while making the
+  # maximum liability of every request finite and useful to the breaker.
+  max_tokens: 16000
+  tech_analyst_max_tokens: 16000
+  news_analyst_max_tokens: 16000
+  macro_analyst_max_tokens: 16000
+  earnings_analyst_max_tokens: 16000
+  smart_money_analyst_max_tokens: 16000
+  portfolio_manager_max_tokens: 16000
+  risk_manager_max_tokens: 16000
+  position_reviewer_max_tokens: 16000
+  evening_analyst_max_tokens: 16000
   # Meta-reflector runs once per quarter (--mode meta). Dense digest input
   # + structured QuarterlyMetaReflection output. No benchmark scenario
   # covers it (see MODEL_ROUTING_POLICY.md "Known limitations") — assigned
@@ -103,7 +103,7 @@ llm:
   # resembles and which measured 1.00/1.00.
   meta_reflector_provider: "openrouter"
   meta_reflector_model: "google/gemini-2.5-flash-lite"
-  meta_reflector_max_tokens: 128000
+  meta_reflector_max_tokens: 16000
   # Stage 1 (QAMC): explicit per-agent provider override. Unset/null still
   # infers the provider from the model-id prefix exactly as before, but the
   # accepted OpenRouter policy above does NOT rely on inference: every seat
@@ -320,6 +320,25 @@ trading:
 
 storage:
   db_path: "data/quant_agent.db"
+
+# Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and
+# shared atomically across systemd processes.  Opening it suspends only model
+# requests; broker-resident orders and deterministic safety work continue.
+llm_cost_circuit:
+  enabled: true
+  require_telegram_alerts: true
+  session_cost_limit_usd: 0.90
+  daily_cost_limit_usd: 1.50
+  # Reservations use a strict UTF-8-byte token upper bound. These exposure
+  # ceilings permit one normal large PM prompt while actual settled spending
+  # remains governed by the lower limits above.
+  session_reserved_exposure_limit_usd: 1.80
+  daily_reserved_exposure_limit_usd: 1.90
+  max_paid_sessions_per_mode_per_day: 2
+  max_provider_attempts_per_call: 2
+  max_retry_attempts_per_session: 2
+  reservation_ttl_minutes: 30
+  reservation_multiplier: 1.05
 
 evolution:
   # Quarterly meta-reflection can auto-append "Learnings" bullets to the six

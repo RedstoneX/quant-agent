@@ -813,3 +813,61 @@ def test_bare_vendor_ids_still_resolve_through_litellm(tmp_path, monkeypatch, _r
     }))
     monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
     assert cost_table.estimate_cost("bare-model-6", 1_000_000, 1_000_000) == 35.0
+
+
+def test_mandatory_openrouter_refresh_uses_fresh_official_cache(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    import json
+    from src import cost_table
+
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    rates["openai/gpt-5.5"] = {"input": 5.25, "output": 31.0}
+    cache = tmp_path / "openrouter.json"
+    cache.write_text(json.dumps(rates))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(
+        cost_table, "_fetch_openrouter_pricing",
+        lambda: (_ for _ in ()).throw(AssertionError("fresh cache must avoid network")),
+    )
+
+    assert cost_table.refresh_openrouter_pricing() is True
+    assert cost_table.PRICING["openai/gpt-5.5"] == {
+        "input": 5.25, "output": 31.0,
+    }
+
+
+def test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_is_down(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    import json
+    import os
+    import time
+    from src import cost_table
+
+    cache = tmp_path / "openrouter.json"
+    cache.write_text(json.dumps(cost_table._PRICING_OPENROUTER))
+    old = time.time() - cost_table._CACHE_MAX_AGE_SECONDS - 60
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    assert cost_table.refresh_openrouter_pricing() is False
+
+
+def test_mandatory_openrouter_refresh_applies_live_catalog_rates(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    from src import cost_table
+
+    live = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    live["google/gemini-2.5-flash-lite"] = {"input": 0.11, "output": 0.44}
+    monkeypatch.setattr(
+        cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json",
+    )
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: live)
+
+    assert cost_table.refresh_openrouter_pricing(force=True) is True
+    assert cost_table.PRICING["google/gemini-2.5-flash-lite"] == {
+        "input": 0.11, "output": 0.44,
+    }

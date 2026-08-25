@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.agents.base import AgentResult
+from src.cost_circuit import PaidAnalysisSuspended
 from src.pipeline import TradingPipeline
 from src.risk.rules import RiskRuleEngine, RiskViolation
 from src.config import RiskConfig
@@ -612,7 +613,7 @@ def test_evening_persists_daily_pnl_when_analysis_raises():
 
     result = pipeline.run_evening()
 
-    assert result["status"] == "analyzed"
+    assert result["status"] == "evening_analysis_error"
     assert result["analysis"] is None
     pipeline.db.insert_daily_pnl.assert_called_once()
     kwargs = pipeline.db.insert_daily_pnl.call_args.kwargs
@@ -620,6 +621,43 @@ def test_evening_persists_daily_pnl_when_analysis_raises():
     assert kwargs["daily_pnl"] == 200.0
     assert kwargs["daily_return_pct"] == pytest.approx(2.0)
     pipeline.db.save_evening_snapshot.assert_not_called()
+
+
+def test_prelatched_evening_preserves_reconciliation_and_daily_pnl():
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.db = MagicMock()
+    pipeline._drain_pending_protection_restores = MagicMock()
+    pipeline._reconcile_orphan_pending_submits = MagicMock()
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipeline._reconcile_fills = MagicMock()
+    pipeline._run_news_update = MagicMock()
+    pipeline._load_earnings_analyses = MagicMock()
+    pipeline.evening_analyst = MagicMock()
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
+        "prelatched", {"suspended": True},
+    )
+    pipeline.broker.is_trading_day.return_value = True
+    pipeline.broker.get_account.return_value = {
+        "portfolio_value": 10_200.0, "last_equity": 10_000.0,
+    }
+    pipeline.broker.get_positions.return_value = []
+    pipeline.broker.get_recent_daily_closes.return_value = []
+
+    result = pipeline.run_evening()
+
+    assert result["status"] == "paid_analysis_suspended"
+    assert result["daily_pnl"] == 200.0
+    pipeline._drain_pending_protection_restores.assert_called_once()
+    pipeline._reconcile_orphan_pending_submits.assert_called_once()
+    pipeline._reconcile_stop_coverage.assert_called_once()
+    pipeline._reconcile_fills.assert_called_once()
+    pipeline.db.insert_daily_pnl.assert_called_once()
+    pipeline._run_news_update.assert_not_called()
+    pipeline._load_earnings_analyses.assert_not_called()
+    pipeline.evening_analyst.analyze.assert_not_called()
 
 
 def test_recent_sells_builder_reads_only_executed_trades():
@@ -1252,12 +1290,15 @@ def _run_main_with_result(monkeypatch, result_dict):
 
 
 def test_main_exits_nonzero_on_retryable_status(monkeypatch):
-    """broker_error / fetch_error / analysis_error → non-zero exit so the
-    wrapper's last-run guard is NOT written and the slot retries."""
-    for status in ("broker_error", "fetch_error", "analysis_error"):
+    """Only external-data failures retry the slot; semantic PM faults do not."""
+    for status in ("broker_error", "fetch_error"):
         exc = _run_main_with_result(monkeypatch, {"status": status})
         assert exc is not None, f"{status} should raise SystemExit"
         assert exc.code == 1, f"{status} should exit code 1, got {exc.code}"
+
+    for status in ("analysis_error", "agent_failure", "pm_parse_error"):
+        exc = _run_main_with_result(monkeypatch, {"status": status})
+        assert exc is None, f"{status} must not auto-repeat the paid stack"
 
 
 def test_main_exits_zero_on_terminal_status(monkeypatch):

@@ -43,13 +43,15 @@ from src.models import (
 # ---------------------------------------------------------------------------
 
 class HealthResponse(BaseModel):
-    status: str  # "ok" — the API process itself responded
+    status: str  # "ok" | "degraded" — process can respond while decisions are broken
     db_reachable: bool
     broker_reachable: bool | None = None  # None = not checked (e.g. no keys)
     paper: bool | None = None  # honest echo of config.alpaca.paper; never fabricated
     sessions_logged_today: list[str] = []  # run_id prefixes, e.g. ["run", "midday"]
     last_run_files: dict[str, str | None] = {}  # mode -> ISO mtime or None
     session_lock_active: bool | None = None  # best-effort process hint, not authoritative
+    decision_path_status: str = "unknown"
+    llm_circuit: dict | None = None
     timestamp: str
 
 
