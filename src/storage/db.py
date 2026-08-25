@@ -165,6 +165,10 @@ class Database:
                 input_tokens INTEGER,
                 output_tokens INTEGER,
                 cost_usd REAL,
+                -- Actual provider HTTP requests represented by this logical
+                -- row. Tech chunk aggregation can be >1; legacy rows are
+                -- NULL and readers conservatively count them as one.
+                provider_requests INTEGER,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -232,9 +236,44 @@ class Database:
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 run_id TEXT
             );
+
+            -- Explicit intraday evaluation ledger. A candidate is recorded
+            -- before paid analysis, so HOLD/RM-reject/parse-failure outcomes
+            -- still enforce cooldown even though no trades row exists.
+            CREATE TABLE IF NOT EXISTS intraday_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(symbol, run_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_intraday_evaluations_symbol_time
+                ON intraday_evaluations(symbol, timestamp);
         """)
         self.conn.commit()
         self._migrate()
+        # The cost circuit also initializes itself independently because it
+        # must work before the main Database object exists. Creating the same
+        # additive schema here makes read-only API health available after any
+        # normal DB initialization and keeps migrations explicit.
+        from src.cost_circuit import ensure_cost_circuit_schema
+        try:
+            ensure_cost_circuit_schema(self.conn)
+            self.conn.commit()
+        except Exception:
+            # Cost-accounting corruption must suspend paid analysis, but must
+            # not prevent construction of the main DB used by broker stop/fill
+            # reconciliation and deterministic loss protection.  The breaker
+            # independently retries initialization and persists its emergency
+            # fail-closed marker.
+            self.conn.rollback()
+            logger.critical(
+                "Cost-circuit schema initialization failed; paid analysis will "
+                "fail closed while non-LLM safety remains available",
+                exc_info=True,
+            )
 
     def _migrate(self):
         """Add columns that may be missing in older databases.
@@ -306,6 +345,7 @@ class Database:
         _ensure_column("agent_logs", "input_tokens", "input_tokens INTEGER")
         _ensure_column("agent_logs", "output_tokens", "output_tokens INTEGER")
         _ensure_column("agent_logs", "cost_usd", "cost_usd REAL")
+        _ensure_column("agent_logs", "provider_requests", "provider_requests INTEGER")
         # Stage 1 (QAMC provider/model/correlation plumbing). All nullable —
         # legacy rows read back as NULL/None, never a fabricated value (per
         # DECISION #12 / ACCEPTANCE_CRITERIA "unknown stays unknown"). Sourced
@@ -965,6 +1005,7 @@ class Database:
                          input_tokens: int | None = None,
                          output_tokens: int | None = None,
                          cost_usd: float | None = None,
+                         provider_requests: int | None = None,
                          requested_provider: str | None = None,
                          requested_model: str | None = None,
                          actual_provider: str | None = None,
@@ -983,13 +1024,15 @@ class Database:
                 """INSERT INTO agent_logs (agent_name, run_id, input_summary, input_message,
                    output_summary, full_response, model, tokens_used,
                    input_tokens, output_tokens, cost_usd,
+                   provider_requests,
                    requested_provider, requested_model, actual_provider,
                    prompt_version, latency_s, status, finish_reason, truncated,
                    decision_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_name, run_id, input_summary, input_message, output_summary,
                  full_response, model, tokens_used,
                  input_tokens, output_tokens, cost_usd,
+                 provider_requests,
                  requested_provider, requested_model, actual_provider,
                  prompt_version, latency_s, status,
                  finish_reason, None if truncated is None else int(truncated),
@@ -1022,6 +1065,30 @@ class Database:
             self.conn.commit()
             return cur.lastrowid or 0
         return self._locked_write(_do, label="insert_specialist_evidence")
+
+    def record_intraday_evaluation(
+        self, *, symbol: str, run_id: str, status: str, detail: str = "",
+    ) -> None:
+        def _do():
+            self.conn.execute(
+                "INSERT INTO intraday_evaluations(symbol, run_id, status, detail) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(symbol, run_id) DO UPDATE SET "
+                "status=excluded.status, detail=excluded.detail",
+                (symbol.upper(), run_id, status, detail),
+            )
+            self.conn.commit()
+        self._locked_write(_do, label="record_intraday_evaluation")
+
+    def get_recent_intraday_evaluations(
+        self, symbol: str, *, cooldown_hours: float,
+    ) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM intraday_evaluations WHERE symbol=? "
+                "AND timestamp >= datetime('now', ?) ORDER BY timestamp DESC",
+                (symbol.upper(), f"-{float(cooldown_hours):g} hours"),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def session_prefixes_logged_on(self, trading_day: date | None = None) -> set[str]:
         """Set of session run_id PREFIXES that produced agent_logs on the given

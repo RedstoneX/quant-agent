@@ -571,16 +571,16 @@ def test_meta_mode_body_renders_staged_hint_from_editor_report():
 # parse) must render LOUDLY: it is a failure, not a deliberate hold.
 # ===========================================================================
 
-def test_morning_analysis_error_renders_loud_not_silent():
+def test_morning_pm_parse_error_renders_loud_not_silent():
     result = {
-        "status": "analysis_error", "run_id": "run-m",
+        "status": "pm_parse_error", "run_id": "run-m",
         "error": "PM returned non-JSON body",
     }
     msg = format_session_result("morning", result, 45.0)
     assert msg is not None, "analysis_error must NEVER be silenced"
     assert "🔴" in msg
     assert "NOT a deliberate hold" in msg
-    assert "PM output unparseable" in msg
+    assert "PM decision failed (pm_parse_error)" in msg
     assert "PM returned non-JSON body" in msg
 
 

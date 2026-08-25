@@ -36,9 +36,11 @@ import logging
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from typing import TYPE_CHECKING
 
 from src.agents.base import agent_log_kwargs
+from src.cost_circuit import PaidAnalysisSuspended
 from src.data.technical import compute_indicators
 from src.models import NewsIntelligenceReport, TechAnalysisResult, TechnicalIndicators
 from src.pipeline_context import RunContext
@@ -336,10 +338,14 @@ class MorningResearchStage:
 
         logger.info("Starting parallel: macro + news + tech + earnings")
         with ThreadPoolExecutor(max_workers=4) as ex:
-            macro_future = ex.submit(_run_macro)
-            news_future = ex.submit(_run_news)
-            tech_future = ex.submit(_run_tech)
-            earnings_future = ex.submit(_load_earnings)
+            # ContextVar values do not automatically flow into executor
+            # workers. Give every branch its own copied context so breaker
+            # reservations retain this run_id/mode even if another scheduler
+            # job overlaps in the parent process.
+            macro_future = ex.submit(copy_context().run, _run_macro)
+            news_future = ex.submit(copy_context().run, _run_news)
+            tech_future = ex.submit(copy_context().run, _run_tech)
+            earnings_future = ex.submit(copy_context().run, _load_earnings)
 
         # Macro
         try:
@@ -381,6 +387,8 @@ class MorningResearchStage:
                 )
             else:
                 data_status["macro"] = "parse_error"
+        except PaidAnalysisSuspended:
+            raise
         except Exception as e:
             logger.error("Macro analyst failed: %s. Continuing without macro.", e)
             data_status["macro"] = "failed"
@@ -399,6 +407,8 @@ class MorningResearchStage:
                 )
             else:
                 data_status["news"] = "parse_error"
+        except PaidAnalysisSuspended:
+            raise
         except Exception as e:
             logger.error("News analyst failed: %s. Continuing without news.", e)
             data_status["news"] = "failed"
@@ -469,6 +479,8 @@ class MorningResearchStage:
                             specialist="tech_analyst",
                         )
             logger.info("Technical analysis complete: %d symbols in 1 LLM call", len(analyses))
+        except PaidAnalysisSuspended:
+            raise
         except Exception as e:
             logger.error("Tech analyst failed: %s. Continuing without technical data.", e)
             data_status["tech"] = "failed"
@@ -492,6 +504,8 @@ class MorningResearchStage:
                         kind="analysis", scope="symbol", symbol=symbol,
                         evidence_json=_json.dumps(analysis),
                     )
+        except PaidAnalysisSuspended:
+            raise
         except Exception as e:
             logger.error("Earnings check failed: %s. Continuing without earnings.", e)
             data_status["earnings"] = "failed"
@@ -619,6 +633,8 @@ class DecisionStage:
             recent_loss_pits=recent_loss_pits,
             facts=pm_facts,
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
+            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+            session_type=ctx.session,
         )
 
         if portfolio_decision and portfolio_decision.reasoning_chain:
@@ -648,14 +664,20 @@ class DecisionStage:
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
-            pm_log_kwargs["status"] = "agent_failure"
+            ctx.analysis_failure_status = (
+                pm_result.semantic_status or "pm_agent_failure"
+            )
+            ctx.analysis_failure_error = (
+                pm_result.semantic_error or "no valid PM decision"
+            )
         pipeline.db.insert_agent_log(
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
             output_summary=(
                 portfolio_decision.portfolio_view
-                if portfolio_decision else "agent_failure: no valid PM decision"
+                if portfolio_decision else
+                f"{ctx.analysis_failure_status}: {ctx.analysis_failure_error}"
             ),
             full_response=pm_result.raw_text,
             model=pm_result.model,

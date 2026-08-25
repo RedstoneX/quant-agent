@@ -45,7 +45,7 @@ def format_session_result(
         return _base_format_session_result(mode, result, elapsed_seconds, error=error)
 
     status = str(result.get("status", "unknown"))
-    if status in _BASE_ONLY_STATUSES:
+    if status in _BASE_ONLY_STATUSES or status.startswith("pm_") or status == "paid_analysis_suspended":
         return _base_format_session_result(mode, result, elapsed_seconds, error=None)
 
     try:
@@ -186,12 +186,23 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
             pass
 
         try:
-            rows = conn.execute(
-                "SELECT agent_name, output_summary, cost_usd FROM agent_logs "
-                "WHERE run_id = ? ORDER BY id",
-                (run_id,),
-            ).fetchall()
-            snapshot["calls"] = len(rows)
+            try:
+                rows = conn.execute(
+                    "SELECT agent_name, output_summary, cost_usd, provider_requests "
+                    "FROM agent_logs WHERE run_id = ? ORDER BY id",
+                    (run_id,),
+                ).fetchall()
+                snapshot["calls"] = sum(
+                    (1 if row["provider_requests"] is None
+                     else max(0, int(row["provider_requests"]))) for row in rows
+                )
+            except sqlite3.DatabaseError:
+                rows = conn.execute(
+                    "SELECT agent_name, output_summary, cost_usd FROM agent_logs "
+                    "WHERE run_id = ? ORDER BY id",
+                    (run_id,),
+                ).fetchall()
+                snapshot["calls"] = len(rows)
             for row in rows:
                 snapshot["agent_summaries"][row["agent_name"]] = row["output_summary"]
             if rows and all(row["cost_usd"] is not None for row in rows):
@@ -436,7 +447,7 @@ def _append_footer(lines: list[str], run_id: str | None, snap: dict[str, Any], e
     calls = int(snap.get("calls") or 0)
     if isinstance(cost, (int, float)):
         cost_text = f"${cost:.4f}" if cost < 0.01 else f"${cost:.2f}"
-        bits.append(f"LLM {cost_text}/{calls} call{'s' if calls != 1 else ''}")
+        bits.append(f"LLM {cost_text}/{calls} provider request{'s' if calls != 1 else ''}")
     bits.append(_fmt_elapsed(elapsed))
     lines.append("🧾 " + " · ".join(bits))
 
@@ -540,6 +551,20 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     snap = _read_run(run_id)
     status = str(nested.get("status", "unknown"))
     lines = [f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
+    if status == "paid_analysis_suspended":
+        lines.append(
+            "🔴 Paid opportunity discovery is suspended by the cost circuit; "
+            "the deterministic intraday loss check completed normally."
+        )
+        if nested.get("error"):
+            lines.append(f"Trigger: {_clip(nested.get('error'), 240)}")
+    elif status == "intraday_analysis_error":
+        lines.append(
+            f"🔴 PM analysis failed ({nested.get('failure_status') or 'unknown'}); "
+            "this was not a deliberate no-trade decision."
+        )
+        if nested.get("error"):
+            lines.append(f"Error: {_clip(nested.get('error'), 240)}")
 
     pnl = _number(outer.get("daily_pnl"))
     ret = _number(outer.get("daily_return_pct"))

@@ -161,7 +161,7 @@ def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path
     assert "🛡️ Risk: APPROVED" in msg
     assert "T-bill cash release" in msg
     assert "BUY SQQQ" in msg and "filled" in msg
-    assert "LLM $0.01/2 calls" in msg
+    assert "LLM $0.01/2 provider requests" in msg
 
 
 def test_morning_hold_explains_no_trade_in_investment_terms(tmp_path, monkeypatch):

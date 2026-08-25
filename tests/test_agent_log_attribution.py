@@ -632,7 +632,7 @@ def test_meta_reflector_persists_actual_model_on_failover(tmp_path):
     )
 
     assert result["status"] == "reflected"
-    logs = pipeline.db.get_agent_logs(f"meta-{result['period']}")
+    logs = pipeline.db.get_agent_logs(result["run_id"])
     row = next(r for r in logs if r["agent_name"] == "meta_reflector")
     assert row["model"] == _ACTUAL_FAILOVER_MODEL
     assert row["model"] != pipeline.config.llm.meta_reflector_model

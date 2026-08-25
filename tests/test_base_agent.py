@@ -59,12 +59,7 @@ def test_agent_records_model(mock_anthropic):
 
 
 def test_agent_retries_transient_failure_and_succeeds(mock_anthropic, monkeypatch):
-    """Retry budget rides through a transient provider/DNS hiccup that
-    clears within a few attempts. Regression for 2026-04-23 morning:
-    a ~15s DNS blackout killed tech_analyst because the old 3-attempt
-    budget only covered 7s. With the new 5-attempt budget, a short
-    blip where calls 1-2 fail and call 3 succeeds must be recoverable
-    without tripping the pipeline's no_data fail-safe."""
+    """The bounded budget rides through one transient provider hiccup."""
     # No real sleeping during the test.
     monkeypatch.setattr("time.sleep", lambda s: None)
 
@@ -76,7 +71,7 @@ def test_agent_retries_transient_failure_and_succeeds(mock_anthropic, monkeypatc
 
     def side_effect(*args, **kwargs):
         calls["n"] += 1
-        if calls["n"] <= 2:
+        if calls["n"] == 1:
             raise ConnectionError("DNS temporarily unavailable")
         return good_response
 
@@ -84,16 +79,12 @@ def test_agent_retries_transient_failure_and_succeeds(mock_anthropic, monkeypatc
 
     agent = ConcreteAgent(api_key="test-key", model="claude-sonnet-4-6-20250514", max_tokens=1024)
     result = agent.run(data="test")
-    assert calls["n"] == 3, f"expected 3 attempts, got {calls['n']}"
+    assert calls["n"] == 2, f"expected 2 attempts, got {calls['n']}"
     assert result.raw_text == '{"result": "ok"}'
 
 
-def test_agent_retry_budget_is_seven_attempts_by_default(mock_anthropic, monkeypatch):
-    """When every attempt fails, the agent gives up after the full
-    7-attempt budget. Bumped from 5 after 2026-04-28+29 RM-stage
-    network failures where 5 retries clustered inside ~30s outage
-    windows; 7 retries with jitter widen total window to ~140s
-    worst case, comfortably surviving observed DNS/OpenAI outages."""
+def test_agent_retry_budget_is_two_attempts_by_default(mock_anthropic, monkeypatch):
+    """A sustained outage cannot amplify one logical call beyond two requests."""
     monkeypatch.setattr("time.sleep", lambda s: None)
 
     calls = {"n": 0}
@@ -107,7 +98,7 @@ def test_agent_retry_budget_is_seven_attempts_by_default(mock_anthropic, monkeyp
     agent = ConcreteAgent(api_key="test-key", model="claude-sonnet-4-6-20250514", max_tokens=1024)
     with pytest.raises(ConnectionError):
         agent.run(data="test")
-    assert calls["n"] == 7, f"expected 7 attempts before giving up, got {calls['n']}"
+    assert calls["n"] == 2, f"expected 2 attempts before giving up, got {calls['n']}"
 
 
 def test_agent_retry_budget_respects_env_override(mock_anthropic, monkeypatch):
@@ -169,12 +160,11 @@ def test_retry_backoff_decorrelates_across_calls():
     )
 
 
-def test_agent_retry_budget_default_constant_is_seven():
-    """Pin the constant value so the next refactor can't silently
-    revert to 5 (the value that failed against 30s outages)."""
+def test_agent_retry_budget_default_constant_is_two():
+    """Pin the incident-response ceiling: initial request plus one retry."""
     from src.agents.base import _DEFAULT_MAX_RETRIES
 
-    assert _DEFAULT_MAX_RETRIES == 7
+    assert _DEFAULT_MAX_RETRIES == 2
 
 
 def test_anthropic_client_gets_explicit_http_timeout():
@@ -402,8 +392,9 @@ def test_agent_fast_fails_non_retryable_4xx(mock_anthropic, monkeypatch):
     assert calls["n"] == 1, f"non-retryable error must not retry; got {calls['n']} attempts"
 
 
-def test_agent_retries_429_and_5xx(mock_anthropic, monkeypatch):
-    """429 (rate limit) and 5xx are transient and must still be retried."""
+@pytest.mark.parametrize("status", [429, 503])
+def test_agent_retries_429_and_5xx(mock_anthropic, monkeypatch, status):
+    """Each transient class gets the one bounded retry still allowed."""
     monkeypatch.setattr("time.sleep", lambda s: None)
     calls = {"n": 0}
     good = MagicMock()
@@ -415,15 +406,13 @@ def test_agent_retries_429_and_5xx(mock_anthropic, monkeypatch):
     def flaky(*a, **k):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise _FakeStatusError(429, "rate limited")
-        if calls["n"] == 2:
-            raise _FakeStatusError(503, "upstream")
+            raise _FakeStatusError(status, "transient")
         return good
 
     mock_anthropic.messages.create.side_effect = flaky
     agent = ConcreteAgent(api_key="k", model="claude-sonnet-4-6-20250514", max_tokens=64)
     result = agent.run(data="test")
-    assert calls["n"] == 3
+    assert calls["n"] == 2
     assert result.raw_text == '{"result": "ok"}'
 
 
@@ -445,17 +434,13 @@ def test_agent_normal_response_not_flagged_truncated(mock_anthropic):
     assert result.finish_reason == "end_turn"
 
 
-def test_anthropic_system_prompt_carries_cache_control(mock_anthropic):
-    """The static system prompt is sent as an ephemeral cache breakpoint so
-    Anthropic reuses the prefix across calls."""
+def test_anthropic_system_prompt_uses_uncached_pricing_shape(mock_anthropic):
+    """Caching stays off until cache write/read rates are modeled by the breaker."""
     mock_anthropic.messages.create.return_value.stop_reason = "end_turn"
     agent = ConcreteAgent(api_key="k", model="claude-sonnet-4-6-20250514", max_tokens=64)
     agent.run(data="test")
     _, kwargs = mock_anthropic.messages.create.call_args
-    system = kwargs["system"]
-    assert isinstance(system, list) and system, "system must be a content-block list"
-    assert system[0]["cache_control"] == {"type": "ephemeral"}
-    assert system[0]["text"] == "You are a test agent."
+    assert kwargs["system"] == "You are a test agent."
 
 
 # === cross-provider failover (OpenAI primary -> Anthropic fallback) ===
@@ -835,15 +820,15 @@ def test_openai_path_streams_and_assembles_content():
     assert result.truncated is False
 
 
-def test_openai_stream_without_usage_estimates_tokens():
-    """Relay ignored include_usage → chars/4 estimates, never 0/0 (0/0 would
-    flag the call cost-unknown and drop it from daily cost totals)."""
+def test_openai_stream_without_usage_reports_unknown_cost():
+    """A usage-less stream must not fabricate billing telemetry."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock(usage=None)
         agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
-    assert result.input_tokens > 0 and result.output_tokens > 0
+    assert result.input_tokens == 0 and result.output_tokens == 0
+    assert result.cost_usd is None
 
 
 def test_openai_stream_interrupted_discards_partial_and_retries(monkeypatch):

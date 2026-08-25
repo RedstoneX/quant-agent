@@ -84,7 +84,7 @@ def test_incomplete_approving_verdict_is_repaired(monkeypatch):
         lambda self, **kw: _result(BROKEN_VERDICT), raising=False,
     )
 
-    def fake_execute(self, user_message):
+    def fake_execute(self, user_message, **_kwargs):
         calls.append(user_message)
         return _result(FIXED_VERDICT, user_message=user_message)
 
@@ -110,7 +110,7 @@ def test_repair_failure_stays_fail_closed(monkeypatch):
     # Second attempt is broken too (still missing the fields).
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(BROKEN_VERDICT), raising=False,
+        lambda self, user_message, **_kwargs: _result(BROKEN_VERDICT), raising=False,
     )
 
     verdict, _ = _review(agent)
@@ -125,7 +125,7 @@ def test_repair_returning_garbage_stays_fail_closed(monkeypatch):
     )
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result("I cannot comply."), raising=False,
+        lambda self, user_message, **_kwargs: _result("I cannot comply."), raising=False,
     )
 
     verdict, _ = _review(agent)
@@ -157,7 +157,7 @@ def test_pm_decision_missing_chain_field_is_repaired(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(fixed, user_message=user_message),
+        lambda self, user_message, **_kwargs: _result(fixed, user_message=user_message),
         raising=False,
     )
     # This test isolates schema repair. PM grounding has dedicated coverage
@@ -190,7 +190,7 @@ def test_repair_that_flips_approved_fails_closed(monkeypatch):
     flipped["approved"] = False
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(flipped)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(flipped)),
         raising=False,
     )
 
@@ -208,7 +208,7 @@ def test_repair_that_changes_a_modification_value_fails_closed(monkeypatch):
     tampered["modifications"][0]["new_value"] = 9.9  # was 2.5
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -226,7 +226,7 @@ def test_repair_that_changes_reason_category_fails_closed(monkeypatch):
     tampered["reason_category"] = "clean"  # was rr_fail
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -244,7 +244,7 @@ def test_repair_that_changes_scale_all_buys_fails_closed(monkeypatch):
     tampered["scale_all_buys"] = 0.5  # was 1.0
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -264,7 +264,7 @@ def test_repair_reordering_modifications_is_still_accepted(monkeypatch):
     reordered["modifications"] = list(reversed(reordered["modifications"]))
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(reordered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(reordered)),
         raising=False,
     )
 
@@ -292,7 +292,7 @@ def test_decision_bearing_validation_error_skips_repair_entirely(monkeypatch):
     execute_calls: list[str] = []
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: execute_calls.append(user_message) or _result("{}"),
+        lambda self, user_message, **_kwargs: execute_calls.append(user_message) or _result("{}"),
         raising=False,
     )
 
@@ -325,7 +325,7 @@ def test_pm_repair_that_changes_target_weight_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -360,7 +360,7 @@ def test_pm_repair_that_adds_a_target_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -402,7 +402,7 @@ def test_pm_decision_bearing_validation_error_skips_repair_entirely(monkeypatch)
     execute_calls: list[str] = []
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: execute_calls.append(user_message) or _result("{}"),
+        lambda self, user_message, **_kwargs: execute_calls.append(user_message) or _result("{}"),
         raising=False,
     )
 
@@ -430,7 +430,7 @@ def test_repair_changing_approved_to_string_false_fails_closed(monkeypatch):
     tampered["approved"] = "false"  # JSON string, not boolean false
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -453,7 +453,7 @@ def test_repair_changing_scale_from_zero_fails_closed(monkeypatch):
     tampered["scale_all_buys"] = 1.0  # was 0.0 — reinstates every BUY
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -475,7 +475,7 @@ def test_repair_preserving_scale_zero_is_still_accepted(monkeypatch):
     fixed_zero_scale["scale_all_buys"] = 0.0
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(fixed_zero_scale)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(fixed_zero_scale)),
         raising=False,
     )
 
@@ -496,7 +496,7 @@ def test_repair_changing_modification_reason_fails_closed(monkeypatch):
     tampered["modifications"][0]["reason"] = "a completely different rationale"
     monkeypatch.setattr(
         RiskManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -527,7 +527,7 @@ def test_pm_repair_changing_conviction_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -559,7 +559,7 @@ def test_pm_repair_changing_thesis_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -591,7 +591,7 @@ def test_pm_repair_changing_suggested_stop_price_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -622,7 +622,7 @@ def test_pm_repair_changing_catalyst_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(tampered)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(tampered)),
         raising=False,
     )
 
@@ -655,7 +655,7 @@ def test_pm_repair_preserving_full_payload_is_still_accepted(monkeypatch):
     )
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, user_message: _result(json.dumps(fixed)),
+        lambda self, user_message, **_kwargs: _result(json.dumps(fixed)),
         raising=False,
     )
     monkeypatch.setattr(

@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from src.cost_table import estimate_cost, fmt_cost
+from src.cost_circuit import PaidAnalysisSuspended, UnavailableLLMCostCircuit
 
 logger = logging.getLogger(__name__)
 
@@ -52,31 +53,10 @@ _DEEPSEEK_MAX_OUTPUT = {
 }
 _DEEPSEEK_DEFAULT_CEILING = 8192  # unknown deepseek-* id -> conservative cap
 
-# Retry budget for a single LLM call — exponential backoff WITH JITTER.
-#
-# Why N=7 with jitter (was N=5 deterministic):
-#   2026-04-28 + 2026-04-29 morning each had RM-stage network failures.
-#   Tue: OpenAI 21s outage. Wed #1: OpenAI fast-fail. Wed #2: macOS DNS
-#   blackout (errno 8). With N=5 deterministic backoff (1+2+4+8 = 15s
-#   sleeps + 5 fast-fail calls ≈ 25s window), all 5 retries clustered
-#   inside the outage window and gave up before recovery. Either of:
-#     - more retries (wider total window), or
-#     - jitter (decorrelate retries from outage timing)
-#   alone helps; doing both is the cheap belt-and-suspenders fix.
-#
-# N=7 base sleeps: 1, 2, 4, 8, 16, 32 between attempts (no sleep after
-# attempt 6, which raises). Total deterministic ~63s. Plus 7 fast-fail
-# call latencies ~14s ≈ 77s window, vs ~25s before. Comfortably inside
-# launchd's 1200s outer kill even when 4-5 agents per session hit it.
-#
-# Jitter is "decorrelated" (AWS-style approximation): each sleep is
-# in [base, 2*base). Worst case ~126s sleep + ~14s call = ~140s.
-# Effect: a 30s outage starting at any moment in the retry sequence
-# is unlikely to swallow ALL 7 attempts because their exact timing
-# now varies per call.
-#
-# Overridable via QUANT_AGENT_MAX_RETRIES for tests / harder retries.
-_DEFAULT_MAX_RETRIES = 7
+# One initial request plus one transient retry. The former seven-attempt loop
+# amplified provider and validation failures into multi-dollar sessions. The
+# persistent circuit below this layer also enforces a session-wide retry cap.
+_DEFAULT_MAX_RETRIES = 2
 
 
 def _retry_backoff_seconds(attempt: int) -> float:
@@ -243,13 +223,6 @@ class LLMStreamInterruptedError(RuntimeError):
     Retryable."""
 
 
-def _estimate_tokens(text: str) -> int:
-    """~4 chars/token heuristic — usage-chunk fallback only, so a relay that
-    doesn't honor stream_options include_usage still yields a nonzero cost
-    estimate instead of a 0/0 that run() flags as cost-unknown."""
-    return max(1, len(text) // 4) if text else 0
-
-
 def _max_retries() -> int:
     """Read at call time so tests can monkeypatch the env var per case
     without reloading the module."""
@@ -405,6 +378,12 @@ class AgentResult:
     # prompt text change between two calls" signal, not a semantic version.
     prompt_version: str = ""
     latency_s: float = 0.0
+    # Provider HTTP requests represented by this logical result. Normally one;
+    # retry/failover and Tech chunk aggregation can be greater.
+    provider_requests: int = 1
+    # Transport-valid output may still fail a deterministic semantic contract.
+    semantic_status: str | None = None
+    semantic_error: str | None = None
 
     # Top-level keys we recognize as "this looks like a real agent output."
     # When the LLM prose includes an extra JSON fragment (self-correction,
@@ -552,19 +531,43 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     derived from an AgentResult. Callers add agent_name/run_id/decision_id
     and the summary/response fields on top. Centralized so all nine call
     sites stay consistent instead of re-deriving `status` etc. independently."""
+    def text_or_none(value):
+        return value if isinstance(value, str) and value else None
+
+    provider_requests = getattr(result, "provider_requests", 1)
+    if (not isinstance(provider_requests, int)
+            or isinstance(provider_requests, bool)
+            or provider_requests < 0):
+        # Compatibility for old test/replay fixtures built as open-ended
+        # MagicMocks and for any legacy caller that predates this field.
+        provider_requests = 1
+    semantic_status = text_or_none(getattr(result, "semantic_status", None))
+    used_fallback = getattr(result, "used_fallback", False) is True
+    latency = getattr(result, "latency_s", None)
+    if not isinstance(latency, (int, float)) or isinstance(latency, bool):
+        latency = None
+    truncated = getattr(result, "truncated", None)
+    if not isinstance(truncated, bool):
+        truncated = None
     return dict(
-        requested_provider=result.requested_provider,
-        requested_model=result.requested_model,
-        actual_provider=result.actual_provider,
-        prompt_version=result.prompt_version,
-        latency_s=result.latency_s,
-        status="fallback" if result.used_fallback else "success",
-        finish_reason=result.finish_reason,
-        truncated=result.truncated,
+        requested_provider=text_or_none(getattr(result, "requested_provider", None)),
+        requested_model=text_or_none(getattr(result, "requested_model", None)),
+        actual_provider=text_or_none(getattr(result, "actual_provider", None)),
+        prompt_version=text_or_none(getattr(result, "prompt_version", None)),
+        latency_s=latency,
+        provider_requests=provider_requests,
+        status=(semantic_status or ("fallback" if used_fallback else "success")),
+        finish_reason=text_or_none(getattr(result, "finish_reason", None)),
+        truncated=truncated,
     )
 
 
 class BaseAgent(ABC):
+    # Unit tests that exercise isolated provider parsing may opt out through
+    # tests/conftest.py. Production code never changes this flag: a paid call
+    # without the mandatory persistent breaker is a fail-closed error.
+    _allow_unmetered_for_tests = False
+
     def __init__(self, api_key: str, model: str, max_tokens: int = 4096,
                  fallback_api_key: str = "", provider: str | None = None):
         self.model = model
@@ -582,6 +585,8 @@ class BaseAgent(ABC):
         # for a Claude primary is harmless, NOT an error, so a future "switch
         # back to Claude" can't crash construction. Empty => failover disabled.
         self._fallback_api_key = (fallback_api_key or "").strip()
+        # Attached after TradingPipeline initializes the shared SQLite DB.
+        self._cost_circuit = None
 
         # max_retries=0 on EVERY SDK client construction: both SDKs default to
         # 2 internal retries on 429/5xx (incl. the relay's CF 524) with their
@@ -631,6 +636,11 @@ class BaseAgent(ABC):
         else:
             from anthropic import Anthropic
             self.client = Anthropic(api_key=api_key, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+
+    def set_cost_circuit(self, circuit) -> None:
+        """Attach the mandatory process-shared paid-analysis gate."""
+
+        self._cost_circuit = circuit
 
     @property
     @abstractmethod
@@ -700,7 +710,7 @@ class BaseAgent(ABC):
             "Agent %s: %s validation failed — attempting one repair reprompt",
             self.name, schema_name,
         )
-        return self._execute(failed.user_message + coda)
+        return self._execute(failed.user_message + coda, retry_kind="schema_repair")
 
     @staticmethod
     def validation_error_touches(error, field_names: tuple[str, ...]) -> bool:
@@ -723,7 +733,7 @@ class BaseAgent(ABC):
             for err in errors
         )
 
-    def _execute(self, user_message: str) -> AgentResult:
+    def _execute(self, user_message: str, *, retry_kind: str | None = None) -> AgentResult:
         """The retry / cross-provider-failover / cost / parse loop, decoupled
         from build_user_message so a stored historical `input_message` can be
         replayed through the CURRENT prompt + model without rebuilding context
@@ -745,21 +755,116 @@ class BaseAgent(ABC):
         requested_model = self.model
         requested_provider = self._provider
         prompt_version = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:12]
+        reservation = None
+        provider_requests = 0
+
+        def _mark_circuit_unavailable(exc: BaseException) -> dict:
+            marker = getattr(self._cost_circuit, "mark_unavailable", None)
+            if callable(marker):
+                try:
+                    return marker(
+                        exc,
+                        run_id=getattr(reservation, "run_id", None),
+                        mode=getattr(reservation, "mode", None),
+                        agent_name=self.name,
+                        attempts=provider_requests,
+                    )
+                except Exception as marker_exc:  # the fallback alert must not leak
+                    logger.critical(
+                        "Cost-circuit failure marker also failed: %s",
+                        marker_exc, exc_info=True,
+                    )
+            sentinel = UnavailableLLMCostCircuit(
+                exc, notifier=getattr(self._cost_circuit, "notifier", None),
+            )
+            return sentinel.activate_session(
+                getattr(reservation, "run_id", "unscoped"),
+                getattr(reservation, "mode", "unknown"),
+            )
+
+        def _safe_fail_reservation(exc: BaseException) -> None:
+            if self._cost_circuit is None or reservation is None:
+                return
+            try:
+                self._cost_circuit.fail_call(reservation, exc)
+            except Exception as accounting_exc:
+                logger.critical(
+                    "Cost-circuit failure accounting failed closed: %s",
+                    accounting_exc, exc_info=True,
+                )
+                _mark_circuit_unavailable(accounting_exc)
+
+        def _authorize(model: str) -> None:
+            nonlocal provider_requests
+            if self._cost_circuit is None:
+                provider_requests += 1
+                return
+            try:
+                self._cost_circuit.before_provider_attempt(reservation, model=model)
+            except PaidAnalysisSuspended:
+                raise
+            except Exception as exc:
+                state = _mark_circuit_unavailable(exc)
+                raise PaidAnalysisSuspended(
+                    "mandatory cost-circuit authorization failed",
+                    state,
+                ) from exc
+            provider_requests += 1
+
+        if self._cost_circuit is None and not self._allow_unmetered_for_tests:
+            raise PaidAnalysisSuspended(
+                "mandatory paid-analysis cost circuit is not attached",
+                {
+                    "available": False,
+                    "suspended": True,
+                    "trigger_code": "cost_circuit_not_attached",
+                    "agent_name": self.name,
+                },
+            )
+        if self._cost_circuit is not None:
+            try:
+                reservation = self._cost_circuit.begin_call(
+                    agent_name=self.name,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_message=user_message,
+                    max_output_tokens=self.max_tokens,
+                    retry_kind=retry_kind,
+                )
+            except PaidAnalysisSuspended:
+                raise
+            except Exception as exc:
+                state = _mark_circuit_unavailable(exc)
+                raise PaidAnalysisSuspended(
+                    "mandatory cost-circuit reservation failed",
+                    state,
+                ) from exc
         for attempt in range(max_retries):
             try:
                 if self._use_deepseek:
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_deepseek(user_message)
+                    raw_text, input_tokens, output_tokens, finish_reason = self._call_deepseek(
+                        user_message, authorize=_authorize,
+                    )
                 elif self._use_openrouter:
                     # OpenRouter is OpenAI-wire-compatible — reuse _call_openai
                     # unmodified rather than duplicating the streaming/usage/
                     # empty-content logic.
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(user_message)
+                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(
+                        user_message, authorize=_authorize,
+                    )
                 elif self._use_openai:
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(user_message)
+                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(
+                        user_message, authorize=_authorize,
+                    )
                 else:
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_anthropic(user_message)
+                    raw_text, input_tokens, output_tokens, finish_reason = self._call_anthropic(
+                        user_message, authorize=_authorize,
+                    )
                 primary_error = None
                 break
+            except PaidAnalysisSuspended as exc:
+                _safe_fail_reservation(exc)
+                raise
             except Exception as e:
                 primary_error = e
                 # Non-retryable (auth / bad-request / 4xx / context-length):
@@ -815,8 +920,15 @@ class BaseAgent(ABC):
             # re-raise (a Claude primary failing over to Claude is pointless).
             failover = None
             if (self._use_openai or self._use_deepseek or self._use_openrouter) and self._fallback_api_key:
-                failover = self._try_failover(user_message, primary_error)
+                try:
+                    failover = self._try_failover(
+                        user_message, primary_error, authorize=_authorize,
+                    )
+                except PaidAnalysisSuspended as exc:
+                    _safe_fail_reservation(exc)
+                    raise
             if failover is None:
+                _safe_fail_reservation(primary_error)
                 raise primary_error
             raw_text, input_tokens, output_tokens, finish_reason = failover
             actual_model = _FALLBACK_MODEL
@@ -855,19 +967,30 @@ class BaseAgent(ABC):
             )
         else:
             cost = estimate_cost(actual_model, input_tokens, output_tokens)
+        if self._cost_circuit is not None and reservation is not None:
+            try:
+                self._cost_circuit.complete_call(
+                    reservation, cost, actual_model=actual_model,
+                )
+            except PaidAnalysisSuspended:
+                raise
+            except Exception as exc:
+                state = _mark_circuit_unavailable(exc)
+                raise PaidAnalysisSuspended(
+                    "mandatory cost-circuit completion accounting failed",
+                    state,
+                ) from exc
         logger.info(
             "Agent %s completed | tokens in=%d out=%d total=%d | cost=%s | model=%s",
             self.name, input_tokens, output_tokens, tokens,
             fmt_cost(cost), actual_model,
         )
         logger.info("Agent %s output:\n%s", self.name, raw_text)
-        # actual_provider is derived from actual_model (not self._provider),
-        # so it's correct in BOTH cases: primary success (actual_model ==
-        # self.model, same provider as requested) and failover success
-        # (actual_model == _FALLBACK_MODEL, which _provider_for resolves to
-        # "anthropic" with no special-casing needed).
-        actual_provider = _provider_for(actual_model)
         used_fallback = primary_error is not None
+        # A vendor/model OpenRouter id is not inferable from its text. Primary
+        # success therefore uses the configured provider; only the explicit
+        # Anthropic failover changes attribution.
+        actual_provider = "anthropic" if used_fallback else requested_provider
         latency_s = time.monotonic() - loop_start
         return AgentResult(
             raw_text=raw_text,
@@ -885,26 +1008,28 @@ class BaseAgent(ABC):
             used_fallback=used_fallback,
             prompt_version=prompt_version,
             latency_s=latency_s,
+            provider_requests=provider_requests,
         )
 
-    def _anthropic_call(self, client, model: str, user_message: str) -> tuple[str, int, int, str | None]:
+    def _anthropic_call(
+        self, client, model: str, user_message: str, *, authorize=None,
+    ) -> tuple[str, int, int, str | None]:
         """One Anthropic messages.create against an arbitrary client+model.
 
         Shared by the primary path (_call_anthropic) and the provider-agnostic
         failover to Anthropic (_try_failover) so both use the identical request shape +
-        usage/finish-reason extraction. System prompt is sent as an ephemeral
-        cache breakpoint (static per agent → cheaper + lower latency; no-op
-        below the cache minimum, safe unconditionally).
+        usage/finish-reason extraction. Prompt caching is intentionally not
+        enabled: the breaker uses the pinned ordinary-input rates, so enabling
+        vendor-specific cache write/read pricing would make reservations and
+        reported cost incomparable until that pricing is modeled explicitly.
         """
         with _ANTHROPIC_LLM_SEMAPHORE:
+            if authorize is not None:
+                authorize(model)
             response = client.messages.create(
                 model=model,
                 max_tokens=self.max_tokens,
-                system=[{
-                    "type": "text",
-                    "text": self.system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }],
+                system=self.system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             )
         in_tok, out_tok = _extract_anthropic_usage(response, self.name)
@@ -922,10 +1047,14 @@ class BaseAgent(ABC):
             )
         return (response.content[0].text, in_tok, out_tok, finish_reason)
 
-    def _call_anthropic(self, user_message: str) -> tuple[str, int, int, str | None]:
-        return self._anthropic_call(self.client, self.model, user_message)
+    def _call_anthropic(
+        self, user_message: str, *, authorize=None,
+    ) -> tuple[str, int, int, str | None]:
+        return self._anthropic_call(
+            self.client, self.model, user_message, authorize=authorize,
+        )
 
-    def _try_failover(self, user_message: str, primary_error: Exception):
+    def _try_failover(self, user_message: str, primary_error: Exception, *, authorize=None):
         """Primary provider (OpenAI or DeepSeek) failed → attempt ONE Anthropic
         call with the fallback model. Returns the (text, in_tok, out_tok,
         finish_reason) tuple on success, or None on failure (caller re-raises
@@ -942,12 +1071,16 @@ class BaseAgent(ABC):
             from anthropic import Anthropic
             client = Anthropic(api_key=self._fallback_api_key,
                                timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
-            result = self._anthropic_call(client, _FALLBACK_MODEL, user_message)
+            result = self._anthropic_call(
+                client, _FALLBACK_MODEL, user_message, authorize=authorize,
+            )
             logger.warning(
                 "Agent %s: FAILOVER to %s SUCCEEDED (in=%d out=%d) — session "
                 "continues on Anthropic.", self.name, _FALLBACK_MODEL, result[1], result[2],
             )
             return result
+        except PaidAnalysisSuspended:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Agent %s: failover to %s also FAILED: %s. Re-raising the "
@@ -955,7 +1088,9 @@ class BaseAgent(ABC):
             )
             return None
 
-    def _call_openai(self, user_message: str) -> tuple[str, int, int, str | None]:
+    def _call_openai(
+        self, user_message: str, *, authorize=None,
+    ) -> tuple[str, int, int, str | None]:
         """OpenAI path is STREAMED on purpose. The OPENAI_BASE_URL relay sits
         behind Cloudflare, whose ~120s Proxy Read Timeout (HTTP 524) kills any
         call that sends zero bytes until the model finishes — and PM / tech /
@@ -974,6 +1109,8 @@ class BaseAgent(ABC):
         """
         semaphore = _OPENROUTER_LLM_SEMAPHORE if self._use_openrouter else _OPENAI_LLM_SEMAPHORE
         with semaphore:
+            if authorize is not None:
+                authorize(self.model)
             stream = self.client.chat.completions.create(
                 model=self.model,
                 max_completion_tokens=self.max_tokens,
@@ -1026,15 +1163,16 @@ class BaseAgent(ABC):
             in_tok = _coerce_token_count(getattr(usage, "prompt_tokens", 0))
             out_tok = _coerce_token_count(getattr(usage, "completion_tokens", 0))
         else:
-            # Relay didn't honor include_usage — estimate rather than report
-            # 0/0 (which run() flags as cost-unknown and can't sum into daily
-            # totals). Loud so the operator knows these numbers are soft.
-            in_tok = _estimate_tokens(self.system_prompt + user_message)
-            out_tok = _estimate_tokens(content)
+            # Character heuristics are not billing telemetry.  Returning 0/0
+            # deliberately routes this success through the breaker's
+            # unknown-actual-cost path: retain the full reservation and latch
+            # instead of releasing it against a soft estimate.
+            in_tok = 0
+            out_tok = 0
             logger.warning(
                 "OpenAI stream for %s carried no usage chunk — token counts "
-                "are chars/4 estimates (in≈%d out≈%d).",
-                self.name, in_tok, out_tok,
+                "and actual cost are unknown; paid analysis will suspend.",
+                self.name,
             )
         return (content, in_tok, out_tok, finish_reason)
 
@@ -1043,7 +1181,9 @@ class BaseAgent(ABC):
         clamp) a max_tokens above the model limit, so we cap client-side."""
         return _DEEPSEEK_MAX_OUTPUT.get(self.model, _DEEPSEEK_DEFAULT_CEILING)
 
-    def _call_deepseek(self, user_message: str) -> tuple[str, int, int, str | None]:
+    def _call_deepseek(
+        self, user_message: str, *, authorize=None,
+    ) -> tuple[str, int, int, str | None]:
         """DeepSeek via the OpenAI SDK (custom base_url). Three deltas vs
         _call_openai:
           1. Sends `max_tokens` (DeepSeek ignores OpenAI's `max_completion_tokens`
@@ -1057,6 +1197,8 @@ class BaseAgent(ABC):
         Usage is OpenAI-shaped (prompt_tokens / completion_tokens) → reuse
         _extract_openai_usage.
         """
+        if authorize is not None:
+            authorize(self.model)
         response = self.client.chat.completions.create(
             model=self.model,
             max_tokens=min(self.max_tokens, self._deepseek_max_output()),

@@ -1,6 +1,8 @@
 import contextlib
+import json as _json
 import logging
 import math
+import re
 import uuid
 from datetime import date
 from pathlib import Path
@@ -15,7 +17,7 @@ from src.data.news import NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
-from src.agents.base import agent_log_kwargs
+from src.agents.base import AgentResult, BaseAgent, agent_log_kwargs
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
@@ -42,6 +44,11 @@ from src.pipeline_stages import (
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.storage.db import Database
+from src.cost_circuit import (
+    LLMCostCircuitBreaker,
+    PaidAnalysisSuspended,
+    UnavailableLLMCostCircuit,
+)
 from src.models import (
     NewsIntelligenceReport,
     PortfolioDecision,
@@ -335,8 +342,59 @@ class TradingPipeline:
         # blackout the technical analyst. Alpaca's daily bars cover the same
         # universe we trade on, so fallback coverage is effectively 100%.
         self.market.set_fallback_bars(self.broker.get_bars)
-        self.db = Database(config.storage.db_path)
+        raw_storage_db_path = config.storage.db_path
+        if raw_storage_db_path == ":memory:":
+            # ``:memory:`` is a SQLite sentinel, not a relative filename.
+            # Rewriting it under the repository creates a persistent DB and
+            # lets otherwise-isolated tests/processes contaminate one another.
+            self._storage_db_path = raw_storage_db_path
+        else:
+            storage_db_path = Path(raw_storage_db_path)
+            if not storage_db_path.is_absolute():
+                storage_db_path = Path(__file__).resolve().parent.parent / storage_db_path
+            self._storage_db_path = str(storage_db_path)
+        self.db = Database(self._storage_db_path)
         self.db.initialize()
+        if BaseAgent._allow_unmetered_for_tests:
+            # Hermetic unit tests use mocked SDKs and explicitly opt out in
+            # tests/conftest.py. This flag is false in every application run.
+            self.cost_circuit = None
+        else:
+            try:
+                from src.cost_table import refresh_openrouter_pricing
+                self.cost_circuit = LLMCostCircuitBreaker(
+                    self._storage_db_path, config.llm_cost_circuit,
+                )
+                openrouter_pricing_ok = refresh_openrouter_pricing()
+                if not openrouter_pricing_ok:
+                    self.cost_circuit.mark_unavailable(
+                        RuntimeError(
+                            "current official OpenRouter pricing is unavailable; "
+                            "paid calls cannot be bounded safely"
+                        ),
+                        agent_name="pricing_preflight",
+                        attempts=0,
+                    )
+            except Exception as exc:  # safety work must still initialize
+                logger.critical(
+                    "Mandatory paid-analysis cost circuit failed to initialize; "
+                    "all paid calls are suspended while broker safety remains live: %s",
+                    exc,
+                    exc_info=True,
+                )
+                existing = getattr(self, "cost_circuit", None)
+                marker = getattr(existing, "mark_unavailable", None)
+                if callable(marker):
+                    marker(exc, agent_name="pricing_preflight", attempts=0)
+                    self.cost_circuit = existing
+                else:
+                    self.cost_circuit = LLMCostCircuitBreaker.fail_closed(
+                        self._storage_db_path,
+                        config.llm_cost_circuit,
+                        exc,
+                        agent_name="circuit_startup",
+                    )
+        self._attach_cost_circuit_to_agents()
         # Deterministic Target → Orders translator. Phase 2 of the architecture:
         # the LLM (PM) emits TargetPositions (intent); the constructor does the
         # math that turns intent into concrete TradeDecision orders.
@@ -720,6 +778,7 @@ class TradingPipeline:
                 full_response=reasons,
                 model="deterministic",
                 tokens_used=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                provider_requests=0,
                 decision_id=ctx.decision_id,
                 status="hard_risk_block",
             )
@@ -1504,7 +1563,6 @@ class TradingPipeline:
         """
         if not specs:
             return None
-        import json as _json
         try:
             row_id = self.db.insert_pending_protection_restore(
                 symbol=symbol,
@@ -2678,7 +2736,6 @@ class TradingPipeline:
         down for several runs in a row, PM has been oversizing — pull base
         allocations down before RM has to do it again.
         """
-        import json
         try:
             rows = self.db.get_recent_agent_outputs(
                 agent_name="risk_manager", limit=limit,
@@ -2692,9 +2749,8 @@ class TradingPipeline:
         lines = []
         for row in reversed(rows):  # oldest→newest
             ts = (row.get("timestamp") or "")[:10]
-            try:
-                data = json.loads(row.get("full_response") or "{}")
-            except (json.JSONDecodeError, TypeError) as e:
+            data = self._parse_logged_agent_response(row)
+            if not isinstance(data, dict):
                 # PM's L5 layer reads RM history to self-calibrate.
                 # Silently dropping a corrupt full_response row makes PM
                 # see fewer verdicts than the DB actually contains and
@@ -2702,7 +2758,7 @@ class TradingPipeline:
                 # corruption pattern shows up in logs.
                 logger.warning(
                     "rm_recent_verdicts: JSON parse failed for row %s: %s",
-                    ts or "?", e,
+                    ts or "?", "no decision object found",
                 )
                 continue
             approved = data.get("approved")
@@ -2728,7 +2784,6 @@ class TradingPipeline:
 
     def _build_pm_recent_decisions(self, limit: int = 3) -> str:
         """PM's own last N decision sets — used to spot flip-flopping against itself."""
-        import json
         try:
             rows = self.db.get_recent_agent_outputs(
                 agent_name="portfolio_manager", limit=limit,
@@ -2742,15 +2797,14 @@ class TradingPipeline:
         lines = []
         for row in reversed(rows):  # oldest→newest
             ts = (row.get("timestamp") or "")[:10]
-            try:
-                data = json.loads(row.get("full_response") or "{}")
-            except (json.JSONDecodeError, TypeError) as e:
+            data = self._parse_logged_agent_response(row)
+            if not isinstance(data, dict):
                 # PM's L6 layer reads its own recent decision history to
                 # spot flip-flops. A silent skip on JSON corruption hides
                 # the gap; same fix as L5 / L3d / L3f builders.
                 logger.warning(
                     "pm_recent_decisions: JSON parse failed for row %s: %s",
-                    ts or "?", e,
+                    ts or "?", "no decision object found",
                 )
                 continue
             # Phase 2: new schema emits `targets` (target weights + thesis);
@@ -3816,7 +3870,6 @@ class TradingPipeline:
         "buy","strong_buy"]} newest-first. Uses the same shape-normalizer
         as the missed_ops digest so bare-list / dict-wrapped / symbol-keyed
         shapes all work. Empty dict on failure."""
-        import json as _json
         from src.evolution.quarterly_digest import _tech_analyses_from_data
         try:
             rows = self.db.get_recent_agent_outputs(
@@ -3829,9 +3882,8 @@ class TradingPipeline:
             return {}
         by_sym: dict[str, list[str]] = {}
         for row in rows:
-            try:
-                data = _json.loads(row.get("full_response") or "{}")
-            except (_json.JSONDecodeError, TypeError):
+            data = self._parse_logged_agent_response(row)
+            if data is None:
                 continue
             for a in _tech_analyses_from_data(data):
                 sym = (a.get("symbol") or "").upper()
@@ -4265,7 +4317,6 @@ class TradingPipeline:
         `quarterly_digest._tech_analyses_from_data` so both paths stay in
         sync — adding a third shape should only require editing that helper.
         """
-        import json as _json
         from datetime import timedelta
         from src.evolution.quarterly_digest import _tech_analyses_from_data
         try:
@@ -4282,9 +4333,8 @@ class TradingPipeline:
             ts_date = (row.get("timestamp") or "")[:10]
             if not ts_date or ts_date < cutoff_str:
                 continue
-            try:
-                data = _json.loads(row.get("full_response") or "{}")
-            except (_json.JSONDecodeError, TypeError):
+            data = self._parse_logged_agent_response(row)
+            if data is None:
                 continue
             for a in _tech_analyses_from_data(data):
                 sym = (a.get("symbol") or "").upper()
@@ -4580,10 +4630,8 @@ class TradingPipeline:
             rm_rows = []
         f.rm_verdicts_seen = len(rm_rows)
         for row in rm_rows:
-            try:
-                import json as _json
-                data = _json.loads(row.get("full_response") or "{}")
-            except (ValueError, TypeError):
+            data = self._parse_logged_agent_response(row)
+            if not isinstance(data, dict):
                 continue
             scale = data.get("scale_all_buys", 1.0)
             try:
@@ -4808,6 +4856,8 @@ class TradingPipeline:
                 **agent_log_kwargs(result),
             )
             return intel_report
+        except PaidAnalysisSuspended:
+            raise
         except Exception as e:
             logger.error("[%s] News analyst failed: %s", session, e)
             return None
@@ -5531,6 +5581,163 @@ class TradingPipeline:
         """Delegates to DecisionStage (class lives in pipeline_stages.py)."""
         self.decision_stage.run(ctx)
 
+    def _activate_cost_session(self, run_id: str, mode: str) -> None:
+        """Register paid-call context without interfering with safety work."""
+
+        self._active_cost_run_context = (run_id, mode)
+        circuit = getattr(self, "cost_circuit", None)
+        if circuit is None:
+            if BaseAgent._allow_unmetered_for_tests:
+                return
+            circuit = UnavailableLLMCostCircuit(
+                RuntimeError("mandatory paid-analysis cost circuit is not initialized")
+            )
+            self.cost_circuit = circuit
+            self._attach_cost_circuit_to_agents()
+        try:
+            circuit.activate_session(run_id, mode)
+        except Exception as exc:
+            logger.critical(
+                "Cost-circuit activation failed for %s/%s; failing paid analysis "
+                "closed without interrupting deterministic safety: %s",
+                run_id, mode, exc, exc_info=True,
+            )
+            marker = getattr(circuit, "mark_unavailable", None)
+            if callable(marker):
+                marker(exc, run_id=run_id, mode=mode)
+            else:
+                circuit = UnavailableLLMCostCircuit(exc)
+                self.cost_circuit = circuit
+                self._attach_cost_circuit_to_agents()
+                circuit.activate_session(run_id, mode)
+
+    def _require_paid_analysis(self, agent_name: str) -> None:
+        circuit = getattr(self, "cost_circuit", None)
+        if circuit is None:
+            if BaseAgent._allow_unmetered_for_tests:
+                return
+            raise PaidAnalysisSuspended(
+                "mandatory paid-analysis cost circuit is not initialized",
+                {"available": False, "suspended": True},
+            )
+        try:
+            circuit.require_paid_analysis(agent_name)
+        except PaidAnalysisSuspended:
+            raise
+        except Exception as exc:
+            logger.critical("Cost-circuit preflight failed closed: %s", exc, exc_info=True)
+            marker = getattr(circuit, "mark_unavailable", None)
+            if callable(marker):
+                state = marker(exc)
+                raise PaidAnalysisSuspended(
+                    "mandatory cost-circuit preflight failed", state,
+                ) from exc
+            replacement = UnavailableLLMCostCircuit(exc)
+            self.cost_circuit = replacement
+            self._attach_cost_circuit_to_agents()
+            run_id, mode = getattr(
+                self, "_active_cost_run_context", ("unscoped", "unknown")
+            )
+            replacement.activate_session(run_id, mode)
+            replacement.require_paid_analysis(agent_name)
+
+    def _attach_cost_circuit_to_agents(self) -> None:
+        circuit = getattr(self, "cost_circuit", None)
+        for name in (
+            "tech_analyst", "news_analyst", "macro_analyst",
+            "earnings_analyst", "portfolio_manager", "risk_manager",
+            "position_reviewer", "evening_analyst", "meta_reflector",
+        ):
+            agent = getattr(self, name, None)
+            setter = getattr(agent, "set_cost_circuit", None)
+            if callable(setter):
+                setter(circuit)
+
+    def _cost_circuit_status(self) -> dict:
+        circuit = getattr(self, "cost_circuit", None)
+        if circuit is None:
+            if BaseAgent._allow_unmetered_for_tests:
+                return {"enabled": False, "suspended": False}
+            return {"available": False, "enabled": True, "suspended": True,
+                    "trigger_detail": "mandatory cost circuit is not initialized"}
+        try:
+            return circuit.status()
+        except Exception as exc:
+            logger.critical("Cost-circuit status failed closed: %s", exc, exc_info=True)
+            marker = getattr(circuit, "mark_unavailable", None)
+            if callable(marker):
+                return marker(exc)
+            replacement = UnavailableLLMCostCircuit(exc)
+            self.cost_circuit = replacement
+            self._attach_cost_circuit_to_agents()
+            run_id, mode = getattr(
+                self, "_active_cost_run_context", ("unscoped", "unknown")
+            )
+            return replacement.activate_session(run_id, mode)
+
+    @staticmethod
+    def _parse_logged_agent_response(row: dict):
+        """Parse stored fenced/prose-wrapped JSON exactly as live agents do."""
+
+        return AgentResult(
+            raw_text=row.get("full_response") or "",
+            tokens_used=0,
+            model=row.get("model") or "",
+        ).parse_json()
+
+    @staticmethod
+    def _paid_suspended_payload(
+        run_id: str, *, orders: list[dict] | None = None, error: BaseException | None = None,
+    ) -> dict:
+        return {
+            "status": "paid_analysis_suspended",
+            "run_id": run_id,
+            "orders": list(orders or []),
+            "error": str(error or "mandatory cost circuit is open"),
+            "paid_analysis_suspended": True,
+            "preserved": [
+                "broker_resident_protection",
+                "order_fill_reconciliation",
+                "deterministic_loss_protection",
+                "non_llm_safety_jobs",
+            ],
+        }
+
+    def _paid_suspension_after_late_safety(
+        self,
+        run_id: str,
+        *,
+        session: str,
+        error: BaseException,
+        where: str,
+        orders: list[dict] | None = None,
+        extra: dict | None = None,
+    ) -> dict:
+        """Recheck deterministic loss protection before a suspension return."""
+
+        existing_orders = list(orders or [])
+        emergency = self._check_late_breach_and_emergency_liquidate(run_id, where)
+        if emergency is not None:
+            if session == "morning":
+                # A liquidation supersedes any PM checkpoint written before
+                # the breaker opened (for example while entering RM).  Never
+                # allow that pre-liquidation plan to resume after a reset.
+                from src import decision_checkpoint as _dc
+                _dc.mark_consumed("morning")
+                _dc.write_status("morning", "emergency_sold")
+            emergency["orders"] = existing_orders + list(emergency.get("orders") or [])
+            emergency["paid_analysis_suspended"] = True
+            emergency["suspension_error"] = str(error)
+            if extra:
+                emergency.update(extra)
+            return emergency
+        payload = self._paid_suspended_payload(
+            run_id, orders=existing_orders, error=error,
+        )
+        if extra:
+            payload.update(extra)
+        return payload
+
     def run_morning(self) -> dict:
         ctx = RunContext.start("morning")
         run_id = ctx.run_id
@@ -5539,6 +5746,8 @@ class TradingPipeline:
         if not self._is_trading_day():
             logger.info("Morning run skipped: market closed for non-trading day")
             return {"status": "market_holiday", "orders": [], "run_id": run_id}
+
+        self._activate_cost_session(run_id, "morning")
 
         try:
             # 0a. Drain orphaned protection-restore intents from prior
@@ -5586,7 +5795,7 @@ class TradingPipeline:
             # 1a. Cash-only safety net — force-sell if margin was entered before
             # this session. Refreshes ctx.cash / positions on completion, so
             # every stage below runs on clean truth.
-            self._force_delever(ctx)
+            forced_orders = self._force_delever(ctx)
             positions = ctx.positions
             cash = ctx.cash
             total_value = ctx.total_value
@@ -5614,6 +5823,17 @@ class TradingPipeline:
                     "orders": orders,
                     "run_id": run_id,
                 }
+
+            # All broker-resident and deterministic safety work above runs
+            # even while the paid-analysis circuit is latched. Only now, at
+            # the boundary before research/resume-RM, may it stop the run.
+            try:
+                self._require_paid_analysis("morning_research")
+            except PaidAnalysisSuspended as exc:
+                return self._paid_suspension_after_late_safety(
+                    run_id, session="morning", error=exc, where="paid-pre-research",
+                    orders=forced_orders,
+                )
 
             # RC2 resume lane: a prior morning tick may have been killed by
             # the wrapper timeout AFTER the PM produced a plan but BEFORE the
@@ -5662,7 +5882,22 @@ class TradingPipeline:
             else:
                 # Phase 4 #1: research stage runs the parallel fan-out (macro /
                 # news / tech / earnings). Populates ctx fields.
-                self.morning_research_stage.run(ctx)
+                try:
+                    self.morning_research_stage.run(ctx)
+                except PaidAnalysisSuspended as exc:
+                    return self._paid_suspension_after_late_safety(
+                        run_id, session="morning", error=exc, where="paid-research-suspended",
+                        orders=forced_orders,
+                    )
+                circuit_state = self._cost_circuit_status()
+                if circuit_state.get("suspended"):
+                    return self._paid_suspension_after_late_safety(
+                        run_id, session="morning", where="post-research-circuit-open",
+                        orders=forced_orders,
+                        error=PaidAnalysisSuspended(
+                            str(circuit_state.get("trigger_detail") or "cost circuit opened")
+                        ),
+                    )
                 analyses = ctx.analyses
 
                 # Late-breach check: research can take 5-10 min on slow OpenAI
@@ -5689,7 +5924,13 @@ class TradingPipeline:
                     return {"status": "no_data", "orders": [], "run_id": run_id}
 
                 # Phase 4 #1: decision stage — memory layers + PM + Constructor.
-                self._decision_stage(ctx)
+                try:
+                    self._decision_stage(ctx)
+                except PaidAnalysisSuspended as exc:
+                    return self._paid_suspension_after_late_safety(
+                        run_id, session="morning", error=exc, where="paid-decision-suspended",
+                        orders=forced_orders,
+                    )
                 portfolio_decision = ctx.portfolio_decision
 
                 # Persist the plan the moment it exists — a kill anywhere
@@ -5715,16 +5956,17 @@ class TradingPipeline:
                     return late_breach
 
             if not portfolio_decision:
-                # audit round 2: "no_trades" here masqueraded a PARSE FAILURE
-                # as a deliberate hold — main.py exited 0, the wrapper wrote
-                # the last-run marker, and the trading day was silently
-                # skipped. analysis_error is already in main.py's retryable
-                # set: exit 1, no marker, the next 30-min tick retries (and
-                # the decision checkpoint, if written, resumes at RiskStage).
-                logger.error("Portfolio manager: parse failed, no decision object")
+                failure_status = ctx.analysis_failure_status or "pm_agent_failure"
+                failure_error = ctx.analysis_failure_error or "no valid PM decision"
+                logger.error(
+                    "Portfolio manager produced no valid decision (%s): %s",
+                    failure_status, failure_error,
+                )
                 return {
-                    "status": "analysis_error", "orders": [], "run_id": run_id,
-                    "error": "PM output unparseable — not a deliberate hold",
+                    # Terminal for this slot. main.py must not repeat the full
+                    # paid stack on deterministic parse/schema/grounding faults.
+                    "status": failure_status, "orders": [], "run_id": run_id,
+                    "error": failure_error,
                     "data_status": dict(ctx.data_status),
                     "stop_coverage_gaps": coverage_gaps,
                 }
@@ -5737,7 +5979,13 @@ class TradingPipeline:
                 }
 
             # Phase 4 #1: risk stage — hard filter + earnings cap + RM review + mods.
-            early_exit = self._risk_stage(ctx)
+            try:
+                early_exit = self._risk_stage(ctx)
+            except PaidAnalysisSuspended as exc:
+                return self._paid_suspension_after_late_safety(
+                    run_id, session="morning", error=exc, where="paid-risk-suspended",
+                    orders=forced_orders,
+                )
             # The plan has now been risk-reviewed — whatever the outcome, it
             # must never be re-offered by the resume lane (an RM-rejected
             # plan retried next tick would be a veto bypass), and marking
@@ -5771,10 +6019,11 @@ class TradingPipeline:
             # orders=[] — the day read as done and nothing retried while the
             # freed cash sat idle until midday re-parked it. When the session
             # had approved BUYs, submitted NOTHING, and at least one skip was
-            # the transient funding race, report `buys_unfunded` — a
-            # retryable status (main.py) so the next 30-min tick re-runs the
-            # full chain (research → PM → RM re-review: no veto bypass) on
-            # fresh prices and by-then-settled cash.
+            # the transient funding race, report `buys_unfunded` truthfully.
+            # It is terminal for this slot: automatically re-running the full
+            # paid research -> PM -> RM stack amplified cost for an execution-
+            # timing issue. A future execution-only checkpoint can retry this
+            # without buying another decision chain.
             approved_buys = [
                 d for d in (portfolio_decision.decisions or [])
                 if d.action == "BUY"
@@ -5793,8 +6042,8 @@ class TradingPipeline:
             if approved_buys and unfunded and not real_orders:
                 logger.warning(
                     "=== Morning run: %d approved BUY(s), 0 submitted, "
-                    "%d unfunded skip(s) — reporting buys_unfunded for "
-                    "retry ===", len(approved_buys), len(unfunded),
+                    "%d unfunded skip(s) — reporting terminal "
+                    "buys_unfunded ===", len(approved_buys), len(unfunded),
                 )
                 return {
                     "status": "buys_unfunded", "orders": orders,
@@ -5958,7 +6207,6 @@ class TradingPipeline:
         actions per symbol so it can't silently reverse itself within hours
         without a named trigger. Complement to PM's `_build_pm_recent_decisions`.
         """
-        import json as _json
         try:
             # No before_date cutoff (audit round 2): the 15:30 close session
             # must see the 13:00 midday row — this anti-flip-flop memory says
@@ -5976,9 +6224,8 @@ class TradingPipeline:
         lines: list[str] = []
         for row in reversed(rows):  # oldest → newest
             ts = (row.get("timestamp") or "")[:16]
-            try:
-                data = _json.loads(row.get("full_response") or "{}")
-            except (_json.JSONDecodeError, TypeError):
+            data = self._parse_logged_agent_response(row)
+            if not isinstance(data, dict):
                 continue
             actions = data.get("actions") or []
             if not isinstance(actions, list):
@@ -6014,6 +6261,8 @@ class TradingPipeline:
         if not self._is_trading_day():
             logger.info("%s run skipped: market closed for non-trading day", session_type)
             return {"status": "market_holiday", "positions": 0, "orders": [], "run_id": run_id}
+
+        self._activate_cost_session(run_id, session_type)
 
         # Early-close check. On half-day sessions (day after Thanksgiving 13:00
         # close; July 3 half-day) the launchd-gated midday (13:00-14:30 ET) and
@@ -6141,24 +6390,71 @@ class TradingPipeline:
         # is still a dividend tomorrow no matter which session looks at it).
         exdiv_orders = self._handle_ex_dividends(positions, run_id)
 
+        # Auto-TP/ex-dividend actions and all protection reconciliation above
+        # are deterministic. A latched paid-analysis breaker stops only at
+        # this boundary, before news/reviewer model requests.
+        orders = list(forced_orders) + list(auto_tp_orders) + list(exdiv_orders)
+        try:
+            self._require_paid_analysis(f"{session_type}_analysis")
+        except PaidAnalysisSuspended as exc:
+            self._reconcile_fills()
+            return self._paid_suspension_after_late_safety(
+                run_id, session=session_type, error=exc,
+                where=f"{session_type}-paid-preflight",
+                orders=orders,
+                extra={"session": session_type, "positions": len(positions),
+                       "stop_coverage_gaps": coverage_gaps},
+            )
+
         # 2. News + Earnings update — capture developments since morning.
-        session_news = self._run_news_update(run_id, session=session_type)
+        try:
+            session_news = self._run_news_update(run_id, session=session_type)
+        except PaidAnalysisSuspended as exc:
+            self._reconcile_fills()
+            return self._paid_suspension_after_late_safety(
+                run_id, session=session_type, error=exc,
+                where=f"{session_type}-paid-news",
+                orders=orders,
+                extra={"session": session_type, "positions": len(positions),
+                       "stop_coverage_gaps": coverage_gaps},
+            )
         if session_news:
             logger.info("%s news: %s", session_type.capitalize(), session_news.pm_briefing[:200])
         try:
             _, session_earnings = self._load_earnings_analyses(
                 run_id, session=session_type, ctx=ctx,
             )
+        except PaidAnalysisSuspended as exc:
+            self._reconcile_fills()
+            return self._paid_suspension_after_late_safety(
+                run_id, session=session_type, error=exc,
+                where=f"{session_type}-paid-earnings",
+                orders=orders,
+                extra={"session": session_type, "positions": len(positions),
+                       "stop_coverage_gaps": coverage_gaps},
+            )
         except Exception as e:  # noqa: BLE001 — reviewer proceeds without earnings
             logger.error("%s: earnings load failed (continuing without): %s",
                          session_type, e)
             session_earnings = []
 
+        circuit_state = self._cost_circuit_status()
+        if circuit_state.get("suspended"):
+            self._reconcile_fills()
+            return self._paid_suspension_after_late_safety(
+                run_id, session=session_type, orders=orders,
+                where=f"{session_type}-post-news-circuit-open",
+                error=PaidAnalysisSuspended(
+                    str(circuit_state.get("trigger_detail") or "cost circuit opened")
+                ),
+                extra={"session": session_type, "positions": len(positions),
+                       "stop_coverage_gaps": coverage_gaps},
+            )
+
         # 3. LLM position review — memory-heavy, 6-step CoT.
         macro_summary = self.macro.get_macro_summary()
         review = None
         # Pre-LLM orders (take-profit + ex-div) feed into the same bucket.
-        orders = list(auto_tp_orders) + list(exdiv_orders)
 
         # LLM view: the cash-sweep vehicle is cash-equivalent, not a
         # position — the reviewer must never see it, hold-grade it, or sell
@@ -6236,29 +6532,42 @@ class TradingPipeline:
             yesterday_insights = self.db.get_latest_insights(before_date=session_date_key())
             recent_performance = self._compute_recent_performance(last_equity)
 
-            review, md_result = self.position_reviewer.review(
-                positions=review_positions,
-                macro_summary=macro_summary,
-                cash_balance=review_cash,
-                reserve_balance=reserve_balance,
-                total_value=total_value,
-                session_type=session_type,
-                position_facts=position_facts,
-                morning_trades=morning_trades,
-                news_intel=session_news,
-                earnings_analyses=session_earnings,
-                macro_analysis=macro_analysis_dict,
-                weekly_narrative=weekly_narrative,
-                macro_trajectory=macro_trajectory,
-                active_state_changes=active_state_changes,
-                calibration_note=calibration_note,
-                own_recent_decisions=own_recent_decisions,
-                trade_grade_summary=trade_grade_summary,
-                yesterday_insights=yesterday_insights,
-                recent_performance=recent_performance,
-                already_trimmed_today=already_trimmed_today,
-                allow_margin=bool(getattr(self.config.risk, "allow_margin", False)),
-            )
+            try:
+                review, md_result = self.position_reviewer.review(
+                    positions=review_positions,
+                    macro_summary=macro_summary,
+                    cash_balance=review_cash,
+                    reserve_balance=reserve_balance,
+                    total_value=total_value,
+                    session_type=session_type,
+                    position_facts=position_facts,
+                    morning_trades=morning_trades,
+                    news_intel=session_news,
+                    earnings_analyses=session_earnings,
+                    macro_analysis=macro_analysis_dict,
+                    weekly_narrative=weekly_narrative,
+                    macro_trajectory=macro_trajectory,
+                    active_state_changes=active_state_changes,
+                    calibration_note=calibration_note,
+                    own_recent_decisions=own_recent_decisions,
+                    trade_grade_summary=trade_grade_summary,
+                    yesterday_insights=yesterday_insights,
+                    recent_performance=recent_performance,
+                    already_trimmed_today=already_trimmed_today,
+                    allow_margin=bool(getattr(self.config.risk, "allow_margin", False)),
+                )
+            except PaidAnalysisSuspended as exc:
+                self._reconcile_fills()
+                return self._paid_suspension_after_late_safety(
+                    run_id, session=session_type, error=exc,
+                    where=f"{session_type}-paid-reviewer",
+                    orders=orders,
+                    extra={"session": session_type, "positions": len(positions),
+                           "stop_coverage_gaps": coverage_gaps},
+                )
+            review_log_kwargs = agent_log_kwargs(md_result)
+            if review is None:
+                review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
@@ -6272,7 +6581,7 @@ class TradingPipeline:
                 input_tokens=md_result.input_tokens,
                 output_tokens=md_result.output_tokens,
                 cost_usd=md_result.cost_usd,
-                **agent_log_kwargs(md_result),
+                **review_log_kwargs,
             )
 
             # Risk check: if daily loss limit breached, force-sell all. Else:
@@ -6341,7 +6650,10 @@ class TradingPipeline:
                 logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
 
         return {
-            "status": "reviewed",
+            "status": (
+                "reviewed" if not review_positions or review is not None
+                else "position_review_parse_error"
+            ),
             "session": session_type,
             "positions": len(positions),
             "review": review.model_dump() if review else None,
@@ -6370,6 +6682,8 @@ class TradingPipeline:
         if not self._is_trading_day():
             logger.info("Earnings preprocess skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
+
+        self._activate_cost_session(run_id, "earnings_preprocess")
 
         # Drain orphaned protection-restore intents from any prior session
         # that died mid-finalize. earnings_preprocess (08:00-09:15 ET) is the
@@ -6401,7 +6715,12 @@ class TradingPipeline:
             ", ".join(r.symbol for r in new_reports),
         )
         try:
+            self._require_paid_analysis("earnings_analyst")
             results = self.earnings_analyst.analyze_reports(new_reports)
+        except PaidAnalysisSuspended as exc:
+            # No filing failure is recorded: the filing remains new and will
+            # be eligible after an operator resets the circuit.
+            return self._paid_suspended_payload(run_id, error=exc)
         except Exception as e:
             logger.error("Earnings preprocess: LLM analysis failed: %s", e, exc_info=True)
             # Record failures so the retry bounds kick in for each filing.
@@ -6508,6 +6827,8 @@ class TradingPipeline:
             logger.info("Intra check skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
 
+        self._activate_cost_session(run_id, "intra_check")
+
         # Drain orphaned protection-restore intents — intra runs every
         # 30 min so this is the most frequent recovery opportunity for
         # bails that landed during morning. Codex r8 #2.
@@ -6563,6 +6884,14 @@ class TradingPipeline:
             if not loss_violation:
                 try:
                     scan_result = self._run_intraday_opportunity_scan(ctx)
+                except PaidAnalysisSuspended as exc:
+                    scan_result = {
+                        "status": "paid_analysis_suspended",
+                        "run_id": run_id,
+                        "error": str(exc),
+                        "suspended": "intraday opportunity discovery only",
+                        "preserved": "intraday deterministic loss protection",
+                    }
                 except Exception as e:  # noqa: BLE001 — never let the scan
                     # turn a routine intra_check tick into a failed run.
                     logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
@@ -6647,39 +6976,47 @@ class TradingPipeline:
         }
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:
-        """True when `symbol` already went through an intraday-scan decision
-        (any action, including HOLD — ExecutionStage records every decision)
-        within the last `cooldown_hours`.
+        """True when the explicit evaluation ledger says this symbol ran.
 
-        Same query-and-cutoff idiom as `_trail_tightened_recently`. Matches
-        on `run_id` prefix `intra_check-` (see `RunContext.start`) rather
-        than on action type, because the whole point is "don't re-run
-        Specialist -> PM -> AI Risk on this symbol again yet", regardless
-        of what the prior tick concluded — a scan that already produced a
-        BUY, a HOLD, or even an RM-rejected proposal is all equally "already
-        looked at this recently".
+        Trades are not an evaluation ledger: PM parse failures, RM rejects,
+        no-target decisions, and pre-execution errors create no trade row and
+        previously bypassed cooldown, repeatedly buying the same analysis.
         """
         try:
-            rows = self.db.get_trades(symbol=symbol, limit=10)
+            rows = self.db.get_recent_intraday_evaluations(
+                symbol, cooldown_hours=cooldown_hours,
+            )
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday cooldown query failed for %s: %s", symbol, e)
-            return False
+            logger.warning(
+                "Intraday cooldown ledger failed for %s (%s) — skipping scan "
+                "for this symbol fail-closed", symbol, e,
+            )
+            return True
+        if isinstance(rows, list):
+            return bool(rows)
+
+        # Compatibility for lightweight test doubles and rolling upgrades in
+        # which an older DB facade has not exposed the new ledger method yet.
+        # Production Database always returns a real list above.
+        try:
+            legacy_rows = self.db.get_trades(symbol=symbol, limit=10)
+        except Exception:
+            return True
         from datetime import datetime as _dt, timedelta, timezone
         cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
-        for row in rows:
-            run_id = row.get("run_id") or ""
-            if not run_id.startswith("intra_check-"):
+        for row in legacy_rows if isinstance(legacy_rows, list) else []:
+            if not str(row.get("run_id") or "").startswith("intra_check-"):
                 continue
-            ts = row.get("timestamp") or ""
             try:
-                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
-                    else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                ts = str(row.get("timestamp") or "")
+                when = (_dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts
+                        else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                if when >= cutoff:
+                    return True
             except (TypeError, ValueError):
                 continue
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            if dt >= cutoff:
-                return True
         return False
 
     def _another_session_recently_active(self, run_id: str,
@@ -6712,6 +7049,39 @@ class TradingPipeline:
         Fails CLOSED: a query failure returns True (skip the scan).
         """
         from datetime import datetime as _dt, timedelta, timezone
+        import os
+        import time as _time
+
+        # The wrapper writes this owner record before Python starts, so it is
+        # visible during the long research window before any trade row exists.
+        # That closes the 09:30 race where morning and intra both used the same
+        # stale cash/position snapshot and could independently authorize BUYs.
+        owner_path = Path.home() / ".cache" / "quant-agent" / "active-session.lock" / "owner"
+        if owner_path.exists():
+            try:
+                parts = owner_path.read_text().strip().split()
+                owner_mode = parts[0]
+                owner_ts = int(parts[2])
+                owner_pid = int(parts[3])
+                age = _time.time() - owner_ts
+                alive = True
+                try:
+                    os.kill(owner_pid, 0)
+                except OSError:
+                    alive = False
+                if owner_mode != "intra_check" and alive and 0 <= age <= 1800:
+                    logger.info(
+                        "Intraday scan: wrapper reports active %s session (pid=%d, age=%.0fs); "
+                        "skipping paid opportunity discovery",
+                        owner_mode, owner_pid, age,
+                    )
+                    return True
+            except (OSError, ValueError, IndexError) as exc:
+                logger.warning(
+                    "Intraday scan: could not validate active-session owner (%s) — "
+                    "skipping paid discovery fail-closed", exc,
+                )
+                return True
         try:
             rows = self.db.get_trades(today_only=True, limit=50)
         except Exception as e:  # noqa: BLE001
@@ -6887,13 +7257,31 @@ class TradingPipeline:
             len(symbols), cfg.move_threshold_pct, cfg.cooldown_hours, symbols,
         )
         move_by_symbol = dict(candidates)
+        ledgered_symbols: list[str] = []
         for symbol in symbols:
+            # Persist before any paid call. Every outcome—including a model
+            # failure or no target—now consumes the configured cooldown.
+            try:
+                self.db.record_intraday_evaluation(
+                    symbol=symbol, run_id=ctx.run_id, status="selected",
+                    detail=f"move_pct={move_by_symbol[symbol]:.4f}",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Intraday evaluation ledger write failed for %s (%s) — "
+                    "skipping it to avoid unbounded repeat spend", symbol, exc,
+                )
+                continue
+            ledgered_symbols.append(symbol)
             _record_pipeline_event(
                 self, ctx, symbol, "opportunity", "discovered",
                 "intraday_move_threshold",
                 move_pct=move_by_symbol[symbol],
                 threshold_pct=cfg.move_threshold_pct,
             )
+        symbols = ledgered_symbols
+        if not symbols:
+            return None
 
         symbols_data = []
         symbols_bars: dict[str, list] = {}
@@ -6942,6 +7330,7 @@ class TradingPipeline:
         intraday_context = {
             s: snapshots[s] for s in symbols if s in snapshots
         }
+        self._require_paid_analysis("intraday_tech_analyst")
         analyses_map, ta_result = self.tech_analyst.analyze_batch(
             symbols_data,
             prior_ratings=prior_ratings,
@@ -7033,7 +7422,19 @@ class TradingPipeline:
         ctx.earnings_results = []
 
         self.decision_stage.run(ctx)
-        if not ctx.portfolio_decision or not ctx.portfolio_decision.decisions:
+        if not ctx.portfolio_decision:
+            logger.error(
+                "Intraday scan: PM failed (%s): %s",
+                ctx.analysis_failure_status, ctx.analysis_failure_error,
+            )
+            return {
+                "status": "intraday_analysis_error",
+                "failure_status": ctx.analysis_failure_status or "pm_agent_failure",
+                "error": ctx.analysis_failure_error or "no valid PM decision",
+                "candidates": symbols,
+                "run_id": ctx.run_id,
+            }
+        if not ctx.portfolio_decision.decisions:
             logger.info("Intraday scan: PM produced no actionable decisions")
             return {
                 "status": "intraday_no_trades", "candidates": symbols,
@@ -7059,6 +7460,8 @@ class TradingPipeline:
         if not self._is_trading_day():
             logger.info("Evening run skipped: market closed for non-trading day")
             return {"status": "market_holiday", "analysis": None, "run_id": run_id}
+
+        self._activate_cost_session(run_id, "evening")
 
         # Drain orphaned protection-restore intents — last chance before
         # the trading day ends. If close-session bailed and the SELL has
@@ -7111,8 +7514,53 @@ class TradingPipeline:
         # Fallback: if the evening LLM fails (analysis is None), we still
         # save the daily_pnl alone below to preserve the P&L audit trail.
 
+        # This boundary is intentionally after broker protection/fill
+        # reconciliation and the deterministic P&L snapshot, but before the
+        # first paid news/model request. A latched breaker still persists the
+        # P&L audit row and returns a truthful suspended status.
+        try:
+            self._require_paid_analysis("evening_news")
+        except PaidAnalysisSuspended as exc:
+            equity_close = None
+            try:
+                closes = self.broker.get_recent_daily_closes(lookback_days=10)
+                if closes and closes[-1][0] == today_str:
+                    equity_close = closes[-1][1]
+            except Exception as close_exc:  # noqa: BLE001
+                logger.warning("suspended evening: 4pm close fetch failed: %s", close_exc)
+            self.db.insert_daily_pnl(
+                date=today_str,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
+                equity_close=equity_close,
+            )
+            payload = self._paid_suspended_payload(run_id, error=exc)
+            payload.update(
+                analysis=None,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
+                equity_close=equity_close,
+                stop_coverage_gaps=coverage_gaps,
+            )
+            return payload
+
         # 2. News + Earnings update — capture end-of-day developments
-        evening_news = self._run_news_update(run_id, session="evening")
+        try:
+            evening_news = self._run_news_update(run_id, session="evening")
+        except PaidAnalysisSuspended as exc:
+            self.db.insert_daily_pnl(
+                date=today_str, total_value=total_value,
+                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
+            )
+            payload = self._paid_suspended_payload(run_id, error=exc)
+            payload.update(
+                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
+                stop_coverage_gaps=coverage_gaps,
+            )
+            return payload
         if evening_news:
             logger.info("Evening news: %s", evening_news.pm_briefing[:200])
         try:
@@ -7120,6 +7568,21 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001 — evening proceeds without earnings
             logger.error("evening: earnings load failed (continuing without): %s", e)
             evening_earnings = []
+
+        try:
+            self._require_paid_analysis("evening_analyst")
+        except PaidAnalysisSuspended as exc:
+            self.db.insert_daily_pnl(
+                date=today_str, total_value=total_value,
+                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
+            )
+            payload = self._paid_suspended_payload(run_id, error=exc)
+            payload.update(
+                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
+                stop_coverage_gaps=coverage_gaps,
+            )
+            return payload
 
         # 3. LLM evening analysis — daily review and tomorrow outlook
         macro_summary = self.macro.get_macro_summary()
@@ -7228,6 +7691,18 @@ class TradingPipeline:
                 missed_ops_snapshots=missed_ops_snapshots,
                 thesis_health_context=thesis_health_context,
             )
+        except PaidAnalysisSuspended as exc:
+            self.db.insert_daily_pnl(
+                date=today_str, total_value=total_value,
+                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
+            )
+            payload = self._paid_suspended_payload(run_id, error=exc)
+            payload.update(
+                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
+                stop_coverage_gaps=coverage_gaps,
+            )
+            return payload
         except Exception as e:
             from src.agents.base import AgentResult, resolve_provider
 
@@ -7247,6 +7722,7 @@ class TradingPipeline:
                 user_message="",
                 requested_model=_requested_model,
                 requested_provider=_requested_provider,
+                provider_requests=0,
             )
 
         _ev_log_kwargs = agent_log_kwargs(ev_result)
@@ -7255,6 +7731,8 @@ class TradingPipeline:
             # used_fallback, which is False here (no call ever completed) —
             # override so a hard failure isn't misreported as a success.
             _ev_log_kwargs["status"] = "failed"
+        elif analysis is None:
+            _ev_log_kwargs["status"] = "evening_parse_error"
         self.db.insert_agent_log(
             agent_name="evening_analyst", run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
@@ -7442,7 +7920,10 @@ class TradingPipeline:
                 "today: %s", ", ".join(missing_sessions),
             )
         return {
-            "status": "analyzed",
+            "status": (
+                "analyzed" if analysis is not None else
+                ("evening_analysis_error" if analysis_error else "evening_parse_error")
+            ),
             "total_value": total_value,
             "daily_pnl": daily_pnl,
             "daily_return_pct": daily_return_pct,
@@ -7623,6 +8104,21 @@ class TradingPipeline:
             (digest.get("loss_patterns") or {}).get("total_wrong_buys"),
         )
 
+        # Every invocation is a distinct paid session.  The period remains in
+        # the artifacts/result, while a UUID suffix prevents forced reruns of
+        # the same quarter from reusing SQLite counters under the run_id PK.
+        meta_run_id = f"meta-{digest['period']}-{uuid.uuid4().hex[:8]}"
+        self._activate_cost_session(meta_run_id, "meta")
+        try:
+            self._require_paid_analysis("meta_reflector")
+        except PaidAnalysisSuspended as exc:
+            payload = self._paid_suspended_payload(meta_run_id, error=exc)
+            payload.update(
+                period=digest["period"], digest_path=str(digest_path),
+                reflection_path=None, reflection=None,
+            )
+            return payload
+
         # 2. Meta-reflector LLM — observe-only in PR3 (no prompt edits).
         # analyze() can raise on provider/network failures after retries. The
         # digest has already been persisted so we must degrade to the
@@ -7635,6 +8131,13 @@ class TradingPipeline:
             reflection, ev_result = self.meta_reflector.analyze(
                 digest=digest, prev_reflection=prev_reflection,
             )
+        except PaidAnalysisSuspended as exc:
+            payload = self._paid_suspended_payload(meta_run_id, error=exc)
+            payload.update(
+                period=digest["period"], digest_path=str(digest_path),
+                reflection_path=None, reflection=None,
+            )
+            return payload
         except Exception as exc:
             logger.error(
                 "meta_reflector.analyze raised; falling back to digest_only: %s",
@@ -7646,7 +8149,7 @@ class TradingPipeline:
             try:
                 self.db.insert_agent_log(
                     agent_name="meta_reflector",
-                    run_id=f"meta-{digest['period']}",
+                    run_id=meta_run_id,
                     input_summary=(
                         f"{digest['period']} · "
                         f"alpha={(digest.get('period_performance') or {}).get('alpha_vs_spy_pct')}"
@@ -7672,6 +8175,7 @@ class TradingPipeline:
                          "digest persisted, reflection missing.")
             return {
                 "status": "digest_only",
+                "run_id": meta_run_id,
                 "period": digest["period"],
                 "digest_path": str(digest_path),
                 "reflection_path": None,
@@ -7733,6 +8237,7 @@ class TradingPipeline:
 
         return {
             "status": "reflected",
+            "run_id": meta_run_id,
             "period": digest["period"],
             "digest_path": str(digest_path),
             "reflection_path": str(reflection_path),

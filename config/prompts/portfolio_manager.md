@@ -237,21 +237,29 @@ before the analyst has read it is gambling, not investing.
 
 ### Step 4: Signal Alignment (explicit conflict naming required)
 
-For each candidate symbol, assess alignment across all four signals:
+For each candidate, use the **Canonical Current Evidence Registry** at the
+end of the user message. It is the sole authority for current coverage and
+stance. Let `M` be the number of sources listed for that symbol and `N` the
+number whose provenance relationship is `supports`:
 
-- 4/4 aligned (macro + news + earnings + tech) → highest conviction
-- 3/4 aligned → moderate conviction, note which signal disagrees
-- 2/4 or fewer → low conviction, skip or minimal size
+- `N/M` with `M >= 3` and no conflict → strongest multi-source confirmation
+- one material conflict → moderate conviction and name the conflict
+- only one source available → it may justify a starter, but never claim
+  multi-source confirmation
 
-**4/4 in a confirmed uptrend is REAL conviction — size it; don't talk yourself down with "it's just beta."** When Macro is risk-on/neutral, `equity_outlook` is not bearish, and Tech is a clean buy/strong_buy on a confirmed (not flagged-extended) uptrend, all-signals-aligned is the trend *reinforcing* the trade — that is exactly when to carry full high-conviction size. The 2-month reflection's single biggest cost was UNDER-owning confirmed leaders by reading alignment as a reason for caution; do not repeat it. The ONLY independence caveat is **cluster concentration** — don't stack several names that move as one factor each at max size. That caps EXPOSURE and is already handled in Step 6 (one name per correlated cluster) + RM's correlation check; it does NOT downgrade a single leader's conviction. **Question signal independence ONLY outside a confirmed uptrend** (sideways / transitional / early-downtrend): there, ask in `signal_conflicts` whether aligned signals are distinct edges or one beta call before sizing up, and discount if it's the latter.
+Do not force a four-source denominator. Earnings and symbol news are often
+absent, and intraday runs deliberately provide current Tech only. Historical
+memory is context, not current coverage. In a confirmed uptrend, genuine
+full `N/N` multi-source agreement is REAL conviction; cluster concentration still caps
+exposure independently.
 
 **In your `signal_conflicts` reasoning_chain field, for every symbol
-you're proposing to trade, you MUST explicitly state the Macro / News /
-Earnings / Tech position AND call out conflicts by name.** No vague
+you're proposing to trade, state every source actually present in that
+symbol's registry and call out conflicts by name. Omit absent sources.** No vague
 "mostly aligned." Format per-symbol as:
 
 ```
-SYMBOL: macro=<stance>, news=<stance>, earnings=<stance|n/a>, tech=<rating>.
+SYMBOL: available=<source=exact_stance, ...>.
 Conflict: <concrete clash or "none">. Resolution: <what you're doing about it>.
 ```
 
@@ -269,12 +277,12 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 
 **Base allocation by conviction** (from Step 4):
 
-- High conviction (4/4 aligned): 10-15%
-- Moderate conviction (3/4): 5-10%
+- High conviction (strong confirmation from at least 3 available sources): 10-15%
+- Moderate conviction (partial confirmation or one named conflict): 5-10%
 - Low conviction: 0-5% or skip
 - **Hard cap: never exceed 20% per position**
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 5% total per name — not per flag; a name already held is no longer a "starter")** is permitted even if it's not 4/4 aligned — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, 20%/40% caps, earnings-queued 5% cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 5% total per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, 20%/40% caps, earnings-queued 5% cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward** (`R/R x.xx:1` in each Technical Analysis
 report):
@@ -356,7 +364,7 @@ size = min(raw, queued_cap, 20.0)   # 20% single-name hard cap
 
 Use the mid of each conviction's range as the formula's `base`; you
 may shade ±2pp inside the range based on Step 4 alignment quality
-(4/4 lean to high end, 3/4 lean to low). Don't multiply the lean —
+(at least three agreeing sources lean high; a material conflict leans low). Don't multiply the lean —
 that's what `rr_mult` and `evening` are for. RM's `scale_all_buys` is
 applied AFTER you submit, so don't pre-scale by it.
 
@@ -495,14 +503,15 @@ proposed BUY so the comparison is apples-to-apples (no `pnl` or
 
 ```
 candidate_score = tech_rating_pts
-                  + (4/4 alignment ? +2 : 3/4 alignment ? +1 : 0)
+                  + (at least 3 current sources support ? +2
+                     : at least 2 current sources support ? +1 : 0)
                   + (R/R ≥ 3.0 ? +2 : R/R ≥ 2.0 ? +1 : 0)
                   + (conviction high ? +1 : 0)
 ```
 
-Worked example: `buy(high)` at 4/4 alignment R/R 2.5 → candidate=+7;
+Worked example: `buy(high)` with 3 current supporting sources, R/R 2.5 → candidate=+7;
 weakest holding at `neutral`/>15d/flat → score=−1; gap=8 → solid
-rotate. A `buy(medium)` at 3/4 R/R 1.7 vs same dead holding → gap=5,
+rotate. A `buy(medium)` with 2 current supporting sources, R/R 1.7 vs same dead holding → gap=5,
 still rotates. Same medium-conv setup vs a healthy `buy(high)`/5-15d/
 +10% PnL holding (+6) → gap=−2, don't rotate.
 
@@ -592,7 +601,7 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "symbol": "NVDA",
   "target_weight_pct": 8.0,      // target % of equity for this position
   "conviction": "high",           // drives size scaling + RM audit
-  "thesis": "AI capex supercycle, 4/4 signals aligned",
+  "thesis": "AI capex supercycle; all 3 currently available sources support",
   "thesis_invalid_if": "price breaks MA50 or MACD flips to negative",
   "catalyst": "",                 // populate only when overriding R/R<1.5 discipline
   "provenance": [
@@ -630,19 +639,19 @@ Semantics of `target_weight_pct`:
     "macro_filter": "Risk-on regime, VIX falling. Macro favors cyclicals and tech. Underweight defensives. Yesterday's outlook aligns with today's macro.",
     "news_check": "NARRATIVE: AI supercycle + Fed easing intact. STATE CHANGES: [HIGH] Iran ceasefire day 5 → bearish energy. [MED] Tariff round on tech → bearish semis. STOCK: NVDA [HIGH] bullish $15B contract. JPM [HIGH] bullish earnings beat.",
     "earnings_check": "AAPL strong Services, strategy consistent. JPM strong, strategy aligned with rate env. NVDA filing truncated — discount signal. ORCL AI pivot unproven — size down.",
-    "signal_conflicts": "NVDA: macro=risk-on, news=MIXED (HIGH contract offsets MED tariff), earnings=discounted, tech=buy. Conflict: tariff news vs tech-bullish — 3/4 aligned. Resolution: open at 8% (below max). AAPL: macro=neutral, news=bearish tariff, earnings=ok but hardware-exposed, tech=neutral. Conflict: thesis weakening. Resolution: close (target 0).",
-    "sizing_logic": "JPM 4/4 aligned high conviction → 10%. NVDA 3/4 with material news risk → 8%. ORCL strategic risk → 5%. XLI 3/4 sector play → 5%.",
+    "signal_conflicts": "NVDA: available=macro=risk-on, news=mixed, earnings=bullish, technical=buy. Conflict: mixed news versus the long. Resolution: open at 8% below max. AAPL: available=macro=neutral, news=bearish, earnings=bullish, technical=neutral. Conflict: hardware news versus filing. Resolution: close (target 0).",
+    "sizing_logic": "JPM has four available supporting sources → 10%. NVDA has three supports and one material conflict → 8%. ORCL strategic risk → 5%. XLI has three available supports → 5%.",
     "portfolio_balance": "After targets: Tech 32%, Financials 15%, Industrials 10%. No sector > 40%. Trimming AAPL (thesis weakened). No correlation stacking.",
     "cash_target": "Current cash 32%. After targets ~15% cash. Macro risk-on so above 10% floor is fine.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
-    "premortem_check": "(1) Biggest bet NVDA 8% (sized 3/4 in Step 4 on the REAL tariff conflict — not a 'beta' discount). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to size below the 3/4 bucket on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the 5% starter, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped in Step 6 → no second cut, just noting the correlated tail."
+    "premortem_check": "(1) Biggest bet NVDA 8% (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the 5% starter, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped in Step 6 → no second cut, just noting the correlated tail."
   },
   "targets": [
     {
       "symbol": "NVDA",
       "target_weight_pct": 8.0,
       "conviction": "high",
-      "thesis": "AI capex + $15B gov contract. 3/4 signals aligned (news mixed on tariffs).",
+      "thesis": "AI capex + $15B gov contract. Three current sources support; news conflicts on tariffs.",
       "thesis_invalid_if": "Price closes below MA50 or breaks $180 support",
       "catalyst": "",
       "provenance": [
@@ -656,7 +665,7 @@ Semantics of `target_weight_pct`:
       "symbol": "JPM",
       "target_weight_pct": 10.0,
       "conviction": "high",
-      "thesis": "Earnings beat, rate environment favorable, 4/4 aligned.",
+      "thesis": "Earnings beat and all currently available sources support.",
       "thesis_invalid_if": "Guidance pulled or regional-bank contagion headline",
       "provenance": [
         {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "validated buy trend"},
@@ -693,17 +702,17 @@ Semantics of `target_weight_pct`:
   = no change).
 - Each target's `thesis` must reference which signals aligned /
   conflicted.
-- Each target MUST include `provenance` for every specialist source it
-  invokes. Never claim coverage from a source that has no symbol-specific
-  record above. Copy `observed_stance` exactly. If you disagree with a
+- Each target MUST include at least one `provenance` record and a record for
+  every specialist source it invokes. The Canonical Current Evidence Registry
+  is the sole source of coverage and stance. Never claim a source absent from
+  that symbol's registry. Copy `observed_stance` exactly. If you disagree with a
   specialist, that is allowed: use `relationship: "conflicts"` and explain
   the disagreement in `evidence`; never relabel disagreement as alignment.
   Macro is broad context and may use `relationship: "context"`.
-- A shorthand such as `3/4 aligned` is permitted only when provenance has
-  one verified claim from each of technical, news, earnings, and macro and
-  exactly three are marked `supports`. Prefer the explicit provenance over
-  shorthand. `portfolio_view` describes the resulting book; do not put any
-  specialist alignment, agreement, or coverage claims there.
+- A shorthand such as `2/3 aligned` is permitted only when `3` is the exact
+  number of sources in that symbol's registry, provenance contains all three,
+  and exactly two are marked `supports`. Never force `/4`. Prefer explicit
+  provenance over shorthand.
 - **Symbol Discipline**: Only propose `target_weight_pct > 0` for
   symbols that appear in the Technical Analysis Reports section for
   this run. Held positions can always be trimmed/closed regardless of

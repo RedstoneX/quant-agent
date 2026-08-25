@@ -297,10 +297,19 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
     # hold. Before this line the push looked identical to a quiet no-trade
     # day, so the operator could not tell "PM chose to sit out" from "PM
     # never spoke". Rendered first: it reframes everything below it.
-    if str(result.get("status", "")) == "analysis_error":
+    status = str(result.get("status", ""))
+    if status == "paid_analysis_suspended":
         lines.append(
-            "🔴 PM output unparseable — no decisions were made today; "
-            "this is NOT a deliberate hold (wrapper retries next 30-min tick)"
+            "🔴 Paid LLM analysis is suspended by the mandatory cost circuit. "
+            "Broker protection and deterministic safety work remain active."
+        )
+        err = result.get("error")
+        if err:
+            lines.append(f"trigger: {str(err)[:300]}")
+    elif status.startswith("pm_") or status == "analysis_error":
+        lines.append(
+            f"🔴 PM decision failed ({status}) — no decisions were made; "
+            "this is NOT a deliberate hold and the full paid stack will not auto-repeat"
         )
         err = result.get("error")
         if err:
@@ -601,10 +610,23 @@ def _session_cost_line(run_id: str | None) -> str | None:
             return None
         conn = sqlite3.connect(str(_DB_PATH))
         try:
-            rows = conn.execute(
-                "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
-                (run_id,),
-            ).fetchall()
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(agent_logs)").fetchall()
+            }
+            if "provider_requests" in columns:
+                rows = conn.execute(
+                    "SELECT cost_usd, provider_requests FROM agent_logs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchall()
+                requests = sum(
+                    1 if row[1] is None else max(0, int(row[1])) for row in rows
+                )
+            else:
+                rows = conn.execute(
+                    "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchall()
+                requests = len(rows)
         finally:
             conn.close()
     except Exception as exc:
@@ -615,14 +637,14 @@ def _session_cost_line(run_id: str | None) -> str | None:
     if any(r[0] is None for r in rows):
         # Unknown model in pricing table for at least one call →
         # cannot honestly sum. Surface a hint instead of a fake number.
-        return f"💵 cost: $?.?? ({len(rows)} calls — see cost_table.py)"
+        return f"💵 cost: $?.?? ({requests} provider requests — see cost_table.py)"
     total = sum(float(r[0]) for r in rows)
     # Cents-or-better precision for human readability; sub-cent
     # sessions (rare, e.g. intra_check with 0 LLM calls — but those
     # don't reach this code path anyway) use 4-decimal.
     if total < 0.01:
-        return f"💵 cost: ${total:.4f} ({len(rows)} calls)"
-    return f"💵 cost: ${total:,.2f} ({len(rows)} calls)"
+        return f"💵 cost: ${total:.4f} ({requests} provider requests)"
+    return f"💵 cost: ${total:,.2f} ({requests} provider requests)"
 
 
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:
@@ -769,7 +791,8 @@ def _status_emoji(status: str) -> str:
     # notice via 🟡 rather than skim past a green check.
     if status in ("emergency_sold", "hard_risk_block", "digest_only"):
         return "🟡"
-    if "error" in status or status in ("rejected", "failed"):
+    if ("error" in status or status.startswith("pm_")
+            or status in ("rejected", "failed", "paid_analysis_suspended")):
         return "🔴"
     return "⚪"
 

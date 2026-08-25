@@ -3,6 +3,7 @@ import json
 from unittest.mock import patch, MagicMock, AsyncMock
 from src.pipeline import TradingPipeline
 from src.agents.base import AgentResult
+from src.cost_circuit import PaidAnalysisSuspended
 from src.models import (
     TechAnalysisResult, PortfolioDecision, TradeDecision, RiskVerdict, Position,
     NewsAnalysisResult, TargetPosition,
@@ -726,6 +727,11 @@ def test_pipeline_morning_bypasses_research_when_daily_loss_breached():
     }
     pipeline.broker.get_positions.return_value = [position]
     pipeline.morning_research_stage = MagicMock()
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
+        "paid path must not be reached before emergency protection"
+    )
     pipeline.risk_engine = MagicMock()
     loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
     pipeline.risk_engine.check_daily_loss.return_value = loss_violation
@@ -742,6 +748,8 @@ def test_pipeline_morning_bypasses_research_when_daily_loss_breached():
         [position], loss_violation, result["run_id"],
     )
     pipeline.morning_research_stage.run.assert_not_called()
+    pipeline.cost_circuit.activate_session.assert_called_once()
+    pipeline.cost_circuit.require_paid_analysis.assert_not_called()
     pipeline._reconcile_fills.assert_called_once()
 
 
@@ -800,6 +808,11 @@ def test_pipeline_midday_bypasses_reviewer_when_daily_loss_breached():
     ])
     pipeline.position_reviewer = MagicMock()
     pipeline._reconcile_fills = MagicMock()
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
+        "paid path must not precede emergency liquidation"
+    )
 
     result = pipeline.run_midday()
 
@@ -809,7 +822,60 @@ def test_pipeline_midday_bypasses_reviewer_when_daily_loss_breached():
         [position], loss_violation, result["run_id"],
     )
     pipeline.position_reviewer.review.assert_not_called()
+    pipeline.cost_circuit.activate_session.assert_called_once()
+    pipeline.cost_circuit.require_paid_analysis.assert_not_called()
     pipeline._reconcile_fills.assert_called_once()
+
+
+@pytest.mark.parametrize("session_type", ["midday", "close"])
+def test_prelatched_position_review_preserves_deterministic_safety(session_type):
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker.is_trading_day.return_value = True
+    pipeline.broker.get_session_close.return_value = None
+    pipeline.broker.get_account.return_value = {
+        "cash": 1000.0, "portfolio_value": 10_000.0, "last_equity": 10_000.0,
+    }
+    pipeline.broker.get_positions.return_value = []
+    pipeline.db = MagicMock()
+    pipeline.risk_engine = MagicMock()
+    pipeline.risk_engine.check_daily_loss.return_value = None
+    pipeline._drain_pending_protection_restores = MagicMock()
+    pipeline._reconcile_orphan_pending_submits = MagicMock()
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    forced = {"id": "forced", "status": "accepted"}
+    exdiv = {"id": "exdiv", "status": "accepted"}
+    pipeline._force_delever = MagicMock(return_value=[forced])
+    pipeline._auto_take_profit = MagicMock(return_value=[])
+    pipeline._handle_ex_dividends = MagicMock(return_value=[exdiv])
+    pipeline._reconcile_fills = MagicMock()
+    pipeline._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock()
+    pipeline._load_earnings_analyses = MagicMock()
+    pipeline.position_reviewer = MagicMock()
+    pipeline.cost_circuit = MagicMock()
+    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
+    pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
+        "prelatched", {"suspended": True},
+    )
+
+    result = pipeline.run_position_review(session_type)
+
+    assert result["status"] == "paid_analysis_suspended"
+    assert result["orders"] == [forced, exdiv]
+    pipeline._drain_pending_protection_restores.assert_called_once()
+    pipeline._reconcile_orphan_pending_submits.assert_called_once()
+    pipeline._reconcile_stop_coverage.assert_called_once()
+    pipeline._force_delever.assert_called_once()
+    pipeline._handle_ex_dividends.assert_called_once()
+    if session_type == "midday":
+        pipeline._auto_take_profit.assert_called_once()
+    else:
+        pipeline._auto_take_profit.assert_not_called()
+    pipeline._run_news_update.assert_not_called()
+    pipeline._load_earnings_analyses.assert_not_called()
+    pipeline.position_reviewer.review.assert_not_called()
+    pipeline._check_late_breach_and_emergency_liquidate.assert_called_once()
 
 
 def test_emergency_liquidate_reconciles_before_dedupe_check(tmp_path):

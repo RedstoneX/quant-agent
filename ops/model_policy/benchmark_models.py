@@ -244,7 +244,7 @@ class _Meter:
         )
 
 
-def run_trial(scenario: Scenario, model: str, pricing: dict) -> Trial:
+def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) -> Trial:
     agent_cls = _load_agent_cls(scenario.agent_path)
     agent = agent_cls(
         api_key=PLACEHOLDER_KEY,
@@ -252,6 +252,8 @@ def run_trial(scenario: Scenario, model: str, pricing: dict) -> Trial:
         max_tokens=scenario.max_tokens,
         provider="openrouter",
     )
+    if cost_circuit is not None:
+        agent.set_cost_circuit(cost_circuit)
 
     meter = _Meter()
     # Wrap _execute so every underlying call is metered even for agents that
@@ -259,8 +261,8 @@ def run_trial(scenario: Scenario, model: str, pricing: dict) -> Trial:
     # rather than each entry point keeps this honest as agents change.
     original_execute = agent._execute
 
-    def metered(user_message: str):
-        result = original_execute(user_message)
+    def metered(user_message: str, **kwargs):
+        result = original_execute(user_message, **kwargs)
         meter.observe(result)
         return result
 
@@ -426,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--from-onecli", action="store_true",
                     help="resolve gateway wiring from the live OneCLI instance")
     ap.add_argument("--out", default="ops/model_policy/results/latest.json")
+    ap.add_argument("--config", default="config/settings.yaml")
     ap.add_argument(
         "--report", nargs="+",
         help="render markdown from existing results file(s) and exit; several "
@@ -498,6 +501,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     pricing = openrouter_pricing()
+    # The breaker uses the same in-process pinned table. OpenRouter's live
+    # catalog is authoritative for benchmark-only candidates and was fetched
+    # before any completion request.
+    from src.cost_table import PRICING
+    PRICING.update(pricing)
+    from src.config import load_config
+    from src.cost_circuit import activate_paid_call_session
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+    app_config = load_config(config_path)
+    cost_circuit = activate_paid_call_session(
+        app_config,
+        run_id=f"benchmark-{int(time.time())}", mode="benchmark",
+    )
+    cost_circuit.require_paid_analysis("benchmark_start")
     models = args.models or DEFAULT_CANDIDATES
     unpriced = [m for m in models if m not in pricing]
     if unpriced:
@@ -521,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
                 n += 1
                 print(f"[{n}/{total}] {model} :: {scenario.key} ... ",
                       end="", flush=True, file=sys.stderr)
-                trial = run_trial(scenario, model, pricing)
+                trial = run_trial(scenario, model, pricing, cost_circuit=cost_circuit)
                 trials.append(trial)
                 print(
                     f"q={trial.quality:.2f} "

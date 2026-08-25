@@ -7,6 +7,7 @@ then runs Opus analysis on any that don't already have a cached analysis.
 import logging
 import sys
 import os
+import uuid
 from pathlib import Path
 
 # Add project root to path
@@ -28,13 +29,28 @@ def main():
 
     # Use 365-day lookback to find at least one filing per stock
     provider = EarningsDataProvider(lookback_days=365)
-    from src.agents.base import _is_openai_model
+    from src.agents.base import resolve_provider
     model = config.llm.earnings_analyst_model
-    api_key = config.api_keys.openai if _is_openai_model(model) else config.api_keys.anthropic
+    provider_name = config.llm.earnings_analyst_provider
+    resolved_provider = resolve_provider(model, provider_name)
+    api_key = {
+        "openai": config.api_keys.openai,
+        "deepseek": config.api_keys.deepseek,
+        "openrouter": config.api_keys.openrouter,
+        "anthropic": config.api_keys.anthropic,
+    }[resolved_provider]
     analyst = EarningsAnalystAgent(
         api_key=api_key,
         model=model,
         max_tokens=config.llm.max_tokens,
+        provider=provider_name,
+        fallback_api_key=config.api_keys.anthropic,
+    )
+    from src.cost_circuit import protect_paid_agent
+    protect_paid_agent(
+        analyst, config,
+        run_id=f"earnings-backfill-{uuid.uuid4().hex[:8]}",
+        mode="earnings_backfill",
     )
 
     universe = config.trading.universe

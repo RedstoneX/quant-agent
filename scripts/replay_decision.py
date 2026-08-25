@@ -24,6 +24,7 @@ import importlib
 import json
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -43,7 +44,7 @@ _AGENT_FACTORY = {
 
 
 def build_agent(agent_name: str, config):
-    from src.agents.base import _is_deepseek_model, _is_openai_model
+    from src.agents.base import resolve_provider
     if agent_name not in _AGENT_FACTORY:
         raise SystemExit(
             f"replay not wired for agent {agent_name!r}; supported: {sorted(_AGENT_FACTORY)}"
@@ -51,15 +52,19 @@ def build_agent(agent_name: str, config):
     mod, cls, base = _AGENT_FACTORY[agent_name]
     Cls = getattr(importlib.import_module(mod), cls)
     model = getattr(config.llm, f"{base}_model")
+    provider = getattr(config.llm, f"{base}_provider", None)
     max_tokens = getattr(config.llm, f"{base}_max_tokens", None) or config.llm.max_tokens
-    if _is_deepseek_model(model):
+    resolved_provider = resolve_provider(model, provider)
+    if resolved_provider == "deepseek":
         key = config.api_keys.deepseek
-    elif _is_openai_model(model):
+    elif resolved_provider == "openai":
         key = config.api_keys.openai
+    elif resolved_provider == "openrouter":
+        key = config.api_keys.openrouter
     else:
         key = config.api_keys.anthropic
     return Cls(api_key=key, model=model, max_tokens=max_tokens,
-               fallback_api_key=config.api_keys.anthropic)
+               fallback_api_key=config.api_keys.anthropic, provider=provider)
 
 
 def main() -> None:
@@ -74,7 +79,11 @@ def main() -> None:
     ap.add_argument("--config", default="config/settings.yaml")
     args = ap.parse_args()
 
-    conn = sqlite3.connect(args.db)
+    root = Path(__file__).resolve().parent.parent
+    db_path = Path(args.db)
+    if not db_path.is_absolute():
+        db_path = root / db_path
+    conn = sqlite3.connect(db_path)
     decisions = load_decisions(conn, args.agent, limit=args.limit, run_id=args.run_id)
     if not decisions:
         print(f"No replayable stored decisions for agent={args.agent!r} "
@@ -89,8 +98,17 @@ def main() -> None:
         print("\n(--no-llm: not calling the model. Drop the flag to replay through the current prompt.)")
         return
 
-    config = load_config(Path(args.config))
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = root / config_path
+    config = load_config(config_path)
     agent = build_agent(args.agent, config)
+    from src.cost_circuit import protect_paid_agent
+    protect_paid_agent(
+        agent, config,
+        run_id=f"replay-{uuid.uuid4().hex[:8]}", mode="replay",
+        db_path=db_path,
+    )
     print(f"Replaying through CURRENT prompt + model={agent.model}\n")
 
     for d in decisions:
