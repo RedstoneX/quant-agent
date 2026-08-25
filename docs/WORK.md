@@ -31,11 +31,11 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
 - PR #79 is merged and deployed. The Research Desk passed production desktop
   and iPad verification against real stored QAMC data; the API remained
   read-only and all seven timers remained intact.
-- The Smart Money code path is deployed but disabled: Bargo's keyless endpoint
-  returns a Cloudflare 403 to server clients and production has no Bargo
-  credential. Real source commissioning is blocked on external free access;
-  stance-vs-direction validation and a bounded whole-branch fetch deadline are
-  also required before enablement.
+- The operator selected first-party SEC Form 4 as the Smart Money v1 source and
+  authorized run-scoped automatic admission of qualifying symbols outside the
+  configured 77-stock universe. Implementation and production commissioning
+  are the active bounded task; production remains on the prior disabled Bargo
+  adapter until that governed deployment completes.
 - Deployment verification passed `/health`, DB, broker, Alpaca Paper, OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI, Telegram configuration, `/cockpit`, accepted chart timeframes, read-only method rejection, and all seven existing timers.
 - The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
 
@@ -100,7 +100,7 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
 
-### Research Intelligence Desk + Smart Money Analyst — DEPLOYED / SOURCE COMMISSIONING BLOCKED
+### Research Intelligence Desk + Smart Money Analyst — DEPLOYED / SEC SOURCE COMMISSIONING ACTIVE
 
 Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
 
@@ -112,7 +112,29 @@ Cover the existing research/review seats where their output is relevant — Tech
 
 #### Smart Money Analyst outcome
 
-Use currently free, source-backed alternative data. Current research establishes Bargo as an acceptable initial source. Its free congressional API derives records from official House/Senate STOCK Act disclosures and preserves transaction date versus disclosure date. Its broader MCP is currently free in beta and advertises additional source-backed streams including insider transactions, 13F holdings, options flow, analyst sentiment and related market intelligence. Quiver's API is paid and is not authorized as a dependency.
+Use first-party, credentialless SEC data for v1. Phase A is broad Form 4
+discovery of exact non-derivative open-market purchase/sale codes `P` and `S`,
+with accession-level provenance, transaction time, SEC acceptance time, lag,
+owner identity/role, amendment and 10b5-1 context where present. Python owns
+parsing, direction, recency, materiality, independent-owner clustering,
+deduplication and admission eligibility. Quiet or unchanged evidence must use
+zero model tokens; the LLM sees only compact surviving evidence and may
+synthesize meaning but cannot author source facts or admission.
+
+The permanent configured universe remains unchanged. A fresh external `P`
+purchase that clears the higher external materiality threshold may be admitted
+for the current run only after deterministic Alpaca common-US-equity/tradable
+eligibility, supported-exchange, minimum-price, minimum-history, minimum
+20-session dollar-liquidity and known-sector checks. At most three external
+symbols may be admitted per run. Admission only adds the symbol to that run's
+research/PM allowlist; it must still receive current Technical analysis and
+pass Portfolio Manager grounding, AI Risk, every deterministic risk/funding
+rule and broker protection. It is never written into the permanent universe.
+
+Schedule 13D/13G and curated-manager 13F deltas remain possible later phases,
+not v1 admission inputs. Alpha Vantage may be considered only as an optional
+cross-check/fallback; Bargo may be reconsidered if access arrives. Neither is
+a current dependency. Paid alternative-data dependencies remain unauthorized.
 
 The Smart Money Analyst should identify **viable present-tense trading evidence**, not merely summarize disclosure feeds. It must distinguish evidence by freshness and economic meaning. Congressional trades can be disclosed up to roughly 45 days after the transaction and 13F holdings can be filed up to 45 days after quarter-end, so those streams are primarily thematic/confirmatory context. SEC Form 4 insider transactions are generally filed within two business days and are materially more timely. Any genuinely real-time/near-real-time stream made available under the accepted free source may be treated according to its actual timestamp and provenance.
 
@@ -155,7 +177,11 @@ This tranche is complete when real stored QAMC data demonstrates that:
 5. PM/Risk/execution are understandable as deltas: what PM wanted, what Risk changed, what deterministic code allowed/blocked, and what actually executed.
 6. Desktop research panels are genuinely movable/resizable/tabbable/maximizable with persisted layout and a sensible default workspace.
 7. iPad has a deliberately designed reading/navigation experience with no horizontal overflow or micro-text.
-8. Smart Money Analyst is source-backed, provenance/timestamp/lag-aware, attributable, separates timely from stale evidence, suppresses noise, and reaches PM only through the accepted specialist path.
+8. Smart Money Analyst is SEC-source-backed, accession/timestamp/lag-aware,
+   attributable, direction-validated, noise-suppressing, and reaches PM only
+   through the accepted specialist path. Any external symbol is run-scoped,
+   visibly admitted by deterministic evidence, and still traverses the full
+   Technical → PM → AI Risk → deterministic gate → broker chain.
 9. Empty, stale, partial and provider-error states are truthful and visually composed.
 10. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
 
@@ -211,9 +237,9 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active work:** natural Alpaca Paper observation continues. Smart Money needs
-an authorized free Bargo credential or a working server-to-server endpoint
-plus the recorded stance/deadline guards before the deployed seat can be
-enabled. Paid research remains deliberately suspended until the circuit is
-reviewed and reset with an auditable reason; deterministic safety observation
-continues. No trade may be forced or manufactured to create acceptance evidence.
+**Active work:** natural Alpaca Paper observation continues. Complete the
+governed SEC Form 4 source/admission deployment and source-only commissioning;
+do not reset the paid-analysis circuit as part of that work. Paid research
+remains deliberately suspended until the circuit is reviewed and reset with an
+auditable reason; deterministic safety observation continues. No trade may be
+forced or manufactured to create acceptance evidence.

@@ -14,6 +14,10 @@ This file records what is accepted and true **now**. Git history preserves imple
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
 - Private operator access uses Tailscale. Canonical VPS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
+- Smart Money v1 uses first-party SEC Form 4. The operator has authorized a
+  fail-closed, run-scoped external-symbol admission lane for fresh material
+  open-market purchases; it changes no permanent universe membership and
+  preserves the complete accepted decision/risk/execution chain.
 
 ## Stabilization account model
 
@@ -72,14 +76,13 @@ Production verification on 2026-08-25 established:
 - the existing private/read-only Mission Control and Research Desk contracts
   remain intact.
 
-The Smart Money seat is deployed but disabled in production. Bargo's
+The Smart Money seat is still disabled in this production SHA. Bargo's
 documented keyless server-to-server endpoint returned a Cloudflare 403 and no
-free Bargo credential exists in OneCLI. Enabling and commissioning real
-source-backed Smart Money evidence is therefore an external credential/access
-blocker, not an invitation to weaken provenance or substitute fabricated data.
-Before enablement, the finding stance must also be deterministically checked
-against source direction and the sequential universe fetch must gain a bounded
-whole-branch deadline.
+free Bargo credential exists in OneCLI. The operator has since selected
+credentialless, first-party SEC Form 4 and authorized deterministic transient
+admission of qualifying external common stocks. That replacement is accepted
+work but is not production truth until its governed deployment and source-only
+commissioning complete.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
@@ -242,10 +245,9 @@ Current bounded activities:
    current ET day. Do not reset while the unchanged $4.211481 ledger remains
    above the daily limit; review the incident and use a recorded reason only
    when resumption is deliberate.
-2. **Smart Money source commissioning:** obtain an authorized free Bargo
-   credential or working server-to-server endpoint, preflight it, then enable
-   the already-deployed fail-soft seat after its stance and deadline guards are
-   fixed. Do not substitute unsourced data.
+2. **Smart Money source commissioning:** complete the SEC Form 4 replacement,
+   run the zero-token official-source preflight, deploy it with the transient
+   admission gates intact, and verify no paid-analysis spend or circuit reset.
 3. **Natural Alpaca Paper acceptance:** resume paid research only after the
    deliberate circuit-reset decision; continue non-LLM safety observation now.
 4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.

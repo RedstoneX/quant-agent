@@ -304,6 +304,25 @@ def test_candidate_detail_404_for_symbol_never_considered(client, seeded_evidenc
     assert r.status_code == 404
 
 
+def test_external_research_scope_does_not_become_trading_candidate(
+    client, seeded_evidence_db,
+):
+    db = Database(str(seeded_evidence_db))
+    db.initialize()
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="smart_money_analyst", kind="finding",
+        scope="research", symbol="VENU",
+        evidence_json=json.dumps({"source": "SEC Form 4", "stance": "bullish"}),
+    )
+    db.close()
+
+    candidates = client.get(f"/runs/{RUN_ID}/candidates")
+    assert candidates.status_code == 200
+    assert "AAPL" in candidates.json()["candidates"]
+    assert "VENU" not in candidates.json()["candidates"]
+    assert client.get(f"/runs/{RUN_ID}/candidates/VENU").status_code == 404
+
+
 def test_candidate_detail_404_for_unknown_run(client, seeded_evidence_db):
     r = client.get("/runs/run-doesnotexist/candidates/AAPL")
     assert r.status_code == 404

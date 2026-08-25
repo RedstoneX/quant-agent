@@ -78,6 +78,53 @@ def test_get_account_falls_back_to_cash_when_nmbp_field_absent(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
+def test_transient_equity_eligibility_accepts_active_tradable_common_stock(mock_tc_cls):
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    mock_client.get_asset.return_value = SimpleNamespace(
+        status="active", asset_class="us_equity", exchange="NASDAQ",
+        tradable=True, name="Example Corp Class A Common Stock",
+    )
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.get_transient_equity_eligibility("EXM")
+    assert result["eligible"] is True
+    assert result["reason"] == "eligible"
+
+
+@patch("src.execution.broker.TradingClient")
+@pytest.mark.parametrize("name", [
+    "Example Preferred Stock", "Example ETF", "Example Depositary Shares",
+    "Example Warrants",
+])
+def test_transient_equity_eligibility_rejects_non_common_security(mock_tc_cls, name):
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    mock_client.get_asset.return_value = SimpleNamespace(
+        status="active", asset_class="us_equity", exchange="NYSE",
+        tradable=True, name=name,
+    )
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    assert broker.get_transient_equity_eligibility("EXM")["reason"] == "not_common_stock"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_transient_equity_eligibility_fails_closed_on_asset_lookup(mock_tc_cls):
+    mock_client = MagicMock()
+    mock_client.get_asset.side_effect = TimeoutError("broker unavailable")
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.get_transient_equity_eligibility("EXM")
+    assert result == {"eligible": False, "reason": "asset_lookup_failed"}
+
+
+@patch("src.execution.broker.TradingClient")
 def test_get_positions(mock_tc_cls):
     mock_client = MagicMock()
     mock_client.get_all_positions.return_value = [

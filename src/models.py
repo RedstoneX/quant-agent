@@ -74,7 +74,6 @@ class TechnicalIndicators(BaseModel):
     def normalize_symbol(cls, value: str) -> str:
         return _normalize_symbol(value)
 
-
 class TechReasoningChain(BaseModel):
     """5-step CoT for a single symbol — forces the LLM to show its work per
     framework step. Every field has `min_length=1` so the LLM cannot skip a
@@ -280,34 +279,48 @@ class AnalystProvenance(BaseModel):
 
 
 class SmartMoneyObservation(BaseModel):
-    """Source-backed alternative-data fact; timestamps are provider facts."""
+    """Source-backed smart-money fact; timestamps and amounts are source facts.
+
+    Congressional fields remain optional-compatible with records already stored
+    by the first provider.  SEC Form 4 observations add accession-level
+    provenance and never rely on the LLM to classify a transaction code.
+    """
     symbol: str
-    stream: Literal["congressional"] = "congressional"
+    stream: Literal["congressional", "insider"] = "congressional"
     actor: str = Field(min_length=1)
+    actor_cik: str = ""
+    actor_roles: list[str] = []
+    joint_owner_ciks: list[str] = []
     direction: Literal["buy", "sell", "exchange", "unknown"]
     amount_range: str = ""
     transaction_date: date
     disclosure_date: date
+    accepted_at: datetime | None = None
+    known_at: datetime | None = None
     source_url: str = Field(min_length=1)
+    accession_number: str = ""
+    filing_form: Literal["", "4", "4/A"] = ""
+    transaction_code: Literal["", "P", "S"] = ""
+    transaction_row: int | None = Field(default=None, ge=0)
+    security_title: str = ""
+    shares: float | None = Field(default=None, ge=0)
+    price_per_share: float | None = Field(default=None, ge=0)
+    transaction_value_usd: float | None = Field(default=None, ge=0)
+    post_transaction_shares: float | None = Field(default=None, ge=0)
+    ownership_nature: Literal["", "direct", "indirect", "unknown"] = ""
+    amendment: bool = False
+    late_filing: bool = False
+    is_10b5_1: bool | None = None
+    listed_exchange: str = ""
+    in_core_universe: bool = False
+    in_trading_universe: bool = False
+    admission_eligible: bool = False
+    transient_admission_eligible: bool = False
+    transient_admitted: bool = False
     lag_days: int = Field(ge=0)
     disclosure_age_days: int = Field(ge=0)
     freshness: Literal["fresh", "delayed", "stale"]
-    economic_role: Literal["confirmatory", "contradictory", "historical"]
-
-    @field_validator("symbol")
-    @classmethod
-    def normalize_symbol(cls, value: str) -> str:
-        return _normalize_symbol(value)
-
-
-class SmartMoneyFinding(BaseModel):
-    symbol: str
-    stance: Literal["bullish", "bearish", "neutral", "mixed"]
-    economic_role: Literal["confirmatory", "contradictory", "historical"]
-    summary: str = Field(min_length=1)
-    why_now: str = Field(min_length=1)
-    observations: list[SmartMoneyObservation] = Field(min_length=1)
-    support_eligible: bool = False
+    economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
 
     @field_validator("symbol")
     @classmethod
@@ -315,21 +328,75 @@ class SmartMoneyFinding(BaseModel):
         return _normalize_symbol(value)
 
     @model_validator(mode="after")
-    def stale_congress_is_never_actionable(self):
-        # Deterministic materiality/independence/recency gate. Prompt judgment
-        # cannot promote an old cluster or repeated activity by one filer.
-        actors = {o.actor.strip().casefold() for o in self.observations}
-        directional = {o.direction for o in self.observations if o.direction in {"buy", "sell"}}
+    def normalize_form4_aliases(self):
+        if self.stream == "insider":
+            if self.known_at is None:
+                self.known_at = self.accepted_at
+            if self.accepted_at is None:
+                self.accepted_at = self.known_at
+            if self.admission_eligible or self.transient_admission_eligible:
+                eligible = (
+                    self.direction == "buy" and self.transaction_code == "P"
+                )
+                self.admission_eligible = eligible
+                self.transient_admission_eligible = eligible
+        return self
+
+
+class SmartMoneyFinding(BaseModel):
+    symbol: str
+    stance: Literal["bullish", "bearish", "neutral", "mixed"]
+    economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
+    summary: str = Field(min_length=1)
+    why_now: str = Field(min_length=1)
+    observations: list[SmartMoneyObservation] = Field(min_length=1)
+    support_eligible: bool = False
+    transient_admission_eligible: bool = False
+    evidence_hash: str = ""
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+    @model_validator(mode="after")
+    def deterministic_eligibility(self):
+        streams = {o.stream for o in self.observations}
+        directional = {
+            o.direction for o in self.observations
+            if o.direction in {"buy", "sell"}
+        }
+        if streams == {"congressional"}:
+            # Preserve the original conservative congressional contract.
+            actors = {o.actor.strip().casefold() for o in self.observations}
+            self.support_eligible = (
+                len(self.observations) >= 2
+                and len(actors) >= 2
+                and len(directional) == 1
+                and all(o.disclosure_age_days <= 7 for o in self.observations)
+                and all(o.lag_days <= 30 for o in self.observations)
+                and all(o.freshness != "stale" for o in self.observations)
+            )
+            if not self.support_eligible:
+                self.economic_role = "historical"
+            self.transient_admission_eligible = False
+            return self
+
+        # SEC observations have already passed the provider's deterministic
+        # materiality/cluster filter.  Fresh, one-direction evidence may
+        # support PM provenance.  Only an explicit open-market purchase can
+        # enter the separately governed transient-candidate lane.
         self.support_eligible = (
-            len(self.observations) >= 2
-            and len(actors) >= 2
+            bool(directional)
             and len(directional) == 1
-            and all(o.disclosure_age_days <= 7 for o in self.observations)
-            and all(o.lag_days <= 30 for o in self.observations)
             and all(o.freshness != "stale" for o in self.observations)
         )
-        if not self.support_eligible:
-            self.economic_role = "historical"
+        self.transient_admission_eligible = any(
+            o.transient_admission_eligible
+            and o.transaction_code == "P"
+            and o.direction == "buy"
+            for o in self.observations
+        )
         return self
 
 

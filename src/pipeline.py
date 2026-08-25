@@ -31,7 +31,7 @@ from src.agents.macro_analyst import MacroAnalystAgent
 from src.agents.earnings_analyst import EarningsAnalystAgent
 from src.agents.meta_reflector import MetaReflectorAgent
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
-from src.data.smart_money import BargoCongressProvider
+from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
 from src.risk.rules import RiskRuleEngine
 from src.execution.broker import AlpacaBroker, _get_sector
@@ -334,10 +334,23 @@ class TradingPipeline:
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.smart_money_analyst_provider,
         )
-        self.smart_money_provider = BargoCongressProvider(
-            base_url=config.smart_money.base_url, api_key=config.api_keys.bargo,
-            timeout_s=config.smart_money.timeout_s,
-            max_rows_per_symbol=config.smart_money.max_rows_per_symbol,
+        self.smart_money_provider = SECForm4Provider(
+            search_url=config.smart_money.search_url,
+            archives_url=config.smart_money.archives_url,
+            data_dir=config.smart_money.data_dir,
+            user_agent=config.smart_money.user_agent,
+            request_timeout_s=config.smart_money.request_timeout_s,
+            refresh_deadline_s=config.smart_money.refresh_deadline_s,
+            requests_per_second=config.smart_money.requests_per_second,
+            lookback_days=config.smart_money.lookback_days,
+            max_filings_per_refresh=config.smart_money.max_filings_per_refresh,
+            max_observations=config.smart_money.max_observations,
+            min_transaction_value_usd=config.smart_money.min_transaction_value_usd,
+            external_min_transaction_value_usd=(
+                config.smart_money.external_min_transaction_value_usd
+            ),
+            cluster_window_days=config.smart_money.cluster_window_days,
+            min_cluster_owners=config.smart_money.min_cluster_owners,
         )
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
@@ -427,6 +440,7 @@ class TradingPipeline:
             earnings_analyst=self.earnings_analyst,
             smart_money_provider=self.smart_money_provider,
             smart_money_analyst=self.smart_money_analyst,
+            admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
             run_news_update_fn=self._run_news_update,
             load_earnings_analyses_fn=self._load_earnings_analyses,
@@ -548,8 +562,14 @@ class TradingPipeline:
         decisions: list[TradeDecision],
         analyses: list[TechAnalysisResult],
         positions,
+        admitted_symbols: set[str] | None = None,
     ) -> tuple[list[TradeDecision], list[str]]:
         universe = {symbol.strip().upper() for symbol in self.config.trading.universe}
+        buy_allowlist = universe | {
+            str(symbol).strip().upper()
+            for symbol in (admitted_symbols or set())
+            if str(symbol).strip()
+        }
         analyzed_symbols = {analysis.symbol.strip().upper() for analysis in analyses}
         held_symbols = {position.symbol.strip().upper() for position in positions}
 
@@ -560,9 +580,10 @@ class TradingPipeline:
             symbol = decision.symbol.strip().upper()
 
             if decision.action == "BUY":
-                if symbol not in universe:
+                if symbol not in buy_allowlist:
                     blocked_reasons.append(
-                        f"{symbol} is outside configured universe and cannot be bought"
+                        f"{symbol} is neither in the configured universe nor "
+                        "deterministically admitted for this run and cannot be bought"
                     )
                     continue
                 if symbol not in analyzed_symbols:
@@ -579,6 +600,117 @@ class TradingPipeline:
             allowed_decisions.append(decision)
 
         return allowed_decisions, blocked_reasons
+
+    def _admit_transient_smart_money_symbols(
+        self,
+        observations: list,
+    ) -> tuple[set[str], dict[str, dict]]:
+        """Apply broker and market-quality gates to SEC-qualified purchases.
+
+        The source provider owns filing provenance, P/S parsing, recency,
+        materiality and independent-owner clustering. This second gate owns
+        the trading-surface facts the SEC cannot know: Alpaca eligibility,
+        price, history and liquidity. The output lives only on RunContext.
+        """
+        cfg = self.config.smart_money
+        configured = {
+            str(symbol).strip().upper()
+            for symbol in self.config.trading.universe
+            if str(symbol).strip()
+        }
+        grouped: dict[str, list] = {}
+        for observation in observations or []:
+            symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
+            if not symbol or symbol in configured:
+                continue
+            if str(getattr(observation, "transaction_code", "") or "").upper() != "P":
+                continue
+            if not bool(getattr(observation, "admission_eligible", False)):
+                continue
+            grouped.setdefault(symbol, []).append(observation)
+
+        def _rank(item):
+            symbol, rows = item
+            value = sum(float(getattr(row, "transaction_value_usd", 0) or 0) for row in rows)
+            newest = max(str(getattr(row, "known_at", "") or "") for row in rows)
+            return (-value, newest, symbol)
+
+        admitted: set[str] = set()
+        details: dict[str, dict] = {}
+        for symbol, rows in sorted(grouped.items(), key=_rank):
+            if len(admitted) >= cfg.max_external_candidates:
+                break
+            broker_fact = self.broker.get_transient_equity_eligibility(symbol)
+            if not broker_fact.get("eligible"):
+                logger.info(
+                    "SEC transient admission rejected %s: %s",
+                    symbol, broker_fact.get("reason", "broker_ineligible"),
+                )
+                continue
+            try:
+                bars = self.market.get_ohlcv(
+                    symbol,
+                    max(self.config.trading.lookback_days, cfg.min_external_history_days + 5),
+                ) or []
+            except Exception as exc:
+                logger.warning("SEC transient admission bars failed for %s: %s", symbol, exc)
+                continue
+            if len(bars) < cfg.min_external_history_days:
+                logger.info("SEC transient admission rejected %s: insufficient_history", symbol)
+                continue
+            recent = bars[-20:]
+            try:
+                last_price = float(recent[-1].close)
+                avg_dollar_volume = sum(
+                    float(bar.close) * float(bar.volume) for bar in recent
+                ) / len(recent)
+            except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+                logger.info("SEC transient admission rejected %s: invalid_market_data", symbol)
+                continue
+            if last_price < cfg.min_external_price_usd:
+                logger.info(
+                    "SEC transient admission rejected %s: price %.2f < %.2f",
+                    symbol, last_price, cfg.min_external_price_usd,
+                )
+                continue
+            if avg_dollar_volume < cfg.min_external_avg_dollar_volume_usd:
+                logger.info(
+                    "SEC transient admission rejected %s: avg dollar volume %.0f < %.0f",
+                    symbol, avg_dollar_volume,
+                    cfg.min_external_avg_dollar_volume_usd,
+                )
+                continue
+            sector = _get_sector(symbol) or "Unknown"
+            if sector == "Unknown":
+                logger.info(
+                    "SEC transient admission rejected %s: unresolved_sector",
+                    symbol,
+                )
+                continue
+            accessions = sorted({
+                str(getattr(row, "accession_number", "") or "") for row in rows
+                if getattr(row, "accession_number", None)
+            })
+            total_value = round(sum(
+                float(getattr(row, "transaction_value_usd", 0) or 0) for row in rows
+            ), 2)
+            owners = sorted({
+                str(getattr(row, "actor", "") or "").strip() for row in rows
+                if str(getattr(row, "actor", "") or "").strip()
+            })
+            details[symbol] = {
+                "temporary": True,
+                "reason": "material_sec_form4_purchase",
+                "accessions": accessions,
+                "owners": owners,
+                "transaction_value_usd": total_value,
+                "last_price": round(last_price, 4),
+                "avg_dollar_volume_20d_usd": round(avg_dollar_volume, 2),
+                "sector": sector,
+                "broker": broker_fact,
+            }
+            admitted.add(symbol)
+        return admitted, details
 
     def _filter_hard_risk_decisions(
         self,
@@ -4811,7 +4943,10 @@ class TradingPipeline:
         price_map = {p.symbol: p.current_price for p in positions}
         return account, positions, price_map
 
-    def _run_news_update(self, run_id: str, session: str = "morning") -> "NewsIntelligenceReport | None":
+    def _run_news_update(
+        self, run_id: str, session: str = "morning",
+        universe: list[str] | None = None,
+    ) -> "NewsIntelligenceReport | None":
         """Fetch news, run intelligence analysis, save report. Session-aware.
 
         - morning: full 3-layer build. prior_session_report=None.
@@ -4822,10 +4957,11 @@ class TradingPipeline:
         each session's output is individually recoverable for audit / debug.
         """
         try:
+            research_universe = universe or self.config.trading.universe
             news_items = self.news_provider.fetch_news()
             news_text = self.news_provider.format_for_prompt(news_items)
             stock_mentions = self.news_provider.tag_symbol_mentions(
-                news_items, self.config.trading.universe)
+                news_items, research_universe)
             previous_narrative = self.news_store.load_macro_narrative()
             # For midday/evening, load the most recent prior session report as
             # a diff baseline. Prefer midday over morning when both exist
@@ -4840,7 +4976,7 @@ class TradingPipeline:
                 )
             intel_report, result = self.news_analyst.analyze(
                 news_text=news_text,
-                universe=self.config.trading.universe,
+                universe=research_universe,
                 stock_mentions=stock_mentions,
                 previous_narrative=previous_narrative,
                 session=session,
@@ -4881,6 +5017,7 @@ class TradingPipeline:
     def _load_earnings_analyses(
         self, run_id: str, session: str = "morning",
         ctx: RunContext | None = None,
+        universe: list[str] | None = None,
     ) -> tuple[list, list]:
         """Hot-path consumer: read cached earnings analyses, never call the LLM.
 
@@ -4901,7 +5038,9 @@ class TradingPipeline:
         compatibility with MorningResearchStage's callable injection.
         """
         try:
-            reports = self.earnings_provider.check_and_fetch(self.config.trading.universe)
+            reports = self.earnings_provider.check_and_fetch(
+                universe or self.config.trading.universe,
+            )
             if not reports:
                 return [], []
 
@@ -5878,6 +6017,7 @@ class TradingPipeline:
                 ctx.analyses = resumed["analyses"]
                 ctx.earnings_results = resumed["earnings_results"]
                 ctx.data_status = resumed["data_status"]
+                ctx.admitted_symbols = set(resumed["admitted_symbols"])
                 ctx.portfolio_decision = resumed["portfolio_decision"]
                 portfolio_decision = ctx.portfolio_decision
                 # Rehydrate bars for the plan's BUY symbols (zero-LLM, fresh
@@ -6713,18 +6853,40 @@ class TradingPipeline:
         self._drain_pending_protection_restores()
         self._reconcile_orphan_pending_submits()  # audit F4
 
+        # Refresh the credentialless SEC Form 4 cache before any paid-analysis
+        # gate. This deterministic source work remains available while the
+        # cost circuit is latched and lets the morning session consume a
+        # bounded local cache instead of crawling EDGAR on the trading path.
+        smart_money_refresh: dict = {"status": "disabled"}
+        if self.config.smart_money.enabled:
+            try:
+                smart_money_refresh = self.smart_money_provider.refresh()
+                logger.info("SEC Form 4 refresh: %s", smart_money_refresh)
+            except Exception as exc:
+                logger.warning("SEC Form 4 refresh failed softly: %s", exc)
+                smart_money_refresh = {
+                    "status": "provider_error",
+                    "error": type(exc).__name__,
+                }
+
         try:
             reports = self.earnings_provider.check_and_fetch(
                 self.config.trading.universe,
             )
         except Exception as e:
             logger.error("Earnings preprocess: fetch failed: %s", e)
-            return {"status": "fetch_error", "run_id": run_id, "error": str(e)}
+            return {
+                "status": "fetch_error", "run_id": run_id, "error": str(e),
+                "smart_money_refresh": smart_money_refresh,
+            }
 
         new_reports = [r for r in reports if r.is_new]
         if not new_reports:
             logger.info("Earnings preprocess: no new filings, nothing to analyze.")
-            return {"status": "nothing_new", "run_id": run_id, "count": 0}
+            return {
+                "status": "nothing_new", "run_id": run_id, "count": 0,
+                "smart_money_refresh": smart_money_refresh,
+            }
 
         logger.info(
             "Earnings preprocess: analyzing %d new filings: %s",
@@ -6737,7 +6899,9 @@ class TradingPipeline:
         except PaidAnalysisSuspended as exc:
             # No filing failure is recorded: the filing remains new and will
             # be eligible after an operator resets the circuit.
-            return self._paid_suspended_payload(run_id, error=exc)
+            payload = self._paid_suspended_payload(run_id, error=exc)
+            payload["smart_money_refresh"] = smart_money_refresh
+            return payload
         except Exception as e:
             logger.error("Earnings preprocess: LLM analysis failed: %s", e, exc_info=True)
             # Record failures so the retry bounds kick in for each filing.
@@ -6825,6 +6989,7 @@ class TradingPipeline:
             "analyzed": analyzed_count,
             "confirmed": confirmed,
             "failed": len(failed_reports),
+            "smart_money_refresh": smart_money_refresh,
         }
 
     def run_intra_check(self) -> dict:

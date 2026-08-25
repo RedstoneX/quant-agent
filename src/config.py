@@ -20,7 +20,6 @@ class ApiKeysConfig(BaseModel):
     fred: str
     alpaca_key: str
     alpaca_secret: str
-    bargo: str = ""
 
     @model_validator(mode="after")
     def _check_required_keys(self):
@@ -319,9 +318,24 @@ class IntradayScanConfig(BaseModel):
 
 class SmartMoneyConfig(BaseModel):
     enabled: bool = False
-    base_url: str = "https://www.bargo.ai/free-apis/congress/v1"
-    timeout_s: float = Field(default=10.0, ge=1, le=60)
-    max_rows_per_symbol: int = Field(default=20, ge=1, le=100)
+    search_url: str = "https://efts.sec.gov/LATEST/search-index"
+    archives_url: str = "https://www.sec.gov/Archives/edgar/data"
+    data_dir: str = "data/smart_money"
+    user_agent: str = "QAMC research-intelligence qamc-contact@proton.me"
+    request_timeout_s: float = Field(default=15.0, ge=1, le=60)
+    refresh_deadline_s: float = Field(default=180.0, ge=10, le=600)
+    requests_per_second: float = Field(default=8.0, ge=0.5, le=10.0)
+    lookback_days: int = Field(default=7, ge=1, le=30)
+    max_filings_per_refresh: int = Field(default=1000, ge=1, le=5000)
+    max_observations: int = Field(default=40, ge=1, le=200)
+    min_transaction_value_usd: float = Field(default=100_000, ge=1_000)
+    external_min_transaction_value_usd: float = Field(default=250_000, ge=1_000)
+    cluster_window_days: int = Field(default=14, ge=1, le=45)
+    min_cluster_owners: int = Field(default=2, ge=2, le=10)
+    max_external_candidates: int = Field(default=3, ge=1, le=10)
+    min_external_price_usd: float = Field(default=5.0, ge=1.0)
+    min_external_avg_dollar_volume_usd: float = Field(default=10_000_000, ge=1_000_000)
+    min_external_history_days: int = Field(default=20, ge=10, le=120)
 
 
 class ScheduleConfig(BaseModel):

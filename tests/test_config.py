@@ -236,9 +236,21 @@ def test_llm_config_get_max_tokens_falls_back_to_global():
         assert cfg.get_max_tokens(agent) == 8192
 
 
-def test_smart_money_provider_defaults_disabled_until_preflight():
+def test_smart_money_provider_defaults_disabled_until_configured():
     from src.config import SmartMoneyConfig
     assert SmartMoneyConfig().enabled is False
+
+
+def test_smart_money_sec_limits_fail_closed():
+    from pydantic import ValidationError
+    from src.config import SmartMoneyConfig
+
+    with pytest.raises(ValidationError):
+        SmartMoneyConfig(requests_per_second=10.1)
+    with pytest.raises(ValidationError):
+        SmartMoneyConfig(min_external_price_usd=0.5)
+    with pytest.raises(ValidationError):
+        SmartMoneyConfig(max_external_candidates=0)
 
 
 def test_llm_config_get_max_tokens_respects_per_agent_override():
