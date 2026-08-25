@@ -19,11 +19,11 @@ This file records what is accepted and true **now**. Git history preserves imple
 
 The prior three-account daily workflow created excessive friction. During stabilization the accepted operating model is now:
 
-- **`ubuntu` — engineering/operator account.** Claude/Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
+- **`ubuntu` — engineering/operator account.** Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
 - **`qamc` — production runtime account only.** It owns the production checkout, runtime `.env`/OneCLI wiring, user services/timers, and QAMC execution.
 - **`dev` — parked.** It remains present but is removed from the normal workflow. Do not expand its permissions or require the operator to use it during stabilization.
 
-The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Claude/Codex must not run as `qamc`.
+The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Codex must not run as `qamc`.
 
 ## Production position — current verified deployment
 
@@ -67,8 +67,8 @@ The standing workflow is:
 
 Important consequences:
 
-- Claude/Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
-- Claude must not merge its own implementation PR.
+- Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
+- Codex must not merge its own implementation PR.
 - Merge authorization and production-deployment authorization are separate gates.
 - Generic instructions such as “proceed”, “continue”, “fix it” or “finish this” never escalate work into the next environment by inference.
 - A merged PR, green tests, or an available deploy script is not production authorization.
