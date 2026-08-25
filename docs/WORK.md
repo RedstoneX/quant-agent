@@ -63,7 +63,7 @@ Complete. PRs #76 and #77 are merged and deployed with the backend recovery
 from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence
 or the research-intelligence outcome below requires a coherent extension.
 
-### Research Intelligence Desk + Smart Money Analyst — AUTHORIZED ENGINEERING TRANCHE
+### Research Intelligence Desk + Smart Money Analyst — AUTHORIZED END-TO-END TRANCHE
 
 Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
 
@@ -75,9 +75,13 @@ Cover the existing research/review seats where their output is relevant — Tech
 
 #### Smart Money Analyst outcome
 
-Use currently free, source-backed alternative data. Current research establishes Bargo's free congressional-trades API as an acceptable initial source: it derives records from official House/Senate STOCK Act disclosures, preserves transaction date versus disclosure date, and requires visible attribution where its data is displayed. Quiver's API is paid and is not authorized as a dependency.
+Use currently free, source-backed alternative data. Current research establishes Bargo as an acceptable initial source. Its free congressional API derives records from official House/Senate STOCK Act disclosures and preserves transaction date versus disclosure date. Its broader MCP is currently free in beta and advertises additional source-backed streams including insider transactions, 13F holdings, options flow, analyst sentiment and related market intelligence. Quiver's API is paid and is not authorized as a dependency.
 
-The Smart Money Analyst should turn alternative disclosures into useful research evidence rather than a ticker feed. Congressional activity is delayed disclosure data (potentially weeks after the trade), so a single stale politician transaction must never be represented as a real-time entry signal. Prefer meaningful patterns such as clusters, repeated activity, alignment/conflict with current QAMC themes, and clearly identified data limitations. If other genuinely free, reliable, source-backed smart-money streams (for example insider or institutional disclosures) are available under acceptable terms, Codex may incorporate them into this same seat rather than proliferating agents.
+The Smart Money Analyst should identify **viable present-tense trading evidence**, not merely summarize disclosure feeds. It must distinguish evidence by freshness and economic meaning. Congressional trades can be disclosed up to roughly 45 days after the transaction and 13F holdings can be filed up to 45 days after quarter-end, so those streams are primarily thematic/confirmatory context. SEC Form 4 insider transactions are generally filed within two business days and are materially more timely. Any genuinely real-time/near-real-time stream made available under the accepted free source may be treated according to its actual timestamp and provenance.
+
+The seat should intelligently suppress noise and surface only material patterns: clustered or repeated activity; unusual size/direction relative to the available disclosure; multiple independent smart-money streams aligning; activity that confirms or contradicts current News/Macro/Earnings/Technical evidence; and fresh evidence that changes the current thesis. A lone stale politician transaction is not a trade signal. Every surfaced finding must state what happened, when it happened, when it became knowable, why it matters now, and whether it is actionable, confirmatory, contradictory or merely historical.
+
+If other genuinely free, reliable, source-backed smart-money streams are available under acceptable terms, Codex may incorporate them into this same seat rather than proliferating agents. Provider/API details should remain replaceable rather than becoming trading architecture.
 
 The new seat may inform the Portfolio Manager through the existing specialist-evidence path. It must not bypass PM, AI Risk, deterministic Python or broker protections and must not create a new execution path.
 
@@ -98,15 +102,19 @@ This tranche is complete when real stored QAMC data demonstrates that:
 3. PM/Risk/execution are understandable as deltas: what PM wanted, what Risk changed, what deterministic code allowed/blocked, and what actually executed.
 4. Desktop research panels are genuinely movable/resizable/tabbable/maximizable with persisted layout and a sensible default workspace.
 5. iPad has a deliberately designed reading/navigation experience with no horizontal overflow or micro-text.
-6. Smart Money Analyst is source-backed, provenance/timestamp/lag-aware, attributable, and reaches PM only through the accepted specialist path.
+6. Smart Money Analyst is source-backed, provenance/timestamp/lag-aware, attributable, separates timely from stale evidence, suppresses noise, and reaches PM only through the accepted specialist path.
 7. Empty, stale, partial and provider-error states are truthful and visually composed.
 8. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
 
-#### Engineering posture
+#### Engineering and promotion authorization
 
 This is outcome-driven work. Codex has autonomy to inspect the current repository, choose the simplest implementation consistent with accepted architecture, make routine engineering/design decisions, implement, test, visually inspect, commit and push **one dedicated branch/PR**. Do not split the work into micro-PRs, repeatedly ask the operator routine design questions, or over-specify implementation from this handoff.
 
-Stop only for a genuine product/safety/architecture conflict that cannot be resolved from current authority. **No merge or production deployment is authorized by this tranche.**
+**For this tranche specifically, the operator explicitly authorizes the complete engineering → merge → production-deploy → production-verify sequence once Codex has satisfied the acceptance criteria above.** This is the explicit promotion authorization required by `CLAUDE.md`; it is not a standing permission for unrelated future work.
+
+Codex may merge its own dedicated PR for this tranche after verifying the final PR head and acceptance evidence, then use `ubuntu` to perform the shortest governed privileged convergence against the existing `qamc` runtime and verify production. Preserve the `ubuntu` engineering/operator versus `qamc` runtime-only boundary. Do not alter secrets architecture, add unrelated infrastructure, force trades, weaken safety, or broaden broker authorization. If deployment verification fails, stop further mutation, preserve/restore the last known-good production state using the existing governed rollback path, and report the concrete blocker.
+
+Stop for the operator only on a genuine unresolved product/safety/architecture conflict, a paid dependency, or an external credential/authorization requirement that cannot be satisfied from existing project resources.
 
 ### Natural Alpaca Paper validation
 
@@ -150,4 +158,4 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active gates:** natural Alpaca Paper observation continues; Research Intelligence Desk + Smart Money Analyst engineering may proceed under `ubuntu` through branch/PR only. No trade may be forced or manufactured to create acceptance evidence, and no research-intelligence implementation may be merged or deployed without the normal later gates.
+**Active gates:** natural Alpaca Paper observation continues; Research Intelligence Desk + Smart Money Analyst is authorized end-to-end through its dedicated PR, merge, governed production deployment and production verification once its acceptance criteria pass. No trade may be forced or manufactured to create acceptance evidence.
