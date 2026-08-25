@@ -27,7 +27,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.config import IntradayScanConfig
+from src.cost_circuit import PaidAnalysisSuspended
 from src.models import TechAnalysisResult, TechReasoningChain
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
@@ -525,6 +528,67 @@ def test_process_lock_is_released_for_the_next_tick(tmp_path):
     # First released on context exit; the next tick gets it.
     with second._intraday_scan_process_lock() as acquired_next:
         assert acquired_next is True
+
+
+def test_process_lock_propagates_scan_exception_and_releases(tmp_path):
+    """The lock manager owns acquisition only; it must never swallow or
+    replace an exception raised by the protected scan body."""
+    db_path = tmp_path / "shared.db"
+    first = _intraday_pipeline(universe=["AAPL"], db_path=db_path)
+    second = _intraday_pipeline(universe=["AAPL"], db_path=db_path)
+    suspended = PaidAnalysisSuspended("prelatched", {"suspended": True})
+
+    with pytest.raises(PaidAnalysisSuspended) as caught:
+        with first._intraday_scan_process_lock() as acquired:
+            assert acquired is True
+            raise suspended
+
+    assert caught.value is suspended
+    with second._intraday_scan_process_lock() as acquired_next:
+        assert acquired_next is True
+
+
+@patch("src.pipeline.compute_indicators")
+def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
+    mock_compute_indicators, tmp_path,
+):
+    """Regression for the 2026-08-25 production tick: a suspension thrown
+    inside the real process-lock wrapper must reach run_intra_check's specific
+    handler and remain visible in the structured result."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"], db_path=tmp_path / "shared.db")
+    p._is_trading_day = MagicMock(return_value=True)
+    p._drain_pending_protection_restores = MagicMock()
+    p._reconcile_stop_coverage = MagicMock(return_value=[])
+    p._reconcile_orphan_pending_submits = MagicMock()
+    p._another_session_recently_active = MagicMock(return_value=False)
+    p.risk_engine = MagicMock()
+    p.risk_engine.check_daily_loss.return_value = None
+    p.broker.get_account.return_value = {
+        "cash": 10_000.0,
+        "portfolio_value": 10_100.0,
+        "last_equity": 10_000.0,
+        "non_marginable_buying_power": 10_000.0,
+    }
+    p.broker.get_positions.return_value = []
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.cost_circuit = MagicMock()
+    p.cost_circuit.activate_session.return_value = {"suspended": True}
+    p.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
+        "prelatched", {"suspended": True},
+    )
+
+    result = p.run_intra_check()
+
+    assert result["status"] == "ok"
+    assert result["intraday_scan"]["status"] == "paid_analysis_suspended"
+    assert result["intraday_scan"]["suspended"] == "intraday opportunity discovery only"
+    p.tech_analyst.analyze_batch.assert_not_called()
+    p.cost_circuit.require_paid_analysis.assert_called_once_with(
+        "intraday_tech_analyst",
+    )
 
 
 # ---------- Blocker 2: Tech receives truthful CURRENT-SESSION evidence ----------
