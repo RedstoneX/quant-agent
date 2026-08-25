@@ -1,19 +1,25 @@
 # QAMC Current Work
 
-Status: **FINAL MISSION CONTROL UTILITY | UBUNTU ENGINEERING | PR REVIEW GATE | NO PRODUCTION AUTHORITY**
+Status: **FINISH LINE DEPLOYED | ALPACA PAPER NATURAL ACCEPTANCE**
 
 ## Current integration truth
 
-- Production has been reported and verified at `a6758f935910c5cf380cc6a7acedc5f3b78f6366` after PR #69 deployment.
+- Production is deployed and verified at
+  `16c52715b3ee05ec9e38c12958a14ee77a6d38d7`; rollback SHA is
+  `a6758f935910c5cf380cc6a7acedc5f3b78f6366`.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
 - The chart live-price/current-price truth issue was already fixed by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`. It is not an outstanding task.
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
 - Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
-- Priority 1 mechanical recovery is merged to engineering `main` through PR
-  #74 (`708cd234`). It has not been deployed to production.
-- Priority 2/3 backend recovery is merged to engineering `main` through PR
-  #75 (`3d79b401`). It has not been deployed to production.
+- PRs #74, #75, #76 and #77 are merged and deployed. Backend recovery and the
+  final Mission Control finish line are complete.
+- Deployment verification passed `/health`, DB, broker, Alpaca Paper,
+  OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI,
+  Telegram configuration, `/cockpit`, accepted chart timeframes, read-only
+  method rejection, and all seven existing timers.
+- The only tracked production delta remains
+  `config/settings.yaml: intraday_scan.enabled: true`.
 
 ## Stabilization account model — HARD RULE
 
@@ -53,30 +59,13 @@ Implementation promotion remains reviewable. Claude does not independently merge
 
 ### Mission Control / dashboard utility
 
-Deliver one read-only frontend tranche that:
-
-- uses Tremor/TanStack/Lightweight Charts/Dockview for their accepted roles and
-  removes ECharts, handmade donut/treemap replacements and raw HTML tables;
-- treats SGOV only as cash parking and excludes it from directional-risk and
-  investment-P&L emphasis;
-- exposes the canonical PR #75 lifecycle, terminal order/fill/protection facts
-  and deterministically known realized P&L without creating another evidence
-  system;
-- labels PM proposed stop, execution-recorded stop and persisted protection
-  outcome by source, never inventing broker protection;
-- makes Candidates, Chart, Decision Room and supporting trader panels dockable
-  on desktop, with a sensible persisted default and reset;
-- preserves simple Candidates/Chart/Decision Room tabs on iPad/mobile;
-- is accepted through rendered desktop/iPad checks, frontend tests, production
-  build and committed screenshots.
-
-The engineering tranche stops after one pushed PR. Merge and production
-deployment remain separate operator gates.
+Complete. PRs #76 and #77 are merged and deployed with the backend recovery
+from PRs #74 and #75. Reopen only from current production evidence.
 
 ### Natural Alpaca Paper validation
 
-After the backend tranches are reviewed and promoted, substantive acceptance
-still requires natural evidence that QAMC behaves coherently in ordinary markets:
+The only remaining substantive acceptance item is natural evidence that QAMC
+behaves coherently in ordinary Alpaca Paper markets:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
@@ -115,6 +104,5 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active gate:** the final Mission Control tranche is not accepted until external PR
-review and explicit merge approval. Production deployment/validation requires
-separate authorization.
+**Active gate:** observe natural Alpaca Paper behavior. No trade may be forced
+or manufactured to create acceptance evidence.
