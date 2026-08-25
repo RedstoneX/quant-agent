@@ -49,9 +49,9 @@ Inside an already-authorized task, Claude may autonomously from `ubuntu`:
 - use existing private Tailscale development access;
 - commit and push a dedicated branch/PR.
 
-Then **STOP at the external gate**.
+The default rule is then **STOP at the external gate**.
 
-Claude must not, without new explicit operator authorization for that exact promotion step:
+Without explicit operator authorization for the exact promotion step, Claude must not:
 - merge its own implementation PR or otherwise advance its implementation into `main`;
 - change `/home/qamc/quant-agent`;
 - restart or alter a `qamc` production service/timer;
@@ -59,9 +59,9 @@ Claude must not, without new explicit operator authorization for that exact prom
 - run a production deployment/convergence entrypoint;
 - treat a production browser check as permission to deploy first.
 
-Merge approval and production-deployment approval are distinct gates. Approval to merge does **not** imply approval to deploy. A single operator instruction may authorize both only when it unambiguously says to merge and deploy to production.
+A bounded `docs/WORK.md` contract may itself contain explicit operator authorization for merge and/or production deployment of that exact tranche. When it does, that authorization is valid and no second prompt is required merely to repeat the same gate. It does **not** become standing permission for unrelated work.
 
-Generic instructions such as “proceed”, “continue”, “fix it”, “make it happen”, or “finish this” authorize work only inside the current environment/phase; they never escalate engineering → `main` or `main` → production by inference. A merged PR, green tests, available deploy script, or prior standing workflow authorization likewise does not create production permission.
+Merge approval and production-deployment approval are otherwise distinct gates. Generic instructions such as “proceed”, “continue”, “fix it”, “make it happen”, or “finish this” never escalate environments by inference.
 
 After explicit production approval, `ubuntu` performs the shortest governed privileged deploy/verify operation against the existing `qamc` runtime. Do not make the operator manually shuttle between accounts when `ubuntu` can perform the approved `sudo -u qamc` steps directly.
 
@@ -95,11 +95,11 @@ For substantial work with a measurable end state, prefer outcome-driven executio
 - Stop as soon as the requested result is proven and no blocker remains; unnecessary re-validation is execution failure, not diligence.
 - At a normal engineering completion gate, report only: **changed / verified / preview (if relevant) / unresolved blocker / exact next gate**.
 
-The governing principle is: **fast autonomous engineering under `ubuntu`; isolated runtime under `qamc`; explicit operator-controlled promotion to production.**
+The governing principle is: **fast autonomous engineering under `ubuntu`; isolated runtime under `qamc`; promotion only when the exact work contract authorizes it.**
 
 ## Git and continuity
 
-Git is durable QAMC memory. Use dedicated branches. Never force-push, push implementation directly to `main`, or merge an implementation PR from Claude Code. Discovery/implementation handoffs must be committed and pushed before external review.
+Git is durable QAMC memory. Use dedicated branches. Never force-push or push implementation directly to `main`. Implementation normally reaches `main` through a PR. Codex may merge its own dedicated PR only when the current `docs/WORK.md` explicitly authorizes that exact tranche through merge; otherwise it stops at the external gate.
 
 Treat a blocked GitHub write as a safety signal, not permission to improvise around it. Verify the relevant ref/PR state before choosing a safe forward operation.
 
