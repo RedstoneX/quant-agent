@@ -13,19 +13,29 @@ The experiment asks:
 
 > **Does inexpensive modern AI add measurable out-of-sample trading value beyond ordinary deterministic signals?**
 
-QAMC is not meant to require a rising market to have an opportunity set. Within the current architecture it can express bearish views through approved inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`). Direct stock shorting, options and margin are not currently part of QAMC.
+QAMC can express bearish views through approved inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`). Direct stock shorting, options and margin are not currently part of QAMC.
 
 Live-money trading is **not authorized**.
 
 ## 🚦 RIGHT NOW
 
-### ▶️ Alpaca Paper soak is ACTIVE — Mission Control production-converged
+### ▶️ Alpaca Paper soak is ACTIVE — production-converged
 
-Production runs the accepted trading-utility recovery, enriched Telegram output, and the full professional Mission Control cockpit (Tremor/TanStack UI, Lightweight Charts, decision-chain visualization, session-execution chart context) — live at `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. All seven paper timers remain armed.
+Production has been reported and verified at `a6758f935910c5cf380cc6a7acedc5f3b78f6366`, including PR #69's explicit Alpaca IEX feed fix for the read-only intraday chart path.
 
-A production-only defect surfaced this session: the chart's intraday timeframe controls (5m/15m/1h) were visible and clickable, but every symbol came back with zero bars. Traced to `src/execution/broker.py`'s intraday bar request never setting Alpaca's `feed` parameter — this account is IEX-entitled, not SIP, and the unset default was resolving to SIP for sub-daily bars only (daily bars aren't feed-gated the same way, which is why `1D` worked fine). Fixed with a 2-file, ~25-line change; 2031 backend + 55 frontend tests pass; pushed for ChatGPT/operator review — **not yet deployed to production**, and not live-verifiable from `dev` (no Alpaca credentials in this account boundary).
+Production verification reported:
 
-A temporary, Tailscale-only Vite hot-reload DEV preview is now a standing authorized workflow (separate from `branch_preview.py`'s static-build preview) for fast visual iteration on Dashboard work.
+- non-empty SPY/AAPL 5m, 15m and 1h bars;
+- usable `5m Today`, `15m`, `1h`, and `1D` chart controls;
+- `/health` healthy with `paper=true` and broker reachable;
+- all seven existing paper timers preserved;
+- Mission Control private/read-only;
+- Telegram and OneCLI preserved;
+- no broker order submitted, cancelled or modified by the read-side deployment.
+
+The chart live/current-price truth issue was already fixed earlier by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`: live `/quotes` data is kept separate from historical bars and the chart renders explicit `LIVE` / `PREV CLOSE` lines.
+
+The production checkout keeps one intended tracked local config delta: `config/settings.yaml` with `intraday_scan.enabled: true`.
 
 ---
 
@@ -33,49 +43,37 @@ A temporary, Tailscale-only Vite hot-reload DEV preview is now a standing author
 
 | Status | Stage / milestone | Result |
 |---|---|---|
-| ✅ DONE | 0–2 | Trading-engine audit, provider/model plumbing, isolated read-only Mission Control API. |
-| ✅ DONE | 3 | Browser/iPad Trading Cockpit. |
-| ✅ DONE | 4–5 | Specialist evidence, decision chain, journal and forensic search. |
-| ✅ DONE | VPS deployment / hardening | Runtime deployed and separated from development. |
-| ✅ DONE | OneCLI commissioning | Private credential gateway; Alpaca Paper/OpenRouter/FRED path verified. |
-| ✅ DONE | Model routing | 8 seats on Gemini 2.5 Flash Lite; Risk Manager on Qwen3 235B via OpenRouter. |
-| ✅ DONE | Decision-chain audit | PM/RM evidence flow and auditability reviewed without changing deterministic safety semantics. |
-| ✅ DONE | Runtime commissioning | 37 PASS / 0 FAIL / EXIT 0, combined with prior green dev isolation evidence. |
-| ✅ DONE | Private operator access | Tailscale/Orca path recorded; explicit VPS FQDN is `ovh-vps.wallaby-bowfin.ts.net`. |
-| ✅ ACTIVE | Scheduled Alpaca Paper soak | Autonomous paper schedule remains armed. |
-| ✅ DONE | Trading-utility recovery (PR #56) | Deployed to production, accepted as machinery. |
-| ✅ DONE | Mission Control professional cockpit (PR #60) | Tremor/TanStack cockpit, data-truth/run-history/explainability — merged and deployed. |
-| ✅ DONE | Session executions + intraday chart (PR #63) | Deployed to production; added the 5m/15m/1h/1D chart timeframe controls. |
-| 🟡 NOW | Chart-timeframe data-path fix | Intraday bars (5m/15m/1h) returned empty for every symbol — missing Alpaca `feed` parameter. Fixed and pushed, awaiting external review. |
+| ✅ DONE | Trading engine / safety foundation | Decision chain, deterministic risk/execution and Paper-only broker boundary accepted. |
+| ✅ DONE | Mission Control | Private browser/iPad cockpit, journal, evidence, search and decision-chain inspection. |
+| ✅ DONE | VPS / OneCLI / private access | Runtime isolated under `qamc`; OneCLI and Tailscale paths accepted. |
+| ✅ DONE | Trading-utility recovery | Mechanical opportunity→execution blockers corrected and deployed. |
+| ✅ DONE | Session executions + intraday chart | Session fills, 5m/15m/1h/1D controls and IEX intraday data path deployed and verified. |
+| ✅ ACTIVE | Natural Alpaca Paper validation | Prove the full opportunity→decision→execution→management→measurement chain in ordinary market conditions. |
+
+## 👥 OPERATING MODEL
+
+- **`ubuntu` — engineering/operator account.** Claude/Codex, Git/GitHub, dev tooling, private Vite/browser verification, tests, Docker/sudo tasks, and approved deployment orchestration.
+- **`qamc` — runtime only.** Production checkout, runtime `.env`/OneCLI wiring, user services/timers, and QAMC Paper execution.
+- **`dev` — parked.** Do not use it in the normal stabilization workflow or expand its permissions.
+
+Engineering work may proceed autonomously under `ubuntu`, but merge and production deployment remain separate explicit gates.
 
 ## 📊 Mission Control
 
-The cockpit is functionally rich but currently too much like a database viewer. The important evidence already exists underneath, but the operator should not need multiple drill-downs to answer basic questions.
+The accepted cockpit uses Tremor/TanStack for ordinary UI, Lightweight Charts for price/trade visualization, Dockview for the desktop support workspace, and custom visualization only where QAMC-specific decision topology justifies it.
 
-The active product direction is a substantially more coherent trading cockpit: honest liquidity/risk presentation, candidate/watchlist context, directional posture, a prominent decision chain, concise “why no trade?”, visible missed opportunities and progressive disclosure of model/cost/raw technical detail.
-
-The prior Mission Control visual board is being made a durable repository reference so Claude can inspect the image directly, not just a textual summary.
-
-## 🖥️ DEPLOYMENT
-
-- OVH VPS: Ubuntu 24.04
-- Runtime account: `qamc`
-- Development account: `dev`
-- Administration account: `ubuntu`
-- Tailnet DNS name: `wallaby-bowfin.ts.net`
-- Verified OVH VPS Tailscale machine name: `ovh-vps`
-- **Canonical SSH / explicit MagicDNS host: `ovh-vps.wallaby-bowfin.ts.net`**
-- `redstone-vps` is obsolete for current Tailscale access.
-- QAMC and OneCLI remain private.
+No current dashboard defect is authorized merely from historical notes. Reopen UI work only from current operator evidence or current `STATE.md` / `WORK.md`.
 
 ## ⏭️ NEXT MOVES
 
-1. ChatGPT/operator review of the pushed chart-timeframe data-path fix branch; Claude does not merge its own work.
-2. After merge and a governed deploy, confirm live that AAPL/SPY/etc. 5m/15m/1h now return real bars — this could not be verified from `dev` (no Alpaca credentials in this account boundary).
-3. Continue natural Alpaca Paper validation of the full opportunity → decision → execution → management chain; do not force activity for the dashboard fix.
+1. Continue natural Alpaca Paper validation without forcing trades or weakening safety.
+2. Separately authorize a production investigation of `src/execution/broker.py::get_latest_price` before any code change. The method still leaves Alpaca feed unspecified and silently returns `None` on failure; this is a trading-critical read path and is not yet proven to be failing in production.
+3. Keep the lower-priority news-narrative factual drift and `actual_provider` attribution oddity parked unless real validation evidence shows they materially distort decisions or operator understanding.
 
 ## 🚧 CURRENT BLOCKERS
 
-No architecture blocker. The chart-timeframe fix is pushed and awaiting ChatGPT/operator review before it can be deployed and live-verified; the paper soak continues unaffected in the meantime.
+No architecture blocker is currently established.
 
-_Last refreshed: 2026-08-24 — active project view only; retired detail lives in Git history._
+The remaining work is primarily **natural trading validation**, plus the separately gated `get_latest_price` production investigation above. A lack of natural end-to-end evidence is not permission to manufacture trades.
+
+_Last refreshed: 2026-08-24 — current project view only; retired detail lives in Git history._
