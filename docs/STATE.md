@@ -106,19 +106,27 @@ GitHub `main` may advance beyond this production SHA. Production changes only th
 
 ## Mandatory paid-analysis cost circuit
 
-Paid model requests now share one persistent SQLite circuit across systemd
+Paid model requests share one persistent SQLite authority across systemd
 processes. It fails closed before provider I/O on missing/corrupt accounting,
-unknown or stale pricing, excessive provider attempts/retries, repeated paid
-sessions, projected exposure, session spend or ET-day spend. Current limits are
+unknown or stale pricing/cost, unresolved attempted requests, excessive provider
+attempts, retries, repeated paid sessions, projected exposure, session spend or
+ET-day spend. Current limits are
 **$0.90 per session**, **$1.50 per ET day**, two provider attempts per logical
 call, two retry/repair attempts per session and two paid sessions per mode/day.
 
-A trip suspends model analysis, repairs, retries and provider failover and sends
-one clear Telegram alert containing the trigger, affected run, attempts, cost,
-suspended work and preserved protections. Broker-resident stops, deterministic
-loss protection, order/fill reconciliation, close/P&L jobs and the read-only API
-remain active. Reset requires an auditable operator reason and never erases
-settled spend, so an over-limit day immediately re-latches.
+Expected budget exhaustion creates the narrowest applicable quota hold: current
+run for session spend/retry exposure, current mode/day for paid-session count,
+or the current ET day for aggregate spend. Session holds do not block later
+independent runs. Day and mode/day holds rearm only after the ET date advances,
+the new ledger seeds exactly, accounting invariants pass and no prior-day
+attempted reservation remains unresolved. Trip and successful rearm each send
+one deduplicated Telegram alert. Missing/corrupt or inexact accounting, unknown
+pricing/cost, unresolved attempted requests, provider-attempt exhaustion and any
+unrecognized trigger remain a hard global latch requiring an auditable operator
+reset. Reset never erases settled spend and cannot bypass a quota hold.
+
+Broker-resident stops, deterministic loss protection, order/fill reconciliation,
+close/P&L jobs and the read-only API remain active under every hold/latch.
 
 ## Paper-beta engineering authority — accepted rule
 
@@ -259,15 +267,16 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 
 Current bounded activities:
 
-1. **Circuit review/reset:** paid analysis is intentionally suspended for the
-   current ET day. Do not reset while the unchanged $4.211481 ledger remains
-   above the daily limit; review the incident and use a recorded reason only
-   when resumption is deliberate.
-2. **Smart Money natural evidence:** after a deliberate circuit reset, observe
+1. **Circuit rollover acceptance:** paid analysis is quota-held for the current
+   ET day. Do not reset or erase the unchanged $4.211481 ledger. Verify the
+   first next-day activation creates an exact new ledger, releases the old-day
+   hold once, sends one recovery alert and never inherits prior-day spend.
+2. **Smart Money natural evidence:** after automatic ET-day rearm, observe
    model synthesis and any naturally qualifying transient candidate through
    the full accepted chain. Do not force a candidate or weaken thresholds.
-3. **Natural Alpaca Paper acceptance:** resume paid research only after the
-   deliberate circuit-reset decision; continue non-LLM safety observation now.
+3. **Natural Alpaca Paper acceptance:** allow the existing schedule to resume
+   paid research only after rollover checks pass; continue non-LLM safety
+   observation now.
 4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
 See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.

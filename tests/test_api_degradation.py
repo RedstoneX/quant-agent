@@ -123,6 +123,52 @@ def test_health_reports_an_active_session_lock(client, stub_broker, monkeypatch,
     assert client.get("/health").json()["session_lock_active"] is True
 
 
+@pytest.mark.parametrize(
+    ("circuit", "decision_status", "overall"),
+    [
+        (
+            {
+                "available": True, "suspended": True,
+                "suspension_class": "quota", "hold_scope": "day",
+                "requires_operator_reset": False, "auto_rearm": True,
+                "active_quota_holds": [{"scope": "day"}],
+            },
+            "paid_analysis_suspended", "degraded",
+        ),
+        (
+            {
+                "available": True, "suspended": False,
+                "suspension_class": "quota", "hold_scope": "session",
+                "requires_operator_reset": False, "auto_rearm": False,
+                "active_quota_holds": [{"scope": "session"}],
+            },
+            "paid_analysis_scoped_quota_hold", "degraded",
+        ),
+        (
+            {
+                "available": True, "suspended": False,
+                "suspension_class": None, "hold_scope": None,
+                "requires_operator_reset": False, "auto_rearm": False,
+                "active_quota_holds": [],
+                "recent_recovery": {"release_reason": "ET budget window advanced"},
+            },
+            "ok", "ok",
+        ),
+    ],
+)
+def test_health_classifies_quota_scope_and_recovery(
+    client, stub_broker, monkeypatch, circuit, decision_status, overall,
+):
+    import src.api.db_reads as db_reads
+
+    monkeypatch.setattr(db_reads, "get_llm_circuit_health", lambda: circuit)
+    monkeypatch.setattr(db_reads, "session_prefixes_logged_on", lambda: [])
+    body = client.get("/health").json()
+    assert body["decision_path_status"] == decision_status
+    assert body["status"] == overall
+    assert body["llm_circuit"] == circuit
+
+
 # ---------------------------------------------------------------------------
 # /account
 # ---------------------------------------------------------------------------

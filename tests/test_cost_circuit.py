@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agents.base import BaseAgent
-from src.cost_circuit import LLMCostCircuitBreaker, PaidAnalysisSuspended
+from src.cost_circuit import LLMCostCircuitBreaker, PaidAnalysisSuspended, _trigger_scope
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
 
@@ -110,11 +110,13 @@ def test_projected_session_spend_blocks_before_provider_request(tmp_path):
     alert = notifier.messages[0]
     assert "affected run: run-projected" in alert
     assert "attempts: 0 provider attempts" in alert
-    assert "suspended: all paid LLM analysis" in alert
+    assert "QAMC PAID ANALYSIS QUOTA HOLD" in alert
+    assert "scope: run run-projected only" in alert
+    assert "later independent sessions remain eligible" in alert
     assert "preserved: broker-resident stops" in alert
 
 
-def test_completed_session_spend_latches_persistently_and_reset_is_audited(tmp_path):
+def test_completed_session_spend_holds_only_that_session_and_cannot_be_reset(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     cfg = _config(session_cost_limit_usd=0.50, daily_cost_limit_usd=2.0)
@@ -131,7 +133,7 @@ def test_completed_session_spend_latches_persistently_and_reset_is_audited(tmp_p
     assert circuit.status()["current_session_cost_usd"] == pytest.approx(0.60)
     assert len(notifier.messages) == 1
 
-    # A new process/object sees the same global latch and does not duplicate
+    # A new process/object sees the same run-scoped hold and does not duplicate
     # an alert already successfully delivered.
     second_notifier = _Notifier()
     second = LLMCostCircuitBreaker(path, cfg, second_notifier)
@@ -141,27 +143,21 @@ def test_completed_session_spend_latches_persistently_and_reset_is_audited(tmp_p
 
     with pytest.raises(ValueError):
         second.reset("  ")
-    second.reset("operator reviewed incident")
-    reset_state = second.status()
-    assert reset_state["suspended"] is False
-    assert reset_state["current_daily_cost_usd"] == pytest.approx(0.60)
-    with sqlite3.connect(path) as conn:
-        reset = conn.execute(
-            "SELECT detail FROM llm_circuit_events WHERE event_type='reset' "
-            "ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-    assert reset[0] == "operator reviewed incident"
+    with pytest.raises(ValueError, match="no operator-resettable hard circuit"):
+        second.reset("operator reviewed quota hold")
 
-    # Reset never erases settled spend. The very next reservation boundary
-    # atomically re-latches the unchanged hard session cap.
+    # The affected run remains stopped, while a genuinely independent session
+    # can spend under the still-available daily budget.
+    second.activate_session("run-cost-next", "midday")
+    reservation = second.begin_call(
+        agent_name="tech_analyst",
+        model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id != "disabled"
+    second.activate_session("run-cost", "morning")
     with pytest.raises(PaidAnalysisSuspended):
-        second.begin_call(
-            agent_name="tech_analyst",
-            model="google/gemini-2.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert second.status()["trigger_code"] == "session_cost_limit"
-    assert second.status()["provider_attempts"] == 1
+        second.require_paid_analysis("same_run_again")
 
 
 def test_existing_daily_logs_seed_budget_and_trip_on_activation(tmp_path):
@@ -186,7 +182,8 @@ def test_existing_daily_logs_seed_budget_and_trip_on_activation(tmp_path):
     state = circuit.status()
     assert state["trigger_code"] == "daily_cost_limit"
     assert state["current_daily_cost_usd"] == pytest.approx(1.55)
-    assert "$1.5500 today" in notifier.messages[0]
+    assert "$1.5500 on ET day" in notifier.messages[0]
+    assert "auto" in notifier.messages[0]
 
 
 def test_base_agent_third_provider_attempt_is_blocked_before_network(tmp_path, monkeypatch):
@@ -315,9 +312,22 @@ def test_third_paid_session_in_same_mode_is_blocked(tmp_path):
         )
     assert circuit.status()["trigger_code"] == "session_retry_limit"
     assert "paid session attempt 3" in notifier.messages[0]
+    assert circuit.status()["hold_scope"] == "mode_day"
+
+    circuit.activate_session("run-other-mode", "midday")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst",
+        model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id != "disabled"
+
+    circuit.activate_session("run-four", "morning")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("same_mode_again")
 
 
-def test_reset_cannot_authorize_an_old_reservation_above_settled_cap(tmp_path):
+def test_quota_hold_cannot_authorize_an_old_reservation_above_settled_cap(tmp_path):
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(
         path,
@@ -342,7 +352,8 @@ def test_reset_cannot_authorize_an_old_reservation_above_settled_cap(tmp_path):
     circuit.complete_call(first, 0.60, actual_model=first.model)
     assert circuit.status()["suspended"] is True
 
-    circuit.reset("reviewed; regression verifies hard caps remain hard")
+    with pytest.raises(ValueError, match="no operator-resettable hard circuit"):
+        circuit.reset("reviewed; quota holds are not operator bypasses")
     with pytest.raises(PaidAnalysisSuspended):
         circuit.before_provider_attempt(waiting, model=waiting.model)
 
@@ -375,8 +386,7 @@ def test_provider_boundary_revalidates_ledger_after_reservation(tmp_path):
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     circuit.before_provider_attempt(settled, model=settled.model)
-    circuit.complete_call(settled, 1.10, actual_model=settled.model)
-    circuit.reset("test the provider-boundary corruption race")
+    circuit.complete_call(settled, 0.10, actual_model=settled.model)
 
     # Simulate damage after the waiting call reserved but before it reaches
     # the provider semaphore.  The day and session ledgers now disagree.
@@ -708,3 +718,418 @@ def test_production_pm_sized_prompt_fits_reserved_exposure_cap(tmp_path):
     )
     assert reservation.input_tokens_estimate == 225_256
     assert circuit.status()["suspended"] is False
+
+
+@pytest.mark.parametrize(
+    ("code", "scope"),
+    [
+        ("daily_cost_limit", "day"),
+        ("projected_daily_cost_limit", "day"),
+        ("provider_projected_daily_cost_limit", "day"),
+        ("outstanding_projected_daily_cost_limit", "day"),
+        ("session_retry_limit", "mode_day"),
+        ("session_cost_limit", "session"),
+        ("projected_session_cost_limit", "session"),
+        ("provider_projected_session_cost_limit", "session"),
+        ("outstanding_projected_session_cost_limit", "session"),
+        ("session_retry_attempt_limit", "session"),
+        ("provider_attempt_limit", "hard"),
+        ("legacy_unknown_cost", "hard"),
+        ("unknown_model_price", "hard"),
+        ("unknown_actual_cost", "hard"),
+        ("failed_call_unknown_cost", "hard"),
+        ("expired_attempted_reservation", "hard"),
+        ("cross_day_started_reservation", "hard"),
+    ],
+)
+def test_trigger_scope_classification_is_explicit(code, scope):
+    assert _trigger_scope(code) == scope
+
+
+@pytest.mark.parametrize("code", [None, "", "future_daily_limit", {"bad": "shape"}])
+def test_unknown_trigger_scope_fails_closed_hard(code):
+    assert _trigger_scope(code) == "hard"
+
+
+def test_day_quota_hold_recovers_once_on_next_et_day(tmp_path, monkeypatch):
+    clock = {
+        "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
+    }
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: clock["value"],
+    )
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(session_cost_limit_usd=2.0, daily_cost_limit_usd=1.0),
+        notifier,
+    )
+    circuit.activate_session("run-old-day", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=1.0 "
+            "WHERE run_id='run-old-day'"
+        )
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=1.0 "
+            "WHERE day='2099-01-01'"
+        )
+    circuit.enforce_current_limits("test_limit")
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["hold_scope"] == "day"
+    assert len(notifier.messages) == 1
+
+    clock["value"] = (
+        "2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59",
+    )
+    state = circuit.activate_session("run-new-day", "morning")
+    assert state["suspended"] is False
+    assert state["current_daily_cost_usd"] == 0
+    assert len(notifier.messages) == 2
+    assert notifier.messages[-1].startswith("🟢 QAMC PAID ANALYSIS REARMED")
+    with sqlite3.connect(path) as conn:
+        old_day = conn.execute(
+            "SELECT baseline_cost_usd + incremental_cost_usd FROM llm_budget_days "
+            "WHERE day='2099-01-01'"
+        ).fetchone()[0]
+        new_day = conn.execute(
+            "SELECT baseline_cost_usd + incremental_cost_usd FROM llm_budget_days "
+            "WHERE day='2099-01-02'"
+        ).fetchone()[0]
+        recoveries = conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events "
+            "WHERE event_type='quota_rearmed'"
+        ).fetchone()[0]
+    assert old_day == pytest.approx(1.0)
+    assert new_day == pytest.approx(0.0)
+    assert recoveries == 1
+    circuit.status()
+    assert len(notifier.messages) == 2
+
+
+@pytest.mark.parametrize("pending_state", [0, -1])
+def test_rollover_delivers_pending_quota_trip_before_recovery(
+    tmp_path, monkeypatch, pending_state,
+):
+    clock = {
+        "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
+    }
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: clock["value"],
+    )
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(session_cost_limit_usd=2.0, daily_cost_limit_usd=1.0),
+        notifier,
+    )
+    circuit.activate_session("run-pending-alert", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=1.0 "
+            "WHERE run_id='run-pending-alert'"
+        )
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=1.0 "
+            "WHERE day='2099-01-01'"
+        )
+    circuit.enforce_current_limits("test_limit")
+    assert len(notifier.messages) == 1
+    notifier.messages.clear()
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_quota_holds SET alert_state=?, "
+            "alert_updated_at=?",
+            (pending_state, "2000-01-01 00:00:00"),
+        )
+
+    clock["value"] = (
+        "2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59",
+    )
+    state = circuit.activate_session("run-after-pending-alert", "morning")
+
+    assert state["suspended"] is False
+    assert len(notifier.messages) == 2
+    assert notifier.messages[0].startswith("🟠 QAMC PAID ANALYSIS QUOTA HOLD")
+    assert notifier.messages[1].startswith("🟢 QAMC PAID ANALYSIS REARMED")
+    circuit.status()
+    assert len(notifier.messages) == 2
+
+
+def test_rollover_waits_for_fresh_trip_alert_lease_before_recovery(
+    tmp_path, monkeypatch,
+):
+    clock = {
+        "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
+    }
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: clock["value"],
+    )
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(session_cost_limit_usd=2.0, daily_cost_limit_usd=1.0),
+        notifier,
+    )
+    circuit.activate_session("run-fresh-lease", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=1.0 "
+            "WHERE run_id='run-fresh-lease'"
+        )
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=1.0 "
+            "WHERE day='2099-01-01'"
+        )
+    circuit.enforce_current_limits("test_limit")
+    notifier.messages.clear()
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_quota_holds SET alert_state=-1, "
+            "alert_updated_at=datetime('now')"
+        )
+
+    clock["value"] = (
+        "2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59",
+    )
+    state = circuit.activate_session("run-after-fresh-lease", "morning")
+    assert state["suspended"] is False
+    assert notifier.messages == []
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_quota_holds SET alert_updated_at='2000-01-01 00:00:00'"
+        )
+    circuit.status()
+    assert len(notifier.messages) == 2
+    assert notifier.messages[0].startswith("🟠 QAMC PAID ANALYSIS QUOTA HOLD")
+    assert notifier.messages[1].startswith("🟢 QAMC PAID ANALYSIS REARMED")
+
+
+def test_clock_regression_with_future_quota_hold_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds",
+        lambda now=None: (
+            "2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59",
+        ),
+    )
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(session_cost_limit_usd=2.0, daily_cost_limit_usd=1.0),
+        _Notifier(),
+    )
+    circuit.activate_session("run-future-hold", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=1.0 "
+            "WHERE run_id='run-future-hold'"
+        )
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=1.0 "
+            "WHERE day='2099-01-01'"
+        )
+    circuit.enforce_current_limits("test_limit")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_quota_holds SET day='2099-01-02', "
+            "scope_key='2099-01-02'"
+        )
+
+    state = circuit.activate_session("run-clock-regressed", "morning")
+
+    assert state["suspended"] is True
+    assert state["suspension_class"] == "hard"
+    assert state["trigger_code"] == "non_monotonic_quota_hold_day"
+    assert state["requires_operator_reset"] is True
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT active FROM llm_quota_holds"
+        ).fetchone()[0] == 1
+
+
+def test_clock_regression_with_future_reservation_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds",
+        lambda now=None: (
+            "2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59",
+        ),
+    )
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-future-reservation", "morning")
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_reservations SET day='2099-01-02', "
+            "expires_at='2000-01-01 00:00:00' "
+            "WHERE reservation_id=?",
+            (reservation.reservation_id,),
+        )
+
+    state = circuit.activate_session("run-clock-regressed", "morning")
+
+    assert state["suspended"] is True
+    assert state["suspension_class"] == "hard"
+    assert state["trigger_code"] == "non_monotonic_reservation_day"
+    assert state["requires_operator_reset"] is True
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT status FROM llm_budget_reservations WHERE reservation_id=?",
+            (reservation.reservation_id,),
+        ).fetchone()[0] == "active"
+
+
+def test_hard_latch_survives_et_rollover_until_audited_reset(tmp_path, monkeypatch):
+    clock = {
+        "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
+    }
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: clock["value"],
+    )
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), notifier)
+    circuit.activate_session("run-hard", "morning")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.begin_call(
+            agent_name="portfolio_manager", model="unknown/unpriced-model",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert circuit.status()["suspension_class"] == "hard"
+    assert circuit.status()["requires_operator_reset"] is True
+
+    clock["value"] = (
+        "2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59",
+    )
+    state = circuit.activate_session("run-next-day", "morning")
+    assert state["suspended"] is True
+    assert state["trigger_code"] == "unknown_model_price"
+    assert len(notifier.messages) == 1
+    circuit.reset("operator verified and pinned the missing model price")
+    assert circuit.status()["suspended"] is False
+
+
+def test_old_daily_latch_migrates_without_early_clear_or_duplicate_alert(
+    tmp_path, monkeypatch,
+):
+    clock = {
+        "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
+    }
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: clock["value"],
+    )
+    path = _db_path(tmp_path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE llm_quota_holds")
+        conn.execute(
+            "INSERT INTO llm_budget_days(day, baseline_cost_usd) "
+            "VALUES ('2099-01-01', 4.211481) "
+            "ON CONFLICT(day) DO UPDATE SET baseline_cost_usd=excluded.baseline_cost_usd"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO llm_budget_sessions(run_id, day, mode) "
+            "VALUES ('deployment-legacy', '2099-01-01', 'operator')"
+        )
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended=1, "
+            "trigger_code='daily_cost_limit', "
+            "trigger_detail='daily LLM spend $4.2115 reached safe limit $1.50', "
+            "run_id='deployment-legacy', mode='operator', agent_name='session_start', "
+            "daily_cost_usd=4.211481, session_limit_usd=.90, daily_limit_usd=1.50, "
+            "suspended_at='2099-01-01 18:11:04', alert_state=1"
+        )
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(daily_cost_limit_usd=1.50), notifier)
+    circuit.activate_session("same-day-check", "morning")
+    state = circuit.status()
+    assert state["suspended"] is True
+    assert state["suspension_class"] == "quota"
+    assert state["daily_cost_usd"] == pytest.approx(4.211481)
+    assert notifier.messages == []
+
+    clock["value"] = (
+        "2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59",
+    )
+    circuit.activate_session("next-day-check", "morning")
+    assert circuit.status()["suspended"] is False
+    assert len(notifier.messages) == 1
+    assert "REARMED" in notifier.messages[0]
+
+
+def test_concurrent_rollover_has_one_recovery_event_and_alert(tmp_path, monkeypatch):
+    clock = {
+        "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
+    }
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: clock["value"],
+    )
+    path = _db_path(tmp_path)
+    first_notifier = _Notifier()
+    cfg = _config(session_cost_limit_usd=2.0, daily_cost_limit_usd=1.0)
+    first = LLMCostCircuitBreaker(path, cfg, first_notifier)
+    first.activate_session("run-old", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=1.0 WHERE run_id='run-old'"
+        )
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=1.0 "
+            "WHERE day='2099-01-01'"
+        )
+    first.enforce_current_limits("test_limit")
+    second_notifier = _Notifier()
+    second = LLMCostCircuitBreaker(path, cfg, second_notifier)
+
+    clock["value"] = (
+        "2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59",
+    )
+    barrier = threading.Barrier(2)
+    states: list[bool] = []
+
+    def activate(circuit, run_id):
+        barrier.wait()
+        states.append(bool(circuit.activate_session(run_id, "morning")["suspended"]))
+
+    threads = [
+        threading.Thread(target=activate, args=(first, "run-new-a")),
+        threading.Thread(target=activate, args=(second, "run-new-b")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert states == [False, False]
+    recovery_messages = [
+        message for message in first_notifier.messages + second_notifier.messages
+        if "PAID ANALYSIS REARMED" in message
+    ]
+    assert len(recovery_messages) == 1
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='quota_rearmed'"
+        ).fetchone()[0] == 1
+
+
+def test_legacy_quota_without_day_provenance_remains_hard(tmp_path):
+    path = _db_path(tmp_path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE llm_quota_holds")
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended=1, "
+            "trigger_code='daily_cost_limit', trigger_detail='legacy ambiguous hold', "
+            "run_id='missing-run', mode='operator', agent_name='migration', "
+            "daily_cost_usd=2, daily_limit_usd=1.5, alert_state=1"
+        )
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    state = circuit.status()
+    assert state["suspended"] is True
+    assert state["available"] is False
+    assert state["trigger_code"] == "circuit_infrastructure_unavailable"
+    assert Path(f"{path}.llm-circuit-unavailable").exists()

@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED**
+Status: **ET-DAY QUOTA HOLD | NON-LLM SAFETY ACTIVE | SCOPED AUTO-RECOVERY APPROVED**
 
 ## Current integration truth
 
@@ -13,7 +13,9 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
   deployed intraday suite passed 24 tests.
 - Production seeded **$4.211481** of existing ET-day spend and latched the
   **$1.50** daily limit with `alert_state=1`. The required Telegram shutdown
-  alert was delivered. Do not reset while the unchanged ledger is over limit.
+  alert was delivered. Do not reset or erase the unchanged ledger. The accepted
+  recovery model treats this exact spend limit as an ET-day quota hold, while
+  accounting/price/unknown-cost failures remain hard operator-reset latches.
 - A post-deployment midday run reconciled both broker-protected long positions,
   then returned `paid_analysis_suspended` before any model request. Agent-log
   ID 189 and ET-day spend remained unchanged.
@@ -262,7 +264,9 @@ Do not interrupt natural validation for these unless current evidence shows they
 **Active work:** natural Alpaca Paper observation continues. The Research Desk
 tranche and deterministic SEC source/admission presentation are complete. Paid
 Smart Money synthesis and natural transient-candidate evidence remain pending
-because paid research is deliberately suspended; this is not a blocker for the
-completed UI/editorial work. Do not reset the circuit until it is reviewed and
-reset with an auditable reason. Deterministic safety observation continues. No
-trade may be forced or manufactured to create acceptance evidence.
+because the current ET-day quota is exhausted; this is not a blocker for the
+completed UI/editorial work. Do not manually reset the quota hold. After the ET
+date advances, exact accounting and reservation checks must pass before the
+system automatically rearms and reports recovery through Telegram/health.
+Deterministic safety observation continues. No trade may be forced or
+manufactured to create acceptance evidence.

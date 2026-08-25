@@ -121,6 +121,7 @@ def get_health() -> HealthResponse:
         recent_pm_status = (llm_health or {}).get("recent_pm_status")
         circuit_suspended = bool((llm_health or {}).get("suspended"))
         circuit_available = bool((llm_health or {}).get("available"))
+        scoped_quota_holds = bool((llm_health or {}).get("active_quota_holds"))
 
         def _failed_status(value) -> bool:
             if not value:
@@ -148,6 +149,8 @@ def get_health() -> HealthResponse:
             decision_path_status = "degraded_cost_circuit_unavailable"
         elif circuit_suspended:
             decision_path_status = "paid_analysis_suspended"
+        elif scoped_quota_holds:
+            decision_path_status = "paid_analysis_scoped_quota_hold"
         elif failed_agents:
             decision_path_status = "degraded_recent_agent_failure:" + ",".join(failed_agents)
         else:

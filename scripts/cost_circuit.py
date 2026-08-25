@@ -3,9 +3,11 @@
 
 This utility never calls a model. ``check`` is suitable for deployment: it
 seeds existing same-day spend, latches if a limit is already reached, and
-sends the one-time Telegram shutdown alert. ``reset`` requires an auditable
-operator reason and does not erase spend, so resetting while still above a
-limit will immediately re-latch on the next check.
+sends the one-time Telegram hold or shutdown alert. Expected session/day quota
+holds cannot be manually reset: sessions remain isolated and ET-day holds
+rearm automatically after exact rollover checks. ``reset`` is reserved for a
+hard accounting/infrastructure latch, requires an auditable operator reason,
+and never erases settled spend.
 """
 
 from __future__ import annotations
