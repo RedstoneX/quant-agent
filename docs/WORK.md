@@ -6,9 +6,9 @@ Status: **UBUNTU ENGINEERING AUTONOMY | QAMC RUNTIME ISOLATION | OPERATOR MERGE/
 
 - Production has been reported and verified at `a6758f935910c5cf380cc6a7acedc5f3b78f6366` after PR #69 deployment.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
+- The chart live-price/current-price truth issue was already fixed earlier by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21). Current `PriceChartPanel` keeps live quote data separate from historical bars, hides the historical series' default last-value line, and renders explicit `LIVE` / `PREV CLOSE` lines. It is not an outstanding task.
 - Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
-- PR #69 did not change `PriceChartPanel`; therefore the previously operator-observed live-price versus chart-right-edge mismatch is **not considered resolved merely because the timeframe/IEX fix is live**.
 
 ## Stabilization account model — HARD RULE
 
@@ -95,27 +95,11 @@ After merge, **STOP again**. Production remains untouched until the operator exp
 
 ## Current authorized next work
 
-### 1. Finish this governance repair
-
-Update the active contract to the two-account stabilization model and retain the explicit external merge + production gates. This PR is governance/docs only and must stop for operator review before merge.
-
-### 2. Establish the `ubuntu` engineering checkout when the next engineering task begins
+### 1. Establish/use the `ubuntu` engineering checkout when the next engineering task begins
 
 Do not migrate production or copy runtime secrets. Create/use a normal `ubuntu`-owned development checkout outside `/home/qamc` and install only the development tooling required by the task. `dev` is no longer a prerequisite.
 
-### 3. Live-price/chart-right-edge mismatch — engineering only until approved
-
-If the mismatch remains reproducible:
-
-- investigate and fix it from `ubuntu` engineering only;
-- preserve separate semantics of historical bars, current-session quote, previous close and live price;
-- use the existing Lightweight Charts/Tremor stack;
-- verify visually in the private engineering browser;
-- push the branch and stop at the external review gate.
-
-Do **not** deploy that fix automatically.
-
-### 4. Continue natural trading validation
+### 2. Continue natural trading validation
 
 Observe normal Alpaca Paper sessions without manufacturing trades. The required natural evidence chain remains:
 
@@ -123,9 +107,9 @@ Observe normal Alpaca Paper sessions without manufacturing trades. The required 
 
 Success is not “more trades.” When QAMC does not trade, the reason must be specific and defensible.
 
-## Flagged separately — not bundled into dashboard workflow work
+### 3. Trading-critical `get_latest_price` follow-up — separate authorization required
 
-`src/execution/broker.py::get_latest_price` builds latest-trade/latest-quote requests without an explicit Alpaca feed and silently degrades to `None` on failure. Because that path is trading-critical, it requires separate operator/ChatGPT authorization and production investigation before code changes.
+`src/execution/broker.py::get_latest_price` builds latest-trade/latest-quote requests without an explicit Alpaca feed and silently degrades to `None` on failure. Because that path is trading-critical, investigate it only after separate operator/ChatGPT authorization; do not bundle it into dashboard or workflow work.
 
 Lower-priority known issues remain news-narrative factual drift and `actual_provider` attribution oddity; do not interrupt the current task for them unless evidence shows they materially distort validation.
 
