@@ -113,9 +113,11 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 - OpenRouter remains the model-provider path.
 - Current accepted routing uses `google/gemini-2.5-flash-lite` and `qwen/qwen3-235b-a22b-2507` according to the per-seat policy.
 
-## Known separate issue requiring explicit authorization
+## Market-data feed finding — resolved, not an active defect
 
-`src/execution/broker.py::get_latest_price` builds latest-trade/latest-quote requests without an explicit Alpaca feed and silently degrades to `None` on failure. Because that path is trading-critical, it requires a separate operator/ChatGPT-authorized production investigation before any code change.
+The previously flagged concern that `src/execution/broker.py::get_latest_price` omits an explicit Alpaca feed is **not an established defect**. Alpaca's current latest-trade/latest-quote behavior defaults to the best feed available to the subscription; for this account that is IEX. Independent probes confirmed current IEX latest trade/quote data succeeds while explicitly requesting SIP is rejected as unsubscribed, which is expected.
+
+`get_latest_price` returning `None` on a genuine market-data exception is an intentional fail-closed/degradation contract and is covered by existing tests. Do not change this trading-critical method merely because `feed` is omitted. Reopen it only on concrete production evidence of incorrect behavior.
 
 ## Not authorized
 
@@ -138,6 +140,6 @@ Current bounded activities:
 
 1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
 2. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
-3. **Trading-critical market-data follow-up:** investigate `get_latest_price` only when separately authorized; do not bundle it into dashboard work.
+3. **Evidence-driven follow-up only:** do not reopen dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
-See `docs/WORK.md` for the active execution contract.
+No active engineering blocker is currently established. See `docs/WORK.md` for the active execution contract.
