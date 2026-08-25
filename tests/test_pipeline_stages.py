@@ -740,6 +740,46 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
     assert "exceed max 20%" in gate_kwargs["full_response"]
 
 
+def test_risk_parse_failure_is_agent_failure_not_rejection():
+    """No validated RiskVerdict means the agent failed; it did not veto."""
+    from src.agents.base import AgentResult
+    from src.models import PortfolioDecision
+
+    decisions = [_buy("AAPL", 10)]
+    pipeline = _risk_stage_pipeline(decisions)
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        return_value=(decisions, [], []),
+    )
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (
+        None,
+        AgentResult(
+            raw_text="not valid json", tokens_used=10, model="test-model",
+            user_message="risk input",
+        ),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.decision_id = f"{ctx.run_id}-dec-failed"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+    )
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result == {
+        "status": "agent_failure", "orders": [],
+        "reason": "risk_manager_unparseable_output",
+    }
+    risk_log = pipeline.db.insert_agent_log.call_args.kwargs
+    assert risk_log["status"] == "agent_failure"
+    evidence = pipeline.db.insert_specialist_evidence.call_args.kwargs
+    assert evidence["kind"] == "agent_failure"
+
+
 def test_decision_stage_delegation_returns_none():
     """Method contract preserved: _decision_stage mutates ctx, returns None."""
     from src.pipeline import TradingPipeline

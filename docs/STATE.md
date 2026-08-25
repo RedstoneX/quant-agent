@@ -85,11 +85,22 @@ Accepted behavior includes:
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 
-## Trading-utility recovery — natural validation still required
+## Trading-utility recovery — mechanical recovery awaiting promotion
 
-The evidenced mechanical blockers between opportunity discovery and execution have been corrected and the accepted machinery is present in production.
+Production forensics for sessions 2026-08-18 through 2026-08-24 disproved the
+prior claim that all mechanical blockers between opportunity discovery and
+execution were corrected. Verified current-code gaps included batch snapshot
+failure from Alpaca-incompatible class-share symbols, unmarketable BUY limits
+coupled to a 15-second cancel guard, Risk parse failures labeled as rejection,
+zero-order runs labeled executed, and SGOV funding sized before entry viability
+with whole-order drops on partial funding.
 
-Acceptance still requires natural Alpaca Paper sessions demonstrating the real chain:
+The Priority 1 engineering tranche corrects those mechanics on a dedicated
+review branch. It is not accepted in production until its PR is externally
+reviewed, explicitly merged, and separately authorized for deployment.
+
+After promotion, acceptance still requires natural Alpaca Paper sessions
+demonstrating the real chain:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
@@ -140,6 +151,9 @@ Current bounded activities:
 
 1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
 2. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
-3. **Evidence-driven follow-up only:** do not reopen dashboard or trading-critical feed defects from historical notes alone; require current evidence.
+3. **Mechanical recovery:** review and promote the Priority 1 backend recovery before treating opportunity→execution mechanics as corrected.
+4. **Evidence-driven follow-up only:** do not reopen dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
-No active engineering blocker is currently established. See `docs/WORK.md` for the active execution contract.
+Priority 2 PM truthfulness/model-suitability work and Priority 3 stage
+observability remain after this mechanical tranche. See `docs/WORK.md` for the
+active execution contract.

@@ -5759,6 +5759,18 @@ class TradingPipeline:
                     "stop_coverage_gaps": coverage_gaps,
                     "execution_skips": list(ctx.execution_skips),
                 }
+            if not real_orders:
+                logger.info(
+                    "=== Morning run complete: no equity order submitted "
+                    "(not marking executed) ===",
+                )
+                return {
+                    "status": "no_orders", "orders": orders,
+                    "run_id": run_id,
+                    "data_status": dict(ctx.data_status),
+                    "stop_coverage_gaps": coverage_gaps,
+                    "execution_skips": list(ctx.execution_skips),
+                }
             logger.info("=== Morning run complete: %d orders executed ===", len(orders))
             return {
                 "status": "executed", "orders": orders, "run_id": run_id,

@@ -214,6 +214,18 @@ def test_run_morning_without_checkpoint_runs_full_pipeline(monkeypatch, tmp_path
     assert json.loads(dc.checkpoint_path("morning").read_text())["consumed"] is True
 
 
+def test_run_morning_with_no_submitted_order_is_not_executed(monkeypatch, tmp_path):
+    _point_dir_at(monkeypatch, tmp_path)
+    dc.write(_ctx_with_plan())
+    p = _resume_pipeline()
+    p.execution_stage.run.return_value = []
+
+    result = p.run_morning()
+
+    assert result["status"] == "no_orders"
+    assert result["orders"] == []
+
+
 # ---------- degradation contract ----------
 #
 # The module docstring states it outright: "Every function is best-effort:

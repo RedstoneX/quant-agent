@@ -106,6 +106,101 @@ def test_submit_market_order(mock_tc_cls):
     order = broker.submit_order(symbol="SPY", qty=10, side="buy")
     assert order["id"] == "order-123"
     assert order["status"] == "accepted"
+    assert order["symbol"] == "SPY"
+    assert mock_client.submit_order.call_args.args[0].symbol == "SPY"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(mock_tc_cls):
+    """BRK-B stays canonical inside QAMC while both Alpaca orders use BRK.B."""
+    from types import SimpleNamespace
+    from alpaca.trading.requests import LimitOrderRequest, StopLimitOrderRequest
+
+    mock_client = MagicMock()
+    mock_client.submit_order.side_effect = [
+        SimpleNamespace(id="entry-1", status="accepted", symbol="BRK.B"),
+        SimpleNamespace(id="stop-1", status="new", symbol="BRK.B"),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    entry = broker.submit_order(
+        symbol="BRK-B", qty=2, side="buy", limit_price=500.0,
+        stop_loss_price=475.0, reference_price=500.0,
+    )
+    entry_req = mock_client.submit_order.call_args_list[0].args[0]
+    assert isinstance(entry_req, LimitOrderRequest)
+    assert entry_req.symbol == "BRK.B"
+    assert entry["symbol"] == "BRK-B"
+    assert entry["pending_stop_price"] == 475.0
+
+    broker.wait_for_order_terminal = MagicMock(return_value="filled")
+    broker.get_order_fill_info = MagicMock(return_value={
+        "status": "filled", "filled_qty": 2.0, "filled_avg_price": 500.0,
+    })
+    protection = broker.place_entry_protection(
+        "BRK-B", entry["id"], entry["pending_stop_price"], requested_qty=2,
+    )
+    stop_req = mock_client.submit_order.call_args_list[1].args[0]
+    assert isinstance(stop_req, StopLimitOrderRequest)
+    assert stop_req.symbol == "BRK.B"
+    assert protection["symbol"] == "BRK-B"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_class_share_positions_cancels_and_reconciliation_preserve_internal_symbol(mock_tc_cls):
+    """Broker reads/filters translate both ways after a BRK-B entry."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    mock_client.get_all_positions.return_value = [
+        _make_mock_position("BRK.B", 2, 500.0, 505.0, 1010.0, 10.0),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    positions = broker.get_positions()
+    assert positions[0].symbol == "BRK-B"
+
+    open_buy = SimpleNamespace(id="entry-1", side="buy", symbol="BRK.B")
+    mock_client.get_orders.return_value = [open_buy]
+    assert broker.cancel_open_entry_orders("BRK-B") == 1
+    cancel_filter = mock_client.get_orders.call_args.kwargs["filter"]
+    assert cancel_filter.symbols == ["BRK.B"]
+    mock_client.cancel_order_by_id.assert_called_once_with("entry-1")
+
+    recent = SimpleNamespace(
+        id="entry-1", side="buy", symbol="BRK.B", qty="2", status="filled",
+    )
+    mock_client.get_orders.return_value = [recent]
+    rows = broker.list_recent_orders(
+        "BRK-B", "buy", datetime.now(timezone.utc),
+    )
+    reconcile_filter = mock_client.get_orders.call_args.kwargs["filter"]
+    assert reconcile_filter.symbols == ["BRK.B"]
+    assert rows == [{
+        "id": "entry-1", "symbol": "BRK-B", "side": "buy",
+        "qty": 2.0, "status": "filled",
+    }]
+
+    live_stop = SimpleNamespace(
+        id="stop-1", order_type="stop_limit", side="sell", symbol="BRK.B",
+        qty="2", stop_price="475", limit_price="460.75",
+    )
+    mock_client.get_orders.return_value = [live_stop]
+    ok, specs = broker.snapshot_protective_stops("BRK-B")
+    stop_filter = mock_client.get_orders.call_args.kwargs["filter"]
+    assert stop_filter.symbols == ["BRK.B"]
+    assert ok is True and specs[0]["id"] == "stop-1"
+    assert broker.cancel_snapshotted_stops("BRK-B", specs) is True
+    assert mock_client.cancel_order_by_id.call_args_list[-1].args == ("stop-1",)
+
+    mock_client.close_position.return_value = SimpleNamespace(
+        id="close-1", status="accepted",
+    )
+    broker.close_position("BRK-B")
+    mock_client.close_position.assert_called_once_with("BRK.B")
 
 
 @patch("src.execution.broker.TradingClient")
@@ -1666,6 +1761,9 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
     assert float(req.qty) == 7.0                    # actual fill, not the 10 requested
     assert float(req.stop_price) == 90.0
     assert float(req.limit_price) == 87.3           # 3% buffer below the stop
+    broker.wait_for_order_terminal.assert_called_once_with(
+        "e1", timeout_seconds=30.0,
+    )
 
 
 @patch("src.execution.broker.TradingClient")
