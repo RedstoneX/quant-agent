@@ -5,8 +5,8 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
 ## Current integration truth
 
 - Production is deployed and verified at
-  `d645ef2d61d8ba4c06dd18c40b0ae44334462cec`; rollback SHA is
-  `8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`.
+  `9c24f78ec99dbcafa62413858aff7e735ae10dbd`; rollback SHA is
+  `d645ef2d61d8ba4c06dd18c40b0ae44334462cec`.
 - PR #81 deployed the persistent mandatory cost circuit and PM/pipeline
   remediation. PR #83 fixed the intraday lock context manager that the first
   natural suspended tick exposed. The full suite passed 2,110 tests and the
@@ -31,6 +31,16 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
 - PR #79 is merged and deployed. The Research Desk passed production desktop
   and iPad verification against real stored QAMC data; the API remained
   read-only and all seven timers remained intact.
+- PR #87 is merged and deployed. It finishes the Research Desk editorial and
+  visual acceptance: evidence-backed change/tension/why-now, restrained desk
+  annotation and semantic seat language, technical setup context, run-local
+  PM/Risk/gate/execution deltas, canonical SEC findings and standalone
+  run-scoped admissions, complete after-bell parsing, persistent Dockview
+  maximize behavior, and deliberately composed iPad/empty/stale/partial states.
+  Production desktop and iPad inspection passed with the canonical stored data,
+  no console/request errors, no horizontal overflow, no micro-text and no raw
+  failure/telemetry copy. The API remains read-only and all seven timers remain
+  intact.
 - PR #85 replaced the blocked Bargo adapter with first-party SEC Form 4 and
   enabled the Smart Money seat. Its source-only production preflight processed
   25 official filings, cached 13 exact P/S observations and retained five
@@ -106,7 +116,13 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
 
-### Research Intelligence Desk + Smart Money Analyst — DEPLOYED / SEC SOURCE COMMISSIONED
+### Research Intelligence Desk + Smart Money Analyst — COMPLETE / DEPLOYED / SEC SOURCE COMMISSIONED
+
+The accepted Research Intelligence Desk tranche is complete in production at
+PR #87. The acceptance criteria below remain the product contract; they are no
+longer an unfinished implementation queue. Natural market validation continues
+separately and does not reopen the completed read-side tranche without new
+production evidence.
 
 Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
 
@@ -243,9 +259,10 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active work:** natural Alpaca Paper observation continues. The SEC source is
-commissioned, but paid Smart Money synthesis and natural transient-candidate
-evidence remain pending because paid research is deliberately suspended. Do
-not reset the circuit until it is reviewed and reset with an auditable reason;
-deterministic safety observation continues. No trade may be forced or
-manufactured to create acceptance evidence.
+**Active work:** natural Alpaca Paper observation continues. The Research Desk
+tranche and deterministic SEC source/admission presentation are complete. Paid
+Smart Money synthesis and natural transient-candidate evidence remain pending
+because paid research is deliberately suspended; this is not a blocker for the
+completed UI/editorial work. Do not reset the circuit until it is reviewed and
+reset with an auditable reason. Deterministic safety observation continues. No
+trade may be forced or manufactured to create acceptance evidence.
