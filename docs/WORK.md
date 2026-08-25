@@ -1,93 +1,121 @@
 # QAMC Current Work
 
-Status: **DEV AUTONOMY | OPERATOR MERGE/PRODUCTION GATES | CORE RECOVERY IN NATURAL PAPER VALIDATION**
+Status: **UBUNTU ENGINEERING AUTONOMY | QAMC RUNTIME ISOLATION | OPERATOR MERGE/PRODUCTION GATES | CORE RECOVERY IN NATURAL PAPER VALIDATION**
 
 ## Current integration truth
 
 - Production has been reported and verified at `a6758f935910c5cf380cc6a7acedc5f3b78f6366` after PR #69 deployment.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
-- Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and the governed local production override `config/settings.yaml: intraday_scan.enabled: true` was preserved.
+- Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
-- The previous “standing fast-lane” wording incorrectly allowed production promotion to be inferred after merge. That authorization is revoked by the operator-promotion rule below.
-- PR #69 did not change `PriceChartPanel`; therefore the previously operator-observed live-price versus chart-right-edge mismatch is **not considered resolved merely because the timeframe/IEX fix is live**. Treat that as a separate DEV issue if still reproducible.
+- PR #69 did not change `PriceChartPanel`; therefore the previously operator-observed live-price versus chart-right-edge mismatch is **not considered resolved merely because the timeframe/IEX fix is live**.
 
-## Product / architecture principle
+## Stabilization account model — HARD RULE
 
-QAMC is one autonomous Alpaca trading system. Alpaca Paper is the currently authorized execution environment, not a separate trading architecture.
+Use two active accounts until QAMC is stable:
 
-Trading-critical path remains:
+### `ubuntu` — engineering/operator
 
-**discovery → Specialists → Portfolio Manager → AI Risk Manager → deterministic gate → funding → broker execution → position/exit management → reflection**.
+Use `ubuntu` for:
 
-Mission Control, Journal, search and Telegram are observational/read-side surfaces and must not become authoritative trading state or broker-write control paths.
+- Claude/Codex sessions;
+- engineering checkout/worktrees outside `/home/qamc`;
+- Git/GitHub;
+- package and development-tool installation;
+- targeted tests/builds;
+- private Tailscale Vite preview and browser automation;
+- Docker/sudo work required for engineering or an explicitly approved production operation;
+- deployment orchestration after the production gate opens.
+
+### `qamc` — runtime only
+
+`qamc` owns:
+
+- `/home/qamc/quant-agent` production checkout;
+- runtime `.env` and OneCLI credential wiring;
+- `qamc` user services/timers;
+- QAMC paper execution.
+
+Do not run Claude/Codex as `qamc` and do not turn it into a general development account.
+
+### `dev` — parked
+
+Do not use `dev` in the normal workflow. Do not grant it sudo, Docker or broader runtime access. Keep it intact for possible later reintroduction after stabilization.
+
+The purpose is to eliminate hours of artificial account friction without collapsing the engineering/runtime boundary.
 
 ## Standing delivery workflow — HARD RULE
 
-### DEV is autonomous
+### Engineering is autonomous
 
-For already-authorized work, Claude/Codex may autonomously:
+For already-authorized work, Claude/Codex may autonomously from `ubuntu`:
 
-- work as `dev` in the development checkout/worktree;
 - diagnose, implement and refactor inside accepted architecture;
+- create/use an `ubuntu`-owned engineering checkout/worktree;
+- install ordinary development tooling when required;
 - run the shortest sufficient tests/builds;
-- start/stop the existing private Tailscale Vite DEV preview;
-- use browser automation/screenshots against DEV;
+- start/stop the existing private Tailscale Vite preview;
+- use browser automation/screenshots;
 - commit and push a dedicated branch/PR.
 
-No separate operator approval is needed for those DEV actions.
+No separate operator approval is needed for those engineering actions.
 
 ### External review/merge gate
 
-After the branch/PR is pushed, **STOP**.
+After the implementation branch/PR is pushed, **STOP**.
 
 - ChatGPT/operator reviews the actual diff and verification evidence.
 - Claude does not merge its own implementation PR.
-- Merge requires explicit operator authorization for that merge, unless the operator has explicitly delegated that exact merge to ChatGPT in the current task.
+- Merge requires explicit operator authorization unless the operator explicitly delegated that exact merge to ChatGPT in the current task.
 
 ### Production gate
 
 After merge, **STOP again**. Production remains untouched until the operator explicitly authorizes production deployment.
 
 - Approval to merge is not approval to deploy.
-- “Proceed”, “continue”, “fix it”, “finish this”, a green build, or a merged PR does not imply production authorization.
+- “Proceed”, “continue”, “fix it”, “finish this”, green tests, or a merged PR do not imply production authorization.
 - A single instruction may authorize merge + production only if it clearly says both.
-- Production deployment/verification must use `ubuntu` operating on the existing `qamc` production checkout and account boundaries.
-- Browser verification against production occurs only after that production gate has been explicitly opened.
+- Before this gate opens, `ubuntu` privilege must not be used to modify `/home/qamc/quant-agent`, `qamc` services/timers, runtime credentials, or production configuration.
+- After approval, `ubuntu` performs the shortest safe `sudo -u qamc` deploy/verify path directly.
+- Production browser verification occurs after the production gate opens and deployment occurs.
 
 ## Friction-reduction rules
 
-The goal is **less operator handling without weakening the production gate**:
-
-1. **No account shuttling during development.** Normal implementation stays under `dev`; do not ask the operator to bounce between `dev`, `qamc`, and `ubuntu` for information that can wait until the one privileged production step.
-2. **One privileged production intervention.** After explicit production approval, bundle production preflight/deploy/restart/acceptance into the shortest safe `ubuntu` operation instead of repeated sudo snippets.
-3. **Private DEV preview is standing-authorized.** Do not repeatedly ask whether Vite/browser verification may run in DEV.
-4. **No broad archaeology for bounded fixes.** Read only `STATE.md`, `WORK.md`, the relevant contract/code, then execute the decisive test. Do not re-read the repository or repeat commissioning unless evidence requires it.
-5. **Targeted verification first.** For a bounded dashboard/read-side fix, run the relevant tests/build/preview. Do not default to the entire repository suite unless the change surface or accepted contract justifies it.
-6. **No gratuitous parallelism.** Do not spawn multiple agents/worktrees for a small fix merely to “double check” it. Parallelize only when it materially reduces wall-clock time.
-7. **Stop on proof.** Once the requested DEV result is demonstrated and no blocker remains, stop and hand off. Do not keep re-validating the same fact.
+1. **No normal use of `dev`.** Do not make the operator or agents bounce through a deliberately restricted account.
+2. **No manual account ping-pong.** `ubuntu` orchestrates approved privileged work; `qamc` remains the runtime identity.
+3. **Private DEV preview is standing-authorized.** Do not repeatedly ask whether Vite/browser verification may run.
+4. **No broad archaeology for bounded fixes.** Read only the current state/work contract and relevant code, then execute the decisive test.
+5. **Targeted verification first.** Do not default to the entire repository suite unless the change surface actually warrants it.
+6. **No gratuitous parallelism.** Small fixes do not need several agents/worktrees rediscovering the same facts.
+7. **Stop on proof.** Once the requested engineering result is demonstrated and no blocker remains, stop and hand off.
 8. **Concise handoff.** Report only: changed / verified / preview / unresolved blocker / exact next gate.
-9. **No new security friction during this phase.** Preserve the existing `dev` / `qamc` / `ubuntu` separation and OneCLI boundaries, but do not invent additional permission layers, daemons, credential systems, proxies, or lockdown steps without separate operator approval.
-10. **Do not conflate adjacent defects.** A task is not complete merely because a related fix deployed. Each operator-observed defect needs evidence against its own acceptance condition.
+9. **No new lockdown while stabilizing.** Preserve `ubuntu` vs `qamc` runtime separation and OneCLI boundaries, but do not add new permission systems or security infrastructure without explicit approval.
+10. **Do not conflate adjacent defects.** Each operator-observed problem must pass its own acceptance condition.
+11. **One production intervention.** After production approval, bundle preflight/deploy/restart/acceptance into the shortest safe `ubuntu` operation instead of a chain of sudo snippets.
 
 ## Current authorized next work
 
 ### 1. Finish this governance repair
 
-This branch should restore the operator-controlled merge/production gates while keeping the useful DEV-autonomy and low-friction rules above.
+Update the active contract to the two-account stabilization model and retain the explicit external merge + production gates. This PR is governance/docs only and must stop for operator review before merge.
 
-### 2. Live-price/chart-right-edge mismatch — DEV only until approved
+### 2. Establish the `ubuntu` engineering checkout when the next engineering task begins
+
+Do not migrate production or copy runtime secrets. Create/use a normal `ubuntu`-owned development checkout outside `/home/qamc` and install only the development tooling required by the task. `dev` is no longer a prerequisite.
+
+### 3. Live-price/chart-right-edge mismatch — engineering only until approved
 
 If the mismatch remains reproducible:
 
-- investigate and fix it only in DEV;
-- preserve the separate semantics of historical bars, current-session quote, previous close, and live price;
+- investigate and fix it from `ubuntu` engineering only;
+- preserve separate semantics of historical bars, current-session quote, previous close and live price;
 - use the existing Lightweight Charts/Tremor stack;
-- verify visually in the private DEV browser;
+- verify visually in the private engineering browser;
 - push the branch and stop at the external review gate.
 
 Do **not** deploy that fix automatically.
 
-### 3. Continue natural trading validation
+### 4. Continue natural trading validation
 
 Observe normal Alpaca Paper sessions without manufacturing trades. The required natural evidence chain remains:
 
@@ -109,6 +137,7 @@ Lower-priority known issues remain news-narrative factual drift and `actual_prov
 - Do not force/manufacture trades or weaken safeguards to increase activity.
 - Do not create paper-only trading semantics.
 - No new daemon/service/database/proxy/security/credential/orchestration architecture without separate explicit approval.
-- Preserve `dev` / `qamc` / `ubuntu` isolation and OneCLI secret handling.
+- Keep `qamc` runtime-only and preserve OneCLI secret handling.
+- Do not expand `dev` privileges during stabilization.
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
