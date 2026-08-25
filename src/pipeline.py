@@ -7164,25 +7164,30 @@ class TradingPipeline:
 
         lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
         fh = None
+        acquired = False
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(lock_path, "w")
             try:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
+                acquired = True
+            except BlockingIOError:
                 logger.info(
                     "Intraday scan: another process already holds the scan "
                     "lock — skipping this tick (no concurrent position sizing)",
                 )
-                yield False
-                return
-            yield True
         except Exception as e:  # noqa: BLE001 — unknowable lock state must not scan
             logger.warning(
                 "Intraday scan: could not establish the process lock (%s) — "
                 "skipping this tick (fail-closed)", e,
             )
-            yield False
+        try:
+            # Keep the yield outside the acquisition exception handler.  An
+            # exception raised by the protected scan body is injected here by
+            # contextlib and must propagate to run_intra_check (not be mistaken
+            # for a lock failure and replaced by "generator didn't stop after
+            # throw()").
+            yield acquired
         finally:
             if fh is not None:
                 try:
