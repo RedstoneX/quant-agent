@@ -83,7 +83,7 @@ Accepted behavior includes:
 - intraday OHLCV timestamps are preserved so execution markers can align to relevant candles;
 - stale/degraded read-side data must be identified rather than silently represented as current.
 
-PR #69 solved the intraday IEX entitlement/data-path defect. It did **not** modify `PriceChartPanel`, so the previously operator-observed live-price versus chart-right-edge mismatch is not considered resolved solely by that deployment. If still reproducible, it remains a separate engineering-first dashboard defect subject to the promotion gates above.
+The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 
 ## Trading-utility recovery — natural validation still required
 
@@ -136,8 +136,8 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 
 Current bounded activities:
 
-1. **Workflow repair:** finalize the two-account stabilization model and explicit merge/production gates.
-2. **Dashboard:** if the live-price/chart-right-edge mismatch remains reproducible, fix and verify it from `ubuntu` engineering only, then stop at the external gate.
-3. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
+1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
+2. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
+3. **Trading-critical market-data follow-up:** investigate `get_latest_price` only when separately authorized; do not bundle it into dashboard work.
 
 See `docs/WORK.md` for the active execution contract.
