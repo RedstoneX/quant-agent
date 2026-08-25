@@ -29,12 +29,13 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`47ace428c4a06f4a5175f71a57a89df706202500`
+`8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`
 
-This is GitHub `main` after PR #81. It retains the Research Intelligence Desk
+This is GitHub `main` after PR #83. It retains the Research Intelligence Desk
 and disabled Smart Money integration while adding the mandatory paid-analysis
-cost circuit and the PM/pipeline failure remediation. The recorded rollback
-SHA is `ac30dc374d60d59bec37fa13bee9ce5956c449c8`.
+cost circuit and the PM/pipeline failure remediation. PR #83 also preserves the
+structured suspension result when the intraday process-lock body raises. The
+recorded rollback SHA is `47ace428c4a06f4a5175f71a57a89df706202500`.
 
 Production verification on 2026-08-25 established:
 
@@ -46,10 +47,20 @@ Production verification on 2026-08-25 established:
 - the first post-deployment midday run reconciled all two broker-protected long
   positions before returning `paid_analysis_suspended`; agent-log ID **189**
   and ET-day spend remained unchanged;
+- the 18:30 UTC natural intraday tick again reconciled both broker-protected
+  longs and blocked before the Tech request with zero incremental spend. It
+  exposed a context-manager observability bug that masked the structured
+  suspension with `generator didn't stop after throw()`; PR #83 corrected that
+  control flow, added exact propagation/release/no-agent-call regressions and
+  was deployed without resetting the circuit;
 - all seven existing timers are active; non-LLM safety, reconciliation, close,
   P&L and read-only API work remain available while model calls are blocked;
-- the complete merged hermetic suite passed **2,108 tests**, including
+- the complete merged hermetic suite passed **2,110 tests**, including
   adversarial accounting corruption, reset-race and cross-process cases;
+- the deployed intraday regression suite passed **24 tests**, `/health`
+  remained intentionally degraded, SQLite `quick_check` remained `ok`, the
+  circuit remained latched, agent-log ID remained **189** and incremental
+  post-deployment spend remained **$0.00**;
 - `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
   price requests were accepted (the 5m response was naturally empty before
   the Paper market session; the other three returned bars);
