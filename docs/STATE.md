@@ -8,13 +8,22 @@ This file records what is accepted and true **now**. Git history preserves imple
 
 - **QAMC / Mission Control** is the whole product/system. **Dashboard** is the browser/iPad read-side UI.
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission is not authorized.
-- Paper vs live is an execution-environment boundary, not a separate trading architecture. Trading-critical reasoning, risk, execution, position management and journaling remain environment-neutral; genuine broker differences stay at the broker/configuration boundary.
+- Paper vs live is an execution-environment boundary, not a separate trading architecture.
 - Decision chain remains: **Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker**.
 - Deterministic Python and broker protections remain final safety authority; uncertainty fails closed.
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
-- Production runtime is owned by `qamc`; administration/recovery by `ubuntu`; development by `dev`. These account boundaries remain hard.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
 - Private operator access uses Tailscale. Canonical VPS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.
+
+## Stabilization account model
+
+The prior three-account daily workflow created excessive friction. During stabilization the accepted operating model is now:
+
+- **`ubuntu` — engineering/operator account.** Claude/Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
+- **`qamc` — production runtime account only.** It owns the production checkout, runtime `.env`/OneCLI wiring, user services/timers, and QAMC execution.
+- **`dev` — parked.** It remains present but is removed from the normal workflow. Do not expand its permissions or require the operator to use it during stabilization.
+
+The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Claude/Codex must not run as `qamc`.
 
 ## Production position — current verified deployment
 
@@ -40,23 +49,23 @@ The production checkout retains exactly one intended tracked local configuration
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
-GitHub `main` may advance beyond this production SHA for documentation or later accepted work. **Production never automatically follows `main`.**
+GitHub `main` may advance beyond this production SHA. **Production never automatically follows `main`.**
 
 ## Promotion authority — accepted rule
 
-The accepted standing workflow is now:
+The standing workflow is:
 
-**DEV implementation/preview/tests → push branch/PR → external review → explicit merge approval → STOP → explicit production approval → governed `ubuntu` deploy/verify.**
+**`ubuntu` engineering implementation/preview/tests → push branch/PR → external review → explicit merge approval → STOP → explicit production approval → governed `ubuntu` → `qamc` deploy/verify.**
 
 Important consequences:
 
-- Claude/Codex may work autonomously inside DEV for already-authorized tasks, including private Vite/browser verification.
+- Claude/Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
 - Claude must not merge its own implementation PR.
 - Merge authorization and production-deployment authorization are separate gates.
 - Generic instructions such as “proceed”, “continue”, “fix it” or “finish this” never escalate work into the next environment by inference.
 - A merged PR, green tests, or an available deploy script is not production authorization.
-- Production checkout/service changes require explicit operator authorization for that promotion step.
-- Existing `dev` / `qamc` / `ubuntu` and OneCLI boundaries remain; the friction reduction comes from keeping routine work in DEV and bundling privileged production actions into one operator-approved step, not from weakening those boundaries.
+- Before explicit production approval, `ubuntu` privilege must not be used to mutate `/home/qamc/quant-agent`, `qamc` services/timers, runtime credentials, or production configuration.
+- After explicit production approval, `ubuntu` performs the necessary privileged operation directly; the operator should not be bounced between accounts.
 
 ## Mission Control accepted state
 
@@ -74,13 +83,13 @@ Accepted behavior includes:
 - intraday OHLCV timestamps are preserved so execution markers can align to relevant candles;
 - stale/degraded read-side data must be identified rather than silently represented as current.
 
-PR #69 solved the intraday IEX entitlement/data-path defect. It did **not** modify `PriceChartPanel`, so the previously operator-observed live-price versus chart-right-edge mismatch is not considered resolved solely by that deployment. If still reproducible, it remains a separate DEV-first dashboard defect subject to the promotion gates above.
+PR #69 solved the intraday IEX entitlement/data-path defect. It did **not** modify `PriceChartPanel`, so the previously operator-observed live-price versus chart-right-edge mismatch is not considered resolved solely by that deployment. If still reproducible, it remains a separate engineering-first dashboard defect subject to the promotion gates above.
 
 ## Trading-utility recovery — natural validation still required
 
 The evidenced mechanical blockers between opportunity discovery and execution have been corrected and the accepted machinery is present in production.
 
-That does **not** yet prove the recovery works as a complete trading system. Acceptance still requires natural Alpaca Paper sessions demonstrating the real chain:
+Acceptance still requires natural Alpaca Paper sessions demonstrating the real chain:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
@@ -103,7 +112,6 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 
 - OpenRouter remains the model-provider path.
 - Current accepted routing uses `google/gemini-2.5-flash-lite` and `qwen/qwen3-235b-a22b-2507` according to the per-seat policy.
-- Cost-optimized routing and the accepted decision-chain audit remain in force.
 
 ## Known separate issue requiring explicit authorization
 
@@ -119,16 +127,17 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 - Broker-write Mission Control controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
-- Collapsing `dev` / `qamc` / `ubuntu` account boundaries.
+- Turning `qamc` into a development/operator account.
+- Expanding `dev` permissions or reintroducing it into the normal workflow during stabilization without explicit authorization.
 - Forcing/manufacturing trades for validation.
-- Automatic production deployment merely because code is merged or verified in DEV.
+- Automatic production deployment merely because code is merged or verified in engineering.
 
 ## Handoff
 
 Current bounded activities:
 
-1. **Workflow repair:** restore the operator-controlled merge/production gates while keeping autonomous DEV preview/testing and minimal-sufficient execution.
-2. **Dashboard:** if the live-price/chart-right-edge mismatch remains reproducible, fix and verify it in DEV only, then stop at the external gate.
+1. **Workflow repair:** finalize the two-account stabilization model and explicit merge/production gates.
+2. **Dashboard:** if the live-price/chart-right-edge mismatch remains reproducible, fix and verify it from `ubuntu` engineering only, then stop at the external gate.
 3. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
 
 See `docs/WORK.md` for the active execution contract.
