@@ -1,36 +1,21 @@
 ---
 paths:
   - "src/api/static/**/*"
+  - "frontend/**/*"
   - "docs/verification/**/*"
 ---
 
 # Frontend verification rules
 
-`src/api/static/` is the Mission Control cockpit — a browser/iPad surface an
-operator relies on to understand trading, not a backend contract a test
-suite alone can validate. Automated tests proving the API returns correct
-JSON do not prove the UI renders it correctly.
+Mission Control is a browser/iPad surface the operator relies on to understand trading. Automated tests proving correct JSON do not prove the UI renders it correctly.
 
-- Any UI/frontend change intended for acceptance (an internal or external
-  checkpoint) must be **browser/runtime verified by Claude before that
-  review** — actually loaded in a real browser against seeded/representative
-  data and actually looked at, not just asserted not to throw.
-- Verification must cover, wherever materially relevant to the change:
+- Any UI/frontend change intended for acceptance must be **browser/runtime verified by the engineering agent** — actually loaded against seeded/representative data and visually inspected, not merely asserted not to throw.
+- Verification should cover, wherever materially relevant:
   - a desktop viewport and an iPad-sized viewport;
   - populated, empty, degraded and error states;
   - any new drill-down/detail view introduced by the change.
-- Save a small **representative** acceptance screenshot set to Git under
-  `docs/verification/<stage-or-checkpoint>/` (e.g.
-  `docs/verification/stage-4-5/`) — enough images to demonstrate the states
-  above were actually seen, not an exhaustive capture of every click.
-- Every screenshot set must ship with a manifest/README in the same
-  directory recording, per screenshot: the commit SHA it was captured
-  against, the viewport and scenario it depicts, and the verification
-  date/time.
-- Do **not** commit routine or transient browser-test screenshots (ad hoc
-  debugging captures, every intermediate iteration) — only the curated
-  representative set that documents acceptance evidence. Generate the rest
-  in a scratch/temp location and discard them.
-- This verification requirement is permanent and applies to every future
-  frontend acceptance pass, not just the checkpoint that introduced this
-  rule.
+- Visual verification may run in parallel with other independent acceptance work when that saves time.
+- Save a small **representative** acceptance screenshot set to Git under `docs/verification/<stage-or-checkpoint>/` — enough to prove the relevant states were seen, not every click.
+- The screenshot set should record the commit SHA, viewport/scenario and verification date/time.
+- Do **not** commit routine/transient debugging screenshots; keep only curated acceptance evidence.
+- This is an acceptance requirement, **not an external review gate**. Under Paper-beta autonomy the lead agent may use the evidence to merge/deploy once the relevant acceptance criteria pass.
