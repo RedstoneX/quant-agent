@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Badge, TextInput } from "@tremor/react";
 import { legacyCreateColumnHelper as createColumnHelper, type LegacyColumnDef } from "@tanstack/react-table/legacy";
 import { TradeItem } from "../api/client";
-import { fmtMoney, fmtNum, fmtTime, pnlClass } from "../lib/format";
+import { fmtMoney, fmtTime, pnlClass } from "../lib/format";
+import { displayFillPrice, displayFillQty } from "../lib/tradeFillDisplay";
 import { Panel, StateMessage } from "./ui/Panel";
 import { DataTable } from "./ui/DataTable";
 
@@ -15,8 +16,8 @@ export function TradeTable({ trades, onInspect }: { trades: TradeItem[]; onInspe
       columnHelper.accessor("symbol", { header: "Symbol", cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span> }),
       columnHelper.accessor("action", { header: "Action", cell: (info) => <Badge color={info.getValue().includes("BUY") ? "emerald" : info.getValue().includes("SELL") ? "rose" : "slate"} size="xs">{info.getValue()}</Badge> }),
       columnHelper.accessor("fill_status", { header: "Fill status", cell: (info) => <Badge color={String(info.getValue()).includes("fill") ? "emerald" : String(info.getValue()).includes("reject") ? "rose" : "slate"} size="xs">{info.getValue() || "unfilled"}</Badge> }),
-      columnHelper.accessor("fill_qty", { header: "Filled qty", cell: (info) => fmtNum(info.getValue() ?? info.row.original.qty) }),
-      columnHelper.accessor("fill_price", { header: "Fill price", cell: (info) => fmtMoney(info.getValue() ?? info.row.original.price) }),
+      columnHelper.accessor("fill_qty", { header: "Filled qty", cell: (info) => displayFillQty(info.row.original) }),
+      columnHelper.accessor("fill_price", { header: "Fill price", cell: (info) => displayFillPrice(info.row.original) }),
       columnHelper.accessor("realized_pnl", { header: "Realized P&L", cell: (info) => <span className={pnlClass(info.getValue())}>{info.getValue() === null || info.getValue() === undefined ? "—" : fmtMoney(info.getValue())}</span> }),
       columnHelper.accessor("stop_loss", { header: "Recorded stop", cell: (info) => fmtMoney(info.getValue()) }),
       columnHelper.accessor("take_profit", { header: "Take profit", cell: (info) => fmtMoney(info.getValue()) }),
