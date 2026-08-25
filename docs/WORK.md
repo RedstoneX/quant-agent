@@ -1,19 +1,15 @@
 # QAMC Current Work
 
-Status: **DASHBOARD TIMEFRAME REGRESSION AUTHORIZED | PRIVATE DEV HOT-RELOAD AUTHORIZED | CORE RECOVERY IN NATURAL PAPER VALIDATION**
+Status: **FRICTIONLESS DELIVERY TOOLING AUTHORIZED | DEPLOY MERGED IEX CHART FIX | CORE RECOVERY IN NATURAL PAPER VALIDATION**
 
 ## Current integration truth
 
-- Actual VPS production is verified at `2b3faaf69c0b842a08f991a9ca517a3989bdaf93` (PR #63 merge).
-- Production contains the accepted runtime payload through PR #56, enriched Telegram output, PR #60 Mission Control/data-correctness work, and PR #63 session-execution/intraday-chart work.
+- GitHub `main` now includes PR #68 (`CLAUDE.md` minimal-sufficient execution discipline) and PR #69 (explicit Alpaca IEX feed for intraday chart bars plus the approved private Vite hostname fix).
+- The PR #69 IEX diagnosis has been directly proven against production credentials: default/unset recent intraday stock data is rejected as SIP-unentitled; explicit IEX returns real SPY/AAPL bars; the branch `AlpacaBroker.get_intraday_chart_bars` path also returned real 15m bars.
+- Actual VPS production remains on the older accepted runtime checkout at `2b3faaf69c0b842a08f991a9ca517a3989bdaf93` until the merged fix is deployed.
 - Production has one intended tracked local delta: `config/settings.yaml` with `intraday_scan.enabled: true`.
-- `ubuntu` / `qamc` / `dev` isolation remains intact.
-- All seven expected qamc timers remain enabled.
-- OneCLI remains private and the production API remains private/read-only.
-- Alpaca Paper remains the only authorized execution environment.
-- A 2026-08-24 production acceptance pass completed with 0 failures for the tested API/read-only surface.
-- Current frontend source already defines chart controls for `5m Today`, `15m`, `1h`, and `1D`, and production API calls for `5m`, `15m`, `1h`, `1d` all passed.
-- **New operator evidence:** the actual production dashboard currently exposes only the day / `1D` chart view. Minute/hour controls are not visible or usable. This is the current bounded dashboard defect.
+- `ubuntu` / `qamc` / `dev` isolation remains hard. OneCLI remains the credential-delivery layer. Alpaca Paper remains the only authorized execution environment.
+- The current chart spinner/empty intraday behavior is expected until production is updated from current accepted `main`.
 
 ## Product / architecture principle
 
@@ -23,182 +19,76 @@ Trading-critical path remains:
 
 **discovery → Specialists → Portfolio Manager → AI Risk Manager → deterministic gate → funding → broker execution → position/exit management → reflection**.
 
-Mission Control, Journal, search and Telegram output are observational/read-side surfaces. They must not become authoritative trading state or broker-write control paths.
-
-## Goal
-
-Use natural market evidence to determine whether QAMC reliably:
-
-**finds opportunity → evaluates it → makes a defensible bullish, bearish or neutral decision → executes when eligible → manages/exits the position → measures the result.**
-
-Success is not “more trades.” Do not force activity, weaken safety or hindsight-tune.
-
-When QAMC does not trade, the reason must be specific and defensible.
+Mission Control, Journal, search and Telegram are observational/read-side surfaces and must not become authoritative trading state or broker-write control paths.
 
 ## Next authorized work
 
-### 0. Standing private DEV visual-review workflow
+### 0. Build the standing frictionless delivery path — IMPLEMENTATION AUTHORIZED
 
-The operator explicitly authorizes a **temporary, development-only Vite hot-reload server** for dashboard work so visual changes can be reviewed immediately while Claude works.
+The operator explicitly authorizes one repo-owned, tested production deployment/verification entrypoint for routine accepted frontend and backend changes.
 
-This is the preferred dashboard development loop when practical:
+Desired standing workflow:
 
-**`dev` checkout/worktree → Vite hot reload → private Tailscale browser view → visual iteration → branch/PR review → separate governed production rollout.**
+**`dev` implementation → private Vite/read-only verification when relevant → tests → push → ChatGPT/operator review and merge → one standardized `ubuntu` production deploy/verify → browser/runtime confirmation.**
 
-Boundaries:
+The deployment/verification entrypoint must:
 
-- run only as `dev`, from the development checkout or its task worktree;
-- use the repository's existing React/Vite frontend and existing Vite API proxy to the read-only Mission Control API on `127.0.0.1:8800`;
-- bind the Vite server only to the VPS Tailscale interface/address, never `0.0.0.0`, the public VPS interface, or another public listener;
-- session/development process only: **no systemd unit, daemon, boot persistence, new proxy, new service architecture, or production dependency**;
-- do not copy production credentials into the frontend or expose OneCLI;
-- do not add broker-write controls or routes; the existing Mission Control API remains read-only;
-- production under `qamc` remains untouched while DEV work is being reviewed;
-- Claude may start/restart/stop this temporary DEV preview autonomously during an authorized dashboard task and report the private Tailscale URL to the operator;
-- `branch_preview.py` remains available for deterministic built-artifact verification, but is **not required instead of hot reload** during normal visual iteration. Use it when a static-build acceptance check is useful.
+- be invoked as `ubuntu` and operate on the existing `qamc` production checkout through the existing account boundaries;
+- deploy the exact current accepted GitHub `main` without inventing another release architecture;
+- preserve the governed production `config/settings.yaml` override (`intraday_scan.enabled: true`);
+- preserve OneCLI secret handling and never print credentials;
+- refuse unexpected/unsafe production state instead of improvising around it;
+- restart only what the existing deployment actually requires;
+- verify deployed SHA, required service state, `/health`, and task-relevant read-only acceptance checks;
+- fail closed with a concise blocker when safe deployment or verification cannot be proven;
+- add no daemon, persistent service, proxy, database, framework, credential system, orchestration platform, or other new infrastructure.
 
-This authorization is specifically intended to remove repeated operator friction. Claude does not need to ask again whether it may run the temporary private Vite preview while working on an already-authorized dashboard task, provided these boundaries are preserved.
+Implementation guidance:
 
-### 1. Fix the production chart-timeframe regression
+- reuse the repository's existing deployment/commissioning/systemd patterns where useful; do not perform another broad commissioning audit;
+- inspect only what is needed to implement and test the entrypoint safely;
+- this is workflow/tooling work, not authorization to investigate unrelated backend trading logic;
+- use the `CLAUDE.md` minimal-sufficient execution rule: once prerequisites are known, implement and run the shortest decisive acceptance path;
+- target 45–90 minutes; if the work is becoming a >2-hour effort or requires a material architecture change, stop and report the specific blocker rather than expanding scope.
 
-This is an **implementation-authorized bounded dashboard defect** under `/qamc-build`.
+### 1. Use the new path immediately to deploy and verify the merged chart fix
 
-Desired verified outcome:
+After the standing deployment entrypoint is ready, use it as the first real acceptance test:
 
-- the actual production chart visibly offers `5m Today`, `15m`, `1h`, and `1D`;
-- each control is usable and actually requests/renders its corresponding timeframe;
-- switching timeframes does not break live-price / previous-close truthfulness, BUY/SELL markers, selected symbol/session context, responsive layout, or read-only behavior;
-- desktop and iPad/tablet rendered verification proves the controls are visible and usable in the real UI, not merely present in source or passing unit tests.
+- deploy current accepted `main` to the existing `qamc` production checkout;
+- preserve `intraday_scan.enabled: true`;
+- verify production remains Alpaca Paper and OneCLI/private-network boundaries remain intact;
+- verify SPY and AAPL intraday `5m`, `15m`, and `1h` data return non-empty results through the production path;
+- verify the actual Mission Control chart exposes and renders `5m Today`, `15m`, `1h`, and `1D` without the prior endless spinner/empty-bar failure;
+- verify only the required production service(s) were restarted.
 
-Execution guidance:
+No additional external merge gate is required for PR #69: it has already passed ChatGPT/operator review and is merged into `main`. Do not re-litigate or re-review that merge before deployment.
 
-- begin from current `main` and current repository authority;
-- use the authorized private Vite hot-reload DEV workflow above for rapid visual diagnosis/iteration;
-- investigate why production exposes only `1D` despite accepted source and working API support;
-- distinguish source-code correctness from built/static asset, serving, CSS/layout, caching, responsive, or deployment-state problems using evidence rather than assumption;
-- make the **smallest justified fix**;
-- use the existing Vite/React/Tremor/Lightweight-Charts stack and existing API; do not introduce a new chart library, frontend framework, service, proxy, or backend architecture;
-- preserve Mission Control as private/read-only and non-critical to trading;
-- do not alter trading/risk/execution semantics, timers, credentials, account boundaries, OneCLI, or the governed `intraday_scan.enabled: true` production override;
-- run the relevant frontend tests/build and any targeted backend/API checks needed to prove no contract regression;
-- perform rendered desktop and iPad/tablet verification per the frontend verification rules;
-- use routine engineering autonomy, helpers/worktrees if useful, and internal checkpoints without asking the operator for implementation choices;
-- at the external gate, push the implementation branch with evidence and STOP for ChatGPT/operator review. Do not merge the implementation PR from Claude Code.
+### 2. Continue natural trading validation after deployment
 
-Do not expand this defect into a broad dashboard redesign. Other dashboard problems require separate evidence/authorization unless they are inseparable from this fix.
-
-### 2. Continue natural trading validation
-
-Observe normal Alpaca Paper sessions without manufacturing trades.
-
-Natural sessions still need to demonstrate:
-
-- worthwhile opportunities survive discovery and reach PM/Risk;
-- eligible trades can reach funded broker submission;
-- supported bearish opportunities can be expressed through approved inverse ETFs;
-- no-trade decisions remain possible and explainable;
-- positions and exits behave coherently after entry;
-- funding/execution failures are visible rather than mistaken for investment judgment;
-- outcomes and missed opportunities can be measured without hindsight tuning.
-
-The required end-to-end evidence chain is:
+Observe normal Alpaca Paper sessions without manufacturing trades. Natural sessions still need to demonstrate:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
-### 3. Use Mission Control and Telegram as validation evidence
+Success is not "more trades." When QAMC does not trade, the reason must be specific and defensible.
 
-Except for the explicitly authorized chart-timeframe regression above, treat Mission Control and Telegram as production-converged observational surfaces. Use them to inspect and explain natural sessions rather than reopening resolved UI work without new evidence.
+## Standing fast-lane rule for future bounded fixes
 
-Production acceptance verified:
+For an already-authorized, bounded frontend/backend defect that stays within accepted architecture and does not alter trading/risk semantics:
 
-- `/health` healthy with `paper=true` and broker reachable;
-- `/cockpit` final HTTP 200;
-- `/ui` final HTTP 200;
-- `/quotes?symbols=SPY` works;
-- `/prices/SPY` works for `5m`, `15m`, `1h`, `1d`;
-- session execution read path works;
-- POST / PUT / PATCH / DELETE are rejected;
-- Telegram production credentials are present, unmuted and notifier-enabled (`--dry-run`; no closeout test message sent);
-- OneCLI remains private;
-- expected timers and account boundaries remain intact.
+1. `dev` diagnoses, implements and runs the shortest sufficient tests/preview.
+2. Claude pushes a dedicated branch and stops at the external GitHub gate.
+3. ChatGPT/operator reviews and merges.
+4. `ubuntu` runs the standardized deploy/verify entrypoint once.
+5. Stop when production verification passes.
 
-Use these surfaces to answer, from real evidence:
+Do not make the operator shuttle production diagnostics or credentials between `dev` and `qamc`. If production privilege or credentials are required, perform that proof in the standardized `ubuntu` step. Do not repeat architecture discovery, commissioning, package archaeology or unrelated verification after a decisive result exists.
 
-- what opportunity was found;
-- which agents evaluated it;
-- what PM/Risk decided;
-- what deterministic gate/funding/execution did;
-- why a trade did or did not happen;
-- what happened after entry;
-- how the result compared with missed opportunities.
+## Flagged separately — not bundled into delivery-tooling work
 
-### 4. Address lower-priority issues only if they distort validation
+`src/execution/broker.py::get_latest_price` builds latest-trade/latest-quote requests without an explicit Alpaca feed and silently degrades to `None` on failure. Because that path is trading-critical, it requires a separate authorized production investigation before any code change. Do not bundle it into the chart/deployment workflow work.
 
-Two known lower-priority issues remain outside the current gate:
-
-- news-narrative factual drift;
-- `actual_provider` attribution oddity.
-
-Do not interrupt natural trading validation for these unless evidence shows they materially damage decision quality, truthfulness or operator understanding.
-
-## Mission Control acceptance baseline
-
-Accepted behavior includes:
-
-- professional ordinary UI primitives via Tremor/TanStack;
-- Lightweight Charts for market-price visualization and trade markers;
-- Dockview for the desktop support workspace;
-- custom visualization only where QAMC-specific decision topology justifies it;
-- separate current-session quote vs historical bar semantics;
-- pinned session/run context that cannot be silently overwritten by stale polls;
-- truthful `AUTO / PRIMARY` behavior;
-- candidate-correct PM/Risk attribution;
-- persisted execution-skip explanations and explicit reason-not-recorded states;
-- Journal decision ledger and exact-run navigation;
-- session-specific execution rows with click-to-chart behavior;
-- accepted `5m Today`, `15m`, `1h`, `1D` read-only chart timeframes with timestamp-preserving intraday OHLCV, subject to the currently authorized production-visibility fix;
-- stale/degraded read-side data identified rather than silently presented as current;
-- no ArcGauge, handmade RunTimeline or old ECharts candidate funnel.
-
-Do not reopen those resolved product decisions without new evidence.
-
-## Verification already recorded
-
-PR #63 pre-merge verification reported:
-
-- backend: **2,030 passed**;
-- frontend: **55 passed**;
-- production frontend build: passed;
-- desktop/iPad browser verification completed with zero console/page errors against the branch verification setup.
-
-Production preflight on 2026-08-24 additionally verified:
-
-- actual production SHA `2b3faaf69c0b842a08f991a9ca517a3989bdaf93`;
-- tracked production files clean except the governed intraday override;
-- `intraday_scan.enabled: true`;
-- seven qamc timers enabled;
-- `quant-agent-api.service` active;
-- `/health` healthy, DB and broker reachable, `paper=true`;
-- OneCLI private listeners present;
-- no runtime/code/config deployment delta remained at that checkpoint.
-
-Final production API/read-only acceptance on 2026-08-24 completed with **0 failures**. The later operator report that only `1D` is visible is new browser-level evidence and is not contradicted by those API checks.
-
-## Remaining uncertainty
-
-The trading recovery is strongly supported by production forensics, deterministic tests and a converged read-side API surface, but the complete opportunity→decision→execution→management chain still needs natural market validation.
-
-Separately, the chart timeframe controls must now be proven visible and functional in the actual production browser before that UI capability is considered production-verified.
-
-## Flagged for external reconciliation — 2026-08-24
-
-Independent review of the chart-timeframe data-path fix (below) surfaced a related but out-of-scope finding that needs an operator/ChatGPT decision, not a Claude-authored fix bundled into the dashboard branch:
-
-`src/execution/broker.py::get_latest_price` builds `StockLatestTradeRequest`/`StockLatestQuoteRequest` without setting Alpaca's `feed` parameter — the same unset-default pattern that caused `get_intraday_chart_bars` to silently return zero bars for every symbol (root-caused this session to this account's market-data plan being IEX-entitled, not SIP; see the chart-timeframe fix commit). Unlike the chart method, `get_latest_price` **is** in the trading-critical path (called from `src/pipeline.py`, `src/pipeline_stages.py`, `src/execution/cash_sweep.py`) and already silently degrades to `None` on any failure.
-
-If this account's feed entitlement affects real-time trade/quote requests the same way it affected historical intraday bars, that could be silently starving order sizing of a price and getting misread as an ordinary "no trade" decision rather than a data-entitlement defect — directly relevant to core recovery's natural-validation goal ("when QAMC does not trade, the reason must be specific and defensible").
-
-Not fixed here: it touches a trading-critical read path, so it needs its own authorized investigation (starting with confirming whether it actually fails in production — `dev` has no Alpaca credentials to check directly) rather than a drive-by change riding on the dashboard fix's authorization.
+Lower-priority known issues remain news-narrative factual drift and `actual_provider` attribution oddity; do not interrupt the current delivery/deployment task for them.
 
 ## Hard boundaries
 
@@ -207,7 +97,7 @@ Not fixed here: it touches a trading-critical read path, so it needs its own aut
 - Deterministic Python/broker protections remain final safety authority.
 - Do not force/manufacture trades or weaken safeguards to increase activity.
 - Do not create paper-only trading semantics.
-- No new daemon/service/database/proxy/security/credential architecture without explicit approval.
+- No new daemon/service/database/proxy/security/credential/orchestration architecture without separate explicit approval.
 - Preserve `dev` / `qamc` / `ubuntu` isolation and OneCLI secret handling.
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
