@@ -30,6 +30,8 @@ from src.agents.news_analyst import NewsAnalystAgent
 from src.agents.macro_analyst import MacroAnalystAgent
 from src.agents.earnings_analyst import EarningsAnalystAgent
 from src.agents.meta_reflector import MetaReflectorAgent
+from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
+from src.data.smart_money import BargoCongressProvider
 from src.data.earnings import EarningsDataProvider
 from src.risk.rules import RiskRuleEngine
 from src.execution.broker import AlpacaBroker, _get_sector
@@ -325,6 +327,18 @@ class TradingPipeline:
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.earnings_analyst_provider,
         )
+        self.smart_money_analyst = SmartMoneyAnalystAgent(
+            api_key=_key_for(config.llm.smart_money_analyst_model, config.llm.smart_money_analyst_provider),
+            model=config.llm.smart_money_analyst_model,
+            max_tokens=config.llm.get_max_tokens("smart_money_analyst"),
+            fallback_api_key=config.api_keys.anthropic,
+            provider=config.llm.smart_money_analyst_provider,
+        )
+        self.smart_money_provider = BargoCongressProvider(
+            base_url=config.smart_money.base_url, api_key=config.api_keys.bargo,
+            timeout_s=config.smart_money.timeout_s,
+            max_rows_per_symbol=config.smart_money.max_rows_per_symbol,
+        )
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
             model=config.llm.meta_reflector_model,
@@ -411,6 +425,8 @@ class TradingPipeline:
             news_analyst=self.news_analyst,
             tech_analyst=self.tech_analyst,
             earnings_analyst=self.earnings_analyst,
+            smart_money_provider=self.smart_money_provider,
+            smart_money_analyst=self.smart_money_analyst,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
             run_news_update_fn=self._run_news_update,
             load_earnings_analyses_fn=self._load_earnings_analyses,
@@ -5645,7 +5661,8 @@ class TradingPipeline:
         circuit = getattr(self, "cost_circuit", None)
         for name in (
             "tech_analyst", "news_analyst", "macro_analyst",
-            "earnings_analyst", "portfolio_manager", "risk_manager",
+            "earnings_analyst", "smart_money_analyst",
+            "portfolio_manager", "risk_manager",
             "position_reviewer", "evening_analyst", "meta_reflector",
         ):
             agent = getattr(self, name, None)

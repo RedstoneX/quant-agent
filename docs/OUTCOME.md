@@ -55,6 +55,20 @@ The cockpit should be dense but legible, desktop-first and strong on iPad, with:
 - positions/orders/trades as supporting state rather than the whole product;
 - structured journal, investigation and learning views that explain decisions and missed opportunities.
 
+### Private Research Desk principle
+
+QAMC is built for **one operator**, not customers. The Research/Intelligence experience should therefore optimize for usefulness and willingness to read it every day, not corporate polish.
+
+The voice should feel like a sharp internal trading desk: candid, compact, substantive, occasionally dry or irreverent when the evidence earns it. Avoid generic AI prose, filler, repeated conclusions, forced jokes, fake quotes and performative cleverness. **Say everything useful. Nothing merely decorative.**
+
+Brevity must not become thinness. Each useful research item should give enough evidence, interpretation and consequence to answer: what happened, what changed, why it matters now, what conflicts with it, and what the PM/Risk implication is.
+
+Use visual structure to reduce reading effort where it helps: signal agreement/conflict, what changed, why now, evidence chips, important tension, compact chart context, and clearly separated Read / PM / Risk consequences. Do not mechanically put every device on every card.
+
+The default composition should be deliberately designed, visually balanced and easy to scan. Important stories may dominate while supporting material recedes. Docking/resizing is operator personalization on top of a strong default layout, not a substitute for design.
+
+Raw JSON/logs remain secondary evidence drill-down. They are never the primary reading experience.
+
 ### Design-donor decisions to preserve
 
 The vision board intentionally uses donors for proven interaction/design ideas while keeping `quant-agent` as the authoritative trading engine.

@@ -19,21 +19,22 @@ This file records what is accepted and true **now**. Git history preserves imple
 
 The prior three-account daily workflow created excessive friction. During stabilization the accepted operating model is now:
 
-- **`ubuntu` — engineering/operator account.** Claude/Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
+- **`ubuntu` — engineering/operator account.** Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and deployment orchestration happen here.
 - **`qamc` — production runtime account only.** It owns the production checkout, runtime `.env`/OneCLI wiring, user services/timers, and QAMC execution.
 - **`dev` — parked.** It remains present but is removed from the normal workflow. Do not expand its permissions or require the operator to use it during stabilization.
 
-The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Claude/Codex must not run as `qamc`.
+The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Codex must not run as `qamc`.
 
 ## Production position — current verified deployment
 
 Production is deployed and verified at:
 
-`16c52715b3ee05ec9e38c12958a14ee77a6d38d7`
+`ac30dc374d60d59bec37fa13bee9ce5956c449c8`
 
-This is GitHub `main` after PRs #74, #75, #76 and #77. It deploys the backend
-recovery and the final Mission Control utility tranche. The recorded rollback
-SHA is `a6758f935910c5cf380cc6a7acedc5f3b78f6366`.
+This is GitHub `main` after PR #79. It deploys the Research Intelligence Desk
+and the fail-soft Smart Money Analyst integration on top of the prior backend
+and Mission Control finish line. The recorded rollback SHA is
+`16c52715b3ee05ec9e38c12958a14ee77a6d38d7`.
 
 Production verification on 2026-08-25 established:
 
@@ -45,6 +46,9 @@ Production verification on 2026-08-25 established:
 - `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
   price requests were accepted (the 5m response was naturally empty before
   the Paper market session; the other three returned bars);
+- `/research/daily/2026-08-25` returned canonical stored QAMC data, and the
+  Research Desk rendered it on desktop and iPad without console errors or
+  horizontal overflow;
 - POST, PUT, PATCH and DELETE remained rejected with 405;
 - OneCLI and Mission Control remained private and reachable;
 - Telegram credentials and the bot API path validated without sending a
@@ -53,27 +57,44 @@ Production verification on 2026-08-25 established:
 - all seven existing `quant-agent-*.timer` units remained enabled and listed;
 - no broker order was submitted, cancelled or modified.
 
+The Smart Money seat is deployed but disabled in production. Bargo's
+documented keyless server-to-server endpoint returned a Cloudflare 403 and no
+free Bargo credential exists in OneCLI. Enabling and commissioning real
+source-backed Smart Money evidence is therefore an external credential/access
+blocker, not an invitation to weaken provenance or substitute fabricated data.
+
 The production checkout retains exactly one intended tracked local configuration delta:
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
-GitHub `main` may advance beyond this production SHA. **Production never automatically follows `main`.**
+GitHub `main` may advance beyond this production SHA. Production changes only through the governed engineering workflow below.
 
-## Promotion authority — accepted rule
+## Paper-beta engineering authority — accepted rule
 
-The standing workflow is:
+While execution remains **Alpaca Paper**, already-authorized engineering work may run end-to-end without a human code-review, merge or deployment gate:
 
-**`ubuntu` engineering implementation/preview/tests → push branch/PR → external review → explicit merge approval → STOP → explicit production approval → governed `ubuntu` → `qamc` deploy/verify.**
+**`ubuntu` engineering → tests/inspection → dedicated PR → merge → governed `ubuntu` → `qamc` deploy → production verification → rollback if needed.**
 
 Important consequences:
 
-- Claude/Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
-- Claude must not merge its own implementation PR.
-- Merge authorization and production-deployment authorization are separate gates.
-- Generic instructions such as “proceed”, “continue”, “fix it” or “finish this” never escalate work into the next environment by inference.
-- A merged PR, green tests, or an available deploy script is not production authorization.
-- Before explicit production approval, `ubuntu` privilege must not be used to mutate `/home/qamc/quant-agent`, `qamc` services/timers, runtime credentials, or production configuration.
-- After explicit production approval, `ubuntu` performs the necessary privileged operation directly; the operator should not be bounced between accounts.
+- Codex may complete implementation, self-review, merge and Paper-production deployment autonomously.
+- Independent review is optional evidence, not permission and not a blocking gate.
+- Version control, the dedicated PR and known-good production state provide traceability and rollback.
+- A failed production verification stops further mutation and triggers preservation/restoration of the last known-good state.
+- This fast lane does **not** authorize live capital, paid dependencies, secrets/credential redesign, destructive infrastructure replacement or material architecture outside current authority.
+
+## Parallel engineering policy — accepted rule
+
+Parallelism and subagents are available and should be used when they reduce wall-clock time without creating coordination waste.
+
+- Parallelize genuinely independent investigation, implementation surfaces, tests, browser/visual verification and evidence gathering.
+- The lead agent owns integration and resolves conflicting findings.
+- Do not spawn multiple workers to rediscover the same facts or overlap edits without a reason.
+- Use strong reasoning models for architecture, trading logic, safety-sensitive changes, complex debugging, hard review and ambiguous product/UX judgment.
+- Use cheaper/faster workers for bounded tests, searches, inventories, logs and mechanical evidence collection.
+- Escalate a cheap worker when the task becomes reasoning-heavy.
+
+This is an efficiency policy, not an agent-count target.
 
 ## Mission Control accepted state
 
@@ -115,13 +136,20 @@ routing and deterministic Python/broker authority remain unchanged. This final
 tranche is merged through PR #75 and deployed.
 
 The final Mission Control utility tranche is merged through PRs #76 and #77
-and deployed. It
-removes ECharts/handmade allocation visuals, moves ordinary tables to TanStack,
+and deployed. It removes ECharts/handmade allocation visuals, moves ordinary tables to TanStack,
 keeps price history on Lightweight Charts, makes SGOV unambiguously cash
 parking outside directional-risk/P&L emphasis, consumes PR #75 lifecycle facts,
 and turns the desktop Candidates/Chart/Decision Room working surface into a
 persisted Dockview workspace while retaining simple iPad/mobile tabs. The
 Mission Control finish line and backend recovery promotion are complete.
+
+The Research Intelligence Desk and Smart Money seat are merged through PR #79
+and deployed. The read-only daily projection, desktop Dockview workspace,
+purpose-built iPad reading flow, truthful sparse/degraded states, and
+PM/Risk/gate/execution deltas are production-verified against stored QAMC data.
+The source adapter preserves transaction versus disclosure time, suppresses
+stale/lone congressional noise, and cannot bypass the accepted decision chain.
+Live Smart Money source commissioning remains blocked as recorded above.
 
 After promotion, acceptance still requires natural Alpaca Paper sessions
 demonstrating the real chain:
@@ -162,27 +190,24 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 - Live-broker order submission or live-capital activation.
 - Direct stock shorting, options/theta strategies, or margin.
 - New timers, daemons, databases, proxies, credential systems or durable infrastructure without explicit architectural approval.
-- Deterministic risk/execution semantic redesign.
-- Paper-specific trading shortcuts.
+- Deterministic risk/execution semantic redesign outside accepted work.
+- Paper-specific trading shortcuts that would create a second trading architecture.
 - Broker-write Mission Control controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Turning `qamc` into a development/operator account.
 - Expanding `dev` permissions or reintroducing it into the normal workflow during stabilization without explicit authorization.
 - Forcing/manufacturing trades for validation.
-- Automatic production deployment merely because code is merged or verified in engineering.
+- Live-capital promotion without separate explicit authorization.
 
 ## Handoff
 
 Current bounded activities:
 
-1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
-2. **Natural Alpaca Paper acceptance:** collect the remaining substantive
-   evidence without forcing activity or weakening safety: opportunity →
-   evaluation → defensible decision → eligible execution → management/exit →
-   measured outcome.
-3. **Evidence-driven follow-up only:** do not reopen dashboard or
-   trading-critical feed defects from historical notes alone; require current
-   evidence.
+1. **Smart Money source commissioning:** obtain an authorized free Bargo
+   credential or working server-to-server endpoint, preflight it, then enable
+   the already-deployed fail-soft seat. Do not substitute unsourced data.
+2. **Natural Alpaca Paper acceptance:** continue collecting real evidence without forcing activity or weakening safety.
+3. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
-See `docs/WORK.md` for the active natural-acceptance contract.
+See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.

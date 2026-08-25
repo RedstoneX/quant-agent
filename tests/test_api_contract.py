@@ -325,14 +325,14 @@ def test_decision_detail_404_for_unknown_decision(client, seeded_db):
 # /agents, /agents/{agent_name}
 # ---------------------------------------------------------------------------
 
-def test_agents_roster_lists_all_nine(client, stub_roster):
+def test_agents_roster_lists_all_ten(client, stub_roster):
     r = client.get("/agents")
     assert r.status_code == 200
     names = {a["agent_name"] for a in r.json()["agents"]}
     assert names == {
         "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
         "portfolio_manager", "risk_manager", "position_reviewer",
-        "evening_analyst", "meta_reflector",
+        "evening_analyst", "meta_reflector", "smart_money_analyst",
     }
 
 

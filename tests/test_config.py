@@ -230,9 +230,15 @@ def test_llm_config_get_max_tokens_falls_back_to_global():
     cfg = LLMConfig(max_tokens=8192)
     for agent in (
         "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+        "smart_money_analyst",
         "portfolio_manager", "risk_manager", "position_reviewer", "evening_analyst",
     ):
         assert cfg.get_max_tokens(agent) == 8192
+
+
+def test_smart_money_provider_defaults_disabled_until_preflight():
+    from src.config import SmartMoneyConfig
+    assert SmartMoneyConfig().enabled is False
 
 
 def test_llm_config_get_max_tokens_respects_per_agent_override():

@@ -507,6 +507,158 @@ export interface SearchResponse {
 }
 
 // ---------------------------------------------------------------------
+// /research/daily/{date} — editorial read-side synthesis only
+// ---------------------------------------------------------------------
+
+export type ResearchDirection = "bullish" | "bearish" | "neutral" | "mixed" | "unknown";
+export type ResearchItemStatus = "current" | "stale" | "partial" | "unavailable" | "error" | "quiet";
+
+export interface ResearchEvidenceItem {
+  label: string;
+  value: string;
+  source?: string | null;
+  timestamp?: string | null;
+}
+
+export interface ResearchAgentBrief {
+  seat: string;
+  status: ResearchItemStatus;
+  headline: string | null;
+  read: string | null;
+  direction: ResearchDirection;
+  evidence: ResearchEvidenceItem[];
+  changed: string | null;
+  tension: string | null;
+  why_now: string | null;
+  timestamp: string | null;
+  error?: string | null;
+}
+
+export interface ResearchSignal {
+  seat: string;
+  direction: ResearchDirection;
+  signal: string | null;
+  relationship: "agrees" | "conflicts" | "independent" | "unknown";
+  timestamp: string | null;
+}
+
+export interface ResearchDecisionStep {
+  stage: "read" | "portfolio_manager" | "ai_risk" | "deterministic_gate" | "execution";
+  status: string;
+  summary: string | null;
+  detail: string | null;
+  timestamp: string | null;
+}
+
+export interface SmartMoneyFinding {
+  id: string;
+  symbol: string | null;
+  stream: string;
+  headline: string;
+  summary: string;
+  classification: "actionable" | "confirmatory" | "contradictory" | "historical";
+  freshness: "real_time" | "timely" | "delayed" | "stale" | "unknown";
+  event_timestamp: string | null;
+  knowable_timestamp: string | null;
+  lag_days: number | null;
+  materiality: string | null;
+  source_name: string;
+  source_url: string | null;
+  source_detail: string | null;
+}
+
+export interface ResearchReviews {
+  position_reviewer: string | null;
+  evening_review: string | null;
+  meta_reflection: string | null;
+  tomorrow_watch: string[];
+}
+
+export interface ResearchDeskData {
+  date: string;
+  status: ResearchItemStatus;
+  as_of: string | null;
+  prior_as_of: string | null;
+  thesis: string | null;
+  what_changed: string[];
+  tension: string | null;
+  why_now: string | null;
+  dry_annotation: string | null;
+  agents: ResearchAgentBrief[];
+  signal_stack: ResearchSignal[];
+  decision_chain: ResearchDecisionStep[];
+  smart_money: SmartMoneyFinding[];
+  reviews: ResearchReviews | null;
+  errors: string[];
+}
+
+export interface ResearchFreshness {
+  latest_recorded_at: string | null;
+  age_minutes: number | null;
+  label: "current" | "aging" | "stale" | "historical" | "unknown";
+}
+
+export interface ResearchAgentCall {
+  id: number;
+  agent_name: string;
+  run_id: string | null;
+  decision_id: string | null;
+  timestamp: string | null;
+  status: string | null;
+  output_summary: string | null;
+  requested_provider: string | null;
+  requested_model: string | null;
+  actual_provider: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  latency_s: number | null;
+  cost_usd: number | null;
+  structured_evidence_count: number;
+}
+
+export interface StoredResearchEvidence {
+  id: number;
+  run_id: string;
+  decision_id: string | null;
+  agent_name: string;
+  kind: string;
+  scope: string;
+  symbol: string | null;
+  timestamp: string | null;
+  state: "valid" | "invalid";
+  payload: Record<string, unknown> | unknown[] | null;
+}
+
+export interface ResearchDecisionDeltaRaw {
+  run_id: string;
+  decision_id: string | null;
+  state: "executed" | "hard_risk_block" | "proposed_not_executed" | "no_proposal";
+  proposed: StoredResearchEvidence[];
+  risk_changes: StoredResearchEvidence[];
+  deterministic_events: StoredResearchEvidence[];
+  trades: TradeItem[];
+}
+
+export interface ResearchRun {
+  summary: RunSummary;
+  agent_calls: ResearchAgentCall[];
+  evidence: StoredResearchEvidence[];
+  decision_delta: ResearchDecisionDeltaRaw;
+}
+
+export interface ResearchDailyResponse {
+  date: string;
+  as_of: string | null;
+  state: "complete" | "partial" | "empty" | "error";
+  freshness: ResearchFreshness;
+  read_error: string | null;
+  missing_sources: string[];
+  daily_pnl: DailyPnlPoint | null;
+  reflection: ReflectionItem | null;
+  runs: ResearchRun[];
+}
+
+// ---------------------------------------------------------------------
 // Calls
 // ---------------------------------------------------------------------
 
@@ -535,6 +687,8 @@ export const api = {
     ),
   journalDates: (limit = 60) => getJSON<JournalDatesResponse>(`/journal/dates?limit=${limit}`),
   journalDay: (date: string) => getJSON<JournalDayResponse>(`/journal/${encodeURIComponent(date)}`),
+  researchDaily: (date: string) =>
+    getJSON<ResearchDailyResponse>(`/research/daily/${encodeURIComponent(date)}`),
   search: (q: string, limit = 50) =>
     getJSON<SearchResponse>(`/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 };

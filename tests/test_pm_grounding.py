@@ -1,6 +1,7 @@
 """Deterministic PM provenance/holding boundary and production-scale context."""
 
 import json
+from datetime import date
 
 from unittest.mock import patch
 
@@ -214,3 +215,32 @@ def test_production_scale_pm_prompt_and_grounding_contract():
         macro_analysis={"regime": "risk_on", "equity_outlook": "bullish"},
         total_value=100_000,
     ) == []
+
+
+def test_pm_rejects_historical_smart_money_as_support():
+    from src.models import SmartMoneyFinding, SmartMoneyObservation
+    finding = SmartMoneyFinding(
+        symbol="AAPL", stance="bullish", economic_role="historical",
+        summary="one disclosed purchase", why_now="new disclosure",
+        observations=[SmartMoneyObservation(
+            symbol="AAPL", actor="Example Member", direction="buy",
+            transaction_date=date(2026, 6, 1), disclosure_date=date(2026, 7, 11),
+            source_url="https://example.test/filing", lag_days=40,
+            disclosure_age_days=20,
+            freshness="stale", economic_role="historical",
+        )],
+    )
+    target = {
+        "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Technical trend plus congressional context.",
+        "provenance": [
+            {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "trend"},
+            {"source": "smart_money", "observed_stance": "bullish", "relationship": "supports", "evidence": "disclosure"},
+        ],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("AAPL", "buy")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        smart_money_findings=[finding], total_value=100_000,
+    )
+    assert any("historical smart-money evidence cannot support" in error for error in errors)

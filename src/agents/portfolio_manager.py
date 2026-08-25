@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
-    TechAnalysisResult,
+    TechAnalysisResult, SmartMoneyFinding,
 )
 from src.risk.rules import _effective_multiplier, _gross_multiplier
 
@@ -57,6 +57,7 @@ class PortfolioManagerAgent(BaseAgent):
         news_intel: NewsIntelligenceReport | None,
         earnings_analyses: list[dict],
         macro_analysis: dict | None,
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
         symbol_sectors: dict[str, str] | None = None,
         session_type: str = "morning",
     ) -> dict[str, dict[str, str]]:
@@ -88,6 +89,12 @@ class PortfolioManagerAgent(BaseAgent):
             analysis = item.get("analysis") or {}
             sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
             put(str(item.get("symbol") or ""), "earnings", cls._collapse_stances([sentiment]))
+
+        smart_money_stances: dict[str, list[str]] = {}
+        for finding in smart_money_findings or []:
+            smart_money_stances.setdefault(finding.symbol.upper(), []).append(finding.stance)
+        for symbol, stances in smart_money_stances.items():
+            put(symbol, "smart_money", cls._collapse_stances(stances))
 
         if macro_analysis:
             sectors = {str(k).upper(): str(v) for k, v in (symbol_sectors or {}).items()}
@@ -125,12 +132,14 @@ class PortfolioManagerAgent(BaseAgent):
         total_value: float = kwargs["total_value"]
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses", [])
+        smart_money_findings: list[SmartMoneyFinding] = kwargs.get("smart_money_findings", [])
         evidence_registry = self.build_evidence_registry(
             analyses=analyses,
             positions=positions,
             news_intel=news_intel,
             earnings_analyses=earnings_analyses,
             macro_analysis=macro_analysis,
+            smart_money_findings=smart_money_findings,
             symbol_sectors=kwargs.get("symbol_sectors") or {},
             session_type=kwargs.get("session_type") or "morning",
         )
@@ -322,6 +331,14 @@ Bear triggers (would turn defensive):
 Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confidence})"""
         else:
             news_section = "## News Intelligence\nNo news data available."
+
+        if smart_money_findings:
+            smart_money_section = "## Smart Money Evidence\n" + "\n".join(
+                f"- {f.symbol}: stance={f.stance}; role={f.economic_role}; {f.summary} Why now: {f.why_now}"
+                for f in smart_money_findings
+            )
+        else:
+            smart_money_section = "## Smart Money Evidence\nNo material source-backed finding available. Do not claim coverage."
 
         # Format earnings analysis section
         if earnings_analyses:
@@ -616,6 +633,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 
 {earnings_section}
 
+{smart_money_section}
+
 ## Technical Analysis Reports
 {analyses_text}
 
@@ -640,6 +659,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                total_value: float = 0,
                news_intel: NewsIntelligenceReport | None = None,
                earnings_analyses: list[dict] | None = None,
+               smart_money_findings: list[SmartMoneyFinding] | None = None,
                yesterday_insights: dict | None = None,
                recent_performance: dict | None = None,
                position_history: dict | None = None,
@@ -666,6 +686,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             total_value=total_value,
             news_intel=news_intel,
             earnings_analyses=earnings_analyses or [],
+            smart_money_findings=smart_money_findings or [],
             yesterday_insights=yesterday_insights,
             recent_performance=recent_performance or {},
             position_history=position_history or {},
@@ -739,6 +760,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 news_intel=news_intel,
                 earnings_analyses=earnings_analyses or [],
                 macro_analysis=macro_analysis, total_value=total_value,
+                smart_money_findings=smart_money_findings or [],
                 symbol_sectors=symbol_sectors or {}, session_type=session_type,
             )
             if errors:
@@ -810,6 +832,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         news_intel=news_intel,
                         earnings_analyses=earnings_analyses or [],
                         macro_analysis=macro_analysis, total_value=total_value,
+                        smart_money_findings=smart_money_findings or [],
                         symbol_sectors=symbol_sectors or {}, session_type=session_type,
                     )
                     if errors:
@@ -849,6 +872,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         earnings_analyses: list[dict], macro_analysis: dict | None,
         total_value: float, symbol_sectors: dict[str, str] | None = None,
         session_type: str = "morning",
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
     ) -> list[str]:
         """Validate only machine-readable claims against the prompt registry.
 
@@ -869,8 +893,15 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         registry = cls.build_evidence_registry(
             analyses=analyses, positions=positions, news_intel=news_intel,
             earnings_analyses=earnings_analyses, macro_analysis=macro_analysis,
+            smart_money_findings=smart_money_findings or [],
             symbol_sectors=symbol_sectors or {}, session_type=session_type,
         )
+        smart_money_eligible: dict[str, bool] = {}
+        for finding in smart_money_findings or []:
+            symbol = finding.symbol.upper()
+            smart_money_eligible[symbol] = (
+                smart_money_eligible.get(symbol, False) or finding.support_eligible
+            )
         bullish = {
             "strong_buy", "buy", "bullish", "positive", "risk_on",
             "overweight", "favorable",
@@ -928,6 +959,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     or (intent == "sell" and stance_is_bearish)
                 )
                 if claim.relationship == "supports":
+                    if source == "smart_money" and not smart_money_eligible.get(symbol, False):
+                        errors.append(f"{symbol}: historical smart-money evidence cannot support a target; use context")
+                        continue
                     if not polarity_supports:
                         errors.append(
                             f"{symbol}: {source} stance {stance!r} does not support "
@@ -940,14 +974,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         f"{symbol}: {source} stance {stance!r} supports the proposed "
                         f"{intent}; it cannot be labelled conflicts"
                     )
-                elif claim.relationship == "context" and stance not in {"neutral", "mixed"}:
+                elif (
+                    claim.relationship == "context"
+                    and stance not in {"neutral", "mixed"}
+                    and source != "macro"
+                    and not (
+                        source == "smart_money"
+                        and not smart_money_eligible.get(symbol, False)
+                    )
+                ):
                     errors.append(
                         f"{symbol}: directional {source} stance {stance!r} must be "
                         "marked supports or conflicts, not context"
                     )
 
-            # Dynamic N/M alignment is valid only when M is the number of
-            # sources actually available for this symbol in the registry.
+            # Dynamic N/M alignment covers the core evidence sources actually
+            # available for this symbol. Optional smart-money context remains
+            # explicit provenance but does not dilute the established
+            # technical/news/earnings/macro denominator.
             texts = [target.thesis]
             texts.extend(
                 m.group(0) for m in re.finditer(
@@ -958,21 +1002,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             for text in texts:
                 for match in re.finditer(r"\b(\d+)/(\d+)\b", text):
                     stated_support, stated_available = map(int, match.groups())
-                    available_sources = set(expected_sources)
+                    available_sources = set(expected_sources) - {"smart_money"}
+                    seen_alignment_sources = seen_sources & available_sources
+                    supporting_alignment_sources = supporting_sources & available_sources
                     if stated_available != len(available_sources):
                         errors.append(
                             f"{symbol}: claims denominator {stated_available}, but "
                             f"{len(available_sources)} current source(s) are available"
                         )
-                    elif seen_sources != available_sources:
+                    elif seen_alignment_sources != available_sources:
                         errors.append(
                             f"{symbol}: alignment shorthand requires provenance for all "
                             f"available sources {sorted(available_sources)!r}"
                         )
-                    elif stated_support != len(supporting_sources):
+                    elif stated_support != len(supporting_alignment_sources):
                         errors.append(
                             f"{symbol}: claims {stated_support}/{stated_available} aligned "
-                            f"but provenance proves {len(supporting_sources)}/{stated_available}"
+                            f"but provenance proves "
+                            f"{len(supporting_alignment_sources)}/{stated_available}"
                         )
         return errors
 

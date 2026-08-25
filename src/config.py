@@ -20,6 +20,7 @@ class ApiKeysConfig(BaseModel):
     fred: str
     alpaca_key: str
     alpaca_secret: str
+    bargo: str = ""
 
     @model_validator(mode="after")
     def _check_required_keys(self):
@@ -81,6 +82,7 @@ class AlpacaConfig(BaseModel):
 # and AppConfig._check_llm_provider_keys so the two can't drift apart.
 AGENT_NAMES = (
     "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+    "smart_money_analyst",
     "portfolio_manager", "risk_manager", "position_reviewer",
     "evening_analyst", "meta_reflector",
 )
@@ -91,6 +93,7 @@ class LLMConfig(BaseModel):
     news_analyst_model: str = "claude-opus-4-7"
     macro_analyst_model: str = "claude-opus-4-7"
     earnings_analyst_model: str = "claude-opus-4-7"
+    smart_money_analyst_model: str = "claude-opus-4-7"
     portfolio_manager_model: str = "claude-opus-4-7"
     risk_manager_model: str = "claude-opus-4-7"
     position_reviewer_model: str = "claude-opus-4-7"
@@ -109,6 +112,7 @@ class LLMConfig(BaseModel):
     news_analyst_provider: str | None = None
     macro_analyst_provider: str | None = None
     earnings_analyst_provider: str | None = None
+    smart_money_analyst_provider: str | None = None
     portfolio_manager_provider: str | None = None
     risk_manager_provider: str | None = None
     position_reviewer_provider: str | None = None
@@ -125,11 +129,21 @@ class LLMConfig(BaseModel):
     news_analyst_max_tokens: int | None = None
     macro_analyst_max_tokens: int | None = None
     earnings_analyst_max_tokens: int | None = None
+    smart_money_analyst_max_tokens: int | None = None
     portfolio_manager_max_tokens: int | None = None
     risk_manager_max_tokens: int | None = None
     position_reviewer_max_tokens: int | None = None
     evening_analyst_max_tokens: int | None = None
     meta_reflector_max_tokens: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inherit_new_specialist_routing(cls, values):
+        """Old configs inherit the technical specialist's provider/model."""
+        if isinstance(values, dict) and "smart_money_analyst_model" not in values:
+            values["smart_money_analyst_model"] = values.get("tech_analyst_model", "claude-opus-4-7")
+            values["smart_money_analyst_provider"] = values.get("tech_analyst_provider")
+        return values
 
     @field_validator("max_tokens")
     @classmethod
@@ -147,6 +161,7 @@ class LLMConfig(BaseModel):
         "news_analyst_max_tokens",
         "macro_analyst_max_tokens",
         "earnings_analyst_max_tokens",
+        "smart_money_analyst_max_tokens",
         "portfolio_manager_max_tokens",
         "risk_manager_max_tokens",
         "position_reviewer_max_tokens",
@@ -187,6 +202,7 @@ class LLMConfig(BaseModel):
     @field_validator(
         "tech_analyst_provider", "news_analyst_provider", "macro_analyst_provider",
         "earnings_analyst_provider", "portfolio_manager_provider", "risk_manager_provider",
+        "smart_money_analyst_provider",
         "position_reviewer_provider", "evening_analyst_provider", "meta_reflector_provider",
     )
     @classmethod
@@ -299,6 +315,13 @@ class IntradayScanConfig(BaseModel):
     """Hard cap on how many symbols get a real tech_analyst call in one
     tick — keeps this a bounded, occasional check, not a high-frequency
     system, even on a broad-market move day when many symbols qualify."""
+
+
+class SmartMoneyConfig(BaseModel):
+    enabled: bool = False
+    base_url: str = "https://www.bargo.ai/free-apis/congress/v1"
+    timeout_s: float = Field(default=10.0, ge=1, le=60)
+    max_rows_per_symbol: int = Field(default=20, ge=1, le=100)
 
 
 class ScheduleConfig(BaseModel):
@@ -486,6 +509,7 @@ class AppConfig(BaseModel):
     # (enabled=False default), so intra_check's existing behavior is
     # unchanged unless explicitly opted in.
     intraday_scan: IntradayScanConfig = Field(default_factory=IntradayScanConfig)
+    smart_money: SmartMoneyConfig = Field(default_factory=SmartMoneyConfig)
 
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):

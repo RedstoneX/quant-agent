@@ -13,6 +13,7 @@ import pytest
 
 from src.agents.base import BaseAgent
 from src.cost_circuit import LLMCostCircuitBreaker, PaidAnalysisSuspended
+from src.pipeline import TradingPipeline
 from src.storage.db import Database
 
 
@@ -60,6 +61,28 @@ def _db_path(tmp_path):
     db.initialize()
     db.conn.close()
     return str(path)
+
+
+def test_pipeline_attaches_breaker_to_every_paid_agent():
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    circuit = object()
+    pipeline.cost_circuit = circuit
+    names = (
+        "tech_analyst", "news_analyst", "macro_analyst",
+        "earnings_analyst", "smart_money_analyst", "portfolio_manager",
+        "risk_manager", "position_reviewer", "evening_analyst",
+        "meta_reflector",
+    )
+    agents = {}
+    for name in names:
+        agent = MagicMock()
+        agents[name] = agent
+        setattr(pipeline, name, agent)
+
+    pipeline._attach_cost_circuit_to_agents()
+
+    for agent in agents.values():
+        agent.set_cost_circuit.assert_called_once_with(circuit)
 
 
 def test_projected_session_spend_blocks_before_provider_request(tmp_path):

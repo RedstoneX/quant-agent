@@ -740,6 +740,62 @@ def get_journal_day(date_str: str) -> dict:
             conn.close()
 
 
+def get_research_day(date_str: str) -> dict:
+    """One consistent read-only snapshot for the Research Intelligence desk.
+
+    Unlike the older convenience readers, this function does not conflate a
+    SQLite failure with a genuinely quiet day: `read_error` is explicit and
+    sanitized.  Raw agent rows are returned only to the typed route projection;
+    that projection deliberately excludes prompts and `full_response`.
+    """
+    try:
+        day = date.fromisoformat(date_str)
+    except (TypeError, ValueError):
+        return {"invalid_date": True, "read_error": None}
+
+    conn = None
+    try:
+        conn = _connect()
+        start_utc, end_utc = _et_day_utc_bounds(day)
+        agent_logs = [dict(r) for r in conn.execute(
+            "SELECT * FROM agent_logs WHERE timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp, id", (start_utc, end_utc),
+        ).fetchall()]
+        evidence = [dict(r) for r in conn.execute(
+            "SELECT * FROM specialist_evidence WHERE timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp, id", (start_utc, end_utc),
+        ).fetchall()]
+        trades = [dict(r) for r in conn.execute(
+            "SELECT * FROM trades WHERE timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp, id", (start_utc, end_utc),
+        ).fetchall()]
+        daily_pnl = conn.execute(
+            "SELECT * FROM daily_pnl WHERE date = ?", (date_str,),
+        ).fetchone()
+        insights = conn.execute(
+            "SELECT * FROM insights WHERE date = ?", (date_str,),
+        ).fetchone()
+        return {
+            "invalid_date": False,
+            "read_error": None,
+            "agent_logs": agent_logs,
+            "specialist_evidence": evidence,
+            "trades": trades,
+            "daily_pnl": dict(daily_pnl) if daily_pnl is not None else None,
+            "insights": dict(insights) if insights is not None else None,
+        }
+    except sqlite3.Error:
+        return {
+            "invalid_date": False,
+            "read_error": "research data unavailable",
+            "agent_logs": [], "specialist_evidence": [], "trades": [],
+            "daily_pnl": None, "insights": None,
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _escape_like(term: str) -> str:
     """Escape SQLite LIKE metacharacters in a user-supplied search term so
     it's matched literally (paired with `ESCAPE '\\'` below). This is what

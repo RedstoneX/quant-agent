@@ -6,6 +6,7 @@ api_keys:
   fred: "${FRED_API_KEY}"
   alpaca_key: "${ALPACA_API_KEY}"
   alpaca_secret: "${ALPACA_SECRET_KEY}"
+  bargo: "${BARGO_API_KEY}"
 
 alpaca:
   base_url: "https://paper-api.alpaca.markets"  # paper trading
@@ -43,6 +44,8 @@ llm:
   macro_analyst_model: "google/gemini-2.5-flash-lite"
   earnings_analyst_provider: "openrouter"
   earnings_analyst_model: "google/gemini-2.5-flash-lite"
+  smart_money_analyst_provider: "openrouter"
+  smart_money_analyst_model: "google/gemini-2.5-flash-lite"
   portfolio_manager_provider: "openrouter"
   # 2026-08-25 production-grounding re-measurement: Gemini scored 0.00 after
   # omitting provenance/inventing holdings; Luna was unstable under the final
@@ -88,6 +91,7 @@ llm:
   news_analyst_max_tokens: 16000
   macro_analyst_max_tokens: 16000
   earnings_analyst_max_tokens: 16000
+  smart_money_analyst_max_tokens: 16000
   portfolio_manager_max_tokens: 16000
   risk_manager_max_tokens: 16000
   position_reviewer_max_tokens: 16000
@@ -160,6 +164,14 @@ intraday_scan:
   move_threshold_pct: 3.0   # min |% move| since last close to qualify
   cooldown_hours: 3.0       # min hours between two decisions for the same symbol
   max_candidates_per_scan: 5  # hard cap per tick — bounded, not high-frequency
+
+smart_money:
+  # Disabled until the production host has a working credential/preflight;
+  # current keyless server-to-server probes are challenged with HTTP 403.
+  enabled: false
+  base_url: "https://www.bargo.ai/free-apis/congress/v1"
+  timeout_s: 10
+  max_rows_per_symbol: 20
 
 trading:
   universe:

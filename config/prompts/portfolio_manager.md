@@ -606,7 +606,7 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "catalyst": "",                 // populate only when overriding R/R<1.5 discipline
   "provenance": [
     {
-      "source": "technical",      // technical | news | earnings | macro
+      "source": "technical",      // technical | news | earnings | macro | smart_money
       "observed_stance": "buy",   // copy the validated stance exactly
       "relationship": "supports", // supports | conflicts | context
       "evidence": "Confirmed uptrend and positive momentum"
@@ -709,10 +709,14 @@ Semantics of `target_weight_pct`:
   specialist, that is allowed: use `relationship: "conflicts"` and explain
   the disagreement in `evidence`; never relabel disagreement as alignment.
   Macro is broad context and may use `relationship: "context"`.
+- Smart-money coverage is optional. Never claim it when no material finding
+  is supplied. Congressional evidence marked `historical` is lagged context
+  only: it may use `relationship: "context"`, never `supports`.
 - A shorthand such as `2/3 aligned` is permitted only when `3` is the exact
-  number of sources in that symbol's registry, provenance contains all three,
-  and exactly two are marked `supports`. Never force `/4`. Prefer explicit
-  provenance over shorthand.
+  number of core sources (technical, news, earnings, macro) available for that
+  symbol in the registry, provenance contains all three, and exactly two are
+  marked `supports`. Optional Smart Money provenance does not change that core
+  denominator. Never force `/4`. Prefer explicit provenance over shorthand.
 - **Symbol Discipline**: Only propose `target_weight_pct > 0` for
   symbols that appear in the Technical Analysis Reports section for
   this run. Held positions can always be trimmed/closed regardless of
