@@ -5,16 +5,23 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
 ## Current integration truth
 
 - Production is deployed and verified at
-  `47ace428c4a06f4a5175f71a57a89df706202500`; rollback SHA is
-  `ac30dc374d60d59bec37fa13bee9ce5956c449c8`.
+  `8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`; rollback SHA is
+  `47ace428c4a06f4a5175f71a57a89df706202500`.
 - PR #81 deployed the persistent mandatory cost circuit and PM/pipeline
-  remediation. The full suite passed 2,108 tests.
+  remediation. PR #83 fixed the intraday lock context manager that the first
+  natural suspended tick exposed. The full suite passed 2,110 tests and the
+  deployed intraday suite passed 24 tests.
 - Production seeded **$4.211481** of existing ET-day spend and latched the
   **$1.50** daily limit with `alert_state=1`. The required Telegram shutdown
   alert was delivered. Do not reset while the unchanged ledger is over limit.
 - A post-deployment midday run reconciled both broker-protected long positions,
   then returned `paid_analysis_suspended` before any model request. Agent-log
   ID 189 and ET-day spend remained unchanged.
+- The 18:30 UTC intraday tick also reconciled both protected longs and blocked
+  before Tech with zero spend. Its initial structured suspension was masked by
+  `generator didn't stop after throw()`; PR #83 now propagates the suspension
+  through the advisory lock correctly. The latch was never reset, max agent-log
+  ID remains 189 and incremental circuit spend remains $0.00.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
 - The chart live-price/current-price truth issue was already fixed by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`. It is not an outstanding task.
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
