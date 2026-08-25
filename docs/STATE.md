@@ -29,20 +29,27 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`ac30dc374d60d59bec37fa13bee9ce5956c449c8`
+`47ace428c4a06f4a5175f71a57a89df706202500`
 
-This is GitHub `main` after PR #79. It deploys the Research Intelligence Desk
-and the fail-soft Smart Money Analyst integration on top of the prior backend
-and Mission Control finish line. The recorded rollback SHA is
-`16c52715b3ee05ec9e38c12958a14ee77a6d38d7`.
+This is GitHub `main` after PR #81. It retains the Research Intelligence Desk
+and disabled Smart Money integration while adding the mandatory paid-analysis
+cost circuit and the PM/pipeline failure remediation. The recorded rollback
+SHA is `ac30dc374d60d59bec37fa13bee9ce5956c449c8`.
 
 Production verification on 2026-08-25 established:
 
-- `/health` returned `status=ok`, DB reachable, broker reachable and
-  `paper=true`;
-- OpenRouter and the configured per-seat policy worked through OneCLI,
-  including a real completion served by Portfolio Manager model
-  `openai/gpt-5.5`;
+- `/health` returned the intentional `status=degraded`, DB reachable, broker
+  reachable, `paper=true`, and `decision_path_status=paid_analysis_suspended`;
+- the circuit seeded the existing ET-day agent ledger at **$4.211481**, latched
+  the **$1.50** daily limit before any post-deployment provider request, and
+  recorded successful Telegram alert delivery;
+- the first post-deployment midday run reconciled all two broker-protected long
+  positions before returning `paid_analysis_suspended`; agent-log ID **189**
+  and ET-day spend remained unchanged;
+- all seven existing timers are active; non-LLM safety, reconciliation, close,
+  P&L and read-only API work remain available while model calls are blocked;
+- the complete merged hermetic suite passed **2,108 tests**, including
+  adversarial accounting corruption, reset-race and cross-process cases;
 - `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
   price requests were accepted (the 5m response was naturally empty before
   the Paper market session; the other three returned bars);
@@ -51,23 +58,39 @@ Production verification on 2026-08-25 established:
   horizontal overflow;
 - POST, PUT, PATCH and DELETE remained rejected with 405;
 - OneCLI and Mission Control remained private and reachable;
-- Telegram credentials and the bot API path validated without sending a
-  message;
-- only `quant-agent-api.service` was restarted;
-- all seven existing `quant-agent-*.timer` units remained enabled and listed;
-- no broker order was submitted, cancelled or modified.
+- the existing private/read-only Mission Control and Research Desk contracts
+  remain intact.
 
 The Smart Money seat is deployed but disabled in production. Bargo's
 documented keyless server-to-server endpoint returned a Cloudflare 403 and no
 free Bargo credential exists in OneCLI. Enabling and commissioning real
 source-backed Smart Money evidence is therefore an external credential/access
 blocker, not an invitation to weaken provenance or substitute fabricated data.
+Before enablement, the finding stance must also be deterministically checked
+against source direction and the sequential universe fetch must gain a bounded
+whole-branch deadline.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
 GitHub `main` may advance beyond this production SHA. Production changes only through the governed engineering workflow below.
+
+## Mandatory paid-analysis cost circuit
+
+Paid model requests now share one persistent SQLite circuit across systemd
+processes. It fails closed before provider I/O on missing/corrupt accounting,
+unknown or stale pricing, excessive provider attempts/retries, repeated paid
+sessions, projected exposure, session spend or ET-day spend. Current limits are
+**$0.90 per session**, **$1.50 per ET day**, two provider attempts per logical
+call, two retry/repair attempts per session and two paid sessions per mode/day.
+
+A trip suspends model analysis, repairs, retries and provider failover and sends
+one clear Telegram alert containing the trigger, affected run, attempts, cost,
+suspended work and preserved protections. Broker-resident stops, deterministic
+loss protection, order/fill reconciliation, close/P&L jobs and the read-only API
+remain active. Reset requires an auditable operator reason and never erases
+settled spend, so an over-limit day immediately re-latches.
 
 ## Paper-beta engineering authority — accepted rule
 
@@ -204,10 +227,16 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 
 Current bounded activities:
 
-1. **Smart Money source commissioning:** obtain an authorized free Bargo
+1. **Circuit review/reset:** paid analysis is intentionally suspended for the
+   current ET day. Do not reset while the unchanged $4.211481 ledger remains
+   above the daily limit; review the incident and use a recorded reason only
+   when resumption is deliberate.
+2. **Smart Money source commissioning:** obtain an authorized free Bargo
    credential or working server-to-server endpoint, preflight it, then enable
-   the already-deployed fail-soft seat. Do not substitute unsourced data.
-2. **Natural Alpaca Paper acceptance:** continue collecting real evidence without forcing activity or weakening safety.
-3. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
+   the already-deployed fail-soft seat after its stance and deadline guards are
+   fixed. Do not substitute unsourced data.
+3. **Natural Alpaca Paper acceptance:** resume paid research only after the
+   deliberate circuit-reset decision; continue non-LLM safety observation now.
+4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
 See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.

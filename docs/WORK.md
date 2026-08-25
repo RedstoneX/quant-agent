@@ -1,12 +1,20 @@
 # QAMC Current Work
 
-Status: **RESEARCH DESK DEPLOYED | SMART MONEY SOURCE ACCESS BLOCKED | ALPACA PAPER NATURAL ACCEPTANCE**
+Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED**
 
 ## Current integration truth
 
 - Production is deployed and verified at
-  `ac30dc374d60d59bec37fa13bee9ce5956c449c8`; rollback SHA is
-  `16c52715b3ee05ec9e38c12958a14ee77a6d38d7`.
+  `47ace428c4a06f4a5175f71a57a89df706202500`; rollback SHA is
+  `ac30dc374d60d59bec37fa13bee9ce5956c449c8`.
+- PR #81 deployed the persistent mandatory cost circuit and PM/pipeline
+  remediation. The full suite passed 2,108 tests.
+- Production seeded **$4.211481** of existing ET-day spend and latched the
+  **$1.50** daily limit with `alert_state=1`. The required Telegram shutdown
+  alert was delivered. Do not reset while the unchanged ledger is over limit.
+- A post-deployment midday run reconciled both broker-protected long positions,
+  then returned `paid_analysis_suspended` before any model request. Agent-log
+  ID 189 and ET-day spend remained unchanged.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
 - The chart live-price/current-price truth issue was already fixed by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`. It is not an outstanding task.
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
@@ -18,7 +26,9 @@ Status: **RESEARCH DESK DEPLOYED | SMART MONEY SOURCE ACCESS BLOCKED | ALPACA PA
   read-only and all seven timers remained intact.
 - The Smart Money code path is deployed but disabled: Bargo's keyless endpoint
   returns a Cloudflare 403 to server clients and production has no Bargo
-  credential. Real source commissioning is blocked on external free access.
+  credential. Real source commissioning is blocked on external free access;
+  stance-vs-direction validation and a bounded whole-branch fetch deadline are
+  also required before enablement.
 - Deployment verification passed `/health`, DB, broker, Alpaca Paper, OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI, Telegram configuration, `/cockpit`, accepted chart timeframes, read-only method rejection, and all seven existing timers.
 - The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
 
@@ -196,5 +206,7 @@ Do not interrupt natural validation for these unless current evidence shows they
 
 **Active work:** natural Alpaca Paper observation continues. Smart Money needs
 an authorized free Bargo credential or a working server-to-server endpoint
-before the deployed seat can be enabled and accepted with real stored evidence.
-No trade may be forced or manufactured to create acceptance evidence.
+plus the recorded stance/deadline guards before the deployed seat can be
+enabled. Paid research remains deliberately suspended until the circuit is
+reviewed and reset with an auditable reason; deterministic safety observation
+continues. No trade may be forced or manufactured to create acceptance evidence.
