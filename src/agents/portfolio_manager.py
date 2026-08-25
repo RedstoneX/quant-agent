@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -599,10 +600,35 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         # PortfolioConstructor downstream still has remaining valid targets
         # to translate into orders; better to fire 4 of 5 trades than 0 of 5.
         # Mirrors PR #73/#74 pattern.
+        parsed_target_count = (
+            len(parsed.get("targets", []))
+            if isinstance(parsed, dict) and isinstance(parsed.get("targets", []), list)
+            else 0
+        )
         if isinstance(parsed, dict):
             parsed = self._drop_invalid_targets(parsed)
         try:
-            return PortfolioDecision(**parsed), result
+            decision = PortfolioDecision(**parsed)
+            if parsed_target_count > 0 and not decision.targets:
+                logger.error(
+                    "Portfolio manager emitted %d target(s), but all were invalid; "
+                    "treating as agent failure, not a no-action decision",
+                    parsed_target_count,
+                )
+                return None, result
+            errors = self.validate_grounding(
+                decision, analyses=analyses, positions=positions,
+                news_intel=news_intel,
+                earnings_analyses=earnings_analyses or [],
+                macro_analysis=macro_analysis, total_value=total_value,
+            )
+            if errors:
+                logger.error(
+                    "Portfolio decision failed deterministic grounding: %s",
+                    "; ".join(errors),
+                )
+                return None, result
+            return decision, result
         except ValidationError as e:
             # Mirror of the RiskManager repair path (2026-08-18 incident
             # class): a decision that parsed as JSON but failed schema
@@ -630,6 +656,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             repaired = self.repair_reprompt(result, e, "PortfolioDecision")
             reparsed = repaired.parse_json()
             if isinstance(reparsed, dict):
+                repaired_target_count = (
+                    len(reparsed.get("targets", []))
+                    if isinstance(reparsed.get("targets", []), list) else 0
+                )
                 reparsed = self._drop_invalid_targets(reparsed)
                 if not self._decision_fields_unchanged(parsed, reparsed):
                     logger.error(
@@ -641,6 +671,25 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     return None, repaired
                 try:
                     decision = PortfolioDecision(**reparsed)
+                    if repaired_target_count > 0 and not decision.targets:
+                        logger.error(
+                            "Portfolio repair emitted %d target(s), but all were "
+                            "invalid; failing closed",
+                            repaired_target_count,
+                        )
+                        return None, repaired
+                    errors = self.validate_grounding(
+                        decision, analyses=analyses, positions=positions,
+                        news_intel=news_intel,
+                        earnings_analyses=earnings_analyses or [],
+                        macro_analysis=macro_analysis, total_value=total_value,
+                    )
+                    if errors:
+                        logger.error(
+                            "Repaired portfolio decision failed deterministic "
+                            "grounding: %s", "; ".join(errors),
+                        )
+                        return None, repaired
                     logger.info(
                         "Portfolio decision repair succeeded (%d targets)",
                         len(decision.targets),
@@ -659,6 +708,195 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         except Exception as e:
             logger.error("Failed to parse portfolio decision: %s", e)
             return None, result
+
+    @staticmethod
+    def validate_grounding(
+        decision: PortfolioDecision, *, analyses: list[TechAnalysisResult],
+        positions: list[Position], news_intel: NewsIntelligenceReport | None,
+        earnings_analyses: list[dict], macro_analysis: dict | None,
+        total_value: float,
+    ) -> list[str]:
+        """Reject invented specialist coverage/alignment and phantom exits.
+
+        This validates claims, not judgment: a PM may oppose any specialist
+        by recording ``relationship=conflicts``.  Historical rows remain
+        readable because the model field has a default; only a new live
+        decision crossing this boundary must satisfy the contract.
+        """
+        errors: list[str] = []
+        if decision.decisions:
+            errors.append(
+                "portfolio manager supplied concrete decisions; only grounded targets "
+                "may cross the PM boundary"
+            )
+        tech = {a.symbol.upper(): {a.rating.lower()} for a in analyses}
+        held = {p.symbol.upper(): p for p in positions}
+        news: dict[str, set[str]] = {}
+        if news_intel is not None:
+            for symbol, items in news_intel.stock_news.items():
+                news[symbol.upper()] = {i.sentiment.lower() for i in items}
+        earnings: dict[str, set[str]] = {}
+        for item in earnings_analyses:
+            analysis = item.get("analysis") or {}
+            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
+            if item.get("symbol") and sentiment:
+                earnings.setdefault(item["symbol"].upper(), set()).add(str(sentiment).lower())
+        macro_stances: set[str] = set()
+        if macro_analysis:
+            for key in ("regime", "equity_outlook", "confidence"):
+                if macro_analysis.get(key):
+                    macro_stances.add(str(macro_analysis[key]).lower())
+
+        bullish = {"strong_buy", "buy", "bullish", "positive", "risk_on", "risk-on"}
+        bearish = {"strong_sell", "sell", "bearish", "negative", "risk_off", "risk-off"}
+        reasoning_text = "\n".join(
+            str(value) for value in decision.reasoning_chain.model_dump().values()
+        )
+        if re.search(r"\b(align(?:ed|ment)?|analysts? agree|coverage)\b",
+                     decision.portfolio_view, flags=re.IGNORECASE):
+            errors.append(
+                "portfolio_view may not assert specialist alignment/coverage; "
+                "use per-target structured provenance"
+            )
+
+        def _asserts_source_view(text: str, terms: tuple[str, ...]) -> bool:
+            """True for a directional/agreement claim, not "no coverage"."""
+            claim_words = re.compile(
+                r"\b(bullish|bearish|buy|sell|positive|negative|supports?|"
+                r"conflicts?|align(?:ed|ment)?|constructive|weak|strong)\b",
+                flags=re.IGNORECASE,
+            )
+            lowered = text.lower()
+            for term in terms:
+                start = 0
+                while True:
+                    index = lowered.find(term, start)
+                    if index < 0:
+                        break
+                    prefix = lowered[max(0, index - 24):index]
+                    suffix = lowered[index + len(term):index + len(term) + 30]
+                    explicit_absence = bool(re.search(
+                        r"(?:\bno\b(?:\s+(?:fresh|material|relevant|adverse|new))?|\bwithout\b|\bunavailable\b|"
+                        r"\bnot available\b|\bn/?a\b)\s*$", prefix,
+                    )) or bool(re.match(
+                        r"\s*(?:=|:)?\s*(?:n/?a|unavailable|absent|none|unconfirmed)\b",
+                        suffix,
+                    )) or bool(re.search(r"\bno\b[^.;:\n]{0,40}$", prefix))
+                    if not explicit_absence:
+                        window = text[max(0, index - 60):index + len(term) + 60]
+                        if claim_words.search(window):
+                            return True
+                    start = index + len(term)
+            return False
+
+        for target in decision.targets:
+            symbol = target.symbol.upper()
+            pos = held.get(symbol)
+            if target.target_weight_pct <= 0 and pos is None:
+                errors.append(f"{symbol}: close/exit target is not an actual holding")
+            if not target.provenance:
+                errors.append(f"{symbol}: target has no structured specialist provenance")
+                continue
+
+            current_weight = 0.0
+            if pos is not None and total_value > 0:
+                current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
+            intent = "buy" if target.target_weight_pct > current_weight + 0.01 else "sell"
+            seen_sources: set[str] = set()
+            supporting_sources: set[str] = set()
+            for claim in target.provenance:
+                source = claim.source
+                stance = claim.observed_stance.strip().lower()
+                expected = (
+                    tech.get(symbol, set()) if source == "technical" else
+                    news.get(symbol, set()) if source == "news" else
+                    earnings.get(symbol, set()) if source == "earnings" else
+                    macro_stances
+                )
+                if not expected:
+                    errors.append(f"{symbol}: claims {source} coverage that does not exist")
+                    continue
+                if stance not in expected:
+                    errors.append(
+                        f"{symbol}: claims {source} stance {stance!r}; observed "
+                        f"stance is {sorted(expected)!r}"
+                    )
+                    continue
+                if source in seen_sources:
+                    errors.append(f"{symbol}: duplicate {source} provenance claim")
+                    continue
+                seen_sources.add(source)
+                polarity_supports = (
+                    (intent == "buy" and stance in bullish)
+                    or (intent == "sell" and stance in bearish)
+                )
+                if claim.relationship == "supports":
+                    if not polarity_supports:
+                        errors.append(
+                            f"{symbol}: {source} stance {stance!r} does not support "
+                            f"the proposed {intent}; record an explicit conflict instead"
+                        )
+                    else:
+                        supporting_sources.add(source)
+                elif claim.relationship == "context" and source != "macro" and stance not in {"neutral", "mixed"}:
+                    errors.append(
+                        f"{symbol}: directional {source} stance {stance!r} must be "
+                        "marked supports or conflicts, not context"
+                    )
+
+            thesis_lower = target.thesis.lower()
+            source_terms = {
+                "technical": ("technical", "tech ", "tech-"),
+                "news": ("news", "headline"),
+                "earnings": ("earnings", "filing"),
+                "macro": ("macro", "regime"),
+            }
+            for source, terms in source_terms.items():
+                if _asserts_source_view(thesis_lower, terms) and source not in seen_sources:
+                    errors.append(
+                        f"{symbol}: thesis invokes {source} without verified provenance"
+                    )
+
+            symbol_segments = [
+                match.group(0) for match in re.finditer(
+                    rf"\b{re.escape(symbol)}\b\s*:\s*.*?"
+                    rf"(?=\b[A-Z][A-Z0-9.\-]{{0,7}}\s*:|[.\n]|$)",
+                    reasoning_text, flags=re.IGNORECASE,
+                )
+            ]
+            for segment in symbol_segments:
+                segment_lower = segment.lower()
+                for source, terms in source_terms.items():
+                    if (_asserts_source_view(segment_lower, terms)
+                            and source not in seen_sources):
+                        errors.append(
+                            f"{symbol}: reasoning invokes {source} without "
+                            "verified provenance"
+                        )
+
+            # Alignment shorthand is allowed only when the structured claims
+            # prove the exact numerator and all four distinct seats exist.
+            texts = [target.thesis]
+            texts.extend(
+                m.group(0) for m in re.finditer(
+                    rf"\b{re.escape(symbol)}\b[^.\n]{{0,240}}\b[0-4]/4\b",
+                    reasoning_text, flags=re.IGNORECASE,
+                )
+            )
+            for text in texts:
+                for match in re.finditer(r"\b([0-4])/4\b", text):
+                    stated = int(match.group(1))
+                    if seen_sources != {"technical", "news", "earnings", "macro"}:
+                        errors.append(
+                            f"{symbol}: {stated}/4 alignment claimed without all four "
+                            "verified source records"
+                        )
+                    elif stated != len(supporting_sources):
+                        errors.append(
+                            f"{symbol}: claims {stated}/4 aligned but structured "
+                            f"provenance proves {len(supporting_sources)}/4"
+                        )
+        return errors
 
     @staticmethod
     def _drop_invalid_targets(parsed: dict) -> dict:

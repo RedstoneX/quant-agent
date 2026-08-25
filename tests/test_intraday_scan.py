@@ -655,3 +655,9 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
     p.risk_stage.run.assert_called_once_with(ctx)
     p.execution_stage.run.assert_called_once_with(ctx)
     assert result["status"] == "intraday_executed"
+    lifecycle = [
+        call.kwargs for call in p.db.insert_specialist_evidence.call_args_list
+        if call.kwargs.get("kind") == "pipeline_event"
+    ]
+    assert any('"stage": "opportunity"' in row["evidence_json"] for row in lifecycle)
+    assert any('"stage": "specialist"' in row["evidence_json"] for row in lifecycle)

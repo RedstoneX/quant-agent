@@ -130,6 +130,7 @@ class Database:
                 fill_status TEXT,                      -- submitted | filled | canceled | rejected | expired | done_for_day | NULL(legacy)
                 fill_qty REAL,                         -- actual qty filled (may differ from requested)
                 fill_price REAL,                       -- actual avg fill price
+                realized_pnl REAL,                     -- average-cost realized P&L for confirmed exits
                 fill_reconciled_at TEXT,               -- when we confirmed the terminal status
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -331,6 +332,7 @@ class Database:
         # for every other agent and for all pre-Stage-1 rows.
         _ensure_column("agent_logs", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "decision_id", "decision_id TEXT")
+        _ensure_column("trades", "realized_pnl", "realized_pnl REAL")
         # codex r7 P1 #3: pending_protection_restores table for older DBs
         # that pre-date the orphaned-stop-restore queue. Idempotent.
         try:
@@ -585,8 +587,66 @@ class Database:
                 "WHERE broker_order_id = ?",
                 (fill_status, fill_qty, fill_price, broker_order_id),
             )
+            try:
+                has_fill = float(fill_qty or 0) > 0
+            except (TypeError, ValueError):
+                has_fill = False
+            if has_fill and fill_price is not None:
+                row = self.conn.execute(
+                    "SELECT id, symbol, action FROM trades WHERE broker_order_id = ?",
+                    (broker_order_id,),
+                ).fetchone()
+                if row is not None and row["action"] not in {"BUY", "SWEEP_BUY", "HOLD"}:
+                    realized = self._realized_pnl_through_trade(row["symbol"], row["id"])
+                    self.conn.execute(
+                        "UPDATE trades SET realized_pnl = ? WHERE id = ?",
+                        (realized, row["id"]),
+                    )
             self.conn.commit()
             return cur.rowcount or 0
+
+    def _realized_pnl_through_trade(self, symbol: str, through_id: int) -> float | None:
+        """Average-cost P&L for one confirmed exit; caller holds ``_lock``."""
+        rows = self.conn.execute(
+            "SELECT id, action, qty, price, fill_status, fill_qty, fill_price "
+            "FROM trades WHERE symbol = ? AND id <= ? ORDER BY id",
+            (symbol, through_id),
+        ).fetchall()
+        inventory = 0.0
+        average_cost = 0.0
+        target_pnl: float | None = None
+        for row in rows:
+            status = str(row["fill_status"] or "").lower()
+            actual_qty = float(row["fill_qty"] or 0)
+            actual_price = row["fill_price"]
+            # Only broker-confirmed execution facts are safe cost basis.
+            if actual_qty <= 0 or actual_price is None or status in {
+                "submitted", "pending_submit", "submit_failed",
+            }:
+                continue
+            actual_price = float(actual_price)
+            if row["action"] in {"BUY", "SWEEP_BUY"}:
+                new_inventory = inventory + actual_qty
+                average_cost = (
+                    (inventory * average_cost + actual_qty * actual_price) / new_inventory
+                    if new_inventory > 0 else 0.0
+                )
+                inventory = new_inventory
+                continue
+            if row["action"] == "HOLD":
+                continue
+            if inventory + 1e-9 < actual_qty:
+                pnl = None  # incomplete canonical cost basis; unknown stays unknown
+                inventory = max(0.0, inventory - actual_qty)
+            else:
+                pnl = round((actual_price - average_cost) * actual_qty, 6)
+                inventory -= actual_qty
+                if inventory <= 1e-9:
+                    inventory = 0.0
+                    average_cost = 0.0
+            if row["id"] == through_id:
+                target_pnl = pnl
+        return target_pnl
 
     def get_unreconciled_orders(self, run_id: str | None = None) -> list[dict]:
         """Trade rows with broker_order_id set but fill_status still 'submitted'.

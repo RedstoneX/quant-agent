@@ -229,6 +229,7 @@ class TradeItem(BaseModel):
     fill_status: str | None = None
     fill_qty: float | None = None
     fill_price: float | None = None
+    realized_pnl: float | None = None
     fill_reconciled_at: str | None = None
     timestamp: str | None = None
     stop_loss: float | None = None
@@ -492,6 +493,8 @@ class CandidateDetailResponse(BaseModel):
     risk_verdict: RiskManagerVerdict | None = None
     risk_modification: RiskModification | None = None
     trade: TradeItem | None = None
+    trades: list[TradeItem] = []
+    pipeline_events: list["PipelineEvent"] = []
 
     consensus: ConsensusSummary = ConsensusSummary()
 
@@ -499,6 +502,14 @@ class CandidateDetailResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /runs/{run_id}/funnel — decision-funnel / "why no trade?" aggregation
 # ---------------------------------------------------------------------------
+
+class PipelineEvent(BaseModel):
+    stage: str
+    outcome: str
+    reason: str = ""
+    timestamp: str | None = None
+    details: dict = {}
+
 
 class CandidateFunnelItem(BaseModel):
     """One candidate's progress through the decision chain this run —
@@ -517,6 +528,12 @@ class CandidateFunnelItem(BaseModel):
     risk_modified: bool = False
     executed: bool = False
     trade_action: str | None = None
+    order_status: str | None = None
+    fill_qty: float | None = None
+    fill_price: float | None = None
+    realized_pnl: float | None = None
+    protection_outcome: str | None = None
+    pipeline_events: list[PipelineEvent] = []
     # Why the execution phase deterministically dropped this candidate's
     # approved order, when it did — quoted from the `execution_skip`
     # evidence row the trading process wrote at the skip site (e.g.
@@ -548,6 +565,7 @@ class RunFunnelResponse(BaseModel):
     bearish_hedge_considered: bool = False
 
     hard_risk_block: bool = False
+    pipeline_events: list[PipelineEvent] = []
     pm_reasoning: PmReasoning | None = None
     risk_verdict: RiskManagerVerdict | None = None
     macro_context: MacroBroaderContext | None = None

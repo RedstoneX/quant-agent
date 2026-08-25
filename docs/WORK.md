@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **PRIORITY 1 BACKEND RECOVERY | UBUNTU ENGINEERING | EXTERNAL REVIEW GATE | NO PRODUCTION AUTHORITY**
+Status: **FINAL BACKEND RECOVERY (P2 + P3) | UBUNTU ENGINEERING | PR REVIEW GATE | NO PRODUCTION AUTHORITY**
 
 ## Current integration truth
 
@@ -10,9 +10,8 @@ Status: **PRIORITY 1 BACKEND RECOVERY | UBUNTU ENGINEERING | EXTERNAL REVIEW GAT
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
 - Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
-- Production evidence from 2026-08-18 through 2026-08-24 establishes that the
-  opportunity→execution path still has mechanical blockers; the former
-  “machinery is present” finish-line claim is stale.
+- Priority 1 mechanical recovery is merged to engineering `main` through PR
+  #74 (`708cd234`). It has not been deployed to production.
 
 ## Stabilization account model — HARD RULE
 
@@ -50,27 +49,41 @@ Implementation promotion remains reviewable. Claude does not independently merge
 
 ## Active finish line
 
-### Priority 1 mechanical recovery
+### Priority 2 PM truthfulness / model suitability
 
-Deliver one reviewable backend tranche that:
+The final engineering tranche now:
 
-- normalizes yfinance class-share symbols at the Alpaca boundary and isolates
-  per-symbol snapshot failures;
-- uses a bounded, price-protected liquid-equity BUY policy instead of resting
-  at last/mid for 15 seconds;
-- records exhausted Risk parsing as a retryable agent failure, never a Risk
-  verdict;
-- never labels a run with no submitted equity order as `executed`;
-- funds SGOV only for entry-preflight survivors and safely resizes BUYs to
-  confirmed partial funding;
-- preserves deterministic Python/broker safety authority and Paper-only scope.
+- requires structured, machine-checkable specialist provenance on every live
+  PM target and rejects invented coverage/stance/alignment;
+- permits explicit PM disagreement (`relationship=conflicts`) rather than
+  forcing specialist agreement;
+- rejects close/exit targets for symbols not actually held before order
+  construction;
+- records malformed, unparseable, or ungrounded PM output as agent failure,
+  never as a genuine HOLD/REJECT;
+- measures the real PM prompt through a 30-candidate/15-position production-
+  scale scenario. `openai/gpt-5.5` passed both final workloads twice at
+  1.00/1.00; the prior Gemini PM and candidate Luna failed the final grounded
+  contract. Only PM routing changes;
+  Risk remains on `qwen/qwen3-235b-a22b-2507`.
 
-The engineering tranche stops after targeted verification and a pushed PR.
-Merge and production deployment remain separate operator gates.
+### Priority 3 canonical lifecycle evidence
+
+The same tranche extends the existing `specialist_evidence` and `trades`
+records (no second memory system) with queryable lifecycle facts for discovery,
+specialist evaluation/failure, PM proposal/omission/failure, Risk outcome,
+deterministic gate, funding, order submission, protection, terminal broker
+status and realized result. Existing candidate/funnel API responses expose the
+events, all symbol trades, fill/cancel/reject state, protection outcome and
+average-cost realized P&L when confirmed fills provide a complete cost basis;
+unknown cost basis stays null.
+
+The engineering tranche stops after verification and a pushed PR. Merge and
+production deployment remain separate operator gates.
 
 ### Natural Alpaca Paper validation
 
-After the Priority 1 tranche is reviewed and promoted, substantive acceptance
+After the backend tranches are reviewed and promoted, substantive acceptance
 still requires natural evidence that QAMC behaves coherently in ordinary markets:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
@@ -88,13 +101,7 @@ Use the existing Mission Control, journal and Telegram read-side evidence to det
 
 When QAMC does not trade, the reason should be specific and defensible rather than an unexplained absence of activity.
 
-## Parked follow-ups — after Priority 1
-
-- Priority 2: deterministic PM provenance/holding validation and a
-  production-scale PM model-suitability regression; leave Risk routing alone
-  absent direct evidence.
-- Priority 3: extend the existing DB/event model so every stage outcome and
-  deterministically derivable realized result is queryable without log archaeology.
+## Evidence-only follow-ups
 
 - news-narrative factual drift;
 - `actual_provider` attribution oddity.
@@ -116,5 +123,6 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active blocker:** Priority 1 is not production truth until external PR review,
-explicit merge approval, and a separately authorized Paper deployment/validation.
+**Active gate:** the final backend tranche is not accepted until external PR
+review and explicit merge approval. Production deployment/validation requires
+separate authorization.

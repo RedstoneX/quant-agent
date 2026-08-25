@@ -38,6 +38,7 @@ from src.pipeline_stages import (
     MorningResearchStage,
     RiskStage,
     _persist_evidence,
+    _record_pipeline_event,
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.storage.db import Database
@@ -2092,6 +2093,47 @@ class TradingPipeline:
             return
         terminal_ok = {"filled"}
         terminal_fail = {"canceled", "cancelled", "expired", "rejected", "done_for_day"}
+
+        def _record_broker_event(row: dict, status: str, fill_qty, fill_price) -> None:
+            import json
+            try:
+                requested = float(row.get("qty") or 0)
+                actual = float(fill_qty or 0)
+                action = str(row.get("action") or "")
+                event_run_id = row.get("run_id") or (ctx.run_id if ctx else None)
+                if not event_run_id:
+                    return
+                if actual > 0:
+                    outcome = "filled" if requested <= 0 or actual + 1e-9 >= requested else "partially_filled"
+                else:
+                    outcome = status
+                payload = {
+                    "stage": "order", "outcome": outcome,
+                    "reason": "broker_reconciliation", "broker_status": status,
+                    "broker_order_id": row.get("broker_order_id"),
+                    "fill_qty": actual or None, "fill_price": fill_price,
+                }
+                self.db.insert_specialist_evidence(
+                    run_id=event_run_id,
+                    agent_name="pipeline", kind="pipeline_event", scope="symbol",
+                    symbol=row.get("symbol"), decision_id=row.get("decision_id"),
+                    evidence_json=json.dumps(payload, sort_keys=True),
+                )
+                if actual > 0 and action not in {"BUY", "SWEEP_BUY", "HOLD"}:
+                    self.db.insert_specialist_evidence(
+                        run_id=event_run_id,
+                        agent_name="pipeline", kind="pipeline_event", scope="symbol",
+                        symbol=row.get("symbol"), decision_id=row.get("decision_id"),
+                        evidence_json=json.dumps({
+                            "stage": "position_management",
+                            "outcome": "exited" if requested <= 0 or actual + 1e-9 >= requested else "partially_exited",
+                            "reason": action.lower(), "broker_status": status,
+                            "fill_qty": actual, "fill_price": fill_price,
+                        }, sort_keys=True),
+                    )
+            except Exception as e:  # evidence is never trading authority
+                logger.warning("reconcile_fills: lifecycle evidence failed: %s", e)
+
         for row in rows:
             order_id = row.get("broker_order_id")
             if not order_id:
@@ -2112,6 +2154,7 @@ class TradingPipeline:
                     fill_qty=fill_qty,
                     fill_price=fill_price,
                 )
+                _record_broker_event(row, status, fill_qty, fill_price)
                 logger.info(
                     "Reconciled %s: filled (qty=%s, avg=$%s)",
                     order_id, fill_qty, fill_price,
@@ -2122,6 +2165,7 @@ class TradingPipeline:
                     fill_qty=fill_qty,
                     fill_price=fill_price,
                 )
+                _record_broker_event(row, status, fill_qty, fill_price)
                 if fill_qty and float(fill_qty) > 0:
                     logger.warning(
                         "Reconciled %s: terminal status=%s with partial fill "
@@ -6842,6 +6886,14 @@ class TradingPipeline:
             "and are outside the %.1fh cooldown: %s",
             len(symbols), cfg.move_threshold_pct, cfg.cooldown_hours, symbols,
         )
+        move_by_symbol = dict(candidates)
+        for symbol in symbols:
+            _record_pipeline_event(
+                self, ctx, symbol, "opportunity", "discovered",
+                "intraday_move_threshold",
+                move_pct=move_by_symbol[symbol],
+                threshold_pct=cfg.move_threshold_pct,
+            )
 
         symbols_data = []
         symbols_bars: dict[str, list] = {}
@@ -6850,8 +6902,17 @@ class TradingPipeline:
                 bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Intraday scan: bar fetch failed for %s: %s", symbol, e)
+                _record_pipeline_event(
+                    self, ctx, symbol, "specialist", "failed",
+                    "market_data_exception", detail=str(e),
+                    specialist="tech_analyst",
+                )
                 continue
             if not bars:
+                _record_pipeline_event(
+                    self, ctx, symbol, "specialist", "failed",
+                    "market_data_unavailable", specialist="tech_analyst",
+                )
                 continue
             indicators = compute_indicators(symbol, bars)
             symbols_data.append({"symbol": symbol, "bars": bars, "indicators": indicators})
@@ -6927,6 +6988,18 @@ class TradingPipeline:
                     kind="analysis", scope="symbol", symbol=analysis.symbol,
                     evidence_json=analysis.model_dump_json(),
                 )
+                _record_pipeline_event(
+                    self, ctx, analysis.symbol, "specialist", "evaluated",
+                    "technical_analysis_validated",
+                    specialist="tech_analyst", rating=analysis.rating,
+                )
+            for symbol, analysis in analyses_map.items():
+                if analysis is None:
+                    _record_pipeline_event(
+                        self, ctx, symbol, "specialist", "failed",
+                        "technical_analysis_unresolved_after_retry",
+                        specialist="tech_analyst",
+                    )
         if analyses:
             try:
                 self.tech_store.update(analyses)

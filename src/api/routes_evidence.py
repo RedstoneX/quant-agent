@@ -34,6 +34,7 @@ from src.api.schemas import (
     MacroBroaderContext,
     NewsBroaderContext,
     PmReasoning,
+    PipelineEvent,
     RiskManagerVerdict,
     RunCandidatesResponse,
     RunFunnelResponse,
@@ -83,6 +84,23 @@ def _find(rows: list[dict], agent_name: str, kind: str) -> dict | None:
         if row["agent_name"] == agent_name and row["kind"] == kind:
             return row
     return None
+
+
+def _pipeline_events(rows: list[dict]) -> list[PipelineEvent]:
+    events: list[PipelineEvent] = []
+    for row in rows:
+        if row.get("kind") != "pipeline_event":
+            continue
+        data = _parse_evidence(row)
+        if not isinstance(data, dict) or not data.get("stage") or not data.get("outcome"):
+            continue
+        details = {k: v for k, v in data.items() if k not in {"stage", "outcome", "reason"}}
+        events.append(PipelineEvent(
+            stage=data["stage"], outcome=data["outcome"],
+            reason=data.get("reason", ""), timestamp=row.get("timestamp"),
+            details=details,
+        ))
+    return events
 
 
 def _run_scoped_context(run_rows: list[dict]) -> tuple:
@@ -139,7 +157,7 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
     client re-parsing raw agent output."""
     symbol = symbol.strip().upper()
     symbol_rows = db_reads.get_specialist_evidence(run_id=run_id, symbol=symbol)
-    trades = db_reads.get_trades(run_id=run_id, symbol=symbol, limit=1)
+    trades = db_reads.get_trades(run_id=run_id, symbol=symbol, limit=100)
 
     # 404 when THIS symbol wasn't actually a candidate in this run (no
     # symbol-scoped evidence, no trade) — run-scoped context (macro/news/PM
@@ -197,7 +215,8 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
                 timestamp=news_row.get("timestamp"),
             )
 
-    trade = TradeItem(**trades[0]) if trades else None
+    trade_items = [TradeItem(**row) for row in trades]
+    trade = trade_items[0] if trade_items else None
 
     signals: list[ConsensusSignal] = []
     if tech is not None:
@@ -241,7 +260,8 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
         macro_context=macro_context, news_context=news_context,
         pm_reasoning=pm_reasoning, pm_target=pm_target,
         pm_proposed_order=pm_proposed_order, risk_verdict=risk_verdict,
-        risk_modification=risk_modification, trade=trade,
+        risk_modification=risk_modification, trade=trade, trades=trade_items,
+        pipeline_events=_pipeline_events(symbol_rows),
         consensus=ConsensusSummary(signals=signals, agreement=agreement),
     )
 
@@ -268,11 +288,11 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
     by_symbol: dict[str, list[dict]] = {}
     for r in symbol_rows:
         by_symbol.setdefault(r["symbol"], []).append(r)
-    first_trade_by_symbol: dict[str, dict] = {}
+    trades_by_symbol: dict[str, list[dict]] = {}
     for t in trades:
-        first_trade_by_symbol.setdefault(t["symbol"], t)
+        trades_by_symbol.setdefault(t["symbol"], []).append(t)
 
-    symbols = sorted(set(by_symbol) | set(first_trade_by_symbol))
+    symbols = sorted(set(by_symbol) | set(trades_by_symbol))
 
     candidates: list[CandidateFunnelItem] = []
     bearish_hedge_considered = False
@@ -310,11 +330,16 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
         skip_reason = skip.get("reason") if isinstance(skip, dict) else None
         skip_detail = skip.get("detail") if isinstance(skip, dict) else None
 
-        trade = first_trade_by_symbol.get(sym)
-        executed = trade is not None and db_reads.is_executed_trade(trade)
+        symbol_trades = trades_by_symbol.get(sym, [])
+        trade = symbol_trades[-1] if symbol_trades else None
+        executed = any(db_reads.is_executed_trade(t) for t in symbol_trades)
         if executed:
             executed_count += 1
 
+        events = _pipeline_events(rows)
+        protection = next(
+            (e for e in reversed(events) if e.stage == "protection"), None,
+        )
         candidates.append(CandidateFunnelItem(
             symbol=sym,
             direction=direction,
@@ -326,6 +351,12 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
             risk_modified=risk_modified,
             executed=executed,
             trade_action=trade.get("action") if trade else None,
+            order_status=trade.get("fill_status") if trade else None,
+            fill_qty=trade.get("fill_qty") if trade else None,
+            fill_price=trade.get("fill_price") if trade else None,
+            realized_pnl=trade.get("realized_pnl") if trade else None,
+            protection_outcome=protection.outcome if protection else None,
+            pipeline_events=events,
             execution_skip_reason=skip_reason,
             execution_skip_detail=skip_detail,
         ))
@@ -356,6 +387,7 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
         executed_count=executed_count,
         bearish_hedge_considered=bearish_hedge_considered,
         hard_risk_block=raw["hard_risk_block"],
+        pipeline_events=_pipeline_events(run_rows),
         pm_reasoning=pm_reasoning,
         risk_verdict=risk_verdict,
         macro_context=macro_context,

@@ -54,20 +54,21 @@ def mock_pm_response():
             "macro_filter": "risk-on regime, tech overweight",
             "news_check": "no fresh HIGH bearish state changes",
             "earnings_check": "SPY n/a, AAPL filing intact",
-            "signal_conflicts": "SPY: 4/4 aligned",
+            "signal_conflicts": "SPY: technical signal supports the target",
             "sizing_logic": "high conviction → 10%",
             "portfolio_balance": "Tech 60% well under 40% cap",
             "cash_target": "current 50% → after ~40%, fine for risk-on",
         },
-        "decisions": [
+        "targets": [
             {
-                "action": "BUY",
                 "symbol": "SPY",
-                "allocation_pct": 10.0,
-                "entry_price": 507.0,
-                "stop_loss": 490.0,
-                "take_profit": 530.0,
-                "reasoning": "Strong tech setup, buy the dip",
+                "target_weight_pct": 10.0,
+                "conviction": "high",
+                "thesis": "Technical setup supports a target.",
+                "provenance": [{
+                    "source": "technical", "observed_stance": "buy",
+                    "relationship": "supports", "evidence": "validated buy rating",
+                }],
             }
         ],
         "portfolio_view": "Cautiously bullish, 60% invested",
@@ -94,9 +95,8 @@ def test_portfolio_manager_decide(mock_cls, sample_analyses, sample_positions, s
     )
 
     assert result is not None
-    assert len(result.decisions) == 1
-    assert result.decisions[0].symbol == "SPY"
-    assert result.decisions[0].action == "BUY"
+    assert len(result.targets) == 1
+    assert result.targets[0].symbol == "SPY"
     assert agent_result.tokens_used > 0
     assert agent_result.user_message != ""
 
@@ -152,8 +152,12 @@ def _valid_target(symbol: str = "NVDA", weight: float = 8.0) -> dict:
         "symbol": symbol,
         "target_weight_pct": weight,
         "conviction": "high",
-        "thesis": "AI capex supercycle, 3/4 aligned.",
+        "thesis": "Technical setup supports the target.",
         "thesis_invalid_if": "Price closes below MA50.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "buy",
+            "relationship": "supports", "evidence": "validated buy rating",
+        }],
     }
 
 

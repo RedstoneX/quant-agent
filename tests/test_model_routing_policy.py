@@ -169,6 +169,15 @@ def test_risk_seat_evidence_covers_the_rules_the_audit_gave_it(llm):
     )
 
 
+def test_pm_seat_is_measured_at_production_scale(llm):
+    model = llm["portfolio_manager_model"]
+    pair = _benchmark_pairs().get(f"{model}|pm_production_scale")
+    assert pair is not None, f"{model} lacks the production-scale PM regression"
+    assert pair["runs"] >= 2
+    assert pair["quality_min"] == 1.0
+    assert not pair["errors"]
+
+
 def test_no_agent_exceeds_its_models_context(llm):
     """`max_tokens` is an OUTPUT ceiling. OpenRouter clamps a request above a
     model's own ceiling rather than rejecting it (verified 2026-08-12 against

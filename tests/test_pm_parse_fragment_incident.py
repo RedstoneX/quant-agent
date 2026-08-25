@@ -122,3 +122,23 @@ def test_pm_decide_treats_non_dict_parse_as_failure(monkeypatch):
     decision, result = agent.decide(analyses=[], positions=[])
     assert decision is None
     assert result is fake
+
+
+def test_pm_decide_treats_all_malformed_targets_as_failure(monkeypatch):
+    raw = '''{
+      "reasoning_chain": {
+        "macro_filter":"m", "news_check":"n", "earnings_check":"e",
+        "signal_conflicts":"s", "sizing_logic":"z",
+        "portfolio_balance":"b", "cash_target":"c"
+      },
+      "targets":[{"symbol":"AAPL","target_weight_pct":99,"thesis":"bad"}],
+      "portfolio_view":"actionable target was attempted"
+    }'''
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    fake = _result(raw)
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "run", lambda self, **kw: fake, raising=False,
+    )
+    decision, result = agent.decide(analyses=[], positions=[])
+    assert decision is None
+    assert result is fake

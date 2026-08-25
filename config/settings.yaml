@@ -16,7 +16,7 @@ llm:
   # See docs/architecture/MODEL_ROUTING_POLICY.md for the evidence.
   # Reproduce with: python ops/model_policy/benchmark_models.py --from-onecli
   #
-  # Eight shared seats were selected from 148 graded trials (2026-08-12)
+  # The specialist/review seats were selected from 148 graded trials (2026-08-12)
   # run through these very agent classes and prompts. Three models scored a
   # perfect mean AND a perfect worst run across the measured sweep;
   # gemini-2.5-flash-lite won those shared seats on latency and cost, being
@@ -25,8 +25,9 @@ llm:
   # separately on the current branch and diverges below at equal measured
   # seat quality to preserve PM/RM model independence.
   #
-  # The per-seat structure is now exercised: eight seats resolve to Gemini
-  # and Risk Manager resolves to Qwen. That keeps future seat changes a config
+  # The per-seat structure is now exercised: PM resolves to GPT-5.5, the Risk
+  # Manager resolves to Qwen, and the remaining seats resolve to Gemini. That
+  # keeps future seat changes a config
   # edit rather than a plumbing change, and it is what
   # `ops/commissioning/verify_commissioning.py` pins against.
   #
@@ -43,7 +44,11 @@ llm:
   earnings_analyst_provider: "openrouter"
   earnings_analyst_model: "google/gemini-2.5-flash-lite"
   portfolio_manager_provider: "openrouter"
-  portfolio_manager_model: "google/gemini-2.5-flash-lite"
+  # 2026-08-25 production-grounding re-measurement: Gemini scored 0.00 after
+  # omitting provenance/inventing holdings; Luna was unstable under the final
+  # contract; GPT-5.5 scored 1.00/1.00 on both pm_constrained and the
+  # 30-candidate/15-position production workload.
+  portfolio_manager_model: "openai/gpt-5.5"
   risk_manager_provider: "openrouter"
   # The ONE seat that diverges, and the reason the per-seat structure exists.
   #
@@ -56,8 +61,9 @@ llm:
   #
   # With quality tied, the review's ordering makes PM/RM model independence
   # the next criterion: this seat is the gate over the Portfolio Manager, and
-  # a shared model shares its blind spots. That eliminates gemini-flash-lite
-  # (PM's model) and leaves three. Latency and cost then break the tie —
+  # a shared model shares its blind spots. At measurement time that eliminated
+  # gemini-flash-lite (then the PM's model) and left three. Latency and cost
+  # then broke the tie —
   # qwen3-235b answers in 10.4s against 61.4s (glm-5.2) and 113.0s
   # (deepseek-v4-pro), at 1/14th their cost.
   #

@@ -142,7 +142,7 @@ _PRICING_PINNED: dict[str, dict[str, float]] = {
 # unnoticed and make verify_pricing.py noisy; the on-demand catalog resolver
 # below covers anything an operator wants to experiment with.
 _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
-    # Eight of nine agent seats (docs/architecture/MODEL_ROUTING_POLICY.md).
+    # Seven specialist/review seats (docs/architecture/MODEL_ROUTING_POLICY.md).
     "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
     # risk_manager only — held apart from PM's model for decision-chain
     # independence at measured-equal quality. Note the input rate is BELOW

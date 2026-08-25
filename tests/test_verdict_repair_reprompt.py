@@ -160,6 +160,12 @@ def test_pm_decision_missing_chain_field_is_repaired(monkeypatch):
         lambda self, user_message: _result(fixed, user_message=user_message),
         raising=False,
     )
+    # This test isolates schema repair. PM grounding has dedicated coverage
+    # in test_pm_grounding.py and runs after repair in production.
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "validate_grounding",
+        staticmethod(lambda *args, **kwargs: []),
+    )
 
     decision, _ = agent.decide(analyses=[], positions=[])
     assert decision is not None
@@ -651,6 +657,10 @@ def test_pm_repair_preserving_full_payload_is_still_accepted(monkeypatch):
         PortfolioManagerAgent, "_execute",
         lambda self, user_message: _result(json.dumps(fixed)),
         raising=False,
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "validate_grounding",
+        staticmethod(lambda *args, **kwargs: []),
     )
 
     decision, _ = agent.decide(analyses=[], positions=[])
