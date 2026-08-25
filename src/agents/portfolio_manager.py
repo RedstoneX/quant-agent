@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
-    TechAnalysisResult,
+    TechAnalysisResult, SmartMoneyFinding,
 )
 from src.risk.rules import _gross_multiplier
 
@@ -42,6 +42,7 @@ class PortfolioManagerAgent(BaseAgent):
         total_value: float = kwargs["total_value"]
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses", [])
+        smart_money_findings: list[SmartMoneyFinding] = kwargs.get("smart_money_findings", [])
 
         def _fmt_tech(a):
             rr = a.risk_reward
@@ -227,6 +228,14 @@ Bear triggers (would turn defensive):
 Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confidence})"""
         else:
             news_section = "## News Intelligence\nNo news data available."
+
+        if smart_money_findings:
+            smart_money_section = "## Smart Money Evidence\n" + "\n".join(
+                f"- {f.symbol}: stance={f.stance}; role={f.economic_role}; {f.summary} Why now: {f.why_now}"
+                for f in smart_money_findings
+            )
+        else:
+            smart_money_section = "## Smart Money Evidence\nNo material source-backed finding available. Do not claim coverage."
 
         # Format earnings analysis section
         if earnings_analyses:
@@ -522,6 +531,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 
 {earnings_section}
 
+{smart_money_section}
+
 ## Technical Analysis Reports
 {analyses_text}
 
@@ -533,6 +544,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                total_value: float = 0,
                news_intel: NewsIntelligenceReport | None = None,
                earnings_analyses: list[dict] | None = None,
+               smart_money_findings: list[SmartMoneyFinding] | None = None,
                yesterday_insights: dict | None = None,
                recent_performance: dict | None = None,
                position_history: dict | None = None,
@@ -557,6 +569,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             total_value=total_value,
             news_intel=news_intel,
             earnings_analyses=earnings_analyses or [],
+            smart_money_findings=smart_money_findings or [],
             yesterday_insights=yesterday_insights,
             recent_performance=recent_performance or {},
             position_history=position_history or {},
@@ -620,7 +633,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 decision, analyses=analyses, positions=positions,
                 news_intel=news_intel,
                 earnings_analyses=earnings_analyses or [],
-                macro_analysis=macro_analysis, total_value=total_value,
+                macro_analysis=macro_analysis, smart_money_findings=smart_money_findings or [], total_value=total_value,
             )
             if errors:
                 logger.error(
@@ -682,7 +695,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         decision, analyses=analyses, positions=positions,
                         news_intel=news_intel,
                         earnings_analyses=earnings_analyses or [],
-                        macro_analysis=macro_analysis, total_value=total_value,
+                        macro_analysis=macro_analysis, smart_money_findings=smart_money_findings or [], total_value=total_value,
                     )
                     if errors:
                         logger.error(
@@ -715,6 +728,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         positions: list[Position], news_intel: NewsIntelligenceReport | None,
         earnings_analyses: list[dict], macro_analysis: dict | None,
         total_value: float,
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
     ) -> list[str]:
         """Reject invented specialist coverage/alignment and phantom exits.
 
@@ -746,6 +760,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             for key in ("regime", "equity_outlook", "confidence"):
                 if macro_analysis.get(key):
                     macro_stances.add(str(macro_analysis[key]).lower())
+        smart_money_findings = smart_money_findings or []
+        smart_money = {f.symbol.upper(): {f.stance.lower()} for f in smart_money_findings}
+        smart_money_eligible = {f.symbol.upper(): f.support_eligible for f in smart_money_findings}
 
         bullish = {"strong_buy", "buy", "bullish", "positive", "risk_on", "risk-on"}
         bearish = {"strong_sell", "sell", "bearish", "negative", "risk_off", "risk-off"}
@@ -811,7 +828,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     tech.get(symbol, set()) if source == "technical" else
                     news.get(symbol, set()) if source == "news" else
                     earnings.get(symbol, set()) if source == "earnings" else
-                    macro_stances
+                    macro_stances if source == "macro" else smart_money.get(symbol, set())
                 )
                 if not expected:
                     errors.append(f"{symbol}: claims {source} coverage that does not exist")
@@ -831,6 +848,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     or (intent == "sell" and stance in bearish)
                 )
                 if claim.relationship == "supports":
+                    if source == "smart_money" and not smart_money_eligible.get(symbol, False):
+                        errors.append(f"{symbol}: historical smart-money evidence cannot support a target; use context")
+                        continue
                     if not polarity_supports:
                         errors.append(
                             f"{symbol}: {source} stance {stance!r} does not support "
@@ -850,6 +870,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "news": ("news", "headline"),
                 "earnings": ("earnings", "filing"),
                 "macro": ("macro", "regime"),
+                "smart_money": ("smart money", "congress", "insider", "13f"),
             }
             for source, terms in source_terms.items():
                 if _asserts_source_view(thesis_lower, terms) and source not in seen_sources:

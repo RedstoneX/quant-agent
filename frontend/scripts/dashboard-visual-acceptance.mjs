@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 
 const baseUrl = process.env.QAMC_VISUAL_URL || "http://127.0.0.1:5173/cockpit/";
 const output = resolve("../docs/verification/dashboard-finish-line");
+const researchOutput = resolve("../docs/verification/research-intelligence-desk");
 await mkdir(output, { recursive: true });
+await mkdir(researchOutput, { recursive: true });
 
 const runId = "morning-20260825-demo";
 const events = [
@@ -82,6 +84,19 @@ const bars = Array.from({ length: 60 }, (_, i) => {
   return { date: timestamp.slice(0, 10), timestamp, open: 205 + i * .3, high: 207 + i * .3, low: 203 + i * .3, close: 206 + i * .32, volume: 50000000 + i * 100000 };
 });
 const runSummary = { run_id: runId, session_prefix: "morning", first_timestamp: "2026-08-25T14:00:00Z", last_timestamp: "2026-08-25T14:25:00Z", agent_count: 8, decision_id: "decision-1", total_cost_usd: 0.42 };
+const researchEvidence = [
+  { id: 1, run_id: runId, decision_id: "decision-1", agent_name: "tech_analyst", kind: "technical_analysis", scope: "symbol", symbol: "AAPL", timestamp: "2026-08-25T14:03:00Z", state: "valid", payload: { rating: "buy", headline: "Trend intact; entry quality matters", reasoning: "Price holds above rising averages with constructive volume.", why_now: "A retest of support keeps the setup timely." } },
+  { id: 2, run_id: runId, decision_id: "decision-1", agent_name: "macro_analyst", kind: "macro_context", scope: "market", symbol: null, timestamp: "2026-08-25T13:55:00Z", state: "valid", payload: { equity_outlook: "neutral", headline: "Narrow participation argues for selectivity", summary: "Liquidity supports risk, but breadth does not justify broad exposure." } },
+  { id: 3, run_id: runId, decision_id: "decision-1", agent_name: "smart_money_analyst", kind: "insider_cluster", scope: "symbol", symbol: "AAPL", timestamp: "2026-08-25T13:58:00Z", state: "valid", payload: { headline: "Fresh insider cluster confirms, not leads", summary: "Two open-market purchases align with the technical read.", classification: "confirmatory", freshness: "timely", event_timestamp: "2026-08-22T16:00:00Z", knowable_timestamp: "2026-08-24T20:00:00Z", lag_days: 2, materiality: "Repeated open-market buying from independent insiders.", provider: "Bargo", provenance: "SEC Form 4 disclosures" } },
+];
+const researchCalls = [
+  ["tech_analyst", "Trend remains constructive, but the setup fails below support."], ["news_analyst", "No fresh headline changes the thesis."],
+  ["macro_analyst", "Narrow breadth keeps sizing conservative."], ["earnings_analyst", "No new filing changes the earnings read."],
+  ["smart_money_analyst", "Timely insider activity confirms the setup; it does not create it."], ["portfolio_manager", "Selective AAPL long with cash reserve maintained."],
+  ["risk_manager", "Approved after reducing concentration from ten to eight percent."], ["position_reviewer", "Protection held and the exit respected the plan."],
+  ["evening_review", "Execution was clean; patience added more than prediction."], ["meta_reflection", "Mean-reversion prompts need an explicit trend veto."],
+].map(([agent_name, output_summary], id) => ({ id: id + 1, agent_name, run_id: runId, decision_id: "decision-1", timestamp: `2026-08-25T${String(14 + Math.min(id, 6)).padStart(2, "0")}:00:00Z`, status: "success", output_summary, requested_provider: "openrouter", requested_model: "model", actual_provider: "openrouter", model: "model", prompt_version: "v1", latency_s: 1.2, cost_usd: .01, structured_evidence_count: researchEvidence.filter((e) => e.agent_name === agent_name).length }));
+const research = { date: "2026-08-25", as_of: "2026-08-25T20:05:00Z", state: "complete", freshness: { latest_recorded_at: "2026-08-25T20:05:00Z", age_minutes: 3, label: "current" }, read_error: null, missing_sources: [], daily_pnl: account.history.at(-1), reflection: { date: "2026-08-25", tomorrow_outlook: "Watch support before adding exposure.", lessons: "Patience added more than prediction.", suggested_actions: null, risk_rating: "medium", tomorrow_bias: "neutral", tomorrow_conviction: "medium", tomorrow_key_risks: "Breadth and concentration", sell_decisions_assessment: null, sell_grades_json: null, buy_grades_json: null, missed_opportunities_json: null, timestamp: "2026-08-25T20:00:00Z" }, runs: [{ summary: runSummary, agent_calls: researchCalls, evidence: researchEvidence, decision_delta: { run_id: runId, decision_id: "decision-1", state: "executed", proposed: [{ ...researchEvidence[0], id: 10, agent_name: "portfolio_manager", kind: "proposed_order", payload: { action: "BUY", summary: "Buy AAPL at eight percent target weight." } }], risk_changes: [{ ...researchEvidence[0], id: 11, agent_name: "risk_manager", kind: "risk_modification", payload: { summary: "Reduced allocation from ten to eight percent for concentration." } }], deterministic_events: [{ ...researchEvidence[0], id: 12, agent_name: "deterministic_gate", kind: "pipeline_event", payload: { summary: "Post-risk checks passed and funding was available." } }], trades: [trade] } }] };
 
 function json(route, body, status = 200) { return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }); }
 
@@ -101,6 +116,11 @@ async function installRoutes(page, scenario = "populated") {
     if (path === `/runs/${runId}/candidates/AAPL`) return json(route, detail);
     if (path === `/runs/${runId}/candidates/MSFT`) return json(route, { ...detail, symbol: "MSFT", tech: null, news_symbol: [], pm_target: null, pm_proposed_order: null, trade: null, trades: [], pipeline_events: events.slice(0, 3) });
     if (path === "/journal/dates") return json(route, { dates: ["2026-08-25"] });
+    if (path.startsWith("/research/daily/")) {
+      if (scenario === "empty") return json(route, { ...research, state: "empty", runs: [], reflection: null, daily_pnl: null });
+      if (scenario === "error") return json(route, { ...research, state: "partial", read_error: "smart-money provider unavailable", missing_sources: ["smart_money"], runs: [{ ...research.runs[0], evidence: researchEvidence.filter((item) => item.agent_name !== "smart_money_analyst"), agent_calls: researchCalls.filter((item) => item.agent_name !== "smart_money_analyst") }] });
+      return json(route, research);
+    }
     if (path.startsWith("/journal/")) {
       if (scenario === "empty" || scenario === "error") return json(route, { date: "2026-08-25", has_data: false, daily_pnl: null, reflection: null, runs: [], trades: [], candidates: [] });
       return json(route, { date: "2026-08-25", has_data: true, daily_pnl: account.history.at(-1), reflection: { date: "2026-08-25", tomorrow_outlook: "Selective", lessons: "Respect grounded passes.", suggested_actions: null, risk_rating: "medium", tomorrow_bias: "neutral", tomorrow_conviction: "medium", tomorrow_key_risks: "Concentration", sell_decisions_assessment: null, sell_grades_json: null, buy_grades_json: null, missed_opportunities_json: JSON.stringify([{ symbol: "NVDA", move_pct: 4.2, miss_category: "late_signal", lesson: "Wait for confirmed entry." }, { symbol: "TSLA", move_pct: -3.1, miss_category: "risk_disciplined", lesson: "Pass was correct." }]), timestamp: "2026-08-25T20:00:00Z" }, runs: [runSummary], trades: [trade, exitTrade], candidates: ["AAPL", "MSFT"] });
@@ -134,7 +154,7 @@ async function shot(name, viewport, scenario = "populated", interact) {
     return offenders.join(" | ");
   });
   if (overflow) browserErrors.push(`${name}: document has horizontal overflow (${overflow})`);
-  await page.screenshot({ path: resolve(output, `${name}.png`), fullPage: true });
+  await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
   await context.close();
 }
 
@@ -154,6 +174,10 @@ await shot("04-ipad-landscape-chart", { width: 1180, height: 820 }, "populated",
 await shot("05-ipad-portrait-candidates", { width: 820, height: 1180 });
 await shot("06-desktop-no-session-empty", { width: 1600, height: 1000 }, "empty");
 await shot("07-ipad-portrait-read-errors", { width: 820, height: 1180 }, "error");
+await shot("08-desktop-research-desk", { width: 1600, height: 1000 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); });
+await shot("09-ipad-portrait-research-brief", { width: 820, height: 1180 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); });
+await shot("10-ipad-landscape-research-decision", { width: 1180, height: 820 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "decision", exact: true }).click(); });
+await shot("11-desktop-research-partial", { width: 1600, height: 1000 }, "error", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Missing source: smart_money").waitFor(); });
 
 await browser.close();
 if (browserErrors.length) throw new Error(browserErrors.join("\n"));

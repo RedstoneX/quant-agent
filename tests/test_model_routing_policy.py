@@ -25,6 +25,7 @@ SETTINGS = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
 
 AGENTS = (
     "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+    "smart_money_analyst",
     "portfolio_manager", "risk_manager", "position_reviewer",
     "evening_analyst", "meta_reflector",
 )

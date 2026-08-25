@@ -40,6 +40,7 @@ AGENT_ROLES: dict[str, str] = {
     "position_reviewer": "Midday/close sell-side reviewer (protected agent)",
     "evening_analyst": "Evening reflection + tomorrow prep",
     "meta_reflector": "Quarterly self-audit + prompt-edit proposal agent",
+    "smart_money_analyst": "Source-backed, lag-aware alternative-data research agent",
 }
 
 

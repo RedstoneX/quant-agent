@@ -265,7 +265,7 @@ class AnalystProvenance(BaseModel):
     validated output.
     """
 
-    source: Literal["technical", "news", "earnings", "macro"]
+    source: Literal["technical", "news", "earnings", "macro", "smart_money"]
     observed_stance: str = Field(min_length=1)
     relationship: Literal["supports", "conflicts", "context"]
     evidence: str = Field(min_length=1)
@@ -277,6 +277,60 @@ class AnalystProvenance(BaseModel):
             values,
             lower_fields=("source", "observed_stance", "relationship"),
         )
+
+
+class SmartMoneyObservation(BaseModel):
+    """Source-backed alternative-data fact; timestamps are provider facts."""
+    symbol: str
+    stream: Literal["congressional"] = "congressional"
+    actor: str = Field(min_length=1)
+    direction: Literal["buy", "sell", "exchange", "unknown"]
+    amount_range: str = ""
+    transaction_date: date
+    disclosure_date: date
+    source_url: str = Field(min_length=1)
+    lag_days: int = Field(ge=0)
+    disclosure_age_days: int = Field(ge=0)
+    freshness: Literal["fresh", "delayed", "stale"]
+    economic_role: Literal["confirmatory", "contradictory", "historical"]
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+
+class SmartMoneyFinding(BaseModel):
+    symbol: str
+    stance: Literal["bullish", "bearish", "neutral", "mixed"]
+    economic_role: Literal["confirmatory", "contradictory", "historical"]
+    summary: str = Field(min_length=1)
+    why_now: str = Field(min_length=1)
+    observations: list[SmartMoneyObservation] = Field(min_length=1)
+    support_eligible: bool = False
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+    @model_validator(mode="after")
+    def stale_congress_is_never_actionable(self):
+        # Deterministic materiality/independence/recency gate. Prompt judgment
+        # cannot promote an old cluster or repeated activity by one filer.
+        actors = {o.actor.strip().casefold() for o in self.observations}
+        directional = {o.direction for o in self.observations if o.direction in {"buy", "sell"}}
+        self.support_eligible = (
+            len(self.observations) >= 2
+            and len(actors) >= 2
+            and len(directional) == 1
+            and all(o.disclosure_age_days <= 7 for o in self.observations)
+            and all(o.lag_days <= 30 for o in self.observations)
+            and all(o.freshness != "stale" for o in self.observations)
+        )
+        if not self.support_eligible:
+            self.economic_role = "historical"
+        return self
 
 
 class TargetPosition(BaseModel):
