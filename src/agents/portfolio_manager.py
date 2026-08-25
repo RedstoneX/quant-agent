@@ -627,13 +627,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "Portfolio decision failed deterministic grounding: %s",
                     "; ".join(errors),
                 )
-                return self._repair_grounding_once(
-                    result=result, parsed=parsed, errors=errors,
-                    analyses=analyses, positions=positions,
-                    news_intel=news_intel,
-                    earnings_analyses=earnings_analyses or [],
-                    macro_analysis=macro_analysis, total_value=total_value,
-                )
+                return None, result
             return decision, result
         except ValidationError as e:
             # Mirror of the RiskManager repair path (2026-08-18 incident
@@ -714,56 +708,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         except Exception as e:
             logger.error("Failed to parse portfolio decision: %s", e)
             return None, result
-
-    def _repair_grounding_once(
-        self, *, result, parsed: dict, errors: list[str],
-        analyses: list[TechAnalysisResult], positions: list[Position],
-        news_intel: NewsIntelligenceReport | None,
-        earnings_analyses: list[dict], macro_analysis: dict | None,
-        total_value: float,
-    ) -> tuple[PortfolioDecision | None, "AgentResult"]:
-        """One provenance/narrative correction; never a target re-decision."""
-        repair_message = f"""{result.user_message}
-
-Your response parsed, but deterministic grounding rejected these claims:
-{chr(10).join(f'- {error}' for error in errors)}
-
-Return the complete corrected JSON object only. You MAY correct or remove
-thesis/reasoning/provenance claims. You MUST NOT add/remove a target or change
-any target's symbol, target_weight_pct, conviction, thesis_invalid_if,
-suggested_stop_price, or catalyst. Explicitly label unavailable coverage as
-unavailable; never count it as alignment.
-
-Original response:
-{result.raw_text}
-"""
-        repaired = self._execute(repair_message)
-        reparsed = repaired.parse_json()
-        if not isinstance(reparsed, dict):
-            logger.error("PM grounding repair returned no decision object")
-            return None, repaired
-        reparsed = self._drop_invalid_targets(reparsed)
-        if not self._target_intents_unchanged(parsed, reparsed):
-            logger.error("PM grounding repair changed target intent; failing closed")
-            return None, repaired
-        try:
-            decision = PortfolioDecision(**reparsed)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("PM grounding repair failed schema validation: %s", exc)
-            return None, repaired
-        repaired_errors = self.validate_grounding(
-            decision, analyses=analyses, positions=positions,
-            news_intel=news_intel, earnings_analyses=earnings_analyses,
-            macro_analysis=macro_analysis, total_value=total_value,
-        )
-        if repaired_errors:
-            logger.error(
-                "PM grounding repair remained invalid: %s",
-                "; ".join(repaired_errors),
-            )
-            return None, repaired
-        logger.info("PM grounding repair succeeded without changing target intent")
-        return decision, repaired
 
     @staticmethod
     def validate_grounding(
@@ -996,31 +940,6 @@ Original response:
         return parsed
 
     _DECISION_FIELDS = ("targets",)
-
-    @staticmethod
-    def _canonical_target_intents(targets) -> list[tuple] | None:
-        """Decision-bearing target fields; excludes repairable prose/provenance."""
-        if not isinstance(targets, list):
-            return None
-        models: list[TargetPosition] = []
-        try:
-            models = [TargetPosition(**target) for target in targets]
-        except Exception:  # noqa: BLE001
-            return None
-        return sorted(
-            (
-                target.symbol, target.target_weight_pct, target.conviction,
-                target.thesis_invalid_if, target.suggested_stop_price,
-                target.catalyst,
-            )
-            for target in models
-        )
-
-    @classmethod
-    def _target_intents_unchanged(cls, original: dict, repaired: dict) -> bool:
-        before = cls._canonical_target_intents(original.get("targets"))
-        after = cls._canonical_target_intents(repaired.get("targets"))
-        return before is not None and after is not None and before == after
 
     @staticmethod
     def _canonical_targets(targets) -> list[tuple] | None:

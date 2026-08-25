@@ -136,7 +136,7 @@ def test_pm_may_truthfully_state_that_symbol_coverage_is_absent():
     assert errors == []
 
 
-def test_grounding_repair_may_fix_claims_but_not_target_intent(monkeypatch):
+def test_grounding_failure_returns_original_result_without_another_llm_call(monkeypatch):
     base = {
         "reasoning_chain": {
             "macro_filter": "m", "news_check": "n", "earnings_check": "e",
@@ -153,28 +153,18 @@ def test_grounding_repair_may_fix_claims_but_not_target_intent(monkeypatch):
         }],
         "portfolio_view": "Selective long.",
     }
-    corrected = json.loads(json.dumps(base))
-    corrected["reasoning_chain"]["signal_conflicts"] = "AAPL: tech=buy, news=unavailable."
-    corrected["targets"][0]["thesis"] = "Technical supports; no news available."
-
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     first = AgentResult(raw_text=json.dumps(base), tokens_used=1, model="test", user_message="input")
-    repaired = AgentResult(raw_text=json.dumps(corrected), tokens_used=1, model="test")
     monkeypatch.setattr(PortfolioManagerAgent, "run", lambda self, **kwargs: first)
-    monkeypatch.setattr(PortfolioManagerAgent, "_execute", lambda self, message: repaired)
-    decision, result = agent.decide(analyses=[_analysis("AAPL")], positions=[])
-    assert decision is not None
-    assert decision.targets[0].target_weight_pct == 5
-    assert result is repaired
-
-    changed = json.loads(json.dumps(corrected))
-    changed["targets"][0]["target_weight_pct"] = 6
+    execute_calls = []
     monkeypatch.setattr(
         PortfolioManagerAgent, "_execute",
-        lambda self, message: AgentResult(raw_text=json.dumps(changed), tokens_used=1, model="test"),
+        lambda self, message: execute_calls.append(message),
     )
-    decision, _ = agent.decide(analyses=[_analysis("AAPL")], positions=[])
+    decision, result = agent.decide(analyses=[_analysis("AAPL")], positions=[])
     assert decision is None
+    assert result is first
+    assert execute_calls == []
 
 
 def test_production_scale_pm_prompt_and_grounding_contract():
