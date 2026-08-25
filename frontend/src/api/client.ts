@@ -24,6 +24,40 @@ export interface HealthResponse {
   sessions_logged_today: string[];
   last_run_files: Record<string, string | null>;
   session_lock_active: boolean | null;
+  decision_path_status: string;
+  llm_circuit: {
+    available: boolean;
+    suspended: boolean | null;
+    suspension_class: "hard" | "quota" | null;
+    hold_scope: "global" | "day" | "mode_day" | "session" | null;
+    requires_operator_reset: boolean;
+    auto_rearm: boolean;
+    trigger: string | null;
+    trigger_code: string | null;
+    suspended_at: string | null;
+    daily_cost_usd: number | null;
+    daily_limit_usd: number | null;
+    active_quota_holds: Array<{
+      scope: "day" | "mode_day" | "session";
+      day: string;
+      trigger_code: string;
+      trigger_detail: string;
+      run_id: string;
+      mode: string;
+      agent_name: string;
+      session_cost_usd: number;
+      daily_cost_usd: number;
+      created_at: string;
+    }>;
+    recent_recovery: {
+      scope: string;
+      day: string;
+      trigger_code: string;
+      mode: string;
+      released_at: string;
+      release_reason: string;
+    } | null;
+  } | null;
   timestamp: string;
 }
 

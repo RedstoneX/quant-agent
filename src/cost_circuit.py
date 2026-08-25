@@ -25,7 +25,7 @@ import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, time as dt_time, timezone
+from datetime import date, datetime, time as dt_time, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -35,6 +35,36 @@ from src.cost_table import PRICING
 logger = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
+
+# Expected budget exhaustion is not an infrastructure incident.  Keep those
+# stops scoped to the budget window that owns them, while every unknown or
+# integrity-related trigger defaults to the durable operator-reset latch.
+_DAY_QUOTA_TRIGGERS = frozenset({
+    "daily_cost_limit",
+    "projected_daily_cost_limit",
+    "provider_projected_daily_cost_limit",
+    "outstanding_projected_daily_cost_limit",
+})
+_MODE_DAY_QUOTA_TRIGGERS = frozenset({"session_retry_limit"})
+_SESSION_QUOTA_TRIGGERS = frozenset({
+    "session_cost_limit",
+    "projected_session_cost_limit",
+    "provider_projected_session_cost_limit",
+    "outstanding_projected_session_cost_limit",
+    "session_retry_attempt_limit",
+})
+
+
+def _trigger_scope(code: Any) -> str:
+    if not isinstance(code, str):
+        return "hard"
+    if code in _DAY_QUOTA_TRIGGERS:
+        return "day"
+    if code in _MODE_DAY_QUOTA_TRIGGERS:
+        return "mode_day"
+    if code in _SESSION_QUOTA_TRIGGERS:
+        return "session"
+    return "hard"
 
 
 class PaidAnalysisSuspended(RuntimeError):
@@ -71,6 +101,14 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
         ).fetchall()
         if str(row[0]) in expected_breaker_tables
     }
+    quota_table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_quota_holds'"
+    ).fetchone() is not None
+    if quota_table_exists and existing_breaker_tables != expected_breaker_tables:
+        raise RuntimeError(
+            "cost-circuit schema is partial: quota holds exist without the complete "
+            "base accounting schema"
+        )
     if existing_breaker_tables and existing_breaker_tables != expected_breaker_tables:
         missing = sorted(expected_breaker_tables - existing_breaker_tables)
         raise RuntimeError(
@@ -159,6 +197,37 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             daily_cost_usd REAL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS llm_quota_holds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL CHECK (scope IN ('day', 'mode_day', 'session')),
+            scope_key TEXT NOT NULL,
+            day TEXT NOT NULL,
+            trigger_code TEXT NOT NULL,
+            trigger_detail TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            attempts_exact INTEGER NOT NULL DEFAULT 1,
+            costs_exact INTEGER NOT NULL DEFAULT 1,
+            session_cost_usd REAL NOT NULL DEFAULT 0,
+            daily_cost_usd REAL NOT NULL DEFAULT 0,
+            session_limit_usd REAL,
+            daily_limit_usd REAL,
+            active INTEGER NOT NULL DEFAULT 1,
+            alert_state INTEGER NOT NULL DEFAULT 0,
+            alert_updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            recovery_alert_state INTEGER NOT NULL DEFAULT 0,
+            recovery_alert_updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            released_at TEXT,
+            release_reason TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_quota_holds_active_scope
+            ON llm_quota_holds(scope, scope_key, day) WHERE active=1;
+        CREATE INDEX IF NOT EXISTS idx_llm_quota_holds_active_day
+            ON llm_quota_holds(day, active);
         """
     )
     if not existing_breaker_tables:
@@ -210,6 +279,66 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE llm_budget_sessions ADD COLUMN costs_exact INTEGER "
             "NOT NULL DEFAULT 1"
         )
+
+    # Migrate a latch created by the original one-state implementation.  Known
+    # quota triggers retain their full audit snapshot but cease to masquerade
+    # as hard infrastructure incidents.  Unknown codes deliberately remain
+    # hard/operator-reset-only.
+    state = conn.execute(
+        "SELECT * FROM llm_circuit_state WHERE singleton=1"
+    ).fetchone()
+    if state is not None and int(state["suspended"] or 0):
+        code = str(state["trigger_code"] or "")
+        scope = _trigger_scope(code)
+        if scope != "hard":
+            run_id = str(state["run_id"] or "unscoped")
+            mode = str(state["mode"] or "unknown")
+            session_day_row = conn.execute(
+                "SELECT day FROM llm_budget_sessions WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if session_day_row is None:
+                # Scope/date provenance is part of the safety decision.  A
+                # partially migrated incident must remain hard instead of
+                # guessing that an old quota belongs to today's budget.
+                raise RuntimeError(
+                    f"legacy quota latch {code!r} has no session/day provenance "
+                    f"for run {run_id}"
+                )
+            hold_day = str(session_day_row["day"])
+            scope_key = (
+                hold_day if scope == "day" else
+                f"{hold_day}:{mode}" if scope == "mode_day" else run_id
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO llm_quota_holds "
+                "(scope, scope_key, day, trigger_code, trigger_detail, run_id, mode, "
+                "agent_name, attempts, attempts_exact, costs_exact, session_cost_usd, "
+                "daily_cost_usd, session_limit_usd, daily_limit_usd, alert_state) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scope, scope_key, hold_day, code,
+                    str(state["trigger_detail"] or code), run_id, mode,
+                    str(state["agent_name"] or "unknown"),
+                    int(state["session_attempts"] or 0),
+                    int(state["attempts_exact"] or 0),
+                    int(state["costs_exact"] or 0),
+                    float(state["session_cost_usd"] or 0),
+                    float(state["daily_cost_usd"] or 0),
+                    state["session_limit_usd"], state["daily_limit_usd"],
+                    int(state["alert_state"] or 0),
+                ),
+            )
+            conn.execute(
+                "UPDATE llm_circuit_state SET suspended=0, trigger_code=NULL, "
+                "trigger_detail=NULL, run_id=NULL, mode=NULL, agent_name=NULL, "
+                "session_attempts=0, session_cost_usd=0, daily_cost_usd=0, "
+                "attempts_exact=1, costs_exact=1, suspended_at=NULL, alert_state=0, "
+                "updated_at=datetime('now') WHERE singleton=1"
+            )
+    # Schema creation and legacy-latch migration are one self-contained
+    # initialization unit.  Callers intentionally start their operational
+    # BEGIN IMMEDIATE transaction only after this durable migration commits.
+    conn.commit()
 
 
 def _et_day_and_utc_bounds(now: datetime | None = None) -> tuple[str, str, str]:
@@ -1013,7 +1142,10 @@ class LLMCostCircuitBreaker:
                 "VALUES (?, ?, ?)",
                 (run_id, day, mode),
             )
+            self._expire_reservations(conn)
+            self._reconcile_quota_holds_locked(conn, current_day=day)
             conn.commit()
+        self._notify_if_needed()
         # Existing overspend must latch immediately, but never raises here:
         # callers still need to run deterministic/broker safety functions.
         self.enforce_current_limits(agent_name="session_start")
@@ -1031,6 +1163,37 @@ class LLMCostCircuitBreaker:
         lease expires.  Only a reservation with attempt_count=0 is known to
         have made no provider request and may be released for free.
         """
+
+        current_day, _, _ = _et_day_and_utc_bounds()
+        current_date = date.fromisoformat(current_day)
+        active_rows = conn.execute(
+            "SELECT * FROM llm_budget_reservations WHERE status='active' "
+            "ORDER BY created_at, reservation_id"
+        ).fetchall()
+        for row in active_rows:
+            try:
+                reservation_date = date.fromisoformat(str(row["day"]))
+            except ValueError:
+                reservation_date = None
+            if reservation_date is None or reservation_date > current_date:
+                reserved = float(row["reserved_cost_usd"] or 0.0)
+                self._trip_locked(
+                    conn,
+                    code="non_monotonic_reservation_day",
+                    detail=(
+                        f"active reservation {row['reservation_id']} has budget day "
+                        f"{row['day']!s} while the current ET day is {current_day}; "
+                        "clock regression or accounting corruption requires operator review"
+                    ),
+                    run_id=str(row["run_id"]),
+                    mode=str(row["mode"]),
+                    agent_name=str(row["agent_name"]),
+                    attempts=int(row["attempt_count"] or 0),
+                    costs_exact=False,
+                    session_cost=reserved,
+                    daily_cost=reserved,
+                )
+                return
 
         rows = conn.execute(
             "SELECT * FROM llm_budget_reservations "
@@ -1129,6 +1292,297 @@ class LLMCostCircuitBreaker:
             raise RuntimeError("cost-circuit singleton state row is missing")
         return dict(row)
 
+    @staticmethod
+    def _scope_key(scope: str, *, day: str, run_id: str, mode: str) -> str:
+        if scope == "day":
+            return day
+        if scope == "mode_day":
+            return f"{day}:{mode}"
+        if scope == "session":
+            return run_id
+        raise ValueError(f"unsupported quota scope: {scope}")
+
+    def _active_quota_hold_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        day: str,
+        run_id: str,
+        mode: str,
+    ) -> dict[str, Any] | None:
+        row = conn.execute(
+            "SELECT * FROM llm_quota_holds WHERE active=1 AND day=? AND ("
+            "scope='day' OR (scope='mode_day' AND scope_key=?) OR "
+            "(scope='session' AND scope_key=?)) "
+            "ORDER BY CASE scope WHEN 'day' THEN 1 WHEN 'mode_day' THEN 2 ELSE 3 END, "
+            "id LIMIT 1",
+            (day, f"{day}:{mode}", run_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _effective_state_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        day: str,
+        run_id: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        state = self._state_row(conn)
+        if int(state.get("suspended") or 0):
+            state.update(
+                suspended=True,
+                suspension_class="hard",
+                hold_scope="global",
+                requires_operator_reset=True,
+                auto_rearm=False,
+            )
+            return state
+        hold = self._active_quota_hold_locked(
+            conn, day=day, run_id=run_id, mode=mode,
+        )
+        if hold is None:
+            state.update(
+                suspended=False,
+                suspension_class=None,
+                hold_scope=None,
+                requires_operator_reset=False,
+                auto_rearm=False,
+            )
+            return state
+        state.update(
+            suspended=True,
+            suspension_class="quota",
+            hold_scope=hold["scope"],
+            hold_day=hold["day"],
+            trigger_code=hold["trigger_code"],
+            trigger_detail=hold["trigger_detail"],
+            run_id=hold["run_id"],
+            mode=hold["mode"],
+            agent_name=hold["agent_name"],
+            session_attempts=hold["attempts"],
+            attempts_exact=hold["attempts_exact"],
+            costs_exact=hold["costs_exact"],
+            session_cost_usd=hold["session_cost_usd"],
+            daily_cost_usd=hold["daily_cost_usd"],
+            session_limit_usd=hold["session_limit_usd"],
+            daily_limit_usd=hold["daily_limit_usd"],
+            suspended_at=hold["created_at"],
+            requires_operator_reset=False,
+            auto_rearm=hold["scope"] in {"day", "mode_day"},
+        )
+        return state
+
+    def _reconcile_quota_holds_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        current_day: str,
+    ) -> None:
+        """Rearm completed ET-day quota windows without weakening hard faults."""
+
+        hard_state = self._state_row(conn)
+        if int(hard_state.get("suspended") or 0):
+            return
+
+        cross_day_reservations = conn.execute(
+            "SELECT * FROM llm_budget_reservations "
+            "WHERE status='active' AND day<>? ORDER BY created_at, reservation_id",
+            (current_day,),
+        ).fetchall()
+        current_date = date.fromisoformat(current_day)
+        prior_reservations = []
+        for row in cross_day_reservations:
+            try:
+                reservation_date = date.fromisoformat(str(row["day"]))
+            except ValueError:
+                reservation_date = None
+            if reservation_date is None or reservation_date > current_date:
+                reserved = float(row["reserved_cost_usd"] or 0.0)
+                self._trip_locked(
+                    conn,
+                    code="non_monotonic_reservation_day",
+                    detail=(
+                        f"active reservation {row['reservation_id']} has budget day "
+                        f"{row['day']!s} while the current ET day is {current_day}; "
+                        "clock regression or accounting corruption requires operator review"
+                    ),
+                    run_id=str(row["run_id"]),
+                    mode=str(row["mode"]),
+                    agent_name=str(row["agent_name"]),
+                    attempts=int(row["attempt_count"] or 0),
+                    costs_exact=False,
+                    session_cost=reserved,
+                    daily_cost=reserved,
+                )
+                return
+            prior_reservations.append(row)
+        for row in prior_reservations:
+            attempts = int(row["attempt_count"] or 0)
+            if attempts == 0:
+                updated = conn.execute(
+                    "UPDATE llm_budget_reservations SET "
+                    "status='expired_cross_day_unattempted', reserved_cost_usd=0, "
+                    "actual_cost_usd=0, completed_at=datetime('now') "
+                    "WHERE reservation_id=? AND status='active'",
+                    (row["reservation_id"],),
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError(
+                        f"cross-day reservation {row['reservation_id']} could not be released"
+                    )
+                continue
+            daily, session_cost, reserved_day = self._totals(
+                conn, str(row["day"]), str(row["run_id"]),
+            )
+            self._trip_locked(
+                conn,
+                code="cross_day_started_reservation",
+                detail=(
+                    f"{row['agent_name']} retained {attempts} started provider "
+                    "request(s) across the ET daily-budget boundary; unresolved "
+                    "prior-day exposure requires operator review"
+                ),
+                run_id=str(row["run_id"]),
+                mode=str(row["mode"]),
+                agent_name=str(row["agent_name"]),
+                attempts=attempts,
+                session_cost=session_cost + float(row["reserved_cost_usd"] or 0),
+                daily_cost=daily + reserved_day,
+                costs_exact=False,
+            )
+            return
+
+        day_row = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days WHERE day=?",
+            (current_day,),
+        ).fetchone()
+        if day_row is None:
+            raise RuntimeError(
+                f"cost-circuit day accounting row is missing for {current_day}"
+            )
+        if int(day_row["unknown_cost_rows"] or 0) or not bool(day_row["costs_exact"]):
+            raise RuntimeError(
+                f"cost-circuit cannot rearm {current_day}: current-day accounting "
+                "is not exact"
+            )
+
+        cross_day_holds = conn.execute(
+            "SELECT * FROM llm_quota_holds WHERE active=1 AND day<>? ORDER BY id",
+            (current_day,),
+        ).fetchall()
+        holds = []
+        for hold in cross_day_holds:
+            try:
+                hold_date = date.fromisoformat(str(hold["day"]))
+            except ValueError:
+                hold_date = None
+            if hold_date is None or hold_date > current_date:
+                self._trip_locked(
+                    conn,
+                    code="non_monotonic_quota_hold_day",
+                    detail=(
+                        f"active {hold['scope']} quota hold {hold['id']} has budget "
+                        f"day {hold['day']!s} while the current ET day is {current_day}; "
+                        "clock regression or accounting corruption requires operator review"
+                    ),
+                    run_id=str(hold["run_id"]),
+                    mode=str(hold["mode"]),
+                    agent_name="budget_rollover",
+                    attempts=int(hold["attempts"] or 0),
+                    attempts_exact=bool(hold["attempts_exact"]),
+                    costs_exact=False,
+                    session_cost=float(hold["session_cost_usd"] or 0.0),
+                    daily_cost=float(hold["daily_cost_usd"] or 0.0),
+                )
+                return
+            holds.append(hold)
+        for hold in holds:
+            reason = (
+                f"ET budget window advanced from {hold['day']} to {current_day}; "
+                "exact ledger, accounting invariants, and prior-day reservation "
+                "checks passed"
+            )
+            updated = conn.execute(
+                "UPDATE llm_quota_holds SET active=0, released_at=datetime('now'), "
+                "release_reason=?, recovery_alert_state=? WHERE id=? AND active=1",
+                (
+                    reason,
+                    0 if hold["scope"] in {"day", "mode_day"} else 1,
+                    hold["id"],
+                ),
+            )
+            if updated.rowcount != 1:
+                continue
+            conn.execute(
+                "INSERT INTO llm_circuit_events "
+                "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
+                "session_cost_usd, daily_cost_usd) VALUES "
+                "('quota_rearmed', ?, ?, ?, ?, 'budget_rollover', ?, ?, ?)",
+                (
+                    hold["trigger_code"], reason, hold["run_id"], hold["mode"],
+                    hold["attempts"], hold["session_cost_usd"],
+                    hold["daily_cost_usd"],
+                ),
+            )
+
+    def _hold_quota_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        scope: str,
+        code: str,
+        detail: str,
+        day: str,
+        run_id: str,
+        mode: str,
+        agent_name: str,
+        attempts: int,
+        attempts_exact: bool,
+        costs_exact: bool,
+        session_cost: float,
+        daily_cost: float,
+    ) -> bool:
+        scope_key = self._scope_key(
+            scope, day=day, run_id=run_id, mode=mode,
+        )
+        existing = conn.execute(
+            "SELECT id FROM llm_quota_holds WHERE active=1 AND scope=? "
+            "AND scope_key=? AND day=?",
+            (scope, scope_key, day),
+        ).fetchone()
+        if existing is not None:
+            return False
+        conn.execute(
+            "INSERT INTO llm_quota_holds "
+            "(scope, scope_key, day, trigger_code, trigger_detail, run_id, mode, "
+            "agent_name, attempts, attempts_exact, costs_exact, session_cost_usd, "
+            "daily_cost_usd, session_limit_usd, daily_limit_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                scope, scope_key, day, code, detail, run_id, mode, agent_name,
+                attempts, int(attempts_exact), int(costs_exact), session_cost,
+                daily_cost, float(self.config.session_cost_limit_usd),
+                float(self.config.daily_cost_limit_usd),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO llm_circuit_events "
+            "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
+            "session_cost_usd, daily_cost_usd) VALUES "
+            "('quota_held', ?, ?, ?, ?, ?, ?, ?, ?)",
+            (code, detail, run_id, mode, agent_name, attempts, session_cost, daily_cost),
+        )
+        updated_session = conn.execute(
+            "UPDATE llm_budget_sessions SET status='quota_held', "
+            "updated_at=datetime('now') WHERE run_id=?", (run_id,),
+        )
+        if updated_session.rowcount != 1:
+            raise RuntimeError(
+                f"cost-circuit could not mark missing session {run_id} quota-held"
+            )
+        return True
+
     def _refresh_latched_snapshot_locked(self, conn: sqlite3.Connection) -> None:
         """Refresh alert totals after concurrent/in-flight accounting settles.
 
@@ -1209,7 +1663,32 @@ class LLMCostCircuitBreaker:
         session_cost: float,
         daily_cost: float,
     ) -> bool:
-        """Latch the breaker. Returns True only for the first transition."""
+        """Apply the narrowest safe stop. Unknown triggers are hard latches."""
+
+        scope = _trigger_scope(code)
+        if scope != "hard":
+            session_row = conn.execute(
+                "SELECT day FROM llm_budget_sessions WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if session_row is None:
+                raise RuntimeError(
+                    f"cost-circuit session row is missing while holding {run_id}"
+                )
+            return self._hold_quota_locked(
+                conn,
+                scope=scope,
+                code=code,
+                detail=detail,
+                day=str(session_row["day"]),
+                run_id=run_id,
+                mode=mode,
+                agent_name=agent_name,
+                attempts=attempts,
+                attempts_exact=attempts_exact,
+                costs_exact=costs_exact,
+                session_cost=session_cost,
+                daily_cost=daily_cost,
+            )
 
         current = self._state_row(conn)
         if int(current.get("suspended") or 0):
@@ -1270,25 +1749,163 @@ class LLMCostCircuitBreaker:
                 )
                 claimed = cur.rowcount == 1
             conn.commit()
-        if not claimed:
-            return
+        if claimed:
+            text = self.format_alert(state)
+            # A Telegram outage must not hide the shutdown from local operators.
+            # The DB lease remains retryable when send() returns false.
+            logger.critical("\n%s", text)
+            sent = False
+            try:
+                sent = bool(self.notifier.send(text))
+            except Exception:  # notifier must never affect trading/safety
+                logger.exception("cost circuit Telegram alert failed")
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE llm_circuit_state SET alert_state=?, "
+                    "updated_at=datetime('now') "
+                    "WHERE singleton=1 AND alert_state=-1",
+                    (1 if sent else 0,),
+                )
+                conn.commit()
+        self._notify_quota_holds_if_needed()
+        self._notify_quota_recoveries_if_needed()
 
-        text = self.format_alert(state)
-        # A Telegram outage must not hide the shutdown from local operators.
-        # The DB lease remains retryable when send() returns false.
-        logger.critical("\n%s", text)
-        sent = False
-        try:
-            sent = bool(self.notifier.send(text))
-        except Exception:  # notifier must never affect trading/safety
-            logger.exception("cost circuit Telegram alert failed")
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE llm_circuit_state SET alert_state=?, updated_at=datetime('now') "
-                "WHERE singleton=1 AND alert_state=-1",
-                (1 if sent else 0,),
+    def _notify_quota_holds_if_needed(self) -> None:
+        while True:
+            hold: dict[str, Any] | None = None
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT * FROM llm_quota_holds WHERE "
+                    "(alert_state=0 OR (alert_state=-1 AND "
+                    "alert_updated_at <= datetime('now', '-2 minutes'))) "
+                    "ORDER BY id LIMIT 1"
+                ).fetchone()
+                if row is not None:
+                    claimed = conn.execute(
+                        "UPDATE llm_quota_holds SET alert_state=-1, "
+                        "alert_updated_at=datetime('now') "
+                        "WHERE id=? AND (alert_state=0 OR alert_state=-1)",
+                        (row["id"],),
+                    ).rowcount == 1
+                    if claimed:
+                        hold = dict(row)
+                conn.commit()
+            if hold is None:
+                return
+            message = self.format_quota_alert(hold)
+            logger.critical("\n%s", message)
+            sent = False
+            try:
+                sent = bool(self.notifier.send(message))
+            except Exception:
+                logger.exception("cost quota Telegram alert failed")
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE llm_quota_holds SET alert_state=?, "
+                    "alert_updated_at=datetime('now') "
+                    "WHERE id=? AND alert_state=-1",
+                    (1 if sent else 0, hold["id"]),
+                )
+                conn.commit()
+            if not sent:
+                return
+
+    def _notify_quota_recoveries_if_needed(self) -> None:
+        while True:
+            hold: dict[str, Any] | None = None
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT * FROM llm_quota_holds WHERE active=0 AND alert_state=1 AND "
+                    "(recovery_alert_state=0 OR (recovery_alert_state=-1 AND "
+                    "recovery_alert_updated_at <= datetime('now', '-2 minutes'))) "
+                    "ORDER BY id LIMIT 1"
+                ).fetchone()
+                if row is not None:
+                    claimed = conn.execute(
+                        "UPDATE llm_quota_holds SET recovery_alert_state=-1, "
+                        "recovery_alert_updated_at=datetime('now') "
+                        "WHERE id=? AND active=0 AND alert_state=1 AND "
+                        "(recovery_alert_state=0 OR "
+                        "recovery_alert_state=-1)",
+                        (row["id"],),
+                    ).rowcount == 1
+                    if claimed:
+                        hold = dict(row)
+                conn.commit()
+            if hold is None:
+                return
+            message = self.format_recovery_alert(hold)
+            logger.info("\n%s", message)
+            sent = False
+            try:
+                sent = bool(self.notifier.send(message))
+            except Exception:
+                logger.exception("cost quota recovery Telegram alert failed")
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE llm_quota_holds SET recovery_alert_state=?, "
+                    "recovery_alert_updated_at=datetime('now') "
+                    "WHERE id=? AND recovery_alert_state=-1",
+                    (1 if sent else 0, hold["id"]),
+                )
+                conn.commit()
+            if not sent:
+                return
+
+    @staticmethod
+    def format_quota_alert(hold: dict[str, Any]) -> str:
+        scope = str(hold.get("scope") or "session")
+        if scope == "day":
+            recovery = (
+                "recovery: automatic at the next ET budget day after exact "
+                "accounting and reservation checks pass"
             )
-            conn.commit()
+            affected = "all paid analysis for this ET budget day"
+        elif scope == "mode_day":
+            recovery = (
+                "recovery: this mode is eligible again next ET budget day after "
+                "exact accounting and reservation checks pass"
+            )
+            affected = f"{hold.get('mode') or 'this mode'} paid sessions today"
+        else:
+            recovery = "recovery: later independent sessions remain eligible"
+            affected = f"run {hold.get('run_id') or 'unknown'} only"
+        attempts = int(hold.get("attempts") or 0)
+        session_cost = float(hold.get("session_cost_usd") or 0.0)
+        daily_cost = float(hold.get("daily_cost_usd") or 0.0)
+        qualifier = "" if bool(hold.get("costs_exact", 1)) else " (conservative exposure)"
+        return (
+            "🟠 QAMC PAID ANALYSIS QUOTA HOLD\n"
+            f"trigger: {hold.get('trigger_detail') or hold.get('trigger_code')}\n"
+            f"scope: {affected}\n"
+            f"affected run: {hold.get('run_id') or 'unknown'} "
+            f"({hold.get('mode') or 'unknown'} / {hold.get('agent_name') or 'unknown'})\n"
+            f"attempts: {attempts} provider attempt{'s' if attempts != 1 else ''}\n"
+            f"cost: ${session_cost:.4f} this run · ${daily_cost:.4f} "
+            f"on ET day {hold.get('day')}{qualifier}\n"
+            f"{recovery}\n"
+            "preserved: broker-resident stops, reconciliation, deterministic loss "
+            "protection, close/P&L jobs, and the read-only API; no operator reset is required."
+        )
+
+    @staticmethod
+    def format_recovery_alert(hold: dict[str, Any]) -> str:
+        scope = str(hold.get("scope") or "day")
+        released = (
+            "all paid modes"
+            if scope == "day"
+            else str(hold.get("mode") or "unknown mode")
+        )
+        return (
+            "🟢 QAMC PAID ANALYSIS REARMED\n"
+            f"previous hold: {hold.get('trigger_code')} on ET day {hold.get('day')}\n"
+            f"scope released: {scope} / {released}\n"
+            f"checks passed: {hold.get('release_reason') or 'new ET budget window is exact'}\n"
+            "status: paid analysis is eligible again; session, retry, attempt, "
+            "reservation, and daily limits remain enforced."
+        )
 
     @staticmethod
     def format_alert(state: dict[str, Any]) -> str:
@@ -1403,6 +2020,7 @@ class LLMCostCircuitBreaker:
             conn.execute("BEGIN IMMEDIATE")
             self._seed_today(conn)
             self._expire_reservations(conn)
+            self._reconcile_quota_holds_locked(conn, current_day=day)
             daily, session, _ = self._totals(conn, day, run_id)
             row = conn.execute(
                 "SELECT provider_attempts, status FROM llm_budget_sessions WHERE run_id=?",
@@ -1488,7 +2106,10 @@ class LLMCostCircuitBreaker:
             conn.execute("BEGIN IMMEDIATE")
             self._seed_today(conn)
             self._expire_reservations(conn)
-            state = self._state_row(conn)
+            self._reconcile_quota_holds_locked(conn, current_day=day)
+            state = self._effective_state_locked(
+                conn, day=day, run_id=run_id, mode=mode,
+            )
             daily, session, reserved_day = self._totals(conn, day, run_id)
             session_row = conn.execute(
                 "SELECT provider_attempts, logical_calls, retry_attempts "
@@ -1517,7 +2138,9 @@ class LLMCostCircuitBreaker:
                 agent_name=agent_name, attempts=attempts,
                 attempts_exact=True, daily=daily, session=session,
             )
-            state = self._state_row(conn)
+            state = self._effective_state_locked(
+                conn, day=day, run_id=run_id, mode=mode,
+            )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
@@ -1594,7 +2217,9 @@ class LLMCostCircuitBreaker:
                         costs_exact=False,
                     )
 
-            state = self._state_row(conn)
+            state = self._effective_state_locked(
+                conn, day=day, run_id=run_id, mode=mode,
+            )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
@@ -1642,7 +2267,13 @@ class LLMCostCircuitBreaker:
             # fail-open window immediately before network I/O.
             self._seed_today(conn)
             self._expire_reservations(conn)
-            state = self._state_row(conn)
+            self._reconcile_quota_holds_locked(conn, current_day=current_day)
+            state = self._effective_state_locked(
+                conn,
+                day=current_day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
+            )
             row = conn.execute(
                 "SELECT * FROM llm_budget_reservations WHERE reservation_id=?",
                 (reservation.reservation_id,),
@@ -1654,6 +2285,12 @@ class LLMCostCircuitBreaker:
             if row["status"] != "active":
                 conn.commit()
                 self._notify_if_needed()
+                if row["status"] == "expired_cross_day_unattempted":
+                    raise PaidAnalysisSuspended(
+                        "call reservation crossed the ET daily-budget boundary; "
+                        "a new current-day reservation is required",
+                        state,
+                    )
                 raise PaidAnalysisSuspended("call reservation expired or is unavailable", state)
             day = str(row["day"])
             current_attempts = int(row["attempt_count"] or 0)
@@ -1707,7 +2344,12 @@ class LLMCostCircuitBreaker:
                     daily_cost=daily + reserved_day,
                     costs_exact=False,
                 )
-                state = self._state_row(conn)
+                state = self._effective_state_locked(
+                    conn,
+                    day=current_day,
+                    run_id=reservation.run_id,
+                    mode=reservation.mode,
+                )
                 conn.commit()
                 self._notify_if_needed()
                 raise PaidAnalysisSuspended(
@@ -1748,7 +2390,12 @@ class LLMCostCircuitBreaker:
                 attempts=session_attempts, attempts_exact=True,
                 daily=daily, session=session_cost,
             )
-            state = self._state_row(conn)
+            state = self._effective_state_locked(
+                conn,
+                day=current_day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
+            )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
@@ -1799,7 +2446,12 @@ class LLMCostCircuitBreaker:
             # network boundary.  A reservation can wait behind a provider
             # semaphore while an earlier call settles above its estimate; an
             # old reservation is not a blank cheque to spend past the cap.
-            state = self._state_row(conn)
+            state = self._effective_state_locked(
+                conn,
+                day=current_day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
+            )
             if not int(state.get("suspended") or 0):
                 session_reserved_row = conn.execute(
                     "SELECT COALESCE(SUM(reserved_cost_usd), 0) AS cost "
@@ -1840,7 +2492,12 @@ class LLMCostCircuitBreaker:
                         costs_exact=False,
                     )
 
-            state = self._state_row(conn)
+            state = self._effective_state_locked(
+                conn,
+                day=current_day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
+            )
             if not int(state.get("suspended") or 0) and pending_retry_reserve:
                 updated_retry = conn.execute(
                     "UPDATE llm_budget_reservations "
@@ -1854,7 +2511,12 @@ class LLMCostCircuitBreaker:
                         "disappeared while reserving retry"
                     )
 
-            state = self._state_row(conn)
+            state = self._effective_state_locked(
+                conn,
+                day=current_day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
+            )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
@@ -1916,7 +2578,12 @@ class LLMCostCircuitBreaker:
                     f"cost-circuit reservation {reservation.reservation_id} is missing at completion"
                 )
             if row["status"] != "active":
-                state = self._state_row(conn)
+                state = self._effective_state_locked(
+                    conn,
+                    day=day,
+                    run_id=reservation.run_id,
+                    mode=reservation.mode,
+                )
                 conn.commit()
                 self._notify_if_needed()
                 raise PaidAnalysisSuspended(
@@ -2163,7 +2830,10 @@ class LLMCostCircuitBreaker:
             conn.execute("BEGIN IMMEDIATE")
             self._seed_today(conn)
             self._expire_reservations(conn)
-            state = self._state_row(conn)
+            self._reconcile_quota_holds_locked(conn, current_day=day)
+            state = self._effective_state_locked(
+                conn, day=day, run_id=run_id, mode=mode,
+            )
             daily, session, reserved = self._totals(conn, day, run_id)
             session_row = conn.execute(
                 "SELECT logical_calls, provider_attempts, retry_attempts FROM llm_budget_sessions "
@@ -2200,6 +2870,15 @@ class LLMCostCircuitBreaker:
             with self._connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 state = self._state_row(conn)
+                emergency_latched = bool(
+                    self._emergency_latch_path is not None
+                    and self._emergency_latch_path.exists()
+                )
+                if not int(state.get("suspended") or 0) and not emergency_latched:
+                    raise ValueError(
+                        "no operator-resettable hard circuit is active; scoped quota "
+                        "holds expire only with their budget window"
+                    )
                 conn.execute(
                     "INSERT INTO llm_circuit_events "
                     "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "

@@ -6,6 +6,22 @@ function healthColor(health: HealthResponse | null): { dot: string; label: strin
   if (!health.db_reachable) return { dot: "bg-neg", label: "database unreachable" };
   if (health.broker_reachable === false) return { dot: "bg-warn", label: "broker unreachable" };
   if (health.broker_reachable === null) return { dot: "bg-warn", label: "broker not configured" };
+  const circuit = health.llm_circuit;
+  if (circuit && !circuit.available) {
+    return { dot: "bg-neg", label: "paid-analysis safety circuit unavailable" };
+  }
+  if (circuit?.requires_operator_reset) {
+    return { dot: "bg-neg", label: "paid analysis suspended — operator reset required" };
+  }
+  if (circuit?.suspended && circuit.suspension_class === "quota") {
+    return { dot: "bg-warn", label: "paid analysis held — auto-rearms next ET budget day" };
+  }
+  if ((circuit?.active_quota_holds?.length ?? 0) > 0) {
+    return { dot: "bg-warn", label: "scoped paid-analysis quota hold — other sessions eligible" };
+  }
+  if (circuit?.recent_recovery) {
+    return { dot: "bg-pos", label: "paid analysis rearmed — checks passed" };
+  }
   return { dot: "bg-pos", label: "all systems reachable" };
 }
 

@@ -123,6 +123,21 @@ function updateHealthIndicator(health) {
   } else if (health.broker_reachable === null) {
     dot.className = "health-dot health-degraded";
     label.textContent = "broker not configured";
+  } else if (health.llm_circuit && !health.llm_circuit.available) {
+    dot.className = "health-dot health-down";
+    label.textContent = "paid-analysis safety circuit unavailable";
+  } else if (health.llm_circuit?.requires_operator_reset) {
+    dot.className = "health-dot health-down";
+    label.textContent = "paid analysis suspended — operator reset required";
+  } else if (health.llm_circuit?.suspended) {
+    dot.className = "health-dot health-degraded";
+    label.textContent = "paid analysis held — auto-rearms next ET budget day";
+  } else if ((health.llm_circuit?.active_quota_holds || []).length) {
+    dot.className = "health-dot health-degraded";
+    label.textContent = "scoped paid-analysis quota hold — other sessions eligible";
+  } else if (health.llm_circuit?.recent_recovery) {
+    dot.className = "health-dot health-ok";
+    label.textContent = "paid analysis rearmed — checks passed";
   } else {
     dot.className = "health-dot health-ok";
     label.textContent = "all systems reachable";
@@ -366,6 +381,19 @@ async function loadHealth() {
   try {
     const data = await fetchJSON("/health");
     updateHealthIndicator(data);
+    const circuit = data.llm_circuit;
+    const quotaHoldCount = (circuit?.active_quota_holds || []).length;
+    const circuitValue = !circuit?.available
+      ? "unavailable"
+      : circuit.requires_operator_reset
+      ? "hard stop · operator reset"
+      : circuit.suspended
+      ? "daily quota hold · auto-rearm"
+      : quotaHoldCount
+      ? `${quotaHoldCount} scoped hold${quotaHoldCount === 1 ? "" : "s"}`
+      : circuit.recent_recovery
+      ? "rearmed · checks passed"
+      : "ready";
     const runs = Object.entries(data.last_run_files || {})
       .map(([mode, ts]) => `${mode}: ${ts ? fmtTime(ts) : "—"}`)
       .join("  ·  ");
@@ -375,11 +403,21 @@ async function loadHealth() {
       statBlock("Mode", data.paper === null || data.paper === undefined ? "unknown" : data.paper ? "paper" : "LIVE"),
       statBlock("Sessions logged today", (data.sessions_logged_today || []).join(", ") || "none"),
       statBlock("Session lock", data.session_lock_active === null ? "unknown" : data.session_lock_active ? "active" : "idle"),
+      statBlock("Paid analysis", circuitValue),
       statBlock("Server time", fmtTime(data.timestamp)),
     ]);
     const runsLine = el("div", { className: "state-message", text: runs ? `Last run files — ${runs}` : "" });
-    body.replaceChildren(grid, runsLine);
-    setPanelState("panel-health", "ok", "ok");
+    const circuitLine = el("div", {
+      className: `state-message${circuit?.requires_operator_reset ? " error" : ""}`,
+      text: (circuit?.trigger && (circuit.requires_operator_reset || circuit.suspended || quotaHoldCount))
+        ? circuit.trigger
+        : circuit?.recent_recovery?.release_reason
+        ? `Last recovery — ${circuit.recent_recovery.release_reason}`
+        : "",
+    });
+    body.replaceChildren(grid, circuitLine, runsLine);
+    const degraded = Boolean((circuit && !circuit.available) || circuit?.requires_operator_reset || circuit?.suspended || quotaHoldCount);
+    setPanelState("panel-health", degraded ? "degraded" : "ok", degraded ? "degraded" : "ok");
     stampUpdated();
   } catch (err) {
     showMessage(body, `Could not load health: ${err.message}`, true);

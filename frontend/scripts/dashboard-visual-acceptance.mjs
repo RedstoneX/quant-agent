@@ -3,8 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const baseUrl = process.env.QAMC_VISUAL_URL || "http://127.0.0.1:5173/cockpit/";
-const output = resolve("../docs/verification/dashboard-finish-line");
-const researchOutput = resolve("../docs/verification/research-intelligence-desk");
+const output = resolve(process.env.QAMC_VISUAL_OUTPUT || "../docs/verification/dashboard-finish-line");
+const researchOutput = resolve(process.env.QAMC_RESEARCH_VISUAL_OUTPUT || "../docs/verification/research-intelligence-desk");
 await mkdir(output, { recursive: true });
 await mkdir(researchOutput, { recursive: true });
 
@@ -125,7 +125,18 @@ async function installRoutes(page, scenario = "populated") {
     if (path === "/positions") return json(route, { positions: scenario === "empty" || scenario === "error" ? [] : positions, error: scenario === "error" ? "position snapshot unavailable" : null });
     if (path === "/orders") return json(route, { orders: scenario === "empty" || scenario === "error" ? [] : orders, error: scenario === "error" ? "order snapshot unavailable" : null });
     if (path === "/trades") return json(route, { trades: scenario === "empty" || scenario === "error" ? [] : [exitTrade, trade], count: scenario === "empty" || scenario === "error" ? 0 : 2 });
-    if (path === "/health") return json(route, { status: "healthy", db_reachable: true, broker_reachable: true, paper: true, sessions_logged_today: [runId], last_run_files: {}, session_lock_active: false, timestamp: "2026-08-25T18:30:00Z" });
+    if (path === "/health") {
+      const base = { available: true, daily_cost_usd: .42, daily_limit_usd: 1.5, active_quota_holds: [] };
+      const llm_circuit = scenario === "error"
+        ? { ...base, suspended: true, suspension_class: "hard", hold_scope: "global", requires_operator_reset: true, auto_rearm: false, trigger: "Accounting telemetry is unavailable.", trigger_code: "unknown_actual_cost", suspended_at: "2026-08-25T18:20:00Z", recent_recovery: null }
+        : scenario === "unavailable"
+        ? { available: false, error: "cost circuit status unavailable" }
+        : scenario === "stale"
+        ? { ...base, suspended: true, suspension_class: "quota", hold_scope: "day", requires_operator_reset: false, auto_rearm: true, trigger: "Daily analysis budget reached its safe limit.", trigger_code: "daily_cost_limit", suspended_at: "2026-08-25T18:20:00Z", active_quota_holds: [{ scope: "day", day: "2026-08-25", trigger_code: "daily_cost_limit", trigger_detail: "Daily analysis budget reached its safe limit.", run_id: runId, mode: "morning", agent_name: "portfolio_manager", session_cost_usd: .42, daily_cost_usd: 1.5, created_at: "2026-08-25T18:20:00Z" }], recent_recovery: null }
+        : { ...base, suspended: false, suspension_class: null, hold_scope: null, requires_operator_reset: false, auto_rearm: false, trigger: null, trigger_code: null, suspended_at: null, recent_recovery: { scope: "day", day: "2026-08-24", trigger_code: "daily_cost_limit", mode: "morning", released_at: "2026-08-25T12:00:00Z", release_reason: "ET budget window advanced and exact accounting checks passed" } };
+      const degraded = scenario === "error" || scenario === "stale" || scenario === "unavailable";
+      return json(route, { status: degraded ? "degraded" : "ok", db_reachable: true, broker_reachable: true, paper: true, sessions_logged_today: [runId], last_run_files: {}, session_lock_active: false, decision_path_status: degraded ? "paid_analysis_suspended" : "ok", llm_circuit, timestamp: "2026-08-25T18:30:00Z" });
+    }
     if (path === "/runs") return json(route, { runs: scenario === "empty" ? [] : [runSummary] });
     if (path === `/runs/${runId}/funnel`) return json(route, funnel);
     if (path === `/runs/${runId}`) return json(route, { run_id: runId, agent_logs: [], trades: [trade, exitTrade], decision_id: "decision-1", total_cost_usd: .42, hard_risk_block_recorded: false });
@@ -213,6 +224,9 @@ await shot("13-ipad-portrait-research-signals", { width: 820, height: 1180 }, "p
 await shot("14-ipad-landscape-research-review", { width: 1180, height: 820 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "review", exact: true }).click(); await page.getByText("Mean-reversion prompts need an explicit trend veto.").waitFor(); });
 await shot("15-ipad-portrait-research-empty", { width: 820, height: 1180 }, "empty", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Quiet is a valid read.").waitFor(); });
 await shot("16-desktop-research-stale", { width: 1600, height: 1000 }, "stale", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Last-known research is shown below.", { exact: false }).waitFor(); });
+await shot("17-desktop-system-rearmed", { width: 1600, height: 1000 }, "populated", async (page) => { await page.getByText("System", { exact: true }).click(); await page.getByText("rearmed · checks passed", { exact: true }).waitFor(); });
+await shot("18-ipad-system-hard-stop", { width: 820, height: 1180 }, "error", async (page) => { await page.getByText("System", { exact: true }).click(); await page.getByText("hard stop · operator reset", { exact: true }).waitFor(); });
+await shot("19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await page.getByText("System", { exact: true }).click(); await page.getByText("unavailable", { exact: true }).last().waitFor(); });
 
 await browser.close();
 if (browserErrors.length) throw new Error(browserErrors.join("\n"));

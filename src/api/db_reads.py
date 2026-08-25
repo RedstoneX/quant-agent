@@ -103,10 +103,17 @@ def get_llm_circuit_health() -> dict:
         result = {
             "available": "llm_circuit_state" in tables,
             "suspended": None,
+            "suspension_class": None,
+            "hold_scope": None,
+            "requires_operator_reset": False,
+            "auto_rearm": False,
             "trigger": None,
+            "trigger_code": None,
             "suspended_at": None,
             "daily_cost_usd": None,
             "daily_limit_usd": None,
+            "active_quota_holds": [],
+            "recent_recovery": None,
             "recent_pm_status": None,
             "recent_pm_run_id": None,
             "recent_pm_timestamp": None,
@@ -114,19 +121,64 @@ def get_llm_circuit_health() -> dict:
         }
         if "llm_circuit_state" in tables:
             state = conn.execute(
-                "SELECT suspended, trigger_detail, suspended_at, daily_limit_usd "
+                "SELECT suspended, trigger_code, trigger_detail, suspended_at, "
+                "daily_limit_usd "
                 "FROM llm_circuit_state WHERE singleton=1"
             ).fetchone()
             if state:
                 result.update(
                     available=True,
                     suspended=bool(state["suspended"]),
+                    suspension_class="hard" if state["suspended"] else None,
+                    hold_scope="global" if state["suspended"] else None,
+                    requires_operator_reset=bool(state["suspended"]),
                     trigger=state["trigger_detail"],
+                    trigger_code=state["trigger_code"],
                     suspended_at=state["suspended_at"],
                     daily_limit_usd=state["daily_limit_usd"],
                 )
             else:
                 result["available"] = False
+        if "llm_quota_holds" in tables:
+            current_day = et_today().isoformat()
+            holds = [
+                dict(row) for row in conn.execute(
+                    "SELECT scope, day, trigger_code, trigger_detail, run_id, mode, "
+                    "agent_name, session_cost_usd, daily_cost_usd, daily_limit_usd, "
+                    "created_at FROM llm_quota_holds WHERE active=1 AND day=? "
+                    "ORDER BY CASE scope WHEN 'day' THEN 1 WHEN 'mode_day' THEN 2 "
+                    "ELSE 3 END, id",
+                    (current_day,),
+                ).fetchall()
+            ]
+            result["active_quota_holds"] = holds
+            global_day_hold = next(
+                (hold for hold in holds if hold["scope"] == "day"), None,
+            )
+            representative = global_day_hold or (holds[0] if holds else None)
+            if not result["suspended"] and representative is not None:
+                result.update(
+                    suspended=bool(global_day_hold),
+                    suspension_class="quota",
+                    hold_scope=representative["scope"],
+                    requires_operator_reset=False,
+                    auto_rearm=representative["scope"] in {"day", "mode_day"},
+                    trigger=representative["trigger_detail"],
+                    trigger_code=representative["trigger_code"],
+                    suspended_at=representative["created_at"],
+                    daily_limit_usd=(
+                        representative["daily_limit_usd"]
+                        if representative["daily_limit_usd"] is not None
+                        else result["daily_limit_usd"]
+                    ),
+                )
+            recovery = conn.execute(
+                "SELECT scope, day, trigger_code, mode, released_at, release_reason "
+                "FROM llm_quota_holds WHERE active=0 AND released_at IS NOT NULL "
+                "ORDER BY released_at DESC, id DESC LIMIT 1"
+            ).fetchone()
+            if recovery is not None:
+                result["recent_recovery"] = dict(recovery)
         # Accounting failures use an atomic sidecar because SQLite itself may
         # be the failed component.  The API is a separate process, so reading
         # only llm_circuit_state could otherwise report OK while every trading
@@ -147,6 +199,11 @@ def get_llm_circuit_health() -> dict:
             result.update(
                 available=False,
                 suspended=True,
+                suspension_class="hard",
+                hold_scope="global",
+                requires_operator_reset=True,
+                auto_rearm=False,
+                trigger_code="circuit_infrastructure_unavailable",
                 trigger=f"cost-circuit infrastructure unavailable: {detail}",
             )
         if "llm_budget_days" in tables:
