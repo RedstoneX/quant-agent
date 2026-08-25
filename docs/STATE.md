@@ -19,7 +19,7 @@ This file records what is accepted and true **now**. Git history preserves imple
 
 The prior three-account daily workflow created excessive friction. During stabilization the accepted operating model is now:
 
-- **`ubuntu` — engineering/operator account.** Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
+- **`ubuntu` — engineering/operator account.** Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and deployment orchestration happen here.
 - **`qamc` — production runtime account only.** It owns the production checkout, runtime `.env`/OneCLI wiring, user services/timers, and QAMC execution.
 - **`dev` — parked.** It remains present but is removed from the normal workflow. Do not expand its permissions or require the operator to use it during stabilization.
 
@@ -57,25 +57,34 @@ The production checkout retains exactly one intended tracked local configuration
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
-GitHub `main` may advance beyond this production SHA. **Production never automatically follows `main`.**
+GitHub `main` may advance beyond this production SHA. Production changes only through the governed engineering workflow below.
 
-## Promotion authority — accepted rule
+## Paper-beta engineering authority — accepted rule
 
-The default standing workflow is:
+While execution remains **Alpaca Paper**, already-authorized engineering work may run end-to-end without a human code-review, merge or deployment gate:
 
-**`ubuntu` engineering implementation/preview/tests → push branch/PR → external review → explicit merge approval → STOP → explicit production approval → governed `ubuntu` → `qamc` deploy/verify.**
+**`ubuntu` engineering → tests/inspection → dedicated PR → merge → governed `ubuntu` → `qamc` deploy → production verification → rollback if needed.**
 
 Important consequences:
 
-- Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
-- Merge authorization and production-deployment authorization are separate by default.
-- A bounded `docs/WORK.md` contract may explicitly authorize one exact tranche through merge and production deployment in advance. When it does, Codex may complete that sequence without asking for a redundant second approval.
-- Such authorization applies only to the named tranche; it is not standing permission for unrelated work.
-- Generic instructions such as “proceed”, “continue”, “fix it” or “finish this” never escalate work into the next environment by inference.
-- Before explicit production approval exists, `ubuntu` privilege must not be used to mutate `/home/qamc/quant-agent`, `qamc` services/timers, runtime credentials, or production configuration.
-- After explicit production approval, `ubuntu` performs the necessary privileged operation directly; the operator should not be bounced between accounts.
+- Codex may complete implementation, self-review, merge and Paper-production deployment autonomously.
+- Independent review is optional evidence, not permission and not a blocking gate.
+- Version control, the dedicated PR and known-good production state provide traceability and rollback.
+- A failed production verification stops further mutation and triggers preservation/restoration of the last known-good state.
+- This fast lane does **not** authorize live capital, paid dependencies, secrets/credential redesign, destructive infrastructure replacement or material architecture outside current authority.
 
-The current Research Intelligence Desk + Smart Money Analyst tranche is explicitly authorized in `docs/WORK.md` through its dedicated PR, merge, governed production deployment and production verification once its own acceptance criteria pass.
+## Parallel engineering policy — accepted rule
+
+Parallelism and subagents are available and should be used when they reduce wall-clock time without creating coordination waste.
+
+- Parallelize genuinely independent investigation, implementation surfaces, tests, browser/visual verification and evidence gathering.
+- The lead agent owns integration and resolves conflicting findings.
+- Do not spawn multiple workers to rediscover the same facts or overlap edits without a reason.
+- Use strong reasoning models for architecture, trading logic, safety-sensitive changes, complex debugging, hard review and ambiguous product/UX judgment.
+- Use cheaper/faster workers for bounded tests, searches, inventories, logs and mechanical evidence collection.
+- Escalate a cheap worker when the task becomes reasoning-heavy.
+
+This is an efficiency policy, not an agent-count target.
 
 ## Mission Control accepted state
 
@@ -163,21 +172,21 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 - Live-broker order submission or live-capital activation.
 - Direct stock shorting, options/theta strategies, or margin.
 - New timers, daemons, databases, proxies, credential systems or durable infrastructure without explicit architectural approval.
-- Deterministic risk/execution semantic redesign.
-- Paper-specific trading shortcuts.
+- Deterministic risk/execution semantic redesign outside accepted work.
+- Paper-specific trading shortcuts that would create a second trading architecture.
 - Broker-write Mission Control controls.
 - Telegram command/control.
 - Public exposure of QAMC or OneCLI.
 - Turning `qamc` into a development/operator account.
 - Expanding `dev` permissions or reintroducing it into the normal workflow during stabilization without explicit authorization.
 - Forcing/manufacturing trades for validation.
-- Automatic production deployment without explicit tranche-specific authorization.
+- Live-capital promotion without separate explicit authorization.
 
 ## Handoff
 
 Current bounded activities:
 
-1. **Finish any already-running pipeline-repair work first.** Do not start the Research Intelligence tranche in the same branch/worktree while overlapping backend work is unsettled.
+1. **Finish any already-running pipeline-repair work first.** It may immediately use efficient subagents/parallelism under the accepted policy above. Do not start the Research Intelligence tranche in the same branch/worktree while overlapping backend work is unsettled.
 2. **Research Intelligence Desk + Smart Money Analyst:** once the current pipeline work is merged, deployed and verified, start from latest `main` and execute the end-to-end authorization in `docs/WORK.md`.
 3. **Natural Alpaca Paper acceptance:** continue collecting real evidence without forcing activity or weakening safety.
 4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
