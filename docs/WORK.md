@@ -5,25 +5,27 @@ Status: **ET-DAY QUOTA HOLD | NON-LLM SAFETY ACTIVE | SCOPED AUTO-RECOVERY APPRO
 ## Current integration truth
 
 - Production is deployed and verified at
-  `9c24f78ec99dbcafa62413858aff7e735ae10dbd`; rollback SHA is
-  `d645ef2d61d8ba4c06dd18c40b0ae44334462cec`.
+  `1bb4e23f259af36a67eae4d2400a2ae8960f2fbc`; rollback SHA is
+  `9c24f78ec99dbcafa62413858aff7e735ae10dbd`.
 - PR #81 deployed the persistent mandatory cost circuit and PM/pipeline
   remediation. PR #83 fixed the intraday lock context manager that the first
   natural suspended tick exposed. The full suite passed 2,110 tests and the
   deployed intraday suite passed 24 tests.
 - Production seeded **$4.211481** of existing ET-day spend and latched the
   **$1.50** daily limit with `alert_state=1`. The required Telegram shutdown
-  alert was delivered. Do not reset or erase the unchanged ledger. The accepted
-  recovery model treats this exact spend limit as an ET-day quota hold, while
-  accounting/price/unknown-cost failures remain hard operator-reset latches.
+  alert was delivered. PR #89 migrated that unchanged incident into a day quota
+  hold without a duplicate alert, provider call, new agent log or new circuit
+  event. Do not reset or erase the ledger. Accounting, non-monotonic dates,
+  unresolved attempted requests, price/unknown-cost and unrecognized failures
+  remain hard operator-reset latches.
 - A post-deployment midday run reconciled both broker-protected long positions,
   then returned `paid_analysis_suspended` before any model request. Agent-log
   ID 189 and ET-day spend remained unchanged.
 - The 18:30 UTC intraday tick also reconciled both protected longs and blocked
   before Tech with zero spend. Its initial structured suspension was masked by
   `generator didn't stop after throw()`; PR #83 now propagates the suspension
-  through the advisory lock correctly. The latch was never reset, max agent-log
-  ID remains 189 and incremental circuit spend remains $0.00.
+  through the advisory lock correctly. The incident was never manually reset;
+  max agent-log ID remains 189 and incremental circuit spend remains $0.00.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
 - The chart live-price/current-price truth issue was already fixed by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`. It is not an outstanding task.
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
@@ -43,18 +45,27 @@ Status: **ET-DAY QUOTA HOLD | NON-LLM SAFETY ACTIVE | SCOPED AUTO-RECOVERY APPRO
   no console/request errors, no horizontal overflow, no micro-text and no raw
   failure/telemetry copy. The API remains read-only and all seven timers remain
   intact.
+- PR #89 is merged and deployed. Expected budget exhaustion is scoped to the
+  affected run, mode/day or ET day; hard integrity faults remain global and
+  operator-reset-only. Trip/recovery Telegram leases are ordered and
+  deduplicated, rollover is strictly forward-only and API/React/legacy health
+  surfaces distinguish quota, recovery, hard-stop and unavailable states.
 - PR #85 replaced the blocked Bargo adapter with first-party SEC Form 4 and
   enabled the Smart Money seat. Its source-only production preflight processed
   25 official filings, cached 13 exact P/S observations and retained five
   material rows for SPIR/TISI. No symbol cleared the higher external-admission
   threshold, no LLM call occurred, max agent-log ID remained 189 and the cost
-  circuit remained latched at the unchanged $4.211481.
+  circuit remained quota-held at the unchanged $4.211481.
 - Run-scoped automatic admission is active for qualifying symbols outside the
   configured 77-stock universe. The permanent universe is unchanged; the lane
   is capped at three names and remains behind broker/common-stock, price,
   history, liquidity, sector, Technical, PM, AI Risk and deterministic gates.
-- Engineering passed 2,127 tests; the deployed focused suite passed 272 tests.
-- Deployment verification passed `/health`, DB, broker, Alpaca Paper, OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI, Telegram configuration, `/cockpit`, accepted chart timeframes, read-only method rejection, and all seven existing timers.
+- Engineering passed 2,161 Python tests and 71 frontend tests; the production
+  build, 19 fixture scenarios and live desktop+iPad circuit/Research Desk
+  inspection passed without console/page/request errors or horizontal overflow.
+- Deployment verification passed `/health`, DB migration/ledger invariants,
+  broker positions and protective stops, Alpaca Paper, `/cockpit`, read-only
+  method rejection and all seven existing timers. No provider call was forced.
 - The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
 
 ## Stabilization account model — HARD RULE

@@ -33,21 +33,24 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`9c24f78ec99dbcafa62413858aff7e735ae10dbd`
+`1bb4e23f259af36a67eae4d2400a2ae8960f2fbc`
 
-This is GitHub `main` after PR #87. It retains the mandatory paid-analysis cost
-circuit, the PR #83 intraday suspension fix and PR #85 credentialless SEC Form
-4 source/admission lane, and completes the Research Intelligence Desk against
-its accepted editorial and responsive acceptance criteria. The recorded
-rollback SHA is `d645ef2d61d8ba4c06dd18c40b0ae44334462cec`.
+This is GitHub `main` after PR #89. It retains the completed PR #87 Research
+Intelligence Desk, PR #83 intraday suspension fix and PR #85 credentialless SEC
+Form 4 source/admission lane. PR #89 separates expected quota exhaustion from
+hard integrity faults, adds strictly checked ET-day auto-recovery and exposes
+the same semantics through Telegram, API and both dashboard implementations.
+The recorded rollback SHA is `9c24f78ec99dbcafa62413858aff7e735ae10dbd`.
 
 Production verification on 2026-08-25 established:
 
 - `/health` returned the intentional `status=degraded`, DB reachable, broker
   reachable, `paper=true`, and `decision_path_status=paid_analysis_suspended`;
-- the circuit seeded the existing ET-day agent ledger at **$4.211481**, latched
-  the **$1.50** daily limit before any post-deployment provider request, and
-  recorded successful Telegram alert delivery;
+- the circuit retained the exact **$4.211481** ET-day ledger and its delivered
+  Telegram alert, migrated the prior singleton daily latch into one active day
+  quota hold without another provider call or duplicate alert, and reports
+  `suspension_class=quota`, `hold_scope=day`, `auto_rearm=true` and
+  `requires_operator_reset=false`;
 - the first post-deployment midday run reconciled all two broker-protected long
   positions before returning `paid_analysis_suspended`; agent-log ID **189**
   and ET-day spend remained unchanged;
@@ -59,17 +62,17 @@ Production verification on 2026-08-25 established:
   was deployed without resetting the circuit;
 - all seven existing timers are active; non-LLM safety, reconciliation, close,
   P&L and read-only API work remain available while model calls are blocked;
-- the complete merged hermetic suite passed **2,127 tests**; the deployed
-  Smart Money/PM/checkpoint/broker/API/stage suite passed **272 tests**;
+- the complete merged hermetic suite passed **2,161 tests**; 71 frontend tests,
+  the production build and 19 rendered fixture scenarios also passed;
 - the source-only production preflight processed 25 official SEC filings,
   cached 13 exact Form 4 P/S observations, retained five material observations
   for SPIR/TISI and made zero LLM calls. No symbol cleared the higher external
   admission threshold, which is a valid quiet source result rather than an
   acceptance failure;
-- `/health`
-  remained intentionally degraded, SQLite `quick_check` remained `ok`, the
-  circuit remained latched, agent-log ID remained **189** and incremental
-  post-deployment spend remained **$0.00**;
+- `/health` remained intentionally degraded for the current day quota hold,
+  SQLite `quick_check` remained `ok`, no active reservation or emergency
+  sidecar existed, circuit event count remained one, agent-log ID remained
+  **189** and incremental post-deployment spend remained **$0.00**;
 - `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
   price requests were accepted (the 5m response was naturally empty before
   the Paper market session; the other three returned bars);
@@ -78,11 +81,13 @@ Production verification on 2026-08-25 established:
   run-local PM/Risk/gate/execution and truthful after-bell states on desktop and
   iPad without console errors, request failures, micro-text or horizontal
   overflow;
-- the Desk production asset is `index-DBp3ajHn.js`; Dockview maximize state
+- the Desk production asset is `index-B0cdM3LQ.js`; Dockview maximize state
   survived a real page reload, and the purpose-built iPad brief, signals,
   decision and review routes passed rendered inspection;
-- 71 frontend tests, six focused Research API contract tests, the production
-  build and all 16 fixture visual-acceptance scenarios passed;
+- live post-deployment desktop and iPad inspection passed for both the circuit
+  hold presentation and the Research Desk, including stored change, tension,
+  why-now and restrained annotation, with no console/page/request errors, raw
+  output leakage or horizontal overflow;
 - POST, PUT, PATCH and DELETE remained rejected with 405;
 - OneCLI and Mission Control remained private and reachable;
 - the existing private/read-only Mission Control and Research Desk contracts
