@@ -1,15 +1,15 @@
 # QAMC Current Work
 
-Status: **FRICTIONLESS DELIVERY TOOLING AUTHORIZED | DEPLOY MERGED IEX CHART FIX | CORE RECOVERY IN NATURAL PAPER VALIDATION**
+Status: **DEV AUTONOMY | OPERATOR MERGE/PRODUCTION GATES | CORE RECOVERY IN NATURAL PAPER VALIDATION**
 
 ## Current integration truth
 
-- GitHub `main` now includes PR #68 (`CLAUDE.md` minimal-sufficient execution discipline) and PR #69 (explicit Alpaca IEX feed for intraday chart bars plus the approved private Vite hostname fix).
-- The PR #69 IEX diagnosis has been directly proven against production credentials: default/unset recent intraday stock data is rejected as SIP-unentitled; explicit IEX returns real SPY/AAPL bars; the branch `AlpacaBroker.get_intraday_chart_bars` path also returned real 15m bars.
-- Actual VPS production remains on the older accepted runtime checkout at `2b3faaf69c0b842a08f991a9ca517a3989bdaf93` until the merged fix is deployed.
-- Production has one intended tracked local delta: `config/settings.yaml` with `intraday_scan.enabled: true`.
-- `ubuntu` / `qamc` / `dev` isolation remains hard. OneCLI remains the credential-delivery layer. Alpaca Paper remains the only authorized execution environment.
-- The current chart spinner/empty intraday behavior is expected until production is updated from current accepted `main`.
+- Production has been reported and verified at `a6758f935910c5cf380cc6a7acedc5f3b78f6366` after PR #69 deployment.
+- PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
+- Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and the governed local production override `config/settings.yaml: intraday_scan.enabled: true` was preserved.
+- GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
+- The previous “standing fast-lane” wording incorrectly allowed production promotion to be inferred after merge. That authorization is revoked by the operator-promotion rule below.
+- PR #69 did not change `PriceChartPanel`; therefore the previously operator-observed live-price versus chart-right-edge mismatch is **not considered resolved merely because the timeframe/IEX fix is live**. Treat that as a separate DEV issue if still reproducible.
 
 ## Product / architecture principle
 
@@ -21,74 +21,85 @@ Trading-critical path remains:
 
 Mission Control, Journal, search and Telegram are observational/read-side surfaces and must not become authoritative trading state or broker-write control paths.
 
-## Next authorized work
+## Standing delivery workflow — HARD RULE
 
-### 0. Build the standing frictionless delivery path — IMPLEMENTATION AUTHORIZED
+### DEV is autonomous
 
-The operator explicitly authorizes one repo-owned, tested production deployment/verification entrypoint for routine accepted frontend and backend changes.
+For already-authorized work, Claude/Codex may autonomously:
 
-Desired standing workflow:
+- work as `dev` in the development checkout/worktree;
+- diagnose, implement and refactor inside accepted architecture;
+- run the shortest sufficient tests/builds;
+- start/stop the existing private Tailscale Vite DEV preview;
+- use browser automation/screenshots against DEV;
+- commit and push a dedicated branch/PR.
 
-**`dev` implementation → private Vite/read-only verification when relevant → tests → push → ChatGPT/operator review and merge → one standardized `ubuntu` production deploy/verify → browser/runtime confirmation.**
+No separate operator approval is needed for those DEV actions.
 
-The deployment/verification entrypoint must:
+### External review/merge gate
 
-- be invoked as `ubuntu` and operate on the existing `qamc` production checkout through the existing account boundaries;
-- deploy the exact current accepted GitHub `main` without inventing another release architecture;
-- preserve the governed production `config/settings.yaml` override (`intraday_scan.enabled: true`);
-- preserve OneCLI secret handling and never print credentials;
-- refuse unexpected/unsafe production state instead of improvising around it;
-- restart only what the existing deployment actually requires;
-- verify deployed SHA, required service state, `/health`, and task-relevant read-only acceptance checks;
-- fail closed with a concise blocker when safe deployment or verification cannot be proven;
-- add no daemon, persistent service, proxy, database, framework, credential system, orchestration platform, or other new infrastructure.
+After the branch/PR is pushed, **STOP**.
 
-Implementation guidance:
+- ChatGPT/operator reviews the actual diff and verification evidence.
+- Claude does not merge its own implementation PR.
+- Merge requires explicit operator authorization for that merge, unless the operator has explicitly delegated that exact merge to ChatGPT in the current task.
 
-- reuse the repository's existing deployment/commissioning/systemd patterns where useful; do not perform another broad commissioning audit;
-- inspect only what is needed to implement and test the entrypoint safely;
-- this is workflow/tooling work, not authorization to investigate unrelated backend trading logic;
-- use the `CLAUDE.md` minimal-sufficient execution rule: once prerequisites are known, implement and run the shortest decisive acceptance path;
-- target 45–90 minutes; if the work is becoming a >2-hour effort or requires a material architecture change, stop and report the specific blocker rather than expanding scope.
+### Production gate
 
-### 1. Use the new path immediately to deploy and verify the merged chart fix
+After merge, **STOP again**. Production remains untouched until the operator explicitly authorizes production deployment.
 
-After the standing deployment entrypoint is ready, use it as the first real acceptance test:
+- Approval to merge is not approval to deploy.
+- “Proceed”, “continue”, “fix it”, “finish this”, a green build, or a merged PR does not imply production authorization.
+- A single instruction may authorize merge + production only if it clearly says both.
+- Production deployment/verification must use `ubuntu` operating on the existing `qamc` production checkout and account boundaries.
+- Browser verification against production occurs only after that production gate has been explicitly opened.
 
-- deploy current accepted `main` to the existing `qamc` production checkout;
-- preserve `intraday_scan.enabled: true`;
-- verify production remains Alpaca Paper and OneCLI/private-network boundaries remain intact;
-- verify SPY and AAPL intraday `5m`, `15m`, and `1h` data return non-empty results through the production path;
-- verify the actual Mission Control chart exposes and renders `5m Today`, `15m`, `1h`, and `1D` without the prior endless spinner/empty-bar failure;
-- verify only the required production service(s) were restarted.
+## Friction-reduction rules
 
-No additional external merge gate is required for PR #69: it has already passed ChatGPT/operator review and is merged into `main`. Do not re-litigate or re-review that merge before deployment.
+The goal is **less operator handling without weakening the production gate**:
 
-### 2. Continue natural trading validation after deployment
+1. **No account shuttling during development.** Normal implementation stays under `dev`; do not ask the operator to bounce between `dev`, `qamc`, and `ubuntu` for information that can wait until the one privileged production step.
+2. **One privileged production intervention.** After explicit production approval, bundle production preflight/deploy/restart/acceptance into the shortest safe `ubuntu` operation instead of repeated sudo snippets.
+3. **Private DEV preview is standing-authorized.** Do not repeatedly ask whether Vite/browser verification may run in DEV.
+4. **No broad archaeology for bounded fixes.** Read only `STATE.md`, `WORK.md`, the relevant contract/code, then execute the decisive test. Do not re-read the repository or repeat commissioning unless evidence requires it.
+5. **Targeted verification first.** For a bounded dashboard/read-side fix, run the relevant tests/build/preview. Do not default to the entire repository suite unless the change surface or accepted contract justifies it.
+6. **No gratuitous parallelism.** Do not spawn multiple agents/worktrees for a small fix merely to “double check” it. Parallelize only when it materially reduces wall-clock time.
+7. **Stop on proof.** Once the requested DEV result is demonstrated and no blocker remains, stop and hand off. Do not keep re-validating the same fact.
+8. **Concise handoff.** Report only: changed / verified / preview / unresolved blocker / exact next gate.
+9. **No new security friction during this phase.** Preserve the existing `dev` / `qamc` / `ubuntu` separation and OneCLI boundaries, but do not invent additional permission layers, daemons, credential systems, proxies, or lockdown steps without separate operator approval.
+10. **Do not conflate adjacent defects.** A task is not complete merely because a related fix deployed. Each operator-observed defect needs evidence against its own acceptance condition.
 
-Observe normal Alpaca Paper sessions without manufacturing trades. Natural sessions still need to demonstrate:
+## Current authorized next work
+
+### 1. Finish this governance repair
+
+This branch should restore the operator-controlled merge/production gates while keeping the useful DEV-autonomy and low-friction rules above.
+
+### 2. Live-price/chart-right-edge mismatch — DEV only until approved
+
+If the mismatch remains reproducible:
+
+- investigate and fix it only in DEV;
+- preserve the separate semantics of historical bars, current-session quote, previous close, and live price;
+- use the existing Lightweight Charts/Tremor stack;
+- verify visually in the private DEV browser;
+- push the branch and stop at the external review gate.
+
+Do **not** deploy that fix automatically.
+
+### 3. Continue natural trading validation
+
+Observe normal Alpaca Paper sessions without manufacturing trades. The required natural evidence chain remains:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
-Success is not "more trades." When QAMC does not trade, the reason must be specific and defensible.
+Success is not “more trades.” When QAMC does not trade, the reason must be specific and defensible.
 
-## Standing fast-lane rule for future bounded fixes
+## Flagged separately — not bundled into dashboard workflow work
 
-For an already-authorized, bounded frontend/backend defect that stays within accepted architecture and does not alter trading/risk semantics:
+`src/execution/broker.py::get_latest_price` builds latest-trade/latest-quote requests without an explicit Alpaca feed and silently degrades to `None` on failure. Because that path is trading-critical, it requires separate operator/ChatGPT authorization and production investigation before code changes.
 
-1. `dev` diagnoses, implements and runs the shortest sufficient tests/preview.
-2. Claude pushes a dedicated branch and stops at the external GitHub gate.
-3. ChatGPT/operator reviews and merges.
-4. `ubuntu` runs the standardized deploy/verify entrypoint once.
-5. Stop when production verification passes.
-
-Do not make the operator shuttle production diagnostics or credentials between `dev` and `qamc`. If production privilege or credentials are required, perform that proof in the standardized `ubuntu` step. Do not repeat architecture discovery, commissioning, package archaeology or unrelated verification after a decisive result exists.
-
-## Flagged separately — not bundled into delivery-tooling work
-
-`src/execution/broker.py::get_latest_price` builds latest-trade/latest-quote requests without an explicit Alpaca feed and silently degrades to `None` on failure. Because that path is trading-critical, it requires a separate authorized production investigation before any code change. Do not bundle it into the chart/deployment workflow work.
-
-Lower-priority known issues remain news-narrative factual drift and `actual_provider` attribution oddity; do not interrupt the current delivery/deployment task for them.
+Lower-priority known issues remain news-narrative factual drift and `actual_provider` attribution oddity; do not interrupt the current task for them unless evidence shows they materially distort validation.
 
 ## Hard boundaries
 
