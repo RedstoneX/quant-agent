@@ -122,6 +122,7 @@ export interface TradeItem {
   fill_status: string | null;
   fill_qty?: number | null;
   fill_price?: number | null;
+  realized_pnl?: number | null;
   fill_reconciled_at?: string | null;
   timestamp: string | null;
   stop_loss: number | null;
@@ -302,6 +303,8 @@ export interface TargetPosition {
   conviction: "high" | "medium" | "low";
   thesis: string;
   thesis_invalid_if: string;
+  suggested_stop_price?: number | null;
+  catalyst?: string;
 }
 
 export interface TradeDecision {
@@ -377,7 +380,17 @@ export interface CandidateDetailResponse {
   risk_verdict: RiskManagerVerdict | null;
   risk_modification: RiskModification | null;
   trade: TradeItem | null;
+  trades?: TradeItem[];
+  pipeline_events?: PipelineEvent[];
   consensus: ConsensusSummary;
+}
+
+export interface PipelineEvent {
+  stage: string;
+  outcome: string;
+  reason: string;
+  timestamp: string | null;
+  details: Record<string, unknown>;
 }
 
 export type DecisionState =
@@ -398,6 +411,12 @@ export interface CandidateFunnelItem {
   risk_modified: boolean;
   executed: boolean;
   trade_action: string | null;
+  order_status?: string | null;
+  fill_qty?: number | null;
+  fill_price?: number | null;
+  realized_pnl?: number | null;
+  protection_outcome?: string | null;
+  pipeline_events?: PipelineEvent[];
   // Why the execution phase deterministically dropped this candidate's
   // approved order, when it did — quoted from the persisted `execution_skip`
   // evidence (e.g. "insufficient_cash", "stale_entry"). None when no skip
@@ -420,6 +439,7 @@ export interface RunFunnelResponse {
   executed_count: number;
   bearish_hedge_considered: boolean;
   hard_risk_block: boolean;
+  pipeline_events?: PipelineEvent[];
   pm_reasoning: PmReasoning | null;
   risk_verdict: RiskManagerVerdict | null;
   macro_context: MacroBroaderContext | null;

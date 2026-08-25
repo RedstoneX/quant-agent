@@ -27,6 +27,9 @@ export interface SupportWorkspaceState {
   runsLoading: boolean;
   health: HealthResponse | null;
   healthError: string | null;
+  onSelectSymbol?: (symbol: string) => void;
+  onInspectOrder?: (order: OrderItem) => void;
+  onInspectTrade?: (trade: TradeItem) => void;
 }
 
 const SupportWorkspaceContext = createContext<SupportWorkspaceState | null>(null);

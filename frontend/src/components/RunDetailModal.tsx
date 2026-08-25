@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { api, RunDetailResponse, RunFunnelResponse } from "../api/client";
+import { useEffect, useMemo, useState } from "react";
+import { legacyCreateColumnHelper as createColumnHelper, type LegacyColumnDef } from "@tanstack/react-table/legacy";
+import { api, AgentLogItem, RunDetailResponse, RunFunnelResponse } from "../api/client";
 import { fmtMoney, fmtNum } from "../lib/format";
 import { Modal } from "./ui/Modal";
 import { Pill } from "./ui/Pill";
@@ -9,40 +10,24 @@ import { STATE_LABELS } from "./funnelShared";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
 import { buildRunGraph } from "./agentflow/buildGraph";
 import { useModalActions } from "../context/ModalContext";
+import { LifecycleTimeline } from "./LifecycleTimeline";
+import { DataTable } from "./ui/DataTable";
+
+const agentColumn = createColumnHelper<AgentLogItem>();
 
 function AgentLogsTable({ detail }: { detail: RunDetailResponse }) {
+  const columns = useMemo(() => [
+    agentColumn.accessor("agent_name", { header: "Agent" }),
+    agentColumn.accessor((item) => `${item.actual_provider || "—"} / ${item.model || "—"}`, {
+      id: "route", header: "Provider / model",
+      cell: (info) => <span className={info.row.original.requested_provider && info.row.original.actual_provider && info.row.original.requested_provider !== info.row.original.actual_provider ? "font-bold text-warn" : ""}>{info.getValue()}</span>,
+    }),
+    agentColumn.accessor("status", { header: "Status", cell: (info) => <Pill text={info.getValue() || "unknown"} /> }),
+    agentColumn.accessor("cost_usd", { header: "Cost", cell: (info) => fmtMoney(info.getValue()) }),
+    agentColumn.accessor("latency_s", { header: "Latency", cell: (info) => info.getValue() === null ? "—" : `${fmtNum(info.getValue())}s` }),
+  ] as LegacyColumnDef<AgentLogItem, unknown>[], []);
   if (!detail.agent_logs.length) return <StateMessage text="No agent calls logged for this run." />;
-  return (
-    <table>
-      <thead>
-        <tr>
-          <th>Agent</th>
-          <th>Provider / model</th>
-          <th>Status</th>
-          <th>Cost</th>
-          <th>Latency</th>
-        </tr>
-      </thead>
-      <tbody>
-        {detail.agent_logs.map((a) => {
-          const changed = a.requested_provider && a.actual_provider && a.requested_provider !== a.actual_provider;
-          return (
-            <tr key={a.id}>
-              <td>{a.agent_name}</td>
-              <td className={changed ? "text-warn font-bold" : ""}>
-                {a.actual_provider || "—"} / {a.model || "—"}
-              </td>
-              <td>
-                <Pill text={a.status || "unknown"} />
-              </td>
-              <td>{fmtMoney(a.cost_usd)}</td>
-              <td>{a.latency_s !== null && a.latency_s !== undefined ? `${fmtNum(a.latency_s)}s` : "—"}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
+  return <DataTable data={detail.agent_logs} columns={columns} getRowId={(item) => String(item.id)} initialSorting={[{ id: "agent_name", desc: false }]} />;
 }
 
 export function RunDetailModal({ runId, onClose }: { runId: string; onClose: () => void }) {
@@ -99,6 +84,9 @@ export function RunDetailModal({ runId, onClose }: { runId: string; onClose: () 
           </EvidenceSection>
           <EvidenceSection title="Agent calls this run">
             {[<AgentLogsTable key="table" detail={detail} />]}
+          </EvidenceSection>
+          <EvidenceSection title="Persisted lifecycle events">
+            {[<LifecycleTimeline key="lifecycle" events={funnel.pipeline_events ?? []} />]}
           </EvidenceSection>
         </div>
       )}

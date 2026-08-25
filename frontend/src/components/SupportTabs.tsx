@@ -39,6 +39,9 @@ export function SupportTabs({
   runsLoading,
   health,
   healthError,
+  onSelectSymbol,
+  onInspectOrder,
+  onInspectTrade,
 }: {
   account: AccountResponse | null;
   accountError?: string | null;
@@ -59,6 +62,9 @@ export function SupportTabs({
   runsLoading: boolean;
   health: HealthResponse | null;
   healthError: string | null;
+  onSelectSymbol?: (symbol: string) => void;
+  onInspectOrder?: (order: OrderItem) => void;
+  onInspectTrade?: (trade: TradeItem) => void;
 }) {
   const [tab, setTab] = useState<TabId>("positions");
 
@@ -74,7 +80,7 @@ export function SupportTabs({
 
   return (
     <div>
-      <div className="flex items-center gap-1 overflow-x-auto mb-3 border-b border-border">
+      <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto mb-3 border-b border-border">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -93,7 +99,7 @@ export function SupportTabs({
       {tab === "positions" && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           <LiquidityPanel account={account} accountError={accountError} positions={positions} />
-          <PositionsPanel positions={positions} error={positionsError} loading={positionsLoading} updatedAt={positionsUpdatedAt} />
+          <PositionsPanel positions={positions} error={positionsError} loading={positionsLoading} updatedAt={positionsUpdatedAt} onSelectSymbol={onSelectSymbol} />
         </div>
       )}
 
@@ -105,14 +111,15 @@ export function SupportTabs({
             loading={ordersLoading}
             status={orderStatus}
             onStatusChange={onOrderStatusChange}
+            onInspect={onInspectOrder}
           />
-          <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} />
+          <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} onInspect={onInspectTrade} />
         </div>
       )}
 
       {tab === "runs" && <RunsPanel runs={runs} error={runsError} loading={runsLoading} />}
       {tab === "bias" && <DirectionalBiasPanel />}
-      {tab === "missed" && <MissedOpportunitiesPanel />}
+      {tab === "missed" && <MissedOpportunitiesPanel onSelectSymbol={onSelectSymbol} />}
       {tab === "search" && <SearchPanel />}
       {tab === "system" && <HealthPanel health={health} error={healthError} />}
     </div>
