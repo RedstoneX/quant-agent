@@ -167,3 +167,30 @@ follows `bestPrimaryRunId` (shown as `AUTO / PRIMARY`, not mislabeled as
 literal latest), and the operator can return to it explicitly. Poll
 responses are generation-checked, so a new run or stale in-flight response
 cannot silently replace a pinned inspection or mix context across runs.
+
+## Research Intelligence Desk (2026-08-25)
+
+`GET /research/daily/{date}` (`ResearchDailyResponse`) is an additive,
+day-scoped read projection over the canonical `agent_logs`,
+`specialist_evidence`, `trades`, `insights` and `daily_pnl` rows. It creates no
+story table and never parses raw agent prose. Every agent call is represented
+separately (including retries, failures and fallbacks); the response excludes
+`input_message` and `full_response`. Structured specialist evidence is emitted
+with its stored scope, symbol, provenance payload and timestamp, including the
+Smart Money seat without granting that seat any path around PM, AI Risk or the
+deterministic gate.
+
+The response explicitly distinguishes `complete`, `partial`, `empty` and
+`error`, and labels timestamp-derived freshness as current, aging, stale,
+historical or unknown. A database read failure is a sanitized `error`, never a
+misleading quiet day. The endpoint deliberately retains HTTP 200 for that typed
+`state="error"` envelope so the reading workspace can render a composed degraded
+panel using the same response contract; transport/server faults outside this
+known read condition remain ordinary HTTP 500s. Persisted `provider_error` and
+`analysis_error` evidence makes the day `partial` and names the affected
+seat/provider in `missing_sources`. Per-run decision deltas contain the stored PM targets and
+orders, Risk verdicts/modifications, deterministic lifecycle events and
+canonical trade/fill rows; Mission Control authors no thesis, confidence or
+causal explanation. The route retains all Mission Control isolation guarantees:
+independent SQLite `mode=ro`, GET-only, no trading imports and no broker-write
+surface.

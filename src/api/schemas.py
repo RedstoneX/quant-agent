@@ -621,6 +621,76 @@ class SearchAgentLogHit(BaseModel):
     output_summary: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# /research/daily/{date} — day-scoped Research Intelligence projection
+# ---------------------------------------------------------------------------
+
+class ResearchFreshness(BaseModel):
+    latest_recorded_at: str | None = None
+    age_minutes: float | None = None
+    label: str = "unknown"  # current | aging | stale | historical | unknown
+
+
+class ResearchAgentCall(BaseModel):
+    id: int
+    agent_name: str
+    run_id: str
+    decision_id: str | None = None
+    timestamp: str | None = None
+    status: str | None = None
+    output_summary: str | None = None
+    requested_provider: str | None = None
+    requested_model: str | None = None
+    actual_provider: str | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+    latency_s: float | None = None
+    cost_usd: float | None = None
+    structured_evidence_count: int = 0
+
+
+class ResearchEvidenceItem(BaseModel):
+    id: int
+    run_id: str
+    decision_id: str | None = None
+    agent_name: str
+    kind: str
+    scope: str
+    symbol: str | None = None
+    timestamp: str | None = None
+    state: str = "valid"  # valid | invalid
+    payload: dict | list | None = None
+
+
+class ResearchDecisionDelta(BaseModel):
+    run_id: str
+    decision_id: str | None = None
+    state: str = "no_proposal"
+    proposed: list[ResearchEvidenceItem] = []
+    risk_changes: list[ResearchEvidenceItem] = []
+    deterministic_events: list[ResearchEvidenceItem] = []
+    trades: list[TradeItem] = []
+
+
+class ResearchRun(BaseModel):
+    summary: RunSummary
+    agent_calls: list[ResearchAgentCall] = []
+    evidence: list[ResearchEvidenceItem] = []
+    decision_delta: ResearchDecisionDelta
+
+
+class ResearchDailyResponse(BaseModel):
+    date: str
+    as_of: str
+    state: str = "empty"  # complete | partial | empty | error
+    freshness: ResearchFreshness = ResearchFreshness()
+    read_error: str | None = None
+    missing_sources: list[str] = []
+    daily_pnl: DailyPnlPoint | None = None
+    reflection: ReflectionItem | None = None
+    runs: list[ResearchRun] = []
+
+
 class SearchResponse(BaseModel):
     query: str
     trades: list[SearchTradeHit] = []

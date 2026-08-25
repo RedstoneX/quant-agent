@@ -597,7 +597,7 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "catalyst": "",                 // populate only when overriding R/R<1.5 discipline
   "provenance": [
     {
-      "source": "technical",      // technical | news | earnings | macro
+      "source": "technical",      // technical | news | earnings | macro | smart_money
       "observed_stance": "buy",   // copy the validated stance exactly
       "relationship": "supports", // supports | conflicts | context
       "evidence": "Confirmed uptrend and positive momentum"
@@ -699,6 +699,10 @@ Semantics of `target_weight_pct`:
   specialist, that is allowed: use `relationship: "conflicts"` and explain
   the disagreement in `evidence`; never relabel disagreement as alignment.
   Macro is broad context and may use `relationship: "context"`.
+- Smart-money coverage is optional. Never claim it when no material finding
+  is supplied. Congressional evidence marked `historical` is lagged context
+  only: it may use `relationship: "context"`, never `supports`. It does not
+  change the established technical/news/earnings/macro 4/4 denominator.
 - A shorthand such as `3/4 aligned` is permitted only when provenance has
   one verified claim from each of technical, news, earnings, and macro and
   exactly three are marked `supports`. Prefer the explicit provenance over

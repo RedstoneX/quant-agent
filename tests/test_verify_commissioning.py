@@ -110,10 +110,10 @@ def _roster(**overrides):
     return out
 
 
-def test_routing_passes_when_all_nine_agents_match():
+def test_routing_passes_when_all_ten_agents_match():
     status, detail = vc.check_agent_routing(_roster())
     assert status == vc.PASS
-    assert "all 9 agents" in detail
+    assert "all 10 agents" in detail
 
 
 def test_routing_fails_when_a_seat_runs_another_seats_model():

@@ -48,6 +48,8 @@ if TYPE_CHECKING:
     from src.agents.macro_analyst import MacroAnalystAgent
     from src.agents.news_analyst import NewsAnalystAgent
     from src.agents.tech_analyst import TechAnalystAgent
+    from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
+    from src.data.smart_money import SmartMoneySource
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
     from src.data.macro import MacroDataProvider
@@ -207,6 +209,8 @@ class MorningResearchStage:
         has_actionable_signal_fn,
         run_news_update_fn,
         load_earnings_analyses_fn,
+        smart_money_provider: "SmartMoneySource | None" = None,
+        smart_money_analyst: "SmartMoneyAnalystAgent | None" = None,
     ):
         self.config = config
         self.db = db
@@ -221,6 +225,8 @@ class MorningResearchStage:
         self.news_analyst = news_analyst
         self.tech_analyst = tech_analyst
         self.earnings_analyst = earnings_analyst
+        self.smart_money_provider = smart_money_provider
+        self.smart_money_analyst = smart_money_analyst
         # Injected callables so we don't duplicate pre-filter / news / earnings
         # orchestration logic. Those still live on TradingPipeline for now
         # because they touch shared state we haven't finished extracting.
@@ -334,12 +340,73 @@ class MorningResearchStage:
         def _load_earnings():
             return self._load_earnings_analyses(ctx.run_id, session="morning", ctx=ctx)
 
+        def _run_smart_money():
+            smart_config = getattr(self.config, "smart_money", None)
+            if not smart_config or not smart_config.enabled or not self.smart_money_provider or not self.smart_money_analyst:
+                return [], None, None, None
+            observations, provider_error = self.smart_money_provider.fetch(self.config.trading.universe)
+            if not observations:
+                return [], None, provider_error, None
+            findings, result, analysis_error = self.smart_money_analyst.analyze(observations)
+            return findings, result, provider_error, analysis_error
+
         logger.info("Starting parallel: macro + news + tech + earnings")
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=5) as ex:
             macro_future = ex.submit(_run_macro)
             news_future = ex.submit(_run_news)
             tech_future = ex.submit(_run_tech)
             earnings_future = ex.submit(_load_earnings)
+            smart_money_future = ex.submit(_run_smart_money)
+
+        try:
+            findings, sm_result, provider_error, analysis_error = smart_money_future.result()
+            ctx.smart_money_findings = findings
+            ctx.smart_money_provider_error = provider_error or analysis_error
+            if provider_error:
+                data_status["smart_money"] = "degraded" if findings else "provider_error"
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                    kind="provider_error", scope="run",
+                    evidence_json=__import__("json").dumps({"error": provider_error}),
+                )
+            if sm_result is not None:
+                sm_log_kwargs = agent_log_kwargs(sm_result)
+                if analysis_error:
+                    sm_log_kwargs["status"] = "agent_failure"
+                self.db.insert_agent_log(
+                    agent_name="smart_money_analyst", run_id=ctx.run_id,
+                    input_summary=f"{len(findings)} material findings",
+                    input_message=sm_result.user_message,
+                    output_summary=(
+                        f"agent_failure:{analysis_error}" if analysis_error else
+                        (", ".join(f"{f.symbol}:{f.stance}" for f in findings) or "no material findings")
+                    ),
+                    full_response=sm_result.raw_text, model=sm_result.model,
+                    tokens_used=sm_result.tokens_used, input_tokens=sm_result.input_tokens,
+                    output_tokens=sm_result.output_tokens, cost_usd=sm_result.cost_usd,
+                    **sm_log_kwargs,
+                )
+                for finding in findings:
+                    _persist_evidence(
+                        self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                        kind="finding", scope="symbol", symbol=finding.symbol,
+                        evidence_json=finding.model_dump_json(),
+                    )
+                if analysis_error:
+                    _persist_evidence(
+                        self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                        kind="agent_failure", scope="run",
+                        evidence_json=__import__("json").dumps({"error": analysis_error}),
+                    )
+                    data_status["smart_money"] = "degraded"
+                elif not provider_error:
+                    data_status["smart_money"] = "ok"
+            elif not provider_error:
+                data_status["smart_money"] = "empty"
+        except Exception as e:
+            logger.warning("Smart-money branch failed: %s", e)
+            ctx.smart_money_provider_error = f"analysis_error:{type(e).__name__}"
+            data_status["smart_money"] = "provider_error"
 
         # Macro
         try:
@@ -604,6 +671,7 @@ class DecisionStage:
             total_value=total_value,
             news_intel=news_intel,
             earnings_analyses=earnings_results,
+            smart_money_findings=ctx.smart_money_findings,
             yesterday_insights=yesterday_insights,
             recent_performance=recent_performance,
             position_history=position_history,

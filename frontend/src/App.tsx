@@ -31,8 +31,9 @@ import { CandidateDetailModal } from "./components/CandidateDetailModal";
 import { Pill } from "./components/ui/Pill";
 import { bestPrimaryRunId } from "./components/funnelShared";
 import { todayEtDate } from "./lib/format";
+import { ResearchDesk } from "./components/research/ResearchDesk";
 
-type View = "cockpit" | "journal";
+type View = "cockpit" | "desk" | "journal";
 type MobilePane = "watchlist" | "chart" | "decision";
 
 /* Top-level view switcher — Cockpit (the live working surface) vs Journal
@@ -43,7 +44,7 @@ type MobilePane = "watchlist" | "chart" | "decision";
 function ViewNav({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   return (
     <nav className="flex items-center gap-1 px-4 border-b border-border bg-bg">
-      {(["cockpit", "journal"] as const).map((v) => (
+      {(["cockpit", "desk", "journal"] as const).map((v) => (
         <button
           key={v}
           type="button"
@@ -52,7 +53,7 @@ function ViewNav({ view, onChange }: { view: View; onChange: (v: View) => void }
             view === v ? "border-accent text-accent" : "border-transparent text-dim hover:text-ink"
           }`}
         >
-          {v === "cockpit" ? "Cockpit" : "Journal"}
+          {v === "cockpit" ? "Cockpit" : v === "desk" ? "Research Desk" : "Journal"}
         </button>
       ))}
     </nav>
@@ -563,6 +564,8 @@ export default function App() {
           <JournalPanel account={account} onOpenCandidate={openJournalCandidate} />
         </div>
       )}
+
+      {view === "desk" && <ResearchDesk />}
 
       <footer className="text-center text-[0.7rem] text-dim py-4 px-3">
         QAMC Mission Control is a read-only view. It cannot place, cancel, or modify orders, and its failure has no

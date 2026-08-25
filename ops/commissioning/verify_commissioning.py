@@ -87,6 +87,7 @@ EXPECTED_ROUTING: dict[str, str] = {
     "news_analyst":      "google/gemini-2.5-flash-lite",
     "macro_analyst":     "google/gemini-2.5-flash-lite",
     "earnings_analyst":  "google/gemini-2.5-flash-lite",
+    "smart_money_analyst": "google/gemini-2.5-flash-lite",
     "portfolio_manager": "openai/gpt-5.5",
     # Deliberately NOT PM's model — the AI Risk Manager is the gate over the
     # Portfolio Manager, and measured quality at that seat is tied, so the
@@ -774,6 +775,7 @@ def check_config(ctx: Ctx) -> None:
         }
         for name in (
             "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+            "smart_money_analyst",
             "portfolio_manager", "risk_manager", "position_reviewer",
             "evening_analyst", "meta_reflector",
         )
