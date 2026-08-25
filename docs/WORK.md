@@ -1,18 +1,24 @@
 # QAMC Current Work
 
-Status: **FINISH LINE DEPLOYED | ALPACA PAPER NATURAL ACCEPTANCE + RESEARCH INTELLIGENCE TRANCHE**
+Status: **RESEARCH DESK DEPLOYED | SMART MONEY SOURCE ACCESS BLOCKED | ALPACA PAPER NATURAL ACCEPTANCE**
 
 ## Current integration truth
 
 - Production is deployed and verified at
-  `16c52715b3ee05ec9e38c12958a14ee77a6d38d7`; rollback SHA is
-  `a6758f935910c5cf380cc6a7acedc5f3b78f6366`.
+  `ac30dc374d60d59bec37fa13bee9ce5956c449c8`; rollback SHA is
+  `16c52715b3ee05ec9e38c12958a14ee77a6d38d7`.
 - PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
 - The chart live-price/current-price truth issue was already fixed by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`. It is not an outstanding task.
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
 - Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
 - PRs #74, #75, #76 and #77 are merged and deployed. Backend recovery and the final Mission Control finish line are complete.
+- PR #79 is merged and deployed. The Research Desk passed production desktop
+  and iPad verification against real stored QAMC data; the API remained
+  read-only and all seven timers remained intact.
+- The Smart Money code path is deployed but disabled: Bargo's keyless endpoint
+  returns a Cloudflare 403 to server clients and production has no Bargo
+  credential. Real source commissioning is blocked on external free access.
 - Deployment verification passed `/health`, DB, broker, Alpaca Paper, OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI, Telegram configuration, `/cockpit`, accepted chart timeframes, read-only method rejection, and all seven existing timers.
 - The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
 
@@ -77,7 +83,7 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
 
-### Research Intelligence Desk + Smart Money Analyst — AUTHORIZED END-TO-END TRANCHE
+### Research Intelligence Desk + Smart Money Analyst — DEPLOYED / SOURCE COMMISSIONING BLOCKED
 
 Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
 
@@ -188,4 +194,7 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active work:** natural Alpaca Paper observation continues; Research Intelligence Desk + Smart Money Analyst is authorized end-to-end under the standing Paper-beta autonomous delivery policy. No trade may be forced or manufactured to create acceptance evidence.
+**Active work:** natural Alpaca Paper observation continues. Smart Money needs
+an authorized free Bargo credential or a working server-to-server endpoint
+before the deployed seat can be enabled and accepted with real stored evidence.
+No trade may be forced or manufactured to create acceptance evidence.
