@@ -5,8 +5,8 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
 ## Current integration truth
 
 - Production is deployed and verified at
-  `8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`; rollback SHA is
-  `47ace428c4a06f4a5175f71a57a89df706202500`.
+  `d645ef2d61d8ba4c06dd18c40b0ae44334462cec`; rollback SHA is
+  `8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`.
 - PR #81 deployed the persistent mandatory cost circuit and PM/pipeline
   remediation. PR #83 fixed the intraday lock context manager that the first
   natural suspended tick exposed. The full suite passed 2,110 tests and the
@@ -31,11 +31,17 @@ Status: **COST CIRCUIT LATCHED | NON-LLM SAFETY ACTIVE | PAID ANALYSIS SUSPENDED
 - PR #79 is merged and deployed. The Research Desk passed production desktop
   and iPad verification against real stored QAMC data; the API remained
   read-only and all seven timers remained intact.
-- The operator selected first-party SEC Form 4 as the Smart Money v1 source and
-  authorized run-scoped automatic admission of qualifying symbols outside the
-  configured 77-stock universe. Implementation and production commissioning
-  are the active bounded task; production remains on the prior disabled Bargo
-  adapter until that governed deployment completes.
+- PR #85 replaced the blocked Bargo adapter with first-party SEC Form 4 and
+  enabled the Smart Money seat. Its source-only production preflight processed
+  25 official filings, cached 13 exact P/S observations and retained five
+  material rows for SPIR/TISI. No symbol cleared the higher external-admission
+  threshold, no LLM call occurred, max agent-log ID remained 189 and the cost
+  circuit remained latched at the unchanged $4.211481.
+- Run-scoped automatic admission is active for qualifying symbols outside the
+  configured 77-stock universe. The permanent universe is unchanged; the lane
+  is capped at three names and remains behind broker/common-stock, price,
+  history, liquidity, sector, Technical, PM, AI Risk and deterministic gates.
+- Engineering passed 2,127 tests; the deployed focused suite passed 272 tests.
 - Deployment verification passed `/health`, DB, broker, Alpaca Paper, OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI, Telegram configuration, `/cockpit`, accepted chart timeframes, read-only method rejection, and all seven existing timers.
 - The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
 
@@ -100,7 +106,7 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
 
-### Research Intelligence Desk + Smart Money Analyst — DEPLOYED / SEC SOURCE COMMISSIONING ACTIVE
+### Research Intelligence Desk + Smart Money Analyst — DEPLOYED / SEC SOURCE COMMISSIONED
 
 Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
 
@@ -237,9 +243,9 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active work:** natural Alpaca Paper observation continues. Complete the
-governed SEC Form 4 source/admission deployment and source-only commissioning;
-do not reset the paid-analysis circuit as part of that work. Paid research
-remains deliberately suspended until the circuit is reviewed and reset with an
-auditable reason; deterministic safety observation continues. No trade may be
-forced or manufactured to create acceptance evidence.
+**Active work:** natural Alpaca Paper observation continues. The SEC source is
+commissioned, but paid Smart Money synthesis and natural transient-candidate
+evidence remain pending because paid research is deliberately suspended. Do
+not reset the circuit until it is reviewed and reset with an auditable reason;
+deterministic safety observation continues. No trade may be forced or
+manufactured to create acceptance evidence.

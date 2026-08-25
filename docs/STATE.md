@@ -33,13 +33,13 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`
+`d645ef2d61d8ba4c06dd18c40b0ae44334462cec`
 
-This is GitHub `main` after PR #83. It retains the Research Intelligence Desk
-and disabled Smart Money integration while adding the mandatory paid-analysis
-cost circuit and the PM/pipeline failure remediation. PR #83 also preserves the
-structured suspension result when the intraday process-lock body raises. The
-recorded rollback SHA is `47ace428c4a06f4a5175f71a57a89df706202500`.
+This is GitHub `main` after PR #85. It retains the mandatory paid-analysis cost
+circuit and PR #83 intraday suspension fix while replacing the blocked Bargo
+adapter with credentialless SEC Form 4 plus the accepted run-scoped transient
+admission lane. The recorded rollback SHA is
+`8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`.
 
 Production verification on 2026-08-25 established:
 
@@ -59,9 +59,14 @@ Production verification on 2026-08-25 established:
   was deployed without resetting the circuit;
 - all seven existing timers are active; non-LLM safety, reconciliation, close,
   P&L and read-only API work remain available while model calls are blocked;
-- the complete merged hermetic suite passed **2,110 tests**, including
-  adversarial accounting corruption, reset-race and cross-process cases;
-- the deployed intraday regression suite passed **24 tests**, `/health`
+- the complete merged hermetic suite passed **2,127 tests**; the deployed
+  Smart Money/PM/checkpoint/broker/API/stage suite passed **272 tests**;
+- the source-only production preflight processed 25 official SEC filings,
+  cached 13 exact Form 4 P/S observations, retained five material observations
+  for SPIR/TISI and made zero LLM calls. No symbol cleared the higher external
+  admission threshold, which is a valid quiet source result rather than an
+  acceptance failure;
+- `/health`
   remained intentionally degraded, SQLite `quick_check` remained `ok`, the
   circuit remained latched, agent-log ID remained **189** and incremental
   post-deployment spend remained **$0.00**;
@@ -76,13 +81,15 @@ Production verification on 2026-08-25 established:
 - the existing private/read-only Mission Control and Research Desk contracts
   remain intact.
 
-The Smart Money seat is still disabled in this production SHA. Bargo's
-documented keyless server-to-server endpoint returned a Cloudflare 403 and no
-free Bargo credential exists in OneCLI. The operator has since selected
-credentialless, first-party SEC Form 4 and authorized deterministic transient
-admission of qualifying external common stocks. That replacement is accepted
-work but is not production truth until its governed deployment and source-only
-commissioning complete.
+The Smart Money seat is enabled on first-party SEC Form 4. Its deterministic
+pre-market refresh is credentialless, bounded, cached and available while the
+paid circuit is suspended. External symbols can be admitted for one run only
+after fresh material open-market purchase evidence plus broker common-stock,
+supported-exchange, $5 price, 20-session history, $10M average dollar-volume
+and known-sector checks. The run cap is three. Admission bypasses only permanent
+universe membership and the Technical prefilter; current Technical analysis,
+PM grounding, AI Risk, deterministic risk/funding, broker protection and
+Alpaca Paper remain mandatory. The configured 77-stock universe is unchanged.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
@@ -245,9 +252,9 @@ Current bounded activities:
    current ET day. Do not reset while the unchanged $4.211481 ledger remains
    above the daily limit; review the incident and use a recorded reason only
    when resumption is deliberate.
-2. **Smart Money source commissioning:** complete the SEC Form 4 replacement,
-   run the zero-token official-source preflight, deploy it with the transient
-   admission gates intact, and verify no paid-analysis spend or circuit reset.
+2. **Smart Money natural evidence:** after a deliberate circuit reset, observe
+   model synthesis and any naturally qualifying transient candidate through
+   the full accepted chain. Do not force a candidate or weaken thresholds.
 3. **Natural Alpaca Paper acceptance:** resume paid research only after the
    deliberate circuit-reset decision; continue non-LLM safety observation now.
 4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
