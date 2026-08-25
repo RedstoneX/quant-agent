@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **UBUNTU ENGINEERING AUTONOMY | QAMC RUNTIME ISOLATION | OPERATOR PROMOTION CONTROL | NATURAL PAPER VALIDATION**
+Status: **PRIORITY 1 BACKEND RECOVERY | UBUNTU ENGINEERING | EXTERNAL REVIEW GATE | NO PRODUCTION AUTHORITY**
 
 ## Current integration truth
 
@@ -10,6 +10,9 @@ Status: **UBUNTU ENGINEERING AUTONOMY | QAMC RUNTIME ISOLATION | OPERATOR PROMOT
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
 - Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
+- Production evidence from 2026-08-18 through 2026-08-24 establishes that the
+  opportunity→execution path still has mechanical blockers; the former
+  “machinery is present” finish-line claim is stale.
 
 ## Stabilization account model — HARD RULE
 
@@ -47,9 +50,28 @@ Implementation promotion remains reviewable. Claude does not independently merge
 
 ## Active finish line
 
+### Priority 1 mechanical recovery
+
+Deliver one reviewable backend tranche that:
+
+- normalizes yfinance class-share symbols at the Alpaca boundary and isolates
+  per-symbol snapshot failures;
+- uses a bounded, price-protected liquid-equity BUY policy instead of resting
+  at last/mid for 15 seconds;
+- records exhausted Risk parsing as a retryable agent failure, never a Risk
+  verdict;
+- never labels a run with no submitted equity order as `executed`;
+- funds SGOV only for entry-preflight survivors and safely resizes BUYs to
+  confirmed partial funding;
+- preserves deterministic Python/broker safety authority and Paper-only scope.
+
+The engineering tranche stops after targeted verification and a pushed PR.
+Merge and production deployment remain separate operator gates.
+
 ### Natural Alpaca Paper validation
 
-The engineering machinery is considered present; the remaining substantive acceptance is natural evidence that QAMC behaves coherently in ordinary markets:
+After the Priority 1 tranche is reviewed and promoted, substantive acceptance
+still requires natural evidence that QAMC behaves coherently in ordinary markets:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
@@ -66,7 +88,13 @@ Use the existing Mission Control, journal and Telegram read-side evidence to det
 
 When QAMC does not trade, the reason should be specific and defensible rather than an unexplained absence of activity.
 
-## Parked follow-ups — not blockers
+## Parked follow-ups — after Priority 1
+
+- Priority 2: deterministic PM provenance/holding validation and a
+  production-scale PM model-suitability regression; leave Risk routing alone
+  absent direct evidence.
+- Priority 3: extend the existing DB/event model so every stage outcome and
+  deterministically derivable realized result is queryable without log archaeology.
 
 - news-narrative factual drift;
 - `actual_provider` attribution oddity.
@@ -88,4 +116,5 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**No active engineering blocker is currently established.**
+**Active blocker:** Priority 1 is not production truth until external PR review,
+explicit merge approval, and a separately authorized Paper deployment/validation.

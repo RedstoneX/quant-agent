@@ -94,6 +94,16 @@ def test_latest_price_returns_none_when_the_data_api_raises():
     assert b.get_latest_price("NVDA") is None
 
 
+def test_latest_quote_returns_truthful_sides():
+    b = _broker()
+    b._data_client = _price_client(
+        trade=None, quote=SimpleNamespace(ask_price=101.25, bid_price=101.0),
+    )
+    assert b.get_latest_quote("NVDA") == {
+        "bid_price": 101.0, "ask_price": 101.25,
+    }
+
+
 def test_latest_price_lazily_builds_one_data_client():
     """The data client is constructed on first use and then reused — the
     market-data host is a separate credentialed endpoint, so a fresh client
@@ -362,6 +372,49 @@ def test_intraday_snapshots_is_a_single_bulk_call_for_many_symbols():
     assert out["AAPL"]["prev_close"] == 200.0
     # Exactly one network call regardless of watchlist size.
     assert b._data_client.get_stock_snapshot.call_count == 1
+
+
+def test_intraday_snapshots_normalizes_class_share_for_alpaca():
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "BRK.B": SimpleNamespace(
+            symbol="BRK.B", latest_trade=SimpleNamespace(price=500.0),
+            previous_daily_bar=SimpleNamespace(close=495.0),
+        ),
+    })
+
+    out = b.get_intraday_snapshots(["BRK-B"])
+
+    assert out["BRK-B"]["last_price"] == 500.0
+    request = b._data_client.get_stock_snapshot.call_args.args[0]
+    assert request.symbol_or_symbols == ["BRK.B"]
+
+
+def test_intraday_snapshots_isolates_one_rejected_symbol():
+    """A malformed/unavailable ticker cannot poison every valid candidate."""
+    b = _broker()
+    b._data_client = MagicMock()
+
+    def snapshots(request):
+        symbols = request.symbol_or_symbols
+        if "BAD" in symbols:
+            raise ValueError("invalid symbol: BAD")
+        return {
+            symbol: SimpleNamespace(
+                symbol=symbol, latest_trade=SimpleNamespace(price=100.0),
+                previous_daily_bar=SimpleNamespace(close=95.0),
+            )
+            for symbol in symbols
+        }
+
+    b._data_client.get_stock_snapshot.side_effect = snapshots
+
+    out = b.get_intraday_snapshots(["NVDA", "BAD", "AAPL"])
+
+    assert out["NVDA"]["last_price"] == 100.0
+    assert out["AAPL"]["prev_close"] == 95.0
+    assert out["BAD"]["last_price"] is None
+    assert b._data_client.get_stock_snapshot.call_count > 1
 
 
 def test_intraday_snapshots_degrades_to_none_fields_for_a_missing_symbol():

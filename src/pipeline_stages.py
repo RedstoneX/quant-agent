@@ -945,6 +945,9 @@ class RiskStage:
             recent_performance=rm_recent_performance,
         )
 
+        rm_log_kwargs = agent_log_kwargs(rm_result)
+        if verdict is None:
+            rm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
             agent_name="risk_manager", run_id=run_id,
             input_summary=f"{len(portfolio_decision.decisions)} trades, {len(rule_violations)} violations",
@@ -957,7 +960,7 @@ class RiskStage:
             output_tokens=rm_result.output_tokens,
             cost_usd=rm_result.cost_usd,
             decision_id=ctx.decision_id,
-            **agent_log_kwargs(rm_result),
+            **rm_log_kwargs,
         )
 
         if verdict:
@@ -973,14 +976,32 @@ class RiskStage:
                     decision_id=ctx.decision_id, evidence_json=mod.model_dump_json(),
                 )
 
-        if not verdict or not verdict.approved:
+        if verdict is None:
+            logger.error(
+                "Risk manager AGENT FAILURE: output remained unparseable after "
+                "bounded repair; no trading verdict exists",
+            )
+            _persist_evidence(
+                pipeline.db, run_id=run_id, agent_name="risk_manager",
+                kind="agent_failure", scope="run", decision_id=ctx.decision_id,
+                evidence_json=(
+                    '{"failure":"unparseable_output",'
+                    '"stage":"risk_manager","verdict":null}'
+                ),
+            )
+            return {
+                "status": "agent_failure", "orders": [],
+                "reason": "risk_manager_unparseable_output",
+            }
+
+        if not verdict.approved:
             logger.info(
                 "Risk manager REJECTED trades: %s",
-                verdict.reasoning if verdict else "parse error",
+                verdict.reasoning,
             )
             return {
                 "status": "rejected", "orders": [],
-                "reason": verdict.reasoning if verdict else "error",
+                "reason": verdict.reasoning,
             }
 
         if verdict.modifications:
@@ -1213,6 +1234,60 @@ class ExecutionStage:
                     )
                 buy_decisions = []
 
+        # Run the cheap deterministic entry-viability checks BEFORE selling
+        # SGOV. Production evidence showed the sweep funding names that were
+        # guaranteed to die moments later on stale-entry / no-price / qty-zero
+        # checks, creating avoidable sell/re-park churn. The full checks remain
+        # in the submit loop below; this preflight only removes names whose
+        # failure is already knowable and computes the actual whole-share
+        # notional that funding should cover.
+        fundable_notional: dict[str, float] = {}
+        preflight_survivors = []
+        for decision in buy_decisions:
+            market_price = price_map.get(decision.symbol)
+            if not isinstance(market_price, (int, float)) or market_price <= 0:
+                live_price = pipeline.broker.get_latest_price(decision.symbol)
+                if isinstance(live_price, (int, float)) and live_price > 0:
+                    market_price = live_price
+                    price_map[decision.symbol] = live_price
+            if not isinstance(market_price, (int, float)) or market_price <= 0:
+                bars = ctx.symbols_bars.get(decision.symbol) or []
+                if bars:
+                    last_close = float(bars[-1].close)
+                    if last_close > 0:
+                        market_price = last_close
+                        price_map[decision.symbol] = last_close
+            if not isinstance(market_price, (int, float)) or market_price <= 0:
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "no_price",
+                    "no verifiable price reference (broker + bars unavailable)",
+                )
+                continue
+            if decision.entry_price > 0:
+                deviation = abs(decision.entry_price - market_price) / market_price
+                if deviation > 0.05:
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "stale_entry",
+                        f"entry ${decision.entry_price:.2f} is "
+                        f"{deviation * 100:.1f}% from market "
+                        f"${market_price:.2f} (threshold 5%)",
+                    )
+                    continue
+            preflight_price = max(market_price, decision.entry_price or 0)
+            preflight_qty = int(
+                (total_value * decision.allocation_pct / 100) / preflight_price
+            )
+            if preflight_qty <= 0:
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "qty_zero",
+                    f"allocation {decision.allocation_pct:.2f}% at "
+                    f"${preflight_price:.2f} rounds to zero shares",
+                )
+                continue
+            fundable_notional[decision.symbol] = preflight_qty * preflight_price
+            preflight_survivors.append(decision)
+        buy_decisions = preflight_survivors
+
         # Cash-sweep funding: PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
         # session with meaningful BUYs this sale IS load-bearing — the raw
@@ -1233,9 +1308,7 @@ class ExecutionStage:
                 sweeper = None
             if sweeper is not None:
                 planned_notional = sum(
-                    total_value * d.allocation_pct / 100.0
-                    for d in buy_decisions
-                    if d.allocation_pct > 0
+                    fundable_notional.get(d.symbol, 0.0) for d in buy_decisions
                 )
                 try:
                     freed = sweeper.fund_buys(ctx, planned_notional)
@@ -1325,6 +1398,33 @@ class ExecutionStage:
                         "unavailable)",
                     )
                     continue
+
+                # Liquid-equity execution policy: cross the displayed offer
+                # with a limit (never a market order), padded by 5 bps for a
+                # moving quote but hard-capped 25 bps above the verified
+                # reference. A wider spread therefore remains price-protected
+                # and may expire after the bounded entry window instead of
+                # paying through an abnormal book. If quote data is degraded,
+                # retain the validated last/PM limit and the same bounded wait.
+                try:
+                    quote = pipeline.broker.get_latest_quote(decision.symbol)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("BUY %s quote lookup failed: %s", decision.symbol, e)
+                    quote = None
+                ask = quote.get("ask_price") if isinstance(quote, dict) else None
+                if isinstance(ask, (int, float)) and ask > 0:
+                    offer_limit = min(ask * 1.0005, market_price * 1.0025)
+                    offer_limit = round(offer_limit, 2 if offer_limit >= 1 else 4)
+                    if limit_price is None or abs(limit_price - offer_limit) > 0.000001:
+                        logger.info(
+                            "BUY %s marketable-limit policy: prior $%s → $%.4f "
+                            "(ask $%.4f, 25bp protection cap)",
+                            decision.symbol,
+                            f"{limit_price:.4f}" if limit_price is not None else "none",
+                            offer_limit, ask,
+                        )
+                    limit_price = offer_limit
+                    sizing_price = max(sizing_price or 0, offer_limit)
 
                 # RC1: code-enforced ATR stop-distance floor at entry. The
                 # P1 prompt rule ("fresh-entry stops never tighter than
@@ -1421,16 +1521,25 @@ class ExecutionStage:
 
                 estimated_cost = qty * sizing_price
                 if estimated_cost > available_cash:
+                    affordable_qty = int(available_cash / sizing_price)
+                    if affordable_qty <= 0:
+                        logger.warning(
+                            "Skipping BUY %s: estimated cost $%.2f exceeds available cash $%.2f after sell phase",
+                            decision.symbol, estimated_cost, available_cash,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "insufficient_cash",
+                            f"estimated cost ${estimated_cost:.2f} exceeds "
+                            f"available cash ${available_cash:.2f}",
+                        )
+                        continue
                     logger.warning(
-                        "Skipping BUY %s: estimated cost $%.2f exceeds available cash $%.2f after sell phase",
-                        decision.symbol, estimated_cost, available_cash,
+                        "Resizing BUY %s from %d to %d share(s): confirmed cash "
+                        "$%.2f only partially covers the approved order",
+                        decision.symbol, qty, affordable_qty, available_cash,
                     )
-                    _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "insufficient_cash",
-                        f"estimated cost ${estimated_cost:.2f} exceeds "
-                        f"available cash ${available_cash:.2f}",
-                    )
-                    continue
+                    qty = min(qty, affordable_qty)
+                    estimated_cost = qty * sizing_price
 
                 # Write-ahead intent: insert a pending row BEFORE calling
                 # the broker. Closes the BUY-side phantom-fill window the

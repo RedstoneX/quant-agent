@@ -1666,6 +1666,9 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
     assert float(req.qty) == 7.0                    # actual fill, not the 10 requested
     assert float(req.stop_price) == 90.0
     assert float(req.limit_price) == 87.3           # 3% buffer below the stop
+    broker.wait_for_order_terminal.assert_called_once_with(
+        "e1", timeout_seconds=30.0,
+    )
 
 
 @patch("src.execution.broker.TradingClient")

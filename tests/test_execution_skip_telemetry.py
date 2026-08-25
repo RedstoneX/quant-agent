@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage
+from src.execution.cash_sweep import CashSweeper
 
 
 def _rc() -> ReasoningChain:
@@ -73,9 +74,12 @@ def test_stale_entry_skip_is_recorded():
     assert "execution_skip" in _evidence_kinds(pipeline)
 
 
-def test_insufficient_cash_skip_is_recorded():
-    """The 2026-08-19 shape: approved BUY, available cash can't cover it."""
+def test_partial_confirmed_cash_resizes_instead_of_dropping_buy():
+    """A partial SGOV funding fill should preserve a smaller safe order."""
     pipeline = _pipeline(live_price=100.0, cash=145.11)
+    pipeline.broker.submit_order.return_value = {
+        "id": "ord-partial", "status": "accepted",
+    }
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=10,
         entry_price=100.0, stop_loss=95.0, take_profit=115.0,
@@ -84,11 +88,23 @@ def test_insufficient_cash_skip_is_recorded():
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
+    assert len(orders) == 1
+    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == 1
+    assert ctx.execution_skips == []
+
+
+def test_insufficient_cash_for_one_share_is_recorded():
+    pipeline = _pipeline(live_price=100.0, cash=99.0)
+    ctx = _ctx([TradeDecision(
+        action="BUY", symbol="XLE", allocation_pct=10,
+        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+        reasoning="approved but unfunded",
+    )], cash=99.0)
+
+    orders = ExecutionStage(pipeline=pipeline).run(ctx)
+
     assert orders == []
-    reasons = [s["reason"] for s in ctx.execution_skips]
-    assert reasons == ["insufficient_cash"]
-    assert "145.11" in ctx.execution_skips[0]["detail"]
-    assert "execution_skip" in _evidence_kinds(pipeline)
+    assert [s["reason"] for s in ctx.execution_skips] == ["insufficient_cash"]
     pipeline.broker.submit_order.assert_not_called()
 
 
@@ -130,16 +146,66 @@ def test_successful_buy_records_no_skip():
     assert ctx.execution_skips == []
 
 
+def test_buy_limit_crosses_offer_with_bounded_price_protection():
+    pipeline = _pipeline(live_price=100.0)
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 100.0, "ask_price": 100.10,
+    }
+    pipeline.broker.submit_order.return_value = {
+        "id": "ord-quote", "status": "accepted",
+    }
+    ctx = _ctx([TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=100.0, stop_loss=95.0, take_profit=112.0,
+        reasoning="clean",
+    )])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price > 100.10          # marketable through the displayed ask
+    assert limit_price <= 100.25         # never beyond the 25bp protection cap
+
+
+def test_funding_is_sized_only_for_preflight_survivors():
+    pipeline = _pipeline(live_price=100.0)
+    sweeper = object.__new__(CashSweeper)
+    sweeper.fund_buys = MagicMock(return_value=0.0)
+    pipeline._sweeper.return_value = sweeper
+    pipeline.broker.submit_order.return_value = {
+        "id": "ord-valid", "status": "accepted",
+    }
+    ctx = _ctx([
+        TradeDecision(
+            action="BUY", symbol="STALE", allocation_pct=10,
+            entry_price=120.0, stop_loss=110.0, take_profit=140.0,
+            reasoning="must fail preflight",
+        ),
+        TradeDecision(
+            action="BUY", symbol="XLE", allocation_pct=10,
+            entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+            reasoning="survivor",
+        ),
+    ])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    sweeper.fund_buys.assert_called_once()
+    assert sweeper.fund_buys.call_args.args[1] == 10_000.0
+    assert [s["reason"] for s in ctx.execution_skips] == ["stale_entry"]
+    assert pipeline.broker.submit_order.call_args.kwargs["symbol"] == "XLE"
+
+
 def test_evidence_failure_never_blocks_the_skip_decision():
     """Trading-core rule: forensic persistence failure must not change
     deterministic behavior — the skip still happens, the run continues."""
-    pipeline = _pipeline(live_price=100.0, cash=100.0)
+    pipeline = _pipeline(live_price=100.0, cash=50.0)
     pipeline.db.insert_specialist_evidence.side_effect = RuntimeError("disk full")
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=10,
         entry_price=100.0, stop_loss=95.0, take_profit=115.0,
         reasoning="r",
-    )], cash=100.0)
+    )], cash=50.0)
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -150,3 +216,4 @@ def test_evidence_failure_never_blocks_the_skip_decision():
 def test_buys_unfunded_is_retryable_in_main():
     import main as main_mod
     assert "buys_unfunded" in main_mod._RETRYABLE_RESULT_STATUSES
+    assert "agent_failure" in main_mod._RETRYABLE_RESULT_STATUSES
