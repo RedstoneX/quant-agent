@@ -61,19 +61,21 @@ GitHub `main` may advance beyond this production SHA. **Production never automat
 
 ## Promotion authority — accepted rule
 
-The standing workflow is:
+The default standing workflow is:
 
 **`ubuntu` engineering implementation/preview/tests → push branch/PR → external review → explicit merge approval → STOP → explicit production approval → governed `ubuntu` → `qamc` deploy/verify.**
 
 Important consequences:
 
 - Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
-- Codex must not merge its own implementation PR.
-- Merge authorization and production-deployment authorization are separate gates.
+- Merge authorization and production-deployment authorization are separate by default.
+- A bounded `docs/WORK.md` contract may explicitly authorize one exact tranche through merge and production deployment in advance. When it does, Codex may complete that sequence without asking for a redundant second approval.
+- Such authorization applies only to the named tranche; it is not standing permission for unrelated work.
 - Generic instructions such as “proceed”, “continue”, “fix it” or “finish this” never escalate work into the next environment by inference.
-- A merged PR, green tests, or an available deploy script is not production authorization.
-- Before explicit production approval, `ubuntu` privilege must not be used to mutate `/home/qamc/quant-agent`, `qamc` services/timers, runtime credentials, or production configuration.
+- Before explicit production approval exists, `ubuntu` privilege must not be used to mutate `/home/qamc/quant-agent`, `qamc` services/timers, runtime credentials, or production configuration.
 - After explicit production approval, `ubuntu` performs the necessary privileged operation directly; the operator should not be bounced between accounts.
+
+The current Research Intelligence Desk + Smart Money Analyst tranche is explicitly authorized in `docs/WORK.md` through its dedicated PR, merge, governed production deployment and production verification once its own acceptance criteria pass.
 
 ## Mission Control accepted state
 
@@ -115,8 +117,7 @@ routing and deterministic Python/broker authority remain unchanged. This final
 tranche is merged through PR #75 and deployed.
 
 The final Mission Control utility tranche is merged through PRs #76 and #77
-and deployed. It
-removes ECharts/handmade allocation visuals, moves ordinary tables to TanStack,
+and deployed. It removes ECharts/handmade allocation visuals, moves ordinary tables to TanStack,
 keeps price history on Lightweight Charts, makes SGOV unambiguously cash
 parking outside directional-risk/P&L emphasis, consumes PR #75 lifecycle facts,
 and turns the desktop Candidates/Chart/Decision Room working surface into a
@@ -170,19 +171,15 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 - Turning `qamc` into a development/operator account.
 - Expanding `dev` permissions or reintroducing it into the normal workflow during stabilization without explicit authorization.
 - Forcing/manufacturing trades for validation.
-- Automatic production deployment merely because code is merged or verified in engineering.
+- Automatic production deployment without explicit tranche-specific authorization.
 
 ## Handoff
 
 Current bounded activities:
 
-1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
-2. **Natural Alpaca Paper acceptance:** collect the remaining substantive
-   evidence without forcing activity or weakening safety: opportunity →
-   evaluation → defensible decision → eligible execution → management/exit →
-   measured outcome.
-3. **Evidence-driven follow-up only:** do not reopen dashboard or
-   trading-critical feed defects from historical notes alone; require current
-   evidence.
+1. **Finish any already-running pipeline-repair work first.** Do not start the Research Intelligence tranche in the same branch/worktree while overlapping backend work is unsettled.
+2. **Research Intelligence Desk + Smart Money Analyst:** once the current pipeline work is merged, deployed and verified, start from latest `main` and execute the end-to-end authorization in `docs/WORK.md`.
+3. **Natural Alpaca Paper acceptance:** continue collecting real evidence without forcing activity or weakening safety.
+4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
-See `docs/WORK.md` for the active natural-acceptance contract.
+See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.
