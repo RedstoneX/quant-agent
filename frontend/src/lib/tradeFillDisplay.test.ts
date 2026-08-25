@@ -2,29 +2,32 @@ import { describe, expect, it } from "vitest";
 import { displayFillPrice, displayFillQty } from "./tradeFillDisplay";
 
 describe("trade fill display truthfulness", () => {
-  it("never substitutes requested values for an unfilled or cancelled trade", () => {
-    const cancelledTrade = {
-      fill_status: "canceled",
+  it.each(["unfilled", "canceled"])("never substitutes requested values for an %s trade", (fillStatus) => {
+    const trade = {
+      fill_status: fillStatus,
       qty: 100,
       price: 50,
       fill_qty: null,
       fill_price: null,
     };
 
-    expect(displayFillQty(cancelledTrade)).toBe("—");
-    expect(displayFillPrice(cancelledTrade)).toBe("—");
+    expect(displayFillQty(trade)).toBe("—");
+    expect(displayFillPrice(trade)).toBe("—");
   });
 
-  it("shows canonical broker fill facts when they are known", () => {
-    const partiallyFilledTrade = {
-      fill_status: "partially_filled",
+  it.each([
+    { fillStatus: "filled", fillQty: 100, fillPrice: 50.25 },
+    { fillStatus: "partially_filled", fillQty: 25, fillPrice: 50.15 },
+  ])("shows canonical broker fill facts for a $fillStatus trade", ({ fillStatus, fillQty, fillPrice }) => {
+    const trade = {
+      fill_status: fillStatus,
       qty: 100,
       price: 50,
-      fill_qty: 25,
-      fill_price: 50.15,
+      fill_qty: fillQty,
+      fill_price: fillPrice,
     };
 
-    expect(displayFillQty(partiallyFilledTrade)).toBe("25");
-    expect(displayFillPrice(partiallyFilledTrade)).toBe("$50.15");
+    expect(displayFillQty(trade)).toBe(String(fillQty));
+    expect(displayFillPrice(trade)).toBe(`$${fillPrice.toFixed(2)}`);
   });
 });
