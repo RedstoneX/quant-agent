@@ -33,13 +33,13 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`d645ef2d61d8ba4c06dd18c40b0ae44334462cec`
+`9c24f78ec99dbcafa62413858aff7e735ae10dbd`
 
-This is GitHub `main` after PR #85. It retains the mandatory paid-analysis cost
-circuit and PR #83 intraday suspension fix while replacing the blocked Bargo
-adapter with credentialless SEC Form 4 plus the accepted run-scoped transient
-admission lane. The recorded rollback SHA is
-`8e2da0f07b14a9ee6a2f10c53550d7b1e9ca132f`.
+This is GitHub `main` after PR #87. It retains the mandatory paid-analysis cost
+circuit, the PR #83 intraday suspension fix and PR #85 credentialless SEC Form
+4 source/admission lane, and completes the Research Intelligence Desk against
+its accepted editorial and responsive acceptance criteria. The recorded
+rollback SHA is `d645ef2d61d8ba4c06dd18c40b0ae44334462cec`.
 
 Production verification on 2026-08-25 established:
 
@@ -74,8 +74,15 @@ Production verification on 2026-08-25 established:
   price requests were accepted (the 5m response was naturally empty before
   the Paper market session; the other three returned bars);
 - `/research/daily/2026-08-25` returned canonical stored QAMC data, and the
-  Research Desk rendered it on desktop and iPad without console errors or
-  horizontal overflow;
+  Research Desk rendered evidence-backed change, tension, why-now, specialist,
+  run-local PM/Risk/gate/execution and truthful after-bell states on desktop and
+  iPad without console errors, request failures, micro-text or horizontal
+  overflow;
+- the Desk production asset is `index-DBp3ajHn.js`; Dockview maximize state
+  survived a real page reload, and the purpose-built iPad brief, signals,
+  decision and review routes passed rendered inspection;
+- 71 frontend tests, six focused Research API contract tests, the production
+  build and all 16 fixture visual-acceptance scenarios passed;
 - POST, PUT, PATCH and DELETE remained rejected with 405;
 - OneCLI and Mission Control remained private and reachable;
 - the existing private/read-only Mission Control and Research Desk contracts
@@ -187,13 +194,17 @@ and turns the desktop Candidates/Chart/Decision Room working surface into a
 persisted Dockview workspace while retaining simple iPad/mobile tabs. The
 Mission Control finish line and backend recovery promotion are complete.
 
-The Research Intelligence Desk and Smart Money seat are merged through PR #79
-and deployed. The read-only daily projection, desktop Dockview workspace,
-purpose-built iPad reading flow, truthful sparse/degraded states, and
-PM/Risk/gate/execution deltas are production-verified against stored QAMC data.
-The source adapter preserves transaction versus disclosure time, suppresses
-stale/lone congressional noise, and cannot bypass the accepted decision chain.
-Live Smart Money source commissioning remains blocked as recorded above.
+The Research Intelligence Desk and Smart Money seat are merged through PRs #79,
+#85 and #87 and deployed. The read-only daily projection, edited daily story,
+evidence-backed change/tension/why-now treatment, restrained semantic language,
+technical setup context, run-local PM/Risk/gate/execution deltas, persistent
+desktop Dockview workspace, purpose-built iPad reading flow and truthful
+sparse/degraded/after-bell states are production-verified against stored QAMC
+data. The first-party SEC source is commissioned and preserves transaction
+versus disclosure time, suppresses stale/lone noise, exposes deterministic
+run-scoped admissions and cannot bypass the accepted decision chain. Paid Smart
+Money synthesis remains suspended by the intentional cost circuit; that does
+not block the completed read-side experience or deterministic source facts.
 
 After promotion, acceptance still requires natural Alpaca Paper sessions
 demonstrating the real chain:
