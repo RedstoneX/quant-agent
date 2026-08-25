@@ -261,6 +261,67 @@ class AlpacaBroker:
             "non_marginable_buying_power": non_marginable_buying_power,
         }
 
+    def get_transient_equity_eligibility(self, symbol: str) -> dict:
+        """Fail-closed broker eligibility for an out-of-universe candidate.
+
+        This is a read-only asset-directory lookup. It grants no trading
+        permission by itself; the Smart Money admission reducer combines it
+        with SEC provenance, price/history/liquidity checks, and a per-run cap.
+        """
+        canonical = _internal_symbol(_alpaca_symbol(symbol))
+        alpaca_symbol = _alpaca_symbol(canonical)
+        non_equity_suffixes = (".WS", ".WSA", ".WSB", ".U", ".UN", ".RT")
+        if alpaca_symbol.endswith(non_equity_suffixes):
+            return {"eligible": False, "reason": "unsupported_security_suffix"}
+        try:
+            asset = self.client.get_asset(alpaca_symbol)
+        except Exception as exc:
+            logger.warning("asset eligibility lookup failed for %s: %s", canonical, exc)
+            return {"eligible": False, "reason": "asset_lookup_failed"}
+
+        def _field(name, default=None):
+            if isinstance(asset, dict):
+                return asset.get(name, default)
+            return getattr(asset, name, default)
+
+        def _enum_text(value) -> str:
+            return str(getattr(value, "value", value) or "").strip().lower()
+
+        status = _enum_text(_field("status"))
+        asset_class = _enum_text(_field("asset_class", _field("class")))
+        exchange = _enum_text(_field("exchange"))
+        tradable = bool(_field("tradable", False))
+        name = str(_field("name", "") or "").strip()
+        name_lower = name.casefold()
+        unsupported_name_terms = (
+            " exchange traded fund", " etf", "fund shares", "warrant",
+            "preferred", "depositary", " american deposit", " unit", " rights",
+        )
+
+        reason = None
+        if status != "active":
+            reason = "asset_not_active"
+        elif asset_class not in {"us_equity", "assetclass.us_equity"}:
+            reason = "not_us_equity"
+        elif not tradable:
+            reason = "asset_not_tradable"
+        elif exchange not in {
+            "nyse", "nasdaq", "amex", "arca", "bats",
+            "assetexchange.nyse", "assetexchange.nasdaq",
+            "assetexchange.amex", "assetexchange.arca", "assetexchange.bats",
+        }:
+            reason = "unsupported_exchange"
+        elif any(term in name_lower for term in unsupported_name_terms):
+            reason = "not_common_stock"
+
+        return {
+            "eligible": reason is None,
+            "reason": reason or "eligible",
+            "symbol": canonical,
+            "name": name,
+            "exchange": exchange,
+        }
+
     def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
         """Official regular-session daily CLOSE equity for recent trading days.
 

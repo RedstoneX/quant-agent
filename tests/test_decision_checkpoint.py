@@ -51,6 +51,7 @@ def _ctx_with_plan() -> RunContext:
     ctx.macro_summary = {"vix": {"current": 18.0}}
     ctx.earnings_results = [{"symbol": "NKE", "queued": True, "analysis": None}]
     ctx.data_status = {"tech": "ok"}
+    ctx.admitted_symbols = {"VST"}
     return ctx
 
 
@@ -74,6 +75,7 @@ def test_checkpoint_roundtrip(monkeypatch, tmp_path):
     assert pd.decisions[0].symbol == "NVDA"
     assert loaded["earnings_results"][0]["symbol"] == "NKE"
     assert loaded["macro_summary"]["vix"]["current"] == 18.0
+    assert loaded["admitted_symbols"] == {"VST"}
 
 
 def test_checkpoint_empty_plan_not_written(monkeypatch, tmp_path):
@@ -162,6 +164,8 @@ def test_run_morning_resumes_and_rm_still_runs(monkeypatch, tmp_path):
     p.morning_research_stage.run.assert_not_called()
     p.decision_stage.run.assert_not_called()
     p.risk_stage.run.assert_called_once()
+    resumed_ctx = p.risk_stage.run.call_args.args[0]
+    assert resumed_ctx.admitted_symbols == {"VST"}
     p.execution_stage.run.assert_called_once()
     assert result["status"] == "executed"
     # consumed BEFORE execution → a second morning tick does a normal run

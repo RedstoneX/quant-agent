@@ -63,6 +63,60 @@ def test_pm_allows_explicit_disagreement_but_rejects_false_alignment():
     assert any("does not support" in error for error in errors)
 
 
+def test_pm_grounding_allows_transient_symbol_only_when_allowlisted_and_analyzed():
+    target = {
+        "symbol": "VST", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Temporary SEC admission still has validated Technical support.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "buy",
+            "relationship": "supports", "evidence": "current-run trend",
+        }],
+    }
+    kwargs = dict(
+        analyses=[_analysis("VST")], positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None, total_value=100_000,
+    )
+    assert PortfolioManagerAgent.validate_grounding(
+        _decision(target), allowed_buy_symbols={"AAPL", "VST"}, **kwargs,
+    ) == []
+
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), allowed_buy_symbols={"AAPL"}, **kwargs,
+    )
+    assert any("temporary-admission allowlist" in error for error in errors)
+
+
+def test_pm_grounding_rejects_allowlisted_increase_without_current_technical():
+    target = {
+        "symbol": "VST", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Smart Money alone cannot open the position.",
+        "provenance": [{
+            "source": "smart_money", "observed_stance": "bullish",
+            "relationship": "supports", "evidence": "material purchase",
+        }],
+    }
+    from src.models import SmartMoneyFinding, SmartMoneyObservation
+    observation = SmartMoneyObservation(
+        symbol="VST", actor="Example Insider", direction="buy",
+        transaction_date=date.today(), disclosure_date=date.today(),
+        source_url="https://www.sec.gov/example", lag_days=0,
+        disclosure_age_days=0, freshness="fresh",
+        economic_role="confirmatory",
+    )
+    finding = SmartMoneyFinding(
+        symbol="VST", stance="bullish", economic_role="confirmatory",
+        summary="material purchase", why_now="new SEC filing",
+        observations=[observation],
+    )
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[], positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None,
+        smart_money_findings=[finding], total_value=100_000,
+        allowed_buy_symbols={"VST"},
+    )
+    assert any("lacks a current-run Technical analysis" in error for error in errors)
+
+
 def test_pm_rejects_invented_coverage_phantom_exit_and_unproved_ratio():
     target = {
         "symbol": "MSFT", "target_weight_pct": 0, "conviction": "low",

@@ -212,6 +212,7 @@ class MorningResearchStage:
         load_earnings_analyses_fn,
         smart_money_provider: "SmartMoneySource | None" = None,
         smart_money_analyst: "SmartMoneyAnalystAgent | None" = None,
+        admit_smart_money_candidates_fn=None,
     ):
         self.config = config
         self.db = db
@@ -228,6 +229,7 @@ class MorningResearchStage:
         self.earnings_analyst = earnings_analyst
         self.smart_money_provider = smart_money_provider
         self.smart_money_analyst = smart_money_analyst
+        self._admit_smart_money_candidates = admit_smart_money_candidates_fn
         # Injected callables so we don't duplicate pre-filter / news / earnings
         # orchestration logic. Those still live on TradingPipeline for now
         # because they touch shared state we haven't finished extracting.
@@ -249,6 +251,66 @@ class MorningResearchStage:
             logger.warning("Failed to load macro news narrative: %s", e)
             news_narrative = None
 
+        smart_config = getattr(self.config, "smart_money", None)
+        smart_money_observations = []
+        smart_money_provider_error = None
+        if smart_config and smart_config.enabled and self.smart_money_provider:
+            try:
+                smart_money_observations, smart_money_provider_error = (
+                    self.smart_money_provider.fetch(self.config.trading.universe)
+                )
+            except Exception as exc:
+                logger.warning("Smart-money cache read failed: %s", exc)
+                smart_money_provider_error = f"provider_error:{type(exc).__name__}"
+        ctx.smart_money_observations = smart_money_observations
+        if smart_money_observations and self._admit_smart_money_candidates:
+            try:
+                admitted, admissions = self._admit_smart_money_candidates(
+                    smart_money_observations,
+                )
+                ctx.admitted_symbols = {
+                    str(symbol).strip().upper() for symbol in admitted if str(symbol).strip()
+                }
+                ctx.smart_money_admissions = dict(admissions or {})
+            except Exception as exc:
+                # Admission uncertainty fails closed; the observations can
+                # still be rendered as research evidence.
+                logger.warning("Smart-money transient admission failed closed: %s", exc)
+                ctx.admitted_symbols = set()
+                ctx.smart_money_admissions = {}
+        configured_symbols = [
+            str(symbol).strip().upper()
+            for symbol in self.config.trading.universe if str(symbol).strip()
+        ]
+        effective_symbols = list(dict.fromkeys(
+            configured_symbols + sorted(ctx.admitted_symbols)
+        ))
+
+        for observation in smart_money_observations:
+            symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
+            for field_name, field_value in (
+                (
+                    "in_trading_universe",
+                    symbol in set(configured_symbols) or symbol in ctx.admitted_symbols,
+                ),
+                ("transient_admitted", symbol in ctx.admitted_symbols),
+            ):
+                try:
+                    setattr(observation, field_name, field_value)
+                except Exception:
+                    pass
+        for symbol, admission in ctx.smart_money_admissions.items():
+            import json as _json
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                kind="admission", scope="symbol", symbol=symbol,
+                evidence_json=_json.dumps(admission, sort_keys=True),
+            )
+            _record_pipeline_event(
+                self, ctx, symbol, "opportunity", "admitted",
+                "smart_money_form4_admission", **admission,
+            )
+
         def _run_macro():
             macro_summary = self.macro.get_macro_summary()
             logger.info(
@@ -260,7 +322,7 @@ class MorningResearchStage:
             )
             analysis, result = self.macro_analyst.analyze(
                 macro_summary=macro_summary,
-                universe=self.config.trading.universe,
+                universe=effective_symbols,
                 last_state=prior_macro_state,
                 news_narrative=news_narrative,
             )
@@ -272,12 +334,19 @@ class MorningResearchStage:
             return macro_summary, analysis, result
 
         def _run_news():
-            return self._run_news_update(ctx.run_id, session="morning")
+            try:
+                return self._run_news_update(
+                    ctx.run_id, session="morning", universe=effective_symbols,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument 'universe'" not in str(exc):
+                    raise
+                return self._run_news_update(ctx.run_id, session="morning")
 
         def _run_tech():
             all_symbols_data = []
             symbols_bars: dict[str, list] = {}
-            for symbol in self.config.trading.universe:
+            for symbol in effective_symbols:
                 bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
                 if not bars:
                     logger.warning("No data for %s, skipping", symbol)
@@ -288,7 +357,12 @@ class MorningResearchStage:
             ctx.symbols_bars = symbols_bars
             symbols_data = [
                 s for s in all_symbols_data
-                if self._has_actionable_signal(s["indicators"], s["symbol"], s["bars"], ctx.positions)
+                if (
+                    s["symbol"] in ctx.admitted_symbols
+                    or self._has_actionable_signal(
+                        s["indicators"], s["symbol"], s["bars"], ctx.positions,
+                    )
+                )
             ]
             logger.info(
                 "Tech pre-filter: %d/%d symbols have actionable signals",
@@ -339,17 +413,26 @@ class MorningResearchStage:
             return analyses_map, ta_res
 
         def _load_earnings():
-            return self._load_earnings_analyses(ctx.run_id, session="morning", ctx=ctx)
+            try:
+                return self._load_earnings_analyses(
+                    ctx.run_id, session="morning", ctx=ctx, universe=effective_symbols,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument 'universe'" not in str(exc):
+                    raise
+                return self._load_earnings_analyses(
+                    ctx.run_id, session="morning", ctx=ctx,
+                )
 
         def _run_smart_money():
-            smart_config = getattr(self.config, "smart_money", None)
             if not smart_config or not smart_config.enabled or not self.smart_money_provider or not self.smart_money_analyst:
-                return [], None, None, None
-            observations, provider_error = self.smart_money_provider.fetch(self.config.trading.universe)
-            if not observations:
-                return [], None, provider_error, None
-            findings, result, analysis_error = self.smart_money_analyst.analyze(observations)
-            return findings, result, provider_error, analysis_error
+                return [], None, smart_money_provider_error, None
+            if not smart_money_observations:
+                return [], None, smart_money_provider_error, None
+            findings, result, analysis_error = self.smart_money_analyst.analyze(
+                smart_money_observations,
+            )
+            return findings, result, smart_money_provider_error, analysis_error
 
         logger.info("Starting parallel: macro + news + tech + earnings + smart money")
         with ThreadPoolExecutor(max_workers=5) as ex:
@@ -367,6 +450,21 @@ class MorningResearchStage:
             findings, sm_result, provider_error, analysis_error = smart_money_future.result()
             ctx.smart_money_findings = findings
             ctx.smart_money_provider_error = provider_error or analysis_error
+            import json as _sm_json
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                kind="scan_summary", scope="run",
+                evidence_json=_sm_json.dumps({
+                    "source": "SEC Form 4",
+                    "observations": len(smart_money_observations),
+                    "findings": len(findings),
+                    "temporary_admissions": sorted(ctx.admitted_symbols),
+                    "state": (
+                        "degraded" if provider_error or analysis_error else
+                        "material" if findings else "quiet"
+                    ),
+                }, sort_keys=True),
+            )
             if provider_error:
                 data_status["smart_money"] = "degraded" if findings else "provider_error"
                 _persist_evidence(
@@ -391,12 +489,6 @@ class MorningResearchStage:
                     output_tokens=sm_result.output_tokens, cost_usd=sm_result.cost_usd,
                     **sm_log_kwargs,
                 )
-                for finding in findings:
-                    _persist_evidence(
-                        self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
-                        kind="finding", scope="symbol", symbol=finding.symbol,
-                        evidence_json=finding.model_dump_json(),
-                    )
                 if analysis_error:
                     _persist_evidence(
                         self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
@@ -406,8 +498,23 @@ class MorningResearchStage:
                     data_status["smart_money"] = "degraded"
                 elif not provider_error:
                     data_status["smart_money"] = "ok"
-            elif not provider_error:
-                data_status["smart_money"] = "empty"
+            for finding in findings:
+                symbol = finding.symbol.upper()
+                is_candidate = (
+                    symbol in set(configured_symbols)
+                    or symbol in ctx.admitted_symbols
+                    or any(
+                        str(getattr(position, "symbol", "") or "").upper() == symbol
+                        for position in ctx.positions
+                    )
+                )
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                    kind="finding", scope="symbol" if is_candidate else "research",
+                    symbol=symbol, evidence_json=finding.model_dump_json(),
+                )
+            if sm_result is None and not provider_error:
+                data_status["smart_money"] = "ok" if findings else "empty"
         except Exception as e:
             logger.warning("Smart-money branch failed: %s", e)
             ctx.smart_money_provider_error = f"analysis_error:{type(e).__name__}"
@@ -674,6 +781,8 @@ class DecisionStage:
             macro_analysis=macro_analysis,
         )
         ctx.facts = pm_facts
+        trading_config = getattr(pipeline.config, "trading", None)
+        configured_universe = getattr(trading_config, "universe", []) or []
 
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
@@ -702,6 +811,12 @@ class DecisionStage:
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
             session_type=ctx.session,
+            allowed_buy_symbols={
+                str(symbol).strip().upper()
+                for symbol in configured_universe
+                if str(symbol).strip()
+            } | set(ctx.admitted_symbols),
+            transient_admitted_symbols=set(ctx.admitted_symbols),
         )
 
         if portfolio_decision and portfolio_decision.reasoning_chain:
@@ -890,8 +1005,12 @@ class RiskStage:
 
         # Symbol guard
         before_symbol_guard = list(portfolio_decision.decisions)
+        guard_kwargs = (
+            {"admitted_symbols": ctx.admitted_symbols}
+            if ctx.admitted_symbols else {}
+        )
         portfolio_decision.decisions, symbol_blocked_reasons = pipeline._filter_supported_symbols(
-            portfolio_decision.decisions, analyses, positions,
+            portfolio_decision.decisions, analyses, positions, **guard_kwargs,
         )
         if symbol_blocked_reasons:
             reasons = "; ".join(dict.fromkeys(symbol_blocked_reasons))

@@ -156,7 +156,9 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
     AI Risk response/modification -> deterministic outcome without the
     client re-parsing raw agent output."""
     symbol = symbol.strip().upper()
-    symbol_rows = db_reads.get_specialist_evidence(run_id=run_id, symbol=symbol)
+    symbol_rows = db_reads.get_specialist_evidence(
+        run_id=run_id, symbol=symbol, scope="symbol",
+    )
     trades = db_reads.get_trades(run_id=run_id, symbol=symbol, limit=100)
 
     # 404 when THIS symbol wasn't actually a candidate in this run (no

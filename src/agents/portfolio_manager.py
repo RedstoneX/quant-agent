@@ -146,6 +146,29 @@ class PortfolioManagerAgent(BaseAgent):
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
         )
+        allowed_buy_symbols = sorted({
+            str(symbol).strip().upper()
+            for symbol in (kwargs.get("allowed_buy_symbols") or [])
+            if str(symbol).strip()
+        })
+        transient_admitted_symbols = sorted({
+            str(symbol).strip().upper()
+            for symbol in (kwargs.get("transient_admitted_symbols") or [])
+            if str(symbol).strip()
+        })
+        permanent_symbols = [
+            symbol for symbol in allowed_buy_symbols
+            if symbol not in set(transient_admitted_symbols)
+        ]
+        eligibility_section = (
+            "## Deterministic BUY Eligibility\n"
+            f"- Permanent configured universe: {', '.join(permanent_symbols) or 'none'}\n"
+            "- Temporary SEC Form 4 admissions for THIS RUN only: "
+            f"{', '.join(transient_admitted_symbols) or 'none'}\n"
+            "Temporary admission permits evaluation; it is not a recommendation, "
+            "does not waive Technical/Risk requirements, and does not permanently "
+            "change the universe. Do not target any other new symbol."
+        )
 
         def _fmt_tech(a):
             rr = a.risk_reward
@@ -635,6 +658,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 
 {smart_money_section}
 
+{eligibility_section}
+
 ## Technical Analysis Reports
 {analyses_text}
 
@@ -676,7 +701,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                facts=None,
                allow_margin: bool = True,
                symbol_sectors: dict[str, str] | None = None,
-               session_type: str = "morning") -> tuple[PortfolioDecision | None, "AgentResult"]:
+               session_type: str = "morning",
+               allowed_buy_symbols: set[str] | None = None,
+               transient_admitted_symbols: set[str] | None = None,
+               ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         result = self.run(
             analyses=analyses,
             positions=positions,
@@ -704,6 +732,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             allow_margin=allow_margin,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,
+            allowed_buy_symbols=allowed_buy_symbols or set(),
+            transient_admitted_symbols=transient_admitted_symbols or set(),
         )
         parsed = result.parse_json()
         if parsed is None:
@@ -762,6 +792,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 macro_analysis=macro_analysis, total_value=total_value,
                 smart_money_findings=smart_money_findings or [],
                 symbol_sectors=symbol_sectors or {}, session_type=session_type,
+                allowed_buy_symbols=allowed_buy_symbols,
             )
             if errors:
                 logger.error(
@@ -834,6 +865,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         macro_analysis=macro_analysis, total_value=total_value,
                         smart_money_findings=smart_money_findings or [],
                         symbol_sectors=symbol_sectors or {}, session_type=session_type,
+                        allowed_buy_symbols=allowed_buy_symbols,
                     )
                     if errors:
                         logger.error(
@@ -873,6 +905,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         total_value: float, symbol_sectors: dict[str, str] | None = None,
         session_type: str = "morning",
         smart_money_findings: list[SmartMoneyFinding] | None = None,
+        allowed_buy_symbols: set[str] | None = None,
     ) -> list[str]:
         """Validate only machine-readable claims against the prompt registry.
 
@@ -927,6 +960,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             if pos is not None and total_value > 0:
                 current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
             intent = "buy" if target.target_weight_pct > current_weight + 0.01 else "sell"
+            if intent == "buy":
+                if allowed_buy_symbols is not None and symbol not in {
+                    str(item).strip().upper() for item in allowed_buy_symbols
+                }:
+                    errors.append(
+                        f"{symbol}: increase is outside the configured universe and "
+                        "the deterministic temporary-admission allowlist"
+                    )
+                if symbol not in {analysis.symbol.upper() for analysis in analyses}:
+                    errors.append(
+                        f"{symbol}: increase lacks a current-run Technical analysis"
+                    )
             expected_sources = registry.get(symbol, {})
             seen_sources: set[str] = set()
             supporting_sources: set[str] = set()

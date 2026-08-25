@@ -73,8 +73,14 @@ class RunContext:
     news_intel: "NewsIntelligenceReport | None" = None
     analyses: list = field(default_factory=list)  # list[TechAnalysisResult]
     earnings_results: list[dict] = field(default_factory=list)
+    smart_money_observations: list = field(default_factory=list)
     smart_money_findings: list = field(default_factory=list)
     smart_money_provider_error: str | None = None
+    # Run-scoped BUY eligibility granted only by deterministic SEC Form 4
+    # admission. Never written back to config.trading.universe and never
+    # authored by an LLM.
+    admitted_symbols: set[str] = field(default_factory=set)
+    smart_money_admissions: dict[str, dict] = field(default_factory=dict)
     symbols_bars: dict = field(default_factory=dict)  # {sym: list[OHLCV]}
     valuations: dict = field(default_factory=dict)  # {sym: {trailing_pe, ...}}
     data_status: dict[str, str] = field(default_factory=dict)

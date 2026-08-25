@@ -542,7 +542,7 @@ def get_run_candidates(run_id: str) -> list[str]:
         conn = _connect()
         ev_rows = conn.execute(
             "SELECT DISTINCT symbol FROM specialist_evidence "
-            "WHERE run_id = ? AND symbol IS NOT NULL",
+            "WHERE run_id = ? AND scope = 'symbol' AND symbol IS NOT NULL",
             (run_id,),
         ).fetchall()
         trade_rows = conn.execute(
@@ -718,7 +718,8 @@ def get_journal_day(date_str: str) -> dict:
 
         candidate_rows = conn.execute(
             "SELECT DISTINCT symbol FROM specialist_evidence "
-            "WHERE timestamp >= ? AND timestamp < ? AND symbol IS NOT NULL",
+            "WHERE timestamp >= ? AND timestamp < ? "
+            "AND scope = 'symbol' AND symbol IS NOT NULL",
             (start_utc, end_utc),
         ).fetchall()
         candidates = sorted({r[0] for r in candidate_rows} | {t["symbol"] for t in trades})

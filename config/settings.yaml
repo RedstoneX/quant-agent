@@ -6,7 +6,6 @@ api_keys:
   fred: "${FRED_API_KEY}"
   alpaca_key: "${ALPACA_API_KEY}"
   alpaca_secret: "${ALPACA_SECRET_KEY}"
-  bargo: "${BARGO_API_KEY}"
 
 alpaca:
   base_url: "https://paper-api.alpaca.markets"  # paper trading
@@ -91,7 +90,7 @@ llm:
   news_analyst_max_tokens: 16000
   macro_analyst_max_tokens: 16000
   earnings_analyst_max_tokens: 16000
-  smart_money_analyst_max_tokens: 16000
+  smart_money_analyst_max_tokens: 1200
   portfolio_manager_max_tokens: 16000
   risk_manager_max_tokens: 16000
   position_reviewer_max_tokens: 16000
@@ -166,12 +165,27 @@ intraday_scan:
   max_candidates_per_scan: 5  # hard cap per tick — bounded, not high-frequency
 
 smart_money:
-  # Disabled until the production host has a working credential/preflight;
-  # current keyless server-to-server probes are challenged with HTTP 403.
-  enabled: false
-  base_url: "https://www.bargo.ai/free-apis/congress/v1"
-  timeout_s: 10
-  max_rows_per_symbol: 20
+  # First-party, credentialless SEC Form 4 discovery. The deterministic
+  # pre-market refresh caches and filters filings before any LLM call.
+  enabled: true
+  search_url: "https://efts.sec.gov/LATEST/search-index"
+  archives_url: "https://www.sec.gov/Archives/edgar/data"
+  data_dir: "data/smart_money"
+  user_agent: "QAMC research-intelligence qamc-contact@proton.me"
+  request_timeout_s: 15
+  refresh_deadline_s: 180
+  requests_per_second: 8
+  lookback_days: 7
+  max_filings_per_refresh: 1000
+  max_observations: 40
+  min_transaction_value_usd: 100000
+  external_min_transaction_value_usd: 250000
+  cluster_window_days: 14
+  min_cluster_owners: 2
+  max_external_candidates: 3
+  min_external_price_usd: 5
+  min_external_avg_dollar_volume_usd: 10000000
+  min_external_history_days: 20
 
 trading:
   universe:

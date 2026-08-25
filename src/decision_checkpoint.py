@@ -36,7 +36,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
 CHECKPOINT_DIR = Path("data/checkpoints")
 MAX_AGE_MINUTES = 90.0
 
@@ -71,6 +71,11 @@ def write(ctx) -> Path | None:
             "macro_summary": ctx.macro_summary or {},
             "earnings_results": ctx.earnings_results or [],
             "data_status": dict(ctx.data_status or {}),
+            "admitted_symbols": sorted({
+                str(symbol).strip().upper()
+                for symbol in (ctx.admitted_symbols or set())
+                if str(symbol).strip()
+            }),
         }
         path = checkpoint_path(ctx.session)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +134,11 @@ def load(session: str, max_age_minutes: float = MAX_AGE_MINUTES) -> dict | None:
             "macro_summary": payload.get("macro_summary") or {},
             "earnings_results": payload.get("earnings_results") or [],
             "data_status": payload.get("data_status") or {},
+            "admitted_symbols": {
+                str(symbol).strip().upper()
+                for symbol in (payload.get("admitted_symbols") or [])
+                if str(symbol).strip()
+            },
         }
     except Exception as e:  # noqa: BLE001
         logger.warning("decision checkpoint load failed (treating as absent): %s", e)
