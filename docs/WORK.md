@@ -12,14 +12,9 @@ Status: **FINISH LINE DEPLOYED | ALPACA PAPER NATURAL ACCEPTANCE + RESEARCH INTE
 - The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
 - Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
 - GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
-- PRs #74, #75, #76 and #77 are merged and deployed. Backend recovery and the
-  final Mission Control finish line are complete.
-- Deployment verification passed `/health`, DB, broker, Alpaca Paper,
-  OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI,
-  Telegram configuration, `/cockpit`, accepted chart timeframes, read-only
-  method rejection, and all seven existing timers.
-- The only tracked production delta remains
-  `config/settings.yaml: intraday_scan.enabled: true`.
+- PRs #74, #75, #76 and #77 are merged and deployed. Backend recovery and the final Mission Control finish line are complete.
+- Deployment verification passed `/health`, DB, broker, Alpaca Paper, OpenRouter per-seat routing including PM `openai/gpt-5.5`, private OneCLI, Telegram configuration, `/cockpit`, accepted chart timeframes, read-only method rejection, and all seven existing timers.
+- The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
 
 ## Stabilization account model — HARD RULE
 
@@ -27,7 +22,7 @@ Use two active accounts until QAMC is stable:
 
 ### `ubuntu` — engineering/operator
 
-Use `ubuntu` for Codex sessions, engineering checkout/worktrees outside `/home/qamc`, Git/GitHub, development tooling, targeted tests/builds, private Tailscale Vite/browser work, Docker/sudo engineering tasks, and approved deployment orchestration.
+Use `ubuntu` for Codex sessions, engineering checkout/worktrees outside `/home/qamc`, Git/GitHub, development tooling, tests/builds, private Tailscale Vite/browser work, Docker/sudo engineering tasks, and deployment orchestration.
 
 ### `qamc` — runtime only
 
@@ -37,31 +32,50 @@ Use `ubuntu` for Codex sessions, engineering checkout/worktrees outside `/home/q
 
 Do not use `dev` in the normal workflow or expand its permissions during stabilization.
 
-## Standing delivery workflow — HARD RULE
+## Standing Paper-beta delivery workflow — HARD RULE
 
-Engineering inside an already-authorized task is autonomous under `ubuntu`: diagnose, implement, test, preview, browser-verify, commit and push without repeated operator prompts.
+While QAMC remains Alpaca Paper, engineering inside already-authorized work is autonomous under `ubuntu` through the full lifecycle:
 
-Implementation promotion remains reviewable. Codex does not independently merge its own implementation work or mutate the `qamc` runtime unless that promotion is explicitly authorized. Once production deployment is authorized, `ubuntu` performs the shortest safe privileged deploy/verify operation directly; do not bounce the operator among accounts.
+**diagnose → implement → test → preview/inspect → PR → merge → deploy → production verify → rollback if needed.**
+
+There is **no mandatory external code-review, merge or deployment gate during Paper beta**. Independent review may be used when useful, but it is evidence, not permission. Keep a dedicated PR for substantive work so the result remains reviewable and reversible in Git.
+
+Live-capital activation, paid dependencies, secrets/credential redesign, destructive infrastructure replacement and material architecture outside current authority still require explicit operator authorization.
 
 ## Friction-reduction rules
 
 1. No normal use of `dev` and no manual account ping-pong.
 2. Private DEV preview/browser verification is standing-authorized for relevant engineering work.
 3. For bounded fixes, read only current authority plus relevant code and run the shortest decisive verification.
-4. Targeted tests first; no default full-suite, commissioning rerun, multi-agent fan-out or broad repository archaeology.
-5. Stop when the requested result is proven; repeated re-validation without new evidence is not diligence.
-6. Keep handoffs concise: changed / verified / unresolved blocker / exact promotion state.
-7. Preserve the `ubuntu` engineering vs `qamc` runtime boundary; do not add new lockdown/security infrastructure during stabilization without a real need.
-8. Do not infer current defects from historical notes. Reopen a resolved area only from current operator or production evidence.
-9. After an authorized production change, bundle preflight/deploy/restart/acceptance into one safe intervention.
+4. Use parallelism/subagents when independent work can safely run together and doing so reduces wall-clock time. Do not fan out duplicate work merely to use more agents.
+5. Targeted tests first. Broaden only when failures, risk or acceptance evidence justify it.
+6. Stop when the requested result is proven; repeated re-validation without new evidence is not diligence.
+7. Keep handoffs concise: changed / verified / preview if relevant / unresolved blocker / production state.
+8. Preserve the `ubuntu` engineering vs `qamc` runtime boundary; do not add new lockdown/security infrastructure during stabilization without a real need.
+9. Do not infer current defects from historical notes. Reopen a resolved area only from current operator or production evidence.
+10. Bundle production preflight/deploy/restart/acceptance into the shortest safe intervention.
+
+## Parallelism and engineering-agent policy
+
+Parallel work is encouraged when tasks are genuinely independent. The lead agent owns integration.
+
+- Good parallel targets: independent code surfaces, investigation questions, targeted tests, log/evidence collection, browser/visual verification and documentation checks.
+- Bad parallelism: multiple workers rediscovering the same facts, editing the same files without coordination, or duplicating validation already proven.
+- Multiple worktrees are allowed when they materially simplify independent work.
+
+Match intelligence to the task:
+
+- **Strongest available reasoning model:** architecture, trading logic, safety-sensitive changes, complex debugging, hard code review, ambiguous UX/product judgment and cross-system integration.
+- **Cheaper/faster workers:** bounded tests, searches, inventory, log parsing, evidence collection and other mechanical work.
+- Escalate a cheap worker when the task becomes reasoning-heavy instead of burning turns.
+
+Parallelism is an efficiency tool, not an agent-count target.
 
 ## Active finish line
 
 ### Mission Control / existing cockpit utility
 
-Complete. PRs #76 and #77 are merged and deployed with the backend recovery
-from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence
-or the research-intelligence outcome below requires a coherent extension.
+Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
 
 ### Research Intelligence Desk + Smart Money Analyst — AUTHORIZED END-TO-END TRANCHE
 
@@ -122,15 +136,15 @@ This tranche is complete when real stored QAMC data demonstrates that:
 9. Empty, stale, partial and provider-error states are truthful and visually composed.
 10. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
 
-#### Engineering and promotion authorization
+#### Engineering posture
 
-This is outcome-driven work. Codex has autonomy to inspect the current repository, choose the simplest implementation consistent with accepted architecture, make routine engineering/design decisions, implement, test, visually inspect, commit and push **one dedicated branch/PR**. Do not split the work into micro-PRs, repeatedly ask the operator routine design questions, or over-specify implementation from this handoff.
+This is outcome-driven work. Codex has autonomy to inspect the current repository, choose the simplest implementation consistent with accepted architecture, make routine engineering/design decisions, implement, test, visually inspect, commit, push, merge, deploy and verify production under the standing Paper-beta workflow.
 
-**For this tranche specifically, the operator explicitly authorizes the complete engineering → merge → production-deploy → production-verify sequence once Codex has satisfied the acceptance criteria above.** This is the explicit promotion authorization required by `CLAUDE.md`; it is not a standing permission for unrelated future work.
+Use parallel subagents where they genuinely accelerate independent work. Assign strong reasoning models to difficult architecture/trading/product problems and cheaper workers to bounded mechanical work. Do not split the product tranche into micro-PRs, repeatedly ask the operator routine questions, or over-specify implementation from this handoff.
 
-Codex may merge its own dedicated PR for this tranche after verifying the final PR head and acceptance evidence, then use `ubuntu` to perform the shortest governed privileged convergence against the existing `qamc` runtime and verify production. Preserve the `ubuntu` engineering/operator versus `qamc` runtime-only boundary. Do not alter secrets architecture, add unrelated infrastructure, force trades, weaken safety, or broaden broker authorization. If deployment verification fails, stop further mutation, preserve/restore the last known-good production state using the existing governed rollback path, and report the concrete blocker.
+Preserve the `ubuntu` engineering/operator versus `qamc` runtime-only boundary. Do not alter secrets architecture, add unrelated infrastructure, force trades, weaken safety or broaden broker authorization. If deployment verification fails, stop further mutation and preserve/restore the last known-good production state.
 
-Stop for the operator only on a genuine unresolved product/safety/architecture conflict, a paid dependency, or an external credential/authorization requirement that cannot be satisfied from existing project resources.
+Stop for the operator only on a genuine unresolved product/safety/architecture conflict, a paid dependency, a live-capital boundary, or an external credential/authorization requirement that cannot be satisfied from existing project resources.
 
 ### Natural Alpaca Paper validation
 
@@ -174,4 +188,4 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active gates:** natural Alpaca Paper observation continues; Research Intelligence Desk + Smart Money Analyst is authorized end-to-end through its dedicated PR, merge, governed production deployment and production verification once its acceptance criteria pass. No trade may be forced or manufactured to create acceptance evidence.
+**Active work:** natural Alpaca Paper observation continues; Research Intelligence Desk + Smart Money Analyst is authorized end-to-end under the standing Paper-beta autonomous delivery policy. No trade may be forced or manufactured to create acceptance evidence.
