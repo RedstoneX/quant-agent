@@ -511,7 +511,7 @@ export interface SearchResponse {
 // ---------------------------------------------------------------------
 
 export type ResearchDirection = "bullish" | "bearish" | "neutral" | "mixed" | "unknown";
-export type ResearchItemStatus = "current" | "stale" | "partial" | "unavailable" | "error" | "quiet";
+export type ResearchItemStatus = "current" | "aging" | "stale" | "historical" | "partial" | "unavailable" | "error" | "quiet";
 
 export interface ResearchEvidenceItem {
   label: string;
@@ -530,8 +530,16 @@ export interface ResearchAgentBrief {
   changed: string | null;
   tension: string | null;
   why_now: string | null;
+  market_context: ResearchMarketContext[];
   timestamp: string | null;
   error?: string | null;
+}
+
+export interface ResearchMarketContext {
+  symbol: string;
+  stop: number;
+  entry: number;
+  target: number;
 }
 
 export interface ResearchSignal {
@@ -556,7 +564,7 @@ export interface SmartMoneyFinding {
   stream: string;
   headline: string;
   summary: string;
-  classification: "actionable" | "confirmatory" | "contradictory" | "historical";
+  classification: "actionable" | "confirmatory" | "contradictory" | "historical" | "admission";
   freshness: "real_time" | "timely" | "delayed" | "stale" | "unknown";
   event_timestamp: string | null;
   knowable_timestamp: string | null;
@@ -565,12 +573,19 @@ export interface SmartMoneyFinding {
   source_name: string;
   source_url: string | null;
   source_detail: string | null;
+  direction: ResearchDirection;
+  observation_count: number;
+  admitted_this_run: boolean;
+  admission_detail: string | null;
 }
 
 export interface ResearchReviews {
+  daily_result: string | null;
   position_reviewer: string | null;
   evening_review: string | null;
   meta_reflection: string | null;
+  lesson_learned: string | null;
+  suggested_actions: string[];
   tomorrow_watch: string[];
 }
 
@@ -586,6 +601,7 @@ export interface ResearchDeskData {
   dry_annotation: string | null;
   agents: ResearchAgentBrief[];
   signal_stack: ResearchSignal[];
+  decision_run_id: string | null;
   decision_chain: ResearchDecisionStep[];
   smart_money: SmartMoneyFinding[];
   reviews: ResearchReviews | null;
