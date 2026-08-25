@@ -75,6 +75,12 @@ def _alpaca_symbol(symbol: str) -> str:
     return re.sub(r"^([A-Z]+)-([A-Z])$", r"\1.\2", value)
 
 
+def _internal_symbol(symbol: str) -> str:
+    """Map Alpaca class-share spelling back to QAMC/yfinance canonical form."""
+    value = str(symbol).strip().upper()
+    return re.sub(r"^([A-Z]+)\.([A-Z])$", r"\1-\2", value)
+
+
 def _quantize_price(price: float | None) -> float | None:
     """Round to Alpaca's minimum tick size: $0.01 for stocks ≥ $1, $0.0001 below.
 
@@ -336,15 +342,16 @@ class AlpacaBroker:
         raw_positions = self.client.get_all_positions()
         positions = []
         for p in raw_positions:
+            symbol = _internal_symbol(p.symbol)
             positions.append(Position(
-                symbol=p.symbol,
+                symbol=symbol,
                 qty=float(p.qty),
                 avg_entry=float(p.avg_entry_price),
                 current_price=float(p.current_price),
                 market_value=float(p.market_value),
                 unrealized_pnl=float(p.unrealized_pl),
                 unrealized_intraday_pnl=float(getattr(p, "unrealized_intraday_pl", 0) or 0),
-                sector=_get_sector(p.symbol),
+                sector=_get_sector(symbol),
             ))
         return positions
 
@@ -534,9 +541,10 @@ class AlpacaBroker:
             sym = getattr(m, "symbol", None)
             if not sym:
                 continue
-            sym_upper = str(sym).upper()
-            if sym_upper.endswith(_NON_EQUITY_SUFFIXES):
+            alpaca_sym_upper = str(sym).upper()
+            if alpaca_sym_upper.endswith(_NON_EQUITY_SUFFIXES):
                 continue
+            sym_upper = _internal_symbol(alpaca_sym_upper)
             try:
                 out.append({
                     "symbol": sym_upper,
@@ -573,8 +581,9 @@ class AlpacaBroker:
 
             end = et_today()
             start = end - _td(days=lookback_days)
+            alpaca_symbol = _alpaca_symbol(symbol)
             req = StockBarsRequest(
-                symbol_or_symbols=symbol,
+                symbol_or_symbols=alpaca_symbol,
                 timeframe=TimeFrame.Day,
                 start=start,
                 end=end,
@@ -583,9 +592,9 @@ class AlpacaBroker:
             # SDK returns a BarSet-like object with .data = {symbol: [Bar, ...]}
             bars_list = None
             if hasattr(raw, "data") and isinstance(raw.data, dict):
-                bars_list = raw.data.get(symbol)
+                bars_list = raw.data.get(alpaca_symbol)
             elif isinstance(raw, dict):
-                bars_list = raw.get(symbol)
+                bars_list = raw.get(alpaca_symbol)
             if not bars_list:
                 return []
             out: list[OHLCV] = []
@@ -653,8 +662,9 @@ class AlpacaBroker:
                 )
             else:
                 start = now - _td(days=lookback_days)
+            alpaca_symbol = _alpaca_symbol(symbol)
             req = StockBarsRequest(
-                symbol_or_symbols=symbol,
+                symbol_or_symbols=alpaca_symbol,
                 timeframe=timeframe_value,
                 start=start,
                 end=now,
@@ -669,9 +679,9 @@ class AlpacaBroker:
             )
             raw = self._data_client.get_stock_bars(req)
             if hasattr(raw, "data") and isinstance(raw.data, dict):
-                bars_list = raw.data.get(symbol)
+                bars_list = raw.data.get(alpaca_symbol)
             elif isinstance(raw, dict):
-                bars_list = raw.get(symbol)
+                bars_list = raw.get(alpaca_symbol)
             else:
                 bars_list = None
             if not bars_list:
@@ -715,7 +725,8 @@ class AlpacaBroker:
             from alpaca.trading.requests import GetOrdersRequest
             orders = self.client.get_orders(
                 filter=GetOrdersRequest(
-                    status=QueryOrderStatus.OPEN, symbols=[symbol], nested=True,
+                    status=QueryOrderStatus.OPEN,
+                    symbols=[_alpaca_symbol(symbol)], nested=True,
                 )
             )
         except Exception as exc:
@@ -1109,7 +1120,7 @@ class AlpacaBroker:
             req_kwargs = dict(status=QueryOrderStatus.OPEN, side=OrderSide.BUY,
                               nested=True)
             if symbol:
-                req_kwargs["symbols"] = [symbol]
+                req_kwargs["symbols"] = [_alpaca_symbol(symbol)]
             orders = self.client.get_orders(filter=GetOrdersRequest(**req_kwargs))
             count = 0
             for order in orders or []:
@@ -1203,7 +1214,8 @@ class AlpacaBroker:
             req_side = OrderSide.BUY if want == "buy" else OrderSide.SELL
             orders = self.client.get_orders(
                 filter=GetOrdersRequest(
-                    status=QueryOrderStatus.ALL, symbols=[symbol],
+                    status=QueryOrderStatus.ALL,
+                    symbols=[_alpaca_symbol(symbol)],
                     side=req_side, after=after, nested=False,
                 )
             )
@@ -1222,7 +1234,7 @@ class AlpacaBroker:
                     continue
                 out.append({
                     "id": oid,
-                    "symbol": str(getattr(o, "symbol", "") or ""),
+                    "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
                     "side": o_side,
                     "qty": oqty,
                     "status": str(getattr(getattr(o, "status", None), "value",
@@ -1306,6 +1318,8 @@ class AlpacaBroker:
                      take_profit_price: float | None = None,
                      reference_price: float | None = None) -> dict:
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+        internal_symbol = _internal_symbol(symbol)
+        alpaca_symbol = _alpaca_symbol(internal_symbol)
 
         # Normalize to Alpaca's tick size — sub-penny values from quote-midpoint
         # math or LLM outputs get Alpaca error 42210000 and a rejected order.
@@ -1336,7 +1350,7 @@ class AlpacaBroker:
                         "Order REJECTED (likely data glitch or LLM hallucination).",
                         side.upper(), symbol, label, candidate, deviation * 100, reference_price,
                     )
-                    return {"id": None, "status": "rejected_outlier", "symbol": symbol}
+                    return {"id": None, "status": "rejected_outlier", "symbol": internal_symbol}
 
         # Protective stop for a BUY is placed as a SEPARATE GTC stop-limit
         # AFTER the entry fills — NOT as an OTO leg.
@@ -1366,12 +1380,12 @@ class AlpacaBroker:
 
         if limit_price is not None:
             request = LimitOrderRequest(
-                symbol=symbol, qty=qty, side=order_side,
+                symbol=alpaca_symbol, qty=qty, side=order_side,
                 time_in_force=TimeInForce.DAY, limit_price=limit_price,
             )
         else:
             request = MarketOrderRequest(
-                symbol=symbol, qty=qty, side=order_side,
+                symbol=alpaca_symbol, qty=qty, side=order_side,
                 time_in_force=TimeInForce.DAY,
             )
 
@@ -1390,7 +1404,7 @@ class AlpacaBroker:
             # as "accepted" and proceed through the pipeline (audit
             # 2026-05-27).
             "status": str(getattr(order.status, "value", order.status)),
-            "symbol": order.symbol,
+            "symbol": _internal_symbol(order.symbol),
             # Echo back the parameters so downstream consumers (notifier,
             # audit log, finalize) can render orders without having to
             # join against the trades table for what was JUST submitted.
@@ -1511,7 +1525,7 @@ class AlpacaBroker:
             return None
 
     def close_position(self, symbol: str) -> dict:
-        order = self.client.close_position(symbol)
+        order = self.client.close_position(_alpaca_symbol(symbol))
         logger.info("Closed position: %s", symbol)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
@@ -1524,7 +1538,7 @@ class AlpacaBroker:
             orders = self.client.get_orders(
                 filter=GetOrdersRequest(
                     status=QueryOrderStatus.OPEN,
-                    symbols=[symbol],
+                    symbols=[_alpaca_symbol(symbol)],
                     nested=True,
                 )
             )
@@ -1577,7 +1591,7 @@ class AlpacaBroker:
             limit_price if limit_price and limit_price > 0 else stop_price * 0.97,
         )
         req = StopLimitOrderRequest(
-            symbol=symbol,
+            symbol=_alpaca_symbol(symbol),
             qty=qty,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
@@ -1588,7 +1602,7 @@ class AlpacaBroker:
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
-                "symbol": symbol}
+                "symbol": _internal_symbol(symbol)}
 
     def _restore_stop_orders(
         self, symbol: str, stop_specs: list[dict],
