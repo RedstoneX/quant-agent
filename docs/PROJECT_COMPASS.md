@@ -19,17 +19,13 @@ Live-money trading is **not authorized**.
 
 ## 🚦 RIGHT NOW
 
-### ▶️ Alpaca Paper soak is ACTIVE
+### ▶️ Alpaca Paper soak is ACTIVE — Mission Control production-converged
 
-Commissioning is complete and accepted, all seven paper timers remain armed, and private operator access is available through Tailscale. The tailnet DNS name is **`wallaby-bowfin.ts.net`** and the verified OVH VPS Tailscale machine is **`ovh-vps`**, giving the explicit MagicDNS FQDN **`ovh-vps.wallaby-bowfin.ts.net`**.
+Production runs the accepted trading-utility recovery, enriched Telegram output, and the full professional Mission Control cockpit (Tremor/TanStack UI, Lightweight Charts, decision-chain visualization, session-execution chart context) — live at `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. All seven paper timers remain armed.
 
-The first real soak review has already produced useful evidence:
+A production-only defect surfaced this session: the chart's intraday timeframe controls (5m/15m/1h) were visible and clickable, but every symbol came back with zero bars. Traced to `src/execution/broker.py`'s intraday bar request never setting Alpaca's `feed` parameter — this account is IEX-entitled, not SIP, and the unset default was resolving to SIP for sub-daily bars only (daily bars aren't feed-gated the same way, which is why `1D` worked fine). Fixed with a 2-file, ~25-line change; 2031 backend + 55 frontend tests pass; pushed for ChatGPT/operator review — **not yet deployed to production**, and not live-verifiable from `dev` (no Alpaca credentials in this account boundary).
 
-- the dashboard makes deterministic SGOV cash parking look like an AI-selected investment;
-- a real morning run considered candidates but the top-level cockpit did not explain why no trade resulted;
-- the recent market decline creates a useful test of whether the existing inverse-ETF bearish path is actually being considered rather than merely existing in code.
-
-That evidence is enough to authorize the next tranche without stopping the soak.
+A temporary, Tailscale-only Vite hot-reload DEV preview is now a standing authorized workflow (separate from `branch_preview.py`'s static-build preview) for fast visual iteration on Dashboard work.
 
 ---
 
@@ -47,7 +43,10 @@ That evidence is enough to authorize the next tranche without stopping the soak.
 | ✅ DONE | Runtime commissioning | 37 PASS / 0 FAIL / EXIT 0, combined with prior green dev isolation evidence. |
 | ✅ DONE | Private operator access | Tailscale/Orca path recorded; explicit VPS FQDN is `ovh-vps.wallaby-bowfin.ts.net`. |
 | ✅ ACTIVE | Scheduled Alpaca Paper soak | Autonomous paper schedule remains armed. |
-| 🟨 NOW | Autonomous product improvement | Directionality evidence, cockpit redesign, explainability and justified intelligence fixes. |
+| ✅ DONE | Trading-utility recovery (PR #56) | Deployed to production, accepted as machinery. |
+| ✅ DONE | Mission Control professional cockpit (PR #60) | Tremor/TanStack cockpit, data-truth/run-history/explainability — merged and deployed. |
+| ✅ DONE | Session executions + intraday chart (PR #63) | Deployed to production; added the 5m/15m/1h/1D chart timeframe controls. |
+| 🟡 NOW | Chart-timeframe data-path fix | Intraday bars (5m/15m/1h) returned empty for every symbol — missing Alpaca `feed` parameter. Fixed and pushed, awaiting external review. |
 
 ## 📊 Mission Control
 
@@ -71,12 +70,12 @@ The prior Mission Control visual board is being made a durable repository refere
 
 ## ⏭️ NEXT MOVES
 
-1. Preserve and commit the Mission Control visual board at `docs/visual/MISSION_CONTROL_VISION_BOARD.png`, then use it as an explicit redesign reference.
-2. Execute the authorized autonomous product-improvement tranche through a meaningful implementation checkpoint, not another audit-only stop.
-3. Push the implementation branch for independent ChatGPT review; Claude does not merge its own work.
+1. ChatGPT/operator review of the pushed chart-timeframe data-path fix branch; Claude does not merge its own work.
+2. After merge and a governed deploy, confirm live that AAPL/SPY/etc. 5m/15m/1h now return real bars — this could not be verified from `dev` (no Alpaca credentials in this account boundary).
+3. Continue natural Alpaca Paper validation of the full opportunity → decision → execution → management chain; do not force activity for the dashboard fix.
 
 ## 🚧 CURRENT BLOCKERS
 
-No architecture blocker. Runtime/database evidence and the newly staged visual board are available to the VPS-side development workflow; the paper soak should continue while improvements are built and verified.
+No architecture blocker. The chart-timeframe fix is pushed and awaiting ChatGPT/operator review before it can be deployed and live-verified; the paper soak continues unaffected in the meantime.
 
-_Last refreshed: 2026-08-18 EDT (America/Toronto) — active project view only; retired detail lives in Git history._
+_Last refreshed: 2026-08-24 — active project view only; retired detail lives in Git history._

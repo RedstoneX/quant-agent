@@ -190,6 +190,16 @@ The trading recovery is strongly supported by production forensics, deterministi
 
 Separately, the chart timeframe controls must now be proven visible and functional in the actual production browser before that UI capability is considered production-verified.
 
+## Flagged for external reconciliation — 2026-08-24
+
+Independent review of the chart-timeframe data-path fix (below) surfaced a related but out-of-scope finding that needs an operator/ChatGPT decision, not a Claude-authored fix bundled into the dashboard branch:
+
+`src/execution/broker.py::get_latest_price` builds `StockLatestTradeRequest`/`StockLatestQuoteRequest` without setting Alpaca's `feed` parameter — the same unset-default pattern that caused `get_intraday_chart_bars` to silently return zero bars for every symbol (root-caused this session to this account's market-data plan being IEX-entitled, not SIP; see the chart-timeframe fix commit). Unlike the chart method, `get_latest_price` **is** in the trading-critical path (called from `src/pipeline.py`, `src/pipeline_stages.py`, `src/execution/cash_sweep.py`) and already silently degrades to `None` on any failure.
+
+If this account's feed entitlement affects real-time trade/quote requests the same way it affected historical intraday bars, that could be silently starving order sizing of a price and getting misread as an ordinary "no trade" decision rather than a data-entitlement defect — directly relevant to core recovery's natural-validation goal ("when QAMC does not trade, the reason must be specific and defensible").
+
+Not fixed here: it touches a trading-critical read path, so it needs its own authorized investigation (starting with confirming whether it actually fails in production — `dev` has no Alpaca credentials to check directly) rather than a drive-by change riding on the dashboard fix's authorization.
+
 ## Hard boundaries
 
 - **Current execution authorization is Alpaca Paper only.**
