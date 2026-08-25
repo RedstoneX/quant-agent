@@ -19,31 +19,39 @@ This file records what is accepted and true **now**. Git history preserves imple
 
 The prior three-account daily workflow created excessive friction. During stabilization the accepted operating model is now:
 
-- **`ubuntu` — engineering/operator account.** Claude/Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
+- **`ubuntu` — engineering/operator account.** Codex development, Git/GitHub, development tooling, private DEV preview/browser work, testing, Docker/sudo tasks, and approved deployment orchestration happen here.
 - **`qamc` — production runtime account only.** It owns the production checkout, runtime `.env`/OneCLI wiring, user services/timers, and QAMC execution.
 - **`dev` — parked.** It remains present but is removed from the normal workflow. Do not expand its permissions or require the operator to use it during stabilization.
 
-The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Claude/Codex must not run as `qamc`.
+The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Codex must not run as `qamc`.
 
 ## Production position — current verified deployment
 
-Production has been reported and verified at:
+Production is deployed and verified at:
 
-`a6758f935910c5cf380cc6a7acedc5f3b78f6366`
+`16c52715b3ee05ec9e38c12958a14ee77a6d38d7`
 
-That deployment includes PR #69, which restores intraday chart bars by explicitly requesting Alpaca IEX data for the accepted 5m/15m/1h read-only chart path.
+This is GitHub `main` after PRs #74, #75, #76 and #77. It deploys the backend
+recovery and the final Mission Control utility tranche. The recorded rollback
+SHA is `a6758f935910c5cf380cc6a7acedc5f3b78f6366`.
 
-Production verification reported:
+Production verification on 2026-08-25 established:
 
-- non-empty SPY/AAPL intraday bars for 5m, 15m and 1h;
-- visible and usable `5m Today`, `15m`, `1h`, and `1D` chart controls;
-- `/health` healthy with DB and broker reachable;
-- `paper=true`;
-- only `quant-agent-api.service` restarted;
-- all seven existing `quant-agent-*.timer` units preserved;
-- Mission Control remained private/read-only;
-- existing Telegram/OneCLI path preserved;
-- no broker order submitted, cancelled or modified as part of the read-side deployment.
+- `/health` returned `status=ok`, DB reachable, broker reachable and
+  `paper=true`;
+- OpenRouter and the configured per-seat policy worked through OneCLI,
+  including a real completion served by Portfolio Manager model
+  `openai/gpt-5.5`;
+- `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
+  price requests were accepted (the 5m response was naturally empty before
+  the Paper market session; the other three returned bars);
+- POST, PUT, PATCH and DELETE remained rejected with 405;
+- OneCLI and Mission Control remained private and reachable;
+- Telegram credentials and the bot API path validated without sending a
+  message;
+- only `quant-agent-api.service` was restarted;
+- all seven existing `quant-agent-*.timer` units remained enabled and listed;
+- no broker order was submitted, cancelled or modified.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
@@ -59,8 +67,8 @@ The standing workflow is:
 
 Important consequences:
 
-- Claude/Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
-- Claude must not merge its own implementation PR.
+- Codex may work autonomously from `ubuntu` on already-authorized engineering tasks.
+- Codex must not merge its own implementation PR.
 - Merge authorization and production-deployment authorization are separate gates.
 - Generic instructions such as “proceed”, “continue”, “fix it” or “finish this” never escalate work into the next environment by inference.
 - A merged PR, green tests, or an available deploy script is not production authorization.
@@ -85,7 +93,7 @@ Accepted behavior includes:
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 
-## Trading-utility recovery — engineering recovery awaiting review/promotion
+## Trading-utility recovery — deployed
 
 Production forensics for sessions 2026-08-18 through 2026-08-24 disproved the
 prior claim that all mechanical blockers between opportunity discovery and
@@ -95,8 +103,7 @@ coupled to a 15-second cancel guard, Risk parse failures labeled as rejection,
 zero-order runs labeled executed, and SGOV funding sized before entry viability
 with whole-order drops on partial funding.
 
-Priority 1 is merged to engineering `main` via PR #74 (`708cd234`). It is not
-production truth until separately authorized and deployed.
+Priority 1 is merged through PR #74 and deployed.
 
 The final backend tranche adds fail-closed, machine-checkable PM specialist
 provenance and holding validation; records PM model/parse/grounding failures as
@@ -105,16 +112,16 @@ the complete candidate/order/protection/outcome chain and deterministically
 derivable realized P&L are queryable through the existing API. Production-scale
 measurement supports changing only the PM seat to `openai/gpt-5.5`; Risk
 routing and deterministic Python/broker authority remain unchanged. This final
-tranche is merged to engineering `main` via PR #75 (`3d79b401`). It is not
-production truth until separately authorized and deployed.
+tranche is merged through PR #75 and deployed.
 
-The final Mission Control utility tranche is now under engineering review. It
+The final Mission Control utility tranche is merged through PRs #76 and #77
+and deployed. It
 removes ECharts/handmade allocation visuals, moves ordinary tables to TanStack,
 keeps price history on Lightweight Charts, makes SGOV unambiguously cash
 parking outside directional-risk/P&L emphasis, consumes PR #75 lifecycle facts,
 and turns the desktop Candidates/Chart/Decision Room working surface into a
-persisted Dockview workspace while retaining simple iPad/mobile tabs. This is
-not accepted state until its PR is reviewed and merged.
+persisted Dockview workspace while retaining simple iPad/mobile tabs. The
+Mission Control finish line and backend recovery promotion are complete.
 
 After promotion, acceptance still requires natural Alpaca Paper sessions
 demonstrating the real chain:
@@ -170,9 +177,12 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 Current bounded activities:
 
 1. **Stabilization workflow:** use the merged two-account model (`ubuntu` engineering/operator, `qamc` runtime-only, `dev` parked) and preserve explicit merge/production gates.
-2. **Core recovery:** continue natural Alpaca Paper validation without forcing activity or weakening safety.
-3. **Mission Control finish line:** review the final dashboard utility tranche;
-   merge and production promotion remain separate explicit gates.
-4. **Evidence-driven follow-up only:** do not reopen dashboard or trading-critical feed defects from historical notes alone; require current evidence.
+2. **Natural Alpaca Paper acceptance:** collect the remaining substantive
+   evidence without forcing activity or weakening safety: opportunity →
+   evaluation → defensible decision → eligible execution → management/exit →
+   measured outcome.
+3. **Evidence-driven follow-up only:** do not reopen dashboard or
+   trading-critical feed defects from historical notes alone; require current
+   evidence.
 
-See `docs/WORK.md` for the active review/promotion contract.
+See `docs/WORK.md` for the active natural-acceptance contract.
