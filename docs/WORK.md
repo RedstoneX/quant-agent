@@ -1,6 +1,6 @@
 # QAMC Current Work
 
-Status: **FINISH LINE DEPLOYED | ALPACA PAPER NATURAL ACCEPTANCE**
+Status: **FINISH LINE DEPLOYED | ALPACA PAPER NATURAL ACCEPTANCE + RESEARCH INTELLIGENCE TRANCHE**
 
 ## Current integration truth
 
@@ -57,15 +57,60 @@ Implementation promotion remains reviewable. Codex does not independently merge 
 
 ## Active finish line
 
-### Mission Control / dashboard utility
+### Mission Control / existing cockpit utility
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery
-from PRs #74 and #75. Reopen only from current production evidence.
+from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence
+or the research-intelligence outcome below requires a coherent extension.
+
+### Research Intelligence Desk + Smart Money Analyst — AUTHORIZED ENGINEERING TRANCHE
+
+Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
+
+The operator should be able to open Mission Control and quickly understand what every research agent learned, where agents agree/disagree, what the Portfolio Manager decided, what AI Risk changed, what deterministic Python allowed/blocked, what actually happened, and what the system learned afterward — **without reading logs or raw JSON**.
+
+The primary experience should feel like an edited private trading publication: concise, specific, visually balanced, easy to scan, and useful even on quiet/no-trade days. Raw structured evidence remains secondary drill-down, never the main reading experience.
+
+Cover the existing research/review seats where their output is relevant — Technical, News, Macro, Earnings, Portfolio Manager, AI Risk Manager, Position Reviewer, Evening Review and Meta-Reflection — and add one new **Smart Money Analyst** specialist seat.
+
+#### Smart Money Analyst outcome
+
+Use currently free, source-backed alternative data. Current research establishes Bargo's free congressional-trades API as an acceptable initial source: it derives records from official House/Senate STOCK Act disclosures, preserves transaction date versus disclosure date, and requires visible attribution where its data is displayed. Quiver's API is paid and is not authorized as a dependency.
+
+The Smart Money Analyst should turn alternative disclosures into useful research evidence rather than a ticker feed. Congressional activity is delayed disclosure data (potentially weeks after the trade), so a single stale politician transaction must never be represented as a real-time entry signal. Prefer meaningful patterns such as clusters, repeated activity, alignment/conflict with current QAMC themes, and clearly identified data limitations. If other genuinely free, reliable, source-backed smart-money streams (for example insider or institutional disclosures) are available under acceptable terms, Codex may incorporate them into this same seat rather than proliferating agents.
+
+The new seat may inform the Portfolio Manager through the existing specialist-evidence path. It must not bypass PM, AI Risk, deterministic Python or broker protections and must not create a new execution path.
+
+#### Research/reading experience outcome
+
+Desktop should provide a strong default editorial reading order while letting the operator organize the material to suit how they read it. Reuse the already accepted Dockview interaction model so research panels can be moved, resized, tabbed, maximized and persist their layout. iPad should be deliberately composed for reading/navigation rather than a squeezed desktop workspace.
+
+Favor useful editorial synthesis such as daily market thesis, what changed, agent findings, important evidence, disagreement, PM ruling, Risk response, proposed-versus-executed delta, position review, after-the-bell lessons and tomorrow watch. These are outcomes, not a mandatory screen taxonomy; Codex should choose the simplest coherent composition after inspecting the current product.
+
+No fabricated confidence, quotes, history or facts. Sparse, stale, partial, no-news, no-trade and provider-error states must look intentional and remain truthful.
+
+#### Acceptance
+
+This tranche is complete when real stored QAMC data demonstrates that:
+
+1. An operator can read a coherent daily story without opening logs or JSON.
+2. Every relevant agent has a useful, visually balanced representation of its belief/findings, strongest evidence, meaningful changes and disagreement where authoritative data supports them.
+3. PM/Risk/execution are understandable as deltas: what PM wanted, what Risk changed, what deterministic code allowed/blocked, and what actually executed.
+4. Desktop research panels are genuinely movable/resizable/tabbable/maximizable with persisted layout and a sensible default workspace.
+5. iPad has a deliberately designed reading/navigation experience with no horizontal overflow or micro-text.
+6. Smart Money Analyst is source-backed, provenance/timestamp/lag-aware, attributable, and reaches PM only through the accepted specialist path.
+7. Empty, stale, partial and provider-error states are truthful and visually composed.
+8. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
+
+#### Engineering posture
+
+This is outcome-driven work. Codex has autonomy to inspect the current repository, choose the simplest implementation consistent with accepted architecture, make routine engineering/design decisions, implement, test, visually inspect, commit and push **one dedicated branch/PR**. Do not split the work into micro-PRs, repeatedly ask the operator routine design questions, or over-specify implementation from this handoff.
+
+Stop only for a genuine product/safety/architecture conflict that cannot be resolved from current authority. **No merge or production deployment is authorized by this tranche.**
 
 ### Natural Alpaca Paper validation
 
-The only remaining substantive acceptance item is natural evidence that QAMC
-behaves coherently in ordinary Alpaca Paper markets:
+Natural validation continues in parallel. The substantive acceptance item remains evidence that QAMC behaves coherently in ordinary Alpaca Paper markets:
 
 **opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
 
@@ -99,10 +144,10 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Do not force/manufacture trades or weaken safeguards to increase activity.
 - Do not create paper-only trading semantics.
 - No new daemon/service/database/proxy/security/credential/orchestration architecture without separate explicit approval.
+- No paid alternative-data dependency without separate explicit approval.
 - Keep `qamc` runtime-only and preserve OneCLI secret handling.
 - Do not expand `dev` privileges during stabilization.
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active gate:** observe natural Alpaca Paper behavior. No trade may be forced
-or manufactured to create acceptance evidence.
+**Active gates:** natural Alpaca Paper observation continues; Research Intelligence Desk + Smart Money Analyst engineering may proceed under `ubuntu` through branch/PR only. No trade may be forced or manufactured to create acceptance evidence, and no research-intelligence implementation may be merged or deployed without the normal later gates.
