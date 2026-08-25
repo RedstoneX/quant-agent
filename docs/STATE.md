@@ -29,11 +29,12 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`16c52715b3ee05ec9e38c12958a14ee77a6d38d7`
+`ac30dc374d60d59bec37fa13bee9ce5956c449c8`
 
-This is GitHub `main` after PRs #74, #75, #76 and #77. It deploys the backend
-recovery and the final Mission Control utility tranche. The recorded rollback
-SHA is `a6758f935910c5cf380cc6a7acedc5f3b78f6366`.
+This is GitHub `main` after PR #79. It deploys the Research Intelligence Desk
+and the fail-soft Smart Money Analyst integration on top of the prior backend
+and Mission Control finish line. The recorded rollback SHA is
+`16c52715b3ee05ec9e38c12958a14ee77a6d38d7`.
 
 Production verification on 2026-08-25 established:
 
@@ -45,6 +46,9 @@ Production verification on 2026-08-25 established:
 - `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
   price requests were accepted (the 5m response was naturally empty before
   the Paper market session; the other three returned bars);
+- `/research/daily/2026-08-25` returned canonical stored QAMC data, and the
+  Research Desk rendered it on desktop and iPad without console errors or
+  horizontal overflow;
 - POST, PUT, PATCH and DELETE remained rejected with 405;
 - OneCLI and Mission Control remained private and reachable;
 - Telegram credentials and the bot API path validated without sending a
@@ -52,6 +56,12 @@ Production verification on 2026-08-25 established:
 - only `quant-agent-api.service` was restarted;
 - all seven existing `quant-agent-*.timer` units remained enabled and listed;
 - no broker order was submitted, cancelled or modified.
+
+The Smart Money seat is deployed but disabled in production. Bargo's
+documented keyless server-to-server endpoint returned a Cloudflare 403 and no
+free Bargo credential exists in OneCLI. Enabling and commissioning real
+source-backed Smart Money evidence is therefore an external credential/access
+blocker, not an invitation to weaken provenance or substitute fabricated data.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
@@ -133,6 +143,14 @@ and turns the desktop Candidates/Chart/Decision Room working surface into a
 persisted Dockview workspace while retaining simple iPad/mobile tabs. The
 Mission Control finish line and backend recovery promotion are complete.
 
+The Research Intelligence Desk and Smart Money seat are merged through PR #79
+and deployed. The read-only daily projection, desktop Dockview workspace,
+purpose-built iPad reading flow, truthful sparse/degraded states, and
+PM/Risk/gate/execution deltas are production-verified against stored QAMC data.
+The source adapter preserves transaction versus disclosure time, suppresses
+stale/lone congressional noise, and cannot bypass the accepted decision chain.
+Live Smart Money source commissioning remains blocked as recorded above.
+
 After promotion, acceptance still requires natural Alpaca Paper sessions
 demonstrating the real chain:
 
@@ -186,9 +204,10 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 
 Current bounded activities:
 
-1. **Finish any already-running pipeline-repair work first.** It may immediately use efficient subagents/parallelism under the accepted policy above. Do not start the Research Intelligence tranche in the same branch/worktree while overlapping backend work is unsettled.
-2. **Research Intelligence Desk + Smart Money Analyst:** once the current pipeline work is merged, deployed and verified, start from latest `main` and execute the end-to-end authorization in `docs/WORK.md`.
-3. **Natural Alpaca Paper acceptance:** continue collecting real evidence without forcing activity or weakening safety.
-4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
+1. **Smart Money source commissioning:** obtain an authorized free Bargo
+   credential or working server-to-server endpoint, preflight it, then enable
+   the already-deployed fail-soft seat. Do not substitute unsourced data.
+2. **Natural Alpaca Paper acceptance:** continue collecting real evidence without forcing activity or weakening safety.
+3. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
 
 See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.
