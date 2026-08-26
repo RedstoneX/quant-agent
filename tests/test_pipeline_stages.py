@@ -953,6 +953,9 @@ def test_morning_research_stage_records_admission_reason_without_collision():
     result_ctx = stage.run(ctx)
 
     assert result_ctx.admitted_symbols == {"RSG"}
+    assert [call.args[0] for call in market.get_ohlcv.call_args_list[:2]] == [
+        "RSG", "SPY",
+    ]
     event_payloads = [
         json.loads(call.kwargs["evidence_json"])
         for call in db.insert_specialist_evidence.call_args_list

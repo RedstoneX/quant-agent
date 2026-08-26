@@ -131,6 +131,83 @@ def test_run_if_et_window_fires_once_per_et_session_date(tmp_path):
     assert counter_file.read_text().splitlines() == ["run"]
 
 
+def test_operator_rerun_bypasses_only_same_day_morning_guard(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / ".env").write_text("")
+    last_run_dir = tmp_path / "cache"
+    last_run_dir.mkdir()
+    (last_run_dir / "last-morning").write_text("2026-08-26 1000\n")
+    counter_file = tmp_path / "operator-rerun.txt"
+    timeout_bin = tmp_path / "timeout"
+    python_bin = tmp_path / "fake-python"
+    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(
+        python_bin,
+        "#!/bin/bash\n"
+        f"echo \"$@\" >> \"{counter_file}\"\n"
+        "exit 0\n",
+    )
+    env = os.environ | {
+        "PROJECT_ROOT_OVERRIDE": str(project_root),
+        "PYTHON_OVERRIDE": str(python_bin),
+        "TIMEOUT_OVERRIDE": str(timeout_bin),
+        "LAST_RUN_DIR_OVERRIDE": str(last_run_dir),
+        "ET_DOW_OVERRIDE": "3",
+        "ET_HOUR_OVERRIDE": "10",
+        "ET_MIN_OVERRIDE": "15",
+        "ET_DATE_OVERRIDE": "2026-08-26",
+        "NOW_UNIX_OVERRIDE": "2000",
+    }
+
+    result = subprocess.run(
+        [
+            "bash", str(script), "morning", "--operator-rerun",
+            "verify consolidated Tech recovery",
+        ],
+        env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0
+    assert counter_file.read_text().strip() == "main.py --mode morning"
+    assert (last_run_dir / "last-morning").read_text().strip() == "2026-08-26 2000"
+    audit = (last_run_dir / "operator-reruns.log").read_text()
+    assert "verify consolidated Tech recovery" in audit
+    assert "operator rerun" in result.stdout
+
+
+def test_operator_rerun_rejects_missing_reason_and_other_modes(tmp_path):
+    env = _base_env(tmp_path, "exit 0")
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
+    missing_reason = subprocess.run(
+        ["bash", str(script), "morning", "--operator-rerun"],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert missing_reason.returncode == 2
+
+    other_mode = subprocess.run(
+        ["bash", str(script), "evening", "--operator-rerun", "not allowed"],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert other_mode.returncode == 2
+
+
+def test_operator_rerun_still_obeys_morning_window(tmp_path):
+    env = _base_env(tmp_path, "exit 0") | {
+        "ET_HOUR_OVERRIDE": "12",
+        "ET_MIN_OVERRIDE": "30",
+    }
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
+    result = subprocess.run(
+        ["bash", str(script), "morning", "--operator-rerun", "too late"],
+        env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0
+    assert not (tmp_path / "cache" / "operator-reruns.log").exists()
+
+
 def test_run_if_et_window_intra_check_fires_every_tick(tmp_path):
     """intra_check is a stateless circuit breaker — must fire on every 30-min
     launchd tick inside market hours, ignoring the once-per-day guard used by

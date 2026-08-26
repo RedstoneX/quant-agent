@@ -10,7 +10,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from src.cost_table import estimate_cost, fmt_cost
-from src.cost_circuit import PaidAnalysisSuspended, UnavailableLLMCostCircuit
+from src.cost_circuit import (
+    OptionalPaidAnalysisRetrySkipped,
+    PaidAnalysisSuspended,
+    UnavailableLLMCostCircuit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -733,7 +737,14 @@ class BaseAgent(ABC):
             for err in errors
         )
 
-    def _execute(self, user_message: str, *, retry_kind: str | None = None) -> AgentResult:
+    def _execute(
+        self,
+        user_message: str,
+        *,
+        retry_kind: str | None = None,
+        optional_retry: bool = False,
+        single_provider_attempt: bool = False,
+    ) -> AgentResult:
         """The retry / cross-provider-failover / cost / parse loop, decoupled
         from build_user_message so a stored historical `input_message` can be
         replayed through the CURRENT prompt + model without rebuilding context
@@ -742,7 +753,7 @@ class BaseAgent(ABC):
         logger.info("Agent %s running with model %s", self.name, self.model)
         logger.info("Agent %s input:\n%s", self.name, user_message)
 
-        max_retries = _max_retries()
+        max_retries = 1 if single_provider_attempt else _max_retries()
         deadline_s = _retry_deadline_s()
         loop_start = time.monotonic()
         finish_reason: str | None = None
@@ -830,7 +841,10 @@ class BaseAgent(ABC):
                     user_message=user_message,
                     max_output_tokens=self.max_tokens,
                     retry_kind=retry_kind,
+                    optional_retry=optional_retry,
                 )
+            except OptionalPaidAnalysisRetrySkipped:
+                raise
             except PaidAnalysisSuspended:
                 raise
             except Exception as exc:
@@ -919,7 +933,11 @@ class BaseAgent(ABC):
             # non-Anthropic provider and a fallback key is configured; otherwise
             # re-raise (a Claude primary failing over to Claude is pointless).
             failover = None
-            if (self._use_openai or self._use_deepseek or self._use_openrouter) and self._fallback_api_key:
+            if (
+                not single_provider_attempt
+                and (self._use_openai or self._use_deepseek or self._use_openrouter)
+                and self._fallback_api_key
+            ):
                 try:
                     failover = self._try_failover(
                         user_message, primary_error, authorize=_authorize,

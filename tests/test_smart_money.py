@@ -292,3 +292,162 @@ def test_analyst_distinguishes_valid_empty_from_parse_failure(tmp_path):
     analyst.run = lambda **_: AgentResult("not json", 1, "test")
     findings, _, error = analyst.analyze([_insider()])
     assert findings == [] and error == "analysis_parse_error"
+
+
+def _compact_payload(message: str) -> dict:
+    return json.loads(message.split("\n", 1)[1])
+
+
+def test_analyst_compacts_and_ranks_production_shaped_observations():
+    observations = []
+    for index in range(40):
+        observation = _insider(
+            symbol=f"S{index:02d}",
+            owner=f"owner-{index}",
+            value=(index + 1) * 10_000,
+            age=index % 8,
+            accession=f"{index + 1:010d}-26-000001",
+        )
+        observation.actor = f"Verbose reporting owner {index} " + ("x" * 200)
+        observation.source_url = "https://www.sec.gov/Archives/" + ("y" * 300)
+        observations.append(observation)
+
+    # Actual admission wins over merely eligible, higher-value symbols;
+    # remaining symbols rank by materiality. Reversing input must not change
+    # the compact request.
+    for observation in observations:
+        observation.transient_admission_eligible = True
+        observation.admission_eligible = True
+    observations[0].transient_admitted = True
+    analyst = object.__new__(SmartMoneyAnalystAgent)
+    message = analyst.build_user_message(observations=observations)
+    reversed_message = analyst.build_user_message(observations=list(reversed(observations)))
+    payload = _compact_payload(message)
+
+    assert message == reversed_message
+    assert payload["input_observation_count"] == 40
+    assert payload["input_symbol_count"] == 40
+    assert payload["presented_symbol_count"] == 8
+    assert payload["omitted_symbol_count"] == 32
+    assert [row["symbol"] for row in payload["symbol_facts"]] == [
+        "S00", "S39", "S38", "S37", "S36", "S35", "S34", "S33",
+    ]
+    assert all(
+        len(row["representative_transactions"]) <= 3
+        for row in payload["symbol_facts"]
+    )
+    assert all(
+        len(row["representative_transactions"][0]["actor"]) <= 96
+        for row in payload["symbol_facts"]
+    )
+    assert "https://www.sec.gov/Archives/" not in message
+    assert len(message) < 15_000
+
+
+def test_analyst_compaction_does_not_replace_canonical_finding_evidence(tmp_path):
+    observations = [
+        _insider(
+            owner=str(index),
+            value=100_000 + index,
+            accession=f"{index + 1:010d}-26-000001",
+            row=index,
+        )
+        for index in range(5)
+    ]
+    analyst = object.__new__(SmartMoneyAnalystAgent)
+    analyst.synthesis_cache_path = tmp_path / "cache.json"
+    captured = {}
+
+    def run(**kwargs):
+        captured["message"] = analyst.build_user_message(**kwargs)
+        return AgentResult(
+            '{"findings":[{"symbol":"NVDA","stance":"bullish",'
+            '"economic_role":"confirmatory","summary":"owner cluster",'
+            '"why_now":"recent accepted filings"}]}',
+            10,
+            "test",
+        )
+
+    analyst.run = run
+    findings, _, error = analyst.analyze(observations)
+    compact = _compact_payload(captured["message"])
+
+    assert error is None
+    assert len(compact["symbol_facts"][0]["representative_transactions"]) == 3
+    assert len(findings[0].observations) == 5
+    assert {
+        row.accession_number for row in findings[0].observations
+    } == {row.accession_number for row in observations}
+
+
+def test_analyst_enforces_presented_unique_symbol_boundary(tmp_path):
+    observations = [
+        _insider(
+            symbol=f"S{index:02d}",
+            owner=f"owner-{index}",
+            value=(index + 1) * 10_000,
+            accession=f"{index + 1:010d}-26-000001",
+        )
+        for index in range(10)
+    ]
+    raw_findings = [{
+        "symbol": observation.symbol,
+        "stance": "bullish",
+        "economic_role": "actionable",
+        "summary": "purchase",
+        "why_now": "recent filing",
+    } for observation in observations]
+    raw_findings.append(dict(raw_findings[-1]))
+    analyst = object.__new__(SmartMoneyAnalystAgent)
+    analyst.synthesis_cache_path = tmp_path / "cache.json"
+    analyst.run = lambda **_: AgentResult(
+        json.dumps({"findings": raw_findings}), 10, "test",
+    )
+
+    findings, _, error = analyst.analyze(observations)
+
+    assert error == "analysis_partial_schema_error"
+    assert len(findings) == 8
+    assert len({finding.symbol for finding in findings}) == 8
+    assert {finding.symbol for finding in findings} == {
+        row["symbol"]
+        for row in _compact_payload(
+            analyst.build_user_message(observations=observations)
+        )["symbol_facts"]
+    }
+
+
+def test_analyst_cache_is_bound_to_run_scoped_presented_symbols(tmp_path):
+    observations = [
+        _insider(
+            symbol=f"S{index:02d}",
+            owner=f"owner-{index}",
+            value=(index + 1) * 10_000,
+            accession=f"{index + 1:010d}-26-000001",
+        ).model_copy(update={
+            "transient_admission_eligible": True,
+            "admission_eligible": True,
+            "transient_admitted": index == 0,
+        })
+        for index in range(9)
+    ]
+    analyst = object.__new__(SmartMoneyAnalystAgent)
+    analyst.model = "test"
+    analyst.synthesis_cache_path = tmp_path / "cache.json"
+    calls = []
+
+    def run(**_):
+        calls.append(1)
+        return AgentResult('{"findings":[]}', 10, "test")
+
+    analyst.run = run
+    analyst.analyze(observations)
+    changed_admission = [
+        observation.model_copy(update={"transient_admitted": index == 1})
+        for index, observation in enumerate(observations)
+    ]
+    _, result, error = analyst.analyze(changed_admission)
+
+    assert error is None
+    assert calls == [1, 1]
+    assert result.tokens_used == 10

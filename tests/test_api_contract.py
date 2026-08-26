@@ -30,6 +30,8 @@ through the module object at call time.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -302,6 +304,60 @@ def test_total_cost_is_none_when_any_call_has_unknown_cost(client, tmp_path, mon
 
     detail = client.get("/runs/run-partial01").json()
     assert detail["total_cost_usd"] is None
+
+
+def test_run_cost_prefers_exact_circuit_ledger_over_partial_agent_logs(
+    client, tmp_path, monkeypatch,
+):
+    """Settled paid calls remain visible even if the stage log never writes."""
+    db_path = tmp_path / "circuit_cost.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_agent_log(
+        agent_name="macro_analyst", run_id="run-circuit01",
+        input_summary="x", output_summary="x", full_response="{}",
+        model="test", tokens_used=100, cost_usd=0.0058333,
+    )
+    db.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO llm_budget_sessions "
+            "(run_id, day, mode, actual_cost_usd, costs_exact) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("run-circuit01", "2026-08-26", "morning", 0.0382979, 1),
+        )
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    summary = client.get("/runs").json()["runs"][0]
+    detail = client.get("/runs/run-circuit01").json()
+
+    assert summary["total_cost_usd"] == pytest.approx(0.0382979)
+    assert detail["total_cost_usd"] == pytest.approx(0.0382979)
+
+
+def test_run_cost_is_unknown_when_circuit_ledger_is_inexact(
+    client, tmp_path, monkeypatch,
+):
+    db_path = tmp_path / "inexact_circuit_cost.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_agent_log(
+        agent_name="macro_analyst", run_id="run-inexact01",
+        input_summary="x", output_summary="x", full_response="{}",
+        model="test", tokens_used=100, cost_usd=0.01,
+    )
+    db.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO llm_budget_sessions "
+            "(run_id, day, mode, actual_cost_usd, costs_exact) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("run-inexact01", "2026-08-26", "morning", 0.04, 0),
+        )
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    assert client.get("/runs").json()["runs"][0]["total_cost_usd"] is None
+    assert client.get("/runs/run-inexact01").json()["total_cost_usd"] is None
 
 
 # ---------------------------------------------------------------------------

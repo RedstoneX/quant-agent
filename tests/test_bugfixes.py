@@ -526,6 +526,67 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
     assert pipeline._admit_transient_smart_money_symbols(observations)[0] == set()
 
 
+def test_morning_prefilter_requires_real_macd_histogram_crossover(monkeypatch):
+    """A merely small MACD histogram is ordinary, not an opportunity."""
+    from src.models import TechnicalIndicators
+
+    bars = [MagicMock(close=100.0) for _ in range(30)]
+    indicators = TechnicalIndicators(
+        symbol="SPY", rsi_14=50.0, macd_hist=0.1,
+        atr_14=10.0, volume_change_pct=0.0,
+    )
+    monkeypatch.setattr(
+        "src.pipeline.compute_indicators",
+        lambda _symbol, _bars: TechnicalIndicators(
+            symbol="SPY", macd_hist=0.2,
+        ),
+    )
+
+    assert TradingPipeline._has_actionable_signal_fn(
+        indicators, "SPY", bars, [],
+    ) is False
+
+
+def test_morning_prefilter_accepts_macd_histogram_sign_change(monkeypatch):
+    from src.models import TechnicalIndicators
+
+    bars = [MagicMock(close=100.0) for _ in range(30)]
+    indicators = TechnicalIndicators(
+        symbol="SPY", rsi_14=50.0, macd_hist=0.1,
+        atr_14=10.0, volume_change_pct=0.0,
+    )
+    monkeypatch.setattr(
+        "src.pipeline.compute_indicators",
+        lambda _symbol, _bars: TechnicalIndicators(
+            symbol="SPY", macd_hist=-0.2,
+        ),
+    )
+
+    assert TradingPipeline._has_actionable_signal_fn(
+        indicators, "SPY", bars, [],
+    ) is True
+
+
+def test_morning_prefilter_rejects_unchanged_zero_macd_histogram(monkeypatch):
+    from src.models import TechnicalIndicators
+
+    bars = [MagicMock(close=100.0) for _ in range(30)]
+    indicators = TechnicalIndicators(
+        symbol="SPY", rsi_14=50.0, macd_hist=0.0,
+        atr_14=10.0, volume_change_pct=0.0,
+    )
+    monkeypatch.setattr(
+        "src.pipeline.compute_indicators",
+        lambda _symbol, _bars: TechnicalIndicators(
+            symbol="SPY", macd_hist=0.0,
+        ),
+    )
+
+    assert TradingPipeline._has_actionable_signal_fn(
+        indicators, "SPY", bars, [],
+    ) is False
+
+
 def test_pipeline_drops_decision_when_risk_modification_invalid():
     """When RM proposes a mod that fails schema validation, the underlying
     decision must be DROPPED, not left at its original (un-tightened) value.

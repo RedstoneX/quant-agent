@@ -76,6 +76,20 @@ class PaidAnalysisSuspended(RuntimeError):
         super().__init__(f"paid analysis suspended: {trigger}")
 
 
+class OptionalPaidAnalysisRetrySkipped(RuntimeError):
+    """An optional repair was not reserved because its retry budget was spent.
+
+    This is not a circuit failure: no provider request was attempted and the
+    caller may safely retain already-completed primary analysis. All mandatory
+    limits and every non-retry trigger continue to use ``PaidAnalysisSuspended``.
+    """
+
+    def __init__(self, trigger: str, state: dict[str, Any] | None = None):
+        self.trigger = trigger
+        self.state = state or {}
+        super().__init__(f"optional paid-analysis retry skipped: {trigger}")
+
+
 @dataclass(frozen=True)
 class CallReservation:
     reservation_id: str
@@ -2080,6 +2094,7 @@ class LLMCostCircuitBreaker:
         user_message: str,
         max_output_tokens: int,
         retry_kind: str | None = None,
+        optional_retry: bool = False,
     ) -> CallReservation:
         """Atomically reserve one conservatively estimated provider request."""
 
@@ -2174,11 +2189,28 @@ class LLMCostCircuitBreaker:
                 max_session_retries = int(self.config.max_retry_attempts_per_session)
 
                 if retry_kind and session_retries + 1 > max_session_retries:
+                    detail = (
+                        f"session retry {retry_kind!r} would be attempt "
+                        f"{session_retries + 1}, above safe limit "
+                        f"{max_session_retries}"
+                    )
+                    if optional_retry:
+                        conn.commit()
+                        raise OptionalPaidAnalysisRetrySkipped(
+                            detail,
+                            {
+                                "run_id": run_id,
+                                "mode": mode,
+                                "agent_name": agent_name,
+                                "retry_kind": retry_kind,
+                                "retry_attempts": session_retries,
+                                "max_retry_attempts": max_session_retries,
+                                "trigger_code": "optional_retry_budget_exhausted",
+                            },
+                        )
                     self._trip_locked(
                         conn, code="session_retry_attempt_limit",
-                        detail=(f"session retry {retry_kind!r} would be attempt "
-                                f"{session_retries + 1}, above safe limit "
-                                f"{max_session_retries}"),
+                        detail=detail,
                         run_id=run_id, mode=mode, agent_name=agent_name,
                         attempts=attempts, session_cost=session, daily_cost=daily,
                         costs_exact=False,
