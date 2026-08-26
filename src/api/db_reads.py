@@ -311,6 +311,30 @@ def _cost_rows_to_total(rows) -> float | None:
     return sum(float(r["cost_usd"]) for r in rows)
 
 
+def _canonical_run_cost(conn: sqlite3.Connection, run_id: str, agent_cost_rows) -> float | None:
+    """Prefer the exact mandatory-circuit ledger over agent-log attribution.
+
+    A paid call can settle successfully and then the enclosing stage can stop
+    before its merged ``agent_logs`` row is written.  Summing those rows would
+    report a precise-looking partial cost.  The circuit session is the shared
+    accounting authority and already includes every settled provider call.
+    Legacy databases/runs without that row retain the prior agent-log behavior.
+    """
+    try:
+        row = conn.execute(
+            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    if row is None:
+        return _cost_rows_to_total(agent_cost_rows)
+    if not bool(row["costs_exact"]):
+        return None
+    return float(row["actual_cost_usd"])
+
+
 def get_recent_runs(limit: int = 20) -> list[dict]:
     """Per-run_id summary from agent_logs, newest-last-activity first.
 
@@ -338,7 +362,9 @@ def get_recent_runs(limit: int = 20) -> list[dict]:
                 "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
                 (d["run_id"],),
             ).fetchall()
-            d["total_cost_usd"] = _cost_rows_to_total(cost_rows)
+            d["total_cost_usd"] = _canonical_run_cost(
+                conn, d["run_id"], cost_rows,
+            )
             out.append(d)
         return out
     except sqlite3.Error:
@@ -378,7 +404,7 @@ def get_run_detail(run_id: str) -> dict:
         cost_rows = conn.execute(
             "SELECT cost_usd FROM agent_logs WHERE run_id = ?", (run_id,),
         ).fetchall()
-        total_cost_usd = _cost_rows_to_total(cost_rows)
+        total_cost_usd = _canonical_run_cost(conn, run_id, cost_rows)
         return {
             "agent_logs": agent_logs,
             "trades": trades,
@@ -763,7 +789,9 @@ def get_journal_day(date_str: str) -> dict:
             cost_rows = conn.execute(
                 "SELECT cost_usd FROM agent_logs WHERE run_id = ?", (d["run_id"],),
             ).fetchall()
-            d["total_cost_usd"] = _cost_rows_to_total(cost_rows)
+            d["total_cost_usd"] = _canonical_run_cost(
+                conn, d["run_id"], cost_rows,
+            )
             runs.append(d)
 
         trade_rows = conn.execute(

@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
+from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
 from src.models import TechAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -217,8 +218,8 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
 
         Every symbol in `symbols_data` is guaranteed to be a key in the
         returned dict (2026-08-19 Tech batch-response symbol-loss fix) —
-        `None` marks a symbol that failed to resolve even after a bounded
-        retry within its chunk. Callers MUST filter `None` values out
+        `None` marks a symbol that failed to resolve after the logical batch's
+        bounded recovery opportunity. Callers MUST filter `None` values out
         before treating the dict's values as a list of real analyses
         (e.g. `[a for a in result.values() if a is not None]`), and should
         surface the None count rather than silently dropping it — that
@@ -257,6 +258,77 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         )
 
         merged: dict[str, TechAnalysisResult | None] = {}
+        result_parts: list[tuple[str, AgentResult]] = []
+        # Phase 1: every primary chunk gets one chance before any repair.
+        # Independent per-chunk recursion used to consume the session-wide
+        # repair allowance before the later chunks were even analyzed.
+        for i, chunk in enumerate(chunks, 1):
+            chunk_analyses, chunk_result = self._analyze_chunk(
+                chunk, prior_ratings, valuations,
+                prior_macro_regime, prior_macro_outlook, intraday_context,
+                _retries_left=0,
+            )
+            merged.update(chunk_analyses)
+            if chunk_result is not None:
+                result_parts.append((f"chunk {i}/{len(chunks)}", chunk_result))
+
+        # Phase 2: one consolidated, bounded recovery for the whole logical
+        # batch.  Original input order is retained; run-scoped admissions are
+        # placed first by MorningResearchStage, so fresh external evidence is
+        # not stranded behind the configured universe.  Anything beyond one
+        # safe chunk remains explicit None and therefore cannot reach PM.
+        missing_data = [
+            item for item in symbols_data
+            if merged.get(item.get("symbol")) is None
+        ]
+        if missing_data:
+            recovery_data = missing_data[:_CHUNK_SIZE]
+            logger.warning(
+                "Tech batch incomplete across %d primary chunk(s): %d symbol(s) "
+                "unresolved — one consolidated recovery for %d symbol(s); "
+                "%d remain explicit failures without another paid retry",
+                len(chunks), len(missing_data), len(recovery_data),
+                len(missing_data) - len(recovery_data),
+            )
+            try:
+                recovered, recovery_result = self._analyze_chunk(
+                    recovery_data, prior_ratings, valuations,
+                    prior_macro_regime, prior_macro_outlook, intraday_context,
+                    _retries_left=0, _is_logical_retry=True,
+                )
+            except OptionalPaidAnalysisRetrySkipped as exc:
+                recovered, recovery_result = {}, None
+                logger.warning(
+                    "Tech batch recovery skipped without provider I/O; shared "
+                    "session retry allowance is already spent: %s", exc.trigger,
+                )
+            except PaidAnalysisSuspended:
+                raise
+            except Exception as exc:
+                recovered, recovery_result = {}, None
+                logger.error(
+                    "Tech batch optional recovery failed; retaining completed "
+                    "primary analyses: %s", exc,
+                )
+            merged.update({
+                symbol: analysis
+                for symbol, analysis in recovered.items()
+                if analysis is not None
+            })
+            if recovery_result is not None:
+                result_parts.append(("missing-symbol recovery", recovery_result))
+
+        final_missing = [
+            item.get("symbol") for item in symbols_data
+            if merged.get(item.get("symbol")) is None
+        ]
+        if final_missing:
+            logger.error(
+                "Tech batch: %d symbol(s) unresolved after the single shared "
+                "recovery — explicit failed outcomes: %s",
+                len(final_missing), final_missing,
+            )
+
         combined_raw: list[str] = []
         combined_msg: list[str] = []
         total_tokens = 0
@@ -286,30 +358,24 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         total_latency = 0.0
         total_provider_requests = 0
         last_finish_reason: str | None = None
-        for i, chunk in enumerate(chunks, 1):
-            chunk_analyses, chunk_result = self._analyze_chunk(
-                chunk, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook, intraday_context,
-            )
-            merged.update(chunk_analyses)
-            if chunk_result is not None:
-                combined_raw.append(f"--- chunk {i}/{len(chunks)} ---\n{chunk_result.raw_text}")
-                combined_msg.append(f"--- chunk {i}/{len(chunks)} ---\n{chunk_result.user_message}")
-                total_tokens += chunk_result.tokens_used
-                total_input_tokens += chunk_result.input_tokens
-                total_output_tokens += chunk_result.output_tokens
-                if chunk_result.cost_usd is None:
-                    any_unknown_cost = True
-                else:
-                    chunk_costs.append(chunk_result.cost_usd)
-                last_model = chunk_result.model
-                requested_provider = chunk_result.requested_provider or requested_provider
-                prompt_version = chunk_result.prompt_version or prompt_version
-                any_used_fallback = any_used_fallback or chunk_result.used_fallback
-                any_truncated = any_truncated or chunk_result.truncated
-                total_latency += chunk_result.latency_s
-                total_provider_requests += chunk_result.provider_requests
-                last_finish_reason = chunk_result.finish_reason
+        for label, part in result_parts:
+            combined_raw.append(f"--- {label} ---\n{part.raw_text}")
+            combined_msg.append(f"--- {label} ---\n{part.user_message}")
+            total_tokens += part.tokens_used
+            total_input_tokens += part.input_tokens
+            total_output_tokens += part.output_tokens
+            if part.cost_usd is None:
+                any_unknown_cost = True
+            else:
+                chunk_costs.append(part.cost_usd)
+            last_model = part.model
+            requested_provider = part.requested_provider or requested_provider
+            prompt_version = part.prompt_version or prompt_version
+            any_used_fallback = any_used_fallback or part.used_fallback
+            any_truncated = any_truncated or part.truncated
+            total_latency += part.latency_s
+            total_provider_requests += part.provider_requests
+            last_finish_reason = part.finish_reason
 
         merged_cost: float | None
         if any_unknown_cost or not chunk_costs:
@@ -355,8 +421,8 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         a `TechAnalysisResult` for a successfully parsed rating (including
         `neutral`/`sell`; a considered-and-passed symbol is a terminal
         outcome too, not a loss), or `None` for a symbol that could not be
-        resolved even after a bounded retry (visibly failed, never
-        silently absent). Previously a chunk that came back short (one
+        resolved within the caller's bounded retry policy (visibly failed,
+        never silently absent). Previously a chunk that came back short (one
         production incident parsed 1/10 submitted symbols) just had
         nothing in the dict for the other 9 — logged once at WARNING and
         otherwise indistinguishable from "never asked".
@@ -372,6 +438,8 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         result = self._execute(
             user_message,
             retry_kind="missing_symbol_recovery" if _is_logical_retry else None,
+            optional_retry=_is_logical_retry,
+            single_provider_attempt=_is_logical_retry,
         )
         parsed = result.parse_json()
 
@@ -427,7 +495,9 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
                 )
 
         missing = submitted - set(analyses.keys())
+        retry_attempted = False
         if missing and _retries_left > 0:
+            retry_attempted = True
             retry_data = [
                 s for s in symbols_data
                 if isinstance(s, dict) and s.get("symbol") in missing
@@ -439,12 +509,27 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
                 len(submitted), len(analyses), failed_symbols, sorted(missing),
                 len(retry_data), _retries_left,
             )
-            retry_analyses, retry_result = self._analyze_chunk(
-                retry_data, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook, intraday_context,
-                _retries_left=_retries_left - 1,
-                _is_logical_retry=True,
-            )
+            try:
+                retry_analyses, retry_result = self._analyze_chunk(
+                    retry_data, prior_ratings, valuations,
+                    prior_macro_regime, prior_macro_outlook, intraday_context,
+                    _retries_left=_retries_left - 1,
+                    _is_logical_retry=True,
+                )
+            except OptionalPaidAnalysisRetrySkipped as exc:
+                retry_analyses, retry_result = {}, None
+                logger.warning(
+                    "Tech recovery skipped without provider I/O; shared session "
+                    "retry allowance is already spent: %s", exc.trigger,
+                )
+            except PaidAnalysisSuspended:
+                raise
+            except Exception as exc:
+                retry_analyses, retry_result = {}, None
+                logger.error(
+                    "Tech optional recovery failed; retaining completed primary "
+                    "analysis: %s", exc,
+                )
             analyses.update({
                 sym: a for sym, a in retry_analyses.items() if a is not None
             })
@@ -462,7 +547,10 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
                     "Tech batch: %d symbol(s) unresolved after%s — recording an "
                     "explicit failed outcome (never silently dropped): %s",
                     len(missing),
-                    " retry" if _MAX_MISSING_RETRIES > 0 else " parsing",
+                    (
+                        " retry" if retry_attempted else
+                        " parsing (shared retry budget exhausted)"
+                    ),
                     sorted(missing),
                 )
             elif failed_symbols:

@@ -250,6 +250,19 @@ loginctl enable-linger "$USER"
 
 `TimeoutStartSec=1500` on the service is the systemd safety net above the wrapper's own `timeout --kill-after=30 1200` (so the wrapper kills Python before systemd kills the wrapper). The timer's `Persistent=true` catches up after reboots.
 
+For an exceptional same-day engineering verification, an operator can rerun
+the morning session inside its normal ET window with a recorded reason:
+
+```bash
+scripts/run_if_et_window.sh morning --operator-rerun "verify deployed fix"
+```
+
+This bypasses only the once-per-day marker. The weekday/window check,
+cross-mode lock, timeout, paid-analysis circuit, Paper configuration, risk
+chain, and broker protections remain in force. Each attempt is appended to
+`~/.cache/quant-agent/operator-reruns.log`; this is an audit tool, not a second
+schedule.
+
 **macOS (launchd, legacy path — works but Sequoia has two extra hurdles)**
 
 If you deploy via `scripts/install_plists.sh`, Sequoia adds:

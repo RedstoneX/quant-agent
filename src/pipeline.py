@@ -1018,13 +1018,22 @@ class TradingPipeline:
                     return True
                 if abs(last_close - indicators.bb_lower) / band_width < 0.1:
                     return True
-        if indicators.macd_hist is not None:
-            if indicators.atr_14 and indicators.atr_14 > 0:
-                if abs(indicators.macd_hist) < 0.2 * indicators.atr_14:
-                    return True
-            elif indicators.ma_20 and indicators.ma_20 > 0:
-                if abs(indicators.macd_hist) / indicators.ma_20 < 0.003:
-                    return True
+        if indicators.macd_hist is not None and len(bars) >= 27:
+            # A MACD histogram merely being small is common, not a signal.
+            # The original prefilter intended to catch a histogram changing
+            # sign, but implemented only "near zero"; in production that
+            # admitted most of the universe (36/75 sampled names on 2026-08-26
+            # qualified solely through this clause).  Recompute the prior
+            # completed bar and require an actual zero-line crossover.
+            try:
+                previous_hist = compute_indicators(symbol, bars[:-1]).macd_hist
+            except Exception:
+                previous_hist = None
+            if previous_hist is not None and (
+                (previous_hist < 0 < indicators.macd_hist)
+                or (previous_hist > 0 > indicators.macd_hist)
+            ):
+                return True
         if indicators.volume_change_pct is not None and abs(indicators.volume_change_pct) > 50:
             return True
         if indicators.ma_20 and indicators.ma_50:

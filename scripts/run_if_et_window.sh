@@ -7,13 +7,41 @@
 # share this script so the system fires at correct US market times regardless
 # of the host's timezone — survives the user flying across continents.
 #
-# Usage: run_if_et_window.sh <earnings_preprocess|morning|intra_check|midday|evening>
+# Usage: run_if_et_window.sh <earnings_preprocess|morning|intra_check|midday|close|evening>
+#        run_if_et_window.sh morning --operator-rerun "reason"
 
 set -eu
 
 MODE="${1:-}"
 if [[ -z "$MODE" ]]; then
-    echo "usage: $0 <earnings_preprocess|morning|intra_check|midday|evening>" >&2
+    echo "usage: $0 <earnings_preprocess|morning|intra_check|midday|close|evening>" >&2
+    exit 2
+fi
+
+# Explicit same-day morning rerun for engineering verification. This skips
+# ONLY the once-per-day marker below: weekday/window, cross-mode lock, timeout,
+# Python's Paper-only configuration, paid-analysis circuit, deterministic risk,
+# and broker protections all remain authoritative. Requiring a reason makes the
+# exceptional run visible and discourages this from becoming a second schedule.
+OPERATOR_RERUN=0
+OPERATOR_RERUN_REASON=""
+if [[ "${2:-}" == "--operator-rerun" ]]; then
+    OPERATOR_RERUN=1
+    OPERATOR_RERUN_REASON="${3:-}"
+    if [[ "$MODE" != "morning" ]]; then
+        echo "--operator-rerun is supported only for morning" >&2
+        exit 2
+    fi
+    if [[ -z "$OPERATOR_RERUN_REASON" || "$OPERATOR_RERUN_REASON" == *$'\n'* || "$OPERATOR_RERUN_REASON" == *$'\r'* || ${#OPERATOR_RERUN_REASON} -gt 200 ]]; then
+        echo "--operator-rerun requires a single-line reason of 1-200 characters" >&2
+        exit 2
+    fi
+    if [[ -n "${4:-}" ]]; then
+        echo "--operator-rerun accepts exactly one quoted reason" >&2
+        exit 2
+    fi
+elif [[ -n "${2:-}" ]]; then
+    echo "unknown option: ${2}" >&2
     exit 2
 fi
 
@@ -96,7 +124,7 @@ fi
 # once-per-day guard is skipped and no last-run file is written for it.
 LAST_FILE="${LAST_RUN_DIR}/last-${MODE}"
 NOW_UNIX="${NOW_UNIX_OVERRIDE:-$(date +%s)}"
-if [[ "$MODE" != "intra_check" && -f "$LAST_FILE" ]]; then
+if [[ "$MODE" != "intra_check" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
     LAST_VALUE="$(cat "$LAST_FILE" 2>/dev/null || echo 0)"
     LAST_DATE="${LAST_VALUE%% *}"
     # Primary guard: never fire the same mode twice in the same ET session date.
@@ -176,7 +204,12 @@ acquire_session_lock
 trap release_session_lock EXIT INT TERM
 
 # === All checks passed — fire ===
-echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Firing ${MODE} (ET ${ET_DATE} ${ET_HOUR}:${ET_MIN}, weekday ${ET_DOW})"
+if [[ "$OPERATOR_RERUN" -eq 1 ]]; then
+    echo "${ET_DATE} ${NOW_UNIX} $$ ${OPERATOR_RERUN_REASON}" >> "${LAST_RUN_DIR}/operator-reruns.log"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Firing ${MODE} operator rerun (ET ${ET_DATE} ${ET_HOUR}:${ET_MIN}, weekday ${ET_DOW}; reason: ${OPERATOR_RERUN_REASON})"
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Firing ${MODE} (ET ${ET_DATE} ${ET_HOUR}:${ET_MIN}, weekday ${ET_DOW})"
+fi
 cd "$PROJECT_ROOT"
 
 # Load API keys from .env — single source of truth for secrets.

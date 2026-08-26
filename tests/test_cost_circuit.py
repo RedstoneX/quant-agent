@@ -12,7 +12,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agents.base import BaseAgent
-from src.cost_circuit import LLMCostCircuitBreaker, PaidAnalysisSuspended, _trigger_scope
+from src.cost_circuit import (
+    LLMCostCircuitBreaker,
+    OptionalPaidAnalysisRetrySkipped,
+    PaidAnalysisSuspended,
+    _trigger_scope,
+)
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
 
@@ -114,6 +119,43 @@ def test_projected_session_spend_blocks_before_provider_request(tmp_path):
     assert "scope: run run-projected only" in alert
     assert "later independent sessions remain eligible" in alert
     assert "preserved: broker-resident stops" in alert
+
+
+def test_optional_retry_budget_exhaustion_skips_without_opening_circuit(tmp_path):
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-optional-retry", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET retry_attempts=2 WHERE run_id=?",
+            ("run-optional-retry",),
+        )
+
+    with pytest.raises(OptionalPaidAnalysisRetrySkipped):
+        circuit.begin_call(
+            agent_name="tech_analyst",
+            model="google/gemini-2.5-flash-lite",
+            system_prompt="s",
+            user_message="u",
+            max_output_tokens=100,
+            retry_kind="missing_symbol_recovery",
+            optional_retry=True,
+        )
+
+    state = circuit.status()
+    assert state["suspended"] is False
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT logical_calls, provider_attempts, retry_attempts, status "
+            "FROM llm_budget_sessions WHERE run_id=?",
+            ("run-optional-retry",),
+        ).fetchone()
+        reservations = conn.execute(
+            "SELECT COUNT(*) FROM llm_budget_reservations WHERE run_id=?",
+            ("run-optional-retry",),
+        ).fetchone()[0]
+    assert row == (0, 0, 2, "active")
+    assert reservations == 0
 
 
 def test_completed_session_spend_holds_only_that_session_and_cannot_be_reset(tmp_path):

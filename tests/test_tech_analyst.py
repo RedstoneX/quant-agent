@@ -1,11 +1,15 @@
 import json
+import sqlite3
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
 
 from src.agents.tech_analyst import TechAnalystAgent
+from src.cost_circuit import LLMCostCircuitBreaker
 from src.models import OHLCV, TechnicalIndicators
+from src.storage.db import Database
 
 
 @pytest.fixture
@@ -488,3 +492,213 @@ def test_chunked_batch_never_loses_a_symbol_across_chunks(
     assert set(results.keys()) == set(syms), "no symbol may vanish between chunks"
     assert all(results[s] is not None for s in syms[:25])
     assert all(results[s] is None for s in syms[25:])
+
+
+@patch("anthropic.Anthropic")
+def test_chunked_batch_shares_one_missing_symbol_retry_budget(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """Large batches must not spend one logical repair per chunk.
+
+    The paid circuit's retry ceiling is session-wide.  When three chunks
+    each omit one symbol, Tech consolidates all omissions into its single
+    shared recovery and never requests the third per-chunk repair that would
+    suspend the whole morning run.
+    """
+    syms = [f"SYM{i:02d}" for i in range(75)]
+    asked_per_call = []
+
+    def _respond(**kw):
+        content = kw.get("messages", [{}])[0].get("content", "")
+        asked = [symbol for symbol in syms if f"### {symbol}" in content]
+        asked_per_call.append(asked)
+        returned = asked[1:] if len(asked) == 25 else asked
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps([
+            json.loads(_valid_response_for(symbol))[0] for symbol in returned
+        ]))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert set(results) == set(syms)
+    assert all(result is not None for result in results.values())
+    assert [len(asked) for asked in asked_per_call] == [25, 25, 25, 3]
+    assert asked_per_call[-1] == ["SYM00", "SYM25", "SYM50"]
+    assert mock_client.messages.create.call_count == 4  # 3 chunks + 1 repair
+
+
+@patch("anthropic.Anthropic")
+def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """A severely incomplete batch still makes only one bounded repair."""
+    syms = [f"SYM{i:02d}" for i in range(75)]
+    asked_per_call = []
+
+    def _respond(**kw):
+        content = kw.get("messages", [{}])[0].get("content", "")
+        asked = [symbol for symbol in syms if f"### {symbol}" in content]
+        asked_per_call.append(asked)
+        # All three primary calls fail to cover their symbols.  The sole
+        # recovery call resolves only its deterministic first 25.
+        returned = asked if len(asked_per_call) == 4 else []
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps([
+            json.loads(_valid_response_for(symbol))[0] for symbol in returned
+        ]))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert [len(asked) for asked in asked_per_call] == [25, 25, 25, 25]
+    assert asked_per_call[-1] == syms[:25]
+    assert all(results[symbol] is not None for symbol in syms[:25])
+    assert all(results[symbol] is None for symbol in syms[25:])
+
+
+@patch("anthropic.Anthropic")
+def test_chunked_batch_composes_with_session_retry_circuit(
+    mock_cls, sample_indicators, sample_bars, tmp_path,
+):
+    """Production-scale Tech uses one of the session's two retry slots."""
+    syms = [f"SYM{i:02d}" for i in range(75)]
+
+    def _respond(**kw):
+        content = kw.get("messages", [{}])[0].get("content", "")
+        asked = [symbol for symbol in syms if f"### {symbol}" in content]
+        returned = asked[1:] if len(asked) == 25 else asked
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps([
+            json.loads(_valid_response_for(symbol))[0] for symbol in returned
+        ]))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    db_path = tmp_path / "tech-circuit.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.close()
+    circuit = LLMCostCircuitBreaker(
+        str(db_path),
+        SimpleNamespace(
+            enabled=True,
+            session_cost_limit_usd=100.0,
+            daily_cost_limit_usd=200.0,
+            max_paid_sessions_per_mode_per_day=2,
+            max_provider_attempts_per_call=2,
+            max_retry_attempts_per_session=2,
+            reservation_ttl_minutes=30,
+            input_chars_per_token=3.5,
+            reservation_multiplier=1.05,
+            require_telegram_alerts=False,
+        ),
+        MagicMock(enabled=True),
+    )
+    circuit.activate_session("run-tech-shared-retry", "morning")
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    agent.set_cost_circuit(circuit)
+    results, _ = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert all(result is not None for result in results.values())
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT logical_calls, provider_attempts, retry_attempts, status "
+            "FROM llm_budget_sessions WHERE run_id = ?",
+            ("run-tech-shared-retry",),
+        ).fetchone()
+    assert row == (4, 4, 1, "active")
+
+
+@patch("anthropic.Anthropic")
+def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
+    mock_cls, sample_indicators, sample_bars, tmp_path,
+):
+    syms = [f"SYM{i:02d}" for i in range(75)]
+
+    def _respond(**kw):
+        content = kw.get("messages", [{}])[0].get("content", "")
+        asked = [symbol for symbol in syms if f"### {symbol}" in content]
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps([
+            json.loads(_valid_response_for(symbol))[0] for symbol in asked[1:]
+        ]))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+    db_path = tmp_path / "spent-retries.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.close()
+    circuit = LLMCostCircuitBreaker(
+        str(db_path),
+        SimpleNamespace(
+            enabled=True,
+            session_cost_limit_usd=100.0,
+            daily_cost_limit_usd=200.0,
+            max_paid_sessions_per_mode_per_day=2,
+            max_provider_attempts_per_call=2,
+            max_retry_attempts_per_session=2,
+            reservation_ttl_minutes=30,
+            input_chars_per_token=3.5,
+            reservation_multiplier=1.05,
+            require_telegram_alerts=False,
+        ),
+        MagicMock(enabled=True),
+    )
+    circuit.activate_session("run-tech-spent-retries", "morning")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET retry_attempts=2 WHERE run_id=?",
+            ("run-tech-spent-retries",),
+        )
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    agent.set_cost_circuit(circuit)
+    results, merged = agent.analyze_batch(
+        _multi_sym_data(syms, sample_bars, sample_indicators)
+    )
+
+    assert mock_client.messages.create.call_count == 3
+    assert sum(result is not None for result in results.values()) == 72
+    assert [symbol for symbol in syms if results[symbol] is None] == [
+        "SYM00", "SYM25", "SYM50",
+    ]
+    assert merged is not None
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT logical_calls, provider_attempts, retry_attempts, status "
+            "FROM llm_budget_sessions WHERE run_id=?",
+            ("run-tech-spent-retries",),
+        ).fetchone()
+    assert row == (3, 3, 2, "active")

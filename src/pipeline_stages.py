@@ -282,8 +282,12 @@ class MorningResearchStage:
             str(symbol).strip().upper()
             for symbol in self.config.trading.universe if str(symbol).strip()
         ]
+        # Fresh run-scoped SEC admissions are the reason this session has an
+        # expanded research surface.  Put them first so a large configured
+        # universe cannot strand the transient opportunity in the final Tech
+        # chunk after earlier chunks consume the bounded recovery budget.
         effective_symbols = list(dict.fromkeys(
-            configured_symbols + sorted(ctx.admitted_symbols)
+            sorted(ctx.admitted_symbols) + configured_symbols
         ))
 
         for observation in smart_money_observations:
