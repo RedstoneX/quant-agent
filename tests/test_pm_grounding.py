@@ -193,6 +193,70 @@ def test_pm_may_truthfully_state_that_symbol_coverage_is_absent():
     assert errors == []
 
 
+def test_queued_earnings_is_absent_evidence_not_directional_none():
+    """Production run-76bd4e83: ``None`` must not become stance ``'none'``.
+
+    A just-filed placeholder has no completed earnings analysis. It stays in
+    the human-readable prompt as unavailable context, but must not enter the
+    authoritative provenance registry or force a false directional label.
+    """
+    analyses = [_analysis("AMR", "strong_buy")]
+    queued_earnings = [{
+        "symbol": "AMR",
+        "queued": True,
+        "form_type": "10-Q",
+        "filing_date": "2026-08-07",
+        "analysis": None,
+    }]
+
+    assert PortfolioManagerAgent._collapse_stances([None]) is None
+    assert PortfolioManagerAgent._collapse_stances(["unavailable"]) is None
+
+    registry = PortfolioManagerAgent.build_evidence_registry(
+        analyses=analyses,
+        positions=[],
+        news_intel=None,
+        earnings_analyses=queued_earnings,
+        macro_analysis=None,
+    )
+    assert registry == {"AMR": {"technical": "strong_buy"}}
+
+    target = {
+        "symbol": "AMR", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Current Technical strength supports a bounded starter.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "strong_buy",
+            "relationship": "supports", "evidence": "current-run trend",
+        }],
+    }
+    assert PortfolioManagerAgent.validate_grounding(
+        _decision(target),
+        analyses=analyses,
+        positions=[],
+        news_intel=None,
+        earnings_analyses=queued_earnings,
+        macro_analysis=None,
+        total_value=100_000,
+        allowed_buy_symbols={"AMR"},
+    ) == []
+
+    target["provenance"].append({
+        "source": "earnings", "observed_stance": "none",
+        "relationship": "context", "evidence": "not analyzed yet",
+    })
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target),
+        analyses=analyses,
+        positions=[],
+        news_intel=None,
+        earnings_analyses=queued_earnings,
+        macro_analysis=None,
+        total_value=100_000,
+        allowed_buy_symbols={"AMR"},
+    )
+    assert any("earnings coverage that does not exist" in error for error in errors)
+
+
 def test_grounding_failure_returns_original_result_without_another_llm_call(monkeypatch):
     base = {
         "reasoning_chain": {
