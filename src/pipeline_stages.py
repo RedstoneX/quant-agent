@@ -306,9 +306,19 @@ class MorningResearchStage:
                 kind="admission", scope="symbol", symbol=symbol,
                 evidence_json=_json.dumps(admission, sort_keys=True),
             )
+            # The deterministic admission record has its own ``reason``
+            # field (for example ``material_sec_form4_purchase``).  Keep it
+            # as admission detail instead of splatting it over the pipeline
+            # event's positional ``reason`` argument.  Passing both used to
+            # raise before any research agent ran, aborting a natural morning
+            # session precisely when an external candidate qualified.
+            admission_details = dict(admission)
+            admission_reason = admission_details.pop("reason", None)
             _record_pipeline_event(
                 self, ctx, symbol, "opportunity", "admitted",
-                "smart_money_form4_admission", **admission,
+                "smart_money_form4_admission",
+                admission_reason=admission_reason,
+                **admission_details,
             )
 
         def _run_macro():
