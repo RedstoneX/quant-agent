@@ -887,6 +887,88 @@ def test_morning_research_stage_populates_ctx_on_success():
     assert result_ctx.earnings_results == []
 
 
+def test_morning_research_stage_records_admission_reason_without_collision():
+    """A qualified external SEC candidate must not abort morning research.
+
+    Admission details deliberately contain their own ``reason`` field.  The
+    lifecycle event also has a canonical reason, so the two values must be
+    stored under distinct keys instead of being passed twice to the recorder.
+    """
+    from types import SimpleNamespace
+
+    from src.agents.base import AgentResult
+
+    config = SimpleNamespace(
+        trading=SimpleNamespace(universe=["SPY"], lookback_days=30),
+        smart_money=SimpleNamespace(enabled=True),
+    )
+    market = MagicMock()
+    market.get_ohlcv.return_value = []
+    macro = MagicMock()
+    macro.get_macro_summary.return_value = {}
+    macro_analyst = MagicMock()
+    macro_analyst.analyze.return_value = (
+        None,
+        AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
+    )
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    smart_money_provider = MagicMock()
+    smart_money_provider.fetch.return_value = ([SimpleNamespace(symbol="RSG")], None)
+    admission = {
+        "temporary": True,
+        "reason": "material_sec_form4_purchase",
+        "transaction_value_usd": 87_980_000.0,
+    }
+    db = MagicMock()
+
+    stage = MorningResearchStage(
+        config=config,
+        db=db,
+        market=market,
+        macro=macro,
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_analyst,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        smart_money_provider=smart_money_provider,
+        smart_money_analyst=None,
+        admit_smart_money_candidates_fn=lambda _observations: (
+            {"RSG"}, {"RSG": admission},
+        ),
+        has_actionable_signal_fn=lambda *args, **kwargs: False,
+        run_news_update_fn=lambda *args, **kwargs: None,
+        load_earnings_analyses_fn=lambda *args, **kwargs: ([], []),
+    )
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.admitted_symbols == {"RSG"}
+    event_payloads = [
+        json.loads(call.kwargs["evidence_json"])
+        for call in db.insert_specialist_evidence.call_args_list
+        if call.kwargs["agent_name"] == "pipeline"
+        and call.kwargs["kind"] == "pipeline_event"
+        and call.kwargs["symbol"] == "RSG"
+    ]
+    admission_event = next(
+        payload for payload in event_payloads
+        if payload["outcome"] == "admitted"
+    )
+    assert admission_event["reason"] == "smart_money_form4_admission"
+    assert admission_event["admission_reason"] == "material_sec_form4_purchase"
+    assert admission_event["transaction_value_usd"] == 87_980_000.0
+
+
 @patch("src.pipeline_stages.compute_indicators")
 def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_compute_indicators):
     """2026-08-19 Tech batch-response symbol-loss fix, pipeline-level: when
