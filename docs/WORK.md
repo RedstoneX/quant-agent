@@ -1,72 +1,43 @@
 # QAMC Current Work
 
-Status: **ET-DAY QUOTA HOLD | NON-LLM SAFETY ACTIVE | SCOPED AUTO-RECOVERY APPROVED**
+Status: **AUG 26 ROOT FIXES DEPLOYED | PAPER SAFE | NATURAL FULL-CHAIN ACCEPTANCE OPEN**
 
 ## Current integration truth
 
 - Production is deployed and verified at
-  `1bb4e23f259af36a67eae4d2400a2ae8960f2fbc`; rollback SHA is
-  `9c24f78ec99dbcafa62413858aff7e735ae10dbd`.
-- PR #81 deployed the persistent mandatory cost circuit and PM/pipeline
-  remediation. PR #83 fixed the intraday lock context manager that the first
-  natural suspended tick exposed. The full suite passed 2,110 tests and the
-  deployed intraday suite passed 24 tests.
-- Production seeded **$4.211481** of existing ET-day spend and latched the
-  **$1.50** daily limit with `alert_state=1`. The required Telegram shutdown
-  alert was delivered. PR #89 migrated that unchanged incident into a day quota
-  hold without a duplicate alert, provider call, new agent log or new circuit
-  event. Do not reset or erase the ledger. Accounting, non-monotonic dates,
-  unresolved attempted requests, price/unknown-cost and unrecognized failures
-  remain hard operator-reset latches.
-- A post-deployment midday run reconciled both broker-protected long positions,
-  then returned `paid_analysis_suspended` before any model request. Agent-log
-  ID 189 and ET-day spend remained unchanged.
-- The 18:30 UTC intraday tick also reconciled both protected longs and blocked
-  before Tech with zero spend. Its initial structured suspension was masked by
-  `generator didn't stop after throw()`; PR #83 now propagates the suspension
-  through the advisory lock correctly. The incident was never manually reset;
-  max agent-log ID remains 189 and incremental circuit spend remains $0.00.
-- PR #69 fixed the intraday chart data path by explicitly requesting Alpaca IEX for 5m/15m/1h bars. Production verification reported non-empty SPY/AAPL bars and working `5m Today`, `15m`, `1h`, and `1D` chart controls.
-- The chart live-price/current-price truth issue was already fixed by commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b`. It is not an outstanding task.
-- The previously flagged `get_latest_price` missing-feed concern is not an established defect: Alpaca latest trade/quote requests default to the best feed available to the subscription; current probes show IEX succeeds and explicitly requested SIP is rejected as unsubscribed, as expected. The method's `None` result on an actual API exception is intentional and tested fail-closed behavior.
-- Production remains Alpaca Paper. The seven existing timers remained intact, Mission Control remained private/read-only, and `config/settings.yaml: intraday_scan.enabled: true` was preserved.
-- GitHub `main` may move ahead with documentation or later accepted work. **Production does not automatically follow `main`.**
-- PRs #74, #75, #76 and #77 are merged and deployed. Backend recovery and the final Mission Control finish line are complete.
-- PR #79 is merged and deployed. The Research Desk passed production desktop
-  and iPad verification against real stored QAMC data; the API remained
-  read-only and all seven timers remained intact.
-- PR #87 is merged and deployed. It finishes the Research Desk editorial and
-  visual acceptance: evidence-backed change/tension/why-now, restrained desk
-  annotation and semantic seat language, technical setup context, run-local
-  PM/Risk/gate/execution deltas, canonical SEC findings and standalone
-  run-scoped admissions, complete after-bell parsing, persistent Dockview
-  maximize behavior, and deliberately composed iPad/empty/stale/partial states.
-  Production desktop and iPad inspection passed with the canonical stored data,
-  no console/request errors, no horizontal overflow, no micro-text and no raw
-  failure/telemetry copy. The API remains read-only and all seven timers remain
-  intact.
-- PR #89 is merged and deployed. Expected budget exhaustion is scoped to the
-  affected run, mode/day or ET day; hard integrity faults remain global and
-  operator-reset-only. Trip/recovery Telegram leases are ordered and
-  deduplicated, rollover is strictly forward-only and API/React/legacy health
-  surfaces distinguish quota, recovery, hard-stop and unavailable states.
-- PR #85 replaced the blocked Bargo adapter with first-party SEC Form 4 and
-  enabled the Smart Money seat. Its source-only production preflight processed
-  25 official filings, cached 13 exact P/S observations and retained five
-  material rows for SPIR/TISI. No symbol cleared the higher external-admission
-  threshold, no LLM call occurred, max agent-log ID remained 189 and the cost
-  circuit remained quota-held at the unchanged $4.211481.
-- Run-scoped automatic admission is active for qualifying symbols outside the
-  configured 77-stock universe. The permanent universe is unchanged; the lane
-  is capped at three names and remains behind broker/common-stock, price,
-  history, liquidity, sector, Technical, PM, AI Risk and deterministic gates.
-- Engineering passed 2,161 Python tests and 71 frontend tests; the production
-  build, 19 fixture scenarios and live desktop+iPad circuit/Research Desk
-  inspection passed without console/page/request errors or horizontal overflow.
-- Deployment verification passed `/health`, DB migration/ledger invariants,
-  broker positions and protective stops, Alpaca Paper, `/cockpit`, read-only
-  method rejection and all seven existing timers. No provider call was forced.
-- The only tracked production delta remains `config/settings.yaml: intraday_scan.enabled: true`.
+  `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7`; rollback SHA is
+  `7fe6e4babbf3cf0209d8f93536f8150de70fea37`.
+- Production remains Alpaca Paper. Mission Control is private/read-only, all
+  seven existing timers remain intact, and the only tracked production delta is
+  `config/settings.yaml: intraday_scan.enabled: true`.
+- The Aug 25 ET-day quota hold rearmed automatically on Aug 26 with exact
+  accounting. No manual reset or spend deletion occurred.
+- The first Aug 26 morning run admitted RSG, AMR and PAM, then safely stopped on
+  a Tech recovery/session-limit mismatch before PM, Risk or broker submission.
+- PR #92 fixes that contract with one bounded consolidated recovery, retained
+  primary results, a narrower prefilter and compact Smart Money input. The
+  controlled rerun completed all 54 selected Technical analyses and produced
+  seven directional PM targets.
+- That rerun exposed two independent data-shaping defects before Risk: valid
+  fenced Smart Money JSON lost its wrapper, and missing queued earnings became
+  a false `none` stance. PR #93 fixes both at their source without weakening PM
+  grounding. The exact saved response replays with all eight findings.
+- Run-scoped SEC Form 4 admission remains active for qualifying symbols outside
+  the configured 101-stock universe. The lane is capped at three names and
+  remains behind broker eligibility, price, history, liquidity, sector,
+  Technical, PM, AI Risk and deterministic gates.
+- The audited operator-rerun switch can bypass only a same-day morning marker.
+  It requires a reason and still enforces the ET window, weekday, session lock,
+  Paper mode, paid-session/cost circuit and the full decision/safety chain.
+- The complete hermetic suite passes **2,181 tests**. The exact saved Smart
+  Money output and production-shaped missing-earnings record have dedicated
+  regressions.
+- Current `/health` has DB/broker reachable, `paper=true`, no global suspension
+  and no active session lock. Its degraded label is caused only by the earlier
+  run's historical session-scoped retry hold. Exact Aug 26 spend is
+  **$0.5279159 / $1.50**; both permitted paid morning sessions are consumed.
+- Alpaca still holds EPD 12 and SGOV 89. EPD remains protected for all 12 shares
+  by the broker stop-limit at stop $38.00 / limit $36.86. No trade was forced.
 
 ## Stabilization account model — HARD RULE
 
@@ -272,12 +243,12 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active work:** natural Alpaca Paper observation continues. The Research Desk
-tranche and deterministic SEC source/admission presentation are complete. Paid
-Smart Money synthesis and natural transient-candidate evidence remain pending
-because the current ET-day quota is exhausted; this is not a blocker for the
-completed UI/editorial work. Do not manually reset the quota hold. After the ET
-date advances, exact accounting and reservation checks must pass before the
-system automatically rearms and reports recovery through Telegram/health.
-Deterministic safety observation continues. No trade may be forced or
-manufactured to create acceptance evidence.
+**Active work:** natural Alpaca Paper observation continues. The Aug 26 runs
+proved live SEC admission, compact Smart Money input, complete bounded Technical
+coverage and real directional PM candidate generation. PR #93's corrected PM
+evidence handoff is deployed but cannot consume a third paid morning session
+today. The remaining acceptance item is a future eligible session traversing PM,
+AI Risk, deterministic gate and broker execution when warranted, followed by
+management/exit and measured outcome. No trade may be forced or manufactured;
+repeated no-trade results must have a specific decision or risk reason, not a
+mechanical pipeline failure.

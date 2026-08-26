@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-25
+Updated: 2026-08-26
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
@@ -33,65 +33,46 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 Production is deployed and verified at:
 
-`1bb4e23f259af36a67eae4d2400a2ae8960f2fbc`
+`a25a723f70a4e0f1548b3389c93c96d9b5ced6d7`
 
-This is GitHub `main` after PR #89. It retains the completed PR #87 Research
-Intelligence Desk, PR #83 intraday suspension fix and PR #85 credentialless SEC
-Form 4 source/admission lane. PR #89 separates expected quota exhaustion from
-hard integrity faults, adds strictly checked ET-day auto-recovery and exposes
-the same semantics through Telegram, API and both dashboard implementations.
-The recorded rollback SHA is `9c24f78ec99dbcafa62413858aff7e735ae10dbd`.
+This is GitHub `main` after PR #93. The recorded rollback SHA is
+`7fe6e4babbf3cf0209d8f93536f8150de70fea37`.
 
-Production verification on 2026-08-25 established:
+Production verification on 2026-08-26 established:
 
-- `/health` returned the intentional `status=degraded`, DB reachable, broker
-  reachable, `paper=true`, and `decision_path_status=paid_analysis_suspended`;
-- the circuit retained the exact **$4.211481** ET-day ledger and its delivered
-  Telegram alert, migrated the prior singleton daily latch into one active day
-  quota hold without another provider call or duplicate alert, and reports
-  `suspension_class=quota`, `hold_scope=day`, `auto_rearm=true` and
-  `requires_operator_reset=false`;
-- the first post-deployment midday run reconciled all two broker-protected long
-  positions before returning `paid_analysis_suspended`; agent-log ID **189**
-  and ET-day spend remained unchanged;
-- the 18:30 UTC natural intraday tick again reconciled both broker-protected
-  longs and blocked before the Tech request with zero incremental spend. It
-  exposed a context-manager observability bug that masked the structured
-  suspension with `generator didn't stop after throw()`; PR #83 corrected that
-  control flow, added exact propagation/release/no-agent-call regressions and
-  was deployed without resetting the circuit;
-- all seven existing timers are active; non-LLM safety, reconciliation, close,
-  P&L and read-only API work remain available while model calls are blocked;
-- the complete merged hermetic suite passed **2,161 tests**; 71 frontend tests,
-  the production build and 19 rendered fixture scenarios also passed;
-- the source-only production preflight processed 25 official SEC filings,
-  cached 13 exact Form 4 P/S observations, retained five material observations
-  for SPIR/TISI and made zero LLM calls. No symbol cleared the higher external
-  admission threshold, which is a valid quiet source result rather than an
-  acceptance failure;
-- `/health` remained intentionally degraded for the current day quota hold,
-  SQLite `quick_check` remained `ok`, no active reservation or emergency
-  sidecar existed, circuit event count remained one, agent-log ID remained
-  **189** and incremental post-deployment spend remained **$0.00**;
-- `/cockpit/` returned 200 and the accepted `5m Today`, `15m`, `1h`, and `1D`
-  price requests were accepted (the 5m response was naturally empty before
-  the Paper market session; the other three returned bars);
-- `/research/daily/2026-08-25` returned canonical stored QAMC data, and the
-  Research Desk rendered evidence-backed change, tension, why-now, specialist,
-  run-local PM/Risk/gate/execution and truthful after-bell states on desktop and
-  iPad without console errors, request failures, micro-text or horizontal
-  overflow;
-- the Desk production asset is `index-B0cdM3LQ.js`; Dockview maximize state
-  survived a real page reload, and the purpose-built iPad brief, signals,
-  decision and review routes passed rendered inspection;
-- live post-deployment desktop and iPad inspection passed for both the circuit
-  hold presentation and the Research Desk, including stored change, tension,
-  why-now and restrained annotation, with no console/page/request errors, raw
-  output leakage or horizontal overflow;
-- POST, PUT, PATCH and DELETE remained rejected with 405;
-- OneCLI and Mission Control remained private and reachable;
-- the existing private/read-only Mission Control and Research Desk contracts
-  remain intact.
+- the prior ET-day quota hold rearmed automatically after the date advanced;
+  no spend was erased and no manual reset was used;
+- the first natural morning run exposed a mismatch between Tech's per-batch
+  recovery and the session-wide retry limit. It admitted RSG, AMR and PAM but
+  stopped safely before PM, Risk or broker submission;
+- PR #92 now analyzes every primary Tech batch before one bounded consolidated
+  recovery, retains successful results, prioritizes run-scoped admissions,
+  narrows the deterministic prefilter and compacts Smart Money input. The
+  audited operator rerun completed all 54 selected Technical analyses, compared
+  with 93 loosely selected symbols before the fix;
+- that rerun found seven directional PM candidates but exposed two independent
+  data-shaping defects before Risk: a valid fenced Smart Money result was
+  reduced to its inner list, and absent queued earnings analysis became the
+  false stance `none`;
+- PR #93 fixes both contracts at their source. The exact stored Smart Money
+  response replays as the full eight-finding object, missing earnings is omitted
+  from PM's authoritative registry, and unsupported evidence is still rejected;
+- the complete hermetic suite passed **2,181 tests**;
+- the operator-rerun switch may bypass only a same-day morning marker and
+  requires a reason. It does not bypass the ET window, weekday check, session
+  lock, paid-session/cost circuit, Paper configuration, PM, AI Risk,
+  deterministic risk or broker protections. Its use is audit-logged;
+- `/health` reports DB and broker reachable, `paper=true`, no active session
+  lock and no global circuit suspension. Its degraded label reflects the
+  historical session-scoped retry hold from the earlier failed run, not a
+  block on later independent sessions;
+- exact settled ET-day paid-analysis cost is **$0.5279159 / $1.50**. Both
+  permitted paid morning sessions were used, so no third run was attempted;
+- Alpaca still reports EPD 12 shares and SGOV 89 shares. EPD remains fully
+  covered by a broker-resident 12-share stop-limit order at stop $38.00 and
+  limit $36.86. No order was forced, submitted, cancelled or modified;
+- Mission Control remains private/read-only and the intended production-only
+  `intraday_scan.enabled: true` setting was preserved.
 
 The Smart Money seat is enabled on first-party SEC Form 4. Its deterministic
 pre-market refresh is credentialless, bounded, cached and available while the
@@ -101,7 +82,7 @@ supported-exchange, $5 price, 20-session history, $10M average dollar-volume
 and known-sector checks. The run cap is three. Admission bypasses only permanent
 universe membership and the Technical prefilter; current Technical analysis,
 PM grounding, AI Risk, deterministic risk/funding, broker protection and
-Alpaca Paper remain mandatory. The configured 77-stock universe is unchanged.
+Alpaca Paper remain mandatory. The configured 101-stock universe is unchanged.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
@@ -272,16 +253,15 @@ The previously flagged concern that `src/execution/broker.py::get_latest_price` 
 
 Current bounded activities:
 
-1. **Circuit rollover acceptance:** paid analysis is quota-held for the current
-   ET day. Do not reset or erase the unchanged $4.211481 ledger. Verify the
-   first next-day activation creates an exact new ledger, releases the old-day
-   hold once, sends one recovery alert and never inherits prior-day spend.
-2. **Smart Money natural evidence:** after automatic ET-day rearm, observe
-   model synthesis and any naturally qualifying transient candidate through
-   the full accepted chain. Do not force a candidate or weaken thresholds.
-3. **Natural Alpaca Paper acceptance:** allow the existing schedule to resume
-   paid research only after rollover checks pass; continue non-LLM safety
-   observation now.
-4. **Evidence-driven follow-up only:** do not reopen resolved dashboard or trading-critical feed defects from historical notes alone; require current evidence.
+1. **Natural Alpaca Paper acceptance:** the Aug 26 rerun proved source,
+   admission, full Technical coverage and PM candidate generation. The first
+   post-PR #93 eligible session must still prove PM → AI Risk → deterministic
+   gate → execution when eligible, followed by management/exit and measurement.
+2. **No artificial activity:** do not exceed paid-session limits, force a trade
+   or weaken evidence/risk thresholds. A no-trade result must be specific and
+   defensible rather than caused by a pipeline defect.
+3. **Evidence-driven follow-up only:** do not reopen resolved dashboard or
+   trading-critical feed defects from historical notes alone; require current
+   evidence.
 
 See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.
