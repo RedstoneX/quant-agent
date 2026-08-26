@@ -32,8 +32,10 @@ class PortfolioManagerAgent(BaseAgent):
     def _collapse_stances(values) -> str | None:
         cleaned = {
             str(value).strip().lower().replace(" ", "_")
-            for value in values if str(value).strip()
+            for value in values
+            if value is not None and str(value).strip()
         }
+        cleaned -= {"none", "n/a", "na", "unknown", "unavailable", "not_available"}
         if not cleaned:
             return None
         if len(cleaned) == 1:
@@ -86,7 +88,9 @@ class PortfolioManagerAgent(BaseAgent):
                 put(symbol, "news", cls._collapse_stances(i.sentiment for i in items))
 
         for item in earnings_analyses:
-            analysis = item.get("analysis") or {}
+            analysis = item.get("analysis")
+            if not isinstance(analysis, dict):
+                continue
             sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
             put(str(item.get("symbol") or ""), "earnings", cls._collapse_stances([sentiment]))
 

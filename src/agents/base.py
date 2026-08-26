@@ -412,6 +412,7 @@ class AgentResult:
         "investment_implications": 40,  # EarningsAnalysis
         "macro_narrative": 40,     # NewsIntelligenceReport
         "analyses": 40,            # TechAnalyst batch wrapper
+        "findings": 50,            # SmartMoney synthesis wrapper
         "portfolio_view": 20,      # PortfolioDecision summary
         "reasoning_chain": 20,     # nested rationale wrapper
         "symbol": 5,               # TechAnalysisResult single
