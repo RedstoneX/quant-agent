@@ -172,7 +172,11 @@ def get_unexpected_dirty_files(deployed_path: str) -> list[str]:
     Informational only — never affects the drift verdict or exit code.
     """
     try:
-        out = _run_git(["status", "--porcelain"], cwd=deployed_path)
+        # `-uno`: untracked files are not local modifications. Rotated logs
+        # and caches always sit in a live runtime directory, and reporting
+        # them every run is exactly how an operator learns to ignore this
+        # channel.
+        out = _run_git(["status", "--porcelain", "-uno"], cwd=deployed_path)
     except GitError:
         return []
     dirty = []
