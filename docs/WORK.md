@@ -96,6 +96,79 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ## Active finish line
 
+### Ordered backlog — RESUME POINT
+
+Single ordered list of outstanding work. A session resuming cold should start
+here. Items are ordered by dependency first, then by value per unit of effort.
+Rationale for the trading items is in `docs/QAMC_REMEDIATION_SPEC.md`; evidence
+for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
+`docs/RESEARCH_FINDINGS.md`.
+
+**Landed (2026-08-27)**
+
+- Phase 0 — CI is a real gate. `pytest` required on `main`, strict, and
+  `enforce_admins: true`. Proven by a deliberately failing test being refused.
+  Root causes were fork-level workflow disablement plus `fastapi` living only in
+  the `[api]` extra while CI installed `.[dev]`.
+- Governance — owner-ratification rule in `AGENTS.md`; `OUTCOME.md` corrected to
+  a profit mandate; `STATE.md` corrected on five false claims.
+- Repository hygiene — branches reduced from 110 to 27.
+
+**In flight**
+
+- **Phase 1 + 1b** (PR #102, CI green, awaiting merge) — structural levels from
+  five years of history (`src/data/levels.py`), market context
+  (`src/data/context.py`), invented stops and targets deleted.
+
+**Next, in order**
+
+1. **Phase 2 — sizing and risk.** Conviction expressed as risk allocation rather
+   than percent-of-portfolio notional. Owner-ratified envelope: 5% ceiling per
+   trade, 0.5% floor, 25% total, correlation-adjusted. Folds in four audit
+   findings: make the drawdown rule real code (§1.1), pass the already-computed
+   correlation matrix to the Portfolio Manager (§1.2), compute portfolio heat
+   (§1.3), compute R-multiple (§1.4).
+2. **Phase 3 — exits.** Break the `pace` feedback loop by measuring against the
+   horizon pinned at entry; give the reviewer memory of its own prior review
+   (§1.5); close the first-sale-of-the-day gate loophole; route exits through
+   AI Risk; upgrade the reviewer's model; ATR noise band; trailing stops.
+3. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
+   ratio in the system — over half of Form 4 trades carry zero predictive power.
+4. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
+   filings are already downloaded and stored.
+5. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
+   path; fix Reuters/AP/FRED; surface degraded coverage to the operator.
+6. **Phase 5 — short selling.** Alpaca is confirmed ready: `shorting_enabled:
+   true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
+   $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
+   entirely a code change; no account work is outstanding.
+7. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
+   afternoon reserve; `position_id` linking a buy to the sell that closed it;
+   surface the reasoning already stored but never displayed.
+8. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
+   post-training-cutoff evaluation windows for any LLM signal — contamination is
+   the dominant failure mode in this literature.
+9. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
+   on the residual); deterministic macro regime with the model confined to FOMC
+   text; earnings multi-quarter trends. Several need new data sources and an
+   owner decision first.
+
+**Set aside — small, easily forgotten**
+
+- `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
+  the Tech Analyst accepts a `days_to_earnings` kwarg that nothing supplies.
+- Nothing tells the Portfolio Manager that `SH`, `SDS`, `PSQ` and `SQQQ` are
+  bearish instruments, so even the sanctioned bearish expression is unwired.
+- 26 unmerged branches await triage, including two abandoned VPS security
+  branches (`claude/vps-security-hardening-t8m3qz`,
+  `claude/vps-deployment-hardening-q3f7k2`) worth rescuing before deletion.
+- `docs/architecture/MODEL_ROUTING_POLICY.md` carries a token-count figure that
+  is stale since the Tech Analyst prompt grew. Annotated with a measured
+  estimate; not re-derived with `ops/model_policy/project_session_cost.py`.
+- Re-examine whether the LLM Risk Manager seat is additive once the drawdown gate
+  is deterministic — see `docs/AGENT_ROLE_AUDIT.md`.
+
+
 ### Mission Control / existing cockpit utility
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
