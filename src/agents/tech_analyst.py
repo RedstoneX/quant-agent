@@ -3,6 +3,7 @@ from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
+from src.data.context import compute_market_context, format_context_block
 from src.data.levels import find_structural_levels, format_levels_block
 from src.models import TechAnalysisResult
 
@@ -169,6 +170,18 @@ class TechAnalystAgent(BaseAgent):
                 f"and say so explicitly in your reasoning_chain."
             )
 
+        # Relative strength needs something to be relative to. The index ETFs
+        # are already in the universe, so the benchmark comes free from the
+        # batch rather than requiring another fetch. A stock rising less than
+        # its index is weak however green the candle looks — the analyst was
+        # previously blind to this entirely.
+        bars_by_symbol = {i["symbol"]: i["bars"] for i in symbols_data}
+        benchmark_symbol = next(
+            (s for s in ("SPY", "QQQ", "IWM") if bars_by_symbol.get(s)), None
+        )
+        benchmark_bars = bars_by_symbol.get(benchmark_symbol) if benchmark_symbol else None
+        days_to_earnings: dict[str, int] = kwargs.get("days_to_earnings") or {}
+
         sections = []
         for item in symbols_data:
             symbol = item["symbol"]
@@ -193,7 +206,16 @@ class TechAnalystAgent(BaseAgent):
                 resistances,
                 last_close if isinstance(last_close, (int, float)) else 0.0,
             )
+            context_text = format_context_block(
+                compute_market_context(
+                    bars,
+                    benchmark_bars=benchmark_bars if symbol != benchmark_symbol else None,
+                    benchmark_symbol=benchmark_symbol if symbol != benchmark_symbol else None,
+                ),
+                days_to_earnings=days_to_earnings.get(symbol),
+            )
             sections.append(f"""### {symbol}{_prior_line(symbol)}{_valuation_line(symbol)}
+{context_text}
 {levels_text}
 Price (last {len(recent_bars)} COMPLETED daily bars):
 {bars_text}
