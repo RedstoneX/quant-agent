@@ -97,7 +97,27 @@ The Tech Analyst must return, per candidate:
 
 `src/agents/tech_analyst.py` wires this in per symbol and accepts an optional `days_to_earnings` kwarg to render an earnings-proximity warning line. **Not wired end to end**: `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()`, which estimates trading sessions to the next scheduled earnings report (approximate — calendar days × 5/7, not a precise trading-calendar count) — the first place in the system that has ever known a *future* earnings date, as distinct from `src/data/earnings.py`, which is retrospective (it finds filings already on EDGAR). This method exists and is tested but **nothing in the pipeline calls it or passes `days_to_earnings` to the Tech Analyst** — the kwarg is accepted and handled but always empty in practice today. `tests/test_context.py` (new, 27 tests) covers the module.
 
-**Phases 2–7 below are still pending — none of this work has been implemented.** Only Phase 1, as described above, is done.
+**Status of everything below (2026-08-27).** This line was previously a blanket
+"none of this work has been implemented", which stopped being true the moment
+Phase 2a landed and is exactly the kind of stale absolute that misleads the next
+session. Per-phase truth, which each phase's own section repeats:
+
+- **Phase 2a** — landed (PR #106). The four audit-finding fold-ins: deterministic
+  drawdown gate, correlation to the PM, portfolio heat, R-multiple.
+  `max_portfolio_risk_pct` is **reporting-only**; it gates nothing yet.
+- **Phase 2b** (§2.1 risk-based sizing, §2.2 correlation-aware budgeting,
+  §2.4 retire the position-count concept) — **not started**.
+- **Phase 3.1 / 3.2** — landed. The pace feedback loop is cut and the Position
+  Reviewer has memory of its own prior numbers.
+- **Phase 3.3–3.7** — **not started**: the first-sale-of-the-day loophole, routing
+  exits through AI Risk, the reviewer's model upgrade, the ATR noise band, and
+  broker-resident trailing stops.
+- **Phases 4–7** — **not started**.
+
+The owner reordered Phase 3 ahead of the rest of Phase 2 on 2026-08-27; the
+evidence and the decision are recorded in `docs/WORK.md`. The execution-order
+diagram at the foot of this document reflects the ORIGINAL dependency analysis
+and has not been redrawn.
 
 ---
 
@@ -141,19 +161,23 @@ Once a position's trailing stop sits **at or above entry**, its risk contributio
 
 This is where the money has been going.
 
-**3.1 — Kill the pace feedback loop. (Highest priority defect in the system.)**
-`pipeline.py:6318` computes `pace = progress ÷ (days_held ÷ avg_hold_days)` where `avg_hold_days` is drawn from the system's **own rolling 30-day realized-trade calibration** (currently ≈2.0 days). Selling quickly shrinks that figure, which makes every position look stalled, which drives more selling. It is a self-tightening noose.
+**Status note (2026-08-27, commit `aea82ee`, branch `feat/exit-rework-pace-and-memory`, not yet merged):** 3.1 and 3.2 below are implemented. **Still NOT started:** §3.3 (first-sale-of-the-day loophole), §3.4 (route exits through AI Risk), §3.5 (upgrade the reviewer's model off `gemini-2.5-flash-lite`), §3.6 (ATR noise band) and §3.7 (broker-resident trailing stops). §3.8 remains documented, unchanged behaviour.
 
-- Replace `avg_hold_days` with the **`expected_horizon_sessions` pinned at entry** from the Tech Analyst (Phase 1.1).
-- Never derive a trade's expected horizon from the system's own past behaviour.
-- Do not evaluate pace until at least **one third** of the pinned horizon has elapsed. Before that the metric is mathematically meaningless.
-- Disable progress and pace entirely for Type B (trend) positions.
+**3.1 — Kill the pace feedback loop. (Highest priority defect in the system.) DONE.**
+`pipeline.py:6318` computed `pace = progress ÷ (days_held ÷ avg_hold_days)` where `avg_hold_days` was drawn from the system's **own rolling 30-day realized-trade calibration** (currently ≈2.0 days). Selling quickly shrank that figure, which made every position look stalled, which drove more selling. It was a self-tightening noose.
 
-**3.2 — Give the reviewer memory.**
+- Replace `avg_hold_days` with the **`expected_horizon_sessions` pinned at entry** from the Tech Analyst (Phase 1.1). **Done** — `expected_horizon_sessions` and `setup_type` are persisted on the `trades` row at BUY time (new columns via `_ensure_column`, `src/storage/db.py`; `insert_trade` takes both as new kwargs); `ExecutionStage` (`src/pipeline_stages.py`) looks them up from `ctx.analyses` to supply them.
+- Never derive a trade's expected horizon from the system's own past behaviour. **Done** — the calibration query is deleted from `run_position_review`, and `avg_hold_days` is removed from `_build_position_facts`'s signature entirely (`src/pipeline.py`), so it cannot be reconnected by accident.
+- Do not evaluate pace until at least **one third** of the pinned horizon has elapsed. Before that the metric is mathematically meaningless. **Done** — `pace_status="too_early"` below that threshold; no figure is produced.
+- Disable progress and pace entirely for Type B (trend) positions. **Done** — `pace_status="n/a_breakout"`.
+
+A fourth state exists beyond this section's original three: `pace_status="unavailable_no_pinned_horizon"`, for positions opened before this landed and carrying no pinned horizon — they get no figure rather than an inferred one. `pace_status="measured"` is the normal case. `config/prompts/position_reviewer.md` renders why pace is absent in each of the three non-measured cases, because a missing number that reads as "nothing to see" is how a day-2 position gets called stalled.
+
+**3.2 — Give the reviewer memory. DONE.**
 `_build_own_recent_decisions` (`pipeline.py:6369-6409`) discards HOLDs and never passes prior metric values. The reviewer sold EPD for "not progressing" when progress had risen 16% → 20% and distance-to-stop had *improved*.
-- Persist each review's metrics per position.
-- Pass the previous snapshot into the next review.
-- Deterministically reject a deterioration verdict when the deltas are positive. A model may not claim a position is stalling while its own numbers improve.
+- Persist each review's metrics per position. **Done** — `db.save_position_review_metrics` snapshots per-position metrics to `specialist_evidence` (`agent_name="position_reviewer"`, `kind="review_metrics"`).
+- Pass the previous snapshot into the next review. **Done** — `db.get_prior_position_review_metrics`, plus new pipeline methods `_build_review_metric_deltas` and `_persist_review_metrics` (`src/pipeline.py`).
+- Deterministically reject a deterioration verdict when the deltas are positive. A model may not claim a position is stalling while its own numbers improve. **Done** — new `src/risk/exit_guard.py` (`MetricDeltas`, `compute_deltas`, `is_deterioration_claim`, `veto_contradicted_exit`). `_midday_execute_llm_actions` now takes `metric_deltas` and drops a SELL/REDUCE whose stated reason is a deterioration claim when every metric that moved since the prior review improved, recording `exit_vetoed_contradicts_own_metrics`. Exits on new information (news, earnings, regime shift, correlation breach, a triggered `thesis_invalid_if`) are never vetoed. A mixed picture is deliberately not vetoed either — that stays the reviewer's judgment call.
 
 **3.3 — Close the first-sale-of-the-day loophole.**
 The hard-trigger gate currently applies only to symbols already trimmed that day, so a position's *first* sale executes on soft reasoning unchecked — which is almost every sale. Apply the gate to **every** exit.

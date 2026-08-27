@@ -65,10 +65,28 @@ This file records what is accepted and true **now**. Git history preserves imple
   render to PM and RM, and R-multiple reaches the Position Reviewer. A new
   `risk.max_portfolio_risk_pct` config field (25%) is **reporting-only** — no
   gate consumes it. Phase 2's own items (§2.1 risk-based sizing, §2.2
-  correlation-aware budget ceiling, §2.4 retiring the fixed position count) and
-  Phases 3–8 (exit rework, evidence/feed repair, short selling,
-  cost/transparency, measurement, further documentation correction) remain
-  pending — see `docs/QAMC_REMEDIATION_SPEC.md`.
+  correlation-aware budget ceiling, §2.4 retiring the fixed position count)
+  remain pending.
+- **Phase 3.1 and 3.2 of the remediation spec are committed, not yet
+  merged** — `aea82ee` on branch `feat/exit-rework-pace-and-memory`. §3.1: the
+  `pace` metric no longer feeds back on the desk's own realized-trade
+  calibration — `expected_horizon_sessions` and `setup_type` are pinned to the
+  `trades` row at BUY time and never recomputed, the calibration query is
+  deleted from the review path, and `pace_status` (`measured` / `too_early` /
+  `n/a_breakout` / `unavailable_no_pinned_horizon`) replaces a fabricated
+  number with a labeled absence where pace cannot be measured. §3.2 (closes
+  `AGENT_ROLE_AUDIT.md` §1.5): the Position Reviewer now has memory of its own
+  prior review — each review snapshots its per-position metrics
+  (`db.save_position_review_metrics`), the next review receives the deltas,
+  and new `src/risk/exit_guard.py` deterministically vetoes a SELL/REDUCE
+  whose stated reason is a deterioration claim when every metric that moved
+  since the prior review improved. Exits on new information (news, earnings,
+  regime shift, correlation breach, a triggered `thesis_invalid_if`) are never
+  vetoed. §3.3–§3.7 (first-sale-of-the-day loophole, routing exits through AI
+  Risk, upgrading the reviewer's model off `gemini-2.5-flash-lite`, ATR noise
+  band, broker-resident trailing stops) and Phases 4–8 (evidence/feed repair,
+  short selling, cost/transparency, measurement, further documentation
+  correction) remain pending — see `docs/QAMC_REMEDIATION_SPEC.md`.
 
 ## Stabilization account model
 
