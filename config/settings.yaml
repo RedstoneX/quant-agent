@@ -51,6 +51,20 @@ llm:
   # contract; GPT-5.5 scored 1.00/1.00 on both pm_constrained and the
   # 30-candidate/15-position production workload.
   portfolio_manager_model: "openai/gpt-5.5"
+  # Endpoint preference, NOT a model change. OpenRouter serves this exact
+  # model (`openai/gpt-5.5-20260423`) from three endpoints: `openai/flex` at
+  # $2.50/$15 per M tokens and `openai` / `azure` at $5/$30. Same weights,
+  # half the price. The PM is 87% of all QAMC LLM spend (measured over the 10
+  # days to 2026-08-27: $5.84 of $6.73), so this halves the dominant cost
+  # line with no quality question to answer and no benchmark to run.
+  #
+  # Fallbacks stay ENABLED: if the flex tier is saturated the call falls
+  # through to the full-price endpoint and the session continues. Losing a
+  # trading session to save $0.11 would be a bad trade. Actual cost stays
+  # truthful either way because OpenRouter reports what it charged per call
+  # (`usage: {include: true}`) and that figure, not the pinned rate, is what
+  # the daily cost circuit spends against.
+  portfolio_manager_provider_order: ["openai/flex"]
   risk_manager_provider: "openrouter"
   # The ONE seat that diverges, and the reason the per-seat structure exists.
   #

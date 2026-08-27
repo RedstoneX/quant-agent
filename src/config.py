@@ -117,6 +117,25 @@ class LLMConfig(BaseModel):
     position_reviewer_provider: str | None = None
     evening_analyst_provider: str | None = None
     meta_reflector_provider: str | None = None
+    # OpenRouter endpoint preference, per seat. OpenRouter serves one model id
+    # from several endpoints ("providers") at DIFFERENT PRICES — `openai/gpt-5.5`
+    # is offered by `openai/flex` at $2.50/$15 and by `openai` / `azure` at
+    # $5/$30, all three serving the identical `gpt-5.5-20260423` weights. This
+    # field pins the preferred endpoint ORDER; it never changes which MODEL
+    # answers, so it is not a routing-policy decision and needs no benchmark.
+    # `None` (every seat's default) leaves endpoint choice to OpenRouter,
+    # exactly as before. Only meaningful when the seat's provider is
+    # `openrouter`; the validator enforces that.
+    tech_analyst_provider_order: list[str] | None = None
+    news_analyst_provider_order: list[str] | None = None
+    macro_analyst_provider_order: list[str] | None = None
+    earnings_analyst_provider_order: list[str] | None = None
+    smart_money_analyst_provider_order: list[str] | None = None
+    portfolio_manager_provider_order: list[str] | None = None
+    risk_manager_provider_order: list[str] | None = None
+    position_reviewer_provider_order: list[str] | None = None
+    evening_analyst_provider_order: list[str] | None = None
+    meta_reflector_provider_order: list[str] | None = None
     # Global fallback — used by any agent without an explicit override below.
     max_tokens: int
     # Per-agent overrides. Each agent emits a different output shape; the PM
@@ -198,6 +217,13 @@ class LLMConfig(BaseModel):
         Unknown agent names also return None."""
         return getattr(self, f"{agent_name}_provider", None)
 
+    def get_provider_order(self, agent_name: str) -> list[str] | None:
+        """Return the OpenRouter endpoint preference for `agent_name`, or None
+        (meaning "let OpenRouter choose", the pre-existing behavior). Unknown
+        agent names also return None. This selects an ENDPOINT for the seat's
+        configured model, never a different model."""
+        return getattr(self, f"{agent_name}_provider_order", None)
+
     @field_validator(
         "tech_analyst_provider", "news_analyst_provider", "macro_analyst_provider",
         "earnings_analyst_provider", "portfolio_manager_provider", "risk_manager_provider",
@@ -218,6 +244,57 @@ class LLMConfig(BaseModel):
                 f"Invalid provider {v!r}; must be one of {sorted(VALID_PROVIDERS)} or unset"
             )
         return normalized
+
+    @field_validator(
+        "tech_analyst_provider_order", "news_analyst_provider_order",
+        "macro_analyst_provider_order", "earnings_analyst_provider_order",
+        "smart_money_analyst_provider_order", "portfolio_manager_provider_order",
+        "risk_manager_provider_order", "position_reviewer_provider_order",
+        "evening_analyst_provider_order", "meta_reflector_provider_order",
+    )
+    @classmethod
+    def _provider_order_is_wellformed(cls, v: list[str] | None) -> list[str] | None:
+        # An empty list is not "no preference" — it is a preference that
+        # nothing may serve the seat. That reads as a typo far more often
+        # than as intent, so reject it and make the operator write null.
+        if v is None:
+            return None
+        if not v:
+            raise ValueError(
+                "provider_order must be null (no preference) or a non-empty "
+                "list of OpenRouter endpoint slugs; got []"
+            )
+        cleaned: list[str] = []
+        for entry in v:
+            if not isinstance(entry, str) or not entry.strip():
+                raise ValueError(
+                    f"provider_order entries must be non-empty strings; got {entry!r}"
+                )
+            cleaned.append(entry.strip())
+        return cleaned
+
+    @model_validator(mode="after")
+    def _provider_order_requires_openrouter(self):
+        """An endpoint preference only means anything to OpenRouter. Set on an
+        Anthropic/OpenAI/DeepSeek seat it would be silently ignored, which is
+        how an operator ends up believing a seat is on a cheaper tier that it
+        never reached. Fail at config load instead."""
+        for agent_name in AGENT_NAMES:
+            order = getattr(self, f"{agent_name}_provider_order", None)
+            if order is None:
+                continue
+            provider = resolve_provider(
+                getattr(self, f"{agent_name}_model"),
+                getattr(self, f"{agent_name}_provider", None),
+            )
+            if provider != "openrouter":
+                raise ValueError(
+                    f"{agent_name}_provider_order is set but {agent_name} routes "
+                    f"to {provider!r}, not 'openrouter'. Endpoint preferences are "
+                    f"an OpenRouter concept and would be ignored — remove the "
+                    f"preference or route the seat through OpenRouter."
+                )
+        return self
 
 
 class ExecutionConfig(BaseModel):

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -574,9 +575,18 @@ class BaseAgent(ABC):
     _allow_unmetered_for_tests = False
 
     def __init__(self, api_key: str, model: str, max_tokens: int = 4096,
-                 fallback_api_key: str = "", provider: str | None = None):
+                 fallback_api_key: str = "", provider: str | None = None,
+                 provider_order: list[str] | None = None):
         self.model = model
         self.max_tokens = max_tokens
+        # OpenRouter endpoint preference for this seat — see
+        # LLMConfig.<agent>_provider_order. Ordered most-preferred first, with
+        # fallbacks left ENABLED: every endpoint for a given model id serves
+        # the same weights, so falling through to a pricier one costs money,
+        # not correctness, whereas pinning `only` would fail the seat closed
+        # over a price tier. Cost stays truthful because OpenRouter reports
+        # the actual charge per call (see _call_openai).
+        self._provider_order = list(provider_order) if provider_order else None
         # `provider` is the Stage 1 explicit override (config.llm.<agent>_provider);
         # None (the default for every pre-Stage-1 config) falls through to the
         # unchanged prefix-inference chain — see resolve_provider().
@@ -758,6 +768,10 @@ class BaseAgent(ABC):
         deadline_s = _retry_deadline_s()
         loop_start = time.monotonic()
         finish_reason: str | None = None
+        # What the provider says it actually charged, when it says so at all
+        # (OpenRouter only). None everywhere else, and the pinned-rate
+        # estimate below stands.
+        reported_cost: float | None = None
         primary_error: Exception | None = None
         # Captured once, before the retry loop, so they reflect what THIS call
         # was CONFIGURED to use regardless of how the loop below resolves —
@@ -857,22 +871,26 @@ class BaseAgent(ABC):
         for attempt in range(max_retries):
             try:
                 if self._use_deepseek:
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_deepseek(
+                    (raw_text, input_tokens, output_tokens, finish_reason,
+                     reported_cost) = self._call_deepseek(
                         user_message, authorize=_authorize,
                     )
                 elif self._use_openrouter:
                     # OpenRouter is OpenAI-wire-compatible — reuse _call_openai
                     # unmodified rather than duplicating the streaming/usage/
                     # empty-content logic.
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(
+                    (raw_text, input_tokens, output_tokens, finish_reason,
+                     reported_cost) = self._call_openai(
                         user_message, authorize=_authorize,
                     )
                 elif self._use_openai:
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_openai(
+                    (raw_text, input_tokens, output_tokens, finish_reason,
+                     reported_cost) = self._call_openai(
                         user_message, authorize=_authorize,
                     )
                 else:
-                    raw_text, input_tokens, output_tokens, finish_reason = self._call_anthropic(
+                    (raw_text, input_tokens, output_tokens, finish_reason,
+                     reported_cost) = self._call_anthropic(
                         user_message, authorize=_authorize,
                     )
                 primary_error = None
@@ -949,7 +967,8 @@ class BaseAgent(ABC):
             if failover is None:
                 _safe_fail_reservation(primary_error)
                 raise primary_error
-            raw_text, input_tokens, output_tokens, finish_reason = failover
+            (raw_text, input_tokens, output_tokens, finish_reason,
+             reported_cost) = failover
             actual_model = _FALLBACK_MODEL
 
         # Truncation detection: a max_tokens / length cutoff means the output
@@ -984,6 +1003,32 @@ class BaseAgent(ABC):
                 "Check the LLM response and update _extract_*_usage if there's a new shape.",
                 self.name,
             )
+        elif reported_cost is not None:
+            # The provider billed this call and told us what it charged. Prefer
+            # it over the pinned per-model rate, which cannot be right for a
+            # model OpenRouter serves from endpoints at different prices — it
+            # would over-report on the cheap endpoint (starving the daily
+            # budget of headroom it actually has) and under-report on the dear
+            # one. Only the estimate is a guess; this is the invoice.
+            cost = reported_cost
+            estimated = estimate_cost(actual_model, input_tokens, output_tokens)
+            if estimated is not None and estimated > 0:
+                ratio = cost / estimated
+                # A large gap is not necessarily wrong — it is exactly what a
+                # half-price endpoint looks like — but it means the pinned
+                # table no longer describes what this seat pays, and every
+                # projection built on that table (project_session_cost.py, the
+                # circuit's worst-case reservation) is off by this factor.
+                if ratio < 0.5 or ratio > 1.5:
+                    logger.warning(
+                        "Agent %s: provider-reported cost %s differs from the "
+                        "pinned-rate estimate %s (%.2fx) for %s — the reported "
+                        "figure is authoritative and is what was recorded, but "
+                        "the pinned rate for this model no longer reflects the "
+                        "endpoint serving it.",
+                        self.name, fmt_cost(cost), fmt_cost(estimated),
+                        ratio, actual_model,
+                    )
         else:
             cost = estimate_cost(actual_model, input_tokens, output_tokens)
         if self._cost_circuit is not None and reservation is not None:
@@ -1032,7 +1077,7 @@ class BaseAgent(ABC):
 
     def _anthropic_call(
         self, client, model: str, user_message: str, *, authorize=None,
-    ) -> tuple[str, int, int, str | None]:
+    ) -> tuple[str, int, int, str | None, float | None]:
         """One Anthropic messages.create against an arbitrary client+model.
 
         Shared by the primary path (_call_anthropic) and the provider-agnostic
@@ -1060,15 +1105,15 @@ class BaseAgent(ABC):
                 # Legit truncation (whole budget burned before any text) —
                 # surface as truncated '', don't retry/fail over.
                 logger.warning("Anthropic returned empty content (stop_reason=%s)", finish_reason)
-                return ("", in_tok, out_tok, finish_reason)
+                return ("", in_tok, out_tok, finish_reason, None)
             raise LLMEmptyResponseError(
                 f"Anthropic returned empty content (stop_reason={finish_reason})"
             )
-        return (response.content[0].text, in_tok, out_tok, finish_reason)
+        return (response.content[0].text, in_tok, out_tok, finish_reason, None)
 
     def _call_anthropic(
         self, user_message: str, *, authorize=None,
-    ) -> tuple[str, int, int, str | None]:
+    ) -> tuple[str, int, int, str | None, float | None]:
         return self._anthropic_call(
             self.client, self.model, user_message, authorize=authorize,
         )
@@ -1109,7 +1154,7 @@ class BaseAgent(ABC):
 
     def _call_openai(
         self, user_message: str, *, authorize=None,
-    ) -> tuple[str, int, int, str | None]:
+    ) -> tuple[str, int, int, str | None, float | None]:
         """OpenAI path is STREAMED on purpose. The OPENAI_BASE_URL relay sits
         behind Cloudflare, whose ~120s Proxy Read Timeout (HTTP 524) kills any
         call that sends zero bytes until the model finishes — and PM / tech /
@@ -1127,6 +1172,18 @@ class BaseAgent(ABC):
         OpenAI relay's cap.
         """
         semaphore = _OPENROUTER_LLM_SEMAPHORE if self._use_openrouter else _OPENAI_LLM_SEMAPHORE
+        # OpenRouter-only request extras. `usage.include` makes OpenRouter
+        # return what it ACTUALLY charged for the call, which is the only
+        # honest way to price a model served from endpoints at different
+        # rates; `provider.order` expresses this seat's endpoint preference.
+        extra_body: dict = {}
+        if self._use_openrouter:
+            extra_body["usage"] = {"include": True}
+            if self._provider_order:
+                extra_body["provider"] = {
+                    "order": list(self._provider_order),
+                    "allow_fallbacks": True,
+                }
         with semaphore:
             if authorize is not None:
                 authorize(self.model)
@@ -1139,6 +1196,7 @@ class BaseAgent(ABC):
                 ],
                 stream=True,
                 stream_options={"include_usage": True},
+                **({"extra_body": extra_body} if extra_body else {}),
             )
             parts: list[str] = []
             finish_reason: str | None = None
@@ -1193,7 +1251,8 @@ class BaseAgent(ABC):
                 "and actual cost are unknown; paid analysis will suspend.",
                 self.name,
             )
-        return (content, in_tok, out_tok, finish_reason)
+        return (content, in_tok, out_tok, finish_reason,
+                _reported_cost_usd(usage, self.name))
 
     def _deepseek_max_output(self) -> int:
         """Clamp ceiling for this DeepSeek model. DeepSeek REJECTS (does not
@@ -1202,7 +1261,7 @@ class BaseAgent(ABC):
 
     def _call_deepseek(
         self, user_message: str, *, authorize=None,
-    ) -> tuple[str, int, int, str | None]:
+    ) -> tuple[str, int, int, str | None, float | None]:
         """DeepSeek via the OpenAI SDK (custom base_url). Three deltas vs
         _call_openai:
           1. Sends `max_tokens` (DeepSeek ignores OpenAI's `max_completion_tokens`
@@ -1247,7 +1306,7 @@ class BaseAgent(ABC):
                 finish_reason, bool(reasoning),
             )
         in_tok, out_tok = _extract_openai_usage(response, self.name)
-        return (content, in_tok, out_tok, finish_reason)
+        return (content, in_tok, out_tok, finish_reason, None)
 
 
 # === Provider-specific usage extraction ===
@@ -1284,6 +1343,36 @@ def _coerce_token_count(value) -> int:
     if isinstance(value, int):
         return value
     return 0
+
+
+def _reported_cost_usd(usage, agent_name: str) -> float | None:
+    """The USD OpenRouter says it actually charged for a call, or None.
+
+    Present only when the request asked for it (`usage: {include: true}`,
+    OpenRouter-only) — every other provider returns None here and keeps the
+    pinned-rate estimate. It matters because OpenRouter serves one model id
+    from endpoints at different prices (`openai/flex` at half `openai`'s rate
+    for the same `gpt-5.5` weights), so a table keyed on the model id alone
+    cannot price the call: it is right for one endpoint and wrong for the
+    other. Under-reporting is the dangerous direction — the daily cost
+    circuit spends against these numbers — so anything that is not a finite,
+    non-negative real number degrades to None and the estimate stands.
+
+    `bool` is excluded for the same reason as in _coerce_token_count: it is a
+    subclass of int and True would silently price a call at $1.
+    """
+    if usage is None:
+        return None
+    value = getattr(usage, "cost", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or value < 0:
+        logger.warning(
+            "Agent %s: OpenRouter reported an unusable cost (%r) — falling "
+            "back to the pinned-rate estimate.", agent_name, value,
+        )
+        return None
+    return float(value)
 
 
 def _extract_anthropic_usage(response, agent_name: str) -> tuple[int, int]:

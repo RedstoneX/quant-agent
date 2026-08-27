@@ -304,6 +304,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("tech_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.tech_analyst_provider,
+            provider_order=config.llm.get_provider_order("tech_analyst"),
         )
         self.portfolio_manager = PortfolioManagerAgent(
             api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),
@@ -311,6 +312,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("portfolio_manager"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.portfolio_manager_provider,
+            provider_order=config.llm.get_provider_order("portfolio_manager"),
         )
         self.risk_manager = RiskManagerAgent(
             api_key=_key_for(config.llm.risk_manager_model, config.llm.risk_manager_provider),
@@ -318,6 +320,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("risk_manager"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.risk_manager_provider,
+            provider_order=config.llm.get_provider_order("risk_manager"),
         )
         self.risk_engine = RiskRuleEngine(RiskConfig(
             max_position_pct=config.risk.max_position_pct,
@@ -339,6 +342,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("position_reviewer"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.position_reviewer_provider,
+            provider_order=config.llm.get_provider_order("position_reviewer"),
         )
         self.evening_analyst = EveningAnalystAgent(
             api_key=_key_for(config.llm.evening_analyst_model, config.llm.evening_analyst_provider),
@@ -346,6 +350,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("evening_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.evening_analyst_provider,
+            provider_order=config.llm.get_provider_order("evening_analyst"),
         )
         self.news_analyst = NewsAnalystAgent(
             api_key=_key_for(config.llm.news_analyst_model, config.llm.news_analyst_provider),
@@ -353,6 +358,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("news_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.news_analyst_provider,
+            provider_order=config.llm.get_provider_order("news_analyst"),
         )
         self.macro_analyst = MacroAnalystAgent(
             api_key=_key_for(config.llm.macro_analyst_model, config.llm.macro_analyst_provider),
@@ -360,6 +366,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("macro_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.macro_analyst_provider,
+            provider_order=config.llm.get_provider_order("macro_analyst"),
         )
         self.news_provider = NewsDataProvider()
         self.news_store = NewsStore()
@@ -371,6 +378,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("earnings_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.earnings_analyst_provider,
+            provider_order=config.llm.get_provider_order("earnings_analyst"),
         )
         self.smart_money_analyst = SmartMoneyAnalystAgent(
             api_key=_key_for(config.llm.smart_money_analyst_model, config.llm.smart_money_analyst_provider),
@@ -378,6 +386,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("smart_money_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.smart_money_analyst_provider,
+            provider_order=config.llm.get_provider_order("smart_money_analyst"),
         )
         self.smart_money_provider = SECForm4Provider(
             search_url=config.smart_money.search_url,
@@ -403,6 +412,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("meta_reflector"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.meta_reflector_provider,
+            provider_order=config.llm.get_provider_order("meta_reflector"),
         )
         self.earnings_provider = EarningsDataProvider()
         self.broker = AlpacaBroker(
