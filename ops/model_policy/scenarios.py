@@ -317,6 +317,15 @@ _PM_ANALYSES = [
     TechAnalysisResult(
         symbol="AAPL", rating="buy", conviction="high",
         entry_price=198.5, reference_target=214.0, stop_loss=191.5,
+        # No overhead resistance — price is riding the upper band above a
+        # rising MA stack after the March 50/200 cross, i.e. no one is
+        # defending a level above; 191.5 is the old breakout shelf now
+        # acting as support underneath. That's the "breakout" case per
+        # TechAnalysisResult.setup_type: target is a measured-move
+        # reference, managed by trailing rather than a defended level.
+        setup_type="breakout",
+        support_levels=[191.5],
+        expected_horizon_sessions=15,
         reasoning="Uptrend intact above rising 20/50/200 stack.",
         reasoning_chain={
             "trend": "Above all MAs, 50 crossed 200 in March.",
@@ -331,6 +340,14 @@ _PM_ANALYSES = [
     TechAnalysisResult(
         symbol="XLE", rating="sell", conviction="medium",
         entry_price=81.2, reference_target=76.0, stop_loss=84.6,
+        # Both sides of this short are named, defended levels — 84.6
+        # resistance above (the stop) and 76.0 the next support (the
+        # target) — so this is "range": a fixed target is meaningful and
+        # thesis_progress/pace can be measured against it.
+        setup_type="range",
+        resistance_levels=[84.6],
+        support_levels=[76.0],
+        expected_horizon_sessions=10,
         reasoning="Downtrend below falling MA stack.",
         reasoning_chain={
             "trend": "Below 20/50/200, all declining.",
@@ -391,6 +408,41 @@ def _pm_invoke(agent):
     return decision
 
 
+def _pm_size_repr(target) -> str:
+    """How a target stated its size, for a check's evidence string."""
+    if target is None:
+        return "None"
+    if target.risk_allocation_pct is not None:
+        return f"risk {target.risk_allocation_pct}%"
+    return f"weight {target.target_weight_pct}%"
+
+
+def _effective_weight_pct(target, analyses) -> float | None:
+    """A target's notional weight, whichever field the model sized it with.
+
+    Phase 2b (spec §2.1) made conviction a RISK allocation and left
+    `target_weight_pct` optional so stored decisions still replay. These
+    scenarios kept doing arithmetic on the notional field, which after that
+    change is `None` for every risk-sized target — the grading path is
+    outside the pytest suite (`ops/` is not collected), so nothing caught it.
+
+    Risk converts to weight the same way `PortfolioConstructor` does:
+    `risk_pct x entry / (entry - stop)`. Returns None when a risk-sized
+    target has no usable stop in the fixture, so callers can exclude it
+    rather than silently score it as zero.
+    """
+    if target.risk_allocation_pct is not None:
+        if target.risk_allocation_pct == 0.0:
+            return 0.0
+        analysis = analyses.get(target.symbol)
+        entry = getattr(analysis, "entry_price", None)
+        stop = target.suggested_stop_price or getattr(analysis, "stop_loss", None)
+        if not entry or not stop or entry <= stop:
+            return None
+        return target.risk_allocation_pct * entry / (entry - stop)
+    return target.target_weight_pct or 0.0
+
+
 def _pm_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks: list[Check] = []
     checks.append(Check("parsed", 0.30, decision is not None, "PortfolioDecision validated"))
@@ -411,12 +463,14 @@ def _pm_grade(decision: PortfolioDecision | None) -> list[Check]:
     # total ADDED weight cannot exceed available cash. This is arithmetic the
     # prompt states, not a market view.
     held = {"NVDA": 18_156.0 / _PM_TOTAL_VALUE * 100, "XLU": 6_732.0 / _PM_TOTAL_VALUE * 100}
-    added = sum(
-        max(0.0, t.target_weight_pct - held.get(t.symbol, 0.0)) for t in targets
-    )
-    freed = sum(
-        max(0.0, held.get(t.symbol, 0.0) - t.target_weight_pct) for t in targets
-    )
+    by_symbol = {a.symbol: a for a in _PM_ANALYSES}
+    weights = [(t, _effective_weight_pct(t, by_symbol)) for t in targets]
+    # A risk-sized target with no stop in the fixture cannot be converted to a
+    # notional weight. Excluding it is right: scoring it as 0% would read as
+    # "freed cash" and could turn an over-committed book into a pass.
+    sized = [(t, w) for t, w in weights if w is not None]
+    added = sum(max(0.0, w - held.get(t.symbol, 0.0)) for t, w in sized)
+    freed = sum(max(0.0, held.get(t.symbol, 0.0) - w) for t, w in sized)
     cash_pct = _PM_CASH / _PM_TOTAL_VALUE * 100
     checks.append(Check(
         "respects_cash_no_margin", 0.30,
@@ -437,8 +491,8 @@ def _pm_grade(decision: PortfolioDecision | None) -> list[Check]:
     xle = next((t for t in targets if t.symbol == "XLE"), None)
     checks.append(Check(
         "no_signal_contradiction", 0.10,
-        xle is None or xle.target_weight_pct == 0 or bool(xle.catalyst.strip()),
-        f"XLE target={getattr(xle, 'target_weight_pct', None)}",
+        xle is None or xle.is_close or bool(xle.catalyst.strip()),
+        f"XLE target={_pm_size_repr(xle)}",
     ))
 
     # The book is ~59% invested against a macro target of 55%, in a
@@ -477,6 +531,13 @@ _PM_PRODUCTION_ANALYSES = [
     TechAnalysisResult(
         symbol=symbol, rating="buy", conviction="medium",
         entry_price=100.0, stop_loss=94.0, reference_target=112.0,
+        # Named support (94, the stop) and a named target level (112) on
+        # both sides — this is the "range" case, not an unstructured
+        # breakout.
+        setup_type="range",
+        support_levels=[94.0],
+        resistance_levels=[112.0],
+        expected_horizon_sessions=12,
         reasoning="Validated uptrend with positive momentum and volume.",
         reasoning_chain={
             "trend": "Above rising 20/50-day averages.",
@@ -520,7 +581,7 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
     held = {p.symbol for p in _PM_PRODUCTION_POSITIONS}
     phantom_exits = [
         target.symbol for target in decision.targets
-        if target.target_weight_pct == 0 and target.symbol not in held
+        if target.is_close and target.symbol not in held
     ]
     checks.append(Check(
         "no_phantom_exits", 0.20, not phantom_exits,
