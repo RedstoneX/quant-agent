@@ -281,6 +281,17 @@ explicit about which inputs are measured and which are structural):
 | per month (21 days) | **$72.10** | **$5.68** | **12.7x cheaper** |
 
 `tech_analyst` is over half of it: five calls a day at 33,328 input tokens
+
+> **Stale as of 2026-08-27.** The Tech Analyst prompt grew when structural
+> levels (`src/data/levels.py`) and market context (`src/data/context.py`) were
+> added and the raw-bar window went from 20 to 40 sessions. Measured on real
+> five-year data, the per-symbol payload rose from roughly 480 to roughly 1,030
+> tokens — about 2.2x — so a 30-symbol call is now in the region of 50,000
+> input tokens rather than 33,328. At the gemini-2.5-flash-lite input rate that
+> is approximately $0.005 per call instead of $0.003: immaterial against the
+> $1.50 daily circuit limit. The figure above has NOT been re-derived with
+> `ops/model_policy/project_session_cost.py`; the numbers in this note are an
+> estimate from measured block sizes, not a benchmark run.
 each, measured at real chunk size rather than extrapolated.
 
 Treat the ratio as the load-bearing number. It is dominated by published

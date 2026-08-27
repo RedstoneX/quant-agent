@@ -41,11 +41,22 @@ This file records what is accepted and true **now**. Git history preserves imple
   their config fields (`default_stop_atr_multiple`, `fallback_stop_pct`) are deleted.
   **Behavioral consequence: the desk now declines a trade outright — no BUY or SELL
   is constructed — whenever the Tech Analyst does not supply a structural stop and
-  target for a symbol**, rather than trading it against an invented number. Phases
-  2–8 of the remediation spec (risk-based sizing, correlation-aware budgeting, exit
-  rework, evidence/feed repair, short selling, cost/transparency, measurement,
-  further documentation correction) remain pending — see
-  `docs/QAMC_REMEDIATION_SPEC.md`.
+  target for a symbol**, rather than trading it against an invented number. On top
+  of this, a new deterministic module `src/data/context.py` computes market context
+  per symbol from the same bars — relative strength vs a same-batch benchmark (SPY,
+  else QQQ, else IWM), returns across 1w/1m/3m/6m/12m, 52-week range position, ATR
+  as a percentage of price with its 1-year percentile and a volatility state,
+  moving-average slopes, consolidation detection (requires both a narrow range and
+  small net drift), average dollar volume, up/down volume ratio, and unfilled gaps
+  — rendered into the Tech Analyst prompt via `format_context_block()`
+  (`src/agents/tech_analyst.py`). `TechAnalystAgent.build_user_message` also accepts
+  an optional `days_to_earnings` kwarg, and `MarketDataProvider.get_next_earnings_date()`
+  (`src/data/market.py`, new) can supply an approximate trading-session count to a
+  symbol's next scheduled earnings — but **nothing in the pipeline calls it or
+  passes `days_to_earnings` today**; it is available but unwired. Phases 2–8 of the
+  remediation spec (risk-based sizing, correlation-aware budgeting, exit rework,
+  evidence/feed repair, short selling, cost/transparency, measurement, further
+  documentation correction) remain pending — see `docs/QAMC_REMEDIATION_SPEC.md`.
 
 ## Stabilization account model
 

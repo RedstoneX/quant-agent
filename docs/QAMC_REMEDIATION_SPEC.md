@@ -84,6 +84,19 @@ The Tech Analyst must return, per candidate:
 
 **1.4 — Delete the invented target. DONE.** `entry × (1 + 2 × stop_gap_pct)` is removed from `portfolio_constructor.py`; a BUY with no `reference_target` from the analyst is now rejected rather than assigned a synthesized one, so a Type B (breakout) position without a real reference is a declined trade today rather than "no target, handled as a first-class state" — the latter is Phase 3 exit-rework territory (disabling progress/pace for breakouts) and remains pending.
 
+**Phase 1b — market context. DONE, not in the original spec text.** Structural levels alone left the Tech Analyst without most of what a technical analyst actually reasons about — it had moving averages, RSI, MACD, Bollinger bands, ATR and a single volume-change percentage, and nothing else. `src/data/context.py` (new) computes, deterministically from bars already fetched, and renders via `format_context_block()` ahead of the levels block in the prompt:
+
+- Relative strength vs a benchmark drawn from the same batch (SPY, else QQQ, else IWM — no extra fetch), over 1m and 3m.
+- Returns over 1w / 1m / 3m / 6m / 12m.
+- Position within the trailing 52-week range.
+- ATR as a percentage of price, its percentile against its own trailing year, and an `expanding` / `contracting` / `stable` volatility state.
+- MA20 / MA50 / MA200 slopes over a 10-session lookback — trend direction of the averages, not merely price's position against them.
+- Consolidation detection: a candidate window must be **both** narrow (≤8% high/low spread over 15 sessions) **and** low-drift (net move ≤50% of the range) to be flagged — a narrow window alone does not distinguish a base from a slow steady trend.
+- 20-day average dollar volume and 20-day up/down volume ratio (accumulation vs. distribution).
+- Unfilled price gaps (≥2%, up to 3 most recent).
+
+`src/agents/tech_analyst.py` wires this in per symbol and accepts an optional `days_to_earnings` kwarg to render an earnings-proximity warning line. **Not wired end to end**: `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()`, which estimates trading sessions to the next scheduled earnings report (approximate — calendar days × 5/7, not a precise trading-calendar count) — the first place in the system that has ever known a *future* earnings date, as distinct from `src/data/earnings.py`, which is retrospective (it finds filings already on EDGAR). This method exists and is tested but **nothing in the pipeline calls it or passes `days_to_earnings` to the Tech Analyst** — the kwarg is accepted and handled but always empty in practice today. `tests/test_context.py` (new, 27 tests) covers the module.
+
 **Phases 2–7 below are still pending — none of this work has been implemented.** Only Phase 1, as described above, is done.
 
 ---

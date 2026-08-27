@@ -29,7 +29,7 @@ LLM multi-agent quantitative trading system for US equities. Eight specialized d
 
 - **Telegram session-status push (opt-in).** Every session emits a structured status message — orders, R/R-weighted sizing, degraded-data flags, daily P&L, tomorrow's bias, or the exact exception trace on failure — to a Telegram chat you control. Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` to enable; missing creds make the notifier a silent no-op and trading is unchanged. Per-mode noise policy hides the 14 silent `intra_check` ticks per day and pre-market `nothing_new` earnings polls while always surfacing emergency liquidations, hard-risk blocks, exceptions, and the substantive morning / midday / close / evening completions. The notifier is wired into `main.py`'s `finally` block so even a `SystemExit` from a wrapper kill still produces a push before the process exits — and HTTP failures to Telegram are swallowed so an outage on their side can never cascade into a trading failure.
 
-- **Tested.** 2200 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
+- **Tested.** 2227 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ SELL allocation_pct semantics, ET-everywhere timezone, etc.).
 
 | Agent | Role | Key Feature |
 |-------|------|-------------|
-| **Tech Analyst** | Batch technical analysis | 5-step CoT (trend / momentum / volatility / volume / S&R). **Structural levels computed in Python** (`src/data/levels.py`) from the full ~5-year price history (`trading.lookback_days: 1800`) — local-neighbourhood bad-print filtering, swing-pivot detection, zone clustering, distance/recency-weighted ranking — and rendered as a formatted support/resistance block in the prompt; the LLM sees the last 40 raw bars for immediate context only (up from 20), never as the source of levels. For every actionable rating the model **must** return `support_levels`, `resistance_levels`, `setup_type` (`range`\|`breakout`), `expected_horizon_sessions`, `entry_price`, `stop_loss` and `reference_target` — a Pydantic validator rejects the result if any is missing. **No synthesized fallback**: `PortfolioConstructor` no longer invents a stop (`entry − 2×ATR` / `entry × 0.95`) or a target (`entry × (1 + 2×stop_gap_pct)`) when the analyst omits one — a candidate with no structural stop or target is rejected outright. **Auto-computed `risk_reward`** (Python-calculated, not LLM-trusted) flows into PM sizing and RM veto logic. **Signal-age memory** (`data/tech/last_ratings.json`): prior rating surfaced to LLM as context; `signal_age_days` counted to spot stale setups — PM cuts allocation on 8+ day stale BUYs. **Valuation context** (yfinance trailing PE / forward PE / P/S) surfaced per symbol — LLM flags >40x forward PE or >15x P/S as stretched in `reasoning_chain.support_resistance`. Pre-filter thresholds normalized by ATR. Auto-chunks batch > 30 symbols. Cross-field validator: BUY stop must be below entry and target above entry, SELL the reverse. |
+| **Tech Analyst** | Batch technical analysis | 5-step CoT (trend / momentum / volatility / volume / S&R). **Structural levels computed in Python** (`src/data/levels.py`) from the full ~5-year price history (`trading.lookback_days: 1800`) — local-neighbourhood bad-print filtering, swing-pivot detection, zone clustering, distance/recency-weighted ranking — and rendered as a formatted support/resistance block in the prompt; the LLM sees the last 40 raw bars for immediate context only (up from 20), never as the source of levels. For every actionable rating the model **must** return `support_levels`, `resistance_levels`, `setup_type` (`range`\|`breakout`), `expected_horizon_sessions`, `entry_price`, `stop_loss` and `reference_target` — a Pydantic validator rejects the result if any is missing. **No synthesized fallback**: `PortfolioConstructor` no longer invents a stop (`entry − 2×ATR` / `entry × 0.95`) or a target (`entry × (1 + 2×stop_gap_pct)`) when the analyst omits one — a candidate with no structural stop or target is rejected outright. **Deterministic market context** (`src/data/context.py`, new) — computed in Python from the same bars, not estimated by the LLM — rendered per symbol ahead of the levels block: relative strength vs a same-batch benchmark (SPY, else QQQ, else IWM — no separate fetch), returns over 1w/1m/3m/6m/12m, 52-week range position, ATR as a percentage of price plus its 1-year percentile and an expanding/contracting/stable volatility state, MA20/50/200 slopes (rising vs. falling, not just price-vs-MA), consolidation detection (requires both a narrow range **and** small net drift, so a slow trend isn't mistaken for a base), 20-day average dollar volume, 20-day up/down volume ratio, and unfilled price gaps. `TechAnalystAgent.build_user_message` also accepts an optional `days_to_earnings` map to flag an imminent report per symbol; `MarketDataProvider.get_next_earnings_date()` (`src/data/market.py`, new) can supply it but nothing in the pipeline wires it up yet, so this stays available-but-unused today. **Auto-computed `risk_reward`** (Python-calculated, not LLM-trusted) flows into PM sizing and RM veto logic. **Signal-age memory** (`data/tech/last_ratings.json`): prior rating surfaced to LLM as context; `signal_age_days` counted to spot stale setups — PM cuts allocation on 8+ day stale BUYs. **Valuation context** (yfinance trailing PE / forward PE / P/S) surfaced per symbol — LLM flags >40x forward PE or >15x P/S as stretched in `reasoning_chain.support_resistance`. Pre-filter thresholds normalized by ATR. Auto-chunks batch > 30 symbols. Cross-field validator: BUY stop must be below entry and target above entry, SELL the reverse. |
 | **News Intelligence** | 3-layer news analysis | Layer 1: Persistent macro narrative. Layer 2: State change detection. Layer 3: Per-symbol alerts with conviction. Daily storage in `data/news/` |
 | **Macro Analyst** | Regime assessment & sector guidance | 6-step CoT (vol / curve / monetary / inflation+labor+credit / cross-signal / sector). Inputs: VIX, 2Y/10Y yields, **DFF** (daily fed funds), **core & headline CPI**, **UNRATE**, **HY OAS**. Persists yesterday's regime → detects `regime_shift`. Cross-references News narrative via `alignment_with_news`. Emits bull/bear view-change triggers. |
 | **Earnings Analyst** | SEC 10-Q/10-K analysis | Revenue, margins, cash flow, strategic direction, competitive positioning, strategic vs operational risks, strategy consistency across filings. `investment_implications` carries a 5-step `reasoning_chain` (fundamental_quality / growth_trajectory / strategic_risks / management_execution / valuation_context) — sentiment call is derivable from the numbers, not a vibe check. |
@@ -346,6 +346,7 @@ quant-agent/
 │   │   ├── earnings.py            # SEC EDGAR provider
 │   │   ├── technical.py           # TA indicators (MA, RSI, MACD, BB, ATR)
 │   │   ├── levels.py              # Deterministic support/resistance from full OHLCV history (pivots, clustering, recency-weighted ranking)
+│   │   ├── context.py             # Deterministic market context: rel. strength, 52w range, ATR regime, MA slopes, consolidation, liquidity, gaps
 │   │   ├── correlation.py         # 120d pairwise return correlations + cluster detection
 │   │   └── tech_store.py          # Per-symbol rating memory + signal-age computation
 │   ├── execution/
@@ -354,7 +355,7 @@ quant-agent/
 │   │   └── rules.py               # Hard risk engine (leverage-adjusted)
 │   └── storage/
 │       └── db.py                  # SQLite (trades, positions, logs, PnL, insights)
-├── tests/                         # 2200 tests
+├── tests/                         # 2227 tests
 ├── data/
 │   ├── quant_agent.db             # SQLite audit trail
 │   ├── earnings/                  # Cached SEC filing analyses
@@ -365,7 +366,7 @@ quant-agent/
 ## Tests
 
 ```bash
-pytest tests/ -v    # 2200 tests
+pytest tests/ -v    # 2227 tests
 ```
 
 ## Data Sources
