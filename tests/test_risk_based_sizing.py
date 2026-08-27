@@ -316,7 +316,10 @@ def test_the_cluster_cap_is_rendered_to_the_portfolio_manager():
 def test_risk_envelope_reaches_the_constructor_from_config():
     """The ratified envelope lives in `risk:` config, not in a dataclass
     default nobody chose — which is how the 0.5% per-trade figure survived
-    unexamined for months."""
+    inherited. It was written by the UPSTREAM author (`995fcb0`, yebof,
+    2026-04-18), before QAMC existed — QAMC's own history begins
+    2026-08-09. It was never a QAMC decision that went stale; it was a
+    default that came with the fork and that nobody had revisited."""
     from pathlib import Path
 
     import yaml
