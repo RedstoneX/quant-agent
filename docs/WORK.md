@@ -167,6 +167,24 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   decision on what §3.5 should actually be scoped to; it is not decided
   here.
 
+- **Phase 3 — COMPLETE (2026-08-27).** §3.1 pace feedback loop cut (horizon
+  pinned at entry on the trade row; `avg_hold_days` removed from the review
+  path entirely) and §3.2 reviewer memory + the metric-contradiction veto
+  (`src/risk/exit_guard.py`) landed in PR #107. §3.3 every exit must name a
+  trigger and §3.4 exits route through AI Risk — fail-OPEN, deliberately
+  asymmetric with the entry path — landed in PR #108. §3.6 ATR noise band on
+  price-derived exits and §3.7 deterministic broker-resident trailing
+  (`src/risk/trailing.py`, range vs breakout keyed on the pinned `setup_type`)
+  landed in PR #109. §3.5 resolved as an owner decision, see below. §3.8
+  unchanged — the reviewer keeps full authority to exit on new information.
+- **DEPLOYED to the live paper account 2026-08-27 ~09:20 ET** at `058273f1`;
+  rollback SHA `9f77b03e`. Verified on the box: `paper=true`,
+  `intraday_scan.enabled: true` (the only tracked config delta) preserved
+  through the checkout, `drawdown_buy_cap` armed, the OKLO noise-band case
+  blocks, and the `trades` migration (`expected_horizon_sessions`,
+  `setup_type`) plus the reviewer-memory reader were pre-run so the 09:30
+  session would not hit a cold migration. **Phase 2b is NOT deployed.**
+
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
 - **Phase 3 runs before the rest of Phase 2.** The spec's stated order is
@@ -179,6 +197,27 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   position anyway". Two of the last three exits cut intact theses. Sizing
   trades more precisely does not help when they are cut on day 5 against a
   self-referential pace metric.
+- **§3.5 resolved: leave the reviewer's model alone, fix the scenario instead.**
+  The spec's premise — `position_reviewer` runs "the weakest model in the
+  stack" — is contradicted by `ops/model_policy/results/merged.json`:
+  `google/gemini-2.5-flash-lite` scores `quality_min 1.0 / quality_mean 1.0`
+  at `midday_exit`, tied with `openai/gpt-5.5`,
+  `deepseek/deepseek-v4-pro-0813`, `qwen/qwen3.7-flash` and
+  `qwen/qwen3-235b-a22b-2507`, and scores 1.0 on every scenario it was ever
+  measured on. `gpt-5.5` costs ~84x more per review ($0.0927 vs $0.0011) for
+  no measured gain. The real EPD/MRVL failure was a broken pace metric and
+  missing memory, not model weakness. The honest gap is that `midday_exit`
+  ties five of twelve candidates at 1.0 and therefore does not discriminate;
+  the owner chose to build a scenario that does (the EPD shape: metrics
+  improved, reason claims stalling) rather than pay 84x on faith. Routing
+  unchanged.
+- **Standing autonomy grant.** The owner instructed that work should not halt
+  at phase gates for approval. Proceed through this backlog — implement, test,
+  PR, merge, deploy to PAPER, verify — and interrupt only for something
+  unusually significant: live-capital activation, new paid dependencies,
+  secrets/credential redesign, destructive infrastructure, material
+  architecture outside current authority, or evidence that a ratified decision
+  was wrong.
 - **The per-trade risk ceiling is 5% of equity, confirmed.** Phase 2b raises it
   from the constructor's current `risk_budget_pct = 0.5` default — a tenfold
   increase in per-trade risk (~$50 → ~$500 at risk on a $9.9k book). The owner
@@ -188,14 +227,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
 
 **Next, in order**
 
-1. **Phase 3 — exits (remaining).** §3.1 (pace feedback loop), §3.2
-   (reviewer memory, audit §1.5) and §3.3 (first-sale-of-the-day gate
-   loophole) are landed — see above. Still open: route exits through AI Risk
-   (§3.4); upgrade the reviewer's model off `gemini-2.5-flash-lite` (§3.5 —
-   its "weakest model" premise is contradicted by committed benchmark data,
-   see note above; scoping this item is an owner decision, not inferred
-   here); ATR noise band (§3.6); broker-resident trailing stops (§3.7).
-2. **Phase 2b — sizing and risk (remaining).** Conviction expressed as risk
+1. **Phase 2b — sizing and risk (remaining).** Conviction expressed as risk
    allocation rather than percent-of-portfolio notional (§2.1,
    `shares = (equity × risk_pct) ÷ |entry − stop|`, envelope 5% ceiling / 0.5%
    floor), correlation-aware cluster budgeting so correlated names consume one
@@ -204,23 +236,23 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
    `max_portfolio_risk_pct` from a reported figure into a live gate. Note: a
    grep of `config/prompts/` and `src/` found **no fixed position-count target**
    anywhere — §2.4 may already be satisfied; verify before building to it.
-3. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
+2. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
    ratio in the system — over half of Form 4 trades carry zero predictive power.
-4. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
+3. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-5. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
+4. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
    path; fix Reuters/AP/FRED; surface degraded coverage to the operator.
-6. **Phase 5 — short selling.** Alpaca is confirmed ready: `shorting_enabled:
+5. **Phase 5 — short selling.** Alpaca is confirmed ready: `shorting_enabled:
    true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
    $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
    entirely a code change; no account work is outstanding.
-7. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
+6. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
-8. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
+7. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-9. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
+8. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
    on the residual); deterministic macro regime with the model confined to FOMC
    text; earnings multi-quarter trends. Several need new data sources and an
    owner decision first.
