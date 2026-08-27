@@ -34,6 +34,62 @@ def _gross_multiplier(symbol: str) -> float:
     return abs(_ETF_LEVERAGE.get(symbol, 1.0))
 
 
+DRAWDOWN_BUY_SCALE = 0.5
+"""Multiplier applied to every new BUY while the system is in drawdown.
+
+`config/prompts/portfolio_manager.md` has instructed the LLM to halve new BUYs
+whenever `in_drawdown=true` since the rule was written, and
+`config/prompts/risk_manager.md` told the Risk Manager it was "the only check"
+because no deterministic code enforced it. A safety rule that depends on a
+language model remembering to apply it is not a rule (audit §1.1), so the
+halving now lives here, in Python, and the PM prompt no longer pre-applies it —
+two independent halvings would quarter the position.
+"""
+
+
+def apply_drawdown_scale(
+    decisions: list[TradeDecision], in_drawdown: bool,
+) -> tuple[list[TradeDecision], list[str]]:
+    """Halve every BUY's allocation while the system is in drawdown.
+
+    Returns `(decisions, notes)`. Mutates each scaled BUY in place and appends
+    provenance to its `reasoning`: the AI Risk Manager audits CONSTRUCTED orders
+    against PM's prose, and an unexplained size difference reads to it as PM
+    contradicting itself — on 2026-08-20 exactly that mismatch drew a full-plan
+    veto over deterministic math (see `portfolio_constructor.py` `cap_note`).
+
+    SELLs and HOLDs are untouched: de-risking during a drawdown is the point.
+    """
+    if not in_drawdown:
+        return decisions, []
+    notes: list[str] = []
+    for decision in decisions:
+        if decision.action != "BUY" or decision.allocation_pct <= 0:
+            continue
+        before = decision.allocation_pct
+        after = round(before * DRAWDOWN_BUY_SCALE, 2)
+        if after <= 0:
+            # Rounds to nothing — the halved trade is not worth submitting.
+            decision.allocation_pct = 0.0
+            notes.append(
+                f"{decision.symbol} {before:.2f}% → 0% (halved below the "
+                f"minimum tradable size by the drawdown rule)"
+            )
+            continue
+        decision.allocation_pct = after
+        decision.reasoning = (
+            decision.reasoning
+            + f" [risk engine: {before:.2f}% halved to {after:.2f}% — system "
+              f"in_drawdown=true. Deterministic, not PM inconsistency.]"
+        )[:800]
+        notes.append(f"{decision.symbol} {before:.2f}% → {after:.2f}%")
+    if notes:
+        logger.warning(
+            "Drawdown gate: halved %d BUY(s) — %s", len(notes), "; ".join(notes),
+        )
+    return decisions, notes
+
+
 @dataclass
 class RiskViolation:
     rule: str
@@ -55,7 +111,8 @@ class RiskRuleEngine:
               correlation_matrix: dict[str, dict[str, float]] | None = None,
               max_correlated_cluster_pct: float = 50.0,
               cash: float | None = None,
-              pending_cash_outflow: float = 0.0) -> list[RiskViolation]:
+              pending_cash_outflow: float = 0.0,
+              in_drawdown: bool = False) -> list[RiskViolation]:
         if decision.action == "SELL":
             return []
         # total_value <= 0 (or NaN) means we can't compute risk percentages.
@@ -146,6 +203,28 @@ class RiskRuleEngine:
                 value=position_pct,
                 limit=self.config.max_position_pct,
             ))
+
+        # 1b. Drawdown gate (audit §1.1). `apply_drawdown_scale` above has
+        # already halved every BUY on the normal path; this is the fail-closed
+        # backstop for any path that reaches the engine unscaled. It bounds the
+        # NEW money only — deliberately not the whole position, because the
+        # rule the prompts have always stated is "halve every new BUY", not
+        # "force-trim existing winners during a drawdown".
+        if in_drawdown:
+            drawdown_new_cap = self.config.max_position_pct * DRAWDOWN_BUY_SCALE
+            new_pct = decision.allocation_pct * gross_mul
+            if new_pct > drawdown_new_cap:
+                violations.append(RiskViolation(
+                    rule="drawdown_buy_cap",
+                    message=(
+                        f"{decision.symbol} new BUY of {new_pct:.1f}% exceeds the "
+                        f"{drawdown_new_cap:.1f}% drawdown cap "
+                        f"({self.config.max_position_pct:.0f}% x "
+                        f"{DRAWDOWN_BUY_SCALE}) — system is in drawdown"
+                    ),
+                    value=new_pct,
+                    limit=drawdown_new_cap,
+                ))
 
         # 2. Total net exposure limit — signed, so long+short hedges cancel
         current_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)

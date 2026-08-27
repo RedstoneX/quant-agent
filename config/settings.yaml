@@ -117,6 +117,11 @@ risk:
   max_total_position_pct: 90
   max_daily_loss_pct: 3
   max_sector_pct: 40
+  # Owner-ratified total at-risk ceiling: sum of (shares x distance from entry
+  # to stop) across the book, as a % of equity. NOT a notional cap — full
+  # deployment is intended; risk is what gets rationed. Reporting-only until
+  # Phase 2b turns it into a gate.
+  max_portfolio_risk_pct: 25
   require_stop_loss: true
   # Cash-only by default. Flip to true to allow margin — BUYs can then spend
   # beyond available cash. When false (default) the risk engine hard-blocks

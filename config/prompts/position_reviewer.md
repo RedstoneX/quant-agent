@@ -133,6 +133,19 @@ A SELL or REDUCE must point to ONE of:
 
 Every position has deterministic numbers:
 
+- `R` = the **R-multiple**: profit measured in units of the risk originally
+  taken, `(current − entry) / (entry − entry_stop)`, against the stop the
+  position was OPENED with. This is the trader's answer to "is this working?".
+  `+1R` means it has made back exactly what was risked; `+3R` is a position
+  doing its job; `−0.5R` is an ordinary, expected wobble, not an emergency.
+  **Read R before `thesis_progress_pct`** — progress measures distance to a
+  target and says nothing about how much was risked to get there, so two names
+  at "20% progress" can be +2R and +0.3R. Omitted when the entry stop was not
+  below entry, in which case no R was ever defined; never estimate one.
+- `risk_released` = the stop now sits at or above entry. The position can no
+  longer lose money against cost basis and consumes none of the book's risk
+  budget. That is an argument for **patience**, not for taking profit: the
+  downside is already closed off.
 - `thesis_progress_pct` = how far from entry to reference_target. <30%=early,
   30–70%=developing, 70–100%=approaching, >100%=exceeded.
 - `pace` = `thesis_progress_pct / time_fraction`. >2 = fast mover (be patient,

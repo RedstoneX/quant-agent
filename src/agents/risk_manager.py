@@ -60,6 +60,13 @@ class RiskManagerAgent(BaseAgent):
         # "no position is young".
         position_history: dict = kwargs.get("position_history") or {}
         recent_performance: dict = kwargs.get("recent_performance") or {}
+        # Audit §1.3 — total capital at risk if every open stop were hit. RM's
+        # `sizing_sanity` step has always been asked whether any bet is
+        # outsized while being shown only notional weights, which answer a
+        # different question: a 15% position stopped 3% away risks less than a
+        # 5% position stopped 20% away. None when the heat build failed.
+        heat = kwargs.get("heat")
+        risk_ceiling_pct: float = float(kwargs.get("risk_ceiling_pct") or 25.0)
 
         # audit round 2 #6: allocation_pct has TWO meanings — %-of-portfolio
         # for BUY vs %-of-current-position for SELL (100 = full close,
@@ -114,11 +121,13 @@ class RiskManagerAgent(BaseAgent):
             # a header to hang off, so open the section anyway.
             account_section = "## Account\n"
 
-        # System-drawdown state. PM's sizing formula multiplies every new BUY
-        # by 0.5 when `in_drawdown` is true; without this block RM had no way
-        # to tell whether that halving happened, so a PM that skipped it was
-        # unauditable. Rendered inside the Account section because it is a
-        # property of the account, not of any one name.
+        # System-drawdown state. The halving is deterministic code now
+        # (`src.risk.rules.apply_drawdown_scale`, audit §1.1) rather than a
+        # rule the PM had to remember, so this block no longer asks RM to
+        # police it — it tells RM the scaling already happened, so a size that
+        # looks smaller than PM's stated weight reads as the engine, not as PM
+        # contradicting itself. Rendered inside the Account section because it
+        # is a property of the account, not of any one name.
         if recent_performance:
             r5 = recent_performance.get("rolling_5d_pct")
             r20 = recent_performance.get("rolling_20d_pct")
@@ -134,15 +143,33 @@ class RiskManagerAgent(BaseAgent):
             )
             if in_dd:
                 account_section += (
-                    "  ⚠️ in_drawdown=true — PM's sizing rule REQUIRES every new "
-                    "BUY halved (×0.5) and the halving named in `sizing_logic`. "
-                    "Verify it against the proposed sizes; this rule has no "
-                    "deterministic enforcement, so you are the only check.\n"
+                    "  ⚠️ in_drawdown=true — the risk engine has ALREADY halved "
+                    "every BUY below (×0.5, deterministic; each scaled order "
+                    "says so in its reasoning). Do not ask for it again and do "
+                    "not read the smaller size as PM inconsistency. Judge the "
+                    "halved sizes on their merits.\n"
                 )
         else:
             account_section += (
                 "- System performance: not provided "
-                "(cannot audit the drawdown-halve rule this run)\n"
+                "(drawdown state unknown this run)\n"
+            )
+
+        # Audit §1.3 — the book's actual risk, in dollars and in % of equity,
+        # with each position's R-multiple. `sizing_sanity` is asked whether any
+        # bet is outsized; this is the number that answers it.
+        if heat is not None:
+            from src.risk.metrics import format_heat_block
+            risk_section = format_heat_block(
+                heat, risk_ceiling_pct,
+                title="Portfolio Risk (deterministic, computed in Python)",
+            )
+        else:
+            risk_section = (
+                "## Portfolio Risk\n"
+                "- not computed this run (stop data unavailable). Total at-risk "
+                "is UNKNOWN; say so rather than assuming the book has "
+                "headroom.\n"
             )
 
         def _fmt_position(p: Position) -> str:
@@ -334,6 +361,7 @@ Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
 Portfolio View: {portfolio_decision.portfolio_view}
 
 {account_section}
+{risk_section}
 ## Current Positions
 {positions_text}
 
@@ -362,7 +390,9 @@ Review these proposed trades and provide your verdict as JSON."""
                cash: float | None = None,
                reserve_balance: float = 0.0,
                position_history: dict | None = None,
-               recent_performance: dict | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
+               recent_performance: dict | None = None,
+               heat=None,
+               risk_ceiling_pct: float = 25.0) -> tuple[RiskVerdict | None, "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
@@ -384,6 +414,8 @@ Review these proposed trades and provide your verdict as JSON."""
             reserve_balance=reserve_balance,
             position_history=position_history or {},
             recent_performance=recent_performance or {},
+            heat=heat,
+            risk_ceiling_pct=risk_ceiling_pct,
         )
         parsed = result.parse_json()
         if parsed is None:
