@@ -29,7 +29,7 @@ LLM multi-agent quantitative trading system for US equities. Eight specialized d
 
 - **Telegram session-status push (opt-in).** Every session emits a structured status message — orders, R/R-weighted sizing, degraded-data flags, daily P&L, tomorrow's bias, or the exact exception trace on failure — to a Telegram chat you control. Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` to enable; missing creds make the notifier a silent no-op and trading is unchanged. Per-mode noise policy hides the 14 silent `intra_check` ticks per day and pre-market `nothing_new` earnings polls while always surfacing emergency liquidations, hard-risk blocks, exceptions, and the substantive morning / midday / close / evening completions. The notifier is wired into `main.py`'s `finally` block so even a `SystemExit` from a wrapper kill still produces a push before the process exits — and HTTP failures to Telegram are swallowed so an outage on their side can never cascade into a trading failure.
 
-- **Tested.** 2444 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
+- **Tested.** 2470 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
 
 ## Architecture
 
@@ -370,7 +370,7 @@ quant-agent/
 │   │   └── trailing.py            # Deterministic broker-resident trailing stops
 │   └── storage/
 │       └── db.py                  # SQLite (trades, positions, logs, PnL, insights)
-├── tests/                         # 2444 tests
+├── tests/                         # 2470 tests
 ├── data/
 │   ├── quant_agent.db             # SQLite audit trail
 │   ├── earnings/                  # Cached SEC filing analyses
@@ -381,7 +381,7 @@ quant-agent/
 ## Tests
 
 ```bash
-pytest tests/ -v    # 2444 tests
+pytest tests/ -v    # 2470 tests
 ```
 
 ## Data Sources

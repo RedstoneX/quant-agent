@@ -284,6 +284,24 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   `sector_guidance` entry as a mapping, so the persisted dict shape raised
   `TypeError: string indices must be integers` and killed every intraday PM
   call carrying macro forward.
+- **`ops/` and `scripts/` are now import-guarded — done.** `6f897a1`, same
+  branch, new `tests/test_ops_scripts_importable.py`. `pytest` collects
+  `tests/` only, so the operational tooling (the model benchmark, the
+  commissioning verifier, the pricing check, replay and preview) had zero
+  coverage and a `src/models.py` schema change could break a tool while the
+  suite stayed green. Three consumers drifted that way on 2026-08-27 alone:
+  `ops/model_policy/scenarios.py` stopped importing when `138edd2`'s Phase 1
+  tranche made `setup_type` required (fixed same-day in `300ea14` — the
+  harness was broken for HOURS, not months; an earlier verbal description of
+  it as "rotted months ago" was wrong and has been corrected in
+  `tests/test_model_policy_harness_imports.py`, `e19d42b`), and
+  `ops/preview/branch_preview.py` plus the Mission Control evidence route both
+  kept reading `TargetPosition.target_weight_pct` after Phase 2b made it
+  optional (`002095c`). The new guard discovers every module under `ops/` and
+  `scripts/` dynamically rather than hardcoding a list, so a new file is
+  covered the moment it lands. Import is deliberately shallow — it proves a
+  tool still agrees with the schemas it's built on, not that the tool works.
+  2470 tests pass.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
