@@ -71,6 +71,13 @@ logger = logging.getLogger(__name__)
 # querying a SELL order that may not exist.
 _WAL_SELL_SENTINEL = "__WAL_PENDING__"
 
+#: Ceiling on how many symbols get a company-profile lookup for PM's facts
+#: block. Profiles are 30-day-cached, so this only bites on a cold cache —
+#: but on a cold cache it is one network round trip per symbol, and a
+#: pathological candidate list must not be able to turn a nice-to-have
+#: identity block into the longest step of the morning session.
+_PM_PROFILE_SYMBOL_CAP = 40
+
 HARD_BLOCK_RULES = {
     "max_daily_loss_pct",
     "max_total_position_pct",
@@ -5079,6 +5086,31 @@ class TradingPipeline:
             logger.warning("pm_facts: correlation clusters failed: %s", e)
             f.correlation_coverage = False
             f.correlation_clusters = []
+
+        # Who these tickers actually are. PM has been reasoning about `CCJ`
+        # and `PATH` as price series with a sector tag; "Energy" covers both
+        # an integrated major and a pre-revenue nuclear startup, and a sector
+        # label alone lets it reach for the wrong prior confidently. Scoped to
+        # the symbols already in play for THIS decision (held + candidates) —
+        # never the configured universe — and capped, because a cold cache
+        # pays one network round trip per symbol and the morning session's
+        # budget is not the place to discover a slow yfinance. Every failure
+        # mode inside the store degrades to an identity-less profile, which
+        # PMFacts.render() drops; this except is the belt to that suspenders.
+        try:
+            from src.data.company import CompanyProfileStore
+            profile_symbols = sorted(
+                {p.symbol for p in positions if p.qty > 0}
+                | {a.symbol for a in analyses}
+            )[:_PM_PROFILE_SYMBOL_CAP]
+            f.company_profiles = list(
+                CompanyProfileStore()
+                .get_many(profile_symbols, allow_fetch=True)
+                .values()
+            )
+        except Exception as e:  # noqa: BLE001 — identity is nice-to-have
+            logger.warning("pm_facts: company profiles failed: %s", e)
+            f.company_profiles = []
 
         return f
 

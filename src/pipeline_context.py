@@ -19,6 +19,7 @@ its own mutable snapshot.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,6 +28,8 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from src.models import NewsIntelligenceReport, PortfolioDecision, Position
     from src.risk.metrics import PortfolioHeat
+
+logger = logging.getLogger(__name__)
 
 SessionType = Literal["morning", "midday", "close", "evening", "intra_check", "earnings_preprocess"]
 
@@ -221,6 +224,19 @@ class PMFacts:
     correlation_clusters: list[list[str]] = field(default_factory=list)
     correlation_coverage: bool = True
 
+    # Who the tickers actually are. Every layer above this one reasons about
+    # a symbol as a price series with a sector tag, and "Utilities" covers
+    # both a regulated water utility and a merchant power trader with
+    # commodity exposure — a label alone lets the PM reach for the wrong
+    # prior with complete confidence. `CompanyProfile` objects for the
+    # symbols in scope for THIS decision (held + candidates), never the whole
+    # universe. Empty when the lookup failed or the cache was cold and the
+    # fetch degraded — the section then renders as nothing at all, which is
+    # the correct failure direction: a missing profile must never cost a
+    # session, and a heading over "no profile available" lines is worse than
+    # silence.
+    company_profiles: list = field(default_factory=list)
+
     def render(self) -> str:
         """Format as a compact markdown block for PM's prompt."""
         def _pct(v: float | None) -> str:
@@ -270,7 +286,7 @@ class PMFacts:
 - rolling 5d={_pct(self.rolling_5d_pct)} · 20d={_pct(self.rolling_20d_pct)} · in_drawdown={self.in_drawdown}{self._render_drawdown_gate()}
 
 {self._render_risk()}
-{self._render_correlation()}{self._render_deployment_gap()}"""
+{self._render_correlation()}{self._render_deployment_gap()}{self._render_companies()}"""
 
     def _render_drawdown_gate(self) -> str:
         """State who applies the halving. Two halvings would quarter the size."""
@@ -325,6 +341,36 @@ class PMFacts:
             f"cap after the fact.\n"
             f"{lines}"
         )
+
+    def _render_companies(self) -> str:
+        """Business identities for the symbols in scope, or nothing at all.
+
+        Profiles that came back with no identifying field (fetch failed, cold
+        cache with `allow_fetch=False`, a symbol yfinance does not know) are
+        dropped before rendering rather than printed as "no company profile
+        available" — a heading followed by a list of shrugs teaches the PM
+        that the section is noise. If nothing survives the filter the whole
+        section disappears.
+        """
+        try:
+            from src.data.company import format_profiles_block
+            known = [
+                p for p in self.company_profiles
+                if p is not None and any((
+                    getattr(p, "name", None),
+                    getattr(p, "summary", None),
+                    getattr(p, "industry", None),
+                ))
+            ]
+            if not known:
+                return ""
+            block = format_profiles_block(
+                known, title="Who These Companies Are",
+            ).rstrip("\n")
+        except Exception as e:  # noqa: BLE001 — never fail a render on prose
+            logger.warning("pm_facts: company profile render failed: %s", e)
+            return ""
+        return f"\n\n{block}" if block else ""
 
     def _render_deployment_gap(self) -> str:
         if self.macro_target_invested_pct is None or self.deployment_gap_pp is None:

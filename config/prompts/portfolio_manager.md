@@ -150,6 +150,12 @@ question is a number):
   stopped 3% away risks less than a 5% position stopped 20% away.
 - **Correlation Clusters** — measured groups of names moving together
   at |r| ≥ 0.7. See Step 6.
+- **Who These Companies Are** — the actual business behind each ticker
+  in play: name, industry, size, and what it does. A sector tag does not
+  separate a regulated water utility from a merchant power trader; read
+  this before you reach for a prior about "Utilities" or "Energy". Absent
+  when the profiles could not be retrieved — that is a missing fact, not
+  a signal.
 
 For any sentence you write in `reasoning_chain` that involves a NUMBER
 (exposure %, win rate, stale signals, etc.), cite the fact — don't
