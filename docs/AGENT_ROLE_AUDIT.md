@@ -1,0 +1,124 @@
+# Agent Role Audit
+
+**Date:** 2026-08-27
+**Method:** each agent's prompt, its `build_user_message`, and its feeding data modules were read directly, then compared against what a professional in that role actually uses.
+**Why:** the owner had assumed each agent did what its job title implies. Mostly they do a fraction of it.
+
+> **The recurring pattern is not missing data.** In case after case the pipeline
+> already computes or fetches the information and then withholds it from the
+> agent that needs it. The 20-bar chart, the unused correlation matrix and the
+> intraday macro blindfold are three instances of one habit.
+
+---
+
+## Severity 1 — safety and sizing
+
+### 1.1 A hard risk rule has no code behind it
+
+`config/prompts/risk_manager.md` (checklist item 7) instructs the Risk Manager to halve BUY sizes during a drawdown, and states plainly that **"no deterministic code enforces this rule... if you don't check it, nothing does."**
+
+A safety rule that depends on a language model remembering to apply it is not a rule. `in_drawdown` is already computed and passed; the gate is arithmetic.
+
+**Fix:** move it into `src/risk/rules.py` as a hard gate. Cheap, deterministic.
+
+### 1.2 The Portfolio Manager receives no correlation data
+
+`config/prompts/portfolio_manager.md` (Step 6) tells the PM to "avoid stacking highly correlated positions (e.g. NVDA + AMD + SMH)". `grep -i correlation src/agents/portfolio_manager.py` returns **zero hits**.
+
+`src/data/correlation.py` builds a full matrix **every run** (`src/pipeline_stages.py:1065`) and passes it only to the deterministic cluster check in `src/risk/rules.py:200` — which fires *after* the PM has already chosen. The PM is instructed to act on information it is never given.
+
+**Fix:** pass the already-computed matrix into the PM's context. Low effort, high value.
+
+### 1.3 Portfolio heat is not computed anywhere
+
+Total capital at risk if every open stop were hit — the number the owner-ratified 25% ceiling is defined against — does not exist in any agent or in the deterministic engine.
+
+**Fix:** `sum(position_size × distance_to_stop)`. Pure Python.
+
+### 1.4 R-multiple is absent
+
+Profit measured against initial risk is the standard trader metric for whether a position is working. No agent computes it. `thesis_progress_pct` measures distance to target, which is a different quantity and does not normalise for how much was risked.
+
+**Fix:** `(current_price − entry) / (entry − initial_stop)`. Pure Python.
+
+### 1.5 The Position Reviewer has no memory of its own prior review
+
+`_build_own_recent_decisions` (`src/pipeline.py:6369-6409`) replays past *actions* and explicitly drops HOLDs. No prior metric values are carried forward, so the reviewer rebuilds its view from scratch twice a day.
+
+This is the second independent confirmation of the EPD defect: on 2026-08-26 it sold a position for "not progressing" when progress had risen 16% → 20% and distance-to-stop had improved since its own midday read.
+
+**Fix:** persist each review's metrics; pass the previous snapshot; reject a deterioration verdict when the deltas are positive.
+
+---
+
+## Severity 2 — analyst coverage
+
+### 2.1 Tech Analyst
+
+Largely addressed by Phase 1 / 1b. Before that work it received twenty daily bars — one month — and was asked to identify structural levels, with no relative strength, no range position, no volatility regime, no MA direction, no consolidation measure and no liquidity figure.
+
+**Still open:** `MarketDataProvider.get_next_earnings_date()` exists but nothing in the pipeline calls it.
+
+### 2.2 News Analyst
+
+| Gap | Detail |
+|---|---|
+| Two of nine feeds dead | Reuters Business returns 404, AP Business returns 403. Failures are logged as warnings and silently dropped (`src/data/news.py:100-102`). |
+| Never reads an article | RSS summary only, truncated to 300 characters (`src/data/news.py:127`). |
+| No source credibility weighting | A Federal Reserve press release and a MarketWatch aggregator are equal-weight text blocks. |
+| Weak deduplication | Word-Jaccard > 0.7 on titles. The same story reworded across outlets survives as multiple "signals". |
+| No novelty assessment | Cannot distinguish new information from recycled commentary — see `RESEARCH_FINDINGS.md`, where novelty is the property that actually predicts returns. |
+| Degradation invisible downstream | The PM cannot tell "the wires were down" from "a quiet news day". |
+
+### 2.3 Macro Analyst
+
+Every value is presented as a bare current level with, at best, a 30-day delta. There is no historical percentile context anywhere — "VIX 19.5" rather than "19.5, the 40th percentile of the last two years".
+
+**Missing series, all free on FRED:** real yields (`DFII10`), inflation breakevens (`T10YIE`), the 3M/10Y curve (`DGS3MO`), the dollar index (`DTWEXBGS`), investment-grade spreads (`BAMLC0A0CM`).
+
+**Also:** FRED calls time out repeatedly in production, so the agent frequently runs on `None`.
+
+### 2.4 Earnings Analyst
+
+- Compares against **one** prior filing (`src/agents/earnings_analyst.py:163-180`), so no multi-quarter revenue/margin/FCF trend and no guidance-versus-prior-guidance diff.
+- No consensus estimates, so it cannot distinguish "beat expectations" from "beat last year" — and only the former moves a stock.
+- Share count and buyback execution are not extracted, though they are present in filings already downloaded.
+
+**Not a gap:** valuation is deliberately deferred to the Tech Analyst because price is stale on a cached filing. That design is correct.
+
+### 2.5 Smart Money Analyst
+
+Correctly filters to transaction codes P/S, non-derivative rows only, with a $100k floor and a 14-day cluster window requiring two distinct owners.
+
+- **No routine-versus-opportunistic classification.** See `RESEARCH_FINDINGS.md` — this is the single highest-value omission in the whole agent set.
+- Post-transaction share count is captured but never converted into a purchase-as-percentage-of-holdings ratio.
+- `actor_roles` is captured but unweighted; CFO purchases are more informative than CEO purchases.
+- No market-cap tilt, though the documented effect concentrates in small and mid caps.
+
+---
+
+## Severity 3 — worth knowing, not urgent
+
+- **PM has no expectancy feedback by conviction level.** Aggregate 30-day win rate exists, but nothing tests whether "high conviction" has historically outperformed "medium". Until measured, conviction-weighted sizing is an assumption.
+- **No opportunity-cost framing at candidate selection.** Rotation logic only fires when cash is short, so a better candidate never displaces a mediocre holding while cash is ample.
+- **Sector tags only, no theme/factor exposure.** A 40% sector cap does not catch a cross-sector "AI capex" concentration.
+- **`thesis_invalid_if` is free text**, evaluated by a model reading it. Conditions like "closes below MA50" are structured enough to check in code.
+
+---
+
+## Is the LLM Risk Manager earning its seat?
+
+**Yes, but narrowly.** `src/risk/rules.py` already enforces position caps, total exposure, daily loss, stop presence, correlation clustering, cash-only and sector caps. The Risk Manager adds narrative coherence auditing and PM-versus-Tech signal-fidelity checking, which rules cannot do.
+
+The uncomfortable part: its most safety-critical contribution is **covering for a missing deterministic control** (§1.1), not adding judgment. Once the drawdown gate is real code, this seat should be re-examined honestly.
+
+---
+
+## Recommended sequencing
+
+| When | Items |
+|---|---|
+| **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple |
+| **Phase 3** (exits) | §1.5 reviewer memory |
+| **Right after Phase 2** | §2.5 routine/opportunistic filter — cheap, well-evidenced, highest value per line of code |
+| **Separate pass, needs owner decisions** | §2.2 news cascade · §2.3 macro series · §2.4 earnings trends — several need new data sources |
