@@ -104,15 +104,17 @@ session. Per-phase truth, which each phase's own section repeats:
 
 - **Phase 2a** — landed (PR #106). The four audit-finding fold-ins: deterministic
   drawdown gate, correlation to the PM, portfolio heat, R-multiple.
-  `max_portfolio_risk_pct` is **reporting-only**; it gates nothing yet.
 - **Phase 2b** (§2.1 risk-based sizing, §2.2 correlation-aware budgeting,
-  §2.4 retire the position-count concept) — **not started**.
-- **Phase 3.1 / 3.2** — landed. The pace feedback loop is cut and the Position
-  Reviewer has memory of its own prior numbers.
-- **Phase 3.3–3.7** — **not started**: the first-sale-of-the-day loophole, routing
-  exits through AI Risk, the reviewer's model upgrade, the ATR noise band, and
-  broker-resident trailing stops.
-- **Phases 4–7** — **not started**.
+  §2.4 retire the position-count concept) — **COMPLETE** (commit `75c0233`,
+  branch `feat/pm-flex-routing`, not yet merged). `max_portfolio_risk_pct` is
+  now an enforced gate, not a reported figure.
+- **Phase 3 (all of 3.1–3.4, 3.6, 3.7)** — **COMPLETE, DEPLOYED** to the live
+  paper account at `058273f1`. §3.5 resolved as an owner decision rather than
+  implemented (see the correction note under §3.5); §3.8 unchanged by design.
+- **Phase 4.1** — **DONE** (commit `fb88e08`, branch `feat/pm-flex-routing`,
+  not yet merged): the intraday PM is no longer blindfolded to macro/news.
+  **Phase 4.2** (feed repair) — not started.
+- **Phases 5–7** — **not started**.
 
 The owner reordered Phase 3 ahead of the rest of Phase 2 on 2026-08-27; the
 evidence and the decision are recorded in `docs/WORK.md`. The execution-order
@@ -180,7 +182,11 @@ retains full authority to exit on new information.
 
 This is where the money has been going.
 
-**Status note (2026-08-27):** 3.1 and 3.2 are implemented (commit `aea82ee`, branch `feat/exit-rework-pace-and-memory`, not yet merged). 3.3 is implemented (commit `2f177e33`, branch `feat/exit-gate-and-risk-routing`, not yet merged). **Still NOT started:** §3.4 (route exits through AI Risk), §3.5 (upgrade the reviewer's model off `gemini-2.5-flash-lite` — its stated premise below is contradicted by committed benchmark data, see the correction note under §3.5), §3.6 (ATR noise band) and §3.7 (broker-resident trailing stops). §3.8 remains documented, unchanged behaviour.
+**Superseded by the Status block above.** This note originally tracked 3.1–3.3
+as the only landed items with 3.4–3.7 "NOT started"; all of Phase 3 except the
+owner-resolved §3.5 has since shipped and deployed (`058273f1`). Left here only
+so the per-item detail below still reads as a record of what was fixed and why,
+not as a live status line.
 
 **3.1 — Kill the pace feedback loop. (Highest priority defect in the system.) DONE.**
 `pipeline.py:6318` computed `pace = progress ÷ (days_held ÷ avg_hold_days)` where `avg_hold_days` was drawn from the system's **own rolling 30-day realized-trade calibration** (currently ≈2.0 days). Selling quickly shrank that figure, which made every position look stalled, which drove more selling. It was a self-tightening noose.
@@ -201,18 +207,18 @@ A fourth state exists beyond this section's original three: `pace_status="unavai
 **3.3 — Close the first-sale-of-the-day loophole. DONE.**
 The hard-trigger gate previously applied only to symbols already trimmed that day, so a position's *first* sale executed on soft reasoning unchecked — which is almost every sale. **Done** — commit `2f177e33` (branch `feat/exit-gate-and-risk-routing`): `src/pipeline.py` now runs `_reason_cites_hard_trigger` against every `SELL`/`REDUCE`, not just a symbol's second sell-side action of the day; a non-matching reason is dropped and logged as `exit_blocked_no_named_trigger`, and the position holds, protected by its broker-resident stop. The `_HARD_TRIGGER_KEYWORDS` vocabulary was widened first — macro regime shift ("regime shift"/"regime flip"/"risk-off"), "sector shock", "adverse news", "material news", "earnings miss", "guidance cut" — all sanctioned by §3.8 and previously unrepresented, so gating every exit against the narrower list would have blocked legitimate ones. Concentration and drift were considered and deliberately NOT added: "Concentration drift; valuation stretched" is the verbatim shape of the reason behind the 2026-05-04 AMZN double-trim, and drift trims belong to the Portfolio Manager's rule-priority rows 4-5, not this seat. `config/prompts/position_reviewer.md` states the new scope and full trigger list. 2324 tests pass (2323 before).
 
-**3.4 — Route exits through AI Risk.**
-`run_position_review` (`pipeline.py:6412`) calls only `position_reviewer`, then executes. This violates the `AGENTS.md` contract: `Specialists → Portfolio Manager → AI Risk → deterministic Python → broker`. Exits must pass the Risk Manager like entries do.
+**3.4 — Route exits through AI Risk. DONE (PR #108).**
+`run_position_review` (`pipeline.py:6412`) called only `position_reviewer`, then executed — violating the `AGENTS.md` contract: `Specialists → Portfolio Manager → AI Risk → deterministic Python → broker`. `_risk_review_exits` now puts every SELL/REDUCE in front of the AI Risk Manager and drops what it rejects. The failure posture is deliberately asymmetric with entries: `RiskStage` fails CLOSED on an unparseable Risk Manager response, but the exit path fails OPEN — failing closed on an exit would leave a thesis-invalidated position unable to close because a language model is unavailable. The deterministic gates (named-trigger requirement, metric-contradiction veto, ATR noise band) are the real protection; every fail-open path logs at ERROR. See `docs/STATE.md` for the full rationale.
 
 **3.5 — Upgrade the reviewer's model.**
 `position_reviewer` runs on `google/gemini-2.5-flash-lite` — the weakest model in the stack — while the PM runs GPT-5.5. The consequential, loss-generating decision is on the cheap seat with no second opinion. Move it to a strong model; the cost is negligible against the losses.
 
 > **Correction (2026-08-27, documentation-sync pass).** The "weakest model in the stack" claim above is not supported by the committed benchmark data and must not be read as fact. `ops/model_policy/results/merged.json`, at `position_reviewer`'s own measured scenario (`midday_exit`), scores `google/gemini-2.5-flash-lite` at `quality_min: 1.0` / `quality_mean: 1.0` — tied at the ceiling with four other candidates: `openai/gpt-5.5` (the PM's own model), `deepseek/deepseek-v4-pro-0813`, `qwen/qwen3.7-flash` and `qwen/qwen3-235b-a22b-2507`. It is not a low scorer at this scenario by any measured axis, and it scored 1.0/1.0 on every scenario it was measured on across the whole sweep (`tech_batch`, `macro_stress`, `news_intel`, `pm_constrained`, `risk_rr_breach`, `midday_exit`, `tech_batch_full`). This is the same error `DECISION_CHAIN_AUDIT.md` (F5) caught and corrected for `risk_manager`: reading the model's price, or its place in the routing policy's cost narrative, as a quality finding, when quality was never measured that way. `midday_exit` ties five of the twelve measured candidates at 1.0 and therefore does not discriminate between them on quality — a model could still be moved off this seat for other reasons (independence from the shared specialist model, the discretion this seat carries, or a scenario suite that plainly doesn't discriminate at the ceiling), but not for the reason stated above. §3.5 stays open and undecided; only its stated premise is corrected here.
 
-**3.6 — ATR noise band on exits.**
-An adverse move inside ~1 × ATR of entry is noise, not thesis failure. OKLO was sold at 0.67 × ATR. Reuse the existing 1.25 × ATR ratchet-band machinery.
+**3.6 — ATR noise band on exits. DONE (PR #109).**
+An adverse move inside ~1 × ATR of entry is noise, not thesis failure. OKLO was sold at 0.67 × ATR. An adverse move inside 1.0× ATR of entry can no longer trigger a price-derived exit; external-information triggers (news, earnings, regime shift, correlation breach, thesis invalidation) bypass the band.
 
-**3.7 — Trailing stops, broker-resident.**
+**3.7 — Trailing stops, broker-resident. DONE (PR #109, `src/risk/trailing.py`).**
 Trailing is arithmetic and belongs in deterministic code, not in an LLM's discretion:
 - **Type A:** trail only after the target is exceeded.
 - **Type B:** trail from entry — under each successive higher low (structural), with a chandelier stop as fallback where structure is unclear.
@@ -224,10 +230,12 @@ Trailing is arithmetic and belongs in deterministic code, not in an LLM's discre
 
 ## Phase 4 — Evidence symmetry and feed repair
 
-**4.1 — Unblindfold the intraday buy path.**
-`portfolio_manager.py:83-84` hard-returns a technical-only evidence registry when `session_type == "intra_check"`, even though the morning's macro is already loaded in memory. The 13:04 reviewer sees macro the 11:02 buyer was denied — which is precisely how OKLO was bought and killed within two hours on evidence that existed at purchase time.
-- Pass the most recent macro/news/earnings state to the intraday PM, **clearly labelled with its age.**
-- Stale-but-labelled beats structurally absent. The PM can discount an old read; it cannot discount one it never received.
+**4.1 — Unblindfold the intraday buy path. DONE (2026-08-27, commit `fb88e08`, branch `feat/pm-flex-routing`, not yet merged).**
+`portfolio_manager.py` previously hard-returned a technical-only evidence registry whenever `session_type == "intra_check"`, even though the morning's macro was already loaded in memory. The 13:04 reviewer saw macro the 11:02 buyer was denied — which is precisely how OKLO was bought and killed within two hours on evidence that existed at purchase time. Measured over the 10 days to 2026-08-27, this session cost $0.222/run — essentially the same as a full `morning` run ($0.221), ~99% of it the PM call — while deciding on a fraction of the evidence: 33% of all LLM spend on blindfolded scanning.
+- **Done, with the remedy narrowed from the original design.** Earnings stay excluded — an intraday filing genuinely has not been read this tick — but today's macro and news are now carried forward from the store (`TradingPipeline._carry_forward_macro` / `_carry_forward_news`) rather than passed by reference from memory. `_carry_forward_macro` refuses anything not dated today (`load_last_state` is not date-scoped, so that check is this method's job); `_carry_forward_news` re-validates the stored dump against the `NewsIntelligenceReport` schema. Both degrade to `None` on any failure — a carry-forward problem costs the tick its context, never the deterministic loss protection that already ran.
+- `data_status` now reads `carried_from_morning` for macro/news instead of `not_run_intraday`, so RiskStage's existing 2+-degraded-sources advisory still fires honestly: a 09:30 regime call IS weaker evidence at 14:00, it is simply not NO evidence. `session_type` was removed from `build_evidence_registry` and `validate_grounding` entirely — rather than left inert — so no future reader assumes an intraday tick is still filtered somewhere.
+- **Nothing is re-fetched.** The research stack still does not rerun this tick, which is the saving this scan exists to preserve; only what was already on disk is now shown to the PM.
+- Fixed a latent crash this carry-forward surfaced: `sector_guidance` has two shapes — the live macro agent emits `[{sector, stance, reason}, ...]`, `MacroStore` persists the normalized `{sector: direction}` form — and the registry iterated the dict shape as a list, so `row.get` raised `AttributeError`. Carrying stored macro forward is what first put that shape in front of the registry; without the fix, every intraday tick would have degraded to no scan at all. Both shapes now resolve; the vocabulary asymmetry they expose (`overweight` vs `bullish` for one macro view) is pinned as a known property, not fixed here.
 
 **4.2 — Repair the data feeds.**
 Production logs show Reuters Business 404, AP Business 403, repeated FRED timeouts, 28 incomplete tech batches, and 11 `Portfolio decision failed deterministic grounding` errors (the PM inventing holdings).

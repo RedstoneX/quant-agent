@@ -103,12 +103,23 @@ paper account, rollback `9f77b03e`. Phase 3 (exit rework) and the execution
 limit fix are LIVE. Seven positions open, all with broker-resident stops.
 `paper: true`. Daily LLM budget raised to $2.75.
 
-**Not deployed:** everything merged after `18dd4bc`, and Phase 2b, which is
-committed-but-unfinished on branch `feat/risk-based-sizing` (worktree
-`/home/ubuntu/projects/quant-agent-worktrees/phase2b`). That branch already
-carries `TargetPosition.risk_allocation_pct` and a new `src/data/company.py`
-(company profile blurbs — the owner asked for these; wire them into the PM
-prompt and the Telegram trade alerts).
+**Not deployed:** everything merged after `18dd4bc`, plus five further commits
+committed but not yet merged on branch `feat/pm-flex-routing`: the PM's
+OpenRouter `openai/flex` endpoint routing (`16f6535`), Phase 2b risk-based
+sizing and budget (`75c0233`), the intraday PM un-blindfolding (`fb88e08`),
+the Mission Control `input_message` surface (`6b7af86`), and the sector-stance
+vocabulary/crash fix (`cdb387b`). None of this is on production.
+
+**Caution — duplicate Phase 2b work in flight:**
+`/home/ubuntu/projects/quant-agent-worktrees/phase2b` (branch
+`feat/risk-based-sizing`) still holds an independent, uncommitted attempt at
+the same Phase 2b sizing work (dirty `src/models.py`, untracked, unwired
+`src/data/company.py` — company profile blurbs the owner asked for, never
+finished). It predates and duplicates the Phase 2b that actually landed as
+`75c0233` on `feat/pm-flex-routing`. It was not touched by this documentation
+pass. Reconcile (pull `company.py` forward if still wanted) or discard that
+worktree before doing further Phase 2b/PM-prompt work, so two sizing
+implementations don't collide.
 
 **Engineering setup:** work as `ubuntu`, never as `qamc`. There is no venv in
 the engineering checkouts — use `/home/ubuntu/projects/quant-agent/.venv/bin/python`
@@ -181,9 +192,11 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   Portfolio Manager's rule-priority rows 4-5, not this seat.
   `config/prompts/position_reviewer.md` states the new scope and full
   trigger list. 2324 tests pass (2323 before).
-  **Still open:** §3.4 (route exits through AI Risk), §3.5 (upgrade the
-  reviewer's model off `gemini-2.5-flash-lite`), §3.6 (ATR noise band), §3.7
-  (broker-resident trailing stops). **Note on §3.5:** its "weakest model in
+  **§3.4–§3.7 landed afterward** (route exits through AI Risk, ATR noise
+  band, broker-resident trailing stops — see "Phase 3 — COMPLETE" below);
+  §3.5 (upgrade the reviewer's model off `gemini-2.5-flash-lite`) was
+  resolved as an owner decision rather than implemented. **Note on §3.5:** its
+  "weakest model in
   the stack" premise is contradicted by the committed benchmark data —
   `ops/model_policy/results/merged.json` scores `gemini-2.5-flash-lite` at
   quality 1.0/1.0 on its own `midday_exit` scenario, tied with four other
@@ -208,7 +221,69 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   through the checkout, `drawdown_buy_cap` armed, the OKLO noise-band case
   blocks, and the `trades` migration (`expected_horizon_sessions`,
   `setup_type`) plus the reviewer-memory reader were pre-run so the 09:30
-  session would not hit a cold migration. **Phase 2b is NOT deployed.**
+  session would not hit a cold migration. **Phase 2b was NOT deployed at this
+  point — see below, it has since been committed.**
+
+- **GPT-5.5 Flex for the Portfolio Manager — done.** `16f6535` on branch
+  `feat/pm-flex-routing` (committed, not merged/deployed). OpenRouter serves
+  the PM's exact model (`openai/gpt-5.5-20260423`) from `openai/flex` at half
+  price ($2.50/$15 vs $5/$30 per M tokens) — an endpoint choice, not a model
+  choice, so no benchmark was needed. New `llm.<agent>_provider_order`
+  (`["openai/flex"]` for the PM), rejected at config load on any non-OpenRouter
+  seat. Fallbacks stay enabled rather than pinned `only`: the fallback serves
+  the same weights, so the exposure is money, and failing a session closed to
+  save $0.11 is a bad trade. Because one model id now has two prices,
+  OpenRouter calls request `usage: {include: true}` and the daily cost
+  circuit spends against the provider-reported cost, not the pinned-table
+  estimate, degrading to the estimate when no figure comes back.
+  `EXPECTED_PROVIDER_ORDER` added to `ops/commissioning/verify_commissioning.py`
+  so a runtime host silently losing this preference doubles the PM's cost
+  while looking normal. Expected effect: PM cost per run roughly halves.
+- **Phase 2b — risk-based sizing and correlation budget — done.** `75c0233`,
+  same branch. §2.1: `TargetPosition.risk_allocation_pct` (0.5–5.0% of equity)
+  replaces `target_weight_pct` as the live sizing field;
+  `shares = (equity × risk_pct/100) / |entry − stop|`, so a wider stop yields
+  a smaller position rather than a rejected trade. `target_weight_pct` stays
+  Optional only so stored decisions still replay. §2.2: new
+  `src/risk/budget.py::allocate_risk_budget` enforces the 25% total at-risk
+  ceiling and a 40%-of-total per-correlated-cluster cap as a live gate,
+  largest-request-first with an alphabetical tie-break, denying a request
+  below the 0.5% floor rather than shrinking it. New config:
+  `max_position_risk_pct` 5, `min_position_risk_pct` 0.5,
+  `max_cluster_risk_share_pct` 40. §2.4 verified already satisfied — no fixed
+  position-count target exists anywhere. The gate is enforced only when the
+  caller supplies book risk + clusters (`pipeline_stages._book_risk_inputs`);
+  otherwise portfolio ceilings are deliberately unenforced and only the 5%
+  single-name cap applies. **See the caution above** — a separate,
+  uncommitted attempt at this same phase still sits in the `phase2b`
+  worktree and needs reconciling.
+- **`intra_check` un-blindfolded — done.** `fb88e08`, same branch. It cost
+  $0.222/run vs morning's $0.221 while the PM received a technical-only
+  evidence registry. The morning's macro/news are now carried forward
+  (date-scoped: refuses anything not from today) and labelled
+  `carried_from_morning` in `data_status` instead of `not_run_intraday`, so
+  the degraded-sources advisory still fires honestly. Nothing is re-fetched.
+  `session_type` removed from `build_evidence_registry`/`validate_grounding`
+  entirely rather than left inert.
+- **Cockpit surfaces `agent_logs.input_message` — done, premise corrected.**
+  `6b7af86`, same branch. The backlog previously claimed the field
+  "already stores the PM's complete prompt" but "nothing populates or serves
+  it" — the first half was right, the second was **false**: all 32 PM rows in
+  the live DB carry it (13KB–190KB each), and `/runs/{run_id}` has always
+  served it via `SELECT *`. The only real gap was `frontend/src/api/client.ts`'s
+  `AgentLogItem` interface omitting the field — a frontend-only fix, now
+  rendered by a new `AgentPromptViewer` in the Run Detail modal.
+- **Macro sector-stance vocabulary unified, and a live crash fixed.**
+  `cdb387b`, same branch. Macro sector stances reached the PM in two
+  vocabularies — the live agent's overweight/underweight vs `MacroStore`'s
+  persisted bullish/bearish — and both now arrive in normal operation because
+  the intraday tick (above) carries stored macro forward.
+  `SECTOR_STANCE_TO_DIRECTION`/`SECTOR_DIRECTIONS`/`normalize_sector_stance`
+  now live once in `src/models.py`, imported by `macro_store`. Also fixed a
+  live crash the carry-forward surfaced: `build_user_message` indexed each
+  `sector_guidance` entry as a mapping, so the persisted dict shape raised
+  `TypeError: string indices must be integers` and killed every intraday PM
+  call carrying macro forward.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -279,9 +354,15 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   increase in per-trade risk (~$50 → ~$500 at risk on a $9.9k book). The owner
   confirmed 5% is the ratified envelope and that the 0.5% figure was a
   constructor default nobody chose. Floor stays 0.5%; total stays 25%,
-  correlation-adjusted.
+  correlation-adjusted. **This envelope has since been implemented** as Phase
+  2b (`75c0233`, `feat/pm-flex-routing`, not yet merged/deployed) — see the
+  landed section above.
 
 **Measured LLM spend (10 days to 2026-08-27) — read before proposing any budget change**
+
+**These figures predate the flex-routing and intra_check fixes below** (both
+committed on `feat/pm-flex-routing`, not yet merged/deployed) — they are the
+baseline those changes were made against, not current production numbers.
 
 $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
 
@@ -296,63 +377,41 @@ $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
 
 Two facts worth acting on:
 
-1. **`intra_check` costs the same as a full morning run** ($0.222 vs $0.221)
+1. **`intra_check` cost the same as a full morning run** ($0.222 vs $0.221)
    while doing almost none of the work — $0.003/run on research, $0.219 on the
-   PM call. It is also the session the PM is *deliberately blindfolded* in
-   (`portfolio_manager.py` returns a technical-only evidence registry when
-   `session_type == "intra_check"`, though macro and news are already in
-   memory). 33% of all spend, on blindfolded scanning.
+   PM call — and it was also the session the PM was *deliberately blindfolded*
+   in (`portfolio_manager.py` returned a technical-only evidence registry when
+   `session_type == "intra_check"`, though macro and news were already in
+   memory). 33% of all spend, on blindfolded scanning. **Fixed** — `fb88e08`
+   carries the morning's macro/news forward instead; nothing is re-fetched, so
+   the per-run cost this table shows should not change materially, but the PM
+   is no longer deciding on a technical-only slice of the evidence.
 2. **The whole research desk costs 5.5%.** Technical — the *only* source of
    trade discovery today — is 4.6% of spend. The system pays 87% to arbitrate
    a shortlist produced by its cheapest component. Fix the allocation before
-   raising the ceiling.
+   raising the ceiling. **Partially addressed** — `16f6535` routes the PM's
+   `openai/gpt-5.5` calls through OpenRouter's `openai/flex` endpoint at half
+   the per-token price (same model weights), so the PM's per-run cost should
+   roughly halve (~$0.22 → ~$0.11 on `morning`, ~$0.22 → ~$0.11 on
+   `intra_check`) once this merges and deploys. That shrinks the 87% share but
+   does not change the underlying allocation problem — the research desk
+   still needs to cost more of the total, not just have the PM cost less.
 
 **Next, in order**
 
-1. **Phase 2b — sizing and risk (remaining).** Conviction expressed as risk
-   allocation rather than percent-of-portfolio notional (§2.1,
-   `shares = (equity × risk_pct) ÷ |entry − stop|`, envelope 5% ceiling / 0.5%
-   floor), correlation-aware cluster budgeting so correlated names consume one
-   bet's risk rather than several (§2.2), and retiring the fixed position-count
-   concept (§2.4). Phase 2a landed the measurement; this turns
-   `max_portfolio_risk_pct` from a reported figure into a live gate. Note: a
-   grep of `config/prompts/` and `src/` found **no fixed position-count target**
-   anywhere — §2.4 may already be satisfied; verify before building to it.
-2. **GPT-5.5 Flex for the Portfolio Manager — do this first, it is free.**
-   OpenRouter lists OpenAI Flex as a GPT-5.5 provider at exactly half price
-   ($2.50/$15 vs $5/$30). **Same model**, so there is no quality question to
-   answer and no benchmark to run — production PM cost goes ~$0.22 -> ~$0.11
-   per run, against a seat that is 87% of all spend. The only risk is added
-   latency; the session wrapper already has a 1200s kill. Verify the routing
-   policy test still passes (the committed benchmark is for the model, not the
-   provider tier).
-3. **Un-blindfold `intra_check` (audit §6 / spec Phase 4).** The PM is handed a
-   technical-only evidence registry in this mode while macro and news sit
-   loaded in memory. Nearly free to fix and it converts the system's
-   worst-value session — 33% of spend — into something that earns it. Frees
-   ~$0.44/day to fund the two items above and below.
-4. **Surface what the PM actually read.** `agent_logs.input_message` already
-   stores the PM's complete prompt — all seven memory layers, verbatim — and
-   `AgentLogItem` in `src/api/schemas.py` already declares the field.
-   **Nothing populates or serves it.** Wiring that one field through gives the
-   operator a "what the PM actually read" view. Today the Journal panel shows
-   the evening reflection's `lessons` and `suggested_actions` (that part
-   works), but not the assembled briefing: the 7-evening narrative, 14-day
-   recurring missed themes, repeat loss patterns, last 5 RM verdicts, the PM's
-   own last 3 decisions, or realized-win-rate calibration. Source material is
-   visible; the briefing is not.
-5. **Phase 9 — the research desk deliberates.** Every seat may nominate a
+1. **Phase 9 — the research desk deliberates.** Every seat may nominate a
    candidate; Technical becomes a responder rather than the gatekeeper on
    candidacy; material disagreements must be adjudicated, not just logged;
    conviction follows multi-source agreement. Full design in
-   `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depends on 2b — "agreement earns
+   `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depended on Phase 2b — now
+   committed (`75c0233`, `feat/pm-flex-routing`) — because "agreement earns
    size" is meaningless until size is expressed as risk.
-6. **Execution: bounded re-peg.** PR #111 fixed the limit-as-ceiling bug and
+2. **Execution: bounded re-peg.** PR #111 fixed the limit-as-ceiling bug and
    the unfillable-order submission. Still open: replace a working order toward
    the moving NBBO up to the slippage ceiling. Note the footgun — an Alpaca
    replacement mints a NEW order id, so the state machine must track it and
    handle partial fills rather than blind-looping PATCHes.
-7. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
+3. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
    (`src/data/earnings.py`) takes the first 30,000 characters of a filing. For
    a 10-K that is the cover page, auditor's report and table of contents — the
    financial statements are hundreds of pages further in. MSFT's own analysis
@@ -360,13 +419,14 @@ Two facts worth acting on:
    report and table of contents."* The earnings seat has never seen MSFT's
    numbers. Cheap fix (locate MD&A / financial statements rather than slicing
    from the top) and it restores an entire evidence source.
-8. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
+4. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
    ratio in the system — over half of Form 4 trades carry zero predictive power.
-9. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
+5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-10. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
-   path; fix Reuters/AP/FRED; surface degraded coverage to the operator.
-11. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
+6. **Phase 4.2 — repair the data feeds.** Fix Reuters/AP/FRED; surface degraded
+   coverage to the operator. (4.1, un-blindfolding the intraday buy path, is
+   done — `fb88e08`, `feat/pm-flex-routing`, see the landed section above.)
+7. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
    emits `sell` / `strong_sell`, so bearish candidates are identified today.
    What is missing is everything downstream: `PortfolioConstructor._build_sell`
    returns `None` when the symbol is not already held, so a bearish view on a
@@ -379,13 +439,13 @@ Two facts worth acting on:
    true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
    $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
    entirely a code change; no account work is outstanding.
-12. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
+8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
-13. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
+9. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-14. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
+10. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
    on the residual); deterministic macro regime with the model confined to FOMC
    text; earnings multi-quarter trends. Several need new data sources and an
    owner decision first.

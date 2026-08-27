@@ -194,3 +194,19 @@ canonical trade/fill rows; Mission Control authors no thesis, confidence or
 causal explanation. The route retains all Mission Control isolation guarantees:
 independent SQLite `mode=ro`, GET-only, no trading imports and no broker-write
 surface.
+
+## `AgentLogItem` surfaces `input_message` / `full_response` (2026-08-27)
+
+Frontend-only contract fix, `GET /runs/{run_id}` unchanged. `agent_logs.input_message`
+has always been populated — `pipeline_stages.py` has passed `pm_result.user_message`
+(and nine other call sites their own prompt) since those columns existed — and
+`get_run_detail`'s `SELECT *` has always returned it; `/runs/{run_id}` was serving
+the field end to end before this change. The gap was purely in
+`frontend/src/api/client.ts`: the `AgentLogItem` TypeScript interface omitted
+`input_message` and `full_response`, so no view in Mission Control could reach
+data the backend was already sending. Both fields are now declared on the
+interface and rendered by a new `AgentPromptViewer` component in the Run Detail
+modal — collapsed by default and height-capped in place, since a stored PM
+prompt runs 13KB-190KB and must not reflow the modal on open. This is
+unrelated to, and does not change, the `ResearchDailyResponse` route above,
+which still deliberately excludes both fields from its own payload.

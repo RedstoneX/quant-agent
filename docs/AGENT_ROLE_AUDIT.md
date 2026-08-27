@@ -39,7 +39,7 @@ Total capital at risk if every open stop were hit — the number the owner-ratif
 
 **Fix:** `sum(position_size × distance_to_stop)`. Pure Python.
 
-**FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** `src/risk/metrics.py` (new) computes budget risk (vs. entry, released once a trailing stop reaches entry) and open risk (from today's price), rolled up into `PortfolioHeat` and rendered via `format_heat_block()` to both PM and RM with headroom under `risk.max_portfolio_risk_pct` (25%, `config/settings.yaml`). A position with no stop is charged at full notional, not zero — scoring it zero would rank the riskiest book as the safest. **The 25% ceiling itself is reporting-only** — nothing gates on it yet; that is spec Phase 2b, alongside risk-based sizing (§2.1).
+**FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** `src/risk/metrics.py` (new) computes budget risk (vs. entry, released once a trailing stop reaches entry) and open risk (from today's price), rolled up into `PortfolioHeat` and rendered via `format_heat_block()` to both PM and RM with headroom under `risk.max_portfolio_risk_pct` (25%, `config/settings.yaml`). A position with no stop is charged at full notional, not zero — scoring it zero would rank the riskiest book as the safest. **The 25% ceiling is now an enforced gate** (spec Phase 2b, commit `75c0233`, branch `feat/pm-flex-routing`, not yet merged) — `src/risk/budget.py::allocate_risk_budget` rations every risk-based target against it, alongside risk-based sizing (§2.1), before Phase 2b it was reporting-only.
 
 ### 1.4 R-multiple is absent
 
