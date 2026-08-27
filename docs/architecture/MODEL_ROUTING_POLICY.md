@@ -454,3 +454,79 @@ prices.
    `gemini-2.5-flash-lite` as "the weakest model in the stack" at this seat
    as though that were a quality finding; it is corrected there. The
    measurement above supports "passed", not "best" or "worst".
+
+---
+
+## Model-selection strategy (2026-08-27)
+
+Where the money actually goes, measured over the 10 days to 2026-08-27:
+**$6.73 total, $5.84 of it the Portfolio Manager — 87%.** Every other seat
+combined is 13%. A production PM run costs about **$0.22** (not the $0.46 the
+`pm_production_scale` benchmark shows; that scenario runs 30 candidates and 15
+holdings, heavier than a real session). Any model-cost work that is not about
+the PM seat is rounding error.
+
+### Keep OpenRouter. Change the models.
+
+OpenRouter passes provider inference prices through without markup; the cost
+is a ~5.5% fee on credit purchases. In exchange: one API, per-seat model
+switching, provider failover, and usage telemetry. Building direct
+Qwen/DeepSeek/Z.ai integrations to save ~5% would be false economy at this
+scale, and a self-hosted gateway makes no sense until model spend is in the
+thousands per month. The cheap models worth testing are already reachable
+through it — usually a one-line model-id change, which is exactly what the
+per-seat structure was built for.
+
+**Do NOT use OpenRouter's Auto Router for the decision chain.** It selects
+models dynamically, which destroys the property this policy exists to
+guarantee: knowing which exact model made which trading decision.
+
+### 1. GPT-5.5 Flex — take this now, no benchmark required
+
+OpenRouter lists OpenAI Flex as a GPT-5.5 provider at exactly half price
+($2.50/$15 input/output vs $5/$30). It is **the same model**, not a cheaper
+substitute, so there is no quality question to answer: PM cost halves to
+~$0.11/run against the seat that is 87% of spend. The only exposure is added
+latency, and the session wrapper already enforces a 1200s kill.
+
+### 2. Build a DISCRIMINATING PM scenario before any shootout
+
+This is the part external analysis keeps getting wrong, and this repo has
+direct evidence for it. The recommendation "require 1.00 mean and 1.00 worst
+run" sounds rigorous and is not: on `midday_exit`, **five of twelve candidates
+score exactly 1.00** — `gemini-2.5-flash-lite`, `gpt-5.5`,
+`deepseek-v4-pro-0813`, `qwen3.7-flash` and `qwen3-235b-a22b-2507`. That is
+not five equally excellent models; that is a scenario with a low ceiling.
+`pm_constrained` is likely the same.
+
+**Running a shootout against a test everybody passes is theatre.** Build a
+scenario that separates candidates first — the natural material is the failure
+modes this system has actually produced: a deterioration claim contradicted by
+its own improving metrics, a target citing provenance that does not exist, a
+macro conflict that must be adjudicated rather than logged.
+
+### 3. Then the challengers, against the strict contract
+
+The 2026-08-25 strict PM grounding rerun covers `gpt-5.5`, `gemini-2.5-flash`
+and `gpt-5.6-luna` only. **DeepSeek V4 Pro, GLM-5.3-Flash and Qwen3.8 Flash
+have never been run against it** — DeepSeek's 1.00 predates the stricter
+contract entirely. That gap is the actual research to do.
+
+- **Qwen3.8 Flash** — ~$0.15/$0.47, 1M context, and **proper JSON-schema
+  structured output**. For a seat whose contract is this strict, schema
+  enforcement likely matters more than the last fraction of a cent.
+- **GLM-5.3-Flash** — cheapest by a wide margin, but OpenRouter reports it
+  supports JSON output **without enforcing JSON Schema**. Against the PM's
+  provenance and grounding contract that is a plausible disqualifier, and it
+  is exactly the kind of thing generic intelligence benchmarks miss.
+- **DeepSeek V4 Pro 0813** — already 1.00 on the older sweep, passed over then
+  for latency, not quality. Cheap to re-run.
+
+Require the winner to shadow-run against GPT-5.5 on live paper sessions before
+it is given authority. A benchmark is evidence; production agreement is proof.
+
+### What NOT to spend on yet
+
+SIP market data (owner declined 2026-08-27 for the paper phase — see
+`docs/WORK.md`), Alpaca Elite smart routing, and a wider universe. None of
+them is the binding constraint.
