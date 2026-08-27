@@ -54,7 +54,30 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 Use dedicated branches/PRs for substantive work. Do not force-push or push implementation directly to `main`. Paper-beta autonomy includes merging the agent's own verified PR and deploying it. Keep rollback possible.
 
-Do not create new governance/status documents. `STATE.md` owns accepted truth, `WORK.md` owns active work, and `PROJECT_COMPASS.md` is human-only.
+## Document authority
+
+Two tiers. Know which one you are reading before you trust it.
+
+**Tier 1 — the authority stack. Closed to additions.**
+
+1. `AGENTS.md` — the engineering contract and operating rules.
+2. `docs/STATE.md` — accepted current truth about the system.
+3. `docs/WORK.md` — active work, including the ordered backlog that a cold session resumes from.
+4. `docs/OUTCOME.md` — the product mandate and intended outcome.
+5. `docs/PROJECT_COMPASS.md` — human-facing compass. Human-only; agents do not rewrite it.
+
+No agent may add a sixth. Proposals to change any of these follow the ratification rule below.
+
+**Tier 2 — reference documents. Subordinate, non-authoritative, consumable.**
+
+Analysis artefacts such as `docs/QAMC_REMEDIATION_SPEC.md`, `docs/AGENT_ROLE_AUDIT.md` and `docs/RESEARCH_FINDINGS.md`. They exist to carry findings and plans that would otherwise be lost between sessions.
+
+- A reference document is **never** cited as truth over Tier 1. Where they disagree, `STATE.md` wins and the reference document is stale.
+- They have a **lifecycle**: they empty as their contents are implemented, and are **deleted when consumed** rather than maintained indefinitely.
+- Creating one requires a reason that Tier 1 cannot serve. "It felt like reference rather than governance" is not that reason — that argument can justify anything, which is precisely why this section exists.
+- A reference document may never quietly become a source of truth. If its content belongs in Tier 1, move it there and delete the original.
+
+Status, current truth, and active work always live in Tier 1. If you are about to create a document to hold any of those, you are making a mistake.
 
 ## Governance ratification
 
