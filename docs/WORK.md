@@ -113,25 +113,54 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
 - Governance — owner-ratification rule in `AGENTS.md`; `OUTCOME.md` corrected to
   a profit mandate; `STATE.md` corrected on five false claims.
 - Repository hygiene — branches reduced from 110 to 27.
+- **Phase 1 + 1b** (PR #102, merged) — structural levels from five years of
+  history (`src/data/levels.py`), market context (`src/data/context.py`),
+  invented stops and targets deleted. PRs #103, #104 and #105 followed
+  (audit + research docs, then the document-authority tiers).
+- **Phase 2a** — committed as `c89e957` on branch
+  `feat/risk-metrics-and-pm-correlation` (not yet merged). Folds in the four
+  audit findings that were blocking real Phase 2 sizing work: the drawdown-halve
+  is now deterministic code (§1.1, `src/risk/rules.py::apply_drawdown_scale` +
+  `drawdown_buy_cap`), the Portfolio Manager sees the correlation matrix before
+  it decides (§1.2), portfolio heat / budget risk / open risk exist and render
+  to PM + RM (§1.3, `src/risk/metrics.py`), and R-multiple reaches the Position
+  Reviewer (§1.4). New `risk.max_portfolio_risk_pct` (25%) is **reporting-only**
+  — it does not gate anything yet.
 
-**In flight**
+**Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
-- **Phase 1 + 1b** (PR #102, CI green, awaiting merge) — structural levels from
-  five years of history (`src/data/levels.py`), market context
-  (`src/data/context.py`), invented stops and targets deleted.
+- **Phase 3 runs before the rest of Phase 2.** The spec's stated order is
+  Phase 2 → Phase 3. The owner reordered it on the evidence below. Phase 1
+  already shipped `expected_horizon_sessions`, which is what Phase 3's pace fix
+  needs, so nothing blocks it.
+  *Evidence:* on 2026-08-26/27 the book went to fully flat. The evening
+  reviewer graded its own exits — EPD (5d) **premature**, "thesis may have only
+  been temporarily paused"; MRVL (5d) **premature**, "thesis intact... closed
+  position anyway". Two of the last three exits cut intact theses. Sizing
+  trades more precisely does not help when they are cut on day 5 against a
+  self-referential pace metric.
+- **The per-trade risk ceiling is 5% of equity, confirmed.** Phase 2b raises it
+  from the constructor's current `risk_budget_pct = 0.5` default — a tenfold
+  increase in per-trade risk (~$50 → ~$500 at risk on a $9.9k book). The owner
+  confirmed 5% is the ratified envelope and that the 0.5% figure was a
+  constructor default nobody chose. Floor stays 0.5%; total stays 25%,
+  correlation-adjusted.
 
 **Next, in order**
 
-1. **Phase 2 — sizing and risk.** Conviction expressed as risk allocation rather
-   than percent-of-portfolio notional. Owner-ratified envelope: 5% ceiling per
-   trade, 0.5% floor, 25% total, correlation-adjusted. Folds in four audit
-   findings: make the drawdown rule real code (§1.1), pass the already-computed
-   correlation matrix to the Portfolio Manager (§1.2), compute portfolio heat
-   (§1.3), compute R-multiple (§1.4).
-2. **Phase 3 — exits.** Break the `pace` feedback loop by measuring against the
+1. **Phase 3 — exits.** Break the `pace` feedback loop by measuring against the
    horizon pinned at entry; give the reviewer memory of its own prior review
    (§1.5); close the first-sale-of-the-day gate loophole; route exits through
    AI Risk; upgrade the reviewer's model; ATR noise band; trailing stops.
+2. **Phase 2b — sizing and risk (remaining).** Conviction expressed as risk
+   allocation rather than percent-of-portfolio notional (§2.1,
+   `shares = (equity × risk_pct) ÷ |entry − stop|`, envelope 5% ceiling / 0.5%
+   floor), correlation-aware cluster budgeting so correlated names consume one
+   bet's risk rather than several (§2.2), and retiring the fixed position-count
+   concept (§2.4). Phase 2a landed the measurement; this turns
+   `max_portfolio_risk_pct` from a reported figure into a live gate. Note: a
+   grep of `config/prompts/` and `src/` found **no fixed position-count target**
+   anywhere — §2.4 may already be satisfied; verify before building to it.
 3. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
    ratio in the system — over half of Form 4 trades carry zero predictive power.
 4. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
@@ -169,40 +198,32 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   is deterministic — see `docs/AGENT_ROLE_AUDIT.md`.
 
 
-### QAMC Remediation Spec — Phase 1 complete, Phase 2 next
+### QAMC Remediation Spec — what Phase 1 delivered
 
-`docs/QAMC_REMEDIATION_SPEC.md` Phase 1 (Tech Analyst returns real structure) is
-implemented on branch `feat/tech-analyst-structural-levels`:
+Kept as a record of the Phase 1 tranche's contents. **Status lives in the
+ordered backlog above, not here** — this section had drifted into a second,
+contradictory account of the same work (it still described Phase 1 as sitting
+on an unmerged branch after it had merged) and is now scoped to substance only.
 
 - `TechAnalysisResult` (`src/models.py`) requires `support_levels`,
   `resistance_levels`, `setup_type` (`"range"` / `"breakout"`),
   `expected_horizon_sessions` and `reference_target` for every actionable rating.
-- `src/data/levels.py` (new) deterministically finds support/resistance from the
-  full OHLCV history; `src/agents/tech_analyst.py` feeds a formatted levels block
-  into the prompt, computed over `trading.lookback_days: 1800` (~5 years).
+- `src/data/levels.py` deterministically finds support/resistance from the full
+  OHLCV history; `src/agents/tech_analyst.py` feeds a formatted levels block into
+  the prompt, computed over `trading.lookback_days: 1800` (~5 years).
 - `src/portfolio_constructor.py`'s synthesized stop (`entry − 2×ATR` / `entry ×
   0.95`) and target (`entry × (1 + 2×stop_gap_pct)`) are deleted, along with their
   config fields. A candidate with no structural stop or target is now rejected
   rather than traded.
-- `tests/test_levels.py` (new, 18 tests) covers the levels module.
-- `src/data/context.py` (new) adds deterministic market context per symbol — rel.
-  strength vs a same-batch benchmark (SPY/QQQ/IWM), 1w/1m/3m/6m/12m returns, 52-week
-  range position, ATR percentage-of-price with a 1y percentile and volatility state,
-  MA slopes, consolidation detection, dollar volume, up/down volume ratio, unfilled
-  gaps — rendered into the Tech Analyst prompt via `format_context_block()`.
-  `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()`, which the
-  Tech Analyst's new optional `days_to_earnings` kwarg can consume, but **nothing in
-  the pipeline wires it up yet** — it exists and is tested but unused end to end.
-  `tests/test_context.py` (new, 27 tests) covers it; the full suite is 2227 tests.
-
-**Next up is Phase 2 (risk-based sizing and correlation-aware budgeting)**: replace
-the Portfolio Manager's percent-of-portfolio conviction sizing with a risk
-allocation in `[0.5%, 5.0%]` of equity from which share count is derived
-(`shares = (equity × risk_pct) ÷ |entry − stop|`), and add correlation/sector
-cluster-aware budgeting so correlated names consume one bet's risk budget rather
-than several, per `docs/QAMC_REMEDIATION_SPEC.md` §2. This is not started.
-Phases 3–8 (exit rework, evidence/feed repair, short selling, cost/transparency,
-measurement, documentation) remain pending behind it, in the spec's stated order.
+- `src/data/context.py` adds deterministic market context per symbol — relative
+  strength vs a same-batch benchmark (SPY/QQQ/IWM), 1w/1m/3m/6m/12m returns,
+  52-week range position, ATR percentage-of-price with a 1y percentile and
+  volatility state, MA slopes, consolidation detection, dollar volume, up/down
+  volume ratio, unfilled gaps — rendered via `format_context_block()`.
+- `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()` and the
+  Tech Analyst accepts a `days_to_earnings` kwarg, but **nothing in the pipeline
+  wires them together** — tested, unused end to end. Still true; still listed in
+  the backlog's "set aside" items.
 
 ### Mission Control / existing cockpit utility
 

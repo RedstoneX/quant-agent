@@ -26,7 +26,7 @@ This file records what is accepted and true **now**. Git history preserves imple
   open-market purchases; it changes no permanent universe membership and
   preserves the complete accepted decision/risk/execution chain.
 - **`QAMC_REMEDIATION_SPEC.md` Phase 1 (Tech Analyst structural levels) is
-  implemented**, on branch `feat/tech-analyst-structural-levels`. `TechAnalysisResult`
+  implemented and merged to `main`** (PR #102). `TechAnalysisResult`
   (`src/models.py`) now requires `support_levels`, `resistance_levels`, `setup_type`
   (`"range"` / `"breakout"`), `expected_horizon_sessions` and `reference_target` for
   every actionable rating, on top of the existing `entry_price` / `stop_loss`; a
@@ -53,10 +53,22 @@ This file records what is accepted and true **now**. Git history preserves imple
   an optional `days_to_earnings` kwarg, and `MarketDataProvider.get_next_earnings_date()`
   (`src/data/market.py`, new) can supply an approximate trading-session count to a
   symbol's next scheduled earnings — but **nothing in the pipeline calls it or
-  passes `days_to_earnings` today**; it is available but unwired. Phases 2–8 of the
-  remediation spec (risk-based sizing, correlation-aware budgeting, exit rework,
-  evidence/feed repair, short selling, cost/transparency, measurement, further
-  documentation correction) remain pending — see `docs/QAMC_REMEDIATION_SPEC.md`.
+  passes `days_to_earnings` today**; it is available but unwired.
+- **Phase 2a of the remediation spec is committed, not yet merged** — `c89e957`
+  on branch `feat/risk-metrics-and-pm-correlation`. It folds in four
+  `AGENT_ROLE_AUDIT.md` audit findings that preceded Phase 2's own sizing work:
+  the drawdown-halve is now deterministic (`src/risk/rules.py::apply_drawdown_scale`
+  + `drawdown_buy_cap` hard block, PM prompt's own halving deleted), the
+  correlation matrix is built before the Portfolio Manager decides and shown to
+  it as measured clusters (`src/data/correlation.py::correlation_clusters`),
+  portfolio heat / budget risk / open risk exist (`src/risk/metrics.py`) and
+  render to PM and RM, and R-multiple reaches the Position Reviewer. A new
+  `risk.max_portfolio_risk_pct` config field (25%) is **reporting-only** — no
+  gate consumes it. Phase 2's own items (§2.1 risk-based sizing, §2.2
+  correlation-aware budget ceiling, §2.4 retiring the fixed position count) and
+  Phases 3–8 (exit rework, evidence/feed repair, short selling,
+  cost/transparency, measurement, further documentation correction) remain
+  pending — see `docs/QAMC_REMEDIATION_SPEC.md`.
 
 ## Stabilization account model
 
