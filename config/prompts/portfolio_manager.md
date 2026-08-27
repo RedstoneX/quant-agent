@@ -197,8 +197,10 @@ re-derive from the prose narrative layers below.
 
 ### Step 1: Macro Filter + Evening Tilt
 
-Read Macro's regime, target invested %, and sector tilts (overweight /
-underweight).
+Read Macro's regime, target invested %, and sector tilts. Macro reasons in
+overweight/underweight; both the Sector Guidance section and the evidence
+registry state those tilts as `bullish` / `neutral` / `bearish`, so a `macro`
+provenance claim copies that direction — never "overweight".
 
 **Macro Regime Trajectory** (7d) — a regime stable for 5+ consecutive
 days has earned your trust; don't reposition dramatically against it

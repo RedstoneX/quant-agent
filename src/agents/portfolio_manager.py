@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
-    TechAnalysisResult, SmartMoneyFinding,
+    TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
 )
 from src.risk.rules import _effective_multiplier, _gross_multiplier
 
@@ -49,6 +49,44 @@ class PortfolioManagerAgent(BaseAgent):
         if cleaned <= {"neutral", "mixed"}:
             return "neutral" if cleaned == {"neutral"} else "mixed"
         return "mixed"
+
+    @staticmethod
+    def _sector_guidance_rows(raw) -> list[dict]:
+        """`sector_guidance`, in either shape, as [{sector, stance, reason}].
+
+        Two shapes reach the PM. The live macro agent emits
+        [{sector, stance, reason}, ...] with stance ∈ overweight|neutral|
+        underweight; `MacroStore` persists the normalized {sector: direction}
+        form (see `macro_store._normalize_sector_guidance`, which drops the
+        bulky reasons). Both arrive in normal operation now that an intraday
+        tick carries the morning's STORED regime forward, so every reader of
+        this field has to handle both — iterating the dict shape as though it
+        were a list yields bare strings, and indexing those took the whole PM
+        call down.
+
+        Stances come out in ONE vocabulary, the bullish/neutral/bearish
+        directions the rest of the system persists and grades against (see
+        `SECTOR_STANCE_TO_DIRECTION`). Without that the same macro view
+        reached the evidence registry as "overweight" in the morning and
+        "bullish" at 14:00, purely by which session read it. Unrecognized
+        stances are dropped rather than passed through: a stance no polarity
+        set knows can only produce a grounding error the model cannot fix.
+        """
+        if isinstance(raw, dict):
+            pairs = list(raw.items())
+        elif isinstance(raw, list):
+            pairs = [
+                (row.get("sector"), row.get("stance"))
+                for row in raw if isinstance(row, dict)
+            ]
+        else:
+            return []
+        rows: list[dict] = []
+        for sector, stance in pairs:
+            direction = normalize_sector_stance(stance)
+            if sector and direction:
+                rows.append({"sector": str(sector), "stance": direction})
+        return rows
 
     @classmethod
     def build_evidence_registry(
@@ -112,25 +150,7 @@ class PortfolioManagerAgent(BaseAgent):
                 if position.sector:
                     sectors.setdefault(position.symbol.upper(), position.sector)
             guidance: dict[str, list[str]] = {}
-            # `sector_guidance` arrives in TWO shapes. The live macro agent
-            # emits [{sector, stance, reason}, ...]; `MacroStore` persists the
-            # normalized {sector: direction} form (see
-            # `macro_store._normalize_sector_guidance`, which drops the bulky
-            # reasons). Both reach here now that an intraday tick carries the
-            # morning's stored regime forward, and iterating the dict shape as
-            # though it were a list yields bare strings — `row.get` then raises
-            # AttributeError and takes the whole PM call down.
-            raw_guidance = macro_analysis.get("sector_guidance") or {}
-            if isinstance(raw_guidance, dict):
-                rows = [
-                    {"sector": sector, "stance": stance}
-                    for sector, stance in raw_guidance.items()
-                ]
-            elif isinstance(raw_guidance, list):
-                rows = [row for row in raw_guidance if isinstance(row, dict)]
-            else:
-                rows = []
-            for row in rows:
+            for row in cls._sector_guidance_rows(macro_analysis.get("sector_guidance")):
                 sector = str(row.get("sector") or "").strip().lower()
                 stance = row.get("stance")
                 if sector and stance:
@@ -269,10 +289,29 @@ class PortfolioManagerAgent(BaseAgent):
                 for o in macro_analysis.get("key_observations", [])
             ) if macro_analysis.get("key_observations") else "No observations."
 
+            # Rendered through the same normalizer the evidence registry uses:
+            # the model is told to copy the validated stance exactly, so a
+            # Macro section speaking a different vocabulary than the registry
+            # is an invitation to cite a stance the validator will reject.
+            # `reason` survives only in the live shape — MacroStore drops it.
+            guidance_rows = self._sector_guidance_rows(
+                macro_analysis.get("sector_guidance")
+            )
+            reasons = {
+                str(row.get("sector")): str(row.get("reason") or "")
+                for row in (macro_analysis.get("sector_guidance") or [])
+                if isinstance(row, dict)
+            }
+
+            def _fmt_guidance(row: dict) -> str:
+                reason = reasons.get(row["sector"], "")
+                return (
+                    f"- {row['sector']}: {row['stance']}"
+                    + (f" — {reason}" if reason else "")
+                )
             sector_guidance_text = "\n".join(
-                f"- {s['sector']}: {s['stance']} — {s['reason']}"
-                for s in macro_analysis.get("sector_guidance", [])
-            ) if macro_analysis.get("sector_guidance") else "No sector guidance."
+                _fmt_guidance(row) for row in guidance_rows
+            ) if guidance_rows else "No sector guidance."
 
             risk_factors_text = "\n".join(
                 f"- {r}" for r in macro_analysis.get("risk_factors", [])

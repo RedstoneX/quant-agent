@@ -667,6 +667,36 @@ _SECTOR_ALIASES = {
 }
 
 
+# The macro analyst speaks TILTS (overweight/underweight); every consumer of a
+# sector stance — MacroStore's persisted snapshot, the evening thesis-health
+# block, `PositionSnapshot.macro_sector_tailwind` below, and the PM's evidence
+# registry — speaks DIRECTIONS (bullish/bearish). One macro view described in
+# two vocabularies is how a provenance mismatch gets debugged twice, so the
+# translation lives here, next to the Literal that defines the tilt side of it,
+# and every consumer imports it rather than re-spelling the pairs.
+SECTOR_STANCE_TO_DIRECTION: dict[str, str] = {
+    "overweight": "bullish",
+    "neutral": "neutral",
+    "underweight": "bearish",
+}
+
+# Directions are idempotent under the map: a stance that already arrived
+# normalized (MacroStore's shape) must survive a second pass unchanged.
+SECTOR_DIRECTIONS: frozenset[str] = frozenset(SECTOR_STANCE_TO_DIRECTION.values())
+
+
+def normalize_sector_stance(value) -> str | None:
+    """overweight|underweight|neutral (or a direction already) → direction.
+
+    Returns None for anything unrecognized so callers can drop it rather
+    than propagate a stance no validator will accept.
+    """
+    stance = str(value or "").strip().lower()
+    if stance in SECTOR_DIRECTIONS:
+        return stance
+    return SECTOR_STANCE_TO_DIRECTION.get(stance)
+
+
 class MacroSectorGuidance(BaseModel):
     sector: Literal[
         "Technology", "Financial Services", "Healthcare", "Consumer Cyclical",

@@ -241,13 +241,97 @@ def test_the_stored_macro_shape_reaches_the_registry_intact():
     assert macro_stance(live) != "neutral"
     assert macro_stance(stored) != "neutral"
 
-    # They are not, however, the same STRING: the live guidance speaks
-    # overweight/underweight and MacroStore normalizes to bullish/bearish.
-    # That is safe as it stands — the grounding validator compares the PM's
-    # citation against the registry built for that same session, so each
-    # session is internally consistent — but it does mean one macro view is
-    # described in two vocabularies depending on which session read it.
-    # Pinned here so the asymmetry is a known property rather than a surprise
-    # to whoever next debugs a provenance mismatch across sessions.
-    assert macro_stance(live) == "overweight"
-    assert macro_stance(stored) == "bullish"
+    # And they are now the SAME STRING. The live guidance speaks
+    # overweight/underweight, MacroStore persists bullish/bearish, and until
+    # the registry normalized both the same macro view reached the PM in one
+    # vocabulary in the morning and the other at 14:00 — purely by which
+    # session happened to read it. Internally consistent per session, and a
+    # trap for whoever next debugs a provenance mismatch ACROSS sessions.
+    assert macro_stance(live) == macro_stance(stored) == "bullish"
+
+
+def test_the_registry_speaks_the_persisted_vocabulary():
+    """The direction vocabulary is not the registry's private choice.
+
+    `PositionSnapshot.macro_sector_tailwind` is a hard Literal over
+    bullish|neutral|bearish, and the evening thesis-health block reads the
+    same persisted strings. Normalizing the registry TOWARD tilts instead
+    would have made the PM the only component speaking overweight."""
+    from src.models import SECTOR_STANCE_TO_DIRECTION, normalize_sector_stance
+
+    assert set(SECTOR_STANCE_TO_DIRECTION) == {
+        "overweight", "neutral", "underweight",
+    }
+    for tilt, direction in SECTOR_STANCE_TO_DIRECTION.items():
+        assert normalize_sector_stance(tilt) == direction
+        # Idempotent: the stored shape arrives already normalized.
+        assert normalize_sector_stance(direction) == direction
+    # Case and whitespace are the model's to get wrong, not ours.
+    assert normalize_sector_stance(" Underweight ") == "bearish"
+    # An unrecognized stance is dropped, never passed through — the polarity
+    # sets in the grounding validator would reject it with an error the model
+    # has no way to act on.
+    assert normalize_sector_stance("mildly keen") is None
+    assert normalize_sector_stance(None) is None
+
+
+@pytest.mark.parametrize("guidance", [
+    [{"sector": "Technology", "stance": "underweight", "reason": "rates"}],
+    {"Technology": "bearish"},
+])
+def test_the_prompt_and_the_registry_state_one_stance(guidance):
+    """The PM is told to copy the validated stance exactly, so the rendered
+    Macro section and the evidence registry must not disagree.
+
+    The dict shape additionally used to CRASH here: the Sector Guidance
+    renderer indexed each entry as a mapping, and iterating the persisted
+    form yields bare sector names, so every intraday tick that carried the
+    morning's macro forward died on `TypeError: string indices must be
+    integers` before the model saw anything."""
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    position = Position(
+        symbol="NVDA", qty=10, avg_entry=90, current_price=100,
+        market_value=1000, unrealized_pnl=100, sector="Technology",
+    )
+    macro = {
+        "regime": "risk-off", "equity_outlook": "bearish",
+        "sector_guidance": guidance, "position_guidance": {},
+    }
+    message = agent.build_user_message(
+        analyses=[], positions=[position], macro_analysis=macro,
+        cash_balance=1000.0, total_value=2000.0,
+        symbol_sectors={"NVDA": "Technology"},
+    )
+    guidance_lines = [
+        line for line in message.splitlines()
+        if line.startswith("- Technology:")
+    ]
+    assert guidance_lines, "sector guidance never reached the prompt"
+    assert "bearish" in guidance_lines[0]
+    assert "underweight" not in guidance_lines[0]
+
+    registry = PortfolioManagerAgent.build_evidence_registry(
+        analyses=[], news_intel=None, earnings_analyses=[],
+        positions=[position], macro_analysis=macro,
+        symbol_sectors={"NVDA": "Technology"},
+    )
+    assert registry["NVDA"]["macro"] == "bearish"
+
+
+def test_the_live_shape_keeps_its_reason_in_the_prompt():
+    """Normalizing the stance must not cost the prompt macro's reasoning —
+    that text is the only thing explaining WHY the sector is tilted, and it
+    exists solely in the live shape (MacroStore drops it to stay small)."""
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    message = agent.build_user_message(
+        analyses=[], positions=[], macro_analysis={
+            "regime": "risk-on", "equity_outlook": "bullish",
+            "position_guidance": {},
+            "sector_guidance": [
+                {"sector": "Technology", "stance": "overweight",
+                 "reason": "AI capex intact"},
+            ],
+        },
+        cash_balance=1000.0, total_value=1000.0,
+    )
+    assert "- Technology: bullish — AI capex intact" in message

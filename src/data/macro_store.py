@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 
+from src.models import SECTOR_DIRECTIONS, normalize_sector_stance
 from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
@@ -18,13 +19,9 @@ def _atomic_write(path: Path, data: str) -> None:
 
 # MacroAnalysis.sector_guidance is a LIST of {sector, stance, reason} where
 # stance ∈ overweight|neutral|underweight. Every consumer of the persisted
-# state (`_missed_ops_macro_sector_map`, thesis-health) wants a DICT keyed by
-# sector with bullish|neutral|bearish values. Convert once, on write.
-_STANCE_TO_DIRECTION = {
-    "overweight": "bullish",
-    "neutral": "neutral",
-    "underweight": "bearish",
-}
+# state (`_missed_ops_macro_sector_map`, thesis-health, the PM's evidence
+# registry) wants a DICT keyed by sector with bullish|neutral|bearish values.
+# Convert once, on write, through the shared map in `src.models`.
 
 
 def _normalize_sector_guidance(raw) -> dict[str, str]:
@@ -37,7 +34,7 @@ def _normalize_sector_guidance(raw) -> dict[str, str]:
     out: dict[str, str] = {}
     if isinstance(raw, dict):
         for sector, direction in raw.items():
-            if isinstance(direction, str) and direction in ("bullish", "neutral", "bearish"):
+            if isinstance(direction, str) and direction in SECTOR_DIRECTIONS:
                 out[str(sector)] = direction
         return out
     if not isinstance(raw, list):
@@ -46,7 +43,7 @@ def _normalize_sector_guidance(raw) -> dict[str, str]:
         if not isinstance(item, dict):
             continue
         sector = item.get("sector")
-        direction = _STANCE_TO_DIRECTION.get(str(item.get("stance") or "").lower())
+        direction = normalize_sector_stance(item.get("stance"))
         if sector and direction:
             out[str(sector)] = direction
     return out
