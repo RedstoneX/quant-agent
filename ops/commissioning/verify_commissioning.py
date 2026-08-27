@@ -103,10 +103,13 @@ EXPECTED_ROUTING: dict[str, str] = {
 # OpenRouter endpoint preference per seat — an ENDPOINT choice, not a model
 # choice, and held here for the same reason as EXPECTED_ROUTING: it is
 # cost-material and must not be editable on the runtime host without the
-# verifier noticing. The PM is 87% of QAMC's LLM spend and `openai/flex`
-# serves its exact model at half price; a seat that silently loses this
-# preference doubles the dominant cost line while looking completely normal.
-# A seat absent from this map must have no preference configured.
+# verifier noticing. A contaminated 10-day measurement (runaway looping
+# incidents inflated it; that's why the LLM cost circuit breaker exists) put
+# the PM at 87% of QAMC's LLM spend, and `openai/flex` serves its exact model
+# at half price regardless of its true share; a seat that silently loses this
+# preference doubles whatever the PM's actual cost line is while looking
+# completely normal. A seat absent from this map must have no preference
+# configured.
 EXPECTED_PROVIDER_ORDER: dict[str, list[str]] = {
     "portfolio_manager": ["openai/flex"],
 }

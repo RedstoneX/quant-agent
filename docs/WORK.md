@@ -383,6 +383,13 @@ committed on `feat/pm-flex-routing`, not yet merged/deployed) — they are the
 baseline those changes were made against, not current production numbers.
 
 $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
+**This window is contaminated and is not a clean baseline.** It includes
+several runaway looping incidents that burned tokens — the reason the LLM
+cost circuit breaker was added — so the per-seat shares below are inflated
+by an unknown amount and should not be read as the PM's steady-state share
+of spend. A clean baseline needs to be re-measured once the current tranche
+(flex routing, the `intra_check` fix) is deployed and the circuit breaker
+has had a run without tripping.
 
 | Mode | Runs | Avg/run | Dominated by |
 |---|---:|---:|---|
@@ -405,15 +412,19 @@ Two facts worth acting on:
    the per-run cost this table shows should not change materially, but the PM
    is no longer deciding on a technical-only slice of the evidence.
 2. **The whole research desk costs 5.5%.** Technical — the *only* source of
-   trade discovery today — is 4.6% of spend. The system pays 87% to arbitrate
-   a shortlist produced by its cheapest component. Fix the allocation before
-   raising the ceiling. **Partially addressed** — `16f6535` routes the PM's
-   `openai/gpt-5.5` calls through OpenRouter's `openai/flex` endpoint at half
-   the per-token price (same model weights), so the PM's per-run cost should
-   roughly halve (~$0.22 → ~$0.11 on `morning`, ~$0.22 → ~$0.11 on
-   `intra_check`) once this merges and deploys. That shrinks the 87% share but
-   does not change the underlying allocation problem — the research desk
-   still needs to cost more of the total, not just have the PM cost less.
+   trade discovery today — is 4.6% of spend. The inference that "the system
+   pays 87% to arbitrate a shortlist produced by its cheapest component, so
+   fix the allocation before raising the ceiling" rests on the contaminated
+   window above and is **not established** — it may still be roughly true,
+   but it cannot be asserted as a finding until it's checked against a clean
+   measurement. `16f6535` routes the PM's `openai/gpt-5.5` calls through
+   OpenRouter's `openai/flex` endpoint at half the per-token price (same
+   model weights), so the PM's per-run cost should roughly halve (~$0.22 →
+   ~$0.11 on `morning`, ~$0.22 → ~$0.11 on `intra_check`) once this merges
+   and deploys — that decision is correct regardless of the PM's exact share,
+   since it's the same model at half price. Whether the research desk still
+   needs to cost more of the total is a separate question that a clean
+   baseline, not this one, has to answer.
 
 **Next, in order**
 

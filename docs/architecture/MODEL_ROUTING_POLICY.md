@@ -461,10 +461,16 @@ prices.
 
 Where the money actually goes, measured over the 10 days to 2026-08-27:
 **$6.73 total, $5.84 of it the Portfolio Manager — 87%.** Every other seat
-combined is 13%. A production PM run costs about **$0.22** (not the $0.46 the
-`pm_production_scale` benchmark shows; that scenario runs 30 candidates and 15
-holdings, heavier than a real session). Any model-cost work that is not about
-the PM seat is rounding error.
+combined is 13%. **This window is contaminated and is not a clean baseline**:
+it includes several runaway looping incidents that burned tokens — the
+reason the LLM cost circuit breaker was added — so the 87% figure is
+inflated by an unknown amount and the allocation conclusion below (fix the
+research desk's share of spend) is not yet established. A clean baseline
+needs to be re-measured once the current tranche deploys. A production PM
+run costs about **$0.22** (not the $0.46 the `pm_production_scale` benchmark
+shows; that scenario runs 30 candidates and 15 holdings, heavier than a real
+session). That per-run figure is not in question — only the share-of-total
+conclusion drawn from the contaminated window is.
 
 ### Keep OpenRouter. Change the models.
 
@@ -486,8 +492,11 @@ guarantee: knowing which exact model made which trading decision.
 OpenRouter lists OpenAI Flex as a GPT-5.5 provider at exactly half price
 ($2.50/$15 input/output vs $5/$30). It is **the same model**, not a cheaper
 substitute, so there is no quality question to answer: PM cost halves to
-~$0.11/run against the seat that is 87% of spend. The only exposure is added
-latency, and the session wrapper already enforces a 1200s kill.
+~$0.11/run. This decision does not depend on the disputed 87% figure above —
+it holds regardless of the PM's exact share of spend, because it is the
+identical model at half the price with no quality trade-off. The only
+exposure is added latency, and the session wrapper already enforces a 1200s
+kill.
 
 **Implemented** as `llm.<agent>_provider_order` in `config/settings.yaml`,
 set to `["openai/flex"]` on `portfolio_manager` and unset everywhere else.

@@ -54,9 +54,13 @@ llm:
   # Endpoint preference, NOT a model change. OpenRouter serves this exact
   # model (`openai/gpt-5.5-20260423`) from three endpoints: `openai/flex` at
   # $2.50/$15 per M tokens and `openai` / `azure` at $5/$30. Same weights,
-  # half the price. The PM is 87% of all QAMC LLM spend (measured over the 10
-  # days to 2026-08-27: $5.84 of $6.73), so this halves the dominant cost
-  # line with no quality question to answer and no benchmark to run.
+  # half the price, so there is no quality question to answer and no
+  # benchmark to run. A measurement over the 10 days to 2026-08-27 put the PM
+  # at 87% of all QAMC LLM spend ($5.84 of $6.73), but that window included
+  # runaway looping incidents (the reason the LLM cost circuit breaker was
+  # added) and is not a clean baseline — treat 87% as unreliable, not as the
+  # PM's steady-state share. This change is correct regardless: it halves
+  # whatever the PM's actual share turns out to be.
   #
   # Fallbacks stay ENABLED: if the flex tier is saturated the call falls
   # through to the full-price endpoint and the session continues. Losing a
