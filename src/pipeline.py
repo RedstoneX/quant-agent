@@ -8106,6 +8106,53 @@ class TradingPipeline:
                 return None
             return self._intraday_opportunity_scan_body(ctx)
 
+    def _carry_forward_macro(self) -> dict | None:
+        """This morning's macro regime, for an intraday tick to reason inside.
+
+        Read from the store rather than re-derived: the macro analyst already
+        ran today and its call is on disk. Returns None when nothing is
+        stored, which leaves the tick exactly as blind as it used to be
+        rather than substituting a stale regime from a previous day —
+        `load_last_state` is not date-scoped, so the freshness check is this
+        method's job.
+        """
+        try:
+            state = self.macro_store.load_last_state() or None
+        except Exception as e:  # noqa: BLE001 — never fail a tick on carry-forward
+            logger.warning("Intraday scan: macro carry-forward failed: %s", e)
+            return None
+        if not state:
+            return None
+        # Only today's regime may be carried into today's session. Yesterday's
+        # is exactly the "citing stale evidence as if it ran this tick"
+        # failure the blindfold was protecting against.
+        stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
+        if stored_date and stored_date != str(et_today()):
+            logger.info(
+                "Intraday scan: stored macro is from %s, not today — not carried",
+                stored_date,
+            )
+            return None
+        return dict(state)
+
+    def _carry_forward_news(self):
+        """This morning's news intelligence, re-validated from its stored dump.
+
+        `load_daily_report` is already date-scoped to today, so no freshness
+        check is needed here. A schema failure degrades to None rather than
+        raising: a malformed cache must cost the tick its news context, never
+        the deterministic loss protection that already ran.
+        """
+        try:
+            report = self.news_store.load_daily_report()
+            if not report:
+                return None
+            from src.models import NewsIntelligenceReport
+            return NewsIntelligenceReport(**report)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: news carry-forward failed: %s", e)
+            return None
+
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict | None:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -8327,21 +8374,38 @@ class TradingPipeline:
             return None
 
         # Same shared chain morning uses — no separate PM/RM/gate logic.
-        # Macro/news/earnings are deliberately NOT re-fetched this tick
-        # (that is exactly the "expensive research stack" this fix must
-        # avoid rerunning); marking them explicitly here (rather than
-        # leaving ctx.data_status empty) makes RiskStage's existing
-        # 2+-degraded-sources advisory fire honestly, so RM is told this
-        # decision rests on thinner evidence than a full morning pass.
+        #
+        # Macro/news/earnings are still NOT re-fetched this tick — that is the
+        # expensive research stack this scan exists to avoid rerunning, and
+        # the saving is the whole point. But "not re-run" was previously
+        # implemented as "not shown", and those are different things. This
+        # session was handing the Portfolio Manager a technical-only view
+        # while THIS MORNING'S macro regime and news sat on disk, already
+        # paid for. The PM was blindfolded, not economical: `intra_check`
+        # measured at $0.222/run against `morning`'s $0.221 over the 10 days
+        # to 2026-08-27, ~99% of it the PM call, deciding on a fraction of
+        # the evidence.
+        #
+        # So: carry the morning's results forward, and label them as carried.
+        # The grounding property that mattered is preserved — nothing is
+        # presented as having run this tick — while the PM stops reasoning
+        # about an intraday move with no idea what regime it is happening in.
         ctx.analyses = analyses
+        carried_macro = self._carry_forward_macro()
+        carried_news = self._carry_forward_news()
         ctx.data_status = {
             "tech": "partial" if failed_count else "ok",
-            "macro": "not_run_intraday",
-            "news": "not_run_intraday",
+            # `carried_from_morning` rather than `ok`: RiskStage's existing
+            # degraded-sources advisory must still fire, because a regime call
+            # from 09:30 IS weaker evidence at 14:00 than a fresh one. It is
+            # not, however, no evidence, which is what `not_run_intraday`
+            # asserted.
+            "macro": "carried_from_morning" if carried_macro else "not_run_intraday",
+            "news": "carried_from_morning" if carried_news else "not_run_intraday",
             "earnings": "not_run_intraday",
         }
-        ctx.macro_analysis = None
-        ctx.news_intel = None
+        ctx.macro_analysis = carried_macro
+        ctx.news_intel = carried_news
         ctx.earnings_results = []
 
         self.decision_stage.run(ctx)

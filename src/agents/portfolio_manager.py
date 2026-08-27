@@ -61,14 +61,23 @@ class PortfolioManagerAgent(BaseAgent):
         macro_analysis: dict | None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         symbol_sectors: dict[str, str] | None = None,
-        session_type: str = "morning",
     ) -> dict[str, dict[str, str]]:
         """Canonical source/stance records shared by prompt and validator.
 
         Display decorations such as conviction and signal age never enter the
-        stance. Historical narrative/memory is intentionally excluded. The
-        intraday path has only current-session Tech evidence, so it cannot
-        cite yesterday's macro/news/earnings as if they ran this tick.
+        stance. Historical narrative/memory is intentionally excluded.
+
+        The intraday path used to return TECH ONLY, on the reasoning that it
+        "cannot cite yesterday's macro/news/earnings as if they ran this
+        tick". The grounding concern is real; the remedy was too broad. What
+        must never happen is stale evidence being cited AS FRESH — not the PM
+        reasoning about a 14:00 move with no idea what regime it is happening
+        in. Today's macro and news are now carried forward explicitly (see
+        `TradingPipeline._carry_forward_macro` / `_carry_forward_news`, which
+        refuse anything not from today) and marked `carried_from_morning` in
+        `data_status`, so the staleness travels with the evidence instead of
+        being handled by deleting it. Earnings stay excluded: an intraday
+        filing genuinely has not been read this tick.
         """
 
         registry: dict[str, dict[str, str]] = {}
@@ -79,9 +88,6 @@ class PortfolioManagerAgent(BaseAgent):
 
         for analysis in analyses:
             put(analysis.symbol, "technical", cls._collapse_stances([analysis.rating]))
-
-        if session_type == "intra_check":
-            return {symbol: sources for symbol, sources in registry.items() if sources}
 
         if news_intel is not None:
             for symbol, items in news_intel.stock_news.items():
@@ -106,7 +112,25 @@ class PortfolioManagerAgent(BaseAgent):
                 if position.sector:
                     sectors.setdefault(position.symbol.upper(), position.sector)
             guidance: dict[str, list[str]] = {}
-            for row in macro_analysis.get("sector_guidance", []) or []:
+            # `sector_guidance` arrives in TWO shapes. The live macro agent
+            # emits [{sector, stance, reason}, ...]; `MacroStore` persists the
+            # normalized {sector: direction} form (see
+            # `macro_store._normalize_sector_guidance`, which drops the bulky
+            # reasons). Both reach here now that an intraday tick carries the
+            # morning's stored regime forward, and iterating the dict shape as
+            # though it were a list yields bare strings — `row.get` then raises
+            # AttributeError and takes the whole PM call down.
+            raw_guidance = macro_analysis.get("sector_guidance") or {}
+            if isinstance(raw_guidance, dict):
+                rows = [
+                    {"sector": sector, "stance": stance}
+                    for sector, stance in raw_guidance.items()
+                ]
+            elif isinstance(raw_guidance, list):
+                rows = [row for row in raw_guidance if isinstance(row, dict)]
+            else:
+                rows = []
+            for row in rows:
                 sector = str(row.get("sector") or "").strip().lower()
                 stance = row.get("stance")
                 if sector and stance:
@@ -145,7 +169,6 @@ class PortfolioManagerAgent(BaseAgent):
             macro_analysis=macro_analysis,
             smart_money_findings=smart_money_findings,
             symbol_sectors=kwargs.get("symbol_sectors") or {},
-            session_type=kwargs.get("session_type") or "morning",
         )
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
@@ -795,7 +818,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 earnings_analyses=earnings_analyses or [],
                 macro_analysis=macro_analysis, total_value=total_value,
                 smart_money_findings=smart_money_findings or [],
-                symbol_sectors=symbol_sectors or {}, session_type=session_type,
+                symbol_sectors=symbol_sectors or {},
                 allowed_buy_symbols=allowed_buy_symbols,
             )
             if errors:
@@ -868,7 +891,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         earnings_analyses=earnings_analyses or [],
                         macro_analysis=macro_analysis, total_value=total_value,
                         smart_money_findings=smart_money_findings or [],
-                        symbol_sectors=symbol_sectors or {}, session_type=session_type,
+                        symbol_sectors=symbol_sectors or {},
                         allowed_buy_symbols=allowed_buy_symbols,
                     )
                     if errors:
@@ -907,7 +930,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         positions: list[Position], news_intel: NewsIntelligenceReport | None,
         earnings_analyses: list[dict], macro_analysis: dict | None,
         total_value: float, symbol_sectors: dict[str, str] | None = None,
-        session_type: str = "morning",
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         allowed_buy_symbols: set[str] | None = None,
     ) -> list[str]:
@@ -931,7 +953,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             analyses=analyses, positions=positions, news_intel=news_intel,
             earnings_analyses=earnings_analyses, macro_analysis=macro_analysis,
             smart_money_findings=smart_money_findings or [],
-            symbol_sectors=symbol_sectors or {}, session_type=session_type,
+            symbol_sectors=symbol_sectors or {},
         )
         smart_money_eligible: dict[str, bool] = {}
         for finding in smart_money_findings or []:
