@@ -996,6 +996,8 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
     resolved = TechAnalysisResult(
         symbol="AAPL", rating="buy", conviction="medium",
         entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+        support_levels=[95.0], resistance_levels=[110.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x",
@@ -1127,6 +1129,8 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
         {"NVDA": TechAnalysisResult(
             symbol="NVDA", rating="buy", conviction="high",
             entry_price=100.0, reference_target=110.0, stop_loss=95.0,
+            support_levels=[95.0], resistance_levels=[110.0],
+            setup_type="range", expected_horizon_sessions=10,
             reasoning="fresh setup", reasoning_chain=_tech_rc(),
         )},
         agent_result,
@@ -1246,6 +1250,8 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
             "NVDA": TechAnalysisResult(
                 symbol="NVDA", rating="buy", conviction="high",
                 entry_price=100.0, reference_target=110.0, stop_loss=95.0,
+                support_levels=[95.0], resistance_levels=[110.0],
+                setup_type="range", expected_horizon_sessions=10,
                 reasoning="fresh setup", reasoning_chain=_tech_rc(),
             )
         },

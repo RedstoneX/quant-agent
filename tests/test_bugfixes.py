@@ -407,6 +407,10 @@ def test_pipeline_symbol_guard_blocks_off_universe_and_unanalyzed_buys():
             entry_price=500,
             reference_target=530,
             stop_loss=480,
+            support_levels=[480.0, 470.0],
+            resistance_levels=[530.0],
+            setup_type="range",
+            expected_horizon_sessions=10,
             reasoning="supported",
             reasoning_chain=_trc(),
         )
@@ -425,7 +429,9 @@ def test_pipeline_symbol_guard_allows_only_run_admitted_analyzed_buy():
     pipeline.config.trading.universe = ["SPY"]
     analysis = TechAnalysisResult(
         symbol="VST", rating="buy", entry_price=150, reference_target=180,
-        stop_loss=140, reasoning="validated transient candidate",
+        stop_loss=140, support_levels=[140.0, 135.0], resistance_levels=[180.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="validated transient candidate",
         reasoning_chain=_trc(),
     )
     decision = TradeDecision(
@@ -1120,6 +1126,8 @@ def test_tech_analysis_buy_stop_must_be_below_entry():
     ok = TechAnalysisResult(
         symbol="SPY", rating="sell",
         entry_price=500, stop_loss=520,  # stop ABOVE entry — correct for SELL
+        reference_target=470, support_levels=[], resistance_levels=[520.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
     )
     assert ok.stop_loss == 520
@@ -1128,7 +1136,9 @@ def test_tech_analysis_buy_stop_must_be_below_entry():
 def test_tech_analysis_conviction_defaults_to_medium():
     r = TechAnalysisResult(
         symbol="SPY", rating="buy",
-        entry_price=500, stop_loss=490,
+        entry_price=500, stop_loss=490, reference_target=520,
+        support_levels=[490.0], resistance_levels=[520.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
     )
     assert r.conviction == "medium"
@@ -1139,6 +1149,8 @@ def test_tech_analysis_rr_computed_for_buy():
     r = TechAnalysisResult(
         symbol="SPY", rating="buy",
         entry_price=500, stop_loss=490, reference_target=525,
+        support_levels=[490.0], resistance_levels=[525.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
     )
     # risk = 10, reward = 25 → 2.5
@@ -1150,6 +1162,8 @@ def test_tech_analysis_rr_computed_for_sell():
     r = TechAnalysisResult(
         symbol="SPY", rating="sell",
         entry_price=500, stop_loss=510, reference_target=475,
+        support_levels=[475.0], resistance_levels=[510.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
     )
     # risk = 10, reward = 25 → 2.5
@@ -1157,35 +1171,56 @@ def test_tech_analysis_rr_computed_for_sell():
 
 
 def test_tech_analysis_rr_none_for_neutral_or_missing_target():
-    """Neutral clears prices (validator) so R/R is None; missing target also yields None."""
+    """Neutral clears prices (validator) so R/R is None.
+
+    The "missing target yields None" half of this test's original intent no
+    longer applies: the 2026-08-27 validator makes reference_target REQUIRED
+    for any actionable rating, so an actionable TechAnalysisResult with no
+    target now fails construction outright (ValidationError) instead of
+    constructing and returning risk_reward=None. That's a stronger guarantee
+    against a bogus/absent ratio ever reaching downstream consumers.
+    """
     neutral = TechAnalysisResult(
         symbol="SPY", rating="neutral",
         entry_price=500, stop_loss=490, reference_target=525,
         reasoning="x", reasoning_chain=_trc(),
     )
     assert neutral.risk_reward is None
-    no_target = TechAnalysisResult(
-        symbol="SPY", rating="buy",
-        entry_price=500, stop_loss=490, reference_target=None,
-        reasoning="x", reasoning_chain=_trc(),
-    )
-    assert no_target.risk_reward is None
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(
+            symbol="SPY", rating="buy",
+            entry_price=500, stop_loss=490, reference_target=None,
+            support_levels=[490.0], resistance_levels=[],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning="x", reasoning_chain=_trc(),
+        )
 
 
 def test_tech_analysis_rr_handles_malformed_geometry():
-    """Target below entry on a BUY yields negative reward → None rather than a bogus ratio."""
-    r = TechAnalysisResult(
-        symbol="SPY", rating="buy",
-        entry_price=500, stop_loss=490, reference_target=495,  # target below entry
-        reasoning="x", reasoning_chain=_trc(),
-    )
-    assert r.risk_reward is None
+    """Target below entry on a BUY is now rejected at construction time.
+
+    Previously this constructed fine and risk_reward computed None from the
+    malformed geometry defensively. The 2026-08-27 validator now enforces
+    reference_target > entry_price for BUY directly, so the bad geometry
+    never reaches the computed field at all — an even stronger defense
+    against a bogus ratio than the old None-return.
+    """
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(
+            symbol="SPY", rating="buy",
+            entry_price=500, stop_loss=490, reference_target=495,  # target below entry
+            support_levels=[490.0], resistance_levels=[],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning="x", reasoning_chain=_trc(),
+        )
 
 
 def test_tech_analysis_thesis_invalid_if_defaults_empty():
     r = TechAnalysisResult(
         symbol="SPY", rating="buy",
         entry_price=500, stop_loss=490, reference_target=525,
+        support_levels=[490.0], resistance_levels=[525.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
     )
     assert r.thesis_invalid_if == ""
@@ -1196,6 +1231,8 @@ def test_tech_analysis_rr_exposed_via_model_dump():
     r = TechAnalysisResult(
         symbol="SPY", rating="buy",
         entry_price=500, stop_loss=490, reference_target=525,
+        support_levels=[490.0], resistance_levels=[525.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
     )
     dumped = r.model_dump()

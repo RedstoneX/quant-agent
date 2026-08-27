@@ -27,6 +27,8 @@ def _analysis(symbol: str, entry: float, stop: float, target: float) -> TechAnal
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry,
         stop_loss=stop, reference_target=target, reasoning="test",
+        support_levels=[stop], resistance_levels=[target],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning_chain=_tech_rc(),
     )
 
@@ -206,11 +208,16 @@ def test_construct_orders_rejects_buy_without_price_reference():
     assert decisions == []
 
 
-def test_construct_orders_falls_back_to_fallback_stop_when_no_hint():
-    """No suggested stop, no TA analysis → fallback to entry × (1 - fallback_pct)."""
-    constructor = PortfolioConstructor(
-        config=ConstructorConfig(fallback_stop_pct=0.05),
-    )
+def test_construct_orders_rejects_buy_when_no_structural_stop_supplied():
+    """No suggested stop, no TA analysis → no structural stop is available,
+    so the BUY is rejected outright.
+
+    Previously (before 2026-08-27) this fell back to entry × (1 - fallback_pct).
+    That ATR/percent fallback family was deleted on purpose — a stop nobody
+    derived from the chart can't be risk-sized honestly. Renamed from
+    `test_construct_orders_falls_back_to_fallback_stop_when_no_hint`.
+    """
+    constructor = PortfolioConstructor()
     targets = [TargetPosition(symbol="NVDA", target_weight_pct=5.0,
                               conviction="medium", thesis="no TA")]
 
@@ -218,40 +225,35 @@ def test_construct_orders_falls_back_to_fallback_stop_when_no_hint():
         targets=targets, positions=[], analyses=[],  # NO analysis
         total_value=100_000, price_map={"NVDA": 100.0},
     )
-    assert len(decisions) == 1
-    # Fallback: 100 × (1 - 0.05) = 95
-    assert decisions[0].stop_loss == 95.0
+    # No structural stop from any source → the BUY is dropped, not sized
+    # against an invented one.
+    assert decisions == []
 
 
-def test_resolve_stop_atr_fallback_when_llm_stop_missing():
-    """Volatility-aware fallback: when `analysis.stop_loss` is None but
-    `analysis.atr_14` is available, `_resolve_stop` returns `entry − 2*ATR`
-    instead of the hardcoded 5 % fallback.
+def test_resolve_stop_returns_none_when_no_structural_stop_supplied():
+    """When `analysis.stop_loss` is None and `target.suggested_stop_price`
+    is unset, `_resolve_stop` returns None — no structural stop, no trade.
 
-    In practice the `TechAnalysisResult._validate_rating_price_consistency`
-    validator forces `stop_loss > 0` for BUY/SELL ratings — so this path is
-    rarely reached in production today. The defensive code matters when
-    that validator gets relaxed (e.g. for an LLM that emits valid neutral-
-    rated targets that PM still wants to size into), and the test pins the
-    behaviour so it doesn't bit-rot. We test `_resolve_stop` directly with
-    a SimpleNamespace stand-in to bypass the model validator.
+    Previously (before 2026-08-27) this asserted a volatility-aware
+    `entry − 2*ATR` fallback when `analysis.atr_14` was available. That
+    fallback was deleted on purpose: it let PortfolioConstructor invent a
+    stop nobody derived from the chart. Renamed from
+    `test_resolve_stop_atr_fallback_when_llm_stop_missing`. We test
+    `_resolve_stop` directly with a SimpleNamespace stand-in to bypass the
+    model validator (which now requires a real stop_loss for actionable
+    ratings anyway).
     """
     from types import SimpleNamespace
-    constructor = PortfolioConstructor(
-        config=ConstructorConfig(
-            fallback_stop_pct=0.05,
-            default_stop_atr_multiple=2.0,
-        ),
-    )
+    constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", target_weight_pct=5.0,
-        conviction="medium", thesis="vol-aware stop",
+        conviction="medium", thesis="no structural stop",
     )
-    # ATR 8.0 on a $100 stock — high-vol small-cap profile.
+    # ATR is retained only as a noise-band input elsewhere; it no longer
+    # feeds a stop fallback here.
     fake_analysis = SimpleNamespace(stop_loss=None, atr_14=8.0)
     stop = constructor._resolve_stop(target, fake_analysis, entry_price=100.0)
-    # 100 − 2*8 = 84 (volatility-aware), NOT 95 (hardcoded 5 %).
-    assert stop == 84.0
+    assert stop is None
 
 
 def test_resolve_stop_llm_stop_wins_over_atr():
@@ -267,20 +269,25 @@ def test_resolve_stop_llm_stop_wins_over_atr():
     assert stop == 90.0
 
 
-def test_resolve_stop_falls_through_to_pct_when_no_atr():
-    """When neither LLM stop nor ATR is available, fall through to the
-    hardcoded % — same as the pre-audit behaviour."""
+def test_resolve_stop_returns_none_when_neither_stop_nor_atr_available():
+    """When neither LLM stop, ATR, nor a suggested stop is available,
+    `_resolve_stop` returns None — there's no hardcoded % to fall through to
+    anymore.
+
+    Previously (before 2026-08-27) this asserted a fall-through to the
+    hardcoded 5% fallback — same as the pre-audit behaviour. That fallback
+    was deleted on purpose. Renamed from
+    `test_resolve_stop_falls_through_to_pct_when_no_atr`.
+    """
     from types import SimpleNamespace
-    constructor = PortfolioConstructor(
-        config=ConstructorConfig(fallback_stop_pct=0.05),
-    )
+    constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", target_weight_pct=5.0,
         conviction="medium", thesis="x",
     )
     fake_analysis = SimpleNamespace(stop_loss=None, atr_14=None)
     stop = constructor._resolve_stop(target, fake_analysis, entry_price=100.0)
-    assert stop == 95.0  # 100 × (1 - 0.05)
+    assert stop is None
 
 
 def test_construct_orders_empty_targets_returns_empty():
@@ -317,63 +324,82 @@ def test_construct_orders_skips_sell_when_position_market_value_is_nan():
     assert sells == []
 
 
-def test_resolve_stop_returns_none_when_atr_too_wide_for_entry(caplog):
-    """High-vol name where 2*ATR >= entry_price would put the ATR stop
-    at or below zero. Pre-fix the `if atr_stop > 0` gate silently fell
-    through to the naive 5% fallback — exactly the scenario the
-    ATR-aware stop was supposed to prevent (a 5% stop on a stock with
-    8% normal-day ATR is one day's noise away from being triggered).
+def test_resolve_stop_returns_none_when_no_structural_stop_supplied_high_vol(caplog):
+    """High-vol name with no structural stop from either source: `_resolve_stop`
+    returns None + WARNING log so the BUY gets rejected upstream rather than
+    silently sized against an invented stop.
 
-    Now: returns None + WARNING log so the BUY gets rejected upstream
-    rather than silently sized with a guaranteed-trigger stop.
+    Previously (before 2026-08-27) this exercised the "2*ATR >= entry_price"
+    edge case of the now-deleted ATR fallback (`entry - 2*ATR` going
+    non-positive at ATR=60 on a $100 stock). That whole fallback tier is
+    gone, so any missing-stop case — high-vol or not — takes this same
+    None-returning path now. Renamed from
+    `test_resolve_stop_returns_none_when_atr_too_wide_for_entry`.
     """
     import logging
     from types import SimpleNamespace
-    constructor = PortfolioConstructor(
-        config=ConstructorConfig(
-            fallback_stop_pct=0.05,
-            default_stop_atr_multiple=2.0,
-        ),
-    )
+    constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="MICRO", target_weight_pct=3.0,
         conviction="low", thesis="too volatile",
     )
-    # ATR 60 on a $100 stock: 2*ATR = 120 > 100, stop would be -20.
     fake_analysis = SimpleNamespace(stop_loss=None, atr_14=60.0)
 
     with caplog.at_level(logging.WARNING):
         stop = constructor._resolve_stop(target, fake_analysis, entry_price=100.0)
 
     assert stop is None, (
-        "ATR stop below zero must reject rather than fall through to "
-        "5% naive fallback that would be triggered on normal noise"
+        "no structural stop from either source must reject rather than "
+        "invent one"
     )
     assert any(
-        "non-positive" in r.message and "Rejecting BUY" in r.message
+        "no structural stop" in r.message and target.symbol in r.message
         for r in caplog.records
     ), "rejection must log the reason so the operator can see why the BUY was dropped"
 
 
-def test_resolve_stop_uses_pct_fallback_when_atr_truly_unavailable():
-    """The 5% fallback IS the right answer when there's genuinely no
-    volatility info (e.g. brand-new symbol with <14 bars). Pin this so
-    the previous fix doesn't accidentally over-restrict."""
+def test_resolve_stop_returns_none_when_genuinely_no_stop_information():
+    """A brand-new symbol with no volatility history and no LLM-supplied
+    stop still resolves to None — there is no naive-percent fallback left
+    to catch it.
+
+    Previously (before 2026-08-27) this asserted the 5% fallback WAS the
+    right answer when there was genuinely no volatility info. That
+    fallback was deleted on purpose. Renamed from
+    `test_resolve_stop_uses_pct_fallback_when_atr_truly_unavailable`.
+    """
     from types import SimpleNamespace
-    constructor = PortfolioConstructor(
-        config=ConstructorConfig(
-            fallback_stop_pct=0.05,
-            default_stop_atr_multiple=2.0,
-        ),
-    )
+    constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NEWIPO", target_weight_pct=3.0,
         conviction="low", thesis="x",
     )
     fake_analysis = SimpleNamespace(stop_loss=None, atr_14=None)
     stop = constructor._resolve_stop(target, fake_analysis, entry_price=100.0)
-    # 100 * (1 - 0.05) = 95
-    assert stop == 95.0
+    assert stop is None
+
+
+def test_construct_orders_rejects_buy_when_no_reference_target_supplied():
+    """New coverage (2026-08-27): a structural stop is present but the
+    Tech Analyst supplied no `reference_target` → the BUY is rejected.
+    Targets are no longer synthesized from `entry * (1 + 2*stop_gap_pct)`;
+    a missing target now means no trade, same as a missing stop.
+    """
+    from types import SimpleNamespace
+    constructor = PortfolioConstructor()
+    targets = [TargetPosition(symbol="NVDA", target_weight_pct=5.0,
+                              conviction="medium", thesis="no target")]
+    # A stop is present (so this isn't the missing-stop rejection path) but
+    # reference_target is None.
+    fake_analysis = SimpleNamespace(
+        symbol="NVDA", stop_loss=95.0, atr_14=None, reference_target=None,
+    )
+
+    decisions = constructor.construct_orders(
+        targets=targets, positions=[], analyses=[fake_analysis],
+        total_value=100_000, price_map={"NVDA": 100.0},
+    )
+    assert decisions == []
 
 
 def test_current_weights_applies_gross_multiplier_for_inverse_etfs():
@@ -444,7 +470,9 @@ def test_risk_budget_cap_carries_provenance_note_for_rm():
     # 10_000 equity = $50 -> 5 shares -> $500 = 5% alloc, well under 15%.
     analysis = TechAnalysisResult(
         symbol="XLE", rating="buy", entry_price=100.0, stop_loss=90.0,
-        reference_target=130.0, reasoning="r", reasoning_chain=_tech_rc(),
+        reference_target=130.0, support_levels=[90.0], resistance_levels=[130.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="r", reasoning_chain=_tech_rc(),
     )
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
@@ -469,7 +497,9 @@ def test_uncapped_buy_has_no_provenance_note():
     # Tight stop: entry 100, stop 99 -> cap = 0.5%*100/1 = 50% >> 5%.
     analysis = TechAnalysisResult(
         symbol="XLF", rating="buy", entry_price=100.0, stop_loss=99.0,
-        reference_target=110.0, reasoning="r", reasoning_chain=_tech_rc(),
+        reference_target=110.0, support_levels=[99.0], resistance_levels=[110.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="r", reasoning_chain=_tech_rc(),
     )
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],

@@ -173,7 +173,10 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reference_target=530.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[530.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = (
@@ -308,7 +311,10 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reference_target=530.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[530.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = (

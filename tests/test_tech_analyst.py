@@ -52,6 +52,10 @@ def _valid_response_for(symbol: str) -> str:
         "entry_price": 507.0,
         "reference_target": 530.0,
         "stop_loss": 494.0,
+        "support_levels": [494.0],
+        "resistance_levels": [530.0],
+        "setup_type": "range",
+        "expected_horizon_sessions": 10,
         "reasoning_chain": {
             "trend": "Above MA20/50/200 stacked bullish.",
             "momentum": "RSI 58 neutral-bullish, MACD hist positive.",

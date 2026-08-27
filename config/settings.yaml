@@ -318,7 +318,12 @@ trading:
   # most-used long-term reference permanently absent. 320 calendar days ≈ 220
   # trading days: enough for MA200 with holiday headroom. Pinned by
   # tests/test_audit_fixes_2026_07_16.py against every advertised indicator.
-  lookback_days: 320
+  # 2026-08-27: raised 320 -> 1800 (~5 years) so structural levels are computed
+  # over real history rather than a single year. src/data/levels.py finds
+  # support/resistance deterministically in Python — 1,254 bars cost ~6ms and
+  # zero LLM tokens — so more history is free here, unlike sending bars to a
+  # model. MA200 was already satisfied at 320; this is purely for structure.
+  lookback_days: 1800
   # NOTE: these times are only consumed by `main.py --mode live` (APScheduler).
   # Production runs via launchd — see `src/trading_calendar.py SESSION_WINDOWS`
   # for the authoritative ET windows and `scripts/run_if_et_window.sh` for the

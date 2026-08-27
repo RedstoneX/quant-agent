@@ -79,7 +79,10 @@ def mock_config():
 def _tech_analysis() -> TechAnalysisResult:
     return TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reference_target=530.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[530.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
 

@@ -3,6 +3,8 @@ from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
+from src.data.context import compute_market_context, format_context_block
+from src.data.levels import find_structural_levels, format_levels_block
 from src.models import TechAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -11,7 +13,10 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "tech
 
 # OHLCV bars attached per symbol in the user message. Enough for swing pivots
 # and micro-structure, not so many that context balloons on a 30-symbol batch.
-_BARS_PER_SYMBOL = 20
+# Recent bars shown verbatim, for immediate context only. Structural levels no
+# longer come from this window — they are computed in Python over the full
+# history (see src/data/levels.py), so this stays small on purpose.
+_BARS_PER_SYMBOL = 40
 
 # Auto-chunk the batch when a single LLM call would carry too many symbols.
 # 25 picked so chunks stay comfortably within typical LLM context, assuming
@@ -165,6 +170,18 @@ class TechAnalystAgent(BaseAgent):
                 f"and say so explicitly in your reasoning_chain."
             )
 
+        # Relative strength needs something to be relative to. The index ETFs
+        # are already in the universe, so the benchmark comes free from the
+        # batch rather than requiring another fetch. A stock rising less than
+        # its index is weak however green the candle looks — the analyst was
+        # previously blind to this entirely.
+        bars_by_symbol = {i["symbol"]: i["bars"] for i in symbols_data}
+        benchmark_symbol = next(
+            (s for s in ("SPY", "QQQ", "IWM") if bars_by_symbol.get(s)), None
+        )
+        benchmark_bars = bars_by_symbol.get(benchmark_symbol) if benchmark_symbol else None
+        days_to_earnings: dict[str, int] = kwargs.get("days_to_earnings") or {}
+
         sections = []
         for item in symbols_data:
             symbol = item["symbol"]
@@ -176,7 +193,30 @@ class TechAnalystAgent(BaseAgent):
                 for b in recent_bars
             )
             last_close = recent_bars[-1].close if recent_bars else "N/A"
+            # Structural levels are computed in Python from the FULL history,
+            # not from the recent window above. Finding where price repeatedly
+            # stopped is arithmetic; asking a model to spot it in a wall of
+            # OHLC rows is both unreliable and unnecessary. Before this, the
+            # analyst saw 20 bars and could only cite moving averages and the
+            # 20-day range as "levels" — which is why the structural stops and
+            # targets the exit system depends on were effectively absent.
+            supports, resistances = find_structural_levels(bars)
+            levels_text = format_levels_block(
+                supports,
+                resistances,
+                last_close if isinstance(last_close, (int, float)) else 0.0,
+            )
+            context_text = format_context_block(
+                compute_market_context(
+                    bars,
+                    benchmark_bars=benchmark_bars if symbol != benchmark_symbol else None,
+                    benchmark_symbol=benchmark_symbol if symbol != benchmark_symbol else None,
+                ),
+                days_to_earnings=days_to_earnings.get(symbol),
+            )
             sections.append(f"""### {symbol}{_prior_line(symbol)}{_valuation_line(symbol)}
+{context_text}
+{levels_text}
 Price (last {len(recent_bars)} COMPLETED daily bars):
 {bars_text}
 Indicators: MA20={indicators.ma_20} MA50={indicators.ma_50} MA200={indicators.ma_200} | RSI={indicators.rsi_14} | MACD={indicators.macd}/{indicators.macd_signal}/{indicators.macd_hist} | BB={indicators.bb_lower}/{indicators.bb_middle}/{indicators.bb_upper} | ATR={indicators.atr_14} | Vol%={indicators.volume_change_pct}

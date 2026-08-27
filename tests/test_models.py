@@ -176,6 +176,10 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
         entry_price=150.0,
         stop_loss=140.0,
         reference_target=180.0,
+        support_levels=[140.0, 135.0],
+        resistance_levels=[180.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain={
             "trend": "x", "momentum": "x", "volatility": "x",
             "volume": "x", "support_resistance": "x",
@@ -189,6 +193,10 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
         symbol="NVDA",
         rating="  Buy  ", conviction="  Medium  ",
         entry_price=150.0, stop_loss=140.0, reference_target=180.0,
+        support_levels=[140.0, 135.0],
+        resistance_levels=[180.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain={
             "trend": "x", "momentum": "x", "volatility": "x",
             "volume": "x", "support_resistance": "x",

@@ -96,6 +96,41 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ## Active finish line
 
+### QAMC Remediation Spec — Phase 1 complete, Phase 2 next
+
+`docs/QAMC_REMEDIATION_SPEC.md` Phase 1 (Tech Analyst returns real structure) is
+implemented on branch `feat/tech-analyst-structural-levels`:
+
+- `TechAnalysisResult` (`src/models.py`) requires `support_levels`,
+  `resistance_levels`, `setup_type` (`"range"` / `"breakout"`),
+  `expected_horizon_sessions` and `reference_target` for every actionable rating.
+- `src/data/levels.py` (new) deterministically finds support/resistance from the
+  full OHLCV history; `src/agents/tech_analyst.py` feeds a formatted levels block
+  into the prompt, computed over `trading.lookback_days: 1800` (~5 years).
+- `src/portfolio_constructor.py`'s synthesized stop (`entry − 2×ATR` / `entry ×
+  0.95`) and target (`entry × (1 + 2×stop_gap_pct)`) are deleted, along with their
+  config fields. A candidate with no structural stop or target is now rejected
+  rather than traded.
+- `tests/test_levels.py` (new, 18 tests) covers the levels module.
+- `src/data/context.py` (new) adds deterministic market context per symbol — rel.
+  strength vs a same-batch benchmark (SPY/QQQ/IWM), 1w/1m/3m/6m/12m returns, 52-week
+  range position, ATR percentage-of-price with a 1y percentile and volatility state,
+  MA slopes, consolidation detection, dollar volume, up/down volume ratio, unfilled
+  gaps — rendered into the Tech Analyst prompt via `format_context_block()`.
+  `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()`, which the
+  Tech Analyst's new optional `days_to_earnings` kwarg can consume, but **nothing in
+  the pipeline wires it up yet** — it exists and is tested but unused end to end.
+  `tests/test_context.py` (new, 27 tests) covers it; the full suite is 2227 tests.
+
+**Next up is Phase 2 (risk-based sizing and correlation-aware budgeting)**: replace
+the Portfolio Manager's percent-of-portfolio conviction sizing with a risk
+allocation in `[0.5%, 5.0%]` of equity from which share count is derived
+(`shares = (equity × risk_pct) ÷ |entry − stop|`), and add correlation/sector
+cluster-aware budgeting so correlated names consume one bet's risk budget rather
+than several, per `docs/QAMC_REMEDIATION_SPEC.md` §2. This is not started.
+Phases 3–8 (exit rework, evidence/feed repair, short selling, cost/transparency,
+measurement, documentation) remain pending behind it, in the spec's stated order.
+
 ### Mission Control / existing cockpit utility
 
 Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.

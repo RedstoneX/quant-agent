@@ -38,10 +38,15 @@ class ConstructorConfig:
     risk_budget_pct: float = 0.5
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
-    # ATR multiplier for default stop when TA didn't supply one.
-    default_stop_atr_multiple: float = 2.0
-    # Fallback stop as % of entry when no ATR or suggestion is available.
-    fallback_stop_pct: float = 0.05
+    # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
+    # REMOVED. They were never the intended design — `_resolve_stop` always
+    # preferred the analyst's structural level and fell through to
+    # `entry - 2*ATR` (then `entry * 0.95`) only when none was supplied. In
+    # practice the analyst supplied none, so the fallback became the norm and
+    # positions were managed against stops nobody derived from the chart.
+    # A stop must now come from structure; without one there is no trade.
+    # ATR is retained only as a noise-band input for exit decisions.
+    # See docs/QAMC_REMEDIATION_SPEC.md Phase 1.
 
 
 class PortfolioConstructor:
@@ -264,13 +269,22 @@ class PortfolioConstructor:
             )
             return None
 
-        # Take-profit: if TA had a reference_target use it; else entry * (1 + 2*stop_gap_pct)
-        # as a soft reference (NOT a hard TP — midday trailing stops manage exits).
-        if analysis and analysis.reference_target and analysis.reference_target > entry_price:
-            take_profit = float(analysis.reference_target)
-        else:
-            stop_gap_pct = (entry_price - stop_loss) / entry_price
-            take_profit = round(entry_price * (1 + 2 * stop_gap_pct), 2)
+        # Take-profit comes from the analyst's structural reference_target, or
+        # there is no trade. The previous `entry * (1 + 2*stop_gap_pct)` branch
+        # manufactured a target whenever the analyst omitted one, and
+        # thesis_progress, pace and TARGET_BREACH were then all measured
+        # against that invention. TechAnalysisResult now requires
+        # reference_target for every actionable rating — structure for a range
+        # setup, a measured move for a breakout — so this is a hard read.
+        if not (analysis and analysis.reference_target and analysis.reference_target > entry_price):
+            logger.warning(
+                "Constructor: BUY %s rejected — no structural reference_target "
+                "from the technical analyst (entry=$%.2f). Targets are no "
+                "longer synthesized.",
+                target.symbol, entry_price,
+            )
+            return None
+        take_profit = float(analysis.reference_target)
 
         # `target_pct` and `current_pct` are GROSS-leverage weights (see
         # _current_weights), but every consumer of `allocation_pct` spends it
@@ -352,47 +366,23 @@ class PortfolioConstructor:
         analysis: TechAnalysisResult | None,
         entry_price: float,
     ) -> float | None:
-        """Priority: target's suggested stop → TA's stop → ATR-based → fallback %.
+        """Priority: target's suggested stop → the technical analyst's stop → no trade.
 
-        The ATR-based middle tier is meaningful for volatile small-caps:
-        a hardcoded 5 % stop on a name with ATR(14) = 8 % of price gets
-        thrashed by normal noise. `entry - 2 * ATR` is the standard
-        volatility-aware default; matches the prompt's recommendation
-        to TechAnalyst.
+        There is deliberately no synthesized fallback. A stop that nobody
+        derived from the chart cannot be risk-sized honestly, and the previous
+        `entry - 2*ATR` / `entry * 0.95` fallbacks were the source of exits
+        that fired inside ordinary noise. If neither source supplies a level,
+        return None and let the caller reject the position.
         """
         if target.suggested_stop_price and target.suggested_stop_price > 0:
             return float(target.suggested_stop_price)
         if analysis and analysis.stop_loss and analysis.stop_loss > 0:
             return float(analysis.stop_loss)
-        # Volatility-aware fallback when LLM didn't supply a stop.
-        if analysis and analysis.atr_14 and analysis.atr_14 > 0:
-            atr_stop = entry_price - self.cfg.default_stop_atr_multiple * analysis.atr_14
-            if atr_stop > 0:
-                return round(atr_stop, 2)
-            # atr_stop <= 0 means 2*ATR >= entry_price — the symbol is
-            # so volatile that the standard ATR-based stop is below
-            # zero. The original code's `if atr_stop > 0` gate then
-            # silently fell through to the naive 5% fallback — exactly
-            # the scenario the ATR-aware stop was meant to prevent
-            # (a 5% stop on an 8%-ATR name is one normal day's noise
-            # away from being triggered). Better: reject the BUY by
-            # returning None so PortfolioConstructor signals upstream
-            # that this position can't be safely sized. Loud, not
-            # silently-degraded.
-            import logging
-            logging.getLogger(__name__).warning(
-                "ATR-based stop for entry=$%.2f with ATR=$%.4f would be "
-                "non-positive (%.4f) — the symbol is too volatile for the "
-                "%.1f×ATR default and no LLM-supplied stop is available. "
-                "Rejecting BUY rather than falling through to naive %.0f%% "
-                "stop that would be triggered on normal noise.",
-                entry_price, analysis.atr_14, atr_stop,
-                self.cfg.default_stop_atr_multiple,
-                self.cfg.fallback_stop_pct * 100,
-            )
-            return None
-        # Naive % fallback ONLY when ATR is genuinely unavailable
-        # (brand-new symbol with <14 bars of history). In that case
-        # we have no volatility information, so the % stop is the
-        # honest best-effort.
-        return round(entry_price * (1 - self.cfg.fallback_stop_pct), 2)
+        # No structural stop from either source — reject rather than invent one.
+        logger.warning(
+            "Constructor: %s has no structural stop (suggested_stop_price and "
+            "analysis.stop_loss both absent) — rejecting. Stops are no longer "
+            "synthesized from ATR or a flat percentage.",
+            target.symbol,
+        )
+        return None

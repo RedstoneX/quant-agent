@@ -40,6 +40,8 @@ def _ta_result(symbol, rating="buy"):
     return TechAnalysisResult(
         symbol=symbol, rating=rating, conviction="medium",
         entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+        support_levels=[95.0], resistance_levels=[110.0],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x",
