@@ -31,11 +31,45 @@ from src.models import Position, TargetPosition, TechAnalysisResult, TradeDecisi
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class RiskPlan:
+    """A risk-based target resolved into the units the order path speaks.
+
+    `risk_pct` is what the budget actually granted, which may be less than the
+    PM asked for; `target_weight_pct` is that risk converted through the stop
+    distance into a gross-leverage weight. `note` explains any cut, and is
+    carried into the order's reasoning so the AI Risk Manager reads a
+    deterministic reduction as arithmetic rather than as the PM contradicting
+    itself.
+    """
+
+    symbol: str
+    risk_pct: float
+    target_weight_pct: float
+    entry_price: float | None
+    stop_price: float | None
+    note: str = ""
+
+
 @dataclass
 class ConstructorConfig:
     """Tunables for how the constructor sizes and prices orders."""
-    # Risk-budget sizing: BUYs capped so a stop-out costs at most this % of equity.
-    risk_budget_pct: float = 0.5
+    # Ceiling on any SINGLE position's risk, and the fallback sizing basis for
+    # a legacy notional target. Owner-ratified at 5% (2026-08-27); the prior
+    # 0.5% was a constructor default nobody chose. Under risk-based sizing
+    # (spec §2.1) this caps `TargetPosition.risk_allocation_pct` rather than
+    # driving it — conviction sets the size, this bounds it.
+    risk_budget_pct: float = 5.0
+    # Below this, an idea is not worth trading: a token position pays full
+    # commission and full attention for an immaterial payoff. A request
+    # rationed under the floor is denied outright rather than shrunk.
+    min_risk_pct: float = 0.5
+    # Spec §2.2. Total at-risk ceiling across the book, and the share of it any
+    # one correlated cluster may take. Enforced only when the caller supplies
+    # `existing_risk_pct` / `clusters` — without those the constructor has no
+    # view of the book's risk and must not invent one.
+    max_portfolio_risk_pct: float = 25.0
+    max_cluster_risk_share_pct: float = 40.0
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
     # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
@@ -62,6 +96,8 @@ class PortfolioConstructor:
         analyses: list[TechAnalysisResult],
         total_value: float,
         price_map: dict[str, float] | None = None,
+        existing_risk_pct: dict[str, float] | None = None,
+        clusters: list[list[str]] | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -72,6 +108,15 @@ class PortfolioConstructor:
         `price_map`: optional {symbol: live_price} — required for BUYs so
         the constructor can sanity-check TA's entry. If absent for a BUY
         symbol, we fall back to TA's entry_price.
+
+        `existing_risk_pct` / `clusters`: spec §2.2. The book's current
+        per-symbol budget risk (`src/risk/metrics.py`) and its measured
+        correlation clusters (`src/data/correlation.py`). Supplied together
+        they turn the 25% at-risk ceiling from a figure the PM was shown into
+        a gate it cannot exceed. Omitted, the portfolio-level ceilings are not
+        enforced — the constructor has no view of the book's risk and must not
+        invent one — though per-position sizing and the 5% single-name ceiling
+        still apply.
         """
         if total_value <= 0:
             return []
@@ -80,13 +125,35 @@ class PortfolioConstructor:
         analyses_by_sym = {a.symbol: a for a in analyses}
         positions_by_sym = {p.symbol: p for p in positions}
 
+        # Spec §2.1/§2.2. Resolve each risk-based target's implied notional
+        # weight BEFORE the delta loop, because that weight is what every
+        # downstream step — the churn filter, the close test, the partial-sell
+        # fraction — already speaks in. Conviction arrives as risk; the stop
+        # converts it to a size; the budget rations it across the book.
+        risk_plan = self._plan_risk_targets(
+            targets,
+            analyses_by_sym=analyses_by_sym,
+            price_map=price_map,
+            current_weights=current_weights,
+            existing_risk_pct=existing_risk_pct,
+            clusters=clusters,
+        )
+
         sells: list[TradeDecision] = []
         buys: list[TradeDecision] = []
 
         for target in targets:
             sym = target.symbol
             current_pct = current_weights.get(sym, 0.0)
-            target_pct = target.target_weight_pct
+            if target.risk_allocation_pct is not None:
+                plan = risk_plan.get(sym)
+                if plan is None:
+                    # No stop, no entry, or the budget refused it outright.
+                    # _plan_risk_targets has already logged which.
+                    continue
+                target_pct = plan.target_weight_pct
+            else:
+                target_pct = target.target_weight_pct or 0.0
             delta_pct = target_pct - current_pct
 
             # target_weight_pct == 0 is PM saying "CLOSE this position", not
@@ -114,6 +181,7 @@ class PortfolioConstructor:
                 # Open or add
                 buy_decision = self._build_buy(
                     target,
+                    plan=risk_plan.get(sym),
                     analysis=analyses_by_sym.get(sym),
                     current_pct=current_pct,
                     target_pct=target_pct,
@@ -130,6 +198,159 @@ class PortfolioConstructor:
         sells.sort(key=lambda d: 0 if d.allocation_pct >= 100 else 1)
         buys.sort(key=lambda d: d.allocation_pct, reverse=True)
         return sells + buys
+
+    def _plan_risk_targets(
+        self,
+        targets: list[TargetPosition],
+        *,
+        analyses_by_sym: dict,
+        price_map: dict[str, float],
+        current_weights: dict[str, float],
+        existing_risk_pct: dict[str, float] | None,
+        clusters: list[list[str]] | None,
+    ) -> dict[str, RiskPlan]:
+        """Turn risk-based targets into notional weights, under the budget.
+
+        Spec §2.1: `shares = (equity x risk_pct) / |entry - stop|`, which as a
+        notional weight is `risk_pct x entry / (entry - stop)`. The equity term
+        cancels, so this needs no book value — only the stop distance. A wider
+        stop yields a SMALLER position rather than a rejected trade, which is
+        what eliminates the "stops too tight" failure class: risk is never
+        controlled by squeezing the stop.
+
+        Spec §2.2: the requested risks are rationed against the total and
+        per-cluster ceilings before any of them is converted to a size, so the
+        book is bounded by construction rather than by a later veto.
+        """
+        from src.risk.budget import RiskRequest, allocate_risk_budget
+        from src.risk.rules import _gross_multiplier
+
+        priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
+        requests: list[RiskRequest] = []
+        closes: set[str] = set()
+
+        for target in targets:
+            if target.risk_allocation_pct is None:
+                continue  # legacy notional target — sized the old way
+            sym = target.symbol
+            if target.risk_allocation_pct == 0.0:
+                # A close needs no price, no stop and no budget. Routing it
+                # through the pricing checks below would let a missing quote
+                # silently cancel an exit PM had decided on.
+                closes.add(sym)
+                continue
+            analysis = analyses_by_sym.get(sym)
+            entry, stop = self._resolve_entry_and_stop(
+                target, analysis, price_map.get(sym),
+            )
+            if entry is None or stop is None:
+                continue  # already logged; no stop means no honest size
+            priced[sym] = (entry, stop)
+            requests.append(RiskRequest(
+                sym,
+                # The single-name ceiling binds before the portfolio one. A PM
+                # asking for more than the ratified envelope is clamped rather
+                # than refused — the idea is sound, the size is not.
+                min(target.risk_allocation_pct, self.cfg.risk_budget_pct),
+            ))
+
+        allocation = allocate_risk_budget(
+            requests,
+            existing_pct=existing_risk_pct,
+            clusters=clusters,
+            ceiling_pct=self.cfg.max_portfolio_risk_pct,
+            cluster_share_pct=self.cfg.max_cluster_risk_share_pct,
+            floor_pct=self.cfg.min_risk_pct,
+        ) if (existing_risk_pct is not None or clusters is not None) else None
+
+        plans: dict[str, RiskPlan] = {}
+        for sym in closes:
+            plans[sym] = RiskPlan(
+                symbol=sym, risk_pct=0.0, target_weight_pct=0.0,
+                entry_price=None, stop_price=None, note="",
+            )
+
+        for sym, (entry, stop) in priced.items():
+            requested = min(
+                next(r.requested_pct for r in requests if r.symbol == sym),
+                self.cfg.risk_budget_pct,
+            )
+            note = ""
+            if allocation is not None:
+                grant = allocation.grants.get(sym.upper())
+                granted = grant.granted_pct if grant else 0.0
+                note = grant.note if grant else ""
+                if granted <= 0:
+                    logger.info(
+                        "Constructor: %s produces no order — risk budget "
+                        "granted 0%% of the %.2f%% requested (%s)",
+                        sym, requested,
+                        grant.limited_by if grant else "no grant",
+                    )
+                    continue
+            else:
+                granted = requested
+
+            # risk_pct x entry / (entry - stop): the §2.1 formula as a weight.
+            raw_weight = granted * entry / (entry - stop)
+            plans[sym] = RiskPlan(
+                symbol=sym,
+                risk_pct=granted,
+                # Stored in GROSS-leverage terms, the units _current_weights
+                # and the delta loop speak. _build_buy divides back out.
+                target_weight_pct=raw_weight * _gross_multiplier(sym),
+                entry_price=entry,
+                stop_price=stop,
+                note=note,
+            )
+        return plans
+
+    def _resolve_entry_and_stop(
+        self,
+        target: TargetPosition,
+        analysis: TechAnalysisResult | None,
+        market_price: float | None,
+    ) -> tuple[float | None, float | None]:
+        """Entry and a validated stop below it, or (None, None).
+
+        Extracted from `_build_buy` because risk-based sizing needs the stop
+        distance one step earlier — the position's weight is not knowable until
+        the stop is. `_build_buy` calls this too, so there is exactly one
+        definition of what a tradeable entry/stop pair is.
+        """
+        entry_price = 0.0
+        if market_price and market_price > 0:
+            entry_price = float(market_price)
+        elif analysis and analysis.entry_price:
+            entry_price = float(analysis.entry_price)
+            logger.info(
+                "Constructor: no live market_price for %s, using TA entry $%.2f",
+                target.symbol, entry_price,
+            )
+        if entry_price <= 0:
+            logger.warning(
+                "Constructor: cannot construct BUY %s — no entry price available",
+                target.symbol,
+            )
+            return (None, None)
+
+        # Round FIRST, then validate: the TradeDecision ships
+        # round(stop_loss, 2), so validating the unrounded value let a stop
+        # that rounds UP to exactly the entry price through the
+        # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
+        # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
+        # fires on the first tick down). 2026-07-16 audit.
+        stop_loss = self._resolve_stop(target, analysis, entry_price)
+        if stop_loss is not None:
+            stop_loss = round(stop_loss, 2)
+        if stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price:
+            logger.warning(
+                "Constructor: BUY %s rejected — no valid stop below entry "
+                "(entry=$%.2f, stop=%s)",
+                target.symbol, entry_price, stop_loss,
+            )
+            return (None, None)
+        return (entry_price, stop_loss)
 
     @staticmethod
     def _current_weights(
@@ -231,43 +452,20 @@ class PortfolioConstructor:
         target_pct: float,
         total_value: float,
         market_price: float | None,
+        plan: RiskPlan | None = None,
     ) -> TradeDecision | None:
-        # Resolve entry price — prefer live market, fall back to TA's call,
-        # last-resort reject.
-        entry_price = 0.0
-        if market_price and market_price > 0:
-            entry_price = float(market_price)
-        elif analysis and analysis.entry_price:
-            entry_price = float(analysis.entry_price)
-            logger.info(
-                "Constructor: no live market_price for %s, using TA entry $%.2f",
-                target.symbol, entry_price,
+        # A risk-based target already resolved its entry and stop in
+        # _plan_risk_targets — reusing them keeps the size the budget granted
+        # consistent with the level the order actually ships, which a second
+        # resolution against a moved quote would not.
+        if plan is not None and plan.entry_price is not None and plan.stop_price is not None:
+            entry_price, stop_loss = plan.entry_price, plan.stop_price
+        else:
+            entry_price, stop_loss = self._resolve_entry_and_stop(
+                target, analysis, market_price,
             )
-        if entry_price <= 0:
-            logger.warning(
-                "Constructor: cannot construct BUY %s — no entry price available",
-                target.symbol,
-            )
-            return None
-
-        # Resolve stop — priority: target's suggested stop, then TA's stop,
-        # then ATR-based default, then fallback % of entry.
-        # Round FIRST, then validate: the TradeDecision below ships
-        # round(stop_loss, 2), so validating the unrounded value let a stop
-        # that rounds UP to exactly the entry price through the
-        # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
-        # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
-        # fires on the first tick down). 2026-07-16 audit.
-        stop_loss = self._resolve_stop(target, analysis, entry_price)
-        if stop_loss is not None:
-            stop_loss = round(stop_loss, 2)
-        if stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price:
-            logger.warning(
-                "Constructor: BUY %s rejected — no valid stop below entry "
-                "(entry=$%.2f, stop=%s)",
-                target.symbol, entry_price, stop_loss,
-            )
-            return None
+            if entry_price is None or stop_loss is None:
+                return None
 
         # Take-profit comes from the analyst's structural reference_target, or
         # there is no trade. The previous `entry * (1 + 2*stop_gap_pct)` branch
@@ -356,8 +554,13 @@ class PortfolioConstructor:
             stop_loss=stop_loss,   # already rounded + validated above
             take_profit=take_profit,
             # Cap note appended AFTER the truncation so provenance never
-            # gets sliced off by a long thesis.
-            reasoning=reasoning[:500] + cap_note,
+            # gets sliced off by a long thesis. The budget note (spec §2.2)
+            # rides alongside it for the same reason: a portfolio-level cut
+            # the AI Risk Manager cannot see the arithmetic behind reads as
+            # the PM contradicting itself.
+            reasoning=reasoning[:500] + cap_note + (
+                f" {plan.note}" if plan is not None and plan.note else ""
+            ),
         )
 
     def _resolve_stop(

@@ -328,6 +328,24 @@ class RiskConfig(BaseModel):
     # the Portfolio Manager sizes against a real number instead of a rule it
     # was told about but never shown. Phase 2b makes it a hard gate.
     max_portfolio_risk_pct: float = Field(default=25.0, gt=0, le=100)
+    # Spec §2.1. The owner-ratified per-trade envelope (2026-08-27). Conviction
+    # is expressed as the share of equity an idea may lose if its stop is hit,
+    # and the constructor derives share count from it:
+    #     shares = (equity x risk_pct / 100) / |entry - stop|
+    # A wider stop therefore yields a SMALLER position rather than a rejected
+    # trade, which is what removes the incentive to squeeze stops. The prior
+    # 0.5% ceiling lived in a constructor dataclass default nobody chose.
+    max_position_risk_pct: float = Field(default=5.0, gt=0, le=100)
+    # Below this an idea is not worth trading: a token position pays full
+    # commission and full attention for an immaterial payoff. A request
+    # rationed under the floor is denied outright rather than shrunk.
+    min_position_risk_pct: float = Field(default=0.5, ge=0, le=100)
+    # Spec §2.2. The most of the total at-risk ceiling any ONE correlated
+    # cluster may take. Without it "total risk is under 25%" says nothing
+    # about diversification — a book holding one theme four times over
+    # satisfies it while carrying exactly the concentration the ceiling
+    # exists to prevent. Correlated names consume one bet's budget.
+    max_cluster_risk_share_pct: float = Field(default=40.0, gt=0, le=100)
     # Cash-only default. When False: no BUY may drive `cash` below zero, and
     # any session that starts with `cash < 0` must de-lever (SELL) before any
     # new BUY. When True: normal margin account behavior, risk engine only

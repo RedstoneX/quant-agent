@@ -141,9 +141,30 @@ risk:
   max_sector_pct: 40
   # Owner-ratified total at-risk ceiling: sum of (shares x distance from entry
   # to stop) across the book, as a % of equity. NOT a notional cap — full
-  # deployment is intended; risk is what gets rationed. Reporting-only until
-  # Phase 2b turns it into a gate.
+  # deployment is intended; risk is what gets rationed. ENFORCED as of
+  # Phase 2b (spec §2.2) — the constructor rations every risk-based target
+  # against it before sizing, so the book is bounded by construction rather
+  # than by a veto after the fact.
   max_portfolio_risk_pct: 25
+  # Spec §2.1 — the owner-ratified per-trade envelope (2026-08-27). Conviction
+  # is stated as the share of equity an idea may lose if its stop is hit, and
+  # the constructor derives the share count from it and the stop distance:
+  #     shares = (equity x risk_pct / 100) / |entry - stop|
+  # A wider stop therefore yields a SMALLER position rather than a rejected
+  # trade, which is what removes the incentive to squeeze stops. The previous
+  # 0.5% ceiling lived in a constructor dataclass default nobody chose.
+  max_position_risk_pct: 5
+  # Under this an idea is not worth trading: a token position pays full
+  # commission and full attention for an immaterial payoff. A request
+  # rationed below the floor is denied outright rather than shrunk.
+  min_position_risk_pct: 0.5
+  # Spec §2.2 — the most of the total ceiling any ONE correlated cluster may
+  # take. Without it, "total risk is under 25%" says nothing about
+  # diversification: a book holding OKLO/CEG/VST/CCJ at 5% risk each sits at
+  # 20% total while carrying one 20% bet on the nuclear theme. Correlated
+  # names consume one bet's budget. Clusters are measured return correlation
+  # (src/data/correlation.py), not a hand-maintained sector table.
+  max_cluster_risk_share_pct: 40
   require_stop_loss: true
   # Cash-only by default. Flip to true to allow margin — BUYs can then spend
   # beyond available cash. When false (default) the risk engine hard-blocks

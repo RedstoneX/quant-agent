@@ -480,7 +480,35 @@ class TradingPipeline:
         # Deterministic Target → Orders translator. Phase 2 of the architecture:
         # the LLM (PM) emits TargetPositions (intent); the constructor does the
         # math that turns intent into concrete TradeDecision orders.
-        self.portfolio_constructor = PortfolioConstructor()
+        # Spec §2.1/§2.2. The risk envelope lives in `risk:` config, not in the
+        # constructor's dataclass defaults — the 0.5% per-trade figure the
+        # constructor shipped with was a default nobody chose, and the owner
+        # ratified 5% / 25% on 2026-08-27. Reading it here means the deployed
+        # ceiling is the one `verify_commissioning.py` can see.
+        from src.portfolio_constructor import ConstructorConfig
+        _risk_cfg = getattr(config, "risk", None)
+
+        def _risk_setting(name: str, default: float) -> float:
+            """Read a risk ceiling, or the ratified default.
+
+            Coerced through a real float check rather than trusted from
+            `getattr`: many tests construct the pipeline against a MagicMock
+            config, where attribute access auto-creates a child mock that is
+            neither the default nor a number — and a MagicMock reaching the
+            sizing arithmetic fails with an opaque TypeError deep inside the
+            constructor. Same defensive posture as `_coerce_token_count`.
+            """
+            value = getattr(_risk_cfg, name, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return default
+            return float(value) if value > 0 else default
+
+        self.portfolio_constructor = PortfolioConstructor(ConstructorConfig(
+            risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
+            min_risk_pct=_risk_setting("min_position_risk_pct", 0.5),
+            max_portfolio_risk_pct=_risk_setting("max_portfolio_risk_pct", 25.0),
+            max_cluster_risk_share_pct=_risk_setting("max_cluster_risk_share_pct", 40.0),
+        ))
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
         self.morning_research_stage = MorningResearchStage(
@@ -5022,6 +5050,11 @@ class TradingPipeline:
         ceiling = getattr(risk_cfg, "max_portfolio_risk_pct", None)
         if isinstance(ceiling, (int, float)) and ceiling > 0:
             f.risk_ceiling_pct = float(ceiling)
+        # Spec §2.2 — render the per-cluster cap the constructor enforces, so
+        # the PM sizes a theme against it instead of meeting it as a surprise.
+        cluster_share = getattr(risk_cfg, "max_cluster_risk_share_pct", None)
+        if isinstance(cluster_share, (int, float)) and 0 < cluster_share <= 100:
+            f.cluster_risk_share_pct = float(cluster_share)
 
         # Audit §1.2 — PM has been told to avoid stacking correlated names
         # while being shown no correlation data at all. Give it the clusters

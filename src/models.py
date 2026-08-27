@@ -486,12 +486,31 @@ class TargetPosition(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     symbol: str
-    # 20% upper bound aligns with config/settings.yaml:max_position_pct=20
-    # and config/prompts/portfolio_manager.md's "single-name cap is 20%"
-    # directive. Before this tightening the schema accepted up to 25%;
-    # LLM could lawfully emit 22% targets that risk_engine.check() then
-    # hard-rejected, wasting a reasoning cycle and bloating the audit log.
-    target_weight_pct: float = Field(ge=0.0, le=20.0)
+    # --- Sizing (Phase 2b, 2026-08-27) -------------------------------------
+    # Conviction is expressed as RISK, not as notional weight.
+    #
+    # `target_weight_pct` is risk-blind: a 3% position stopped 10% away risks
+    # 0.3% of equity; the same 3% stopped 2% away risks 0.06%. The PM was
+    # choosing the number that does NOT determine what a losing trade costs,
+    # while the number that does — the distance to the stop — was set by
+    # somebody else entirely.
+    #
+    # `risk_allocation_pct` is the share of equity this idea may lose if its
+    # stop is hit. The constructor derives share count from it:
+    #     shares = (equity x risk_pct / 100) / |entry - stop|
+    # A wider stop therefore yields a SMALLER position rather than a rejected
+    # trade, which eliminates the entire "stops too tight" failure class:
+    # risk is never controlled by squeezing the stop.
+    #
+    # Envelope is owner-ratified (2026-08-27): 5% ceiling, 0.5% floor, below
+    # which the idea is not worth trading. 0.0 is legal and means CLOSE.
+    risk_allocation_pct: float | None = Field(default=None, ge=0.0, le=5.0)
+    # Legacy notional sizing. Retained ONLY so historical agent_logs and
+    # specialist_evidence rows still parse — `src/replay.py` and the Mission
+    # Control API both re-validate stored PM output through this model. New
+    # live decisions must supply `risk_allocation_pct`; the grounding
+    # validator enforces that. When both are present, risk wins.
+    target_weight_pct: float | None = Field(default=None, ge=0.0, le=20.0)
     conviction: Literal["high", "medium", "low"] = "medium"
     thesis: str
     thesis_invalid_if: str = ""
@@ -520,6 +539,30 @@ class TargetPosition(BaseModel):
         if isinstance(values, dict) and values.get("conviction") == "moderate":
             values["conviction"] = "medium"
         return values
+
+    @model_validator(mode="after")
+    def _requires_one_sizing_field(self):
+        """A target must size itself somehow.
+
+        Both fields are Optional so historical rows (which carry only
+        `target_weight_pct`) still parse, but a target carrying NEITHER is
+        meaningless — it names a symbol and asks for nothing. Rejecting it
+        here keeps the "drop malformed entries" path in the PM agent from
+        having to special-case a silently zero-sized position.
+        """
+        if self.risk_allocation_pct is None and self.target_weight_pct is None:
+            raise ValueError(
+                f"{self.symbol}: target supplies neither risk_allocation_pct "
+                f"nor target_weight_pct — it sizes to nothing"
+            )
+        return self
+
+    @property
+    def is_close(self) -> bool:
+        """PM asking to exit this name entirely."""
+        if self.risk_allocation_pct is not None:
+            return self.risk_allocation_pct == 0.0
+        return self.target_weight_pct == 0.0
 
 
 class PortfolioDecision(BaseModel):

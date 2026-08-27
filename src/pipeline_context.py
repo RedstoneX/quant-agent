@@ -205,6 +205,11 @@ class PMFacts:
     # — the prompt then says so rather than rendering a confident zero.
     heat: "PortfolioHeat | None" = None
     risk_ceiling_pct: float = 25.0
+    #: Spec §2.2 — the most of that ceiling any ONE correlated cluster may
+    #: take. Rendered with the clusters below so the cap the constructor
+    #: enforces is a number the PM can size against, rather than a rule it is
+    #: told about and then surprised by.
+    cluster_risk_share_pct: float = 40.0
 
     # Audit §1.2: the correlation matrix has been computed every run and shown
     # only to the deterministic cluster check, which fires AFTER PM has already
@@ -305,11 +310,19 @@ class PMFacts:
         lines = "\n".join(
             f"  - {' / '.join(cluster)}" for cluster in self.correlation_clusters
         )
+        cluster_cap = self.risk_ceiling_pct * self.cluster_risk_share_pct / 100.0
         return (
             "\n### Correlation Clusters (|r| >= 0.7 over the trailing window)\n"
             "- These names move together. Each cluster is ONE bet, however "
             "many tickers it holds; sizing two members full-size is one "
             "double-sized bet wearing a diversification costume.\n"
+            f"- ENFORCED: the members of any one cluster may hold at most "
+            f"{cluster_cap:.1f}% of equity at risk between them "
+            f"({self.cluster_risk_share_pct:.0f}% of the "
+            f"{self.risk_ceiling_pct:.1f}% total). Ask for more and the "
+            f"constructor rations it deterministically, largest request "
+            f"first — so size the theme yourself rather than discovering the "
+            f"cap after the fact.\n"
             f"{lines}"
         )
 

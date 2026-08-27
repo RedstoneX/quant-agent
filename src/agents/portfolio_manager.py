@@ -954,7 +954,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         for target in decision.targets:
             symbol = target.symbol.upper()
             pos = held.get(symbol)
-            if target.target_weight_pct <= 0 and pos is None:
+            if target.is_close and pos is None:
                 errors.append(f"{symbol}: close/exit target is not an actual holding")
             if not target.provenance:
                 errors.append(f"{symbol}: target has no structured specialist provenance")
@@ -963,7 +963,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             current_weight = 0.0
             if pos is not None and total_value > 0:
                 current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
-            intent = "buy" if target.target_weight_pct > current_weight + 0.01 else "sell"
+            # Risk-based targets (spec §2.1) state risk, not weight, so the
+            # weight comparison below cannot classify them — the position's
+            # current risk depends on its stop, which this validator does not
+            # have. Any non-zero risk allocation is therefore treated as a
+            # BUY. That is the safe direction: the buy branch applies the
+            # STRICTER checks (universe membership, an actual technical
+            # analysis backing the name), so a misclassified trim is
+            # over-validated rather than waved through.
+            if target.risk_allocation_pct is not None:
+                intent = "sell" if target.is_close else "buy"
+            else:
+                intent = "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
             if intent == "buy":
                 if allowed_buy_symbols is not None and symbol not in {
                     str(item).strip().upper() for item in allowed_buy_symbols
@@ -1145,7 +1156,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return sorted(
             (
                 (
-                    m.symbol, m.target_weight_pct, m.conviction, m.thesis,
+                    m.symbol, m.target_weight_pct, m.risk_allocation_pct,
+                    m.conviction, m.thesis,
                     m.thesis_invalid_if, m.suggested_stop_price, m.catalyst,
                 )
                 for m in models

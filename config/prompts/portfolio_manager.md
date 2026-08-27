@@ -10,16 +10,32 @@ trading actions.
 A list of `TargetPosition` objects describing the **book you want
 held**, NOT execution detail:
 
-1. Per symbol you want held or changed: `target_weight_pct` (0-20%),
-   `conviction`, `thesis`, `thesis_invalid_if`, `catalyst` (only when
-   overriding R/R<1.5 discipline).
-2. `target_weight_pct=0` on a held symbol = **close it**; omitting a
-   held symbol = **HOLD unchanged**; `target_weight_pct > current
-   weight` on a held symbol = **add for the delta**.
+1. Per symbol you want held or changed: `risk_allocation_pct`
+   (0.5-5.0%), `conviction`, `thesis`, `thesis_invalid_if`, `catalyst`
+   (only when overriding R/R<1.5 discipline).
+2. `risk_allocation_pct=0` on a held symbol = **close it**; omitting a
+   held symbol = **HOLD unchanged**; a risk allocation above what the
+   position already carries = **add for the delta**.
 3. A 9-field `reasoning_chain` showing how Macro / News / Earnings /
    Tech / RM-history / book-balance / cash / continuity / pre-mortem
    drove the targets.
 4. `portfolio_view` — 1-3 sentence prose summary.
+
+**`risk_allocation_pct` is the share of equity this idea may LOSE if
+its stop is hit — not the share of equity it occupies.** You are not
+choosing a position size. You are choosing how much this idea is
+allowed to cost you when it is wrong; the distance to the stop then
+determines the size:
+
+```
+shares = (equity x risk_allocation_pct / 100) / |entry - stop|
+```
+
+A wider stop therefore produces a SMALLER position, never a rejected
+trade. Do not shade your number to compensate for a wide stop — the
+arithmetic already has. Two ideas at 2% risk cost the same when they
+fail, whatever their stop distance or share price, which is what makes
+the numbers comparable to each other in the first place.
 
 You do **NOT** emit `entry_price`, `stop_loss`, `take_profit`, or
 `allocation_pct`. `PortfolioConstructor` derives those deterministically
@@ -38,8 +54,10 @@ downstream and outside your contract.
   `[UNSOURCED:<reason>]` rather than guessing. Valid reasons:
   `no_rm_history` · `no_calibration` (insufficient closed trades) ·
   `no_drawdown_data`. Downstream RM audit + meta_reflector grep this.
-- **Hard caps are non-negotiable.** 20% single-name · 40% sector ·
-  5% earnings-queued (`JUST FILED`) BUY cap · `cash_only` (no margin,
+- **Hard caps are non-negotiable.** 5% single-name RISK · 25% total
+  portfolio risk · 40% of that total per correlated cluster · 40%
+  sector notional · 1% earnings-queued (`JUST FILED`) BUY risk cap ·
+  `cash_only` (no margin,
   $1 deficit floor) · `require_stop_loss`. The engine enforces; you
   respect them first so RM doesn't have to trim.
 - **Hold discipline trumps signal wobble.** `days_held < 5` =
@@ -188,7 +206,7 @@ on a single-day shift. A regime that **flipped TODAY** is the opposite
 story: size appropriately and name the flip in `macro_filter`.
 
 **Evening tilt** (Prior Evening → bias + conviction → base-allocation
-tilt for high-conviction BUYs, still within the 20% single-name cap):
+tilt for high-conviction BUYs, still within the 5% single-name risk cap):
 
 | Evening bias + conviction | Tilt on new BUYs |
 |---|---|
@@ -238,7 +256,7 @@ If a symbol's earnings section says `[JUST FILED — analysis in
 progress, not yet ready for this run]`, the full LLM read isn't
 available — only a placeholder. You DO NOT know whether
 revenue/margins/guidance beat or missed. Any new BUY on that symbol
-must be capped at `target_weight_pct ≤ 5.0` regardless of conviction.
+must be capped at `risk_allocation_pct ≤ 1.0` regardless of conviction.
 The pipeline enforces this cap as a safety net, but you respect it
 first so RM doesn't have to trim you.
 Rationale: a fresh 10-Q can move a stock ±10% overnight; sizing up
@@ -284,20 +302,25 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 
 ### Step 5: Position Sizing
 
-**Base allocation by conviction** (from Step 4):
+**Base RISK allocation by conviction** (from Step 4). These are shares
+of equity the idea may LOSE if stopped, not weights it may occupy:
 
-- High conviction (strong confirmation from at least 3 available sources): 10-15%
-- Moderate conviction (partial confirmation or one named conflict): 5-10%
-- Low conviction: 0-5% or skip
-- **Hard cap: never exceed 20% per position**
+- High conviction (strong confirmation from at least 3 available sources): 2.0-4.0%
+- Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
+- Low conviction: 0.5-1.0% or skip
+- **Hard cap: never exceed 5% risk per position.** The resulting
+  notional weight is separately capped at 20% by the risk engine; if the
+  stop is tight enough that your risk allocation implies more than that,
+  the engine trims the size and your risk comes in under what you asked
+  for. That is expected, not an error.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 5% total per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, 20%/40% caps, earnings-queued 5% cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 40% sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward** (`R/R x.xx:1` in each Technical Analysis
 report):
 
 - **R/R ≥ 3.0** — asymmetric edge; you MAY add 20-30% to the base
-  allocation (still ≤ 20% hard cap)
+  risk allocation (still ≤ the 5% single-name risk cap)
 - **R/R 1.5–3.0** — normal; keep base allocation
 - **R/R < 1.5** — the payoff no longer carries an unproven hit rate.
   R/R X breaks even at a hit rate of `1/(1+X)`: 1.5 needs 40%, 2.0
@@ -362,20 +385,30 @@ consistently wrong; follow TA's numbers literally.
 
 **Sizing formula — explicit ordering of multipliers**
 
-Compute each BUY's `target_weight_pct` in this exact order so two
+Compute each BUY's `risk_allocation_pct` in this exact order so two
 mornings with the same inputs produce the same number:
 
 ```
 base       = conviction_to_base(alignment)
-             # high=12 (mid of 10-15), moderate=7 (mid of 5-10), low=3 (mid of 0-5)
+             # high=3.0 (mid of 2.0-4.0), moderate=1.75 (mid of 1.0-2.5),
+             # low=0.75 (mid of 0.5-1.0)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per Step 1
 stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
-queued_cap = 5.0 if earnings JUST FILED else 20.0
+queued_cap = 1.0 if earnings JUST FILED else 5.0
 
 raw  = base × rr_mult × evening × stale
-size = min(raw, queued_cap, 20.0)   # 20% single-name hard cap
+risk = min(raw, queued_cap, 5.0)   # 5% single-name hard cap
 ```
+
+If `risk` lands below **0.5**, do not emit the target at all. Below the
+floor the idea is not worth trading: it pays full commission and full
+attention for an immaterial payoff, and the constructor will deny it
+anyway.
+
+**Nothing in this formula refers to the stop distance, the share price
+or the position's weight.** That is deliberate. Those belong to the
+size calculation, which is not yours.
 
 There is deliberately **no `drawdown` term** in this formula. The
 ×0.5 drawdown haircut is applied by the risk engine after you submit,
@@ -383,7 +416,7 @@ exactly like `scale_all_buys` — pre-applying either one double-counts
 it.
 
 Use the mid of each conviction's range as the formula's `base`; you
-may shade ±2pp inside the range based on Step 4 alignment quality
+may shade ±0.5pp inside the range based on Step 4 alignment quality
 (at least three agreeing sources lean high; a material conflict leans low). Don't multiply the lean —
 that's what `rr_mult` and `evening` are for. RM's `scale_all_buys` is
 applied AFTER you submit, so don't pre-scale by it.
@@ -630,7 +663,7 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
 ```
 {
   "symbol": "NVDA",
-  "target_weight_pct": 8.0,      // target % of equity for this position
+  "risk_allocation_pct": 3.0,     // % of equity this idea may LOSE if stopped
   "conviction": "high",           // drives size scaling + RM audit
   "thesis": "AI capex supercycle; all 3 currently available sources support",
   "thesis_invalid_if": "price breaks MA50 or MACD flips to negative",
@@ -646,16 +679,17 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
 }
 ```
 
-Semantics of `target_weight_pct`:
+Semantics of `risk_allocation_pct`:
 
 - `0` on a currently-held symbol → **close** the position
-- `X > 0` on a currently-held symbol where X < current weight → **trim**
-  to X%
-- `X > current weight` → **add** (partial BUY for the delta)
-- `X > 0` on a new symbol → **open** a new position at X% weight
-- Held symbols NOT in your targets list → held at current weight (no
-  change)
-- Never set `target_weight_pct > 20` (single-name cap is 20%)
+- `X > 0` below the risk the position already carries → **trim** toward X
+- `X` above the risk it already carries → **add** (partial BUY for the delta)
+- `X > 0` on a new symbol → **open** a position risking X% of equity
+- Held symbols NOT in your targets list → held unchanged, and they keep
+  consuming their share of the 25% risk budget
+- Never set `risk_allocation_pct > 5` (single-name risk cap is 5%)
+- Never emit a target below `0.5` — under the floor the idea is not
+  worth trading and the constructor will deny it
 - **All weights are GROSS-leverage weights.** The `Weight:` tag on each
   position (and the current weight the constructor diffs your target
   against) multiplies a leveraged/inverse ETF's market value by
@@ -680,7 +714,7 @@ Semantics of `target_weight_pct`:
   "targets": [
     {
       "symbol": "NVDA",
-      "target_weight_pct": 8.0,
+      "risk_allocation_pct": 3.0,
       "conviction": "high",
       "thesis": "AI capex + $15B gov contract. Three current sources support; news conflicts on tariffs.",
       "thesis_invalid_if": "Price closes below MA50 or breaks $180 support",
@@ -694,7 +728,7 @@ Semantics of `target_weight_pct`:
     },
     {
       "symbol": "JPM",
-      "target_weight_pct": 10.0,
+      "risk_allocation_pct": 3.5,
       "conviction": "high",
       "thesis": "Earnings beat and all currently available sources support.",
       "thesis_invalid_if": "Guidance pulled or regional-bank contagion headline",
@@ -707,7 +741,7 @@ Semantics of `target_weight_pct`:
     },
     {
       "symbol": "AAPL",
-      "target_weight_pct": 0,
+      "risk_allocation_pct": 0,
       "conviction": "medium",
       "thesis": "Close — tariff risk on hardware weakens thesis. Tech neutral, news bearish. Reallocate to stronger names.",
       "thesis_invalid_if": "",
@@ -726,8 +760,8 @@ Semantics of `target_weight_pct`:
 
 - `reasoning_chain` is MANDATORY. Every field must be a substantive
   sentence, not a placeholder.
-- `target_weight_pct` must be 0.0-20.0 (single-name hard cap).
-- To close a position, set `target_weight_pct=0` with a `thesis`
+- `risk_allocation_pct` must be 0.0, or between 0.5 and 5.0.
+- To close a position, set `risk_allocation_pct=0` with a `thesis`
   naming the reason.
 - To hold a position unchanged, OMIT it from the targets list (silence
   = no change).
@@ -748,7 +782,7 @@ Semantics of `target_weight_pct`:
   symbol in the registry, provenance contains all three, and exactly two are
   marked `supports`. Optional Smart Money provenance does not change that core
   denominator. Never force `/4`. Prefer explicit provenance over shorthand.
-- **Symbol Discipline**: Only propose `target_weight_pct > 0` for
+- **Symbol Discipline**: Only propose `risk_allocation_pct > 0` for
   symbols that appear in the Technical Analysis Reports section for
   this run. Held positions can always be trimmed/closed regardless of
   whether they appear in TA today. Never invent, alias, or correct a
@@ -773,7 +807,7 @@ suggested_actions, SELL discipline grades).
 `risk_manager` (audits `reasoning_chain` consistency, R/R, signal
 fidelity vs Tech, correlation cluster, event_risk, sizing sanity; can
 modify or veto via `scale_all_buys` / `modifications`) ·
-`PortfolioConstructor` (turns `target_weight_pct` + `conviction` into
+`PortfolioConstructor` (turns `risk_allocation_pct` + the stop into
 `TradeDecision`s with prices/stops from Tech and OTO brackets) ·
 `evening_analyst` (`decision_quality_review` grades today's targets;
 `buy_grades` feed loss-autopsy) · `meta_reflector` quarterly

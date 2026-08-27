@@ -77,6 +77,39 @@ logger = logging.getLogger(__name__)
 MAX_ENTRY_SLIPPAGE_BPS = 40.0
 
 
+def _book_risk_inputs(ctx, total_value: float):
+    """Per-symbol budget risk (% of equity) and correlation clusters, or Nones.
+
+    Spec §2.2. Both are already computed for the PM's own facts block — the
+    heat roll-up in `src/risk/metrics.py` and the clusters in
+    `src/data/correlation.py` — so the constructor rations the plan against
+    precisely the numbers the plan was made against, rather than a second
+    view assembled a moment later.
+
+    Returns `(None, None)` when the facts are unavailable. That leaves the
+    portfolio ceilings UNENFORCED, which is the correct failure direction
+    here: enforcing a 25% ceiling against a book we cannot actually see would
+    either block every trade or wave everything through, and both are worse
+    than the per-position sizing that still applies regardless.
+    """
+    facts = getattr(ctx, "facts", None)
+    if facts is None:
+        return (None, None)
+    heat = getattr(facts, "heat", None)
+    clusters = getattr(facts, "correlation_clusters", None)
+    existing: dict[str, float] | None = None
+    if heat is not None and total_value > 0:
+        try:
+            existing = {
+                row.symbol: row.budget_risk_dollars / total_value * 100
+                for row in heat.per_position
+            }
+        except Exception as e:  # noqa: BLE001 — never fail the session on telemetry
+            logger.warning("constructor: per-symbol risk map failed: %s", e)
+            existing = None
+    return (existing, list(clusters) if clusters else None)
+
+
 def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
                        scope: str, evidence_json: str, symbol: str | None = None,
                        decision_id: str | None = None) -> None:
@@ -952,12 +985,21 @@ class DecisionStage:
                 continue
             if live and live > 0:
                 price_map[sym] = live
+        # Spec §2.2 — the book's risk as the constructor must ration it. Both
+        # come from `ctx.facts`, which is exactly what the PM was shown before
+        # it decided, so the gate judges the plan against the same numbers the
+        # plan was made against. Absent facts (a stage built without them)
+        # leave both None and the portfolio ceilings unenforced rather than
+        # enforced against a fabricated view of the book.
+        existing_risk_pct, risk_clusters = _book_risk_inputs(ctx, total_value)
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
             targets=portfolio_decision.targets,
             positions=positions,
             analyses=analyses,
             total_value=total_value,
             price_map=price_map,
+            existing_risk_pct=existing_risk_pct,
+            clusters=risk_clusters,
         )
         logger.info(
             "Constructor: %d targets → %d decisions (%d BUY, %d SELL, %d HOLD)",

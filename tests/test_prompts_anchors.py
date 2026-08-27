@@ -284,20 +284,30 @@ def test_hard_anchor_preserved(prompt_name: str, anchor: str, motivation: str) -
 
 
 def test_pm_sizing_formula_intact() -> None:
-    """PM's explicit sizing formula (`size = min(raw, queued_cap, 20.0)`)
+    """PM's explicit sizing formula (`risk = min(raw, queued_cap, 5.0)`)
     is the contract for how morning + midday + close arrive at the
-    same target_weight_pct given the same inputs. Compression of
+    same risk_allocation_pct given the same inputs. Compression of
     surrounding prose is fine — losing the formula is not.
+
+    The formula emits RISK, not notional weight, as of spec §2.1
+    (2026-08-27): conviction states what an idea may cost when it is
+    wrong, and the stop distance converts that to a size.
     """
     path = PROMPT_DIR / "portfolio_manager.md"
     text = path.read_text()
     # The formula box is anchored by the explicit min() call referencing
-    # both queued_cap and the 20.0 single-name cap.
-    assert "min(raw, queued_cap" in text and "20.0" in text, (
+    # both queued_cap and the 5.0 single-name RISK cap.
+    assert "min(raw, queued_cap" in text and "5.0" in text, (
         "portfolio_manager.md no longer contains the canonical sizing "
-        "formula `size = min(raw, queued_cap, 20.0)`. This is the "
+        "formula `risk = min(raw, queued_cap, 5.0)`. This is the "
         "deterministic contract; without it, two sessions with the "
-        "same inputs can produce different target_weight_pct."
+        "same inputs can produce different risk_allocation_pct."
+    )
+    # The formula must stay in RISK units. A reversion to notional
+    # weight would silently restore the risk-blind sizing §2.1 removed.
+    assert "risk = min(raw" in text, (
+        "portfolio_manager.md sizing formula must emit risk_allocation_pct, "
+        "not a notional weight — see docs/QAMC_REMEDIATION_SPEC.md §2.1."
     )
     # The 5 multipliers must all be named — compression that drops
     # any one of them creates a silent sizing inconsistency.
