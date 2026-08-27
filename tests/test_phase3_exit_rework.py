@@ -610,3 +610,171 @@ def test_executor_drops_a_symbol_vetoed_by_ai_risk():
     )
     assert orders == []
     pipeline.broker.submit_order.assert_not_called()
+
+
+# ===========================================================================
+# 3.6 — an adverse move inside one ATR of entry is noise, not thesis failure
+# ===========================================================================
+
+def test_the_oklo_case_is_blocked():
+    """OKLO was bought at 42.59 and sold at 41.51 on 2026-08-26 — a 2.5% loss,
+    0.67 ATR, on day zero. The position was never given one day's normal range
+    to breathe."""
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    assert adverse_move_is_noise(42.59, 41.51, atr=1.6) is True
+
+
+def test_a_real_break_beyond_one_atr_is_not_noise():
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    assert adverse_move_is_noise(42.59, 38.00, atr=1.6) is False
+
+
+def test_a_winning_position_is_not_this_guards_business():
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    assert adverse_move_is_noise(100.0, 120.0, atr=2.0) is False
+    assert adverse_move_is_noise(100.0, 100.0, atr=2.0) is False
+
+
+def test_missing_atr_never_manufactures_a_block():
+    """This guard stops premature exits; it must never strand a position the
+    reviewer has real reason to leave."""
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    assert adverse_move_is_noise(100.0, 99.0, atr=None) is False
+    assert adverse_move_is_noise(100.0, 99.0, atr=0.0) is False
+    assert adverse_move_is_noise(float("nan"), 99.0, atr=2.0) is False
+
+
+def test_external_information_bypasses_the_noise_band():
+    """An earnings miss is an earnings miss whether the stock has moved 0.2
+    ATR or 3 ATR. Waiting for price confirmation before acting on information
+    sells the bottom instead of the top."""
+    from src.risk.exit_guard import cites_external_information
+
+    for reason in (
+        "bearish earnings, revenue missed",
+        "adverse news: FDA rejection",
+        "sector shock hit the whole group",
+        "macro regime flip to risk-off",
+        "correlation breach across the cluster",
+        "stopped out at the broker",
+    ):
+        assert cites_external_information(reason) is True, reason
+
+    for reason in (
+        "thesis_invalid triggered: closed below MA50",
+        "thesis broken on the chart",
+    ):
+        assert cites_external_information(reason) is False, reason
+
+
+def test_executor_blocks_a_price_derived_exit_inside_the_noise_band():
+    pipeline = _pipeline()
+    pipeline._atr_for_symbol = MagicMock(return_value=1.6)
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[_position("OKLO", qty=25, avg_entry=42.59, current_price=41.51)],
+        review=_review_with(
+            symbol="OKLO", reason="thesis_invalid triggered — lost the level",
+        ),
+        run_id="r1",
+    )
+    assert orders == []
+    status = pipeline.db.record_intraday_evaluation.call_args.kwargs["status"]
+    assert status == "exit_blocked_inside_atr_noise_band"
+
+
+def test_executor_allows_an_external_information_exit_inside_the_noise_band():
+    """Same tiny move, different kind of reason — must go through."""
+    pipeline = _pipeline()
+    pipeline._atr_for_symbol = MagicMock(return_value=1.6)
+    pipeline._midday_execute_llm_actions(
+        positions=[_position("OKLO", qty=25, avg_entry=42.59, current_price=41.51)],
+        review=_review_with(
+            symbol="OKLO", reason="bearish earnings — revenue missed by 8%",
+        ),
+        run_id="r1",
+    )
+    # The claim under test is that the NOISE BAND did not stop it. Whatever
+    # happens further down the executor is another test's business.
+    blocked = [
+        call.kwargs.get("status")
+        for call in pipeline.db.record_intraday_evaluation.call_args_list
+    ]
+    assert "exit_blocked_inside_atr_noise_band" not in blocked
+
+
+# ===========================================================================
+# 3.7 — deterministic trailing runs before the LLM is asked
+# ===========================================================================
+
+def test_deterministic_trail_places_a_broker_order():
+    pipeline = _pipeline()
+    pipeline.db.get_symbol_last_buy.return_value = {
+        "setup_type": "breakout", "take_profit": None,
+        "timestamp": "2026-08-01 14:00:00",
+    }
+    pipeline.broker.get_current_stop_price.return_value = 95.0
+    pipeline._atr_for_symbol = MagicMock(return_value=2.0)
+
+    class _B:
+        def __init__(self, hi, lo, d):
+            self.high, self.low, self.date = hi, lo, d
+
+    lows = [110, 108, 106, 100, 106, 108, 110,
+            118, 116, 114, 110, 114, 116, 118, 125]
+    pipeline.market = MagicMock()
+    pipeline.market.get_ohlcv.return_value = [
+        _B(lo + 2, lo, "2026-08-10") for lo in lows
+    ]
+    pipeline.broker.replace_stop_loss.return_value = {"id": "o1"}
+
+    orders = pipeline._apply_deterministic_trails(
+        [_position("AAA", qty=10, avg_entry=100.0, current_price=125.0)],
+        run_id="r1",
+    )
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once()
+    assert pipeline.broker.replace_stop_loss.call_args[0][1] == 110.0
+
+
+def test_deterministic_trail_keeps_the_old_stop_when_the_broker_call_fails():
+    """A failed replace must never leave the position less protected than it
+    was."""
+    pipeline = _pipeline()
+    pipeline.db.get_symbol_last_buy.return_value = {
+        "setup_type": "breakout", "take_profit": None,
+        "timestamp": "2026-08-01 14:00:00",
+    }
+    pipeline.broker.get_current_stop_price.return_value = 95.0
+    pipeline._atr_for_symbol = MagicMock(return_value=2.0)
+    pipeline.broker.replace_stop_loss.side_effect = RuntimeError("broker down")
+
+    class _B:
+        def __init__(self, hi, lo, d):
+            self.high, self.low, self.date = hi, lo, d
+
+    lows = [110, 108, 106, 100, 106, 108, 110,
+            118, 116, 114, 110, 114, 116, 118, 125]
+    pipeline.market = MagicMock()
+    pipeline.market.get_ohlcv.return_value = [
+        _B(lo + 2, lo, "2026-08-10") for lo in lows
+    ]
+    orders = pipeline._apply_deterministic_trails(
+        [_position("AAA", qty=10, avg_entry=100.0, current_price=125.0)],
+        run_id="r1",
+    )
+    assert orders == []
+
+
+def test_deterministic_trail_skips_a_position_with_no_recorded_buy():
+    pipeline = _pipeline()
+    pipeline.db.get_symbol_last_buy.return_value = None
+    pipeline.market = MagicMock()
+    orders = pipeline._apply_deterministic_trails(
+        [_position("AAA")], run_id="r1",
+    )
+    assert orders == []
+    pipeline.broker.replace_stop_loss.assert_not_called()
