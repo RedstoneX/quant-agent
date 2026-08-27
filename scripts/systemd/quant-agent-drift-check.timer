@@ -1,0 +1,15 @@
+# Fires the deploy-drift check Mon-Fri at 08:45 ET.
+[Unit]
+Description=quant-agent deploy-drift check — Mon-Fri 08:45 ET
+
+[Timer]
+# 08:45 ET is deliberately BEFORE the 09:30 morning session: a merge that
+# never reached the box should be caught while there is still time to deploy
+# it, not discovered afterwards from the day's decisions. systemd resolves the
+# IANA zone, so this stays 08:45 New York across DST.
+OnCalendar=Mon..Fri 08:45 America/New_York
+# Run a missed firing on boot (server was down at 08:45).
+Persistent=true
+
+[Install]
+WantedBy=timers.target

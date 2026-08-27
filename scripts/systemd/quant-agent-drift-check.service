@@ -1,0 +1,22 @@
+# Deploy-drift check — pairs with quant-agent-drift-check.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-drift-check.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-drift-check.timer
+[Unit]
+Description=quant-agent deploy-drift check (no LLM, no trading, read-only)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Read-only against the checkout: fetches the remote-tracking ref and compares
+# commits. Never checks out, resets, or touches the working tree, so it is safe
+# to fire regardless of what else is running.
+ExecStart=/home/qamc/quant-agent/.venv/bin/python \
+    /home/qamc/quant-agent/scripts/check_deploy_drift.py
+# Exit 1 means "the box is behind" — that is a finding, not a unit failure.
+# Without this systemd would mark the service failed every time it works.
+SuccessExitStatus=0 1
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
