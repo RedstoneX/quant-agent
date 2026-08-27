@@ -77,7 +77,25 @@ Analysis artefacts such as `docs/QAMC_REMEDIATION_SPEC.md`, `docs/AGENT_ROLE_AUD
 - Creating one requires a reason that Tier 1 cannot serve. "It felt like reference rather than governance" is not that reason — that argument can justify anything, which is precisely why this section exists.
 - A reference document may never quietly become a source of truth. If its content belongs in Tier 1, move it there and delete the original.
 
+**Tier 3 — technical reference. Durable.**
+
+`docs/architecture/*` — how a subsystem actually works: `SAFETY_BOUNDARIES.md`, `MISSION_CONTROL_API.md`, `MODEL_ROUTING_POLICY.md`, `MODEL_PROVIDER_ARCHITECTURE.md`, `DECISION_CHAIN_AUDIT.md`, `CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+Long-lived, unlike Tier 2 — they are maintained rather than consumed, and **must be updated in the same change that alters the subsystem they describe**. They are authoritative on mechanism and never on status: if one implies a capability exists, `STATE.md` decides whether it actually does.
+
+**Conceptual — `docs/FUTURE_*`. Binding on nothing.**
+
+`FUTURE_LIVE_SENTINEL.md`, `FUTURE_SECURITY_OBSERVATORY.md`. Ideas recorded so they are not lost. They authorize no work, describe nothing that exists, and must carry their `Status: CONCEPTUAL / NOT AUTHORIZED` header. Never cite one as a requirement or as evidence that something is planned.
+
+**Project-standard — `README.md`, `SECURITY.md`.**
+
+Outward-facing files following normal open-source convention. `README.md` describes the system to a newcomer; where it disagrees with `STATE.md`, `STATE.md` wins and the README is stale.
+
+---
+
 Status, current truth, and active work always live in Tier 1. If you are about to create a document to hold any of those, you are making a mistake.
+
+**Every documentation file in this repository belongs to exactly one of the five categories above.** If you cannot place a file, that is the signal not to create it.
 
 ## Governance ratification
 
