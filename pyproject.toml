@@ -39,6 +39,12 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",
+    # tests/test_api_*.py import fastapi directly, so the API deps are part of
+    # what the test suite needs — not just what the API process needs. Without
+    # these, all 8 API test modules fail at collection and pytest exits 2
+    # before running any test at all. Kept mirrored with the `api` extra below.
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
 ]
 # Stage 2 (Thin Read-Only Mission Control API) — a separate, optional
 # process from trading. `pip install -e .` alone (trading-only) does not
