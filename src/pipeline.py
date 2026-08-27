@@ -5505,6 +5505,86 @@ class TradingPipeline:
                 return True
         return False
 
+    def _apply_deterministic_trails(self, positions, *, run_id: str) -> list[dict]:
+        """Raise stops arithmetically, before the LLM is asked anything — 3.7.
+
+        Trailing is arithmetic. Running it here means the reviewer's
+        discretionary `TRAIL_STOP` becomes an override for the unusual case
+        rather than the only mechanism, and the stop a winner rides up behind
+        no longer depends on a model remembering to propose it.
+
+        Every proposal is bounded by `src/risk/trailing.py`: ratchet upward
+        only, a minimum move worth an order, and never inside one ordinary
+        day's range. Returns the broker orders placed.
+        """
+        from src.risk.trailing import compute_trailing_stop
+
+        orders: list[dict] = []
+        for position in positions:
+            symbol = position.symbol
+            try:
+                buy = self.db.get_symbol_last_buy(symbol)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trail: last-buy lookup failed for %s: %s", symbol, e)
+                continue
+            if not buy:
+                continue
+            try:
+                current_stop = self.broker.get_current_stop_price(symbol)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trail: stop lookup failed for %s: %s", symbol, e)
+                continue
+
+            # Only bars SINCE ENTRY matter: a swing low from before the
+            # position existed is not a level this trade ever defended.
+            bars = []
+            try:
+                all_bars = self.market.get_ohlcv(symbol, 120) or []
+                entry_ts = (buy or {}).get("timestamp") or ""
+                entry_day = entry_ts[:10]
+                bars = [
+                    b for b in all_bars
+                    if not entry_day or str(getattr(b, "date", ""))[:10] >= entry_day
+                ]
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
+
+            proposal = compute_trailing_stop(
+                symbol=symbol,
+                setup_type=(buy or {}).get("setup_type"),
+                entry=position.avg_entry,
+                current_price=position.current_price,
+                current_stop=current_stop,
+                reference_target=(buy or {}).get("take_profit"),
+                bars=bars,
+                atr=self._atr_for_symbol(symbol),
+            )
+            if proposal is None:
+                continue
+            logger.info("Deterministic trail: %s", proposal.reason)
+            try:
+                order = self.broker.replace_stop_loss(symbol, proposal.new_stop)
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "trail: replace_stop_loss failed for %s (%s) — the OLD "
+                    "stop remains in force", symbol, e,
+                )
+                continue
+            if not order:
+                continue
+            if isinstance(order, dict):
+                order.setdefault("action", "TRAIL_STOP")
+            orders.append(order)
+            try:
+                self.db.insert_trade(
+                    symbol=symbol, action="TRAIL_STOP", qty=position.qty,
+                    price=proposal.new_stop, reasoning=proposal.reason,
+                    run_id=run_id,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trail: trade row write failed for %s: %s", symbol, e)
+        return orders
+
     def _risk_review_exits(
         self, review, positions, *, run_id: str, total_value: float,
         macro_summary: dict | None = None, position_facts: dict | None = None,
@@ -5757,6 +5837,49 @@ class TradingPipeline:
                     act, symbol,
                 )
                 continue
+
+            # Phase 3.6 — noise band on exits. A PRICE-DERIVED failure inside
+            # one ATR of entry has not distinguished itself from one ordinary
+            # day's range. OKLO was bought and sold on 2026-08-26 at 0.67 ATR,
+            # on day zero, never given a single day's normal range to breathe.
+            #
+            # Triggers originating outside the tape — earnings, news, regime,
+            # sector, correlation, circuit breaker, a fired stop — bypass this
+            # entirely. An earnings miss is an earnings miss whether the stock
+            # has moved 0.2 ATR or 3 ATR, and waiting for price confirmation
+            # before acting on information sells the bottom instead of the top.
+            if act in ("SELL", "REDUCE"):
+                from src.risk.exit_guard import (
+                    adverse_move_is_noise, cites_external_information,
+                )
+                held_now = next((p for p in positions if p.symbol == symbol), None)
+                reason_for_band = action_item.get("reason", "")
+                if held_now is not None and not cites_external_information(reason_for_band):
+                    atr = self._atr_for_symbol(symbol)
+                    if adverse_move_is_noise(
+                        held_now.avg_entry, held_now.current_price, atr,
+                    ):
+                        logger.warning(
+                            "Position reviewer: blocking %s %s — down "
+                            "$%.2f from entry $%.2f, which is inside the "
+                            "1.0xATR noise band (ATR14 $%.2f). A price-derived "
+                            "failure this small has not distinguished itself "
+                            "from one day's normal range. External-information "
+                            "triggers bypass this. Reason: %r",
+                            act, symbol,
+                            held_now.avg_entry - held_now.current_price,
+                            held_now.avg_entry, atr or 0.0,
+                            reason_for_band[:160],
+                        )
+                        try:
+                            self.db.record_intraday_evaluation(
+                                symbol=symbol, run_id=run_id,
+                                status="exit_blocked_inside_atr_noise_band",
+                                detail=f"{act}: {reason_for_band[:400]}",
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("noise band: audit write failed: %s", e)
+                        continue
 
             reason_text = action_item.get("reason", "")
             if act in ("SELL", "REDUCE") and not _reason_cites_hard_trigger(reason_text):
@@ -7325,6 +7448,14 @@ class TradingPipeline:
                     "stop_coverage_gaps": coverage_gaps,
                 }
             else:
+                # Phase 3.7 — deterministic trailing FIRST, before the LLM's
+                # discretionary TRAIL_STOP is considered. Arithmetic does not
+                # need a language model's permission, and a winner's stop
+                # should not depend on one remembering to propose a move.
+                orders.extend(
+                    self._apply_deterministic_trails(review_positions, run_id=run_id)
+                )
+
                 # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
                 # as well as entries. Until this landed the entire sell side
                 # skipped the veto layer the buy side has always had.

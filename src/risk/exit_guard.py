@@ -37,6 +37,10 @@ __all__ = [
     "is_deterioration_claim",
     "veto_contradicted_exit",
     "DETERIORATION_PATTERNS",
+    "EXTERNAL_INFORMATION_PATTERNS",
+    "cites_external_information",
+    "adverse_move_is_noise",
+    "NOISE_BAND_ATR_MULTIPLE",
 ]
 
 
@@ -208,3 +212,81 @@ def veto_contradicted_exit(
         f"reviewer's own recorded numbers. Exit on new information (news, "
         f"earnings, regime, invalidation) is unaffected."
     )
+
+
+# ---------------------------------------------------------------------------
+# Noise band on exits — spec Phase 3.6
+# ---------------------------------------------------------------------------
+
+#: An adverse move smaller than this many ATRs from entry cannot be
+#: distinguished from one ordinary day's range. `TRAIL_STOP` already uses
+#: 1.25x ATR14 against CURRENT price for the same reason; this is the
+#: equivalent floor for a discretionary exit, measured from ENTRY.
+#:
+#: OKLO was bought and sold on 2026-08-26 for a 2.5% loss — **0.67 ATR**, on
+#: day zero. The evening review graded the buy "wrong" and the sell "correct",
+#: but the honest reading is that nothing had happened yet in either
+#: direction: the position was never given one day's normal range to breathe.
+NOISE_BAND_ATR_MULTIPLE = 1.0
+
+#: Triggers that come from OUTSIDE the price series. These bypass the noise
+#: band entirely: an earnings miss is an earnings miss whether the stock has
+#: moved 0.2 ATR or 3 ATR, and waiting for price confirmation before acting on
+#: information is how you sell the bottom instead of the top.
+#:
+#: Everything NOT on this list — chiefly thesis invalidation, which in practice
+#: means a level broke on the chart — is price-derived, and a price-derived
+#: failure inside one ATR of entry has not yet distinguished itself from noise.
+EXTERNAL_INFORMATION_PATTERNS: tuple[str, ...] = (
+    r"\badverse news\b",
+    r"\bmaterial news\b",
+    r"\bsector shock\b",
+    r"\bbearish earnings\b",
+    r"\bearnings miss(?:ed)?\b",
+    r"\bbearish filing\b",
+    r"\bguidance cut\b",
+    r"\bregime (?:shift|flip|flipped)\b",
+    r"\brisk[- ]off\b",
+    r"\bhigh[- ]?conviction bearish\b",
+    r"\bhigh bearish\b",
+    r"\bcorrelation (?:cluster )?breach\b",
+    r"\bcircuit breaker\b",
+    r"\bdaily[- ]loss\b",
+    r"\bdaily loss\b",
+    r"\bstop hit\b",
+    r"\bstopped out\b",
+)
+
+_EXTERNAL_RE = re.compile("|".join(EXTERNAL_INFORMATION_PATTERNS), re.IGNORECASE)
+
+
+def cites_external_information(reason: str) -> bool:
+    """True when the reason names a trigger originating outside the tape."""
+    return bool(reason) and bool(_EXTERNAL_RE.search(reason))
+
+
+def adverse_move_is_noise(
+    entry: float,
+    current_price: float,
+    atr: float | None,
+    *,
+    multiple: float = NOISE_BAND_ATR_MULTIPLE,
+) -> bool:
+    """True when the position is DOWN from entry by less than `multiple` ATRs.
+
+    Returns False — i.e. "not noise, let the caller proceed" — whenever the
+    question cannot be answered: no ATR, non-finite inputs, or a position that
+    is flat or in profit. This guard exists to stop premature exits on
+    positions that have barely moved; it must never manufacture a block out of
+    missing data, because that would strand a position the reviewer has real
+    reason to leave.
+    """
+    ent = _finite(entry)
+    cur = _finite(current_price)
+    atr_f = _finite(atr) if atr is not None else None
+    if ent is None or cur is None or atr_f is None or atr_f <= 0 or ent <= 0:
+        return False
+    adverse = ent - cur
+    if adverse <= 0:
+        return False   # flat or winning — not this guard's business
+    return adverse < multiple * atr_f
