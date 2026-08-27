@@ -176,6 +176,43 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     )
 
 
+def _macro_analysis_as_dict(macro_analysis) -> dict | None:
+    """Dual-shape read: macro_analysis may be a Pydantic MacroAnalysis (a
+    fresh macro run this tick) OR a plain dict carried forward from
+    macro_store.load_last_state() (Pipeline._carry_forward_macro — no macro
+    run today, yesterday's persisted snapshot is reused). The persisted
+    snapshot is a deliberately-trimmed subset (see macro_store.save_last_state)
+    and must never be coerced back into a MacroAnalysis model — it lacks
+    reasoning_chain and stores sector_guidance pre-normalized as a dict, not
+    the model's list[MacroSectorGuidance].
+
+    portfolio_manager.decide() already accepts a plain dict for
+    macro_analysis, so both shapes resolve to "pass a dict straight through".
+    """
+    if macro_analysis is None:
+        return None
+    if isinstance(macro_analysis, dict):
+        return macro_analysis
+    return macro_analysis.model_dump()
+
+
+def _macro_target_invested_pct(macro_analysis) -> float | None:
+    """Dual-shape read of position_guidance.target_invested_pct.
+
+    Same carried-forward-dict vs. fresh-model split as
+    `_macro_analysis_as_dict` (see there for why the dict shape exists).
+    Degrades to None — the existing "not provided" path — when the key or
+    attribute is missing, since a carried snapshot may legitimately lack it.
+    """
+    if not macro_analysis:
+        return None
+    if hasattr(macro_analysis, "position_guidance"):
+        guidance = macro_analysis.position_guidance
+        return getattr(guidance, "target_invested_pct", None) if guidance else None
+    guidance = macro_analysis.get("position_guidance")
+    return guidance.get("target_invested_pct") if isinstance(guidance, dict) else None
+
+
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     """Apply RiskVerdict.scale_all_buys to BUY decisions.
 
@@ -850,7 +887,7 @@ class DecisionStage:
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
             positions=positions,
-            macro_analysis=(macro_analysis.model_dump() if macro_analysis else None),
+            macro_analysis=_macro_analysis_as_dict(macro_analysis),
             cash_balance=cash,
             reserve_balance=reserve_balance,
             total_value=total_value,
@@ -1113,9 +1150,7 @@ class RiskStage:
 
         daily_pnl = total_value - last_equity
         ctx.daily_pnl = daily_pnl
-        macro_target_pct = None
-        if macro_analysis:
-            macro_target_pct = macro_analysis.position_guidance.target_invested_pct
+        macro_target_pct = _macro_target_invested_pct(macro_analysis)
         ctx.macro_target_pct = macro_target_pct
 
         # Holding ages + system-drawdown state (2026-08-13 agent audit).
