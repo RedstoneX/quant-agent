@@ -96,6 +96,31 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ## Active finish line
 
+### Session start — read this first
+
+**Live production state (2026-08-27, 11:00 ET):** deployed at `18dd4bc` on the
+paper account, rollback `9f77b03e`. Phase 3 (exit rework) and the execution
+limit fix are LIVE. Seven positions open, all with broker-resident stops.
+`paper: true`. Daily LLM budget raised to $2.75.
+
+**Not deployed:** everything merged after `18dd4bc`, and Phase 2b, which is
+committed-but-unfinished on branch `feat/risk-based-sizing` (worktree
+`/home/ubuntu/projects/quant-agent-worktrees/phase2b`). That branch already
+carries `TargetPosition.risk_allocation_pct` and a new `src/data/company.py`
+(company profile blurbs — the owner asked for these; wire them into the PM
+prompt and the Telegram trade alerts).
+
+**Engineering setup:** work as `ubuntu`, never as `qamc`. There is no venv in
+the engineering checkouts — use `/home/ubuntu/projects/quant-agent/.venv/bin/python`
+with `PYTHONPATH` set to the checkout root and the five dummy API-key env vars
+CI uses. Read the live box with `sudo -n -u qamc`. Log timestamps are **UTC**;
+the owner is **ET** — convert before quoting times to him.
+
+**Working agreement:** the owner has given a standing autonomy grant — do not
+stop at phase gates for approval. Interrupt only for live-capital activation,
+new paid dependencies, secrets redesign, destructive infrastructure, or
+evidence that a ratified decision was wrong. See `Owner decisions` below.
+
 ### Ordered backlog — RESUME POINT
 
 Single ordered list of outstanding work. A session resuming cold should start
@@ -238,12 +263,49 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   analysis. If something has high conviction or strong candidacy it should be
   debated amongst all the agents. We're trying to create a trading desk with
   synergy, not a technical analysis trade bot."* Sequenced AFTER Phase 2b.
+- **The $1.50/day LLM budget is not a hard boundary.** Rex, 2026-08-27:
+  *"There is significant flexibility on the daily budget if the cost benefit
+  makes sense... throwing money at something is not the solution, it has to be
+  carefully weighed cost benefit. Also there are clever ways of solving
+  problems that don't always require more money."* Raised to **$2.75/day** on
+  the live box the same day (`llm_cost_circuit.daily_cost_limit_usd`, with
+  `daily_reserved_exposure_limit_usd` 1.90 -> 3.20) because a single
+  `intra_check` had consumed $0.43 of a $1.50 day by 10:02 ET and a second
+  would have starved the midday/close/evening sessions that carry every
+  Phase 3 exit fix. **Rebalance before increasing further** — see the measured
+  breakdown below.
 - **The per-trade risk ceiling is 5% of equity, confirmed.** Phase 2b raises it
   from the constructor's current `risk_budget_pct = 0.5` default — a tenfold
   increase in per-trade risk (~$50 → ~$500 at risk on a $9.9k book). The owner
   confirmed 5% is the ratified envelope and that the 0.5% figure was a
   constructor default nobody chose. Floor stays 0.5%; total stays 25%,
   correlation-adjusted.
+
+**Measured LLM spend (10 days to 2026-08-27) — read before proposing any budget change**
+
+$6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
+
+| Mode | Runs | Avg/run | Dominated by |
+|---|---:|---:|---|
+| `morning` | 20 | $0.221 | PM $3.65 (83% of the mode) |
+| `intra_check` | 10 | **$0.222** | **PM $2.19 (99% of the mode)** |
+| `evening` | 7 | $0.004 | evening + news |
+| `close` | 7 | $0.003 | news + position_reviewer |
+| `earnings_preprocess` | 4 | $0.004 | earnings |
+| `midday` | 7 | $0.003 | news + position_reviewer |
+
+Two facts worth acting on:
+
+1. **`intra_check` costs the same as a full morning run** ($0.222 vs $0.221)
+   while doing almost none of the work — $0.003/run on research, $0.219 on the
+   PM call. It is also the session the PM is *deliberately blindfolded* in
+   (`portfolio_manager.py` returns a technical-only evidence registry when
+   `session_type == "intra_check"`, though macro and news are already in
+   memory). 33% of all spend, on blindfolded scanning.
+2. **The whole research desk costs 5.5%.** Technical — the *only* source of
+   trade discovery today — is 4.6% of spend. The system pays 87% to arbitrate
+   a shortlist produced by its cheapest component. Fix the allocation before
+   raising the ceiling.
 
 **Next, in order**
 
@@ -256,18 +318,41 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
    `max_portfolio_risk_pct` from a reported figure into a live gate. Note: a
    grep of `config/prompts/` and `src/` found **no fixed position-count target**
    anywhere — §2.4 may already be satisfied; verify before building to it.
-2. **Phase 9 — the research desk deliberates.** Every seat may nominate a
+2. **GPT-5.5 Flex for the Portfolio Manager — do this first, it is free.**
+   OpenRouter lists OpenAI Flex as a GPT-5.5 provider at exactly half price
+   ($2.50/$15 vs $5/$30). **Same model**, so there is no quality question to
+   answer and no benchmark to run — production PM cost goes ~$0.22 -> ~$0.11
+   per run, against a seat that is 87% of all spend. The only risk is added
+   latency; the session wrapper already has a 1200s kill. Verify the routing
+   policy test still passes (the committed benchmark is for the model, not the
+   provider tier).
+3. **Un-blindfold `intra_check` (audit §6 / spec Phase 4).** The PM is handed a
+   technical-only evidence registry in this mode while macro and news sit
+   loaded in memory. Nearly free to fix and it converts the system's
+   worst-value session — 33% of spend — into something that earns it. Frees
+   ~$0.44/day to fund the two items above and below.
+4. **Surface what the PM actually read.** `agent_logs.input_message` already
+   stores the PM's complete prompt — all seven memory layers, verbatim — and
+   `AgentLogItem` in `src/api/schemas.py` already declares the field.
+   **Nothing populates or serves it.** Wiring that one field through gives the
+   operator a "what the PM actually read" view. Today the Journal panel shows
+   the evening reflection's `lessons` and `suggested_actions` (that part
+   works), but not the assembled briefing: the 7-evening narrative, 14-day
+   recurring missed themes, repeat loss patterns, last 5 RM verdicts, the PM's
+   own last 3 decisions, or realized-win-rate calibration. Source material is
+   visible; the briefing is not.
+5. **Phase 9 — the research desk deliberates.** Every seat may nominate a
    candidate; Technical becomes a responder rather than the gatekeeper on
    candidacy; material disagreements must be adjudicated, not just logged;
    conviction follows multi-source agreement. Full design in
    `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depends on 2b — "agreement earns
    size" is meaningless until size is expressed as risk.
-3. **Execution: bounded re-peg.** PR #111 fixed the limit-as-ceiling bug and
+6. **Execution: bounded re-peg.** PR #111 fixed the limit-as-ceiling bug and
    the unfillable-order submission. Still open: replace a working order toward
    the moving NBBO up to the slippage ceiling. Note the footgun — an Alpaca
    replacement mints a NEW order id, so the state machine must track it and
    handle partial fills rather than blind-looping PATCHes.
-4. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
+7. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
    (`src/data/earnings.py`) takes the first 30,000 characters of a filing. For
    a 10-K that is the cover page, auditor's report and table of contents — the
    financial statements are hundreds of pages further in. MSFT's own analysis
@@ -275,13 +360,13 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
    report and table of contents."* The earnings seat has never seen MSFT's
    numbers. Cheap fix (locate MD&A / financial statements rather than slicing
    from the top) and it restores an entire evidence source.
-5. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
+8. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
    ratio in the system — over half of Form 4 trades carry zero predictive power.
-6. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
+9. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-7. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
+10. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
    path; fix Reuters/AP/FRED; surface degraded coverage to the operator.
-8. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
+11. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
    emits `sell` / `strong_sell`, so bearish candidates are identified today.
    What is missing is everything downstream: `PortfolioConstructor._build_sell`
    returns `None` when the symbol is not already held, so a bearish view on a
@@ -294,13 +379,13 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
    true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
    $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
    entirely a code change; no account work is outstanding.
-9. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
+12. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
-10. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
+13. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-11. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
+14. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
    on the residual); deterministic macro regime with the model confined to FOMC
    text; earnings multi-quarter trends. Several need new data sources and an
    owner decision first.
