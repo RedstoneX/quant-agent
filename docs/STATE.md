@@ -10,6 +10,13 @@ This file records what is accepted and true **now**. Git history preserves imple
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission is not authorized.
 - Paper vs live is an execution-environment boundary, not a separate trading architecture.
 - Decision chain remains: **Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker**.
+- **KNOWN DEFECT — the exit path does not follow this chain.** `run_position_review`
+  (`src/pipeline.py`, midday and close sessions) calls `position_reviewer` and then
+  executes directly: no Portfolio Manager, no AI Risk Manager. Sells are therefore
+  taken by a single model call with no second opinion, while buys pass three layers
+  of scrutiny. This contradicts the chain stated above and is scheduled for repair
+  in `docs/QAMC_REMEDIATION_SPEC.md` Phase 3.4. Until then, treat the chain as
+  accurate for entries only.
 - Deterministic Python and broker protections remain final safety authority; uncertainty fails closed.
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
@@ -58,6 +65,13 @@ Production verification on 2026-08-26 established:
   response replays as the full eight-finding object, missing earnings is omitted
   from PM's authoritative registry, and unsupported evidence is still rejected;
 - the complete hermetic suite passed **2,181 tests**;
+  - *Correction (2026-08-27):* this figure was accurate locally but had never been
+    reproduced in CI. GitHub Actions had never executed a single run on this fork,
+    so all 94 merges to that date were ungated. The first CI run failed: `fastapi`
+    was declared only in the optional `[api]` extra while the workflow installed
+    `.[dev]`, so all 8 API test modules failed at collection and pytest exited
+    before running anything. Every run would have failed identically. Fixed in #96;
+    CI now reproduces 2,181 passing tests;
 - the operator-rerun switch may bypass only a same-day morning marker and
   requires a reason. It does not bypass the ET window, weekday check, session
   lock, paid-session/cost circuit, Paper configuration, PM, AI Risk,
@@ -124,6 +138,12 @@ Important consequences:
 
 - Codex may complete implementation, self-review, merge and Paper-production deployment autonomously.
 - Independent review is optional evidence, not permission and not a blocking gate.
+- **CI is now a blocking gate.** As of 2026-08-27 `main` is protected: the `pytest`
+  check is required, strict mode is on, and `enforce_admins` is true, so a failing
+  suite blocks merges for everyone including administrators. Verified by merging a
+  deliberately failing test (refused: `Required status check "pytest" is failing`).
+- Changes to `OUTCOME.md`, `STATE.md` and `WORK.md` require **owner ratification**
+  — agents propose, the owner accepts by merging. See `AGENTS.md`.
 - Version control, the dedicated PR and known-good production state provide traceability and rollback.
 - A failed production verification stops further mutation and triggers preservation/restoration of the last known-good state.
 - This fast lane does **not** authorize live capital, paid dependencies, secrets/credential redesign, destructive infrastructure replacement or material architecture outside current authority.
@@ -218,7 +238,16 @@ Accepted live configuration:
 - maximum candidates per tick: **5**;
 - approved bearish-expression ETFs: `SH`, `SDS`, `PSQ`, `SQQQ`.
 
-Bearish expression remains through approved inverse ETFs. Direct stock shorts, options/theta strategies and margin remain outside the accepted architecture.
+Bearish expression currently runs through approved inverse ETFs. **Direct stock
+shorting and margin are authorized as of 2026-08-27** (owner ratification; see
+`docs/OUTCOME.md`) and are pending implementation — the broker layer contains no
+short-selling capability at all today. The prior exclusion was an engineering scope
+decision recorded here as an accepted constraint; it was never an owner requirement.
+Options and theta strategies remain outside the accepted architecture.
+
+Note also that nothing in the codebase currently tells the Portfolio Manager that
+`SH`, `SDS`, `PSQ` and `SQQQ` are bearish instruments, so even the sanctioned
+bearish expression is not actually wired up.
 
 ## Model / provider policy
 
@@ -231,6 +260,14 @@ Bearish expression remains through approved inverse ETFs. Direct stock shorts, o
 ## Market-data feed finding — resolved, not an active defect
 
 The previously flagged concern that `src/execution/broker.py::get_latest_price` omits an explicit Alpaca feed is **not an established defect**. Alpaca's current latest-trade/latest-quote behavior defaults to the best feed available to the subscription; for this account that is IEX. Independent probes confirmed current IEX latest trade/quote data succeeds while explicitly requesting SIP is rejected as unsubscribed, which is expected.
+
+**ACTIVE DEFECT — research feeds are degraded (observed 2026-08-26).** Production
+logs show the Reuters Business feed returning HTTP 404 and AP Business returning
+HTTP 403 (16 occurrences each), repeated FRED macro API timeouts (13), 28 incomplete
+Tech batches, and 11 `Portfolio decision failed deterministic grounding` errors. The
+news and macro seats are therefore frequently operating with no data, and nothing
+surfaces that fact to the operator. Repair is `docs/QAMC_REMEDIATION_SPEC.md`
+Phase 4.2, which also adds a feed-health signal to the alerts and dashboard.
 
 `get_latest_price` returning `None` on a genuine market-data exception is an intentional fail-closed/degradation contract and is covered by existing tests. Do not change this trading-critical method merely because `feed` is omitted. Reopen it only on concrete production evidence of incorrect behavior.
 
