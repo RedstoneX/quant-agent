@@ -55,3 +55,15 @@ Parallelism is an efficiency tool, not an agent-count target.
 Use dedicated branches/PRs for substantive work. Do not force-push or push implementation directly to `main`. Paper-beta autonomy includes merging the agent's own verified PR and deploying it. Keep rollback possible.
 
 Do not create new governance/status documents. `STATE.md` owns accepted truth, `WORK.md` owns active work, and `PROJECT_COMPASS.md` is human-only.
+
+## Governance ratification
+
+`OUTCOME.md`, `STATE.md` and `WORK.md` define the mandate this system is built to. Agents may **propose** changes to them; only the **owner** may **accept** those changes.
+
+- Put proposed governance changes in a PR and state the change plainly in the PR description. It becomes accepted truth when the owner merges it — not before.
+- Never record an engineering decision in these documents as though it were an owner requirement. If scope was cut, a capability deferred, or a constraint adopted for implementation convenience, say so explicitly and attribute it to the agent that decided it.
+- Treat any constraint already present in these documents as **unverified** if it lacks such attribution. Ask rather than inherit it.
+
+**Why this rule exists.** A 2026-08-27 review found that scope decisions taken by coding agents had been written into these documents as accepted constraints, and every later agent then treated them as instructions from the owner. Direct short selling is the clearest case: an agent decided it was out of scope, recorded that in the governance docs, and the system was subsequently built long-only against an owner mandate that never excluded shorting. The same mechanism recorded the project's purpose as a research question about model quality, when the actual mandate is to make money.
+
+Nobody misrepresented anything. Decisions laundered into requirements because there was no ratification step. This is that step.
