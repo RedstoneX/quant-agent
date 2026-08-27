@@ -215,6 +215,16 @@ class PositionReviewerAgent(BaseAgent):
                 metric_bits.append(f"days_held={pf['days_held']}")
             if pf.get("thesis_progress_pct") is not None:
                 metric_bits.append(f"thesis_progress={pf['thesis_progress_pct']:.0f}%")
+            # R-multiple (audit §1.4) — profit in units of the risk originally
+            # taken, against the stop the position was OPENED with. Answers
+            # "is this working?" in the unit a trader actually judges it in;
+            # thesis_progress answers a different question and does not
+            # normalise for how much was risked. Omitted when the entry stop
+            # was not below entry, in which case no R was ever defined.
+            if pf.get("r_multiple") is not None:
+                metric_bits.append(f"R={pf['r_multiple']:+.2f}")
+            if pf.get("risk_released"):
+                metric_bits.append("risk_released (stop at/above entry)")
             if pf.get("pace") is not None:
                 metric_bits.append(f"pace={pf['pace']:.2f}×")
             if pf.get("distance_to_stop_pct") is not None:

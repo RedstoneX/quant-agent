@@ -103,6 +103,16 @@ The Tech Analyst must return, per candidate:
 
 ## Phase 2 — Risk-based sizing and correlation-aware budgeting
 
+**Status note (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`, not yet merged):** landed as "Phase 2a" is the deterministic risk arithmetic this phase depends on — it closes four `AGENT_ROLE_AUDIT.md` audit findings (§1.1–§1.4), not this section's own numbered items:
+
+- The drawdown-halve (audit §1.1) moved from a PM-prompt instruction into `src/risk/rules.py::apply_drawdown_scale`, with `drawdown_buy_cap` as a hard-block backstop. The PM prompt no longer pre-applies it.
+- The correlation matrix (audit §1.2) is now built before PM decides (`TradingPipeline._ensure_correlation_matrix`) and PM's Quantitative Facts render the measured clusters (`src/data/correlation.py::correlation_clusters`).
+- Portfolio heat (audit §1.3) — budget risk and open risk — is computed in `src/risk/metrics.py` and rendered to PM and RM with headroom under a new `risk.max_portfolio_risk_pct` config field (default 25). **That ceiling is reporting-only** — nothing gates on it yet.
+- R-multiple (audit §1.4) is computed against the entry stop and rendered to the Position Reviewer.
+- `src/risk/metrics.py`'s budget-risk arithmetic already implements §2.3's release condition below (a stop at or above entry zeroes that position's budget contribution) and the module docstring cites §2.3 directly — but this is exposed only as a reported figure. No gate consumes it, so the book does not yet actually expand/contract on it.
+
+**Still NOT started:** §2.1 (risk-based position sizing formula, replacing percent-of-portfolio notional), §2.2 (correlation-aware budget ceiling enforced as a live gate, with a per-cluster share cap), and §2.4 (retire the fixed position-count concept — depends on §2.1/§2.2 existing as gates, not reports). This is Phase 2b.
+
 **2.1 — Conviction is expressed as risk, not notional.**
 The PM currently emits "BUY OKLO 3%" — percent of portfolio, which is risk-blind. A 3% position with a 10% stop risks 0.3% of equity; the same position with a 2% stop risks 0.06%.
 

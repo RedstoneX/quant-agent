@@ -21,6 +21,8 @@ A safety rule that depends on a language model remembering to apply it is not a 
 
 **Fix:** move it into `src/risk/rules.py` as a hard gate. Cheap, deterministic.
 
+**FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** `src/risk/rules.py::apply_drawdown_scale` halves every BUY's allocation before the hard filter runs, so the cash budget, sector accumulation, RM and execution all see the halved size; `drawdown_buy_cap` joins `HARD_BLOCK_RULES` (`src/pipeline.py`) as a fail-closed backstop for any BUY that reaches the engine unscaled. The PM prompt's own `drawdown = 0.5` multiplier was deleted in the same change — two independent halvings would quarter the position, so exactly one layer owns it.
+
 ### 1.2 The Portfolio Manager receives no correlation data
 
 `config/prompts/portfolio_manager.md` (Step 6) tells the PM to "avoid stacking highly correlated positions (e.g. NVDA + AMD + SMH)". `grep -i correlation src/agents/portfolio_manager.py` returns **zero hits**.
@@ -29,17 +31,23 @@ A safety rule that depends on a language model remembering to apply it is not a 
 
 **Fix:** pass the already-computed matrix into the PM's context. Low effort, high value.
 
+**FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** The matrix is now built on the DecisionStage side (`TradingPipeline._ensure_correlation_matrix`, memoized on `RunContext`) before PM decides, rather than only in RiskStage after. `correlation_clusters()` (`src/data/correlation.py`, new — groups transitively, so a theme is one bet even where its outer pair falls under 0.7) renders the measured clusters into PM's Quantitative Facts. RiskStage reuses the same memoized matrix instead of building a second one, so the deterministic cluster check judges PM against the exact numbers PM was shown.
+
 ### 1.3 Portfolio heat is not computed anywhere
 
 Total capital at risk if every open stop were hit — the number the owner-ratified 25% ceiling is defined against — does not exist in any agent or in the deterministic engine.
 
 **Fix:** `sum(position_size × distance_to_stop)`. Pure Python.
 
+**FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** `src/risk/metrics.py` (new) computes budget risk (vs. entry, released once a trailing stop reaches entry) and open risk (from today's price), rolled up into `PortfolioHeat` and rendered via `format_heat_block()` to both PM and RM with headroom under `risk.max_portfolio_risk_pct` (25%, `config/settings.yaml`). A position with no stop is charged at full notional, not zero — scoring it zero would rank the riskiest book as the safest. **The 25% ceiling itself is reporting-only** — nothing gates on it yet; that is spec Phase 2b, alongside risk-based sizing (§2.1).
+
 ### 1.4 R-multiple is absent
 
 Profit measured against initial risk is the standard trader metric for whether a position is working. No agent computes it. `thesis_progress_pct` measures distance to target, which is a different quantity and does not normalise for how much was risked.
 
 **Fix:** `(current_price − entry) / (entry − initial_stop)`. Pure Python.
+
+**FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** `src/risk/metrics.py::r_multiple` computes it against the stop the position was OPENED with, never the trailed stop — the denominator is the bet that was actually made. `_build_position_facts` (`src/pipeline.py`) renders it into the Position Reviewer's per-position metrics line, ahead of `thesis_progress_pct`.
 
 ### 1.5 The Position Reviewer has no memory of its own prior review
 
@@ -112,13 +120,15 @@ Correctly filters to transaction codes P/S, non-derivative rows only, with a $10
 
 The uncomfortable part: its most safety-critical contribution is **covering for a missing deterministic control** (§1.1), not adding judgment. Once the drawdown gate is real code, this seat should be re-examined honestly.
 
+**Status (2026-08-27):** the drawdown gate is real code (§1.1, above). That re-examination has not happened yet.
+
 ---
 
 ## Recommended sequencing
 
 | When | Items |
 |---|---|
-| **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple |
+| **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple — **landed as Phase 2a, commit `c89e957`** |
 | **Phase 3** (exits) | §1.5 reviewer memory |
 | **Right after Phase 2** | §2.5 routine/opportunistic filter — cheap, well-evidenced, highest value per line of code |
 | **Separate pass, needs owner decisions** | §2.2 news cascade · §2.3 macro series · §2.4 earnings trends — several need new data sources |

@@ -788,11 +788,17 @@ class DecisionStage:
         # the last 14 days. Empty strings when no recurring pattern found.
         recent_missed_lessons = pipeline._build_recent_missed_lessons()
         recent_loss_pits = pipeline._build_recent_loss_pits()
+        # Audit §1.2 — build the correlation matrix HERE, before PM decides,
+        # rather than in RiskStage after it already has. RiskStage reuses the
+        # memoized matrix, so the deterministic cluster check still judges PM
+        # against exactly the numbers PM was shown.
+        correlation_matrix = pipeline._ensure_correlation_matrix(ctx, positions)
         pm_facts = pipeline._build_pm_facts(
             positions=positions, analyses=analyses,
             total_value=total_value, cash=cash,
             recent_performance=recent_performance,
             macro_analysis=macro_analysis,
+            correlation_matrix=correlation_matrix,
         )
         ctx.facts = pm_facts
         trading_config = getattr(pipeline.config, "trading", None)
@@ -1060,19 +1066,61 @@ class RiskStage:
             macro_target_pct = macro_analysis.position_guidance.target_invested_pct
         ctx.macro_target_pct = macro_target_pct
 
-        correlation_matrix = None
-        try:
-            from src.data.correlation import build_correlation_matrix
-            pool_bars = dict(ctx.symbols_bars)
-            for p in rm_positions:
-                if p.symbol not in pool_bars:
-                    pool_bars[p.symbol] = pipeline.market.get_ohlcv(
-                        p.symbol, pipeline.config.trading.lookback_days,
-                    ) or []
-            correlation_matrix = build_correlation_matrix(pool_bars)
-        except Exception as e:
-            logger.warning("Failed to build correlation matrix: %s (continuing without)", e)
-        ctx.correlation_matrix = correlation_matrix or {}
+        # Holding ages + system-drawdown state (2026-08-13 agent audit).
+        # Normally DecisionStage already published both. On the RC2 resume lane
+        # it never ran, so rebuild rather than let the gate silently lose the
+        # evidence. Both builders are local DB reads with no LLM call and no
+        # broker call; a failure degrades to "not provided" in the prompt,
+        # never to a wrong value that reads as "no drawdown".
+        #
+        # Resolved HERE rather than just before the RM call (where it lived
+        # until the audit §1.1 fix) because the drawdown-halve is now a
+        # deterministic gate that runs BEFORE the hard risk filter, and the
+        # filter is upstream of RM.
+        rm_position_history = ctx.position_history
+        rm_recent_performance = ctx.recent_performance
+        if not rm_position_history:
+            try:
+                rm_position_history = pipeline._build_position_history(rm_positions)
+                ctx.position_history = rm_position_history
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "RiskStage: position history rebuild failed — RM will see "
+                    "holding ages as unknown: %s", e,
+                )
+                rm_position_history = {}
+        if not rm_recent_performance:
+            try:
+                rm_recent_performance = pipeline._compute_recent_performance(last_equity)
+                ctx.recent_performance = rm_recent_performance
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "RiskStage: recent-performance rebuild failed — the "
+                    "drawdown gate cannot fire this run: %s", e,
+                )
+                rm_recent_performance = {}
+        in_drawdown = bool(rm_recent_performance.get("in_drawdown"))
+
+        # Audit §1.1 — the drawdown-halve is deterministic code now, applied
+        # before the hard filter so every downstream consumer (cash budget,
+        # sector accumulation, RM, execution) sees the halved size rather than
+        # PM's pre-halving intent. The PM prompt no longer pre-applies it.
+        if in_drawdown:
+            from src.risk.rules import apply_drawdown_scale
+            portfolio_decision.decisions, drawdown_notes = apply_drawdown_scale(
+                portfolio_decision.decisions, in_drawdown=True,
+            )
+            for note in drawdown_notes:
+                symbol = note.split(" ", 1)[0]
+                _record_pipeline_event(
+                    pipeline, ctx, symbol, "deterministic_gate", "modified",
+                    "drawdown_buy_halved", detail=note,
+                )
+
+        # Memoized by DecisionStage so PM and this gate score the same numbers.
+        # On the RC2 resume lane DecisionStage never ran and this is the first
+        # build; the helper handles both cases.
+        correlation_matrix = pipeline._ensure_correlation_matrix(ctx, rm_positions)
 
         before_hard_gate = list(portfolio_decision.decisions)
         portfolio_decision.decisions, rule_violations, blocked_reasons = (
@@ -1083,6 +1131,7 @@ class RiskStage:
                 macro_target_invested_pct=macro_target_pct,
                 correlation_matrix=correlation_matrix,
                 cash=ctx.deployable_cash,
+                in_drawdown=in_drawdown,
             )
         )
         if blocked_reasons:
@@ -1195,36 +1244,6 @@ class RiskStage:
         if isinstance(sweeper, CashSweeper):
             rm_reserve_balance = sweeper.parked_value(ctx.positions)
 
-        # Holding ages + system-drawdown state for the RM audit (2026-08-13
-        # agent audit). Normally DecisionStage already published both. On the
-        # RC2 resume lane it never ran, so rebuild rather than let RM silently
-        # lose the evidence for two of the rules its prompt makes it own. Both
-        # builders are local DB reads with no LLM call and no broker call; a
-        # failure degrades to "not provided" in the prompt, never to a wrong
-        # value that reads as "no drawdown".
-        rm_position_history = ctx.position_history
-        rm_recent_performance = ctx.recent_performance
-        if not rm_position_history:
-            try:
-                rm_position_history = pipeline._build_position_history(rm_positions)
-                ctx.position_history = rm_position_history
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "RiskStage: position history rebuild failed — RM will see "
-                    "holding ages as unknown: %s", e,
-                )
-                rm_position_history = {}
-        if not rm_recent_performance:
-            try:
-                rm_recent_performance = pipeline._compute_recent_performance(last_equity)
-                ctx.recent_performance = rm_recent_performance
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "RiskStage: recent-performance rebuild failed — RM cannot "
-                    "audit the drawdown-halve rule this run: %s", e,
-                )
-                rm_recent_performance = {}
-
         verdict, rm_result = pipeline.risk_manager.review(
             portfolio_decision=portfolio_decision,
             positions=rm_positions,
@@ -1240,6 +1259,12 @@ class RiskStage:
             reserve_balance=rm_reserve_balance,
             position_history=rm_position_history,
             recent_performance=rm_recent_performance,
+            # Audit §1.3 — same heat object PM sized against, so RM audits the
+            # book's real risk instead of re-deriving it from notional weights.
+            heat=getattr(ctx.facts, "heat", None) if ctx.facts else None,
+            risk_ceiling_pct=(
+                getattr(ctx.facts, "risk_ceiling_pct", 25.0) if ctx.facts else 25.0
+            ),
         )
 
         rm_log_kwargs = agent_log_kwargs(rm_result)

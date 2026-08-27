@@ -46,6 +46,15 @@ flag. RM was the only possible check on that rule and was blind to it. A PM
 that quietly skipped the halving during a losing stretch would have been
 approved by a reviewer with no way to know.
 
+> **Superseded (2026-08-27, commit `c89e957`).** The finding above describes
+> the state this F6 fix addressed at the time — RM's evidence, not the halving
+> itself. The halving is no longer prompt-only or RM-dependent:
+> `src/risk/rules.py::apply_drawdown_scale` now halves every BUY
+> deterministically before RM ever reviews the plan, backed by a
+> `drawdown_buy_cap` fail-closed hard block. See `AGENT_ROLE_AUDIT.md` §1.1
+> and `QAMC_REMEDIATION_SPEC.md` Phase 2. RM's role per item 7 below shifted
+> accordingly — see `config/prompts/risk_manager.md`.
+
 **Decision.** Route the evidence. This is plumbing an existing measurement to
 an existing consumer, not new authority: RM's remit already covered these
 rules and its prompt already claimed the inputs.

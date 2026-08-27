@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from src.models import NewsIntelligenceReport, PortfolioDecision, Position
+    from src.risk.metrics import PortfolioHeat
 
 SessionType = Literal["morning", "midday", "close", "evening", "intra_check", "earnings_preprocess"]
 
@@ -197,6 +198,24 @@ class PMFacts:
     macro_target_invested_pct: float | None = None
     deployment_gap_pp: float | None = None  # invested - target (negative = under)
 
+    # Phase 2 / audit §1.3-§1.4: the book's actual risk, computed in Python.
+    # `heat` carries per-position at-risk dollars, open risk, the release flag
+    # and R-multiples; `risk_ceiling_pct` is the owner-ratified total at-risk
+    # ceiling the headroom is measured against. None when the heat build failed
+    # — the prompt then says so rather than rendering a confident zero.
+    heat: "PortfolioHeat | None" = None
+    risk_ceiling_pct: float = 25.0
+
+    # Audit §1.2: the correlation matrix has been computed every run and shown
+    # only to the deterministic cluster check, which fires AFTER PM has already
+    # chosen. PM's prompt told it to "avoid stacking highly correlated
+    # positions" while `grep -i correlation src/agents/portfolio_manager.py`
+    # returned zero hits. These are the clusters PM is now actually given.
+    # Each entry is a list of mutually correlated symbols (|corr| >= 0.7),
+    # sorted, largest cluster first. Empty when coverage is missing.
+    correlation_clusters: list[list[str]] = field(default_factory=list)
+    correlation_coverage: bool = True
+
     def render(self) -> str:
         """Format as a compact markdown block for PM's prompt."""
         def _pct(v: float | None) -> str:
@@ -243,7 +262,56 @@ class PMFacts:
 - signals={self.tech_signals_count} · median_age={_num(self.tech_signals_median_age_days)}d · stale(≥8d)={self.tech_signals_stale_count}
 
 ### System Performance
-- rolling 5d={_pct(self.rolling_5d_pct)} · 20d={_pct(self.rolling_20d_pct)} · in_drawdown={self.in_drawdown}{self._render_deployment_gap()}"""
+- rolling 5d={_pct(self.rolling_5d_pct)} · 20d={_pct(self.rolling_20d_pct)} · in_drawdown={self.in_drawdown}{self._render_drawdown_gate()}
+
+{self._render_risk()}
+{self._render_correlation()}{self._render_deployment_gap()}"""
+
+    def _render_drawdown_gate(self) -> str:
+        """State who applies the halving. Two halvings would quarter the size."""
+        if not self.in_drawdown:
+            return ""
+        return (
+            "\n- ⚠️ in_drawdown=true — the risk engine halves every BUY "
+            "deterministically AFTER you submit. Do NOT pre-halve; size "
+            "normally and the gate will apply once."
+        )
+
+    def _render_risk(self) -> str:
+        from src.risk.metrics import format_heat_block
+        if self.heat is None:
+            return (
+                "### Portfolio Risk\n"
+                "- not computed this run (stop data unavailable) — treat total "
+                "at-risk as UNKNOWN, cite as [UNSOURCED:no_risk_data], and do "
+                "not assume headroom exists."
+            )
+        return format_heat_block(self.heat, self.risk_ceiling_pct).rstrip("\n")
+
+    def _render_correlation(self) -> str:
+        if not self.correlation_coverage:
+            return (
+                "\n### Correlation Clusters\n"
+                "- coverage MISSING this run (insufficient bar history). The "
+                "deterministic cluster check is disabled, so concentration you "
+                "stack today will not be caught downstream. Diversify by theme "
+                "manually and say so in `portfolio_balance`."
+            )
+        if not self.correlation_clusters:
+            return (
+                "\n### Correlation Clusters\n"
+                "- none: no held or candidate pair correlates at |r| >= 0.7."
+            )
+        lines = "\n".join(
+            f"  - {' / '.join(cluster)}" for cluster in self.correlation_clusters
+        )
+        return (
+            "\n### Correlation Clusters (|r| >= 0.7 over the trailing window)\n"
+            "- These names move together. Each cluster is ONE bet, however "
+            "many tickers it holds; sizing two members full-size is one "
+            "double-sized bet wearing a diversification costume.\n"
+            f"{lines}"
+        )
 
     def _render_deployment_gap(self) -> str:
         if self.macro_target_invested_pct is None or self.deployment_gap_pp is None:

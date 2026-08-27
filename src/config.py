@@ -226,6 +226,16 @@ class RiskConfig(BaseModel):
     max_daily_loss_pct: float = Field(gt=0, le=100)
     max_sector_pct: float = Field(gt=0, le=100)
     require_stop_loss: bool
+    # Owner-ratified total at-risk ceiling (2026-08-27): the sum of every
+    # position's loss-if-stopped, measured against cost basis, may not exceed
+    # this share of equity. Distinct from `max_total_position_pct`, which caps
+    # NOTIONAL: a $50k book with 10% stops is 50% invested and 5% at risk.
+    # Capital is meant to be fully deployed; it is RISK that is rationed.
+    #
+    # Reporting-only today — `PMFacts` renders the figure and its headroom so
+    # the Portfolio Manager sizes against a real number instead of a rule it
+    # was told about but never shown. Phase 2b makes it a hard gate.
+    max_portfolio_risk_pct: float = Field(default=25.0, gt=0, le=100)
     # Cash-only default. When False: no BUY may drive `cash` below zero, and
     # any session that starts with `cash < 0` must de-lever (SELL) before any
     # new BUY. When True: normal margin account behavior, risk engine only

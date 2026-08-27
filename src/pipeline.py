@@ -78,6 +78,11 @@ HARD_BLOCK_RULES = {
     "require_stop_loss",
     "max_sector_pct",
     "cash_only",
+    # Audit §1.1: the drawdown-halve rule used to live only in the PM and RM
+    # prompts, where "no deterministic code enforces this" was stated outright.
+    # It is a hard gate now. `apply_drawdown_scale` halves BUYs before this
+    # filter runs, so a violation here means a BUY reached the engine unscaled.
+    "drawdown_buy_cap",
 }
 
 
@@ -722,6 +727,7 @@ class TradingPipeline:
         macro_target_invested_pct: float | None = None,
         correlation_matrix: dict[str, dict[str, float]] | None = None,
         cash: float | None = None,
+        in_drawdown: bool = False,
     ) -> tuple[list[TradeDecision], list, list[str]]:
         allowed_decisions: list[TradeDecision] = []
         remaining_violations = []
@@ -822,6 +828,7 @@ class TradingPipeline:
                 correlation_matrix=correlation_matrix,
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
+                in_drawdown=in_drawdown,
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
@@ -4741,6 +4748,94 @@ class TradingPipeline:
             )
         return ""
 
+    def _ensure_correlation_matrix(self, ctx, positions) -> dict:
+        """Build the run's correlation matrix once, memoized on `ctx`.
+
+        It used to be built inside `RiskStage`, which runs AFTER the Portfolio
+        Manager has already chosen — so the PM's prompt could tell it to "avoid
+        stacking highly correlated positions" while the only correlation data
+        in the system was computed too late to inform that choice (audit §1.2).
+        Building it here, from the DecisionStage side, lets PM see the clusters
+        BEFORE it decides, and RiskStage reuses the same matrix rather than
+        paying for a second one — the deterministic cluster check must judge
+        PM against the numbers PM was actually shown.
+        """
+        cached = getattr(ctx, "correlation_matrix", None)
+        if cached:
+            return cached
+        try:
+            from src.data.correlation import build_correlation_matrix
+            pool_bars = dict(ctx.symbols_bars)
+            for p in positions:
+                if p.symbol not in pool_bars:
+                    pool_bars[p.symbol] = self.market.get_ohlcv(
+                        p.symbol, self.config.trading.lookback_days,
+                    ) or []
+            matrix = build_correlation_matrix(pool_bars) or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to build correlation matrix: %s (continuing without)", e)
+            matrix = {}
+        ctx.correlation_matrix = matrix
+        return matrix
+
+    def _build_stop_map(self, positions) -> tuple[dict[str, float], dict[str, float]]:
+        """`(live_stops, initial_stops)` keyed by symbol.
+
+        Live stops are broker truth (already trailed). Initial stops come from
+        the last executed BUY row and are what an R-multiple's denominator must
+        use — the bet that was actually made, not the one it was ratcheted to.
+        A symbol missing from `live_stops` is genuinely unprotected and
+        `portfolio_heat` charges it at full notional; never substitute the BUY
+        row's stop for a missing broker stop, because that would report
+        protection the account does not have.
+        """
+        live_stops: dict[str, float] = {}
+        initial_stops: dict[str, float] = {}
+        for p in positions:
+            sym = p.symbol
+            try:
+                live = self.broker.get_current_stop_price(sym)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("stop map: live stop lookup failed for %s: %s", sym, e)
+                live = None
+            if isinstance(live, (int, float)) and live > 0:
+                live_stops[sym] = float(live)
+            try:
+                buy = self.db.get_symbol_last_buy(sym)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("stop map: last-buy lookup failed for %s: %s", sym, e)
+                buy = None
+            initial = float((buy or {}).get("stop_loss") or 0)
+            if initial > 0:
+                initial_stops[sym] = initial
+        return live_stops, initial_stops
+
+    def _build_portfolio_heat(self, positions, total_value: float):
+        """Audit §1.3 — total capital at risk, which nothing computed before.
+
+        The cash-equivalent sweep vehicle is excluded rather than counted as
+        unprotected: it is deliberately stopless everywhere in this codebase
+        and is not a risk position. Returns None on failure so the prompt can
+        say "unknown" instead of rendering a confident zero.
+        """
+        from src.risk.metrics import portfolio_heat
+        try:
+            sweeper = self._sweeper()
+            excluded = set()
+            if sweeper is not None and sweeper.symbol:
+                excluded.add(str(sweeper.symbol).upper())
+            live_stops, initial_stops = self._build_stop_map(positions)
+            return portfolio_heat(
+                positions=positions,
+                equity=total_value,
+                stops=live_stops,
+                initial_stops=initial_stops,
+                exclude_symbols=excluded,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("portfolio heat build failed: %s", e)
+            return None
+
     def _build_pm_facts(
         self,
         *,
@@ -4750,6 +4845,7 @@ class TradingPipeline:
         cash: float,
         recent_performance: dict,
         macro_analysis=None,
+        correlation_matrix: dict[str, dict[str, float]] | None = None,
     ) -> PMFacts:
         """Quantitative snapshot surfaced to PM as structured fields.
 
@@ -4865,6 +4961,33 @@ class TradingPipeline:
                 f.deployment_gap_pp = round(f.invested_pct - float(target), 1)
         except Exception as e:  # noqa: BLE001
             logger.warning("pm_facts: deployment gap failed: %s", e)
+
+        # Audit §1.3/§1.4 — the book's real risk, and each position's
+        # R-multiple. None on failure; PMFacts.render() then says "unknown"
+        # rather than implying the book is risk-free.
+        f.heat = self._build_portfolio_heat(positions, total_value)
+        # getattr-guarded for the ~58 tests that build TradingPipeline via
+        # __new__() without __init__ — same convention as `_sweeper`.
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        ceiling = getattr(risk_cfg, "max_portfolio_risk_pct", None)
+        if isinstance(ceiling, (int, float)) and ceiling > 0:
+            f.risk_ceiling_pct = float(ceiling)
+
+        # Audit §1.2 — PM has been told to avoid stacking correlated names
+        # while being shown no correlation data at all. Give it the clusters
+        # the deterministic check already builds, BEFORE it chooses.
+        try:
+            from src.data.correlation import correlation_clusters
+            universe = {p.symbol for p in positions if p.qty > 0}
+            universe |= {a.symbol for a in analyses}
+            f.correlation_coverage = bool(correlation_matrix)
+            f.correlation_clusters = correlation_clusters(
+                universe, correlation_matrix or {},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("pm_facts: correlation clusters failed: %s", e)
+            f.correlation_coverage = False
+            f.correlation_clusters = []
 
         return f
 
@@ -6285,6 +6408,10 @@ class TradingPipeline:
 
             stop_loss = float((buy or {}).get("stop_loss") or 0)
             take_profit = float((buy or {}).get("take_profit") or 0)
+            # Keep the ENTRY stop before the live-stop override below. It is
+            # the R-multiple's denominator: the bet that was actually made,
+            # not the level a trail later ratcheted it to (audit §1.4).
+            initial_stop = stop_loss
 
             # RC1: after any TRAIL_STOP the BUY row's stop is stale-WIDE —
             # the reviewer would see a fat distance_to_stop and keep
@@ -6351,8 +6478,23 @@ class TradingPipeline:
             if atr and stop_loss and cur > stop_loss:
                 stop_distance_atrs = round((cur - stop_loss) / atr, 2)
 
+            # R-multiple (audit §1.4) — profit in units of the risk taken.
+            # `thesis_progress_pct` measures distance to TARGET, a different
+            # question that does not normalise for how much was risked: a name
+            # 20% of the way to a distant target may be +2R or +0.3R, and only
+            # the second is a reason to leave it alone.
+            from src.risk.metrics import position_risk as _position_risk
+            risk = _position_risk(
+                symbol=sym, qty=p.qty, entry=entry, current_price=cur,
+                stop=stop_loss or None, initial_stop=initial_stop or None,
+            )
+
             facts[sym] = {
                 "days_held": days_held,
+                "r_multiple": risk.r_multiple,
+                "initial_stop": initial_stop or None,
+                "risk_released": risk.risk_released,
+                "open_risk_dollars": risk.open_risk_dollars,
                 "thesis_progress_pct": progress_pct,
                 "pace": pace,
                 "distance_to_stop_pct": dist_stop_pct,

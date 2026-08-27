@@ -91,3 +91,52 @@ def highly_correlated_peers(
     row = matrix.get(symbol, {})
     return [peer for peer in candidates
             if peer != symbol and abs(row.get(peer, 0.0)) >= threshold]
+
+
+def correlation_clusters(
+    symbols: Iterable[str],
+    matrix: dict[str, dict[str, float]],
+    threshold: float = CLUSTER_CORRELATION_THRESHOLD,
+) -> list[list[str]]:
+    """Group `symbols` into connected components of |corr| >= threshold.
+
+    Transitive by construction: if A~B and B~C then A, B and C are one cluster
+    even when A and C fall just under the threshold themselves. That is the
+    honest reading of a theme — `OKLO / CEG / VST / CCJ` is one nuclear bet
+    whether or not every pair inside it clears 0.7.
+
+    Singletons are omitted: a symbol correlated with nothing is not a cluster,
+    and listing it as one would bury the real clusters in noise. Returns
+    clusters sorted largest first, each member list sorted alphabetically, so
+    the rendering an agent sees is stable across runs.
+    """
+    universe = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+    if len(universe) < 2 or not matrix:
+        return []
+
+    # Union-find over the correlation graph.
+    parent = {sym: sym for sym in universe}
+
+    def find(sym: str) -> str:
+        while parent[sym] != sym:
+            parent[sym] = parent[parent[sym]]
+            sym = parent[sym]
+        return sym
+
+    def union(a: str, b: str) -> None:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    for i, sym1 in enumerate(universe):
+        row = matrix.get(sym1) or {}
+        for sym2 in universe[i + 1:]:
+            if abs(row.get(sym2, 0.0)) >= threshold:
+                union(sym1, sym2)
+
+    groups: dict[str, list[str]] = {}
+    for sym in universe:
+        groups.setdefault(find(sym), []).append(sym)
+    clusters = [sorted(members) for members in groups.values() if len(members) > 1]
+    clusters.sort(key=lambda members: (-len(members), members[0]))
+    return clusters

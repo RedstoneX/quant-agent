@@ -123,6 +123,15 @@ question is a number):
   (need trim or named reason)
 - `tech_signals_median_age_days / stale_count` — signal freshness
 - `rolling_5d_pct / rolling_20d_pct / in_drawdown` — system performance
+- **Portfolio Risk** — total capital at risk if every open stop fired,
+  in dollars and as % of equity, with the ceiling and your remaining
+  headroom, plus per position: at-risk dollars, R-multiple, and whether
+  its risk has been RELEASED (stop at or above entry → costs no budget)
+  or it is UNPROTECTED (no stop found → charged at full notional).
+  **Size against this, not against notional weight**: a 15% position
+  stopped 3% away risks less than a 5% position stopped 20% away.
+- **Correlation Clusters** — measured groups of names moving together
+  at |r| ≥ 0.7. See Step 6.
 
 For any sentence you write in `reasoning_chain` that involves a NUMBER
 (exposure %, win rate, stale signals, etc.), cite the fact — don't
@@ -319,9 +328,16 @@ or rotate per Step 7.
 
 **System-drawdown discipline** (independent of macro regime):
 
-- `in_drawdown=true` (5d < −3% OR 20d < −8%) → **halve every new BUY**
-  and state it in `sizing_logic`. Edge is temporarily degraded;
-  preserve capital to re-engage when the tape cooperates.
+- `in_drawdown=true` (5d < −3% OR 20d < −8%) → **the risk engine halves
+  every new BUY for you**, deterministically, after you submit. Do
+  **NOT** pre-halve: two halvings quarter the position. Size normally
+  and name the fact that the gate is active in `sizing_logic` so the
+  audit trail shows you knew. (This moved out of your hands on
+  2026-08-27 — a rule that depended on you remembering it was not a
+  rule. See `src/risk/rules.py::apply_drawdown_scale`.)
+- What the drawdown SHOULD change in your thinking: be choosier about
+  which names qualify at all. The gate shrinks sizes; only you can
+  decline a marginal setup.
 - 5d modestly negative (−1% to −3%) → no change; normal variance.
 - Both 5d > +5% AND 20d > +10% → do NOT size up extra. R/R + conviction
   rule sizing as always.
@@ -355,12 +371,16 @@ base       = conviction_to_base(alignment)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per Step 1
 stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
-drawdown   = 0.5 if `in_drawdown=true` else 1.0
 queued_cap = 5.0 if earnings JUST FILED else 20.0
 
-raw  = base × rr_mult × evening × stale × drawdown
+raw  = base × rr_mult × evening × stale
 size = min(raw, queued_cap, 20.0)   # 20% single-name hard cap
 ```
+
+There is deliberately **no `drawdown` term** in this formula. The
+×0.5 drawdown haircut is applied by the risk engine after you submit,
+exactly like `scale_all_buys` — pre-applying either one double-counts
+it.
 
 Use the mid of each conviction's range as the formula's `base`; you
 may shade ±2pp inside the range based on Step 4 alignment quality
@@ -373,8 +393,18 @@ applied AFTER you submit, so don't pre-scale by it.
 Check the resulting portfolio against constraints:
 
 - **Sector concentration**: no sector > 40%
-- **Correlation**: avoid stacking highly correlated positions (e.g.,
-  NVDA + AMD + SMH)
+- **Correlation**: the **Correlation Clusters** block in your Quantitative
+  Facts lists every group of held-or-candidate names correlating at
+  |r| ≥ 0.7 over the trailing window. This is measured data, not a
+  guess — use it instead of eyeballing tickers. **Each cluster is ONE
+  bet** however many tickers it contains: `NVDA / AMD / AVGO / SMH` is
+  a single semiconductor position wearing four names, and
+  `OKLO / CEG / VST / CCJ` is a single nuclear position. Sizing two
+  members of one cluster full-size is one double-sized bet, not
+  diversification. Name the clusters you touched in
+  `portfolio_balance`. When the block says coverage is MISSING, the
+  downstream deterministic cluster check is disabled too — diversify by
+  theme manually and say so.
 - **thesis_invalid_if on each Tech report for existing positions**:
   if a held position's thesis-invalid condition has triggered (price
   closed below MA50, MACD flipped, etc.), propose SELL NOW rather than
@@ -579,13 +609,14 @@ one-directional formality.
 | 6 | **Regime cash floor** (risk-off 25% / trans 15% / on 5%) | Macro Analyst's `cash_recommendation_pct`    | Floor is hard-coded; advisory is soft.         |
 | 7 | **R/R < 1.5** without named catalyst → HOLD / skip | Conviction / signal alignment score               | Needs a >40% hit rate we have never measured.  |
 | 8 | Holding discipline: <5d default HOLD               | Single-day Tech rating downgrade                  | Noise dominates day 1-4; don't panic-exit.     |
-| 9 | Drawdown-halve (`in_drawdown=true`) on new BUYs    | High conviction sizing on new names               | System edge is temporarily degraded.           |
+| 9 | Drawdown-halve — **applied by the engine, not by you** | Nothing; it is not yours to apply             | System edge is temporarily degraded.           |
 |10 | Stale-signal halve (age≥8d no progress)            | Original conviction sizing                        | LLM had a week to be right and wasn't.         |
 |11 | Projected sector > 35% → drop lowest conviction    | Rubber-stamping all TA BUYs                       | Sector cap (40%) will block you anyway.        |
 
-Note: drawdown-halve and in-drawdown sizing apply to **new** BUYs
-only, NOT to existing positions (which stay governed by holding
-discipline and `thesis_invalid_if`).
+Note: the drawdown-halve applies to **new** BUYs only, NOT to existing
+positions (which stay governed by holding discipline and
+`thesis_invalid_if`). It is deterministic code and runs after you
+submit — never fold it into your own numbers.
 
 ## Output
 

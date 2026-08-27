@@ -136,10 +136,13 @@ def test_f6_unknown_position_age_is_explicit_not_omitted() -> None:
 
 
 def test_f6_rm_sees_system_drawdown_state() -> None:
-    """PM's sizing formula multiplies every new BUY by 0.5 when
-    `in_drawdown` is true. No deterministic code enforces that — the engine
-    never sees the rule — so RM is the only possible check, and it had no
-    access to the flag."""
+    """RM had no access to the drawdown flag at all when this was written,
+    while its prompt made it the enforcer of the halving.
+
+    Audit §1.1 has since moved the halving into deterministic code
+    (`src.risk.rules.apply_drawdown_scale`), so RM is no longer the enforcer —
+    but it still needs the flag, now to read a scaled-down BUY as the engine's
+    work rather than as PM contradicting its own stated weight."""
     msg = _rm_message(recent_performance={
         "rolling_5d_pct": -4.1, "rolling_20d_pct": -2.0,
         "in_drawdown": True, "trailing_days": 22,
@@ -148,7 +151,7 @@ def test_f6_rm_sees_system_drawdown_state() -> None:
     assert "5d -4.1%" in msg and "20d -2.0%" in msg
     assert "22 trailing sessions" in msg
     assert "halved" in msg, (
-        "an in_drawdown run must tell RM what PM was required to do about it"
+        "an in_drawdown run must tell RM that the engine already halved the BUYs"
     )
 
 
@@ -158,7 +161,10 @@ def test_f6_no_drawdown_data_reads_as_unauditable_not_as_no_drawdown() -> None:
     'in_drawdown=false' and RM must be able to tell them apart."""
     msg = _rm_message(recent_performance={})
     assert "System performance: not provided" in msg
-    assert "cannot audit the drawdown-halve rule" in msg
+    # Wording changed when the halving became deterministic code (audit §1.1):
+    # RM no longer polices the rule, so the absent-input line reports unknown
+    # STATE rather than an unauditable rule. The claim under test is unchanged.
+    assert "drawdown state unknown this run" in msg
     assert "in_drawdown=true" not in msg
     assert "in_drawdown=false" not in msg
 
@@ -190,8 +196,13 @@ def test_f6_rm_prompt_declares_the_new_inputs() -> None:
     text = (PROMPT_DIR / "risk_manager.md").read_text()
     assert "in_drawdown" in text
     assert "held: Nd" in text
-    assert "Drawdown-halve compliance" in text
+    # Renamed from "Drawdown-halve compliance" when audit §1.1 moved the
+    # halving into deterministic code: RM is told the state, not made the
+    # enforcer of a rule it can only ask about.
+    assert "**Drawdown state**" in text
     assert "Holding-discipline compliance" in text
+    # Audit §1.3 — the Portfolio Risk block RM's sizing_sanity step now reads.
+    assert "Portfolio Risk" in text
 
 
 def test_f6_risk_stage_forwards_the_evidence_it_was_given() -> None:
