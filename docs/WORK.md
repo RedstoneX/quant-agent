@@ -1,26 +1,34 @@
 # QAMC Current Work
 
-Status: **AUG 26 ROOT FIXES DEPLOYED | PAPER SAFE | NATURAL FULL-CHAIN ACCEPTANCE OPEN**
+Status: **STALE — see "Session start" below for current production state.**
 
-## Current integration truth
+## Current integration truth — historical (2026-08-26, PR #93), superseded
 
-- Production is deployed and verified at
-  `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7`; rollback SHA is
-  `7fe6e4babbf3cf0209d8f93536f8150de70fea37`.
-- Production remains Alpaca Paper. Mission Control is private/read-only, all
-  seven existing timers remain intact, and the only tracked production delta is
+The block below was accurate for the SHA it names but that SHA is no longer
+production. Production has since moved through PR #109/#110 (Phase 3,
+`058273f1`), PR #111/#112 (execution fix, `e6ada88`), and PR #114 (deploy-drift
+alarm, `32c174b` — current). For what is actually deployed now, read
+"Session start" under "Active finish line" below; this section is kept only
+because the PR #92/#93 forensic narrative isn't duplicated elsewhere.
+
+- Production was deployed and verified at
+  `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7` (2026-08-26); recorded rollback SHA
+  was `7fe6e4babbf3cf0209d8f93536f8150de70fea37`. Both are stale — do not use
+  either against current production without re-verifying the gap.
+- Production remained Alpaca Paper. Mission Control was private/read-only, all
+  seven existing timers were intact, and the only tracked production delta was
   `config/settings.yaml: intraday_scan.enabled: true`.
 - The Aug 25 ET-day quota hold rearmed automatically on Aug 26 with exact
   accounting. No manual reset or spend deletion occurred.
 - The first Aug 26 morning run admitted RSG, AMR and PAM, then safely stopped on
   a Tech recovery/session-limit mismatch before PM, Risk or broker submission.
-- PR #92 fixes that contract with one bounded consolidated recovery, retained
+- PR #92 fixed that contract with one bounded consolidated recovery, retained
   primary results, a narrower prefilter and compact Smart Money input. The
   controlled rerun completed all 54 selected Technical analyses and produced
   seven directional PM targets.
 - That rerun exposed two independent data-shaping defects before Risk: valid
   fenced Smart Money JSON lost its wrapper, and missing queued earnings became
-  a false `none` stance. PR #93 fixes both at their source without weakening PM
+  a false `none` stance. PR #93 fixed both at their source without weakening PM
   grounding. The exact saved response replays with all eight findings.
 - Run-scoped SEC Form 4 admission remains active for qualifying symbols outside
   the configured 101-stock universe. The lane is capped at three names and
@@ -29,15 +37,11 @@ Status: **AUG 26 ROOT FIXES DEPLOYED | PAPER SAFE | NATURAL FULL-CHAIN ACCEPTANC
 - The audited operator-rerun switch can bypass only a same-day morning marker.
   It requires a reason and still enforces the ET window, weekday, session lock,
   Paper mode, paid-session/cost circuit and the full decision/safety chain.
-- The complete hermetic suite passes **2,181 tests**. The exact saved Smart
-  Money output and production-shaped missing-earnings record have dedicated
-  regressions.
-- Current `/health` has DB/broker reachable, `paper=true`, no global suspension
-  and no active session lock. Its degraded label is caused only by the earlier
-  run's historical session-scoped retry hold. Exact Aug 26 spend is
-  **$0.5279159 / $1.50**; both permitted paid morning sessions are consumed.
-- Alpaca still holds EPD 12 and SGOV 89. EPD remains protected for all 12 shares
-  by the broker stop-limit at stop $38.00 / limit $36.86. No trade was forced.
+- The complete hermetic suite passed **2,181 tests** at that point (see
+  "Session start" below for the current count).
+- Alpaca held EPD 12 and SGOV 89 as of 2026-08-26. EPD was protected for all 12
+  shares by the broker stop-limit at stop $38.00 / limit $36.86. No trade was
+  forced.
 
 ## Stabilization account model — HARD RULE
 
@@ -98,13 +102,23 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
-**Live production state (2026-08-27, deployed this session):** deployed at
-`e6ada88` on the paper account. (An earlier version of this note claimed
-`18dd4bc` — that SHA was never actually on the box; corrected here.) Phase 3
-(exit rework) and the execution limit fix are LIVE. Seven positions open, all
-with broker-resident stops. `paper: true`. Daily LLM budget raised to $2.75.
+**Live production state (2026-08-27 evening ET, deployed this session):**
+deployed at `32c174b` on the paper account — PR #114, the deploy-drift alarm,
+merged on top of `e6ada88`. (Earlier same-day notes claimed `18dd4bc`, then
+`e6ada88`; `18dd4bc` was never actually on the box, and `e6ada88` was
+superseded by this deploy within the session — corrected here.) Phase 3 (exit
+rework), the execution limit fix, and the deploy-drift alarm are LIVE. Seven
+positions open, all with broker-resident stops. `paper: true`. Daily LLM
+budget raised to $2.75.
 
-**Not deployed:** everything merged after `e6ada88`, plus the whole of
+**New this deploy — deploy-drift alarm (PR #114, `9eef617` + `38a985c`):**
+`scripts/check_deploy_drift.py` plus `quant-agent-drift-check.timer`
+(Mon-Fri 08:45 ET) alerts over Telegram when the box's deployed HEAD falls
+behind `origin/main`. Built because PR #111 sat merged-but-undeployed for
+eight hours with nothing catching it (see the correction above). Verified
+firing.
+
+**Not deployed:** everything merged after `32c174b`, plus the whole of
 **PR #113** (`feat/pm-flex-routing`), which is open, CI-green and unmerged.
 None of it is on production. It carries, in review order:
 
@@ -753,12 +767,11 @@ Do not interrupt natural validation for these unless current evidence shows they
 - Mission Control remains private/read-only; Telegram remains output-only.
 - No public exposure of QAMC or OneCLI.
 
-**Active work:** natural Alpaca Paper observation continues. The Aug 26 runs
-proved live SEC admission, compact Smart Money input, complete bounded Technical
-coverage and real directional PM candidate generation. PR #93's corrected PM
-evidence handoff is deployed but cannot consume a third paid morning session
-today. The remaining acceptance item is a future eligible session traversing PM,
-AI Risk, deterministic gate and broker execution when warranted, followed by
+**Active work:** natural Alpaca Paper observation continues. *(The rest of this
+paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are stale;
+current production state is `32c174b`, see "Session start" above.)* The
+remaining acceptance item is a future eligible session traversing PM, AI Risk,
+deterministic gate and broker execution when warranted, followed by
 management/exit and measured outcome. No trade may be forced or manufactured;
 repeated no-trade results must have a specific decision or risk reason, not a
 mechanical pipeline failure.

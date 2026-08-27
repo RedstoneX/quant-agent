@@ -161,7 +161,9 @@ This file records what is accepted and true **now**. Git history preserves imple
   level. `config/prompts/portfolio_manager.md`'s conviction bands and
   `config/prompts/tech_analyst.md`'s stop guidance were recalibrated to match.
   2487 tests pass. Production still runs the pre-clamp, pre-widening
-  constructor from `058273f1` / `e6ada88`.
+  constructor — true from `058273f1` / `e6ada88` and still true at current
+  production HEAD `32c174b` (PR #114 added only the deploy-drift alarm, not
+  this fix; see "Production position" below).
 - **The Portfolio Manager now routes through OpenRouter's `openai/flex`
   endpoint** (`16f6535`, same branch) — the identical `openai/gpt-5.5-20260423`
   weights at half price ($2.50/$15 vs $5/$30 per M tokens), an endpoint choice
@@ -200,16 +202,27 @@ The prior three-account daily workflow created excessive friction. During stabil
 
 The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Codex must not run as `qamc`.
 
-## Production position — current verified deployment
+## Production position — current pointer and history
 
-Production is deployed and verified at:
+**Current production HEAD is `32c174b`** (merge of PR #114, the deploy-drift
+alarm — see below), deployed 2026-08-27 evening ET. It descends from `e6ada88`
+(PR #112) and `058273f1` (Phase 3, PR #109/#110), so everything recorded
+against those SHAs elsewhere in this file still holds. It does **not**
+include Phase 2b risk-based sizing (`75c0233`) or the OpenRouter flex-routing
+change (`16f6535`) — both are on `feat/pm-flex-routing` (PR #113), still open
+and unmerged. See `docs/WORK.md` "Session start" for the full not-deployed
+list.
 
-`a25a723f70a4e0f1548b3389c93c96d9b5ced6d7`
+The `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7` / PR #93 SHA recorded below is
+**historical** — it was production on 2026-08-26 and has since been
+superseded twice over (PR #109/#110, then PR #111/#112, then PR #114). It is
+kept only because the forensic narrative under it (the recovery/retry-limit
+defect, the Smart Money/earnings data-shaping fixes) is not duplicated
+elsewhere. Its recorded rollback SHA was `7fe6e4babbf3cf0209d8f93536f8150de70fea37`;
+that rollback target is likewise stale and must not be used against current
+production without re-verifying the gap it would reopen.
 
-This is GitHub `main` after PR #93. The recorded rollback SHA is
-`7fe6e4babbf3cf0209d8f93536f8150de70fea37`.
-
-Production verification on 2026-08-26 established:
+Production verification on 2026-08-26 established (historical, PR #93 state):
 
 - the prior ET-day quota hold rearmed automatically after the date advanced;
   no spend was erased and no manual reset was used;
@@ -266,7 +279,15 @@ The production checkout retains exactly one intended tracked local configuration
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
-GitHub `main` may advance beyond this production SHA. Production changes only through the governed engineering workflow below.
+GitHub `main` may advance beyond the current production SHA. Production changes only through the governed engineering workflow below.
+
+**Deploy-drift alarm (2026-08-27, PR #114).** This "may advance beyond" gap is
+now monitored instead of silently trusted: `scripts/check_deploy_drift.py`
+compares the deployed HEAD on the qamc box against `origin/main` and alerts
+over Telegram when they diverge, run by `quant-agent-drift-check.timer`
+Mon-Fri 08:45 ET. It exists because PR #111 sat merged-but-undeployed for
+eight hours with nothing catching it (`docs/WORK.md` records that incident).
+Merged and deployed as part of `32c174b`; verified firing.
 
 ## Mandatory paid-analysis cost circuit
 
