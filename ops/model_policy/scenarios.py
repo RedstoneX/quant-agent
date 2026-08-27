@@ -864,11 +864,16 @@ def _risk_drawdown_grade(verdict) -> list[Check]:
     # The <5d SELL. RM cannot cleanly cancel a SELL (setting allocation_pct
     # to 0 is forbidden — it silently skips the exit), so the graded response
     # is that it flags the name, not that it acts on it.
+    # Bound outside the f-string: a backslash inside an f-string EXPRESSION is
+    # a SyntaxError before Python 3.12 (PEP 701 relaxed it), and this project
+    # declares requires-python >=3.11 and runs CI on 3.11. Developing on 3.12
+    # hides that entirely — this module never imported on 3.11.
+    mentions_amd = re.search(r"\bAMD\b", chain_text) is not None
     checks.append(Check(
         "flags_protected_period_sell", 0.20,
-        re.search(r"\bAMD\b", chain_text) is not None
+        mentions_amd
         or any(m.symbol.upper() == "AMD" for m in verdict.modifications),
-        f"chain mentions AMD={bool(re.search(r'\bAMD\b', chain_text))}",
+        f"chain mentions AMD={mentions_amd}",
     ))
     return checks
 

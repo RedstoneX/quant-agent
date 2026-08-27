@@ -32,6 +32,7 @@ modules.
 
 from __future__ import annotations
 
+import ast
 import importlib
 from pathlib import Path
 
@@ -78,3 +79,59 @@ def test_module_imports(module_path: str):
     benchmark harness break unnoticed.
     """
     assert importlib.import_module(module_path) is not None
+
+# ---------------------------------------------------------------------------
+# Python-version floor
+# ---------------------------------------------------------------------------
+
+def _fstring_backslash_offenders() -> list[str]:
+    """Source locations using a backslash inside an f-string EXPRESSION.
+
+    PEP 701 legalised this in Python 3.12. Before that it is a SyntaxError, so
+    such a line makes the whole module unimportable on 3.11 — which this
+    project declares as its floor (`requires-python = ">=3.11"`) and runs CI
+    on. Local development happens on 3.12, so the interpreter here accepts it
+    silently and only CI fails.
+
+    `ast.parse(..., feature_version=(3, 11))` does NOT catch this: the change
+    is in the tokenizer, not the grammar the feature flag gates. So the check
+    walks `FormattedValue` nodes and inspects the source text of each
+    expression instead.
+    """
+    offenders: list[str] = []
+    for package in ("ops", "scripts", "src", "tests"):
+        root = PROJECT_ROOT / package
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            source = path.read_text(encoding="utf-8")
+            try:
+                tree = ast.parse(source, filename=str(path))
+            except SyntaxError:  # already unparseable; the import tests own that
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FormattedValue):
+                    continue
+                segment = ast.get_source_segment(source, node.value)
+                if segment and "\\" in segment:
+                    offenders.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} -> {segment}"
+                    )
+    return offenders
+
+
+def test_no_python_312_only_fstrings():
+    """Caught for real: `ops/model_policy/scenarios.py` carried
+    `f"...{bool(re.search(r'\\bAMD\\b', text))}"` from 2026-08-14. It parsed
+    fine on the 3.12 dev interpreter and was a SyntaxError on CI's 3.11, so
+    that module had never once imported on the project's declared floor.
+
+    Bind the value to a name above the f-string instead.
+    """
+    offenders = _fstring_backslash_offenders()
+    assert not offenders, (
+        "backslash inside an f-string expression is a SyntaxError before "
+        "Python 3.12; this project supports 3.11:\n  " + "\n  ".join(offenders)
+    )
