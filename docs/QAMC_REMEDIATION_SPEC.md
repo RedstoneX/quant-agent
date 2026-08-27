@@ -285,6 +285,99 @@ The reasoning is already persisted; it is simply never shown.
 
 ---
 
+## Phase 9 — The research desk actually deliberates
+
+**Owner-directed, 2026-08-27.** Rex, verbatim: *"We have agents doing research
+and analysis. If something has high conviction or strong candidacy it should
+be debated amongst all the agents. We're trying to create a trading desk with
+synergy, not a technical analysis trade bot."*
+
+### What the system does today
+
+Evidence from the 2026-08-27 morning run. Ten Portfolio Manager targets,
+every one of them carrying `technical=buy/supports` as its **only** supporting
+source. News contributed to exactly one target, as neutral context. Smart
+Money contributed to none. Four of the ten were bought while
+`macro=underweight/conflicts` — the conflict was recorded and then ignored.
+
+The cause is structural, not a tuning problem. `validate_grounding`
+(`src/agents/portfolio_manager.py`) rejects any increase where
+`symbol not in {analysis.symbol for analysis in analyses}` — **a current-run
+Technical analysis is a hard gate on candidacy.** The funnel is
+`universe → prefilter → Technical → PM`, so News, Earnings, Macro and Smart
+Money are all *filters applied to a list Technical already chose*. A name with
+a blowout earnings beat and cluster insider buying cannot be bought unless
+Technical happened to analyse and rate it. The other seats cannot bring
+anything to the table; they can only nod at what is already on it.
+
+That is a technical-analysis bot with commentary attached, which is precisely
+what the owner does not want.
+
+### 9.1 — Any seat may NOMINATE a candidate
+
+Each research seat gains a bounded nomination output: symbol, conviction, and
+the specific observation behind it. News nominates on a genuine catalyst;
+Earnings on a filing that materially changes the picture; Smart Money on
+clustered insider buying (this lane half-exists already and is capped at three
+per run — generalise that pattern rather than inventing a new one); Macro
+nominates sector leaders when a regime turns.
+
+Cap nominations per seat per run. The cap is what keeps this bounded and
+affordable, and the existing SEC Form 4 admission lane is the working
+precedent for how to do it safely.
+
+### 9.2 — Technical becomes a RESPONDER, not the gatekeeper
+
+Invert the funnel. A nomination triggers an on-demand Technical analysis of
+that symbol. Technical stays **mandatory** — Phase 1's contract is
+non-negotiable, no trade without structural levels, a stop and a target — but
+it stops being the thing that *originates* every idea. It answers "here is a
+name the desk is interested in; is there a tradeable setup, and where are the
+levels?"
+
+This is the whole architectural change. Everything else follows from it.
+
+Cost is bounded and modest: seats already do the analysis that produces a
+nomination, so nomination itself is free — it is structured output from work
+already paid for. Only the responding Technical call is new spend, and it is
+capped by 9.1.
+
+### 9.3 — Disagreement must be adjudicated, not merely logged
+
+Today a conflicting macro stance is recorded in `provenance` as
+`conflicts` and the trade proceeds unchanged. That is a record of a
+disagreement, not a resolution of one.
+
+Where a material conflict exists between seats, the PM must address that
+specific conflict in `signal_conflicts` and name why it is overridden. A
+target carrying a `conflicts` provenance entry with no corresponding
+adjudication should fail grounding, the same way an unsourced claim does.
+
+### 9.4 — Conviction is agreement, not a technical rating
+
+The mandate is **breadth × consistency × asymmetry**. Sizing should follow the
+number of *independent* sources that agree, not the strength of one seat's
+rating. A name confirmed by Technical, Earnings and Smart Money is a different
+bet from a name only Technical likes, and today they size identically at 3-5%.
+
+This lands naturally on top of Phase 2b, which replaces notional conviction
+sizing with risk allocation: multi-source agreement earns a larger share of
+the risk budget.
+
+### 9.5 — A conviction ledger per candidate
+
+Who nominated it, who confirmed, who dissented and on what grounds, and what
+changed since the previous session. This is the artifact that makes the desk
+legible to the operator without reading logs, and it is the natural input to
+Mission Control's research view.
+
+### Sequencing
+
+Phase 9 depends on Phase 2b, because "agreement earns size" is meaningless
+until size is expressed as risk. Build 2b first.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.
