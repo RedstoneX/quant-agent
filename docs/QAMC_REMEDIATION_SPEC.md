@@ -157,7 +157,20 @@ Once a position's trailing stop sits **at or above entry**, its risk contributio
 
 ---
 
-## Phase 3 — Exit rework
+## Phase 3 — Exit rework — **COMPLETE, DEPLOYED 2026-08-27**
+
+**Status.** §3.1 and §3.2 landed in PR #107; §3.3 and §3.4 in PR #108; §3.6 and
+§3.7 in PR #109. All are deployed to the live paper account at `058273f1`.
+§3.5 was **resolved as an owner decision rather than implemented**: its
+"weakest model in the stack" premise is contradicted by
+`ops/model_policy/results/merged.json`, where `google/gemini-2.5-flash-lite`
+scores `quality_min 1.0` at `midday_exit` tied with four other models
+including `openai/gpt-5.5` (which costs ~84x more per review), and scores 1.0
+on every scenario it was measured on. The `midday_exit` scenario ties five of
+twelve candidates at the ceiling and therefore does not discriminate; the
+agreed path is to build a scenario that does. §3.8 is unchanged — the reviewer
+retains full authority to exit on new information.
+
 
 This is where the money has been going.
 

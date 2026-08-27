@@ -10,13 +10,21 @@ This file records what is accepted and true **now**. Git history preserves imple
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission is not authorized.
 - Paper vs live is an execution-environment boundary, not a separate trading architecture.
 - Decision chain remains: **Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker**.
-- **KNOWN DEFECT — the exit path does not follow this chain.** `run_position_review`
-  (`src/pipeline.py`, midday and close sessions) calls `position_reviewer` and then
-  executes directly: no Portfolio Manager, no AI Risk Manager. Sells are therefore
-  taken by a single model call with no second opinion, while buys pass three layers
-  of scrutiny. This contradicts the chain stated above and is scheduled for repair
-  in `docs/QAMC_REMEDIATION_SPEC.md` Phase 3.4. Until then, treat the chain as
-  accurate for entries only.
+- **FIXED 2026-08-27 (PR #108) — the exit path now follows this chain.**
+  `run_position_review` (`src/pipeline.py`, midday and close) previously called
+  `position_reviewer` and executed directly: no Portfolio Manager, no AI Risk
+  Manager, so sells were taken by a single model call with no second opinion
+  while buys passed three layers. `_risk_review_exits` now puts every
+  SELL/REDUCE in front of the AI Risk Manager and drops what it rejects.
+  **The failure posture is deliberately asymmetric with entries and this is
+  not an oversight:** `RiskStage` fails CLOSED with zero orders when the Risk
+  Manager is unparseable, but the exit path fails OPEN. Failing closed on an
+  entry means not buying, which costs nothing; failing closed on an exit means
+  a thesis-invalidated position cannot be closed because a language model is
+  unavailable, with the loss then bounded only by the broker stop. The
+  deterministic gates (named-trigger requirement, metric-contradiction veto,
+  ATR noise band) run first and are the real protection. Every fail-open path
+  logs at ERROR.
 - Deterministic Python and broker protections remain final safety authority; uncertainty fails closed.
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
@@ -98,8 +106,27 @@ This file records what is accepted and true **now**. Git history preserves imple
   cover macro regime shift, sector shock, adverse/material news, earnings
   miss and guidance cut); a non-matching reason is dropped and logged as
   `exit_blocked_no_named_trigger`, and the position is held, protected by its
-  broker-resident stop. This does not change the KNOWN DEFECT above — exits
-  still bypass the Portfolio Manager and AI Risk Manager entirely (§3.4).
+  broker-resident stop.
+- **Phase 3 of the remediation spec is COMPLETE and DEPLOYED** at `058273f1`
+  (rollback `9f77b03e`), live on the paper account since ~09:20 ET
+  2026-08-27. §3.1 the `pace` feedback loop is cut — the horizon is pinned to
+  the trade row at entry from the analyst's thesis and `avg_hold_days` is gone
+  from the review path, so the system's own selling behaviour no longer sets
+  the bar every surviving position is measured against. §3.2 the reviewer
+  snapshots its metrics and a deterioration verdict that contradicts its own
+  improving numbers is vetoed (`src/risk/exit_guard.py`). §3.3/§3.4 as above.
+  §3.6 an adverse move inside 1.0x ATR of entry cannot trigger a price-derived
+  exit; external-information triggers bypass it. §3.7 trailing stops are
+  computed deterministically in `src/risk/trailing.py` before the LLM is asked
+  — range setups do not trail until the target is exceeded, breakouts trail
+  under confirmed higher lows with a 3x ATR chandelier fallback, ratchet
+  upward only. §3.5 was resolved as an owner decision rather than
+  implemented: the "weakest model" premise is contradicted by committed
+  benchmark data (see `docs/WORK.md`). §3.8 unchanged.
+- **Phase 2b (risk-based sizing) is NOT deployed and NOT complete.** Per-trade
+  risk in production is still bounded by the constructor's
+  `risk_budget_pct = 0.5`. The owner-ratified 5% ceiling is not yet in force,
+  and `max_portfolio_risk_pct: 25` remains reporting-only.
 
 ## Stabilization account model
 
