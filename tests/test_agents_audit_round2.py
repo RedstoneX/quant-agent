@@ -456,10 +456,13 @@ def test_idx29_37_prompt_matches_executor_enforcement():
     # The two stale "always permitted" claims are gone.
     assert "TRAIL_STOP is always permitted" not in text
     assert "always permitted" not in text
-    # The gate is scoped to already-trimmed-today symbols…
-    assert "already trimmed today" in text
-    # …and first exits are named as executing without the backstop.
-    assert "first exit of the day executes as-is" in text
+    # SCOPE CHANGED, spec Phase 3.3 (2026-08-27). This test used to assert the
+    # prompt taught a gate scoped to already-trimmed-today symbols, with first
+    # exits "executing as-is". That scope WAS the loophole — a first exit is
+    # almost every exit. The gate now covers every SELL and REDUCE, and the
+    # prompt must no longer promise otherwise.
+    assert "first exit of the day executes as-is" not in text
+    assert "EVERY SELL and REDUCE, first exit of the day included" in text
     # TRAIL_STOP clamps are named where the exemption is claimed.
     assert "ratchet cooldown" in text
     assert "1.25×ATR" in text

@@ -86,40 +86,80 @@ HARD_BLOCK_RULES = {
 }
 
 
-# Hard-trigger keywords that authorise position_reviewer to REDUCE/SELL a
-# symbol that was ALREADY trimmed earlier today. Anything in the LLM-emitted
-# `reason` field that contains one of these substrings (case-insensitive)
-# bypasses the same-day-trim discipline. The list is intentionally narrow
-# — soft signals like "TARGET_BREACH" / "stretched" / "macro noise" must NOT
-# be on it; those are exactly the recurring flags that mechanical
-# double-application would re-trim on a second session.
+# Named exit triggers — the vocabulary of NEW INFORMATION.
+#
+# Spec Phase 3.8: the reviewer retains full authority to exit on new
+# information — adverse news, an earnings miss, a macro regime shift, a sector
+# shock, a correlation breach, a thesis invalidation. Price movement alone is
+# not new information. This tuple is that list, expressed as prose the LLM
+# actually emits.
+#
+# Soft signals — "TARGET_BREACH", "stretched", "extended", "macro noise",
+# "taking profits", "de-risking" — are deliberately ABSENT and must stay
+# absent. They are recurring flags, not events, and mechanically
+# re-applying them is what produced the repeated same-day double-trims.
+#
+# Phase 3.3 (2026-08-27) widened where this gate applies. It used to guard
+# only the SECOND sell-side action on a symbol in one day, so a position's
+# FIRST sale — which is almost every sale — executed on soft reasoning
+# entirely unchecked. It now guards every exit. Two categories were added at
+# the same time, because gating every exit on a list that did not cover the
+# whole of 3.8 would have blocked legitimate exits: macro regime shifts and
+# sector shocks are sanctioned by 3.8 but were unrepresented here.
+#
+# Concentration and drift were considered for inclusion and deliberately
+# REJECTED. "Concentration drift; valuation stretched" is the verbatim shape
+# of the reason behind the 2026-05-04 AMZN double-trim, and drift trims belong
+# to the Portfolio Manager (its rule-priority rows 4 and 5), not to this seat.
+# A Tech-rating downgrade alone is likewise excluded: the Risk Manager prompt
+# already states it is not sufficient grounds for an exit.
 _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
+    # Thesis invalidation
     "thesis_invalid",
     "thesis invalid",
     "invalidation triggered",
+    "broken thesis",
+    "thesis broken",
+    # Adverse company/sector news and state changes
     "high bearish",
     "high-conviction bearish",
     "high conviction bearish",
+    "adverse news",
+    "material news",
+    "sector shock",
+    # Earnings and filings
     "bearish earnings",
     "bearish filing",
     "earnings missed",
+    "earnings miss",
     "guidance cut",
+    # Macro regime — sanctioned by spec 3.8, previously unrepresented
+    "regime shift",
+    "regime flip",
+    "regime flipped",
+    "risk-off",
+    "risk off",
+    # Deterministic risk management
     "daily loss",
     "daily-loss",
     "circuit breaker",
     "correlation breach",
     "correlation cluster breach",
+    # Protection already fired
     "stop hit",
     "stopped out",
-    "broken thesis",
-    "thesis broken",
 )
 
 
 def _reason_cites_hard_trigger(reason: str) -> bool:
-    """True if the LLM's reason text contains a recognised hard-trigger
-    phrase that authorises a same-day re-trim. Substring match (case-
-    insensitive) — the LLM emits prose so we tolerate variation.
+    """True when the reason NAMES a recognised new-information trigger.
+
+    Substring match, case-insensitive — the LLM emits prose, so variation is
+    tolerated. The point is not to be clever about language; it is to force
+    the reason to make a CLAIM ("X happened") rather than express a feeling
+    ("it looks tired"). A claim is auditable, gradeable by the evening review,
+    and cross-checkable against the reviewer's own metrics by
+    `src/risk/exit_guard.py`. A feeling is none of those things.
     """
     if not reason:
         return False
@@ -5556,6 +5596,41 @@ class TradingPipeline:
                         except Exception as e:  # noqa: BLE001
                             logger.warning("exit guard: audit write failed: %s", e)
                         continue
+
+            # Phase 3.3 — EVERY exit must name a trigger, not just the second
+            # one on a symbol in a day.
+            #
+            # The gate below used to be conditioned on `symbol in
+            # already_trimmed`, so a position's FIRST sale of the day executed
+            # on soft reasoning entirely unchecked — and a first sale is almost
+            # every sale. Both of the exits the evening review graded
+            # "premature" on 2026-08-26 (EPD, MRVL) were first sales and sailed
+            # straight through.
+            #
+            # Failing closed here means HOLDING, and every position carries a
+            # broker-resident stop (AGENTS.md invariant 3), so the downside of
+            # a wrongly-blocked exit is bounded by that stop. The downside of a
+            # wrongly-allowed one is the pattern that emptied the book.
+            reason_text = action_item.get("reason", "")
+            if act in ("SELL", "REDUCE") and not _reason_cites_hard_trigger(reason_text):
+                logger.warning(
+                    "Position reviewer: blocking %s %s — the reason names no "
+                    "recognised trigger. Exits require NEW INFORMATION "
+                    "(thesis invalidation, adverse news, earnings, regime "
+                    "shift, sector shock, correlation breach, stop hit); "
+                    "price action and soft flags are not triggers. Reason "
+                    "was: %r",
+                    act, symbol, reason_text[:200],
+                )
+                try:
+                    self.db.record_intraday_evaluation(
+                        symbol=symbol, run_id=run_id,
+                        status="exit_blocked_no_named_trigger",
+                        detail=f"{act}: {reason_text[:400]}",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("exit gate: audit write failed: %s", e)
+                continue
 
             if (
                 act in ("SELL", "REDUCE")
