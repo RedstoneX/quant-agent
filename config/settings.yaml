@@ -169,6 +169,17 @@ risk:
   # names consume one bet's budget. Clusters are measured return correlation
   # (src/data/correlation.py), not a hand-maintained sector table.
   max_cluster_risk_share_pct: 40
+  # Minimum stop distance in ATRs (2026-08-27). Structure still places the
+  # stop; this only pushes it out when structure put it inside ordinary
+  # volatility. Measured: stops sat a median 4.3% below entry against a median
+  # ATR of 2.56% of price — about 1.7 ATRs, barely more than one ordinary
+  # day's range. That is what fired exits inside noise, and what forced huge
+  # positions to reach any meaningful risk (a 4.3% stop admits only 0.86% risk
+  # under the 20% single-name cap, so conviction could not change the size).
+  min_stop_atr_multiple: 3.0
+  # A widened stop lowers reward:risk because the target does not move. Under
+  # this, the setup only ever qualified on a stop too tight to survive.
+  min_reward_risk_after_widening: 1.5
   require_stop_loss: true
   # Cash-only by default. Flip to true to allow margin — BUYs can then spend
   # beyond available cash. When false (default) the risk engine hard-blocks

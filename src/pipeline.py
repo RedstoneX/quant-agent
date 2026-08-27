@@ -512,6 +512,10 @@ class TradingPipeline:
             # constructor sizes under the ceiling rather than proposing orders
             # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
             max_position_pct=_risk_setting("max_position_pct", 20.0),
+            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
+            min_reward_risk_after_widening=_risk_setting(
+                "min_reward_risk_after_widening", 1.5,
+            ),
         ))
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.

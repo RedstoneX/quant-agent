@@ -77,6 +77,17 @@ logger = logging.getLogger(__name__)
 MAX_ENTRY_SLIPPAGE_BPS = 40.0
 
 
+def _macro_regime(macro_analysis) -> str | None:
+    """The regime string, from either a MacroAnalysis or a carried-forward dict."""
+    if macro_analysis is None:
+        return None
+    if isinstance(macro_analysis, dict):
+        value = macro_analysis.get("regime")
+    else:
+        value = getattr(macro_analysis, "regime", None)
+    return str(value) if value else None
+
+
 def _book_risk_inputs(ctx, total_value: float):
     """Per-symbol budget risk (% of equity) and correlation clusters, or Nones.
 
@@ -1037,6 +1048,10 @@ class DecisionStage:
             price_map=price_map,
             existing_risk_pct=existing_risk_pct,
             clusters=risk_clusters,
+            # The tape the stop has to survive. Widening a stop past the noise
+            # band is not a fixed number of ATRs — a risk-off market swings
+            # wider for the same ATR reading than a trending one.
+            regime=_macro_regime(macro_analysis),
         )
         logger.info(
             "Constructor: %d targets → %d decisions (%d BUY, %d SELL, %d HOLD)",

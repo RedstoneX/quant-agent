@@ -520,3 +520,111 @@ def test_the_ceiling_flattens_conviction_at_realistic_stop_distances():
     assert alloc(1.0) == alloc(2.5) == alloc(5.0) == 20.0
     # And each risks ~0.86% of equity, not the 1.0/2.5/5.0 the PM allocated.
     assert abs(20.0 * 0.043 - 0.86) < 0.01
+
+
+# --------------------------------------------------------------------------
+# Stop width — the root cause behind both the sizing squeeze and noise exits
+# --------------------------------------------------------------------------
+
+def _vol_analysis(symbol, entry, stop, target, atr, setup="range"):
+    from src.models import TechReasoningChain
+    return TechAnalysisResult(
+        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
+        reference_target=target, reasoning="test", support_levels=[stop],
+        resistance_levels=[target], setup_type=setup,
+        expected_horizon_sessions=10, atr_14=atr,
+        reasoning_chain=TechReasoningChain(
+            trend="x", momentum="x", volatility="x", volume="x",
+            support_resistance="x"),
+    )
+
+
+def test_a_stop_inside_the_noise_band_is_pushed_out():
+    """Measured 2026-08-27: stops sat a median 4.3% below entry against a
+    median ATR of 2.56% of price — about 1.7 ATRs. That is one ordinary day's
+    range, not a thesis invalidation, and it is what both fired exits inside
+    noise and forced huge positions to reach any real risk."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=2.35)],
+        total_value=EQUITY, price_map={"MSFT": 100.0},
+    )
+    assert len(decisions) == 1
+    # A range setup earns 1.15x the 3.0 base = 3.45 ATRs, so 3.45 x 2.35 =
+    # 8.11 below entry, replacing the 2.4% structural stop.
+    assert abs(decisions[0].stop_loss - 91.89) < 0.01
+
+
+def test_a_stop_already_outside_the_noise_band_is_left_alone():
+    """This only corrects stops placed inside the noise. It never pulls a
+    wide structural stop tighter — structure still decides."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("OKLO", 1.0)], positions=[],
+        analyses=[_vol_analysis("OKLO", 100.0, 60.0, 200.0, atr=8.22)],
+        total_value=EQUITY, price_map={"OKLO": 100.0},
+    )
+    assert decisions[0].stop_loss == 60.0
+
+
+def test_the_atr_multiple_is_not_one_constant_for_every_trade():
+    """ATR already adapts the distance to each stock and session. The MULTIPLE
+    adapts how many ATRs the setup earns: a breakout invalidates at a level,
+    a range trade gets shaken out inside its own band, and a risk-off tape
+    swings wider for the same ATR reading than a trending one."""
+    constructor = PortfolioConstructor()
+
+    def stop(setup, regime):
+        d = constructor.construct_orders(
+            targets=[_risk_target("MSFT", 1.0)], positions=[],
+            analyses=[_vol_analysis("MSFT", 100.0, 97.6, 200.0, 2.35, setup)],
+            total_value=EQUITY, price_map={"MSFT": 100.0}, regime=regime,
+        )
+        return d[0].stop_loss
+
+    # Breakout earns less room than a range trade on the same name and tape.
+    assert stop("breakout", "risk-on") > stop("range", "risk-on")
+    # And the same setup gets more room as the tape deteriorates.
+    assert stop("range", "risk-on") > stop("range", "transitional") > stop("range", "risk-off")
+
+
+def test_widening_a_stop_into_a_bad_payoff_rejects_the_trade():
+    """The target does not move when the stop does, so reward:risk falls. A
+    setup that only cleared the bar on a stop too tight to survive was never
+    the trade it appeared to be."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        # Target only 5% up; a 7% stop leaves reward:risk well under 1.5.
+        analyses=[_vol_analysis("MSFT", 100.0, 97.6, 105.0, atr=2.35)],
+        total_value=EQUITY, price_map={"MSFT": 100.0},
+    )
+    assert decisions == []
+
+
+def test_no_volatility_reading_leaves_the_structural_stop_untouched():
+    """Fail toward existing behaviour rather than inventing a width."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)],
+        total_value=EQUITY, price_map={"MSFT": 100.0},
+    )
+    assert decisions[0].stop_loss == 97.6
+
+
+def test_wider_stops_give_conviction_room_to_change_the_size():
+    """The payoff. With stops outside the noise, conviction moves the size
+    again instead of every idea clamping to the same 20% position."""
+    constructor = PortfolioConstructor()
+
+    def alloc(risk):
+        d = constructor.construct_orders(
+            targets=[_risk_target("MSFT", risk)], positions=[],
+            analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=2.35)],
+            total_value=EQUITY, price_map={"MSFT": 100.0},
+        )
+        return d[0].allocation_pct
+
+    assert alloc(0.5) < alloc(1.0) < alloc(1.5)

@@ -23,6 +23,7 @@ confined to intent; math is code.
 
 from __future__ import annotations
 
+import math
 import logging
 from dataclasses import dataclass
 
@@ -80,6 +81,40 @@ class ConstructorConfig:
     # and the session trades nothing. Keep in sync with
     # `risk.max_position_pct` — pipeline.py wires them from the same setting.
     max_position_pct: float = 20.0
+    # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
+    # a thesis invalidation, it is a coin flip on noise — Phase 3 already
+    # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
+    # and an entry stop has to survive the whole expected hold, not one
+    # session. Measured 2026-08-27: the book's stops sat a median 4.3% below
+    # entry against a median ATR of 2.56% of price — about 1.7 ATRs, barely
+    # more than a single day. Structure still places the stop; this only
+    # pushes it out when structure put it inside the noise.
+    # This is a BASE, not a constant. `_stop_atr_multiple` adjusts it per
+    # trade — a breakout has a clean invalidation level and does not need the
+    # room a range setup does, and a risk-off tape chops harder than a
+    # trending one. ATR itself already adapts the distance to each stock and
+    # each session; these adjust how many ATRs that stock's setup deserves.
+    min_stop_atr_multiple: float = 3.0
+    #: Multipliers ON the base, by `TechAnalysisResult.setup_type`. Breakout
+    #: invalidation is a level ("back below the breakout"), so it earns a
+    #: tighter stop than a range trade being shaken out inside its own band.
+    #: Same keying Phase 3's deterministic trailing already uses.
+    stop_atr_setup_scale: tuple[tuple[str, float], ...] = (
+        ("breakout", 0.85),
+        ("range", 1.15),
+    )
+    #: Multipliers ON the base, by macro regime. A risk-off or transitional
+    #: tape produces wider ordinary swings for the same ATR reading, so the
+    #: same structural stop is nearer the noise than it looks.
+    stop_atr_regime_scale: tuple[tuple[str, float], ...] = (
+        ("risk-off", 1.20),
+        ("transitional", 1.10),
+        ("risk-on", 0.95),
+    )
+    # Widening a stop lowers reward:risk, because the target does not move.
+    # Below this the trade only ever looked good on a stop too tight to
+    # survive, so it is rejected rather than taken at a worse payoff.
+    min_reward_risk_after_widening: float = 1.5
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
     # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
@@ -108,6 +143,7 @@ class PortfolioConstructor:
         price_map: dict[str, float] | None = None,
         existing_risk_pct: dict[str, float] | None = None,
         clusters: list[list[str]] | None = None,
+        regime: str | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -147,6 +183,7 @@ class PortfolioConstructor:
             current_weights=current_weights,
             existing_risk_pct=existing_risk_pct,
             clusters=clusters,
+            regime=regime,
         )
 
         sells: list[TradeDecision] = []
@@ -197,6 +234,7 @@ class PortfolioConstructor:
                     target_pct=target_pct,
                     total_value=total_value,
                     market_price=price_map.get(sym),
+                    regime=regime,
                 )
                 if buy_decision is not None:
                     buys.append(buy_decision)
@@ -218,6 +256,7 @@ class PortfolioConstructor:
         current_weights: dict[str, float],
         existing_risk_pct: dict[str, float] | None,
         clusters: list[list[str]] | None,
+        regime: str | None = None,
     ) -> dict[str, RiskPlan]:
         """Turn risk-based targets into notional weights, under the budget.
 
@@ -251,7 +290,7 @@ class PortfolioConstructor:
                 continue
             analysis = analyses_by_sym.get(sym)
             entry, stop = self._resolve_entry_and_stop(
-                target, analysis, price_map.get(sym),
+                target, analysis, price_map.get(sym), regime=regime,
             )
             if entry is None or stop is None:
                 continue  # already logged; no stop means no honest size
@@ -320,6 +359,7 @@ class PortfolioConstructor:
         target: TargetPosition,
         analysis: TechAnalysisResult | None,
         market_price: float | None,
+        regime: str | None = None,
     ) -> tuple[float | None, float | None]:
         """Entry and a validated stop below it, or (None, None).
 
@@ -351,6 +391,9 @@ class PortfolioConstructor:
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
         stop_loss = self._resolve_stop(target, analysis, entry_price)
+        stop_loss = self._widen_stop_past_noise(
+            target.symbol, analysis, entry_price, stop_loss, regime=regime,
+        )
         if stop_loss is not None:
             stop_loss = round(stop_loss, 2)
         if stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price:
@@ -361,6 +404,97 @@ class PortfolioConstructor:
             )
             return (None, None)
         return (entry_price, stop_loss)
+
+    def _stop_atr_multiple(
+        self, analysis: TechAnalysisResult | None, regime: str | None,
+    ) -> float:
+        """How many ATRs of room THIS trade deserves, not a global constant.
+
+        ATR already scales the distance to the stock and the session. This
+        scales how many of them the setup earns: a breakout invalidates at a
+        level and does not need range-trade room, and a risk-off tape swings
+        wider for the same ATR reading than a trending one does.
+        """
+        multiple = self.cfg.min_stop_atr_multiple
+        setup = (getattr(analysis, "setup_type", None) or "").strip().lower()
+        for key, scale in self.cfg.stop_atr_setup_scale:
+            if setup == key:
+                multiple *= scale
+                break
+        tape = (regime or "").strip().lower()
+        for key, scale in self.cfg.stop_atr_regime_scale:
+            if tape == key:
+                multiple *= scale
+                break
+        return multiple
+
+    def _widen_stop_past_noise(
+        self,
+        symbol: str,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        stop_loss: float | None,
+        regime: str | None = None,
+    ) -> float | None:
+        """Push a stop out to `min_stop_atr_multiple` ATRs when structure put
+        it inside ordinary volatility.
+
+        The stop still comes from structure — this never invents one where
+        none exists, and never pulls a wide stop tighter. It only corrects the
+        case the evidence says was routine: stops a median 1.7 ATRs from
+        entry, which is a coin flip on a normal day's range rather than a
+        thesis invalidation, and which then forced enormous positions to reach
+        any meaningful risk.
+
+        Returns None when widening would leave a reward:risk the trade cannot
+        justify. That is deliberate: a trade that only cleared the bar on a
+        stop too tight to survive was never the trade it appeared to be.
+        """
+        if stop_loss is None or stop_loss <= 0 or entry_price <= 0:
+            return stop_loss
+        atr = getattr(analysis, "atr_14", None) if analysis else None
+        try:
+            atr = float(atr) if atr is not None else None
+        except (TypeError, ValueError):
+            atr = None
+        if atr is None or not math.isfinite(atr) or atr <= 0:
+            return stop_loss  # no volatility reading — leave structure alone
+
+        multiple = self._stop_atr_multiple(analysis, regime)
+        floor = entry_price - multiple * atr
+        if floor <= 0 or stop_loss <= floor:
+            return stop_loss  # already outside the noise band
+
+        target_price = getattr(analysis, "reference_target", None) if analysis else None
+        try:
+            target_price = float(target_price) if target_price else None
+        except (TypeError, ValueError):
+            target_price = None
+        if target_price and target_price > entry_price:
+            reward_risk = (target_price - entry_price) / (entry_price - floor)
+            if reward_risk < self.cfg.min_reward_risk_after_widening:
+                logger.info(
+                    "Constructor: %s rejected — a stop outside the noise band "
+                    "(%.2f x ATR = $%.2f) leaves reward:risk %.2f, under the "
+                    "%.2f minimum. The setup only qualified on a stop inside "
+                    "one ordinary day's range.",
+                    symbol, multiple, floor, reward_risk,
+                    self.cfg.min_reward_risk_after_widening,
+                )
+                return None
+
+        logger.info(
+            "Constructor: %s stop widened $%.2f → $%.2f (%.1f%% → %.1f%% below "
+            "entry) — structure placed it inside %.2f x ATR of $%.2f "
+            "(%s setup, %s tape)",
+            symbol, stop_loss, floor,
+            100 * (entry_price - stop_loss) / entry_price,
+            100 * (entry_price - floor) / entry_price,
+            multiple, atr,
+            getattr(analysis, "setup_type", None) or "unknown",
+            regime or "unknown",
+        )
+        return floor
 
     @staticmethod
     def _current_weights(
@@ -463,6 +597,7 @@ class PortfolioConstructor:
         total_value: float,
         market_price: float | None,
         plan: RiskPlan | None = None,
+        regime: str | None = None,
     ) -> TradeDecision | None:
         # A risk-based target already resolved its entry and stop in
         # _plan_risk_targets — reusing them keeps the size the budget granted
@@ -472,7 +607,7 @@ class PortfolioConstructor:
             entry_price, stop_loss = plan.entry_price, plan.stop_price
         else:
             entry_price, stop_loss = self._resolve_entry_and_stop(
-                target, analysis, market_price,
+                target, analysis, market_price, regime=regime,
             )
             if entry_price is None or stop_loss is None:
                 return None

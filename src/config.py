@@ -346,6 +346,16 @@ class RiskConfig(BaseModel):
     # satisfies it while carrying exactly the concentration the ceiling
     # exists to prevent. Correlated names consume one bet's budget.
     max_cluster_risk_share_pct: float = Field(default=40.0, gt=0, le=100)
+    # Minimum stop distance in ATRs. Structure places the stop; this only
+    # pushes it out when structure put it inside ordinary volatility. Measured
+    # 2026-08-27: stops sat a median 4.3% below entry against a median ATR of
+    # 2.56% of price — about 1.7 ATRs, barely more than one ordinary day's
+    # range, which is what was firing exits inside noise AND forcing enormous
+    # positions to reach any meaningful risk.
+    min_stop_atr_multiple: float = Field(default=3.0, gt=0, le=10)
+    # Widening a stop lowers reward:risk, because the target does not move.
+    # Under this the setup only ever qualified on a stop too tight to survive.
+    min_reward_risk_after_widening: float = Field(default=1.5, ge=0, le=10)
     # Cash-only default. When False: no BUY may drive `cash` below zero, and
     # any session that starts with `cash < 0` must de-lever (SELL) before any
     # new BUY. When True: normal margin account behavior, risk engine only
