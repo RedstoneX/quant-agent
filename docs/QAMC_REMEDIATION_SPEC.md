@@ -55,28 +55,36 @@ Live `config/settings.yaml` has uncommitted edits. `STATE.md` claims exactly one
 
 ---
 
-## Phase 1 — Tech Analyst returns real structure
+## Phase 1 — Tech Analyst returns real structure — IMPLEMENTED (branch `feat/tech-analyst-structural-levels`)
 
 Everything downstream depends on this. Stops, targets, thesis progress and pace are all currently derived from *invented* numbers because the analyst supplies no levels.
 
-**1.1 — Require structural levels.**
-The Tech Analyst must return, per candidate:
-- `support_levels[]`, `resistance_levels[]` — actual prior consolidation / swing structure
-- `suggested_stop_price` — derived from structure, never from a volatility multiple
-- `setup_type` — see 1.2
-- `reference_target` — only where structure supports one
-- `expected_horizon_sessions` — the analyst's own estimate of time-to-resolution
+**Status note (2026-08-27):** the substance of 1.1–1.4 is implemented, with two departures from this text worth recording:
 
-**1.2 — Classify the setup.** Two types, managed differently:
+- The spec names a new `suggested_stop_price` field on the Tech Analyst's output. The implementation reuses the existing `stop_loss` field on `TechAnalysisResult` (`src/models.py`) instead of adding a differently-named one; `suggested_stop_price` remains a distinct field elsewhere, on the Portfolio Manager's `TargetPosition`, which `PortfolioConstructor._resolve_stop` still checks first.
+- `reference_target` was made **mandatory** for every actionable rating (not "only where structure supports one" as originally written) — the validator in `src/models.py` requires it, `setup_type`, `expected_horizon_sessions`, and at least one support/resistance level together, or the result is rejected. For a `"breakout"` setup, `reference_target` is documented (`config/prompts/tech_analyst.md`) as a measured-move projection rather than a defended level.
+- Two things were added beyond this section's original text: a standalone deterministic levels module (`src/data/levels.py`, new) that finds support/resistance from OHLCV bars via bad-print filtering, swing-pivot detection, zone clustering, distance/recency-weighted ranking; and raising `trading.lookback_days` from 320 to 1800 (~5 years, `config/settings.yaml`) so those levels are computed over real multi-year history rather than the ~1-year window the 320-day figure implied.
+
+**1.1 — Require structural levels. DONE.**
+The Tech Analyst must return, per candidate:
+- `support_levels[]`, `resistance_levels[]` — actual prior consolidation / swing structure. **Done** — computed by `src/data/levels.py` over the full fetched history and required by the validator for actionable ratings.
+- `suggested_stop_price` — derived from structure, never from a volatility multiple. **Done, via the existing `stop_loss` field** rather than a new field of this name (see status note above).
+- `setup_type` — see 1.2. **Done** — `Literal["range", "breakout"]` on `TechAnalysisResult`, required for actionable ratings.
+- `reference_target` — only where structure supports one. **Done, but made unconditionally required** for actionable ratings rather than conditional (see status note above).
+- `expected_horizon_sessions` — the analyst's own estimate of time-to-resolution. **Done**, required for actionable ratings.
+
+**1.2 — Classify the setup.** Two types, managed differently. **`setup_type` field is implemented and required; the differentiated exit-management behavior in the table below (fixed target vs. trailing-only, progress/pace enable/disable) is NOT implemented — that is Phase 3 work and remains pending.**
 
 | Type | Definition | Stop | Exit management |
 |---|---|---|---|
 | **A — Range / level** | Clear overhead resistance exists | Below structural support | Fixed target; progress & pace metrics valid |
 | **B — Breakout / trend** | No overhead resistance (all-time highs, clean break) | Below the breakout level or prior consolidation high | **Trailing only. No fixed target. Progress and pace metrics DISABLED.** |
 
-**1.3 — No levels, no trade.** If the analyst cannot identify structure, the candidate is rejected. Delete the `2 × ATR` and `5%` fallbacks in `src/portfolio_constructor.py:363-398`. ATR remains useful as a *noise-band* input (Phase 3), never as a stop source.
+**1.3 — No levels, no trade. DONE.** If the analyst cannot identify structure, the candidate is rejected: the model validator requires at least one support/resistance level for any actionable rating, and `PortfolioConstructor._resolve_stop` rejects (returns `None`) a BUY with no structural stop. The `2 × ATR` and `5%` fallbacks are deleted from `src/portfolio_constructor.py` (and the `default_stop_atr_multiple` / `fallback_stop_pct` config fields removed with them). `atr_14` is retained on `TechAnalysisResult` for a future noise-band use (Phase 3); it is no longer read as a stop source anywhere in `portfolio_constructor.py`.
 
-**1.4 — Delete the invented target.** Remove `entry × (1 + 2 × stop_gap_pct)` at `portfolio_constructor.py:267-274`. A Type B position simply has no target, and the code must handle that as a first-class state rather than fabricating one.
+**1.4 — Delete the invented target. DONE.** `entry × (1 + 2 × stop_gap_pct)` is removed from `portfolio_constructor.py`; a BUY with no `reference_target` from the analyst is now rejected rather than assigned a synthesized one, so a Type B (breakout) position without a real reference is a declined trade today rather than "no target, handled as a first-class state" — the latter is Phase 3 exit-rework territory (disabling progress/pace for breakouts) and remains pending.
+
+**Phases 2–7 below are still pending — none of this work has been implemented.** Only Phase 1, as described above, is done.
 
 ---
 

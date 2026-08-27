@@ -3,6 +3,7 @@ from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
+from src.data.levels import find_structural_levels, format_levels_block
 from src.models import TechAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -11,7 +12,10 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "tech
 
 # OHLCV bars attached per symbol in the user message. Enough for swing pivots
 # and micro-structure, not so many that context balloons on a 30-symbol batch.
-_BARS_PER_SYMBOL = 20
+# Recent bars shown verbatim, for immediate context only. Structural levels no
+# longer come from this window — they are computed in Python over the full
+# history (see src/data/levels.py), so this stays small on purpose.
+_BARS_PER_SYMBOL = 40
 
 # Auto-chunk the batch when a single LLM call would carry too many symbols.
 # 25 picked so chunks stay comfortably within typical LLM context, assuming
@@ -176,7 +180,21 @@ class TechAnalystAgent(BaseAgent):
                 for b in recent_bars
             )
             last_close = recent_bars[-1].close if recent_bars else "N/A"
+            # Structural levels are computed in Python from the FULL history,
+            # not from the recent window above. Finding where price repeatedly
+            # stopped is arithmetic; asking a model to spot it in a wall of
+            # OHLC rows is both unreliable and unnecessary. Before this, the
+            # analyst saw 20 bars and could only cite moving averages and the
+            # 20-day range as "levels" — which is why the structural stops and
+            # targets the exit system depends on were effectively absent.
+            supports, resistances = find_structural_levels(bars)
+            levels_text = format_levels_block(
+                supports,
+                resistances,
+                last_close if isinstance(last_close, (int, float)) else 0.0,
+            )
             sections.append(f"""### {symbol}{_prior_line(symbol)}{_valuation_line(symbol)}
+{levels_text}
 Price (last {len(recent_bars)} COMPLETED daily bars):
 {bars_text}
 Indicators: MA20={indicators.ma_20} MA50={indicators.ma_50} MA200={indicators.ma_200} | RSI={indicators.rsi_14} | MACD={indicators.macd}/{indicators.macd_signal}/{indicators.macd_hist} | BB={indicators.bb_lower}/{indicators.bb_middle}/{indicators.bb_upper} | ATR={indicators.atr_14} | Vol%={indicators.volume_change_pct}

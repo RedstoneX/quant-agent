@@ -13,7 +13,7 @@ LLM multi-agent quantitative trading system for US equities. Eight specialized d
 
 ## Highlights
 
-- **Multi-agent coordination, not just orchestration.** Each agent has a single specialty and a strict output contract. The Portfolio Manager synthesizes upstream signals through an **8-layer memory stack** (today's quantitative facts, 7-day portfolio narrative, 14-day active HIGH-conviction state changes, 45-day trade calibration bucketed by size, last-5 Risk-Manager verdicts for self-calibration, own recent decisions for flip-flop detection, and a projected book preview that flags sector concentration before any orders are placed) and emits Pydantic-validated `TargetPosition` intent. A deterministic `PortfolioConstructor` then translates intent + ATR-based stops + live broker prices into actual orders — the LLM never guesses entry prices, stop levels, or share counts.
+- **Multi-agent coordination, not just orchestration.** Each agent has a single specialty and a strict output contract. The Portfolio Manager synthesizes upstream signals through an **8-layer memory stack** (today's quantitative facts, 7-day portfolio narrative, 14-day active HIGH-conviction state changes, 45-day trade calibration bucketed by size, last-5 Risk-Manager verdicts for self-calibration, own recent decisions for flip-flop detection, and a projected book preview that flags sector concentration before any orders are placed) and emits Pydantic-validated `TargetPosition` intent. A deterministic `PortfolioConstructor` then translates intent + the Tech Analyst's structural stop/target + live broker prices into actual orders. Stops and targets must trace to chart structure the Tech Analyst identified — there is no ATR-multiple or flat-percentage fallback; a candidate missing either is rejected rather than traded.
 
 - **Reflection that closes the loop.** Every evening grades that day's trades along two axes (`correct / premature / wrong` × `thesis_trajectory_at_sell` ∈ `strengthening / intact / weakening / broken`) and grades the previous day's outlook against the actual next-day return — **deterministically** computed by pairing predicted bias with realized P&L, not LLM self-grading. Bias hit rates over rolling 10 sessions feed forward into the next evening's prompt, so the system gets quieter when it has been wrong. Concrete loop documented in the commit history: when evening flagged `memory-pricing` and `rare-earth` as recurring missed themes, the next morning's Portfolio Manager bought MU and MP from those exact themes, and that night's grader marked both entries `correct`.
 
@@ -29,7 +29,7 @@ LLM multi-agent quantitative trading system for US equities. Eight specialized d
 
 - **Telegram session-status push (opt-in).** Every session emits a structured status message — orders, R/R-weighted sizing, degraded-data flags, daily P&L, tomorrow's bias, or the exact exception trace on failure — to a Telegram chat you control. Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` to enable; missing creds make the notifier a silent no-op and trading is unchanged. Per-mode noise policy hides the 14 silent `intra_check` ticks per day and pre-market `nothing_new` earnings polls while always surfacing emergency liquidations, hard-risk blocks, exceptions, and the substantive morning / midday / close / evening completions. The notifier is wired into `main.py`'s `finally` block so even a `SystemExit` from a wrapper kill still produces a push before the process exits — and HTTP failures to Telegram are swallowed so an outage on their side can never cascade into a trading failure.
 
-- **Tested.** 874 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
+- **Tested.** 2200 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ SELL allocation_pct semantics, ET-everywhere timezone, etc.).
 
 | Agent | Role | Key Feature |
 |-------|------|-------------|
-| **Tech Analyst** | Batch technical analysis | 5-step CoT (trend / momentum / volatility / volume / S&R). ATR-based default stop (`entry − 2*ATR`). Output rating + `conviction` (high/medium/low) + `reference_target` + `thesis_invalid_if` (soft exit condition). **Auto-computed `risk_reward`** (Python-calculated, not LLM-trusted) flows into PM sizing and RM veto logic. **Signal-age memory** (`data/tech/last_ratings.json`): prior rating surfaced to LLM as context; `signal_age_days` counted to spot stale setups — PM cuts allocation on 8+ day stale BUYs. **Valuation context** (yfinance trailing PE / forward PE / P/S) surfaced per symbol — LLM flags >40x forward PE or >15x P/S as stretched in `reasoning_chain.support_resistance`. Pre-filter thresholds normalized by ATR. Auto-chunks batch > 30 symbols. Cross-field validator: BUY stop must be below entry, SELL above. |
+| **Tech Analyst** | Batch technical analysis | 5-step CoT (trend / momentum / volatility / volume / S&R). **Structural levels computed in Python** (`src/data/levels.py`) from the full ~5-year price history (`trading.lookback_days: 1800`) — local-neighbourhood bad-print filtering, swing-pivot detection, zone clustering, distance/recency-weighted ranking — and rendered as a formatted support/resistance block in the prompt; the LLM sees the last 40 raw bars for immediate context only (up from 20), never as the source of levels. For every actionable rating the model **must** return `support_levels`, `resistance_levels`, `setup_type` (`range`\|`breakout`), `expected_horizon_sessions`, `entry_price`, `stop_loss` and `reference_target` — a Pydantic validator rejects the result if any is missing. **No synthesized fallback**: `PortfolioConstructor` no longer invents a stop (`entry − 2×ATR` / `entry × 0.95`) or a target (`entry × (1 + 2×stop_gap_pct)`) when the analyst omits one — a candidate with no structural stop or target is rejected outright. **Auto-computed `risk_reward`** (Python-calculated, not LLM-trusted) flows into PM sizing and RM veto logic. **Signal-age memory** (`data/tech/last_ratings.json`): prior rating surfaced to LLM as context; `signal_age_days` counted to spot stale setups — PM cuts allocation on 8+ day stale BUYs. **Valuation context** (yfinance trailing PE / forward PE / P/S) surfaced per symbol — LLM flags >40x forward PE or >15x P/S as stretched in `reasoning_chain.support_resistance`. Pre-filter thresholds normalized by ATR. Auto-chunks batch > 30 symbols. Cross-field validator: BUY stop must be below entry and target above entry, SELL the reverse. |
 | **News Intelligence** | 3-layer news analysis | Layer 1: Persistent macro narrative. Layer 2: State change detection. Layer 3: Per-symbol alerts with conviction. Daily storage in `data/news/` |
 | **Macro Analyst** | Regime assessment & sector guidance | 6-step CoT (vol / curve / monetary / inflation+labor+credit / cross-signal / sector). Inputs: VIX, 2Y/10Y yields, **DFF** (daily fed funds), **core & headline CPI**, **UNRATE**, **HY OAS**. Persists yesterday's regime → detects `regime_shift`. Cross-references News narrative via `alignment_with_news`. Emits bull/bear view-change triggers. |
 | **Earnings Analyst** | SEC 10-Q/10-K analysis | Revenue, margins, cash flow, strategic direction, competitive positioning, strategic vs operational risks, strategy consistency across filings. `investment_implications` carries a 5-step `reasoning_chain` (fundamental_quality / growth_trajectory / strategic_risks / management_execution / valuation_context) — sentiment call is derivable from the numbers, not a vibe check. |
@@ -345,6 +345,7 @@ quant-agent/
 │   │   ├── news_store.py          # Dated news storage + narrative persistence
 │   │   ├── earnings.py            # SEC EDGAR provider
 │   │   ├── technical.py           # TA indicators (MA, RSI, MACD, BB, ATR)
+│   │   ├── levels.py              # Deterministic support/resistance from full OHLCV history (pivots, clustering, recency-weighted ranking)
 │   │   ├── correlation.py         # 120d pairwise return correlations + cluster detection
 │   │   └── tech_store.py          # Per-symbol rating memory + signal-age computation
 │   ├── execution/
@@ -353,7 +354,7 @@ quant-agent/
 │   │   └── rules.py               # Hard risk engine (leverage-adjusted)
 │   └── storage/
 │       └── db.py                  # SQLite (trades, positions, logs, PnL, insights)
-├── tests/                         # 874 tests
+├── tests/                         # 2200 tests
 ├── data/
 │   ├── quant_agent.db             # SQLite audit trail
 │   ├── earnings/                  # Cached SEC filing analyses
@@ -364,7 +365,7 @@ quant-agent/
 ## Tests
 
 ```bash
-pytest tests/ -v    # 874 tests
+pytest tests/ -v    # 2200 tests
 ```
 
 ## Data Sources
