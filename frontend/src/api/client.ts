@@ -221,7 +221,21 @@ export interface AgentLogItem {
   decision_id: string | null;
   timestamp: string | null;
   input_summary: string | null;
+  /**
+   * The COMPLETE prompt this agent received — every memory layer, verbatim.
+   * Persisted since the field was added and served by /runs/{id} all along;
+   * it was simply missing from this interface, so no view could render it.
+   * For the Portfolio Manager this is the assembled briefing (the 7-evening
+   * narrative, recurring missed themes, repeat loss patterns, recent RM
+   * verdicts, its own last decisions, win-rate calibration) that the operator
+   * could previously only infer from its source material.
+   *
+   * Large: production PM prompts run 13KB-190KB. Render it collapsed.
+   */
+  input_message: string | null;
   output_summary: string | null;
+  /** The agent's complete raw response, same size caveat as input_message. */
+  full_response: string | null;
   requested_provider: string | null;
   requested_model: string | null;
   actual_provider: string | null;
