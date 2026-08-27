@@ -508,6 +508,10 @@ class TradingPipeline:
             min_risk_pct=_risk_setting("min_position_risk_pct", 0.5),
             max_portfolio_risk_pct=_risk_setting("max_portfolio_risk_pct", 25.0),
             max_cluster_risk_share_pct=_risk_setting("max_cluster_risk_share_pct", 40.0),
+            # Same setting the risk engine enforces (line ~326), so the
+            # constructor sizes under the ceiling rather than proposing orders
+            # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
+            max_position_pct=_risk_setting("max_position_pct", 20.0),
         ))
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.

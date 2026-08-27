@@ -70,6 +70,16 @@ class ConstructorConfig:
     # view of the book's risk and must not invent one.
     max_portfolio_risk_pct: float = 25.0
     max_cluster_risk_share_pct: float = 40.0
+    # The risk engine's single-name GROSS notional ceiling, mirrored here so
+    # the constructor sizes UNDER it instead of proposing an order the engine
+    # will hard-block. Risk-based sizing (§2.1) makes this binding in the
+    # ordinary case, not the exotic one: notional = risk_pct x entry/(entry -
+    # stop), so at this book's median 4.3% stop distance even 1.5% risk asks
+    # for 35% of equity in one name. `max_position_pct` is in
+    # HARD_BLOCK_RULES, so without this clamp those BUYs are dropped entirely
+    # and the session trades nothing. Keep in sync with
+    # `risk.max_position_pct` — pipeline.py wires them from the same setting.
+    max_position_pct: float = 20.0
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
     # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
@@ -535,6 +545,38 @@ class PortfolioConstructor:
                     f"not PM inconsistency]"
                 )
                 allocation_pct = alloc_cap_by_risk
+
+        # Single-name notional ceiling. The risk engine treats
+        # `max_position_pct` as a HARD BLOCK, not a trim, so an order above it
+        # is not "reduced" downstream — it is dropped and the trade never
+        # happens. Under risk-based sizing that is the common case rather than
+        # the edge: risk_pct x entry/(entry - stop) exceeds 20% of equity for
+        # any conviction above ~1% at this book's real stop distances. Clamp
+        # to what the engine will actually accept, and say so, rather than
+        # shipping an order built to be rejected.
+        #
+        # The resulting position therefore risks LESS than the PM allocated
+        # whenever this binds. That is the honest outcome of the two ceilings
+        # meeting, and the note carries it into the audit trail — silently
+        # delivering under-sized risk is exactly the kind of gap this pass
+        # exists to close.
+        gross_mul = _gross_multiplier(target.symbol)
+        name_headroom_pct = (self.cfg.max_position_pct - current_pct) / gross_mul
+        if allocation_pct > name_headroom_pct:
+            logger.info(
+                "Constructor: %s alloc capped by the single-name ceiling "
+                "(delta %.2f%% → %.2f%%; %.1f%% max position, %.2f%% already held)",
+                target.symbol, allocation_pct, max(0.0, name_headroom_pct),
+                self.cfg.max_position_pct, current_pct,
+            )
+            cap_note += (
+                f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
+                f"by the {self.cfg.max_position_pct:.0f}% single-name ceiling — "
+                f"the stop is close enough that the requested risk would need a "
+                f"larger position than one name may hold, so this trade carries "
+                f"less risk than allocated. Deterministic, not PM inconsistency]"
+            )
+            allocation_pct = name_headroom_pct
 
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:
