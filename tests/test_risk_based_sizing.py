@@ -343,3 +343,36 @@ def test_risk_envelope_reaches_the_constructor_from_config():
     assert defaults.min_position_risk_pct == 0.5
     assert defaults.max_portfolio_risk_pct == 25.0
     assert defaults.max_cluster_risk_share_pct == 40.0
+
+
+def test_the_api_reports_risk_sized_targets_rather_than_dropping_them():
+    """Spec §2.1 regression guard.
+
+    `CandidateFunnelItem.pm_target_weight_pct` reads
+    `TargetPosition.target_weight_pct`, which is None for every risk-sized
+    target. Reporting only that field silently dropped the size of every
+    target the PM sized the new way — the cockpit rendered the candidate with
+    no size at all. The two fields are not interchangeable and neither is
+    derivable from the other without the stop, so both are carried and the
+    view shows whichever the PM actually stated.
+    """
+    from src.api.schemas import CandidateFunnelItem
+
+    item = CandidateFunnelItem(
+        symbol="NVDA", direction="bullish", is_bearish_hedge=False,
+        reached_pm_target=True,
+        pm_target_weight_pct=None, pm_risk_allocation_pct=2.0,
+        reached_proposed_order=False, risk_modified=False, executed=False,
+    )
+    assert item.pm_risk_allocation_pct == 2.0
+    assert item.pm_target_weight_pct is None
+
+    # A legacy notional target still reports the way it always did.
+    legacy = CandidateFunnelItem(
+        symbol="NVDA", direction="bullish", is_bearish_hedge=False,
+        reached_pm_target=True,
+        pm_target_weight_pct=8.0, pm_risk_allocation_pct=None,
+        reached_proposed_order=False, risk_modified=False, executed=False,
+    )
+    assert legacy.pm_target_weight_pct == 8.0
+    assert legacy.pm_risk_allocation_pct is None

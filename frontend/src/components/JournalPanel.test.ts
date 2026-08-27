@@ -12,7 +12,7 @@ function candidate(overrides: Partial<CandidateFunnelItem>): CandidateFunnelItem
     direction: "bullish",
     is_bearish_hedge: false,
     reached_pm_target: false,
-    pm_target_weight_pct: null,
+    pm_target_weight_pct: null, pm_risk_allocation_pct: null,
     reached_proposed_order: false,
     proposed_action: null,
     risk_modified: false,

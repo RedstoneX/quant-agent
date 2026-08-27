@@ -454,6 +454,10 @@ export interface CandidateFunnelItem {
   is_bearish_hedge: boolean;
   reached_pm_target: boolean;
   pm_target_weight_pct: number | null;
+  /** Spec §2.1 risk-based sizing. Null for legacy notional targets, and
+   *  `pm_target_weight_pct` is null for risk-sized ones — show whichever
+   *  the PM actually stated rather than converting between them. */
+  pm_risk_allocation_pct: number | null;
   reached_proposed_order: boolean;
   proposed_action: string | null;
   risk_modified: boolean;

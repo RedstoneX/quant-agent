@@ -525,6 +525,13 @@ class CandidateFunnelItem(BaseModel):
     is_bearish_hedge: bool = False  # SH/SDS/PSQ/SQQQ — inverse ETF already in the universe
     reached_pm_target: bool = False
     pm_target_weight_pct: float | None = None
+    #: Spec §2.1. Conviction is stated as RISK — the share of equity the idea
+    #: may lose if its stop is hit — so a risk-sized target carries no notional
+    #: weight at all and `pm_target_weight_pct` is None for it. Reporting only
+    #: the weight silently dropped the size of every target the PM sized the
+    #: new way. The two are not interchangeable and neither is derivable from
+    #: the other without the stop, so both are carried.
+    pm_risk_allocation_pct: float | None = None
     reached_proposed_order: bool = False
     proposed_action: str | None = None       # BUY | SELL | HOLD | None
     risk_modified: bool = False

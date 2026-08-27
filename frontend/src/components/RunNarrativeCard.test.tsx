@@ -26,7 +26,7 @@ function runSummary(runId: string, prefix: string): RunSummary {
 function nvdaCandidate(overrides: Partial<CandidateFunnelItem> = {}): CandidateFunnelItem {
   return {
     symbol: "NVDA", direction: "bullish", is_bearish_hedge: false,
-    reached_pm_target: true, pm_target_weight_pct: 5,
+    reached_pm_target: true, pm_target_weight_pct: 5, pm_risk_allocation_pct: null,
     reached_proposed_order: true, proposed_action: "BUY",
     risk_modified: false, executed: false, trade_action: null,
     execution_skip_reason: null, execution_skip_detail: null,

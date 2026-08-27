@@ -62,7 +62,11 @@ interface Row {
 
 function expandedSummary(c: CandidateFunnelItem, funnel: RunFunnelResponse): string {
   const parts: string[] = [];
-  if (c.reached_pm_target && c.pm_target_weight_pct !== null) parts.push(`PM target ${fmtNum(c.pm_target_weight_pct)}%`);
+  // Conviction is stated as risk since spec §2.1; legacy runs stated a
+  // notional weight. Show whichever the PM actually emitted — labelled, since
+  // "5% risk" and "5% of the book" are very different sizes.
+  if (c.reached_pm_target && c.pm_risk_allocation_pct !== null) parts.push(`PM risk ${fmtNum(c.pm_risk_allocation_pct)}%`);
+  else if (c.reached_pm_target && c.pm_target_weight_pct !== null) parts.push(`PM target ${fmtNum(c.pm_target_weight_pct)}%`);
   if (c.reached_proposed_order && c.proposed_action) parts.push(`Proposed ${c.proposed_action}`);
   if (c.risk_modified) parts.push("Modified by AI Risk Manager");
   if (c.executed && c.trade_action) parts.push(`Executed ${c.trade_action}`);

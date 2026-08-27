@@ -35,7 +35,7 @@ function candidate(overrides: Partial<CandidateFunnelItem>): CandidateFunnelItem
     direction: "bullish",
     is_bearish_hedge: false,
     reached_pm_target: true,
-    pm_target_weight_pct: 5,
+    pm_target_weight_pct: 5, pm_risk_allocation_pct: null,
     reached_proposed_order: true,
     proposed_action: "BUY",
     risk_modified: false,
