@@ -4,13 +4,40 @@ This file states the result QAMC is trying to achieve. It is intentionally less 
 
 ## Outcome
 
-Build a small, understandable autonomous AI-assisted **Alpaca trading system** that can determine whether inexpensive modern AI models add measurable out-of-sample trading value beyond deterministic market signals.
+Build an autonomous AI-assisted **Alpaca trading system** whose purpose is to **make money**.
+
+QAMC is a systematic trading desk, not an experiment in model quality. Every design decision serves risk-adjusted return; nothing here is justified by being interesting.
+
+**The edge, stated so it can be tested:**
+
+> **Breadth x consistency x asymmetry.** Underwrite the full liquid universe daily across technicals, fundamentals, news, macro and insider flow — coverage no individual could sustain. Act identically every time, long or short. Risk a bounded fraction of equity per idea, cut losers at pre-defined structure, and let winners run. Be right slightly more often than not, and make materially more when right than is lost when wrong.
+
+This is a hypothesis until the measured win rate, average win/loss ratio and expectancy confirm it. Measuring it is a first-class requirement, not a reporting nicety.
+
+**Horizon:** swing — days to weeks.
+
+**Capital is to be deployed.** Idle cash is a cost, not a safety measure. Parking equity in T-bills is correct only when the desk genuinely finds nothing worth owning, and that condition must be stated and defensible rather than arrived at by default. Capital preservation is achieved by **bounding the size of each loss**, never by declining to participate.
+
+**Risk envelope (owner-ratified 2026-08-27):**
+
+| Parameter | Value |
+|---|---|
+| Max risk per trade | 5% of equity — a ceiling, not a target |
+| Min risk per trade | 0.5% — below this, do not trade |
+| Max total at risk | 25% of equity, correlation-adjusted |
+| Position count | Not fixed. Determined dynamically by the risk budget. |
+
+Correlated names consume a single bet's budget rather than several, so genuine diversification is rewarded and fake diversification is refused. Risk is released as trades prove themselves: once a position's trailing stop sits at or above entry it stops consuming budget, so the book expands when the desk is right and contracts when it is not.
+
+**Conviction is expressed as risk allocation, not as percent-of-portfolio notional.** The specialist team decides how much conviction an idea carries; deterministic code converts that into a share count using the analyst's stop. A wider stop yields a smaller position, never a tighter stop.
 
 QAMC is being validated first in Alpaca Paper. Paper is the current execution environment and safety authorization, not the product identity. If the system earns progression to live capital, the same decision, risk, execution, position-management, journaling and observability architecture should carry forward without a paper-to-live redesign.
 
 The system should run largely unattended while giving the operator a browser/iPad Dashboard that makes the trading process understandable rather than opaque.
 
-**Directional neutrality is a product requirement, not a promise of constant activity.** QAMC should not structurally depend on rising equity markets to have an opportunity set. Within the instruments and risk architecture actually supported by the project, it should be able to express bullish, bearish or neutral/cash views and evaluate missed opportunities in both directions. The currently supported bearish expression is through the approved inverse ETFs already in the universe; this statement does not authorize direct stock shorting, options, margin or a deterministic risk/execution redesign.
+**Directional neutrality is a product requirement, not a promise of constant activity.** QAMC should not structurally depend on rising equity markets to have an opportunity set. Within the instruments and risk architecture actually supported by the project, it should be able to express bullish, bearish or neutral/cash views and evaluate missed opportunities in both directions. **Direct short selling is authorized** (owner ratification, 2026-08-27) and is to be implemented against an Alpaca margin account, with borrow-availability checks and risk treatment appropriate to unbounded downside. Until it ships, bearish expression runs through the approved inverse ETFs already in the universe — which requires the Portfolio Manager to be told those instruments are bearish, something the codebase does not currently convey.
+
+Options and theta strategies remain outside the accepted architecture.
 
 The operator should be able to understand, without reading raw logs:
 - current account/equity/P&L/positions/orders/trades and system health;
