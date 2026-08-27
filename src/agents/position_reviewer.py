@@ -115,6 +115,11 @@ class PositionReviewerAgent(BaseAgent):
         total_value: float = kwargs["total_value"]
         session_type: str = kwargs.get("session_type", "midday")
         position_facts: dict = kwargs.get("position_facts") or {}  # symbol → deterministic-metrics dict
+        # Phase 3.2 / audit §1.5 — {symbol: MetricDeltas} versus this seat's
+        # own previous review. Without it the reviewer rebuilds its view from
+        # scratch twice a day and can call a position stalled while every
+        # number it recorded six hours earlier improved.
+        metric_deltas: dict = kwargs.get("metric_deltas") or {}
         morning_trades: list[dict] = kwargs.get("morning_trades", [])
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses") or []
@@ -225,8 +230,38 @@ class PositionReviewerAgent(BaseAgent):
                 metric_bits.append(f"R={pf['r_multiple']:+.2f}")
             if pf.get("risk_released"):
                 metric_bits.append("risk_released (stop at/above entry)")
+            # Phase 3.1 — pace is measured against the horizon the analyst
+            # pinned AT ENTRY, and is deliberately absent more often than it
+            # used to be. When it is absent, say WHY: a missing number that
+            # reads as "nothing to see" is how a healthy day-2 position got
+            # called stalled.
             if pf.get("pace") is not None:
                 metric_bits.append(f"pace={pf['pace']:.2f}×")
+            else:
+                _status = pf.get("pace_status")
+                if _status == "n/a_breakout":
+                    metric_bits.append(
+                        "pace=n/a (breakout setup — progress/pace disabled by "
+                        "design; manage by trailing, not by schedule)"
+                    )
+                elif _status == "too_early":
+                    _h = pf.get("expected_horizon_sessions")
+                    metric_bits.append(
+                        f"pace=not-yet-measurable (held {pf.get('days_held')}d of a "
+                        f"{_h}-session thesis; under 1/3 elapsed, so pace is "
+                        f"mathematically meaningless — this is NOT 'stalled')"
+                    )
+                elif _status == "unavailable_no_pinned_horizon":
+                    metric_bits.append(
+                        "pace=unavailable (no horizon pinned at entry — do not "
+                        "infer one; judge this position on thesis and structure)"
+                    )
+            if pf.get("expected_horizon_sessions") is not None:
+                metric_bits.append(
+                    f"horizon={pf['expected_horizon_sessions']}sessions (pinned at entry)"
+                )
+            if pf.get("setup_type"):
+                metric_bits.append(f"setup={pf['setup_type']}")
             if pf.get("distance_to_stop_pct") is not None:
                 metric_bits.append(f"to_stop={pf['distance_to_stop_pct']:.1f}%")
             if pf.get("distance_to_target_pct") is not None:
@@ -541,6 +576,48 @@ class PositionReviewerAgent(BaseAgent):
         session_label = _SESSION_LABEL.get(session_type, session_type)
         session_bias = _SESSION_DISPOSITION.get(session_type, "")
 
+        # Phase 3.2 — what THIS SEAT measured last time, and which way each
+        # number moved since. Rendered right above the reasoning instructions
+        # because it is the direct antidote to the failure it exists for:
+        # calling a position stalled when its own numbers improved.
+        if metric_deltas:
+            delta_lines = [
+                deltas.render() for _, deltas in sorted(metric_deltas.items())
+            ]
+            contradicted = sorted(
+                symbol for symbol, deltas in metric_deltas.items()
+                if deltas.net_improved
+            )
+            warn = ""
+            if contradicted:
+                warn = (
+                    "\n- ⚠️ IMPROVED SINCE YOUR LAST REVIEW: "
+                    + ", ".join(contradicted)
+                    + ". A SELL or REDUCE on one of these citing stalling, "
+                    "lack of progress, fading momentum or deterioration will "
+                    "be VETOED by deterministic code — you would be "
+                    "contradicting your own recorded numbers. Exit on NEW "
+                    "INFORMATION (news, earnings, regime shift, correlation "
+                    "breach, triggered thesis_invalid_if) is unaffected and "
+                    "remains entirely your call."
+                )
+            deltas_section = (
+                "### Your Own Previous Review (metric deltas)\n"
+                "These are the numbers YOU recorded last session and how they "
+                "have moved. Read them before judging whether anything is "
+                "actually deteriorating.\n"
+                + "\n".join(delta_lines)
+                + warn
+                + "\n"
+            )
+        else:
+            deltas_section = (
+                "### Your Own Previous Review\n"
+                "- No prior snapshot on record for these positions (first look, "
+                "or memory unavailable this run). Judge on thesis and structure; "
+                "do not assume a trajectory you have not measured.\n"
+            )
+
         return f"""## Position Review — {session_label}
 
 {margin_section}
@@ -572,6 +649,7 @@ class PositionReviewerAgent(BaseAgent):
 {grade_section}
 {calibration_section}
 {decisions_section}
+{deltas_section}
 {perf_section}
 
 Review each position. Fill the 6-step `reasoning_chain` before emitting
@@ -584,6 +662,7 @@ schema."""
                reserve_balance: float = 0.0,
                session_type: str = "midday",
                position_facts: dict | None = None,
+               metric_deltas: dict | None = None,
                morning_trades: list[dict] | None = None,
                news_intel: NewsIntelligenceReport | None = None,
                earnings_analyses: list[dict] | None = None,
@@ -606,6 +685,7 @@ schema."""
             total_value=total_value,
             session_type=session_type,
             position_facts=position_facts or {},
+            metric_deltas=metric_deltas or {},
             morning_trades=morning_trades or [],
             news_intel=news_intel,
             earnings_analyses=earnings_analyses or [],

@@ -309,6 +309,18 @@ class Database:
         _ensure_column("daily_pnl", "equity_close", "equity_close REAL")
         _ensure_column("trades", "stop_loss", "stop_loss REAL DEFAULT 0")
         _ensure_column("trades", "take_profit", "take_profit REAL DEFAULT 0")
+        # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
+        # `pace` used to be measured against `avg_hold_days` from the system's
+        # OWN rolling 30-day realized-trade calibration (~2.0 days), so selling
+        # quickly shrank the average, which made every remaining position look
+        # stalled, which drove more selling. A self-tightening noose. The
+        # horizon must come from the analyst's stated thesis at entry and never
+        # be recomputed. NULL on legacy rows — those positions get no pace
+        # figure at all rather than a fabricated one.
+        _ensure_column(
+            "trades", "expected_horizon_sessions", "expected_horizon_sessions INTEGER",
+        )
+        _ensure_column("trades", "setup_type", "setup_type TEXT")
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -542,7 +554,9 @@ class Database:
                      stop_loss: float = 0, take_profit: float = 0,
                      broker_order_id: str | None = None,
                      fill_status: str | None = None,
-                     decision_id: str | None = None) -> int:
+                     decision_id: str | None = None,
+                     expected_horizon_sessions: int | None = None,
+                     setup_type: str | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `fill_status` semantics:
@@ -557,10 +571,12 @@ class Database:
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, "
-                "stop_loss, take_profit, broker_order_id, fill_status, decision_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "stop_loss, take_profit, broker_order_id, fill_status, decision_id, "
+                "expected_horizon_sessions, setup_type) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
-                 stop_loss, take_profit, broker_order_id, fill_status, decision_id),
+                 stop_loss, take_profit, broker_order_id, fill_status, decision_id,
+                 expected_horizon_sessions, setup_type),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -1065,6 +1081,60 @@ class Database:
             self.conn.commit()
             return cur.lastrowid or 0
         return self._locked_write(_do, label="insert_specialist_evidence")
+
+    # --- Position-reviewer memory (spec Phase 3.2 / audit §1.5) -----------
+    #
+    # `_build_own_recent_decisions` replays past ACTIONS and explicitly drops
+    # HOLDs, so the reviewer rebuilt its view of every position from scratch
+    # twice a day with no idea what it had measured six hours earlier. On
+    # 2026-08-26 it sold EPD for "not progressing" when progress had risen
+    # 16% -> 20% and distance-to-stop had improved since its own midday read.
+    # These two methods give the seat a memory of its own numbers.
+
+    POSITION_REVIEW_METRIC_KIND = "review_metrics"
+
+    def save_position_review_metrics(
+        self, *, run_id: str, symbol: str, metrics_json: str,
+    ) -> int:
+        """Snapshot one position's deterministic metrics for the next review."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="position_reviewer",
+            kind=self.POSITION_REVIEW_METRIC_KIND, scope="symbol",
+            symbol=symbol.upper(), evidence_json=metrics_json,
+        )
+
+    def get_prior_position_review_metrics(
+        self, symbols, *, exclude_run_id: str | None = None,
+    ) -> dict[str, dict]:
+        """Most recent prior metric snapshot per symbol, as {symbol: row}.
+
+        `exclude_run_id` drops the current run's own rows so a re-entrant or
+        retried review compares against the LAST session, never against the
+        snapshot it just wrote. Each returned row carries `evidence_json` and
+        `timestamp`; parsing is the caller's job so a single malformed blob
+        cannot take down the read.
+        """
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp, run_id FROM specialist_evidence "
+            f"WHERE agent_name='position_reviewer' AND kind=? AND symbol IN ({placeholders})"
+        )
+        params: list = [self.POSITION_REVIEW_METRIC_KIND, *wanted]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        latest: dict[str, dict] = {}
+        for row in rows:
+            row = dict(row)
+            # Rows arrive newest-first, so the first sighting of a symbol wins.
+            latest.setdefault(row["symbol"], row)
+        return latest
 
     def record_intraday_evaluation(
         self, *, symbol: str, run_id: str, status: str, detail: str = "",

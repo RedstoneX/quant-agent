@@ -1934,6 +1934,19 @@ class ExecutionStage:
                 # (or a periodic cleanup) can reconcile against the
                 # broker's order list.
                 executed_price = limit_price if limit_price is not None else sizing_price
+                # Phase 3.1 — pin the analyst's stated horizon and setup type to
+                # the trade row at entry. Everything downstream that asks "is
+                # this position on schedule?" must measure against THIS number,
+                # not against the system's own rolling average hold time, which
+                # shrinks every time the system sells early and thereby makes
+                # the next position look stalled. None when the analysis is
+                # missing (resume lanes, sweep buys): the reviewer then gets no
+                # pace figure at all, which is correct — it never gets a
+                # fabricated one.
+                entry_analysis = next(
+                    (a for a in (ctx.analyses or []) if a.symbol == decision.symbol),
+                    None,
+                )
                 pending_row_id = pipeline.db.insert_trade(
                     symbol=decision.symbol, action="BUY", qty=qty,
                     price=executed_price, reasoning=decision.reasoning, run_id=run_id,
@@ -1941,6 +1954,10 @@ class ExecutionStage:
                     broker_order_id=None,
                     fill_status="pending_submit",
                     decision_id=decision_id,
+                    expected_horizon_sessions=getattr(
+                        entry_analysis, "expected_horizon_sessions", None,
+                    ),
+                    setup_type=getattr(entry_analysis, "setup_type", None),
                 )
 
                 try:

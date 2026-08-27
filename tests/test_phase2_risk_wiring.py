@@ -373,7 +373,7 @@ def test_position_facts_carry_the_r_multiple_against_the_entry_stop():
 
     facts = pipeline._build_position_facts(
         positions=[_position("NVDA", qty=10, avg_entry=100.0, current_price=120.0)],
-        morning_trades=[], total_value=100_000.0, avg_hold_days=5.0,
+        morning_trades=[], total_value=100_000.0,
     )
     # Risked $10/share at entry, now +$20 → 2R, NOT (120-100)/(100-105).
     assert facts["NVDA"]["r_multiple"] == 2.0
@@ -394,7 +394,7 @@ def test_position_facts_omit_r_when_no_risk_was_defined_at_entry():
 
     facts = pipeline._build_position_facts(
         positions=[_position("NVDA", qty=10, avg_entry=100.0, current_price=120.0)],
-        morning_trades=[], total_value=100_000.0, avg_hold_days=5.0,
+        morning_trades=[], total_value=100_000.0,
     )
     assert facts["NVDA"]["r_multiple"] is None
     assert facts["NVDA"]["initial_stop"] is None
