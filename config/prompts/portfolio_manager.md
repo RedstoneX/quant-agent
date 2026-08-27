@@ -307,14 +307,29 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 **Base RISK allocation by conviction** (from Step 4). These are shares
 of equity the idea may LOSE if stopped, not weights it may occupy:
 
-- High conviction (strong confirmation from at least 3 available sources): 2.0-4.0%
-- Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
+- High conviction (strong confirmation from at least 3 available sources): 1.5-3.0%
+- Moderate conviction (partial confirmation or one named conflict): 1.0-2.0%
 - Low conviction: 0.5-1.0% or skip
 - **Hard cap: never exceed 5% risk per position.** The resulting
-  notional weight is separately capped at 20% by the risk engine; if the
-  stop is tight enough that your risk allocation implies more than that,
-  the engine trims the size and your risk comes in under what you asked
-  for. That is expected, not an error.
+  notional weight is separately capped at 20% single-name.
+  `max_position_pct` is a HARD BLOCK in the risk engine, not a trim —
+  so `PortfolioConstructor` clamps to that 20% ceiling itself before an
+  order ever reaches the engine, and your risk comes in under what you
+  asked for rather than the trade being dropped. That is expected, not
+  an error.
+
+  These bands assume the headroom that ceiling actually leaves
+  (2026-08-27, measured). Entry stops are now widened to clear ordinary
+  volatility (`risk.min_stop_atr_multiple`; see `tech_analyst.md`)
+  instead of sitting inside it, and `notional = risk_pct x entry /
+  (entry - stop)` means the 20% clamp binds at `risk_pct = 20% x
+  stop_distance`. A quiet name's stop widens to roughly 5-9% below
+  entry, which puts the clamp at ~1.0-1.8% risk — near the top of the
+  moderate band. A volatile name's ATR is wider to begin with, so the
+  same rule can put its stop 20%+ below entry, leaving room for high
+  conviction to reach toward the 5% cap. Size by conviction as always;
+  do not shade the number to guess at a name's volatility, the
+  constructor already accounts for it.
 
 **Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 40% sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
@@ -392,7 +407,7 @@ mornings with the same inputs produce the same number:
 
 ```
 base       = conviction_to_base(alignment)
-             # high=3.0 (mid of 2.0-4.0), moderate=1.75 (mid of 1.0-2.5),
+             # high=2.25 (mid of 1.5-3.0), moderate=1.5 (mid of 1.0-2.0),
              # low=0.75 (mid of 0.5-1.0)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per Step 1

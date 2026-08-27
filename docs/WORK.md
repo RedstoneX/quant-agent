@@ -98,18 +98,28 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
-**Live production state (2026-08-27, 11:00 ET):** deployed at `18dd4bc` on the
-paper account, rollback `9f77b03e`. Phase 3 (exit rework) and the execution
-limit fix are LIVE. Seven positions open, all with broker-resident stops.
-`paper: true`. Daily LLM budget raised to $2.75.
+**Live production state (2026-08-27, deployed this session):** deployed at
+`e6ada88` on the paper account. (An earlier version of this note claimed
+`18dd4bc` — that SHA was never actually on the box; corrected here.) Phase 3
+(exit rework) and the execution limit fix are LIVE. Seven positions open, all
+with broker-resident stops. `paper: true`. Daily LLM budget raised to $2.75.
 
-**Not deployed:** everything merged after `18dd4bc`, plus the whole of
+**Not deployed:** everything merged after `e6ada88`, plus the whole of
 **PR #113** (`feat/pm-flex-routing`), which is open, CI-green and unmerged.
 None of it is on production. It carries, in review order:
 
 - `75c0233` Phase 2b risk-based sizing + the correlation-aware risk budget
   gate — **the highest-consequence change here; review first.** It decides how
-  much money each trade may lose.
+  much money each trade may lose. `b712f4c` and `3dff940` land on top of it,
+  same branch: the constructor now clamps to the risk engine's 20%
+  single-name ceiling instead of proposing orders it hard-blocks, and entry
+  stops sitting inside ordinary volatility get pushed out to a
+  regime-and-setup-scaled ATR floor (`risk.min_stop_atr_multiple`) — a
+  widened stop that drops reward:risk below 1.5 rejects the trade outright.
+  Measured against the real book: MSFT's stop went 2.4% → 7.0%, VLO 4.5% →
+  9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% conviction now produces
+  7.1/14.2/20.0% positions instead of clamping all three to 20%. None of
+  this is deployed — PR #113 is still open.
 - `fb88e08` the intraday PM un-blindfolding.
 - `16f6535` the PM's OpenRouter `openai/flex` endpoint routing.
 - `6b7af86` the Mission Control `input_message` surface, `cdb387b` the
@@ -302,6 +312,35 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   single-name cap applies. **See the caution above** — a separate,
   uncommitted attempt at this same phase still sits in the `phase2b`
   worktree and needs reconciling.
+
+  **Two follow-on fixes landed on top, same branch, both PR #113, neither
+  deployed.** `b712f4c`: `max_position_pct` (20%) is a HARD BLOCK rule in the
+  risk engine, not a trim, and nothing connected it to §2.1's sizing — the
+  constructor was free to build orders the engine existed to refuse. Measured
+  against the book: the 17 most recent BUYs carried stops a median 4.3% below
+  entry, which admits at most 0.86% risk under the 20% ceiling, so every
+  target from moderate conviction upward was silently hard-blocked (empty
+  book, not an error). The constructor now clamps to that same ceiling itself
+  and states in the order's reasoning that the position therefore risks LESS
+  than the PM allocated. `3dff940` then fixed the reason the stops were that
+  tight in the first place: they sat a median 1.7 ATRs from entry — barely
+  past one ordinary day's range, the same noise band Phase 3's trailing-stop
+  work established at 1.25 ATR. A stop that tight was both firing on ordinary
+  volatility (Phase 3's failure mode) and forcing the 20% clamp to bind at
+  every conviction level (this failure mode) — one root cause, two symptoms.
+  Entry stops placed inside `risk.min_stop_atr_multiple` ATRs (base 3.0,
+  scaled 0.85x/1.15x by breakout/range setup and 0.95x/1.10x/1.20x by
+  risk-on/transitional/risk-off regime) are now pushed out to that floor;
+  structure still places the stop, this only widens one placed inside the
+  noise, never tightens a wide one. A widened stop that drops reward:risk
+  below `risk.min_reward_risk_after_widening` (1.5) rejects the trade rather
+  than taking it at a payoff it never earned. Measured effect: MSFT's stop
+  went 2.4% → 7.0%, VLO 4.5% → 9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% risk
+  now produces 7.1/14.2/20.0% positions instead of clamping all three to 20%
+  — conviction changes size again. `config/prompts/portfolio_manager.md`'s
+  conviction bands and `tech_analyst.md`'s stop guidance were recalibrated to
+  match (2026-08-27 doc-sync pass). 2487 tests pass. **None of this is
+  deployed** — PR #113 is open, CI-green, unmerged.
 - **`intra_check` un-blindfolded — done.** `fb88e08`, same branch. It cost
   $0.222/run vs morning's $0.221 while the PM received a technical-only
   evidence registry. The morning's macro/news are now carried forward

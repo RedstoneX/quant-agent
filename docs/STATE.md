@@ -147,6 +147,21 @@ This file records what is accepted and true **now**. Git history preserves imple
   `src/data/company.py`) that predates and duplicates `75c0233`. It was not
   touched by this documentation pass; reconcile or discard it before doing
   further Phase 2b work so two implementations don't collide.
+  **Two follow-on fixes landed the same day, same branch, also not merged or
+  deployed:** `b712f4c` clamps the constructor to the 20% single-name ceiling
+  the risk engine actually enforces (`max_position_pct` is a HARD BLOCK, not
+  a trim — without this, the sizing above computed orders the engine would
+  silently drop). `3dff940` widens an entry stop to a minimum ATR distance
+  (`risk.min_stop_atr_multiple`, base 3.0, scaled by setup type and macro
+  regime) when the analyst placed it inside ordinary volatility, and rejects
+  the trade if the widened stop drops reward:risk below
+  `risk.min_reward_risk_after_widening` (1.5) — measured, the book's stops
+  were sitting a median 1.7 ATRs from entry, which both fired exits inside
+  noise and forced the 20% clamp above to bind at nearly every conviction
+  level. `config/prompts/portfolio_manager.md`'s conviction bands and
+  `config/prompts/tech_analyst.md`'s stop guidance were recalibrated to match.
+  2487 tests pass. Production still runs the pre-clamp, pre-widening
+  constructor from `058273f1` / `e6ada88`.
 - **The Portfolio Manager now routes through OpenRouter's `openai/flex`
   endpoint** (`16f6535`, same branch) — the identical `openai/gpt-5.5-20260423`
   weights at half price ($2.50/$15 vs $5/$30 per M tokens), an endpoint choice
