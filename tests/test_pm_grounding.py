@@ -18,6 +18,9 @@ def _analysis(symbol: str, rating: str = "buy") -> TechAnalysisResult:
     return TechAnalysisResult(
         symbol=symbol, rating=rating, conviction="medium", entry_price=100,
         stop_loss=95 if buy else 105, reference_target=112 if buy else 88,
+        support_levels=[95] if buy else [88],
+        resistance_levels=[112] if buy else [105],
+        setup_type="range", expected_horizon_sessions=10,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=TechReasoningChain(
             trend="daily trend", momentum="momentum", volatility="ATR",

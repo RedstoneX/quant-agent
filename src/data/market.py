@@ -174,6 +174,58 @@ class MarketDataProvider:
             return {}
         return {"date": ex_date, "amount": amount}
 
+    def get_next_earnings_date(self, symbol: str) -> int | None:
+        """Sessions until the next scheduled earnings report, or None.
+
+        Nothing in the system knew this. `src/data/earnings.py` discovers
+        filings that have ALREADY been submitted to EDGAR — it is retrospective.
+        For a desk holding positions for days to weeks, an unnoticed earnings
+        date is a binary event the thesis never chose to take, and the only
+        place "days to earnings" appeared previously was as illustrative text
+        inside the Risk Manager prompt, which means any figure the model quoted
+        was invented.
+
+        Returns a trading-session estimate (calendar days x 5/7), not a precise
+        count, because the exact market calendar is not needed to answer "is a
+        report imminent". None whenever the date is unknown or in the past —
+        callers must treat None as "unknown", never as "no earnings soon".
+        """
+        try:
+            ticker = yf.Ticker(symbol)
+            candidates: list = []
+
+            calendar = getattr(ticker, "calendar", None)
+            if isinstance(calendar, dict):
+                value = calendar.get("Earnings Date")
+                if isinstance(value, list):
+                    candidates.extend(value)
+                elif value is not None:
+                    candidates.append(value)
+
+            if not candidates:
+                frame = ticker.earnings_dates
+                if frame is not None and not frame.empty:
+                    candidates.extend(list(frame.index))
+
+            today = et_today()
+            upcoming: list[int] = []
+            for candidate in candidates:
+                as_date = getattr(candidate, "date", None)
+                resolved = as_date() if callable(as_date) else candidate
+                if not hasattr(resolved, "year"):
+                    continue
+                delta = (resolved - today).days
+                if delta >= 0:
+                    upcoming.append(delta)
+
+            if not upcoming:
+                return None
+            # Calendar days -> trading sessions, floored at same-day.
+            return max(0, int(min(upcoming) * 5 / 7))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("earnings date unavailable for %s: %s", symbol, exc)
+            return None
+
     def get_valuation_metrics(self, symbol: str) -> dict:
         """Fetch trailing PE, forward PE, and price-to-sales from yfinance.
 

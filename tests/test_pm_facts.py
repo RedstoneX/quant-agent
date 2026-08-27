@@ -21,7 +21,10 @@ def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
 def _ta(symbol: str, age: int | None = None) -> TechAnalysisResult:
     t = TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=100,
-        stop_loss=95, reference_target=110, reasoning="test",
+        stop_loss=95, reference_target=110,
+        support_levels=[95], resistance_levels=[110],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="test",
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x",
             volume="x", support_resistance="x",

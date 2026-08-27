@@ -271,6 +271,10 @@ def _tech_row(symbol):
         "entry_price": 507.0,
         "reference_target": 530.0,
         "stop_loss": 494.0,
+        "support_levels": [494.0],
+        "resistance_levels": [530.0],
+        "setup_type": "range",
+        "expected_horizon_sessions": 10,
         "reasoning_chain": {
             "trend": "up", "momentum": "ok", "volatility": "calm",
             "volume": "confirming", "support_resistance": "MA50",

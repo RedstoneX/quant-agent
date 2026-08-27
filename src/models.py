@@ -96,6 +96,32 @@ class TechAnalysisResult(BaseModel):
     entry_price: float | None = None
     reference_target: float | None = None  # renamed from exit_price — it's a soft reference, not a hard TP
     stop_loss: float | None = None
+    # --- Structural levels (2026-08-27) -------------------------------------
+    # The prior design let the analyst omit levels and had
+    # `PortfolioConstructor` invent replacements: `entry - 2*ATR` for the stop
+    # and `entry * (1 + 2*stop_gap)` for the target. Every downstream metric
+    # — thesis_progress, pace, R/R, TARGET_BREACH — was then measured against
+    # a number nobody derived from the chart. These fields make the levels
+    # first-class so the invented fallbacks can be deleted.
+    #
+    # Prices only; no indicator values. Empty lists are legal for `neutral`
+    # (no trade is being proposed) but not for an actionable rating.
+    support_levels: list[float] = Field(default_factory=list)
+    resistance_levels: list[float] = Field(default_factory=list)
+    # How the position must be MANAGED, decided at entry from the chart:
+    #   "range"    — clear structure on both sides. Fixed target is meaningful;
+    #                thesis_progress and pace are valid measurements.
+    #   "breakout" — no overhead structure (highs, clean break). The target is
+    #                a MEASURED MOVE reference, not a level anyone is defending;
+    #                the position is managed by trailing and progress/pace must
+    #                be disabled downstream (see QAMC_REMEDIATION_SPEC Phase 3).
+    setup_type: Literal["range", "breakout"] | None = None
+    # The analyst's own estimate of how many trading sessions this thesis needs
+    # to resolve. Pinned at entry and never recomputed. This replaces the
+    # self-referential `avg_hold_days` calibration that made `pace` a feedback
+    # loop: selling quickly shrank the average, which made every position look
+    # stalled, which drove more selling.
+    expected_horizon_sessions: int | None = None
     reasoning_chain: TechReasoningChain
     reasoning: str  # 1-sentence summary; reasoning_chain carries the full analysis
     # Soft exit signal separate from the hard stop_loss. Example:
@@ -164,6 +190,8 @@ class TechAnalysisResult(BaseModel):
             self.__dict__["entry_price"] = None
             self.__dict__["reference_target"] = None
             self.__dict__["stop_loss"] = None
+            self.__dict__["setup_type"] = None
+            self.__dict__["expected_horizon_sessions"] = None
             return self
 
         if self.entry_price is None or self.entry_price <= 0:
@@ -184,6 +212,43 @@ class TechAnalysisResult(BaseModel):
                 raise ValueError(
                     f"{self.symbol}: SELL stop_loss {self.stop_loss} must be above entry {self.entry_price}"
                 )
+
+        # --- Structural requirements for actionable ratings (2026-08-27) ----
+        # No levels, no trade. Previously the analyst could omit all of this and
+        # PortfolioConstructor would invent a stop and a target; every downstream
+        # measurement was then taken against numbers derived from nothing.
+        if self.reference_target is None or self.reference_target <= 0:
+            raise ValueError(
+                f"{self.symbol}: rating={self.rating} requires reference_target > 0 "
+                f"(derive it from structure, or from a measured move on a breakout)"
+            )
+        if self.rating in ("buy", "strong_buy"):
+            if self.reference_target <= self.entry_price:
+                raise ValueError(
+                    f"{self.symbol}: BUY reference_target {self.reference_target} "
+                    f"must be above entry {self.entry_price}"
+                )
+        else:
+            if self.reference_target >= self.entry_price:
+                raise ValueError(
+                    f"{self.symbol}: SELL reference_target {self.reference_target} "
+                    f"must be below entry {self.entry_price}"
+                )
+        if self.setup_type is None:
+            raise ValueError(
+                f"{self.symbol}: rating={self.rating} requires setup_type "
+                f"('range' or 'breakout') — it determines how the exit is managed"
+            )
+        if self.expected_horizon_sessions is None or self.expected_horizon_sessions <= 0:
+            raise ValueError(
+                f"{self.symbol}: rating={self.rating} requires "
+                f"expected_horizon_sessions > 0 (pinned at entry; pace is measured against it)"
+            )
+        if not self.support_levels and not self.resistance_levels:
+            raise ValueError(
+                f"{self.symbol}: rating={self.rating} requires at least one "
+                f"structural level (support_levels and/or resistance_levels)"
+            )
         return self
 
 

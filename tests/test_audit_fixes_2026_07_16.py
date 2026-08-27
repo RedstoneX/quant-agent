@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.config import RiskConfig
-from src.models import Position, TargetPosition, TradeDecision
+from src.models import (
+    Position, TargetPosition, TechAnalysisResult, TechReasoningChain, TradeDecision,
+)
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.rules import RiskRuleEngine
 from src.pipeline import TradingPipeline
@@ -86,13 +88,37 @@ def _target(symbol, weight):
                           conviction="high", thesis="t", thesis_invalid_if="")
 
 
+def _tech_rc() -> TechReasoningChain:
+    return TechReasoningChain(
+        trend="x", momentum="x", volatility="x", volume="x",
+        support_resistance="x",
+    )
+
+
+def _analysis(symbol, entry=100.0, stop=99.0, target=110.0) -> TechAnalysisResult:
+    """A structurally-valid BUY analysis, so `construct_orders` has a real
+    stop and target to size against — since 2026-08-27 the constructor no
+    longer synthesizes either, so `analyses={}` alone would reject the BUY
+    before the gross-weight conversion under test ever runs. Stop kept tight
+    (1/share risk) so the 0.5% risk budget cap doesn't bind and mask the
+    weight-conversion assertion under test."""
+    return TechAnalysisResult(
+        symbol=symbol, rating="buy", entry_price=entry,
+        stop_loss=stop, reference_target=target,
+        support_levels=[stop], resistance_levels=[target],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="t", reasoning_chain=_tech_rc(),
+    )
+
+
 def test_leveraged_etf_target_is_converted_to_raw_notional():
     """PM targets 6% GROSS on SQQQ (3x). Pre-fix the constructor emitted
     alloc=6.0, which ExecutionStage spends as $6k raw = 18% gross — 3x the
     intended exposure."""
     c = PortfolioConstructor()
     decisions = c.construct_orders(
-        targets=[_target("SQQQ", 6.0)], positions=[], analyses={},
+        targets=[_target("SQQQ", 6.0)], positions=[],
+        analyses=[_analysis("SQQQ")],
         total_value=100_000.0, price_map={"SQQQ": 100.0},
     )
     buys = [d for d in decisions if d.action == "BUY"]
@@ -103,7 +129,8 @@ def test_leveraged_etf_target_is_converted_to_raw_notional():
 def test_unleveraged_target_is_unchanged():
     c = PortfolioConstructor()
     decisions = c.construct_orders(
-        targets=[_target("AAPL", 6.0)], positions=[], analyses={},
+        targets=[_target("AAPL", 6.0)], positions=[],
+        analyses=[_analysis("AAPL")],
         total_value=100_000.0, price_map={"AAPL": 100.0},
     )
     buys = [d for d in decisions if d.action == "BUY"]
