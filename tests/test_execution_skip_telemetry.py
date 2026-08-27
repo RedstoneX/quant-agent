@@ -10,6 +10,7 @@ and persists an `execution_skip` evidence row; a morning whose approved
 BUYs ALL died on the funding race reports terminal `buys_unfunded` without
 automatically purchasing another full decision chain.
 """
+import pytest
 from unittest.mock import MagicMock
 
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
@@ -165,7 +166,10 @@ def test_buy_limit_crosses_offer_with_bounded_price_protection():
 
     limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
     assert limit_price > 100.10          # marketable through the displayed ask
-    assert limit_price <= 100.25         # never beyond the 25bp protection cap
+    # Cap raised 25bp -> 40bp on 2026-08-27 (see MAX_ENTRY_SLIPPAGE_BPS). The
+    # property under test is unchanged: the limit crosses the offer and stays
+    # bounded. Only the bound moved.
+    assert limit_price <= 100.40
 
 
 def test_funding_is_sized_only_for_preflight_survivors():
@@ -218,3 +222,83 @@ def test_buys_unfunded_does_not_repeat_paid_stack_in_main():
     import main as main_mod
     assert "buys_unfunded" not in main_mod._RETRYABLE_RESULT_STATUSES
     assert "agent_failure" not in main_mod._RETRYABLE_RESULT_STATUSES
+
+
+# ---------------------------------------------------------------------------
+# The VLO no-fill, 2026-08-27 — an order that could never have filled
+# ---------------------------------------------------------------------------
+
+def test_the_limit_is_a_ceiling_not_a_haggled_price():
+    """The VLO shape: reference $349.99, IEX ask $350.96 (28bp above it).
+
+    The limit must be set AT the slippage ceiling, not shaved down toward the
+    displayed offer. Alpaca fills a buy limit at the NBBO or better, so a
+    higher limit costs nothing and a lower one just fails to fill — which is
+    exactly what happened to VLO: `min(ask*1.0005, 25bp cap)` produced $350.86,
+    ten cents under the market it was trying to cross.
+    """
+    pipeline = _pipeline(live_price=349.99)
+    pipeline.config.execution.max_entry_slippage_bps = 40.0
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 350.86, "ask_price": 350.96,
+    }
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    ctx = _ctx([TradeDecision(
+        action="BUY", symbol="VLO", allocation_pct=9,
+        entry_price=349.99, stop_loss=335.0, take_profit=380.0,
+        reasoning="strong_buy",
+    )])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    # The ceiling, not the offer: 349.99 * 1.0040.
+    assert limit_price == pytest.approx(351.39, abs=0.01)
+    assert limit_price > 350.96, "must clear the displayed offer to be fillable"
+
+
+def test_even_a_tight_ceiling_is_not_shaved_below_the_offer():
+    """25bp still clears this offer once the limit stops being haggled:
+    349.99 * 1.0025 = $350.86... which is BELOW the $350.96 ask, so the idea
+    is genuinely priced out of its own ceiling and must be skipped, not
+    submitted."""
+    pipeline = _pipeline(live_price=349.99)
+    pipeline.config.execution.max_entry_slippage_bps = 25.0
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 350.86, "ask_price": 350.96,
+    }
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    ctx = _ctx([TradeDecision(
+        action="BUY", symbol="VLO", allocation_pct=9,
+        entry_price=349.99, stop_loss=335.0, take_profit=380.0,
+        reasoning="strong_buy",
+    )])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    # Ceiling $350.86 is under the offer but within the 2% IEX-noise tolerance,
+    # so it is still submitted — it may fill against a better NBBO than IEX
+    # shows. What must NOT happen is a limit shaved below its own ceiling.
+    if pipeline.broker.submit_order.called:
+        limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+        assert limit_price == pytest.approx(350.86, abs=0.01)
+
+
+def test_price_protection_still_refuses_a_genuinely_abnormal_book():
+    """The cap is not a formality. A 3% gap must still be refused, loudly."""
+    pipeline = _pipeline(live_price=100.0)
+    pipeline.config.execution.max_entry_slippage_bps = 40.0
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 102.9, "ask_price": 103.0,     # 300bp above reference
+    }
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    ctx = _ctx([TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=100.0, stop_loss=95.0, take_profit=112.0,
+        reasoning="clean",
+    )])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    pipeline.broker.submit_order.assert_not_called()
+    assert ctx.execution_skips[0]["reason"] == "slippage_gated"

@@ -66,6 +66,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Ceiling on how far above the verified reference price an entry limit may
+#: be placed, in basis points. Raised from a hardcoded 25 to a configurable 40
+#: on 2026-08-27 after VLO proved 25bp is tighter than a normal market open:
+#: the ask was 28bp above the reference within seconds of 09:30, so the cap
+#: produced an unfillable limit and no trade. 40bp still refuses to pay
+#: through a genuinely abnormal book — a gap, a halt reopen, a fat spread —
+#: while tolerating ordinary opening drift. Override in `settings.yaml` under
+#: `execution.max_entry_slippage_bps`.
+MAX_ENTRY_SLIPPAGE_BPS = 40.0
+
 
 def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
                        scope: str, evidence_json: str, symbol: str | None = None,
@@ -1788,15 +1798,99 @@ class ExecutionStage:
                     quote = None
                 ask = quote.get("ask_price") if isinstance(quote, dict) else None
                 if isinstance(ask, (int, float)) and ask > 0:
-                    offer_limit = min(ask * 1.0005, market_price * 1.0025)
-                    offer_limit = round(offer_limit, 2 if offer_limit >= 1 else 4)
+                    # The protection cap and the offer are two different
+                    # numbers, and when they disagree the ORDER CANNOT FILL.
+                    #
+                    # 2026-08-27 VLO: reference $349.99, ask $350.96 (28bp
+                    # above it), cap 25bp -> limit $350.86. That limit sits
+                    # TEN CENTS BELOW the offer. A buy limit below the ask
+                    # does not fill, by definition — Alpaca fills a limit at
+                    # the limit or better, and there was no better. The order
+                    # sat unfilled for 31s, the entry-protection sweep
+                    # cancelled it, and the session still reported
+                    # `status: executed`. The trade was never possible; the
+                    # system just never said so.
+                    #
+                    # Price protection itself is correct and stays: crossing
+                    # an abnormal book at the open is how you pay 3% for a
+                    # 0.3% idea. What changes is that an unfillable order is
+                    # now a DECISION with a reason, not a doomed submission.
+                    # isinstance-guarded: ~58 tests build the pipeline with a
+                    # MagicMock config, whose auto-attributes are truthy and
+                    # would blow up float(). Same convention as `_sweeper`.
+                    _cfg = getattr(
+                        getattr(pipeline.config, "execution", None),
+                        "max_entry_slippage_bps", None,
+                    )
+                    slippage_bps = (
+                        float(_cfg)
+                        if isinstance(_cfg, (int, float)) and _cfg > 0
+                        else MAX_ENTRY_SLIPPAGE_BPS
+                    )
+                    # A LIMIT IS A CEILING, NOT A PRICE.
+                    #
+                    # This is the correction that matters. Alpaca fills a buy
+                    # limit at the NBBO or better — submitting $50.05 when the
+                    # offer is $50.02 does not pay $50.05, it pays $50.02. So
+                    # shaving the limit down toward the offer buys NOTHING and
+                    # costs fills. The old `min(ask * 1.0005, cap)` treated the
+                    # limit as if it were the execution price and haggled over
+                    # it, which is how VLO ended up bid ten cents under a
+                    # market it was trying to cross.
+                    #
+                    # Worse, the `ask` being haggled against is not the ask we
+                    # trade at. This account is entitled to IEX, not SIP
+                    # (verified 2026-08-27: a SIP quote request returns
+                    # "subscription does not permit querying recent SIP
+                    # data"). IEX is a single venue carrying a small share of
+                    # volume, and its top of book is routinely stale or absurd
+                    # — CCJ quoted bid $92.96 / ask $107.10, a 15% spread, in
+                    # the middle of a normal session. Alpaca's matching engine
+                    # uses the consolidated NBBO. Pricing an order against IEX
+                    # while filling against NBBO is the root cause.
+                    #
+                    # So: set the limit AT the ceiling we are willing to pay,
+                    # and let the match happen at the real NBBO underneath it.
+                    # Price protection is unchanged — `slippage_bps` still
+                    # bounds the worst possible fill — it just stops being
+                    # self-defeating.
+                    cap = market_price * (1 + slippage_bps / 10_000.0)
+                    offer_limit = round(cap, 2 if cap >= 1 else 4)
+                    ask_premium_bps = (ask - market_price) / market_price * 10_000.0
+
+                    # The IEX ask is too unreliable to gate on directly, but a
+                    # far-through reading is still information: either the
+                    # market has genuinely run, or the venue is quoting
+                    # nonsense. Either way this is not a book to cross blind.
+                    # The multiple is deliberately loose because the input is.
+                    if ask > cap * 1.02:
+                        logger.warning(
+                            "BUY %s NOT SUBMITTED — the displayed offer has run "
+                            "beyond the slippage ceiling. Ask $%.4f is %.1fbp "
+                            "above the $%.4f reference; the %.0fbp ceiling is "
+                            "$%.4f. (Quote is IEX, not NBBO, so it may also "
+                            "simply be a stale venue print — either way, not a "
+                            "book to cross blind.)",
+                            decision.symbol, ask, ask_premium_bps,
+                            market_price, slippage_bps, cap,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "slippage_gated",
+                            f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
+                            f"above reference ${market_price:.4f}, beyond the "
+                            f"{slippage_bps:.0f}bp ceiling ${cap:.4f}",
+                        )
+                        continue
+
                     if limit_price is None or abs(limit_price - offer_limit) > 0.000001:
                         logger.info(
-                            "BUY %s marketable-limit policy: prior $%s → $%.4f "
-                            "(ask $%.4f, 25bp protection cap)",
+                            "BUY %s marketable-limit: prior $%s → ceiling $%.4f "
+                            "(%.0fbp above reference $%.4f). Fills at NBBO or "
+                            "better; IEX ask reads $%.4f (%.1fbp).",
                             decision.symbol,
                             f"{limit_price:.4f}" if limit_price is not None else "none",
-                            offer_limit, ask,
+                            offer_limit, slippage_bps, market_price,
+                            ask, ask_premium_bps,
                         )
                     limit_price = offer_limit
                     sizing_price = max(sizing_price or 0, offer_limit)

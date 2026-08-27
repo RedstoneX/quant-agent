@@ -220,6 +220,21 @@ class LLMConfig(BaseModel):
         return normalized
 
 
+class ExecutionConfig(BaseModel):
+    """How aggressively an entry may cross the spread.
+
+    Separate from `RiskConfig` on purpose: this bounds EXECUTION cost, not
+    position risk. A too-tight cap does not make the book safer — it silently
+    stops it trading, which is what happened to VLO on 2026-08-27.
+    """
+
+    max_entry_slippage_bps: float = Field(default=40.0, gt=0, le=500)
+    """Max basis points above the verified reference price an entry limit may
+    sit. When the displayed offer is already beyond this, the BUY is skipped
+    with reason `slippage_gated` rather than submitted as an unfillable
+    order."""
+
+
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)
     max_total_position_pct: float = Field(gt=0)
@@ -521,6 +536,7 @@ class AppConfig(BaseModel):
     api_keys: ApiKeysConfig
     alpaca: AlpacaConfig
     llm: LLMConfig
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     risk: RiskConfig
     trading: TradingConfig
     storage: StorageConfig

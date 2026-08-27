@@ -218,6 +218,26 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   secrets/credential redesign, destructive infrastructure, material
   architecture outside current authority, or evidence that a ratified decision
   was wrong.
+- **Market data stays on IEX; SIP is NOT authorized.** Alpaca's Algo Trader
+  Plus (~$99/mo) would give consolidated NBBO quotes. Verified 2026-08-27 that
+  this account is IEX-only (a SIP request returns "subscription does not
+  permit querying recent SIP data") and that IEX top-of-book is frequently
+  unusable — CCJ quoted bid $92.96 / ask $107.10, a 15% spread, mid-session —
+  while Alpaca fills against NBBO. Rex's decision: *"this is paper trading,
+  this is proof of concept. Slippage is not really a big concern... when we
+  move to real money that's something to look at again."* **Revisit before any
+  live-capital activation** — execution-quality numbers measured under IEX are
+  not trustworthy.
+- **Fractional shares are OUT.** Alpaca supports fractional on simple orders
+  but not combined with bracket/OCO. QAMC attaches the protective stop as an
+  OTO bracket at entry (`AGENTS.md` invariant 3), so fractional would mean a
+  window where a position exists unprotected. Not worth recovering whole-share
+  rounding loss (V wanted 6%, got 3.84%).
+- **The desk must deliberate, not just filter** — see `Phase 9` in
+  `docs/QAMC_REMEDIATION_SPEC.md`. Rex: *"We have agents doing research and
+  analysis. If something has high conviction or strong candidacy it should be
+  debated amongst all the agents. We're trying to create a trading desk with
+  synergy, not a technical analysis trade bot."* Sequenced AFTER Phase 2b.
 - **The per-trade risk ceiling is 5% of equity, confirmed.** Phase 2b raises it
   from the constructor's current `risk_budget_pct = 0.5` default — a tenfold
   increase in per-trade risk (~$50 → ~$500 at risk on a $9.9k book). The owner
@@ -236,23 +256,51 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
    `max_portfolio_risk_pct` from a reported figure into a live gate. Note: a
    grep of `config/prompts/` and `src/` found **no fixed position-count target**
    anywhere — §2.4 may already be satisfied; verify before building to it.
-2. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
+2. **Phase 9 — the research desk deliberates.** Every seat may nominate a
+   candidate; Technical becomes a responder rather than the gatekeeper on
+   candidacy; material disagreements must be adjudicated, not just logged;
+   conviction follows multi-source agreement. Full design in
+   `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depends on 2b — "agreement earns
+   size" is meaningless until size is expressed as risk.
+3. **Execution: bounded re-peg.** PR #111 fixed the limit-as-ceiling bug and
+   the unfillable-order submission. Still open: replace a working order toward
+   the moving NBBO up to the slippage ceiling. Note the footgun — an Alpaca
+   replacement mints a NEW order id, so the state machine must track it and
+   handle partial fills rather than blind-looping PATCHes.
+4. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
+   (`src/data/earnings.py`) takes the first 30,000 characters of a filing. For
+   a 10-K that is the cover page, auditor's report and table of contents — the
+   financial statements are hundreds of pages further in. MSFT's own analysis
+   says so: *"Filing text is heavily truncated, consisting mainly of auditor's
+   report and table of contents."* The earnings seat has never seen MSFT's
+   numbers. Cheap fix (locate MD&A / financial statements rather than slicing
+   from the top) and it restores an entire evidence source.
+5. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
    ratio in the system — over half of Form 4 trades carry zero predictive power.
-3. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
+6. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-4. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
+7. **Phase 4 — evidence symmetry and feed repair.** Unblindfold the intraday buy
    path; fix Reuters/AP/FRED; surface degraded coverage to the operator.
-5. **Phase 5 — short selling.** Alpaca is confirmed ready: `shorting_enabled:
+8. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
+   emits `sell` / `strong_sell`, so bearish candidates are identified today.
+   What is missing is everything downstream: `PortfolioConstructor._build_sell`
+   returns `None` when the symbol is not already held, so a bearish view on a
+   name you do not own dies silently in one line; `TradeDecision.action` has no
+   open-short value; and sizing, stops (inverted — above entry) and margin
+   accounting all assume long. Bounded and additive, roughly a day, NOT a
+   rewrite. **Inverse ETFs are explicitly NOT the answer** — the owner has
+   rejected that workaround; he wants real short selling. Alpaca is ready:
+   `shorting_enabled:
    true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
    $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
    entirely a code change; no account work is outstanding.
-6. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
+9. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
-7. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
+10. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-8. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
+11. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
    on the residual); deterministic macro regime with the model confined to FOMC
    text; earnings multi-quarter trends. Several need new data sources and an
    owner decision first.

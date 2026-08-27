@@ -112,6 +112,14 @@ llm:
   #   tech_analyst_model: "anthropic/claude-3.5-sonnet"
   # Valid values: anthropic | openai | deepseek | openrouter.
 
+# How aggressively an entry may cross the spread. Bounds EXECUTION cost, not
+# position risk. A too-tight cap does not make the book safer — it silently
+# stops it trading: on 2026-08-27 VLO's ask sat 28bp above the reference
+# seconds after the open, a hardcoded 25bp cap produced a limit BELOW the
+# offer, and the order could never fill.
+execution:
+  max_entry_slippage_bps: 40
+
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
