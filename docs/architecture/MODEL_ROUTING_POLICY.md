@@ -447,3 +447,10 @@ prices.
    moving it into the perfect-score group. Neither changed the selection,
    but a table that had kept the original numbers would have been wrong
    about both.
+8. **`position_reviewer`'s `midday_exit` scenario ties five candidates at
+   1.00 quality** — `gemini-2.5-flash-lite`, `gpt-5.5`, `deepseek-v4-pro-0813`,
+   `qwen3.7-flash` and `qwen3-235b-a22b-2507` — and so does not discriminate
+   between them. `QAMC_REMEDIATION_SPEC.md` §3.5 previously stated
+   `gemini-2.5-flash-lite` as "the weakest model in the stack" at this seat
+   as though that were a quality finding; it is corrected there. The
+   measurement above supports "passed", not "best" or "worst".
