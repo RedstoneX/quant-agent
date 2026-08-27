@@ -117,6 +117,25 @@ class LLMConfig(BaseModel):
     position_reviewer_provider: str | None = None
     evening_analyst_provider: str | None = None
     meta_reflector_provider: str | None = None
+    # OpenRouter endpoint preference, per seat. OpenRouter serves one model id
+    # from several endpoints ("providers") at DIFFERENT PRICES — `openai/gpt-5.5`
+    # is offered by `openai/flex` at $2.50/$15 and by `openai` / `azure` at
+    # $5/$30, all three serving the identical `gpt-5.5-20260423` weights. This
+    # field pins the preferred endpoint ORDER; it never changes which MODEL
+    # answers, so it is not a routing-policy decision and needs no benchmark.
+    # `None` (every seat's default) leaves endpoint choice to OpenRouter,
+    # exactly as before. Only meaningful when the seat's provider is
+    # `openrouter`; the validator enforces that.
+    tech_analyst_provider_order: list[str] | None = None
+    news_analyst_provider_order: list[str] | None = None
+    macro_analyst_provider_order: list[str] | None = None
+    earnings_analyst_provider_order: list[str] | None = None
+    smart_money_analyst_provider_order: list[str] | None = None
+    portfolio_manager_provider_order: list[str] | None = None
+    risk_manager_provider_order: list[str] | None = None
+    position_reviewer_provider_order: list[str] | None = None
+    evening_analyst_provider_order: list[str] | None = None
+    meta_reflector_provider_order: list[str] | None = None
     # Global fallback — used by any agent without an explicit override below.
     max_tokens: int
     # Per-agent overrides. Each agent emits a different output shape; the PM
@@ -198,6 +217,13 @@ class LLMConfig(BaseModel):
         Unknown agent names also return None."""
         return getattr(self, f"{agent_name}_provider", None)
 
+    def get_provider_order(self, agent_name: str) -> list[str] | None:
+        """Return the OpenRouter endpoint preference for `agent_name`, or None
+        (meaning "let OpenRouter choose", the pre-existing behavior). Unknown
+        agent names also return None. This selects an ENDPOINT for the seat's
+        configured model, never a different model."""
+        return getattr(self, f"{agent_name}_provider_order", None)
+
     @field_validator(
         "tech_analyst_provider", "news_analyst_provider", "macro_analyst_provider",
         "earnings_analyst_provider", "portfolio_manager_provider", "risk_manager_provider",
@@ -218,6 +244,57 @@ class LLMConfig(BaseModel):
                 f"Invalid provider {v!r}; must be one of {sorted(VALID_PROVIDERS)} or unset"
             )
         return normalized
+
+    @field_validator(
+        "tech_analyst_provider_order", "news_analyst_provider_order",
+        "macro_analyst_provider_order", "earnings_analyst_provider_order",
+        "smart_money_analyst_provider_order", "portfolio_manager_provider_order",
+        "risk_manager_provider_order", "position_reviewer_provider_order",
+        "evening_analyst_provider_order", "meta_reflector_provider_order",
+    )
+    @classmethod
+    def _provider_order_is_wellformed(cls, v: list[str] | None) -> list[str] | None:
+        # An empty list is not "no preference" — it is a preference that
+        # nothing may serve the seat. That reads as a typo far more often
+        # than as intent, so reject it and make the operator write null.
+        if v is None:
+            return None
+        if not v:
+            raise ValueError(
+                "provider_order must be null (no preference) or a non-empty "
+                "list of OpenRouter endpoint slugs; got []"
+            )
+        cleaned: list[str] = []
+        for entry in v:
+            if not isinstance(entry, str) or not entry.strip():
+                raise ValueError(
+                    f"provider_order entries must be non-empty strings; got {entry!r}"
+                )
+            cleaned.append(entry.strip())
+        return cleaned
+
+    @model_validator(mode="after")
+    def _provider_order_requires_openrouter(self):
+        """An endpoint preference only means anything to OpenRouter. Set on an
+        Anthropic/OpenAI/DeepSeek seat it would be silently ignored, which is
+        how an operator ends up believing a seat is on a cheaper tier that it
+        never reached. Fail at config load instead."""
+        for agent_name in AGENT_NAMES:
+            order = getattr(self, f"{agent_name}_provider_order", None)
+            if order is None:
+                continue
+            provider = resolve_provider(
+                getattr(self, f"{agent_name}_model"),
+                getattr(self, f"{agent_name}_provider", None),
+            )
+            if provider != "openrouter":
+                raise ValueError(
+                    f"{agent_name}_provider_order is set but {agent_name} routes "
+                    f"to {provider!r}, not 'openrouter'. Endpoint preferences are "
+                    f"an OpenRouter concept and would be ignored — remove the "
+                    f"preference or route the seat through OpenRouter."
+                )
+        return self
 
 
 class ExecutionConfig(BaseModel):
@@ -251,6 +328,34 @@ class RiskConfig(BaseModel):
     # the Portfolio Manager sizes against a real number instead of a rule it
     # was told about but never shown. Phase 2b makes it a hard gate.
     max_portfolio_risk_pct: float = Field(default=25.0, gt=0, le=100)
+    # Spec §2.1. The owner-ratified per-trade envelope (2026-08-27). Conviction
+    # is expressed as the share of equity an idea may lose if its stop is hit,
+    # and the constructor derives share count from it:
+    #     shares = (equity x risk_pct / 100) / |entry - stop|
+    # A wider stop therefore yields a SMALLER position rather than a rejected
+    # trade, which is what removes the incentive to squeeze stops. The prior
+    # 0.5% ceiling lived in a constructor dataclass default nobody chose.
+    max_position_risk_pct: float = Field(default=5.0, gt=0, le=100)
+    # Below this an idea is not worth trading: a token position pays full
+    # commission and full attention for an immaterial payoff. A request
+    # rationed under the floor is denied outright rather than shrunk.
+    min_position_risk_pct: float = Field(default=0.5, ge=0, le=100)
+    # Spec §2.2. The most of the total at-risk ceiling any ONE correlated
+    # cluster may take. Without it "total risk is under 25%" says nothing
+    # about diversification — a book holding one theme four times over
+    # satisfies it while carrying exactly the concentration the ceiling
+    # exists to prevent. Correlated names consume one bet's budget.
+    max_cluster_risk_share_pct: float = Field(default=40.0, gt=0, le=100)
+    # Minimum stop distance in ATRs. Structure places the stop; this only
+    # pushes it out when structure put it inside ordinary volatility. Measured
+    # 2026-08-27: stops sat a median 4.3% below entry against a median ATR of
+    # 2.56% of price — about 1.7 ATRs, barely more than one ordinary day's
+    # range, which is what was firing exits inside noise AND forcing enormous
+    # positions to reach any meaningful risk.
+    min_stop_atr_multiple: float = Field(default=3.0, gt=0, le=10)
+    # Widening a stop lowers reward:risk, because the target does not move.
+    # Under this the setup only ever qualified on a stop too tight to survive.
+    min_reward_risk_after_widening: float = Field(default=1.5, ge=0, le=10)
     # Cash-only default. When False: no BUY may drive `cash` below zero, and
     # any session that starts with `cash < 0` must de-lever (SELL) before any
     # new BUY. When True: normal margin account behavior, risk engine only

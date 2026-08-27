@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
-    TechAnalysisResult, SmartMoneyFinding,
+    TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
 )
 from src.risk.rules import _effective_multiplier, _gross_multiplier
 
@@ -50,6 +50,44 @@ class PortfolioManagerAgent(BaseAgent):
             return "neutral" if cleaned == {"neutral"} else "mixed"
         return "mixed"
 
+    @staticmethod
+    def _sector_guidance_rows(raw) -> list[dict]:
+        """`sector_guidance`, in either shape, as [{sector, stance, reason}].
+
+        Two shapes reach the PM. The live macro agent emits
+        [{sector, stance, reason}, ...] with stance ∈ overweight|neutral|
+        underweight; `MacroStore` persists the normalized {sector: direction}
+        form (see `macro_store._normalize_sector_guidance`, which drops the
+        bulky reasons). Both arrive in normal operation now that an intraday
+        tick carries the morning's STORED regime forward, so every reader of
+        this field has to handle both — iterating the dict shape as though it
+        were a list yields bare strings, and indexing those took the whole PM
+        call down.
+
+        Stances come out in ONE vocabulary, the bullish/neutral/bearish
+        directions the rest of the system persists and grades against (see
+        `SECTOR_STANCE_TO_DIRECTION`). Without that the same macro view
+        reached the evidence registry as "overweight" in the morning and
+        "bullish" at 14:00, purely by which session read it. Unrecognized
+        stances are dropped rather than passed through: a stance no polarity
+        set knows can only produce a grounding error the model cannot fix.
+        """
+        if isinstance(raw, dict):
+            pairs = list(raw.items())
+        elif isinstance(raw, list):
+            pairs = [
+                (row.get("sector"), row.get("stance"))
+                for row in raw if isinstance(row, dict)
+            ]
+        else:
+            return []
+        rows: list[dict] = []
+        for sector, stance in pairs:
+            direction = normalize_sector_stance(stance)
+            if sector and direction:
+                rows.append({"sector": str(sector), "stance": direction})
+        return rows
+
     @classmethod
     def build_evidence_registry(
         cls,
@@ -61,14 +99,23 @@ class PortfolioManagerAgent(BaseAgent):
         macro_analysis: dict | None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         symbol_sectors: dict[str, str] | None = None,
-        session_type: str = "morning",
     ) -> dict[str, dict[str, str]]:
         """Canonical source/stance records shared by prompt and validator.
 
         Display decorations such as conviction and signal age never enter the
-        stance. Historical narrative/memory is intentionally excluded. The
-        intraday path has only current-session Tech evidence, so it cannot
-        cite yesterday's macro/news/earnings as if they ran this tick.
+        stance. Historical narrative/memory is intentionally excluded.
+
+        The intraday path used to return TECH ONLY, on the reasoning that it
+        "cannot cite yesterday's macro/news/earnings as if they ran this
+        tick". The grounding concern is real; the remedy was too broad. What
+        must never happen is stale evidence being cited AS FRESH — not the PM
+        reasoning about a 14:00 move with no idea what regime it is happening
+        in. Today's macro and news are now carried forward explicitly (see
+        `TradingPipeline._carry_forward_macro` / `_carry_forward_news`, which
+        refuse anything not from today) and marked `carried_from_morning` in
+        `data_status`, so the staleness travels with the evidence instead of
+        being handled by deleting it. Earnings stay excluded: an intraday
+        filing genuinely has not been read this tick.
         """
 
         registry: dict[str, dict[str, str]] = {}
@@ -79,9 +126,6 @@ class PortfolioManagerAgent(BaseAgent):
 
         for analysis in analyses:
             put(analysis.symbol, "technical", cls._collapse_stances([analysis.rating]))
-
-        if session_type == "intra_check":
-            return {symbol: sources for symbol, sources in registry.items() if sources}
 
         if news_intel is not None:
             for symbol, items in news_intel.stock_news.items():
@@ -106,7 +150,7 @@ class PortfolioManagerAgent(BaseAgent):
                 if position.sector:
                     sectors.setdefault(position.symbol.upper(), position.sector)
             guidance: dict[str, list[str]] = {}
-            for row in macro_analysis.get("sector_guidance", []) or []:
+            for row in cls._sector_guidance_rows(macro_analysis.get("sector_guidance")):
                 sector = str(row.get("sector") or "").strip().lower()
                 stance = row.get("stance")
                 if sector and stance:
@@ -145,7 +189,6 @@ class PortfolioManagerAgent(BaseAgent):
             macro_analysis=macro_analysis,
             smart_money_findings=smart_money_findings,
             symbol_sectors=kwargs.get("symbol_sectors") or {},
-            session_type=kwargs.get("session_type") or "morning",
         )
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
@@ -246,10 +289,29 @@ class PortfolioManagerAgent(BaseAgent):
                 for o in macro_analysis.get("key_observations", [])
             ) if macro_analysis.get("key_observations") else "No observations."
 
+            # Rendered through the same normalizer the evidence registry uses:
+            # the model is told to copy the validated stance exactly, so a
+            # Macro section speaking a different vocabulary than the registry
+            # is an invitation to cite a stance the validator will reject.
+            # `reason` survives only in the live shape — MacroStore drops it.
+            guidance_rows = self._sector_guidance_rows(
+                macro_analysis.get("sector_guidance")
+            )
+            reasons = {
+                str(row.get("sector")): str(row.get("reason") or "")
+                for row in (macro_analysis.get("sector_guidance") or [])
+                if isinstance(row, dict)
+            }
+
+            def _fmt_guidance(row: dict) -> str:
+                reason = reasons.get(row["sector"], "")
+                return (
+                    f"- {row['sector']}: {row['stance']}"
+                    + (f" — {reason}" if reason else "")
+                )
             sector_guidance_text = "\n".join(
-                f"- {s['sector']}: {s['stance']} — {s['reason']}"
-                for s in macro_analysis.get("sector_guidance", [])
-            ) if macro_analysis.get("sector_guidance") else "No sector guidance."
+                _fmt_guidance(row) for row in guidance_rows
+            ) if guidance_rows else "No sector guidance."
 
             risk_factors_text = "\n".join(
                 f"- {r}" for r in macro_analysis.get("risk_factors", [])
@@ -795,7 +857,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 earnings_analyses=earnings_analyses or [],
                 macro_analysis=macro_analysis, total_value=total_value,
                 smart_money_findings=smart_money_findings or [],
-                symbol_sectors=symbol_sectors or {}, session_type=session_type,
+                symbol_sectors=symbol_sectors or {},
                 allowed_buy_symbols=allowed_buy_symbols,
             )
             if errors:
@@ -868,7 +930,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         earnings_analyses=earnings_analyses or [],
                         macro_analysis=macro_analysis, total_value=total_value,
                         smart_money_findings=smart_money_findings or [],
-                        symbol_sectors=symbol_sectors or {}, session_type=session_type,
+                        symbol_sectors=symbol_sectors or {},
                         allowed_buy_symbols=allowed_buy_symbols,
                     )
                     if errors:
@@ -907,7 +969,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         positions: list[Position], news_intel: NewsIntelligenceReport | None,
         earnings_analyses: list[dict], macro_analysis: dict | None,
         total_value: float, symbol_sectors: dict[str, str] | None = None,
-        session_type: str = "morning",
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         allowed_buy_symbols: set[str] | None = None,
     ) -> list[str]:
@@ -931,7 +992,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             analyses=analyses, positions=positions, news_intel=news_intel,
             earnings_analyses=earnings_analyses, macro_analysis=macro_analysis,
             smart_money_findings=smart_money_findings or [],
-            symbol_sectors=symbol_sectors or {}, session_type=session_type,
+            symbol_sectors=symbol_sectors or {},
         )
         smart_money_eligible: dict[str, bool] = {}
         for finding in smart_money_findings or []:
@@ -954,7 +1015,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         for target in decision.targets:
             symbol = target.symbol.upper()
             pos = held.get(symbol)
-            if target.target_weight_pct <= 0 and pos is None:
+            if target.is_close and pos is None:
                 errors.append(f"{symbol}: close/exit target is not an actual holding")
             if not target.provenance:
                 errors.append(f"{symbol}: target has no structured specialist provenance")
@@ -963,7 +1024,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             current_weight = 0.0
             if pos is not None and total_value > 0:
                 current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
-            intent = "buy" if target.target_weight_pct > current_weight + 0.01 else "sell"
+            # Risk-based targets (spec §2.1) state risk, not weight, so the
+            # weight comparison below cannot classify them — the position's
+            # current risk depends on its stop, which this validator does not
+            # have. Any non-zero risk allocation is therefore treated as a
+            # BUY. That is the safe direction: the buy branch applies the
+            # STRICTER checks (universe membership, an actual technical
+            # analysis backing the name), so a misclassified trim is
+            # over-validated rather than waved through.
+            if target.risk_allocation_pct is not None:
+                intent = "sell" if target.is_close else "buy"
+            else:
+                intent = "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
             if intent == "buy":
                 if allowed_buy_symbols is not None and symbol not in {
                     str(item).strip().upper() for item in allowed_buy_symbols
@@ -1145,7 +1217,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return sorted(
             (
                 (
-                    m.symbol, m.target_weight_pct, m.conviction, m.thesis,
+                    m.symbol, m.target_weight_pct, m.risk_allocation_pct,
+                    m.conviction, m.thesis,
                     m.thesis_invalid_if, m.suggested_stop_price, m.catalyst,
                 )
                 for m in models

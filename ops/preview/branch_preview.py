@@ -379,6 +379,7 @@ def create_app() -> FastAPI:
                 is_bearish_hedge=is_hedge,
                 reached_pm_target=reached_target,
                 pm_target_weight_pct=(pm_target or {}).get("target_weight_pct"),
+                pm_risk_allocation_pct=(pm_target or {}).get("risk_allocation_pct"),
                 reached_proposed_order=reached_proposed,
                 proposed_action=(pm_proposed or {}).get("action"),
                 risk_modified=detail.get("risk_modification") is not None,

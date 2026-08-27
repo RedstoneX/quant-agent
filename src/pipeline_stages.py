@@ -77,6 +77,50 @@ logger = logging.getLogger(__name__)
 MAX_ENTRY_SLIPPAGE_BPS = 40.0
 
 
+def _macro_regime(macro_analysis) -> str | None:
+    """The regime string, from either a MacroAnalysis or a carried-forward dict."""
+    if macro_analysis is None:
+        return None
+    if isinstance(macro_analysis, dict):
+        value = macro_analysis.get("regime")
+    else:
+        value = getattr(macro_analysis, "regime", None)
+    return str(value) if value else None
+
+
+def _book_risk_inputs(ctx, total_value: float):
+    """Per-symbol budget risk (% of equity) and correlation clusters, or Nones.
+
+    Spec §2.2. Both are already computed for the PM's own facts block — the
+    heat roll-up in `src/risk/metrics.py` and the clusters in
+    `src/data/correlation.py` — so the constructor rations the plan against
+    precisely the numbers the plan was made against, rather than a second
+    view assembled a moment later.
+
+    Returns `(None, None)` when the facts are unavailable. That leaves the
+    portfolio ceilings UNENFORCED, which is the correct failure direction
+    here: enforcing a 25% ceiling against a book we cannot actually see would
+    either block every trade or wave everything through, and both are worse
+    than the per-position sizing that still applies regardless.
+    """
+    facts = getattr(ctx, "facts", None)
+    if facts is None:
+        return (None, None)
+    heat = getattr(facts, "heat", None)
+    clusters = getattr(facts, "correlation_clusters", None)
+    existing: dict[str, float] | None = None
+    if heat is not None and total_value > 0:
+        try:
+            existing = {
+                row.symbol: row.budget_risk_dollars / total_value * 100
+                for row in heat.per_position
+            }
+        except Exception as e:  # noqa: BLE001 — never fail the session on telemetry
+            logger.warning("constructor: per-symbol risk map failed: %s", e)
+            existing = None
+    return (existing, list(clusters) if clusters else None)
+
+
 def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
                        scope: str, evidence_json: str, symbol: str | None = None,
                        decision_id: str | None = None) -> None:
@@ -141,6 +185,43 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
         symbol=symbol, decision_id=ctx.decision_id,
         evidence_json=_json.dumps(payload, sort_keys=True),
     )
+
+
+def _macro_analysis_as_dict(macro_analysis) -> dict | None:
+    """Dual-shape read: macro_analysis may be a Pydantic MacroAnalysis (a
+    fresh macro run this tick) OR a plain dict carried forward from
+    macro_store.load_last_state() (Pipeline._carry_forward_macro — no macro
+    run today, yesterday's persisted snapshot is reused). The persisted
+    snapshot is a deliberately-trimmed subset (see macro_store.save_last_state)
+    and must never be coerced back into a MacroAnalysis model — it lacks
+    reasoning_chain and stores sector_guidance pre-normalized as a dict, not
+    the model's list[MacroSectorGuidance].
+
+    portfolio_manager.decide() already accepts a plain dict for
+    macro_analysis, so both shapes resolve to "pass a dict straight through".
+    """
+    if macro_analysis is None:
+        return None
+    if isinstance(macro_analysis, dict):
+        return macro_analysis
+    return macro_analysis.model_dump()
+
+
+def _macro_target_invested_pct(macro_analysis) -> float | None:
+    """Dual-shape read of position_guidance.target_invested_pct.
+
+    Same carried-forward-dict vs. fresh-model split as
+    `_macro_analysis_as_dict` (see there for why the dict shape exists).
+    Degrades to None — the existing "not provided" path — when the key or
+    attribute is missing, since a carried snapshot may legitimately lack it.
+    """
+    if not macro_analysis:
+        return None
+    if hasattr(macro_analysis, "position_guidance"):
+        guidance = macro_analysis.position_guidance
+        return getattr(guidance, "target_invested_pct", None) if guidance else None
+    guidance = macro_analysis.get("position_guidance")
+    return guidance.get("target_invested_pct") if isinstance(guidance, dict) else None
 
 
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
@@ -817,7 +898,7 @@ class DecisionStage:
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
             positions=positions,
-            macro_analysis=(macro_analysis.model_dump() if macro_analysis else None),
+            macro_analysis=_macro_analysis_as_dict(macro_analysis),
             cash_balance=cash,
             reserve_balance=reserve_balance,
             total_value=total_value,
@@ -952,12 +1033,25 @@ class DecisionStage:
                 continue
             if live and live > 0:
                 price_map[sym] = live
+        # Spec §2.2 — the book's risk as the constructor must ration it. Both
+        # come from `ctx.facts`, which is exactly what the PM was shown before
+        # it decided, so the gate judges the plan against the same numbers the
+        # plan was made against. Absent facts (a stage built without them)
+        # leave both None and the portfolio ceilings unenforced rather than
+        # enforced against a fabricated view of the book.
+        existing_risk_pct, risk_clusters = _book_risk_inputs(ctx, total_value)
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
             targets=portfolio_decision.targets,
             positions=positions,
             analyses=analyses,
             total_value=total_value,
             price_map=price_map,
+            existing_risk_pct=existing_risk_pct,
+            clusters=risk_clusters,
+            # The tape the stop has to survive. Widening a stop past the noise
+            # band is not a fixed number of ATRs — a risk-off market swings
+            # wider for the same ATR reading than a trending one.
+            regime=_macro_regime(macro_analysis),
         )
         logger.info(
             "Constructor: %d targets → %d decisions (%d BUY, %d SELL, %d HOLD)",
@@ -1071,9 +1165,7 @@ class RiskStage:
 
         daily_pnl = total_value - last_equity
         ctx.daily_pnl = daily_pnl
-        macro_target_pct = None
-        if macro_analysis:
-            macro_target_pct = macro_analysis.position_guidance.target_invested_pct
+        macro_target_pct = _macro_target_invested_pct(macro_analysis)
         ctx.macro_target_pct = macro_target_pct
 
         # Holding ages + system-drawdown state (2026-08-13 agent audit).

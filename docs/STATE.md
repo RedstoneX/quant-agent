@@ -71,10 +71,10 @@ This file records what is accepted and true **now**. Git history preserves imple
   it as measured clusters (`src/data/correlation.py::correlation_clusters`),
   portfolio heat / budget risk / open risk exist (`src/risk/metrics.py`) and
   render to PM and RM, and R-multiple reaches the Position Reviewer. A new
-  `risk.max_portfolio_risk_pct` config field (25%) is **reporting-only** — no
-  gate consumes it. Phase 2's own items (§2.1 risk-based sizing, §2.2
-  correlation-aware budget ceiling, §2.4 retiring the fixed position count)
-  remain pending.
+  `risk.max_portfolio_risk_pct` config field (25%) was reporting-only at this
+  point — no gate consumed it yet. Phase 2's own items (§2.1 risk-based
+  sizing, §2.2 correlation-aware budget ceiling, §2.4 retiring the fixed
+  position count) landed afterward as Phase 2b — see below.
 - **Phase 3.1 and 3.2 of the remediation spec are committed, not yet
   merged** — `aea82ee` on branch `feat/exit-rework-pace-and-memory`. §3.1: the
   `pace` metric no longer feeds back on the desk's own realized-trade
@@ -123,10 +123,74 @@ This file records what is accepted and true **now**. Git history preserves imple
   upward only. §3.5 was resolved as an owner decision rather than
   implemented: the "weakest model" premise is contradicted by committed
   benchmark data (see `docs/WORK.md`). §3.8 unchanged.
-- **Phase 2b (risk-based sizing) is NOT deployed and NOT complete.** Per-trade
-  risk in production is still bounded by the constructor's
-  `risk_budget_pct = 0.5`. The owner-ratified 5% ceiling is not yet in force,
-  and `max_portfolio_risk_pct: 25` remains reporting-only.
+- **Phase 2b (risk-based sizing) is committed, not yet merged or deployed** —
+  `75c0233` on branch `feat/pm-flex-routing`. Production is still bounded by
+  the constructor's `risk_budget_pct = 0.5` default until this merges. The
+  branch replaces `target_weight_pct` with `risk_allocation_pct` as the live
+  sizing field and turns `max_portfolio_risk_pct` from a reported figure into
+  an enforced gate. **Owner-ratified risk envelope, per `config/settings.yaml`
+  `risk:`:** 5% of equity per trade ceiling (`max_position_risk_pct`), 0.5%
+  floor below which a request is denied rather than shrunk
+  (`min_position_risk_pct`), 25% of equity total at-risk ceiling across the
+  book (`max_portfolio_risk_pct`, previously reporting-only), and no single
+  correlated cluster (measured return correlation, `src/data/correlation.py`)
+  may consume more than 40% of that total (`max_cluster_risk_share_pct`) —
+  `src/risk/budget.py::allocate_risk_budget`, largest-request-first with an
+  alphabetical tie-break. The gate engages only when the caller supplies the
+  book's current risk and clusters (`pipeline_stages._book_risk_inputs`); an
+  unmeasurable book falls back to per-position sizing and the 5% single-name
+  cap only. `target_weight_pct` stays Optional so stored decisions still
+  replay through `src/replay.py` and the Mission Control API. **Caution for
+  the next session:** `/home/ubuntu/projects/quant-agent-worktrees/phase2b`
+  (branch `feat/risk-based-sizing`) still holds an independent, uncommitted,
+  in-progress attempt at this same phase (dirty `src/models.py`, untracked
+  `src/data/company.py`) that predates and duplicates `75c0233`. It was not
+  touched by this documentation pass; reconcile or discard it before doing
+  further Phase 2b work so two implementations don't collide.
+  **Two follow-on fixes landed the same day, same branch, also not merged or
+  deployed:** `b712f4c` clamps the constructor to the 20% single-name ceiling
+  the risk engine actually enforces (`max_position_pct` is a HARD BLOCK, not
+  a trim — without this, the sizing above computed orders the engine would
+  silently drop). `3dff940` widens an entry stop to a minimum ATR distance
+  (`risk.min_stop_atr_multiple`, base 3.0, scaled by setup type and macro
+  regime) when the analyst placed it inside ordinary volatility, and rejects
+  the trade if the widened stop drops reward:risk below
+  `risk.min_reward_risk_after_widening` (1.5) — measured, the book's stops
+  were sitting a median 1.7 ATRs from entry, which both fired exits inside
+  noise and forced the 20% clamp above to bind at nearly every conviction
+  level. `config/prompts/portfolio_manager.md`'s conviction bands and
+  `config/prompts/tech_analyst.md`'s stop guidance were recalibrated to match.
+  2487 tests pass. Production still runs the pre-clamp, pre-widening
+  constructor — true from `058273f1` / `e6ada88` and still true at current
+  production HEAD `32c174b` (PR #114 added only the deploy-drift alarm, not
+  this fix; see "Production position" below).
+- **The Portfolio Manager now routes through OpenRouter's `openai/flex`
+  endpoint** (`16f6535`, same branch) — the identical `openai/gpt-5.5-20260423`
+  weights at half price ($2.50/$15 vs $5/$30 per M tokens), an endpoint choice
+  rather than a model choice. `llm.portfolio_manager_provider_order:
+  ["openai/flex"]`; fallbacks stay enabled since the fallback endpoint serves
+  the same weights. OpenRouter calls now request `usage: {include: true}` and
+  the daily cost circuit spends against the provider-reported figure, not the
+  pinned per-model estimate, because one model id now prices two ways.
+- **`intra_check` is no longer blindfolded** (`fb88e08`, same branch). The
+  intraday PM previously received a technical-only evidence registry even
+  though the morning's macro and news were already on disk; both are now
+  carried forward, date-scoped and re-validated, and labelled
+  `carried_from_morning` in `data_status` rather than `not_run_intraday`.
+  Earnings stay excluded — an intraday filing genuinely has not been read
+  this tick. Nothing is re-fetched.
+- **`AgentLogItem` now surfaces `input_message` / `full_response`**
+  (`6b7af86`, same branch), a frontend-only fix — the backend has populated
+  and served both fields all along; only the TypeScript interface omitted
+  them. See `docs/architecture/MISSION_CONTROL_API.md`.
+- **Sector-stance vocabulary is unified** (`cdb387b`, same branch).
+  `SECTOR_STANCE_TO_DIRECTION` / `SECTOR_DIRECTIONS` / `normalize_sector_stance`
+  now live once in `src/models.py`; `macro_store` imports them instead of
+  keeping its own copy. This also fixed a live crash where carrying stored
+  macro forward into the intraday PM (`fb88e08`, above) raised `TypeError:
+  string indices must be integers` because `build_user_message` indexed the
+  persisted `{sector: direction}` dict shape as if it were the live agent's
+  list-of-mappings shape.
 
 ## Stabilization account model
 
@@ -138,16 +202,27 @@ The prior three-account daily workflow created excessive friction. During stabil
 
 The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Codex must not run as `qamc`.
 
-## Production position — current verified deployment
+## Production position — current pointer and history
 
-Production is deployed and verified at:
+**Current production HEAD is `32c174b`** (merge of PR #114, the deploy-drift
+alarm — see below), deployed 2026-08-27 evening ET. It descends from `e6ada88`
+(PR #112) and `058273f1` (Phase 3, PR #109/#110), so everything recorded
+against those SHAs elsewhere in this file still holds. It does **not**
+include Phase 2b risk-based sizing (`75c0233`) or the OpenRouter flex-routing
+change (`16f6535`) — both are on `feat/pm-flex-routing` (PR #113), still open
+and unmerged. See `docs/WORK.md` "Session start" for the full not-deployed
+list.
 
-`a25a723f70a4e0f1548b3389c93c96d9b5ced6d7`
+The `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7` / PR #93 SHA recorded below is
+**historical** — it was production on 2026-08-26 and has since been
+superseded twice over (PR #109/#110, then PR #111/#112, then PR #114). It is
+kept only because the forensic narrative under it (the recovery/retry-limit
+defect, the Smart Money/earnings data-shaping fixes) is not duplicated
+elsewhere. Its recorded rollback SHA was `7fe6e4babbf3cf0209d8f93536f8150de70fea37`;
+that rollback target is likewise stale and must not be used against current
+production without re-verifying the gap it would reopen.
 
-This is GitHub `main` after PR #93. The recorded rollback SHA is
-`7fe6e4babbf3cf0209d8f93536f8150de70fea37`.
-
-Production verification on 2026-08-26 established:
+Production verification on 2026-08-26 established (historical, PR #93 state):
 
 - the prior ET-day quota hold rearmed automatically after the date advanced;
   no spend was erased and no manual reset was used;
@@ -204,7 +279,15 @@ The production checkout retains exactly one intended tracked local configuration
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`
 
-GitHub `main` may advance beyond this production SHA. Production changes only through the governed engineering workflow below.
+GitHub `main` may advance beyond the current production SHA. Production changes only through the governed engineering workflow below.
+
+**Deploy-drift alarm (2026-08-27, PR #114).** This "may advance beyond" gap is
+now monitored instead of silently trusted: `scripts/check_deploy_drift.py`
+compares the deployed HEAD on the qamc box against `origin/main` and alerts
+over Telegram when they diverge, run by `quant-agent-drift-check.timer`
+Mon-Fri 08:45 ET. It exists because PR #111 sat merged-but-undeployed for
+eight hours with nothing catching it (`docs/WORK.md` records that incident).
+Merged and deployed as part of `32c174b`; verified firing.
 
 ## Mandatory paid-analysis cost circuit
 
@@ -358,6 +441,12 @@ bearish expression is not actually wired up.
   `qwen/qwen3-235b-a22b-2507` for Risk Manager, and
   `google/gemini-2.5-flash-lite` for the remaining seats, according to the
   measured per-seat policy. Production remains on its separately promoted config.
+- **Committed, not yet merged or deployed** (`16f6535`, branch
+  `feat/pm-flex-routing`): the Portfolio Manager's `openai/gpt-5.5` calls now
+  prefer OpenRouter's `openai/flex` endpoint over `openai`/`azure` — the same
+  model weights at half the per-token price. This is an endpoint preference
+  (`llm.<agent>_provider_order`), not a routing change, and it is rejected at
+  config load on any seat not on OpenRouter. See `docs/architecture/MODEL_ROUTING_POLICY.md`.
 
 ## Market-data feed finding — resolved, not an active defect
 

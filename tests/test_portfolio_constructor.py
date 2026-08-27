@@ -115,8 +115,14 @@ def test_construct_orders_skips_tiny_delta():
 
 
 def test_construct_orders_risk_budget_caps_buy_size():
-    """Wide-stop name: 0.5% risk budget caps below the target weight."""
-    constructor = PortfolioConstructor()
+    """Wide-stop name: the single-name risk budget caps below the target weight.
+
+    Pinned at 0.5% explicitly rather than relying on the default, which is now
+    the owner-ratified 5% envelope (2026-08-27). What this test is for is the
+    capping MECHANISM on a legacy notional target, not the size of the budget.
+    """
+    from src.portfolio_constructor import ConstructorConfig
+    constructor = PortfolioConstructor(ConstructorConfig(risk_budget_pct=0.5))
     # Target 10% on $100k = $10k = 100 shares @ $100.
     # Stop 80 → risk_per_share = $20. Risk budget $500 / $20 = 25 shares max
     # → 25 × $100 = $2500 = 2.5% weight cap.
@@ -461,7 +467,8 @@ def test_risk_budget_cap_carries_provenance_note_for_rm():
     A capped BUY's reasoning must carry the [constructor: ...] note."""
     from src.models import TargetPosition, TechAnalysisResult
 
-    constructor = PortfolioConstructor()
+    from src.portfolio_constructor import ConstructorConfig
+    constructor = PortfolioConstructor(ConstructorConfig(risk_budget_pct=0.5))
     target = TargetPosition(
         symbol="XLE", target_weight_pct=15.0, conviction="high",
         thesis="Energy geopolitical tailwind.", thesis_invalid_if="", catalyst="",

@@ -12,10 +12,17 @@ import { buildRunGraph } from "./agentflow/buildGraph";
 import { useModalActions } from "../context/ModalContext";
 import { LifecycleTimeline } from "./LifecycleTimeline";
 import { DataTable } from "./ui/DataTable";
+import { AgentPromptViewer } from "./AgentPromptViewer";
 
 const agentColumn = createColumnHelper<AgentLogItem>();
 
-function AgentLogsTable({ detail }: { detail: RunDetailResponse }) {
+function AgentLogsTable({
+  detail, selectedId, onSelect,
+}: {
+  detail: RunDetailResponse;
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
+}) {
   const columns = useMemo(() => [
     agentColumn.accessor("agent_name", { header: "Agent" }),
     agentColumn.accessor((item) => `${item.actual_provider || "—"} / ${item.model || "—"}`, {
@@ -25,15 +32,51 @@ function AgentLogsTable({ detail }: { detail: RunDetailResponse }) {
     agentColumn.accessor("status", { header: "Status", cell: (info) => <Pill text={info.getValue() || "unknown"} /> }),
     agentColumn.accessor("cost_usd", { header: "Cost", cell: (info) => fmtMoney(info.getValue()) }),
     agentColumn.accessor("latency_s", { header: "Latency", cell: (info) => info.getValue() === null ? "—" : `${fmtNum(info.getValue())}s` }),
-  ] as LegacyColumnDef<AgentLogItem, unknown>[], []);
+    // The prompt has been persisted and served all along; nothing offered a
+    // way in. This column is that way in.
+    agentColumn.display({
+      id: "prompt",
+      header: "Read",
+      cell: (info) => {
+        const item = info.row.original;
+        const chars = (item.input_message ?? "").length;
+        if (!chars && !(item.full_response ?? "").length) return <span className="text-dim">—</span>;
+        const open = selectedId === item.id;
+        return (
+          <button
+            type="button"
+            className="underline hover:text-accent"
+            aria-expanded={open}
+            onClick={() => onSelect(open ? null : item.id)}
+          >
+            {open ? "hide" : "view"}
+          </button>
+        );
+      },
+    }),
+  ] as LegacyColumnDef<AgentLogItem, unknown>[], [selectedId, onSelect]);
   if (!detail.agent_logs.length) return <StateMessage text="No agent calls logged for this run." />;
-  return <DataTable data={detail.agent_logs} columns={columns} getRowId={(item) => String(item.id)} initialSorting={[{ id: "agent_name", desc: false }]} />;
+  const selected = detail.agent_logs.find((item) => item.id === selectedId) ?? null;
+  return (
+    <div>
+      <DataTable data={detail.agent_logs} columns={columns} getRowId={(item) => String(item.id)} initialSorting={[{ id: "agent_name", desc: false }]} />
+      {selected && (
+        <div className="mt-3 border-t border-border pt-3">
+          <div className="mb-2 text-[0.75rem] uppercase tracking-wide text-dim">
+            What {selected.agent_name} read
+          </div>
+          <AgentPromptViewer log={selected} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function RunDetailModal({ runId, onClose }: { runId: string; onClose: () => void }) {
   const [funnel, setFunnel] = useState<RunFunnelResponse | null>(null);
   const [detail, setDetail] = useState<RunDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openLogId, setOpenLogId] = useState<number | null>(null);
   const { openCandidateDetail } = useModalActions();
 
   useEffect(() => {
@@ -83,7 +126,7 @@ export function RunDetailModal({ runId, onClose }: { runId: string; onClose: () 
             ]}
           </EvidenceSection>
           <EvidenceSection title="Agent calls this run">
-            {[<AgentLogsTable key="table" detail={detail} />]}
+            {[<AgentLogsTable key="table" detail={detail} selectedId={openLogId} onSelect={setOpenLogId} />]}
           </EvidenceSection>
           <EvidenceSection title="Persisted lifecycle events">
             {[<LifecycleTimeline key="lifecycle" events={funnel.pipeline_events ?? []} />]}

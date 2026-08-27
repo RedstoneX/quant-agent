@@ -779,3 +779,59 @@ def test_full_config_load_rejects_live_trading(tmp_path):
     )
     with pytest.raises(Exception, match="live trading is not authorized"):
         load_config(config_file)
+
+
+def test_provider_order_returns_the_seat_preference_or_none():
+    from src.config import LLMConfig
+    cfg = LLMConfig(
+        max_tokens=4096,
+        portfolio_manager_provider="openrouter",
+        portfolio_manager_model="openai/gpt-5.5",
+        portfolio_manager_provider_order=["openai/flex"],
+    )
+    assert cfg.get_provider_order("portfolio_manager") == ["openai/flex"]
+    assert cfg.get_provider_order("risk_manager") is None
+    assert cfg.get_provider_order("nonexistent_agent") is None
+
+
+def test_provider_order_on_a_non_openrouter_seat_is_rejected():
+    """An endpoint preference is an OpenRouter concept. Set on an Anthropic
+    seat it would be silently ignored — which is how an operator ends up
+    believing a seat runs on a cheaper tier that it never reached."""
+    import pytest
+    from src.config import LLMConfig
+    with pytest.raises(ValueError, match="not 'openrouter'"):
+        LLMConfig(
+            max_tokens=4096,
+            portfolio_manager_model="claude-opus-4-7",
+            portfolio_manager_provider_order=["openai/flex"],
+        )
+
+
+def test_empty_provider_order_is_rejected_rather_than_read_as_no_preference():
+    """`[]` is a preference that nothing may serve the seat, which reads as a
+    typo far more often than as intent. Make the operator write null."""
+    import pytest
+    from src.config import LLMConfig
+    with pytest.raises(ValueError, match="non-empty list"):
+        LLMConfig(
+            max_tokens=4096,
+            portfolio_manager_provider="openrouter",
+            portfolio_manager_model="openai/gpt-5.5",
+            portfolio_manager_provider_order=[],
+        )
+    with pytest.raises(ValueError, match="non-empty strings"):
+        LLMConfig(
+            max_tokens=4096,
+            portfolio_manager_provider="openrouter",
+            portfolio_manager_model="openai/gpt-5.5",
+            portfolio_manager_provider_order=["  "],
+        )
+
+
+def test_provider_order_absent_loads_exactly_as_before():
+    """Additive-only: a settings.yaml that never mentions the field must
+    produce None on every seat."""
+    from src.config import AGENT_NAMES, LLMConfig
+    cfg = LLMConfig(max_tokens=4096)
+    assert all(cfg.get_provider_order(name) is None for name in AGENT_NAMES)

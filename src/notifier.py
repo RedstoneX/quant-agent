@@ -290,6 +290,54 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
     )
 
 
+def _append_company_identities(lines: list[str], orders: list) -> None:
+    """One line per traded symbol: who the company is.
+
+    The operator reads `BUY CCJ qty=40 @$58.10` and has to already know that
+    CCJ is Cameco. Name and industry only — deliberately NOT the business
+    summary that goes to the PM. A Telegram message is 4096 characters and
+    competes for a phone screen; ten paragraphs of company description would
+    push the order list itself out of view.
+
+    `allow_fetch=False` is not an optimisation, it is the contract: an
+    operator alert must never sit waiting on a network call. By the time an
+    alert goes out the PM path has already warmed the cache for exactly
+    these symbols, so this is a dictionary lookup. Symbols the cache does
+    not know are silently skipped rather than rendered as unknowns.
+    """
+    symbols = []
+    for o in orders:
+        if not isinstance(o, dict):
+            continue
+        symbol = str(o.get("symbol") or "").strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    if not symbols:
+        return
+    try:
+        from src.data.company import CompanyProfileStore
+        profiles = CompanyProfileStore().get_many(
+            symbols[:12], allow_fetch=False,
+        )
+    except Exception as e:  # noqa: BLE001 — never lose an alert over prose
+        logger.warning("notifier: company profiles unavailable: %s", e)
+        return
+    identities = []
+    for symbol in symbols[:12]:
+        profile = profiles.get(symbol)
+        if profile is None:
+            continue
+        bits = [b for b in (
+            getattr(profile, "name", None), getattr(profile, "industry", None),
+        ) if b]
+        if not bits:
+            continue
+        identities.append(f"  {symbol} — {' · '.join(bits)}")
+    if identities:
+        lines.append("who:")
+        lines.extend(identities)
+
+
 def _append_trade_session_body(lines: list[str], result: dict) -> None:
     # audit round 2: "analysis_error" from a trading session means the PM
     # decision was never produced (LLM output unparseable / analysis step
@@ -365,6 +413,7 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         omitted = max(0, len(buys) - 10) + max(0, len(sells) - 10)
         if omitted:
             lines.append(f"  (+{omitted} more — see audit log)")
+        _append_company_identities(lines, orders)
     else:
         lines.append("orders: 0")
 

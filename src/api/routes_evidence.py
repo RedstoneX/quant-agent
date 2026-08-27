@@ -348,6 +348,9 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
             is_bearish_hedge=is_hedge,
             reached_pm_target=reached_target,
             pm_target_weight_pct=pm_target.target_weight_pct if pm_target else None,
+            pm_risk_allocation_pct=(
+                pm_target.risk_allocation_pct if pm_target else None
+            ),
             reached_proposed_order=reached_proposed,
             proposed_action=pm_proposed.action if pm_proposed else None,
             risk_modified=risk_modified,

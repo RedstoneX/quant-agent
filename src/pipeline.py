@@ -71,6 +71,13 @@ logger = logging.getLogger(__name__)
 # querying a SELL order that may not exist.
 _WAL_SELL_SENTINEL = "__WAL_PENDING__"
 
+#: Ceiling on how many symbols get a company-profile lookup for PM's facts
+#: block. Profiles are 30-day-cached, so this only bites on a cold cache —
+#: but on a cold cache it is one network round trip per symbol, and a
+#: pathological candidate list must not be able to turn a nice-to-have
+#: identity block into the longest step of the morning session.
+_PM_PROFILE_SYMBOL_CAP = 40
+
 HARD_BLOCK_RULES = {
     "max_daily_loss_pct",
     "max_total_position_pct",
@@ -304,6 +311,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("tech_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.tech_analyst_provider,
+            provider_order=config.llm.get_provider_order("tech_analyst"),
         )
         self.portfolio_manager = PortfolioManagerAgent(
             api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),
@@ -311,6 +319,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("portfolio_manager"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.portfolio_manager_provider,
+            provider_order=config.llm.get_provider_order("portfolio_manager"),
         )
         self.risk_manager = RiskManagerAgent(
             api_key=_key_for(config.llm.risk_manager_model, config.llm.risk_manager_provider),
@@ -318,6 +327,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("risk_manager"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.risk_manager_provider,
+            provider_order=config.llm.get_provider_order("risk_manager"),
         )
         self.risk_engine = RiskRuleEngine(RiskConfig(
             max_position_pct=config.risk.max_position_pct,
@@ -339,6 +349,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("position_reviewer"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.position_reviewer_provider,
+            provider_order=config.llm.get_provider_order("position_reviewer"),
         )
         self.evening_analyst = EveningAnalystAgent(
             api_key=_key_for(config.llm.evening_analyst_model, config.llm.evening_analyst_provider),
@@ -346,6 +357,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("evening_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.evening_analyst_provider,
+            provider_order=config.llm.get_provider_order("evening_analyst"),
         )
         self.news_analyst = NewsAnalystAgent(
             api_key=_key_for(config.llm.news_analyst_model, config.llm.news_analyst_provider),
@@ -353,6 +365,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("news_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.news_analyst_provider,
+            provider_order=config.llm.get_provider_order("news_analyst"),
         )
         self.macro_analyst = MacroAnalystAgent(
             api_key=_key_for(config.llm.macro_analyst_model, config.llm.macro_analyst_provider),
@@ -360,6 +373,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("macro_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.macro_analyst_provider,
+            provider_order=config.llm.get_provider_order("macro_analyst"),
         )
         self.news_provider = NewsDataProvider()
         self.news_store = NewsStore()
@@ -371,6 +385,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("earnings_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.earnings_analyst_provider,
+            provider_order=config.llm.get_provider_order("earnings_analyst"),
         )
         self.smart_money_analyst = SmartMoneyAnalystAgent(
             api_key=_key_for(config.llm.smart_money_analyst_model, config.llm.smart_money_analyst_provider),
@@ -378,6 +393,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("smart_money_analyst"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.smart_money_analyst_provider,
+            provider_order=config.llm.get_provider_order("smart_money_analyst"),
         )
         self.smart_money_provider = SECForm4Provider(
             search_url=config.smart_money.search_url,
@@ -403,6 +419,7 @@ class TradingPipeline:
             max_tokens=config.llm.get_max_tokens("meta_reflector"),
             fallback_api_key=config.api_keys.anthropic,
             provider=config.llm.meta_reflector_provider,
+            provider_order=config.llm.get_provider_order("meta_reflector"),
         )
         self.earnings_provider = EarningsDataProvider()
         self.broker = AlpacaBroker(
@@ -470,7 +487,43 @@ class TradingPipeline:
         # Deterministic Target → Orders translator. Phase 2 of the architecture:
         # the LLM (PM) emits TargetPositions (intent); the constructor does the
         # math that turns intent into concrete TradeDecision orders.
-        self.portfolio_constructor = PortfolioConstructor()
+        # Spec §2.1/§2.2. The risk envelope lives in `risk:` config, not in the
+        # constructor's dataclass defaults — the 0.5% per-trade figure the
+        # constructor shipped with was a default nobody chose, and the owner
+        # ratified 5% / 25% on 2026-08-27. Reading it here means the deployed
+        # ceiling is the one `verify_commissioning.py` can see.
+        from src.portfolio_constructor import ConstructorConfig
+        _risk_cfg = getattr(config, "risk", None)
+
+        def _risk_setting(name: str, default: float) -> float:
+            """Read a risk ceiling, or the ratified default.
+
+            Coerced through a real float check rather than trusted from
+            `getattr`: many tests construct the pipeline against a MagicMock
+            config, where attribute access auto-creates a child mock that is
+            neither the default nor a number — and a MagicMock reaching the
+            sizing arithmetic fails with an opaque TypeError deep inside the
+            constructor. Same defensive posture as `_coerce_token_count`.
+            """
+            value = getattr(_risk_cfg, name, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return default
+            return float(value) if value > 0 else default
+
+        self.portfolio_constructor = PortfolioConstructor(ConstructorConfig(
+            risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
+            min_risk_pct=_risk_setting("min_position_risk_pct", 0.5),
+            max_portfolio_risk_pct=_risk_setting("max_portfolio_risk_pct", 25.0),
+            max_cluster_risk_share_pct=_risk_setting("max_cluster_risk_share_pct", 40.0),
+            # Same setting the risk engine enforces (line ~326), so the
+            # constructor sizes under the ceiling rather than proposing orders
+            # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
+            max_position_pct=_risk_setting("max_position_pct", 20.0),
+            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
+            min_reward_risk_after_widening=_risk_setting(
+                "min_reward_risk_after_widening", 1.5,
+            ),
+        ))
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
         self.morning_research_stage = MorningResearchStage(
@@ -5012,6 +5065,11 @@ class TradingPipeline:
         ceiling = getattr(risk_cfg, "max_portfolio_risk_pct", None)
         if isinstance(ceiling, (int, float)) and ceiling > 0:
             f.risk_ceiling_pct = float(ceiling)
+        # Spec §2.2 — render the per-cluster cap the constructor enforces, so
+        # the PM sizes a theme against it instead of meeting it as a surprise.
+        cluster_share = getattr(risk_cfg, "max_cluster_risk_share_pct", None)
+        if isinstance(cluster_share, (int, float)) and 0 < cluster_share <= 100:
+            f.cluster_risk_share_pct = float(cluster_share)
 
         # Audit §1.2 — PM has been told to avoid stacking correlated names
         # while being shown no correlation data at all. Give it the clusters
@@ -5028,6 +5086,31 @@ class TradingPipeline:
             logger.warning("pm_facts: correlation clusters failed: %s", e)
             f.correlation_coverage = False
             f.correlation_clusters = []
+
+        # Who these tickers actually are. PM has been reasoning about `CCJ`
+        # and `PATH` as price series with a sector tag; "Energy" covers both
+        # an integrated major and a pre-revenue nuclear startup, and a sector
+        # label alone lets it reach for the wrong prior confidently. Scoped to
+        # the symbols already in play for THIS decision (held + candidates) —
+        # never the configured universe — and capped, because a cold cache
+        # pays one network round trip per symbol and the morning session's
+        # budget is not the place to discover a slow yfinance. Every failure
+        # mode inside the store degrades to an identity-less profile, which
+        # PMFacts.render() drops; this except is the belt to that suspenders.
+        try:
+            from src.data.company import CompanyProfileStore
+            profile_symbols = sorted(
+                {p.symbol for p in positions if p.qty > 0}
+                | {a.symbol for a in analyses}
+            )[:_PM_PROFILE_SYMBOL_CAP]
+            f.company_profiles = list(
+                CompanyProfileStore()
+                .get_many(profile_symbols, allow_fetch=True)
+                .values()
+            )
+        except Exception as e:  # noqa: BLE001 — identity is nice-to-have
+            logger.warning("pm_facts: company profiles failed: %s", e)
+            f.company_profiles = []
 
         return f
 
@@ -8063,6 +8146,53 @@ class TradingPipeline:
                 return None
             return self._intraday_opportunity_scan_body(ctx)
 
+    def _carry_forward_macro(self) -> dict | None:
+        """This morning's macro regime, for an intraday tick to reason inside.
+
+        Read from the store rather than re-derived: the macro analyst already
+        ran today and its call is on disk. Returns None when nothing is
+        stored, which leaves the tick exactly as blind as it used to be
+        rather than substituting a stale regime from a previous day —
+        `load_last_state` is not date-scoped, so the freshness check is this
+        method's job.
+        """
+        try:
+            state = self.macro_store.load_last_state() or None
+        except Exception as e:  # noqa: BLE001 — never fail a tick on carry-forward
+            logger.warning("Intraday scan: macro carry-forward failed: %s", e)
+            return None
+        if not state:
+            return None
+        # Only today's regime may be carried into today's session. Yesterday's
+        # is exactly the "citing stale evidence as if it ran this tick"
+        # failure the blindfold was protecting against.
+        stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
+        if stored_date and stored_date != str(et_today()):
+            logger.info(
+                "Intraday scan: stored macro is from %s, not today — not carried",
+                stored_date,
+            )
+            return None
+        return dict(state)
+
+    def _carry_forward_news(self):
+        """This morning's news intelligence, re-validated from its stored dump.
+
+        `load_daily_report` is already date-scoped to today, so no freshness
+        check is needed here. A schema failure degrades to None rather than
+        raising: a malformed cache must cost the tick its news context, never
+        the deterministic loss protection that already ran.
+        """
+        try:
+            report = self.news_store.load_daily_report()
+            if not report:
+                return None
+            from src.models import NewsIntelligenceReport
+            return NewsIntelligenceReport(**report)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: news carry-forward failed: %s", e)
+            return None
+
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict | None:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -8284,21 +8414,38 @@ class TradingPipeline:
             return None
 
         # Same shared chain morning uses — no separate PM/RM/gate logic.
-        # Macro/news/earnings are deliberately NOT re-fetched this tick
-        # (that is exactly the "expensive research stack" this fix must
-        # avoid rerunning); marking them explicitly here (rather than
-        # leaving ctx.data_status empty) makes RiskStage's existing
-        # 2+-degraded-sources advisory fire honestly, so RM is told this
-        # decision rests on thinner evidence than a full morning pass.
+        #
+        # Macro/news/earnings are still NOT re-fetched this tick — that is the
+        # expensive research stack this scan exists to avoid rerunning, and
+        # the saving is the whole point. But "not re-run" was previously
+        # implemented as "not shown", and those are different things. This
+        # session was handing the Portfolio Manager a technical-only view
+        # while THIS MORNING'S macro regime and news sat on disk, already
+        # paid for. The PM was blindfolded, not economical: `intra_check`
+        # measured at $0.222/run against `morning`'s $0.221 over the 10 days
+        # to 2026-08-27, ~99% of it the PM call, deciding on a fraction of
+        # the evidence.
+        #
+        # So: carry the morning's results forward, and label them as carried.
+        # The grounding property that mattered is preserved — nothing is
+        # presented as having run this tick — while the PM stops reasoning
+        # about an intraday move with no idea what regime it is happening in.
         ctx.analyses = analyses
+        carried_macro = self._carry_forward_macro()
+        carried_news = self._carry_forward_news()
         ctx.data_status = {
             "tech": "partial" if failed_count else "ok",
-            "macro": "not_run_intraday",
-            "news": "not_run_intraday",
+            # `carried_from_morning` rather than `ok`: RiskStage's existing
+            # degraded-sources advisory must still fire, because a regime call
+            # from 09:30 IS weaker evidence at 14:00 than a fresh one. It is
+            # not, however, no evidence, which is what `not_run_intraday`
+            # asserted.
+            "macro": "carried_from_morning" if carried_macro else "not_run_intraday",
+            "news": "carried_from_morning" if carried_news else "not_run_intraday",
             "earnings": "not_run_intraday",
         }
-        ctx.macro_analysis = None
-        ctx.news_intel = None
+        ctx.macro_analysis = carried_macro
+        ctx.news_intel = carried_news
         ctx.earnings_results = []
 
         self.decision_stage.run(ctx)

@@ -51,6 +51,24 @@ llm:
   # contract; GPT-5.5 scored 1.00/1.00 on both pm_constrained and the
   # 30-candidate/15-position production workload.
   portfolio_manager_model: "openai/gpt-5.5"
+  # Endpoint preference, NOT a model change. OpenRouter serves this exact
+  # model (`openai/gpt-5.5-20260423`) from three endpoints: `openai/flex` at
+  # $2.50/$15 per M tokens and `openai` / `azure` at $5/$30. Same weights,
+  # half the price, so there is no quality question to answer and no
+  # benchmark to run. A measurement over the 10 days to 2026-08-27 put the PM
+  # at 87% of all QAMC LLM spend ($5.84 of $6.73), but that window included
+  # runaway looping incidents (the reason the LLM cost circuit breaker was
+  # added) and is not a clean baseline — treat 87% as unreliable, not as the
+  # PM's steady-state share. This change is correct regardless: it halves
+  # whatever the PM's actual share turns out to be.
+  #
+  # Fallbacks stay ENABLED: if the flex tier is saturated the call falls
+  # through to the full-price endpoint and the session continues. Losing a
+  # trading session to save $0.11 would be a bad trade. Actual cost stays
+  # truthful either way because OpenRouter reports what it charged per call
+  # (`usage: {include: true}`) and that figure, not the pinned rate, is what
+  # the daily cost circuit spends against.
+  portfolio_manager_provider_order: ["openai/flex"]
   risk_manager_provider: "openrouter"
   # The ONE seat that diverges, and the reason the per-seat structure exists.
   #
@@ -127,9 +145,41 @@ risk:
   max_sector_pct: 40
   # Owner-ratified total at-risk ceiling: sum of (shares x distance from entry
   # to stop) across the book, as a % of equity. NOT a notional cap — full
-  # deployment is intended; risk is what gets rationed. Reporting-only until
-  # Phase 2b turns it into a gate.
+  # deployment is intended; risk is what gets rationed. ENFORCED as of
+  # Phase 2b (spec §2.2) — the constructor rations every risk-based target
+  # against it before sizing, so the book is bounded by construction rather
+  # than by a veto after the fact.
   max_portfolio_risk_pct: 25
+  # Spec §2.1 — the owner-ratified per-trade envelope (2026-08-27). Conviction
+  # is stated as the share of equity an idea may lose if its stop is hit, and
+  # the constructor derives the share count from it and the stop distance:
+  #     shares = (equity x risk_pct / 100) / |entry - stop|
+  # A wider stop therefore yields a SMALLER position rather than a rejected
+  # trade, which is what removes the incentive to squeeze stops. The previous
+  # 0.5% ceiling lived in a constructor dataclass default nobody chose.
+  max_position_risk_pct: 5
+  # Under this an idea is not worth trading: a token position pays full
+  # commission and full attention for an immaterial payoff. A request
+  # rationed below the floor is denied outright rather than shrunk.
+  min_position_risk_pct: 0.5
+  # Spec §2.2 — the most of the total ceiling any ONE correlated cluster may
+  # take. Without it, "total risk is under 25%" says nothing about
+  # diversification: a book holding OKLO/CEG/VST/CCJ at 5% risk each sits at
+  # 20% total while carrying one 20% bet on the nuclear theme. Correlated
+  # names consume one bet's budget. Clusters are measured return correlation
+  # (src/data/correlation.py), not a hand-maintained sector table.
+  max_cluster_risk_share_pct: 40
+  # Minimum stop distance in ATRs (2026-08-27). Structure still places the
+  # stop; this only pushes it out when structure put it inside ordinary
+  # volatility. Measured: stops sat a median 4.3% below entry against a median
+  # ATR of 2.56% of price — about 1.7 ATRs, barely more than one ordinary
+  # day's range. That is what fired exits inside noise, and what forced huge
+  # positions to reach any meaningful risk (a 4.3% stop admits only 0.86% risk
+  # under the 20% single-name cap, so conviction could not change the size).
+  min_stop_atr_multiple: 3.0
+  # A widened stop lowers reward:risk because the target does not move. Under
+  # this, the setup only ever qualified on a stop too tight to survive.
+  min_reward_risk_after_widening: 1.5
   require_stop_loss: true
   # Cash-only by default. Flip to true to allow margin — BUYs can then spend
   # beyond available cash. When false (default) the risk engine hard-blocks

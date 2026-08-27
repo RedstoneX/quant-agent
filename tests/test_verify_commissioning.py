@@ -104,6 +104,7 @@ def _roster(**overrides):
             "agent_name": name,
             "configured_provider": vc.EXPECTED_PROVIDER,
             "configured_model": model,
+            "configured_provider_order": vc.EXPECTED_PROVIDER_ORDER.get(name),
         }
         entry.update(overrides.get(name, {}))
         out.append(entry)
@@ -779,3 +780,34 @@ def test_garbage_from_tailscale_does_not_become_a_pass(monkeypatch):
     assert vc.tailscale_local_addresses() is None
     status, _ = vc.listener_privacy_verdict([TS4], vc.tailscale_local_addresses())
     assert status == vc.FAIL
+
+
+def test_routing_fails_when_a_seat_loses_its_endpoint_preference():
+    """The PM's `openai/flex` preference is half of the dominant cost line.
+    Stripped on the runtime host, the seat still runs the right model on the
+    right provider and looks entirely normal — while quietly costing twice as
+    much. That is precisely what this verifier exists to catch."""
+    seat = next(iter(vc.EXPECTED_PROVIDER_ORDER), None)
+    if seat is None:  # no seat currently pins an endpoint
+        pytest.skip("policy currently pins no endpoint preference")
+    status, detail = vc.check_agent_routing(
+        _roster(**{seat: {"configured_provider_order": None}})
+    )
+    assert status == vc.FAIL
+    assert "endpoint preference" in detail
+
+
+def test_routing_fails_when_a_seat_gains_an_unreviewed_endpoint_preference():
+    """Symmetric: pinning a seat to an endpoint nobody reviewed is also a
+    deployed-vs-reviewed divergence, and can pin a seat to a slow or
+    expensive endpoint just as easily as a cheap one."""
+    unpinned = next(
+        (a for a in vc.EXPECTED_ROUTING if a not in vc.EXPECTED_PROVIDER_ORDER), None
+    )
+    if unpinned is None:
+        pytest.skip("every seat already pins an endpoint")
+    status, detail = vc.check_agent_routing(
+        _roster(**{unpinned: {"configured_provider_order": ["openai/flex"]}})
+    )
+    assert status == vc.FAIL
+    assert "endpoint preference" in detail
