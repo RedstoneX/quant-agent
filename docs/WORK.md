@@ -103,12 +103,38 @@ paper account, rollback `9f77b03e`. Phase 3 (exit rework) and the execution
 limit fix are LIVE. Seven positions open, all with broker-resident stops.
 `paper: true`. Daily LLM budget raised to $2.75.
 
-**Not deployed:** everything merged after `18dd4bc`, plus five further commits
-committed but not yet merged on branch `feat/pm-flex-routing`: the PM's
-OpenRouter `openai/flex` endpoint routing (`16f6535`), Phase 2b risk-based
-sizing and budget (`75c0233`), the intraday PM un-blindfolding (`fb88e08`),
-the Mission Control `input_message` surface (`6b7af86`), and the sector-stance
-vocabulary/crash fix (`cdb387b`). None of this is on production.
+**Not deployed:** everything merged after `18dd4bc`, plus the whole of
+**PR #113** (`feat/pm-flex-routing`), which is open, CI-green and unmerged.
+None of it is on production. It carries, in review order:
+
+- `75c0233` Phase 2b risk-based sizing + the correlation-aware risk budget
+  gate — **the highest-consequence change here; review first.** It decides how
+  much money each trade may lose.
+- `fb88e08` the intraday PM un-blindfolding.
+- `16f6535` the PM's OpenRouter `openai/flex` endpoint routing.
+- `6b7af86` the Mission Control `input_message` surface, `cdb387b` the
+  sector-stance vocabulary + `TypeError` crash fix, `002095c` risk-sized
+  targets reappearing in the cockpit funnel, `300ea14` + `6f897a1` + `55f0e05`
+  the benchmark-harness repair and its guards, and the `docs:` commits.
+
+**Two findings from 2026-08-27 that outlive this PR:**
+
+1. **The model benchmark harness was broken two independent ways and nothing
+   detected either.** `ops/model_policy/scenarios.py` stopped importing when
+   Phase 1 (`138edd2`) made `setup_type` required — same day — AND it had
+   carried a backslash inside an f-string expression since `2016c9b`
+   (2026-08-14), which is a SyntaxError on Python 3.11, the project's declared
+   floor and what CI runs. Local dev is 3.12, so it parsed here and never
+   there. `tests/test_ops_scripts_importable.py` now imports every module
+   under `ops/` and `scripts/` and rejects 3.12-only f-strings, because
+   `pytest` collects `tests/` only and that blind spot is what let both sit.
+2. **The LLM-spend baseline is contaminated** — see the annotated
+   measured-spend section below. Do not build allocation conclusions on it.
+
+**Model-market strategy is TABLED** by owner decision (2026-08-27): fix
+everything, deploy, measure a clean baseline against the current build and
+allocation, and only then revisit champion/challenger and keeping up with new
+models. Do not reopen it before that clean measurement exists.
 
 **Caution — duplicate Phase 2b work in flight:**
 `/home/ubuntu/projects/quant-agent-worktrees/phase2b` (branch
@@ -131,6 +157,25 @@ the owner is **ET** — convert before quoting times to him.
 stop at phase gates for approval. Interrupt only for live-capital activation,
 new paid dependencies, secrets redesign, destructive infrastructure, or
 evidence that a ratified decision was wrong. See `Owner decisions` below.
+
+**Four corrections the owner issued on 2026-08-27. All four were earned:**
+
+- **Stage git paths explicitly. Never `git add -A` in these checkouts.** Other
+  sessions and subagents edit the same tree; a blanket stage committed another
+  session's in-flight work under the wrong message and had to be unpicked with
+  a soft reset.
+- **Delegate grunt work to Sonnet subagents at the START of a task** — doc
+  passes, verification sweeps, mechanical refactors — not after the work is
+  already done on Opus. Budget is the binding constraint on this project.
+- **Stop when you find something broken that predates your task.** Report it
+  in plain, non-technical language and let the owner decide. The autonomy
+  grant covers EXECUTING the agreed backlog, not expanding it.
+- **Never state a date or duration from impression.** Get it from `git log`,
+  and check the author: everything in this repository before **2026-08-09**
+  belongs to the upstream author `yebof`, not to QAMC. Two claims were
+  overstated in one day ("rotted months ago" — it broke the same day;
+  "unexamined for months" — it was inherited with the fork), both in the
+  direction of making findings sound worse than they were.
 
 ### Ordered backlog — RESUME POINT
 
