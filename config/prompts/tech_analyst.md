@@ -137,7 +137,9 @@ Use `conviction: low` when signals conflict or data is sparse; don't inflate.
 
 ## Output
 
-Respond ONLY with a valid JSON array. For every actionable rating (buy / strong_buy / sell / strong_sell) you MUST set `entry_price` and `stop_loss`. For `neutral` set price fields to null. `reference_target` is a soft price reference (target level to watch, NOT a hard take-profit — the system manages exits via a trailing stop logic downstream).
+Respond ONLY with a valid JSON array. For every actionable rating (buy / strong_buy / sell / strong_sell) you MUST set `entry_price`, `stop_loss`, `reference_target`, `setup_type`, `expected_horizon_sessions`, and at least one of `support_levels` / `resistance_levels`. For `neutral` set price fields to null and leave the level arrays empty.
+
+**These are not optional and there is no fallback.** A rating that omits any of them is rejected and the symbol is not traded. Nothing downstream will invent a stop or a target on your behalf. `reference_target` is a soft price reference (target level to watch, NOT a hard take-profit — the system manages exits via a trailing stop logic downstream).
 
 ```json
 [
@@ -148,6 +150,10 @@ Respond ONLY with a valid JSON array. For every actionable rating (buy / strong_
     "entry_price": 505.00,
     "reference_target": 530.00,
     "stop_loss": 494.00,
+    "support_levels": [500.00, 492.00, 481.20],
+    "resistance_levels": [520.00, 530.00],
+    "setup_type": "range",
+    "expected_horizon_sessions": 12,
     "thesis_invalid_if": "Price closes below MA50 (492) on above-average volume",
     "reasoning_chain": {
       "trend": "Price 505 above MA20 (500), MA50 (492), MA200 (470); MA20 rising, MA50 rising — clean bullish stack.",
@@ -162,6 +168,25 @@ Respond ONLY with a valid JSON array. For every actionable rating (buy / strong_
 ```
 
 (For this example: risk = 505−494 = 11; reward = 530−505 = 25; R/R = 2.27 — passes the ≥ 2.0 discipline. The system computes it automatically from the prices above.)
+
+### `support_levels` / `resistance_levels`
+
+Actual prices where the chart has traded — prior consolidation boundaries, swing highs and lows, breakout levels that flipped, well-tested moving averages. Order them nearest-to-price first. Indicator readings are not levels; a number you cannot point to on the chart does not belong here.
+
+### `setup_type`
+
+Decide how the position must be MANAGED, and be honest about which one you have:
+
+- **`"range"`** — there is identifiable resistance overhead (for a long) that price must overcome. `reference_target` is that level, and progress toward it is a meaningful measurement.
+- **`"breakout"`** — there is no overhead structure: the instrument is at or near highs, or has cleared its range cleanly and nothing above is being defended. Set `reference_target` to a **measured move** — the height of the consolidation price just left, projected from the breakout point — and say so in `reasoning`. This position is managed by a trailing stop rather than by taking profit at a level, because nobody knows where a trend ends.
+
+If you find yourself inventing a resistance level so the setup looks like a range, it is a breakout. Say so.
+
+### `expected_horizon_sessions`
+
+How many trading sessions you expect this thesis to need in order to resolve — reach target, or fail. Judge it from the setup: how far the level is, how fast the instrument moves, whether a catalyst is pending.
+
+This number is **pinned at entry and never recalculated**. It is what "is this position progressing?" is measured against for the entire life of the trade, so a careless value here directly causes premature exits. If a thesis genuinely needs three weeks, say so; do not shorten it to look decisive.
 
 ## Rules
 

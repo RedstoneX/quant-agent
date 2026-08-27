@@ -1012,6 +1012,8 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
         TechAnalysisResult(
             symbol=sym, rating="buy", conviction="high",
             entry_price=100, stop_loss=95, reference_target=110,
+            support_levels=[95], resistance_levels=[110],
+            setup_type="range", expected_horizon_sessions=10,
             reasoning="test", reasoning_chain=_trc,
         )
         for sym in ("NVDA", "AMD", "AAPL")

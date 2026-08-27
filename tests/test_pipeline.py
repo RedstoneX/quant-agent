@@ -173,7 +173,10 @@ def test_pipeline_morning_run_buy(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reference_target=530.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[530.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
@@ -295,7 +298,10 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reference_target=530.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[530.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
@@ -459,7 +465,10 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     # uses live broker price.
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=98.0,
-        reference_target=130.0, stop_loss=72.0, reasoning="Bullish",
+        reference_target=130.0, stop_loss=72.0,
+        support_levels=[72.0], resistance_levels=[130.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
@@ -572,7 +581,10 @@ def test_pipeline_risk_rejected(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0, reasoning="Bullish",
+        reference_target=530.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[530.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
@@ -2708,7 +2720,10 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_ta = MagicMock()
     qqq_analysis = TechAnalysisResult(
         symbol="QQQ", rating="buy", entry_price=100.0,
-        reference_target=110.0, stop_loss=95.0, reasoning="Bullish",
+        reference_target=110.0, stop_loss=95.0,
+        support_levels=[95.0], resistance_levels=[110.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="Bullish",
         reasoning_chain=_trc(),
     )
     mock_ta.analyze_batch.return_value = ({"QQQ": qqq_analysis}, _mock_agent_result())
