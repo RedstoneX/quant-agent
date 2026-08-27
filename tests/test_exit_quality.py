@@ -159,7 +159,7 @@ def test_position_facts_prefer_live_broker_stop():
     }
     pipeline._atr_for_symbol = lambda s: 8.0
     facts = pipeline._build_position_facts(
-        [GE], morning_trades=[], total_value=100_000.0, avg_hold_days=10.0,
+        [GE], morning_trades=[], total_value=100_000.0,
     )
     dist = facts["GE"]["distance_to_stop_pct"]
     assert dist is not None and abs(dist - (360 - 350) / 360 * 100) < 0.01
@@ -179,7 +179,7 @@ def test_position_facts_fall_back_to_buy_row_stop():
     }
     pipeline._atr_for_symbol = lambda s: None
     facts = pipeline._build_position_facts(
-        [GE], morning_trades=[], total_value=100_000.0, avg_hold_days=10.0,
+        [GE], morning_trades=[], total_value=100_000.0,
     )
     dist = facts["GE"]["distance_to_stop_pct"]
     assert dist is not None and abs(dist - (360 - 300) / 360 * 100) < 0.01

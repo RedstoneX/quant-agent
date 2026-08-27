@@ -126,6 +126,22 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   to PM + RM (§1.3, `src/risk/metrics.py`), and R-multiple reaches the Position
   Reviewer (§1.4). New `risk.max_portfolio_risk_pct` (25%) is **reporting-only**
   — it does not gate anything yet.
+- **Phase 3.1 + 3.2** — committed as `aea82ee` on branch
+  `feat/exit-rework-pace-and-memory` (not yet merged). §3.1: the `pace` feedback
+  loop is broken — `expected_horizon_sessions` and `setup_type` are pinned on
+  the `trades` row at BUY time and never recomputed, the rolling-calibration
+  `avg_hold_days` query is deleted from the review path, and `pace_status`
+  (`measured` / `too_early` / `n/a_breakout` / `unavailable_no_pinned_horizon`)
+  replaces a fabricated figure with a labeled absence. §3.2 (audit §1.5): the
+  reviewer now has memory — each review snapshots its per-position metrics
+  (`db.save_position_review_metrics`), the next review receives the deltas,
+  and new `src/risk/exit_guard.py` vetoes a SELL/REDUCE whose stated reason is
+  a deterioration claim when every metric that moved actually improved. Exits
+  on new information are never vetoed. 2323 tests pass (2283 on main, +40).
+  **Still open:** §3.3 (first-sale-of-the-day loophole), §3.4 (route exits
+  through AI Risk), §3.5 (upgrade the reviewer's model off
+  `gemini-2.5-flash-lite`), §3.6 (ATR noise band), §3.7 (broker-resident
+  trailing stops).
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -148,10 +164,11 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
 
 **Next, in order**
 
-1. **Phase 3 — exits.** Break the `pace` feedback loop by measuring against the
-   horizon pinned at entry; give the reviewer memory of its own prior review
-   (§1.5); close the first-sale-of-the-day gate loophole; route exits through
-   AI Risk; upgrade the reviewer's model; ATR noise band; trailing stops.
+1. **Phase 3 — exits (remaining).** §3.1 (pace feedback loop) and §3.2
+   (reviewer memory, audit §1.5) are landed — see above. Still open: close the
+   first-sale-of-the-day gate loophole (§3.3); route exits through AI Risk
+   (§3.4); upgrade the reviewer's model off `gemini-2.5-flash-lite` (§3.5);
+   ATR noise band (§3.6); broker-resident trailing stops (§3.7).
 2. **Phase 2b — sizing and risk (remaining).** Conviction expressed as risk
    allocation rather than percent-of-portfolio notional (§2.1,
    `shares = (equity × risk_pct) ÷ |entry − stop|`, envelope 5% ceiling / 0.5%

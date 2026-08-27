@@ -86,7 +86,7 @@ def test_thesis_progress_pct_at_entry():
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
-        total_value=10_000.0, avg_hold_days=5.0,
+        total_value=10_000.0,
     )
     assert facts["AAA"]["thesis_progress_pct"] == 0.0
 
@@ -106,7 +106,7 @@ def test_thesis_progress_pct_halfway_to_target():
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
-        total_value=10_000.0, avg_hold_days=5.0,
+        total_value=10_000.0,
     )
     assert facts["BBB"]["thesis_progress_pct"] == 50.0
 
@@ -126,7 +126,7 @@ def test_thesis_progress_pct_beyond_target():
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
-        total_value=10_000.0, avg_hold_days=5.0,
+        total_value=10_000.0,
     )
     assert facts["CCC"]["thesis_progress_pct"] == 200.0
     # And target_breach flag should fire
@@ -149,7 +149,7 @@ def test_distance_to_stop_and_target():
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
-        total_value=10_000.0, avg_hold_days=5.0,
+        total_value=10_000.0,
     )
     assert round(facts["DDD"]["distance_to_stop_pct"], 1) == 13.6
     assert round(facts["DDD"]["distance_to_target_pct"], 1) == 9.1
@@ -190,7 +190,6 @@ def test_good_stock_long_hold_has_no_flags_firing():
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
         total_value=15_625.0,  # GOOD is 8% of book
-        avg_hold_days=8.0,
     )
 
     good = facts["GOOD"]
@@ -222,7 +221,7 @@ def test_parabolic_flag_fires_on_recent_big_winner():
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
-        total_value=20_000.0, avg_hold_days=8.0,
+        total_value=20_000.0,
     )
     assert facts["FAST"]["parabolic_flag"] is True
 
@@ -246,7 +245,6 @@ def test_drift_flag_fires_on_oversized_winner():
     facts = pipeline._build_position_facts(
         positions=[p], morning_trades=morning,
         total_value=50_000.0,  # BIG is 23% of book
-        avg_hold_days=8.0,
     )
     assert facts["BIG"]["drift_flag"] is True
     assert facts["BIG"]["weight_pct"] > 12

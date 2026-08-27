@@ -5468,6 +5468,7 @@ class TradingPipeline:
     def _midday_execute_llm_actions(
         self, positions, review, run_id: str, blocked_symbols: set[str] | None = None,
         already_trimmed_today: set[str] | None = None,
+        metric_deltas: dict | None = None,
     ) -> list[dict]:
         """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP actions to broker.
 
@@ -5531,6 +5532,31 @@ class TradingPipeline:
             # flag = 73% one-day trim on a strengthening thesis. Mechanical
             # double-application of one signal violates "good stocks are meant
             # to be held".
+            # Phase 3.2 — a deterioration verdict may not contradict the
+            # reviewer's own recorded numbers. Vetoes ONLY a SELL/REDUCE whose
+            # stated reason claims the position is stalling while every metric
+            # that moved since the previous review improved. Exits on new
+            # information (news, earnings, regime, invalidation) are untouched,
+            # however good the numbers look — see src/risk/exit_guard.py.
+            if act in ("SELL", "REDUCE") and metric_deltas:
+                from src.risk.exit_guard import veto_contradicted_exit
+                deltas = metric_deltas.get(symbol)
+                if deltas is not None:
+                    veto = veto_contradicted_exit(
+                        act, action_item.get("reason", ""), deltas,
+                    )
+                    if veto:
+                        logger.warning("Exit guard: %s", veto)
+                        try:
+                            self.db.record_intraday_evaluation(
+                                symbol=symbol, run_id=run_id,
+                                status="exit_vetoed_contradicts_own_metrics",
+                                detail=veto[:500],
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("exit guard: audit write failed: %s", e)
+                        continue
+
             if (
                 act in ("SELL", "REDUCE")
                 and symbol in already_trimmed
@@ -6375,7 +6401,7 @@ class TradingPipeline:
         fire now rather than waiting for tomorrow morning."""
         return self.run_position_review(session_type="close")
 
-    def _build_position_facts(self, positions, morning_trades, total_value, avg_hold_days):
+    def _build_position_facts(self, positions, morning_trades, total_value):
         """Deterministic per-position metrics surfaced to the reviewer.
 
         Python does the math (progress %, pace, distance-to-stop/target,
@@ -6437,18 +6463,61 @@ class TradingPipeline:
                 except Exception:
                     days_held = None
 
-            # Progress: 0 at entry, 100 at target, >100 beyond target.
-            progress_pct = None
-            if take_profit and entry and take_profit != entry:
-                progress_pct = (cur - entry) / (take_profit - entry) * 100
+            # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
+            # Read from the BUY row, never recomputed. NULL for positions
+            # opened before this landed, and for sweep/resume-lane buys with
+            # no analysis; those get no pace figure rather than a fabricated
+            # one.
+            pinned_horizon = (buy or {}).get("expected_horizon_sessions")
+            try:
+                pinned_horizon = int(pinned_horizon) if pinned_horizon else None
+            except (TypeError, ValueError):
+                pinned_horizon = None
+            setup_type = (buy or {}).get("setup_type") or None
 
-            # Pace = progress / (days_held / avg_hold_days_from_calibration)
+            # Progress: 0 at entry, 100 at target, >100 beyond target.
+            #
+            # DISABLED for breakout ("Type B") setups. A breakout's target is a
+            # measured-move reference, not a level anyone is defending — there
+            # is no overhead structure for price to progress TOWARD, so
+            # "progress" against it measures nothing and "pace" against that
+            # nothing is worse. Breakouts are managed by trailing instead
+            # (spec Phase 3.7). `setup_type` is pinned at entry alongside the
+            # horizon.
+            progress_pct = None
             pace = None
-            if (progress_pct is not None and days_held is not None
-                    and avg_hold_days and avg_hold_days > 0 and days_held > 0):
-                time_fraction = days_held / avg_hold_days
-                if time_fraction > 0:
-                    pace = progress_pct / (time_fraction * 100)  # normalize to 1× = on pace
+            pace_status = "unavailable"
+            if setup_type == "breakout":
+                pace_status = "n/a_breakout"
+            else:
+                if take_profit and entry and take_profit != entry:
+                    progress_pct = (cur - entry) / (take_profit - entry) * 100
+
+                # Pace against the horizon the ANALYST pinned at entry.
+                #
+                # This replaces `days_held / avg_hold_days`, where avg_hold_days
+                # came from the system's own rolling 30-day realized-trade
+                # calibration (~2.0 days in practice). That made pace a
+                # feedback loop: every early sale shrank the average, which made
+                # every surviving position look stalled, which drove more early
+                # sales. A self-tightening noose, and the single largest
+                # identified P&L defect in the system. A trade's expected
+                # horizon must never be derived from the system's own past
+                # behaviour.
+                if progress_pct is None or not pinned_horizon or days_held is None:
+                    pace_status = "unavailable_no_pinned_horizon"
+                elif days_held < max(1, pinned_horizon / 3):
+                    # Below one third of the pinned horizon the metric is
+                    # mathematically meaningless — a thesis given 15 sessions
+                    # cannot be "behind schedule" on day 2, and reading it as
+                    # such is exactly how a day-5 position gets sold for "not
+                    # progressing".
+                    pace_status = "too_early"
+                else:
+                    time_fraction = days_held / pinned_horizon
+                    if time_fraction > 0:
+                        pace = progress_pct / (time_fraction * 100)
+                        pace_status = "measured"
 
             # Distance-to-stop / distance-to-target as % of current price.
             dist_stop_pct = None
@@ -6491,6 +6560,9 @@ class TradingPipeline:
 
             facts[sym] = {
                 "days_held": days_held,
+                "expected_horizon_sessions": pinned_horizon,
+                "setup_type": setup_type,
+                "pace_status": pace_status,
                 "r_multiple": risk.r_multiple,
                 "initial_stop": initial_stop or None,
                 "risk_released": risk.risk_released,
@@ -6507,6 +6579,83 @@ class TradingPipeline:
                 "stop_distance_atrs": stop_distance_atrs,
             }
         return facts
+
+    #: Metric keys snapshotted after every review and compared on the next one.
+    #: Kept deliberately small — these are the numbers a "stalling" claim is
+    #: actually about, and every one of them has a defined direction.
+    _REVIEW_METRIC_KEYS = (
+        "thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace",
+        "days_held", "expected_horizon_sessions", "setup_type", "pace_status",
+    )
+
+    def _build_review_metric_deltas(self, position_facts: dict, *, run_id: str) -> dict:
+        """`{symbol: MetricDeltas}` versus this seat's previous review.
+
+        Phase 3.2 / audit §1.5. Degrades to empty deltas (never to a wrong
+        comparison) when the prior snapshot is missing or unparseable — a
+        first look at a position legitimately has nothing to compare against,
+        and the guard downstream treats "no prior" as "do not veto".
+        """
+        import json as _json
+        from src.risk.exit_guard import compute_deltas
+
+        symbols = list(position_facts or {})
+        if not symbols:
+            return {}
+        try:
+            prior_rows = self.db.get_prior_position_review_metrics(
+                symbols, exclude_run_id=run_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "review memory: prior-metric read failed (%s) — this review "
+                "runs without memory of its own last look", e,
+            )
+            prior_rows = {}
+        deltas: dict = {}
+        for symbol, current in (position_facts or {}).items():
+            row = prior_rows.get(symbol.upper())
+            prior = None
+            if row:
+                try:
+                    prior = _json.loads(row.get("evidence_json") or "{}")
+                except (TypeError, ValueError) as e:
+                    logger.warning(
+                        "review memory: %s prior snapshot is unparseable (%s) — "
+                        "treating as no prior", symbol, e,
+                    )
+                    prior = None
+            deltas[symbol.upper()] = compute_deltas(
+                symbol, prior, current,
+                prior_timestamp=(row or {}).get("timestamp"),
+            )
+        return deltas
+
+    def _persist_review_metrics(self, position_facts: dict, *, run_id: str) -> None:
+        """Snapshot this review's metrics so the next one can compare.
+
+        Never raises: losing a snapshot degrades the NEXT review to "no prior",
+        which the guard handles, and must not take down the current session.
+        """
+        import json as _json
+        for symbol, facts in (position_facts or {}).items():
+            payload = {
+                key: facts.get(key)
+                for key in self._REVIEW_METRIC_KEYS
+                if facts.get(key) is not None
+            }
+            if not payload:
+                continue
+            try:
+                self.db.save_position_review_metrics(
+                    run_id=run_id, symbol=symbol,
+                    metrics_json=_json.dumps(payload, sort_keys=True),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "review memory: failed to snapshot %s (%s) — next review "
+                    "will have no prior for it", symbol, e,
+                )
 
     def _build_own_recent_decisions(self, limit: int = 3) -> str:
         """Pull last N position_reviewer sessions from agent_logs.
@@ -6811,16 +6960,26 @@ class TradingPipeline:
                 logger.warning("%s: macro_store load failed: %s", session_type, e)
 
             # Pre-compute deterministic per-position metrics.
-            calib = {}
-            try:
-                raw_calib = self.db.compute_trade_calibration(lookback_days=45)
-                calib = raw_calib if isinstance(raw_calib, dict) else {}
-            except Exception as e:
-                logger.warning("%s: calibration query failed: %s", session_type, e)
-            raw_avg = calib.get("avg_hold_days")
-            avg_hold_days = raw_avg if isinstance(raw_avg, (int, float)) else None
+            #
+            # Phase 3.1: this used to fetch `avg_hold_days` from the rolling
+            # 45-day realized-trade calibration and hand it to the facts
+            # builder as the denominator of `pace`. That is the feedback loop —
+            # the system's own selling behaviour set the bar every surviving
+            # position was measured against. The horizon is now pinned at entry
+            # on the trade row and the calibration query is gone from this
+            # path entirely, so there is nothing to accidentally reconnect.
             position_facts = self._build_position_facts(
-                review_positions, morning_trades, total_value, avg_hold_days,
+                review_positions, morning_trades, total_value,
+            )
+
+            # Phase 3.2 / audit §1.5 — the reviewer's memory of its OWN prior
+            # numbers. `_build_own_recent_decisions` below replays past ACTIONS
+            # and drops HOLDs, so without this the seat rebuilds its view from
+            # scratch every session and can report a position deteriorating
+            # while everything it measured six hours ago improved. That is
+            # exactly how EPD and MRVL were sold on intact theses.
+            metric_deltas = self._build_review_metric_deltas(
+                position_facts, run_id=run_id,
             )
 
             # Memory layers — share the same helpers PM uses.
@@ -6849,6 +7008,7 @@ class TradingPipeline:
                     total_value=total_value,
                     session_type=session_type,
                     position_facts=position_facts,
+                    metric_deltas=metric_deltas,
                     morning_trades=morning_trades,
                     news_intel=session_news,
                     earnings_analyses=session_earnings,
@@ -6933,7 +7093,13 @@ class TradingPipeline:
                     review_positions, review, run_id,
                     blocked_symbols=blocked_position_symbols,
                     already_trimmed_today=already_trimmed_today,
+                    metric_deltas=metric_deltas,
                 ))
+
+            # Snapshot AFTER the review so the next session compares against
+            # what this one actually saw. Written even when the review failed:
+            # the metrics are deterministic and their continuity is the point.
+            self._persist_review_metrics(position_facts, run_id=run_id)
 
         logger.info("%s: %d positions, risk=%s, %d orders",
                      session_type.capitalize(), len(positions),

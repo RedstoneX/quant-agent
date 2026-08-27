@@ -57,6 +57,8 @@ This is the second independent confirmation of the EPD defect: on 2026-08-26 it 
 
 **Fix:** persist each review's metrics; pass the previous snapshot; reject a deterioration verdict when the deltas are positive.
 
+**FIXED (2026-08-27, commit `aea82ee`, branch `feat/exit-rework-pace-and-memory`, not yet merged).** Each review now snapshots its per-position metrics to `specialist_evidence` (`agent_name="position_reviewer"`, `kind="review_metrics"`) via new `db.save_position_review_metrics`; the next review reads them back with `db.get_prior_position_review_metrics` and the pipeline's new `_build_review_metric_deltas` / `_persist_review_metrics` (`src/pipeline.py`). New `src/risk/exit_guard.py` (`MetricDeltas`, `compute_deltas`, `is_deterioration_claim`, `veto_contradicted_exit`) then vetoes a SELL/REDUCE whose stated reason is a deterioration claim ("stalling", "not progressing", "momentum fading", etc.) when every metric that moved since the prior review improved — logged as `exit_vetoed_contradicts_own_metrics`. Exits on new information (news, earnings, regime shift, correlation breach, a triggered `thesis_invalid_if`) are never vetoed, and a mixed picture is deliberately not vetoed — that stays the reviewer's judgment call. Landed alongside Phase 3.1 (the pace feedback loop, `QAMC_REMEDIATION_SPEC.md` §3.1); see that document for the pace fix.
+
 ---
 
 ## Severity 2 — analyst coverage
@@ -129,6 +131,6 @@ The uncomfortable part: its most safety-critical contribution is **covering for 
 | When | Items |
 |---|---|
 | **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple — **landed as Phase 2a, commit `c89e957`** |
-| **Phase 3** (exits) | §1.5 reviewer memory |
+| **Phase 3** (exits) | §1.5 reviewer memory — **landed, commit `aea82ee` on branch `feat/exit-rework-pace-and-memory` (not yet merged)** |
 | **Right after Phase 2** | §2.5 routine/opportunistic filter — cheap, well-evidenced, highest value per line of code |
 | **Separate pass, needs owner decisions** | §2.2 news cascade · §2.3 macro series · §2.4 earnings trends — several need new data sources |
