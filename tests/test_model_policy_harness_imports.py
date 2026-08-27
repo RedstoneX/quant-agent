@@ -1,11 +1,16 @@
 """The model-policy benchmark harness must stay runnable.
 
-`ops/` is not collected by pytest, and that is how this rotted: Phase 1 made
-`setup_type`, `expected_horizon_sessions` and a structural level required on
-`TechAnalysisResult`, the `ops/model_policy/scenarios.py` fixtures were never
-updated, and the module stopped importing. Nothing failed, because nothing
-imported it — so `benchmark_models.py` was dead from Phase 1 until 2026-08-27
-and no one could have noticed.
+`ops/` is not collected by pytest, and that is how this broke: the Phase 1
+tranche (`138edd2`, 2026-08-27) made `setup_type`, `expected_horizon_sessions`
+and a structural level required on `TechAnalysisResult`, the
+`ops/model_policy/scenarios.py` fixtures were not updated with it, and the
+module stopped importing. Nothing failed, because nothing imports it.
+
+The window here was HOURS, not months — Phase 1 and this repair landed the
+same day. The danger is not the elapsed time, it is that elapsed time was the
+only thing bounding it: a benchmark is run every few weeks at most, so nothing
+would have surfaced this until the next sweep, and the next sweep is precisely
+when the harness has to work.
 
 That matters more than a broken script. `docs/architecture/MODEL_ROUTING_POLICY.md`
 names this harness as the thing that "re-derives the whole decision from
@@ -32,7 +37,7 @@ def test_scenarios_module_imports():
 
     Every fixture is a real `src.models` object, so any newly-required field
     raises `ValidationError` here rather than silently at the next sweep —
-    which is months later, costs real money, and is exactly when the harness
+    which may be weeks away, costs real money, and is exactly when the harness
     needs to work.
     """
     module = importlib.import_module("ops.model_policy.scenarios")
