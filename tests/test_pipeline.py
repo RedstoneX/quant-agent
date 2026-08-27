@@ -2999,10 +2999,21 @@ def test_midday_allows_trail_stop_on_already_trimmed_symbol():
     pipeline.broker.replace_stop_loss.assert_called_once()
 
 
-def test_midday_first_sell_of_day_passes_through():
-    """No prior trim on this symbol today → SELL with even a soft reason
-    is allowed (first one is fine; only the SECOND on the same day with
-    a soft reason is the mechanical-loop bug we guard against)."""
+def test_midday_first_sell_of_day_on_a_soft_reason_is_now_blocked():
+    """CONTRACT CHANGE, spec Phase 3.3 (2026-08-27). This test previously
+    asserted the opposite — that a first sale on a soft reason passes — and
+    that was the loophole.
+
+    The hard-trigger gate applied only to a symbol's SECOND sell-side action
+    in a day, so a position's FIRST sale executed on soft reasoning entirely
+    unchecked. A first sale is almost every sale. Both exits the evening
+    review graded "premature" on 2026-08-26 (EPD, MRVL) were first sales and
+    went straight through this gap.
+
+    Every exit must now NAME a trigger. "momentum cooling, take some off" is
+    a feeling, not new information, so it is refused. The position is held
+    instead, protected by its broker-resident stop.
+    """
     position = Position(
         symbol="NVDA", qty=10.0, avg_entry=400.0, current_price=420.0,
         market_value=4200.0, unrealized_pnl=200.0,
@@ -3021,6 +3032,33 @@ def test_midday_first_sell_of_day_passes_through():
     orders = pipeline._midday_execute_llm_actions(
         positions=[position], review=review, run_id="r-1",
         already_trimmed_today=set(),  # empty — first time today
+    )
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()
+
+
+def test_midday_first_sell_of_day_passes_when_it_names_a_trigger():
+    """The gate refuses feelings, not exits. A named trigger goes through on
+    the first sale exactly as before — this is the other half of 3.3, and
+    without it the change would just be a blanket freeze."""
+    position = Position(
+        symbol="NVDA", qty=10.0, avg_entry=400.0, current_price=420.0,
+        market_value=4200.0, unrealized_pnl=200.0,
+        unrealized_intraday_pnl=0.0, sector="Technology",
+    )
+    pipeline = _mk_midday_pipeline(position)
+    review = PositionReview(
+        reasoning_chain=_review_rc(),
+        actions=[PositionAction(
+            action="SELL", symbol="NVDA",
+            reason="thesis_invalid triggered: closed below MA50 on 2x volume",
+        )],
+        overall_assessment="thesis broke",
+        risk_level="moderate",
+    )
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[position], review=review, run_id="r-1",
+        already_trimmed_today=set(),
     )
     assert len(orders) == 1
     pipeline.broker.submit_order.assert_called_once()

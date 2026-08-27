@@ -774,10 +774,16 @@ def test_executor_does_not_block_trail_stop_on_already_trimmed():
     pipeline.broker.replace_stop_loss.assert_called_once()
 
 
-def test_executor_filter_no_op_when_set_empty():
-    """When no symbols were trimmed today, executor behaves exactly as
-    before — even soft-reasoned REDUCEs go through (LLM judgment, not
-    our place to second-guess on a clean session)."""
+def test_executor_blocks_a_soft_reasoned_reduce_even_on_a_clean_session():
+    """CONTRACT CHANGE, spec Phase 3.3 (2026-08-27). This previously asserted
+    that a soft-reasoned REDUCE goes through when nothing was trimmed today —
+    "LLM judgment, not our place to second-guess on a clean session".
+
+    That deference is what the loophole was. `TARGET_BREACH and weight 10.3%`
+    is a pair of recurring flags, not an event, and mechanically acting on
+    flags is what produced repeated trims of strengthening theses. Every exit
+    now names a trigger or does not happen.
+    """
     from src.models import Position
 
     pipeline = _executor_pipeline_with_position("AMZN", 41.0, 270.0)
@@ -794,7 +800,7 @@ def test_executor_filter_no_op_when_set_empty():
         already_trimmed_today=set(),  # nothing trimmed yet today
     )
 
-    pipeline.broker.submit_order.assert_called_once()
+    pipeline.broker.submit_order.assert_not_called()
 
 
 def test_executor_blocks_full_sell_on_already_trimmed_soft_reason():

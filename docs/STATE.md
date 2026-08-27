@@ -82,11 +82,24 @@ This file records what is accepted and true **now**. Git history preserves imple
   whose stated reason is a deterioration claim when every metric that moved
   since the prior review improved. Exits on new information (news, earnings,
   regime shift, correlation breach, a triggered `thesis_invalid_if`) are never
-  vetoed. §3.3–§3.7 (first-sale-of-the-day loophole, routing exits through AI
-  Risk, upgrading the reviewer's model off `gemini-2.5-flash-lite`, ATR noise
-  band, broker-resident trailing stops) and Phases 4–8 (evidence/feed repair,
-  short selling, cost/transparency, measurement, further documentation
-  correction) remain pending — see `docs/QAMC_REMEDIATION_SPEC.md`.
+  vetoed. §3.3 is committed separately — see below. §3.4–§3.7 (routing exits
+  through AI Risk, upgrading the reviewer's model off `gemini-2.5-flash-lite`,
+  ATR noise band, broker-resident trailing stops) and Phases 4–8
+  (evidence/feed repair, short selling, cost/transparency, measurement,
+  further documentation correction) remain pending — see
+  `docs/QAMC_REMEDIATION_SPEC.md`.
+- **Phase 3.3 of the remediation spec is committed, not yet merged** —
+  `2f177e33` on branch `feat/exit-gate-and-risk-routing`. The hard-trigger
+  phrase gate on exits previously applied only to a symbol already trimmed
+  that day, so a position's first sale of the day executed on soft reasoning
+  unchecked — almost every sale. Every SELL and REDUCE now requires the
+  reason to name a recognised trigger (`src/pipeline.py`,
+  `_reason_cites_hard_trigger` against `_HARD_TRIGGER_KEYWORDS`, widened to
+  cover macro regime shift, sector shock, adverse/material news, earnings
+  miss and guidance cut); a non-matching reason is dropped and logged as
+  `exit_blocked_no_named_trigger`, and the position is held, protected by its
+  broker-resident stop. This does not change the KNOWN DEFECT above — exits
+  still bypass the Portfolio Manager and AI Risk Manager entirely (§3.4).
 
 ## Stabilization account model
 

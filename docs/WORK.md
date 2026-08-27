@@ -138,10 +138,34 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   and new `src/risk/exit_guard.py` vetoes a SELL/REDUCE whose stated reason is
   a deterioration claim when every metric that moved actually improved. Exits
   on new information are never vetoed. 2323 tests pass (2283 on main, +40).
-  **Still open:** §3.3 (first-sale-of-the-day loophole), §3.4 (route exits
-  through AI Risk), §3.5 (upgrade the reviewer's model off
-  `gemini-2.5-flash-lite`), §3.6 (ATR noise band), §3.7 (broker-resident
-  trailing stops).
+- **Phase 3.3** — committed as `2f177e33` on branch
+  `feat/exit-gate-and-risk-routing` (not yet merged). The hard-trigger phrase
+  gate previously applied only to a symbol already trimmed that day, so a
+  position's *first* sale executed on soft reasoning unchecked — almost
+  every sale. Two of 2026-08-26's evening-graded `premature` exits (EPD,
+  MRVL) were first sales that went straight through the gap. Every SELL and
+  REDUCE now requires the reason to name a recognized trigger; a
+  non-matching reason is dropped and logged as
+  `exit_blocked_no_named_trigger`. The trigger vocabulary
+  (`_HARD_TRIGGER_KEYWORDS`, `src/pipeline.py`) was widened first — macro
+  regime shift, sector shock, adverse/material news, earnings miss, guidance
+  cut, all sanctioned by spec §3.8 and previously unrepresented — so gating
+  every exit against the old list would have blocked legitimate ones.
+  Concentration and drift were deliberately NOT added: their reason shape is
+  the verbatim 2026-05-04 AMZN double-trim, and drift trims belong to the
+  Portfolio Manager's rule-priority rows 4-5, not this seat.
+  `config/prompts/position_reviewer.md` states the new scope and full
+  trigger list. 2324 tests pass (2323 before).
+  **Still open:** §3.4 (route exits through AI Risk), §3.5 (upgrade the
+  reviewer's model off `gemini-2.5-flash-lite`), §3.6 (ATR noise band), §3.7
+  (broker-resident trailing stops). **Note on §3.5:** its "weakest model in
+  the stack" premise is contradicted by the committed benchmark data —
+  `ops/model_policy/results/merged.json` scores `gemini-2.5-flash-lite` at
+  quality 1.0/1.0 on its own `midday_exit` scenario, tied with four other
+  candidates including the PM's own `gpt-5.5`. See the correction note under
+  `QAMC_REMEDIATION_SPEC.md` §3.5 for the full evidence. This needs an owner
+  decision on what §3.5 should actually be scoped to; it is not decided
+  here.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -164,11 +188,13 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
 
 **Next, in order**
 
-1. **Phase 3 — exits (remaining).** §3.1 (pace feedback loop) and §3.2
-   (reviewer memory, audit §1.5) are landed — see above. Still open: close the
-   first-sale-of-the-day gate loophole (§3.3); route exits through AI Risk
-   (§3.4); upgrade the reviewer's model off `gemini-2.5-flash-lite` (§3.5);
-   ATR noise band (§3.6); broker-resident trailing stops (§3.7).
+1. **Phase 3 — exits (remaining).** §3.1 (pace feedback loop), §3.2
+   (reviewer memory, audit §1.5) and §3.3 (first-sale-of-the-day gate
+   loophole) are landed — see above. Still open: route exits through AI Risk
+   (§3.4); upgrade the reviewer's model off `gemini-2.5-flash-lite` (§3.5 —
+   its "weakest model" premise is contradicted by committed benchmark data,
+   see note above; scoping this item is an owner decision, not inferred
+   here); ATR noise band (§3.6); broker-resident trailing stops (§3.7).
 2. **Phase 2b — sizing and risk (remaining).** Conviction expressed as risk
    allocation rather than percent-of-portfolio notional (§2.1,
    `shares = (equity × risk_pct) ÷ |entry − stop|`, envelope 5% ceiling / 0.5%

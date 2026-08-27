@@ -438,3 +438,175 @@ def test_executor_drops_a_vetoed_sell_and_records_it():
     pipeline.broker.submit_order.assert_not_called()
     status = pipeline.db.record_intraday_evaluation.call_args.kwargs["status"]
     assert status == "exit_vetoed_contradicts_own_metrics"
+
+
+# ===========================================================================
+# 3.3 — every exit names a trigger, not just the second one that day
+# ===========================================================================
+
+def test_trigger_vocabulary_covers_every_category_spec_38_sanctions():
+    """Gating every exit against a list that did not cover the whole of 3.8
+    would block legitimate exits. Each category must have a representative."""
+    from src.pipeline import _reason_cites_hard_trigger
+
+    for reason in (
+        "thesis_invalid triggered: closed below MA50",
+        "thesis broken — the catalyst was priced in",
+        "HIGH-conviction bearish state change on the name",
+        "adverse news: FDA rejected the filing",
+        "material news broke after the open",
+        "sector shock — the whole group gapped down",
+        "bearish earnings, revenue missed",
+        "earnings miss on both lines",
+        "guidance cut for the full year",
+        "macro regime shift to defensive today",
+        "regime flip confirmed this morning",
+        "macro flipped risk-off today",
+        "daily loss circuit breaker fired",
+        "correlation breach: three names now one cluster",
+        "stopped out at the broker",
+    ):
+        assert _reason_cites_hard_trigger(reason) is True, reason
+
+
+def test_soft_flags_are_still_not_triggers():
+    """These are recurring flags, not events. Mechanically acting on them is
+    what produced the repeated trims of strengthening theses."""
+    from src.pipeline import _reason_cites_hard_trigger
+
+    for reason in (
+        "TARGET_BREACH at 150% thesis progress",
+        "Concentration drift; valuation stretched at 28x forward",
+        "momentum cooling, take some off",
+        "prudent to harvest into strength",
+        "position looks extended here",
+        "de-risking ahead of the weekend",
+        "",
+    ):
+        assert _reason_cites_hard_trigger(reason) is False, reason
+
+
+def test_concentration_is_deliberately_not_a_trigger():
+    """Drift trims belong to the Portfolio Manager (rule-priority rows 4-5),
+    and 'Concentration drift; valuation stretched' is the verbatim shape of
+    the reason behind the 2026-05-04 AMZN double-trim."""
+    from src.pipeline import _HARD_TRIGGER_KEYWORDS
+
+    for banned in ("concentration", "drift trim", "downgrade", "target_breach"):
+        assert banned not in _HARD_TRIGGER_KEYWORDS
+
+
+# ===========================================================================
+# 3.4 — exits go through AI Risk
+# ===========================================================================
+
+def _review_with(action="SELL", symbol="AAA", reason="thesis_invalid triggered"):
+    from src.models import PositionAction, PositionReasoningChain, PositionReview
+
+    return PositionReview(
+        reasoning_chain=PositionReasoningChain(
+            macro_continuity_check="stable", thesis_progress_check="broken",
+            thesis_integrity_check="invalidation hit", winners_discipline_check="n/a",
+            session_disposition_check="midday", execution_rationale="exit",
+        ),
+        actions=[PositionAction(action=action, symbol=symbol, reason=reason)],
+        overall_assessment="one exit", risk_level="moderate",
+    )
+
+
+def _verdict(approved: bool, reasoning="because"):
+    from src.models import RiskReasoningChain, RiskVerdict
+
+    return RiskVerdict(
+        approved=approved,
+        reasoning_chain=RiskReasoningChain(
+            rr_audit="n/a", signal_fidelity="ok", correlation_check="ok",
+            event_risk="none", sizing_sanity="ok", overall="ok",
+        ),
+        reasoning=reasoning,
+    )
+
+
+def _risk_pipeline(verdict=None, raises=False):
+    pipeline = _pipeline()
+    pipeline.risk_manager = MagicMock()
+    if raises:
+        pipeline.risk_manager.review.side_effect = RuntimeError("provider down")
+    else:
+        pipeline.risk_manager.review.return_value = (verdict, MagicMock(
+            user_message="u", raw_text="r", model="m", tokens_used=1,
+            input_tokens=1, output_tokens=1, cost_usd=0.0,
+        ))
+    pipeline._build_portfolio_heat = MagicMock(return_value=None)
+    return pipeline
+
+
+def test_ai_risk_can_veto_an_exit():
+    pipeline = _risk_pipeline(_verdict(False, "thesis is not actually broken"))
+    vetoed, verdict = pipeline._risk_review_exits(
+        _review_with(), [_position("AAA")], run_id="r1", total_value=100_000.0,
+    )
+    assert vetoed == {"AAA"}
+    assert verdict is not None and verdict.approved is False
+
+
+def test_ai_risk_approval_lets_the_exit_through():
+    pipeline = _risk_pipeline(_verdict(True))
+    vetoed, verdict = pipeline._risk_review_exits(
+        _review_with(), [_position("AAA")], run_id="r1", total_value=100_000.0,
+    )
+    assert vetoed == set()
+    assert verdict is not None and verdict.approved is True
+
+
+def test_ai_risk_failure_fails_OPEN_for_exits():
+    """Owner-ratified asymmetry (2026-08-27). The entry path fails CLOSED with
+    zero orders; the exit path must not, because failing closed on an exit
+    means a thesis-invalidated position cannot be closed while a language
+    model is unavailable. The deterministic gates have already run."""
+    pipeline = _risk_pipeline(verdict=None)
+    vetoed, verdict = pipeline._risk_review_exits(
+        _review_with(), [_position("AAA")], run_id="r1", total_value=100_000.0,
+    )
+    assert vetoed == set()
+    assert verdict is None
+
+
+def test_ai_risk_exception_also_fails_open():
+    pipeline = _risk_pipeline(raises=True)
+    vetoed, _ = pipeline._risk_review_exits(
+        _review_with(), [_position("AAA")], run_id="r1", total_value=100_000.0,
+    )
+    assert vetoed == set()
+
+
+def test_no_exits_means_no_paid_risk_call():
+    """A HOLD-only review must not buy a Risk Manager call."""
+    pipeline = _risk_pipeline(_verdict(True))
+    vetoed, verdict = pipeline._risk_review_exits(
+        _review_with(action="HOLD", reason="on track"),
+        [_position("AAA")], run_id="r1", total_value=100_000.0,
+    )
+    assert vetoed == set()
+    assert verdict is None
+    pipeline.risk_manager.review.assert_not_called()
+
+
+def test_an_exit_for_a_symbol_not_held_is_not_sent_to_risk():
+    pipeline = _risk_pipeline(_verdict(True))
+    vetoed, verdict = pipeline._risk_review_exits(
+        _review_with(symbol="ZZZ"), [_position("AAA")],
+        run_id="r1", total_value=100_000.0,
+    )
+    assert verdict is None
+    pipeline.risk_manager.review.assert_not_called()
+
+
+def test_executor_drops_a_symbol_vetoed_by_ai_risk():
+    pipeline = _pipeline()
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[_position("AAA")], review=_review_with(), run_id="r1",
+        risk_vetoed_symbols={"AAA"},
+    )
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()

@@ -86,40 +86,80 @@ HARD_BLOCK_RULES = {
 }
 
 
-# Hard-trigger keywords that authorise position_reviewer to REDUCE/SELL a
-# symbol that was ALREADY trimmed earlier today. Anything in the LLM-emitted
-# `reason` field that contains one of these substrings (case-insensitive)
-# bypasses the same-day-trim discipline. The list is intentionally narrow
-# — soft signals like "TARGET_BREACH" / "stretched" / "macro noise" must NOT
-# be on it; those are exactly the recurring flags that mechanical
-# double-application would re-trim on a second session.
+# Named exit triggers — the vocabulary of NEW INFORMATION.
+#
+# Spec Phase 3.8: the reviewer retains full authority to exit on new
+# information — adverse news, an earnings miss, a macro regime shift, a sector
+# shock, a correlation breach, a thesis invalidation. Price movement alone is
+# not new information. This tuple is that list, expressed as prose the LLM
+# actually emits.
+#
+# Soft signals — "TARGET_BREACH", "stretched", "extended", "macro noise",
+# "taking profits", "de-risking" — are deliberately ABSENT and must stay
+# absent. They are recurring flags, not events, and mechanically
+# re-applying them is what produced the repeated same-day double-trims.
+#
+# Phase 3.3 (2026-08-27) widened where this gate applies. It used to guard
+# only the SECOND sell-side action on a symbol in one day, so a position's
+# FIRST sale — which is almost every sale — executed on soft reasoning
+# entirely unchecked. It now guards every exit. Two categories were added at
+# the same time, because gating every exit on a list that did not cover the
+# whole of 3.8 would have blocked legitimate exits: macro regime shifts and
+# sector shocks are sanctioned by 3.8 but were unrepresented here.
+#
+# Concentration and drift were considered for inclusion and deliberately
+# REJECTED. "Concentration drift; valuation stretched" is the verbatim shape
+# of the reason behind the 2026-05-04 AMZN double-trim, and drift trims belong
+# to the Portfolio Manager (its rule-priority rows 4 and 5), not to this seat.
+# A Tech-rating downgrade alone is likewise excluded: the Risk Manager prompt
+# already states it is not sufficient grounds for an exit.
 _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
+    # Thesis invalidation
     "thesis_invalid",
     "thesis invalid",
     "invalidation triggered",
+    "broken thesis",
+    "thesis broken",
+    # Adverse company/sector news and state changes
     "high bearish",
     "high-conviction bearish",
     "high conviction bearish",
+    "adverse news",
+    "material news",
+    "sector shock",
+    # Earnings and filings
     "bearish earnings",
     "bearish filing",
     "earnings missed",
+    "earnings miss",
     "guidance cut",
+    # Macro regime — sanctioned by spec 3.8, previously unrepresented
+    "regime shift",
+    "regime flip",
+    "regime flipped",
+    "risk-off",
+    "risk off",
+    # Deterministic risk management
     "daily loss",
     "daily-loss",
     "circuit breaker",
     "correlation breach",
     "correlation cluster breach",
+    # Protection already fired
     "stop hit",
     "stopped out",
-    "broken thesis",
-    "thesis broken",
 )
 
 
 def _reason_cites_hard_trigger(reason: str) -> bool:
-    """True if the LLM's reason text contains a recognised hard-trigger
-    phrase that authorises a same-day re-trim. Substring match (case-
-    insensitive) — the LLM emits prose so we tolerate variation.
+    """True when the reason NAMES a recognised new-information trigger.
+
+    Substring match, case-insensitive — the LLM emits prose, so variation is
+    tolerated. The point is not to be clever about language; it is to force
+    the reason to make a CLAIM ("X happened") rather than express a feeling
+    ("it looks tired"). A claim is auditable, gradeable by the evening review,
+    and cross-checkable against the reviewer's own metrics by
+    `src/risk/exit_guard.py`. A feeling is none of those things.
     """
     if not reason:
         return False
@@ -5465,10 +5505,147 @@ class TradingPipeline:
                 return True
         return False
 
+    def _risk_review_exits(
+        self, review, positions, *, run_id: str, total_value: float,
+        macro_summary: dict | None = None, position_facts: dict | None = None,
+    ):
+        """Put the reviewer's exits in front of the AI Risk Manager — Phase 3.4.
+
+        `AGENTS.md` states the chain as `Specialists -> Portfolio Manager ->
+        AI Risk -> deterministic Python -> broker`, **for exits as well as
+        entries**. Until this landed, `run_position_review` called only
+        `position_reviewer` and then executed, so the entire sell side skipped
+        the veto layer the buy side has always had.
+
+        Returns `(vetoed_symbols, verdict_or_None)`. Symbols in the returned
+        set are dropped by the caller.
+
+        **Failure posture: FAIL OPEN.** An unparseable or errored Risk Manager
+        lets the exits through, logged loudly. This deliberately differs from
+        the entry path, which fails closed with zero orders (`RiskStage`).
+        The asymmetry is intentional and owner-ratified (2026-08-27):
+        - failing closed on an ENTRY means not buying, which costs nothing;
+        - failing closed on an EXIT means a thesis-invalidated position cannot
+          be closed because a language model is unavailable, and the loss is
+          then bounded only by the broker stop.
+        The deterministic gates — the named-trigger requirement and the
+        metric-contradiction veto — have already run by this point and are the
+        real protection. AI Risk here is a second opinion, not the gate.
+        """
+        from src.models import (
+            PortfolioDecision, ReasoningChain, TradeDecision,
+        )
+
+        exits = [
+            a for a in (review.actions if review else [])
+            if a.action in ("SELL", "REDUCE")
+        ]
+        if not exits:
+            return set(), None
+
+        held = {p.symbol.upper(): p for p in positions}
+        decisions: list[TradeDecision] = []
+        for action in exits:
+            symbol = action.symbol.upper()
+            if symbol not in held:
+                continue
+            decisions.append(TradeDecision(
+                action="SELL", symbol=symbol,
+                # 100 = full exit; REDUCE is a partial whose exact fraction the
+                # executor derives. The RM is being asked to judge WHETHER the
+                # exit is sound, not to re-size it.
+                allocation_pct=100.0 if action.action == "SELL" else 50.0,
+                entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+                reasoning=action.reason[:500],
+            ))
+        if not decisions:
+            return set(), None
+
+        summary = (review.overall_assessment or "")[:400]
+        proposal = PortfolioDecision(
+            reasoning_chain=ReasoningChain(
+                macro_filter=(review.reasoning_chain.macro_continuity_check or "n/a")[:800],
+                news_check="see position reviewer thesis_integrity_check",
+                earnings_check="see position reviewer thesis_integrity_check",
+                signal_conflicts=(review.reasoning_chain.thesis_integrity_check or "n/a")[:800],
+                sizing_logic=(review.reasoning_chain.execution_rationale or "n/a")[:800],
+                portfolio_balance=(review.reasoning_chain.winners_discipline_check or "n/a")[:800],
+                cash_target=(review.reasoning_chain.session_disposition_check or "n/a")[:800],
+            ),
+            decisions=decisions,
+            portfolio_view=f"EXIT REVIEW (position reviewer): {summary}",
+        )
+
+        try:
+            verdict, rm_result = self.risk_manager.review(
+                portfolio_decision=proposal,
+                positions=positions,
+                macro_summary=macro_summary or {},
+                rule_violations=[],
+                total_value=total_value,
+                heat=self._build_portfolio_heat(positions, total_value),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "AI Risk exit review RAISED (%s) — failing OPEN: %d exit(s) "
+                "proceed unreviewed. The named-trigger gate and the "
+                "metric-contradiction veto already passed.",
+                e, len(decisions),
+            )
+            return set(), None
+
+        try:
+            self.db.insert_agent_log(
+                agent_name="risk_manager", run_id=run_id,
+                input_summary=f"exit review: {len(decisions)} exit(s)",
+                input_message=rm_result.user_message,
+                output_summary=f"Approved: {verdict.approved if verdict else 'error'}",
+                full_response=rm_result.raw_text,
+                model=rm_result.model,
+                tokens_used=rm_result.tokens_used,
+                input_tokens=rm_result.input_tokens,
+                output_tokens=rm_result.output_tokens,
+                cost_usd=rm_result.cost_usd,
+                status="agent_failure" if verdict is None else "ok",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("AI Risk exit review: agent log write failed: %s", e)
+
+        if verdict is None:
+            logger.error(
+                "AI Risk exit review returned no verdict — failing OPEN: "
+                "%d exit(s) proceed unreviewed.", len(decisions),
+            )
+            return set(), None
+
+        if verdict.approved:
+            logger.info(
+                "AI Risk approved %d exit(s): %s",
+                len(decisions), (verdict.reasoning or "")[:200],
+            )
+            return set(), verdict
+
+        vetoed = {d.symbol for d in decisions}
+        logger.warning(
+            "AI Risk REJECTED %d exit(s) %s — holding instead. Reason: %s",
+            len(vetoed), sorted(vetoed), (verdict.reasoning or "")[:300],
+        )
+        for symbol in sorted(vetoed):
+            try:
+                self.db.record_intraday_evaluation(
+                    symbol=symbol, run_id=run_id,
+                    status="exit_vetoed_by_ai_risk",
+                    detail=(verdict.reasoning or "")[:400],
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("AI Risk exit review: audit write failed: %s", e)
+        return vetoed, verdict
+
     def _midday_execute_llm_actions(
         self, positions, review, run_id: str, blocked_symbols: set[str] | None = None,
         already_trimmed_today: set[str] | None = None,
         metric_deltas: dict | None = None,
+        risk_vetoed_symbols: set[str] | None = None,
     ) -> list[dict]:
         """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP actions to broker.
 
@@ -5557,17 +5734,76 @@ class TradingPipeline:
                             logger.warning("exit guard: audit write failed: %s", e)
                         continue
 
-            if (
-                act in ("SELL", "REDUCE")
-                and symbol in already_trimmed
-                and not _reason_cites_hard_trigger(action_item.get("reason", ""))
-            ):
+            # Phase 3.3 — EVERY exit must name a trigger, not just the second
+            # one on a symbol in a day.
+            #
+            # The gate below used to be conditioned on `symbol in
+            # already_trimmed`, so a position's FIRST sale of the day executed
+            # on soft reasoning entirely unchecked — and a first sale is almost
+            # every sale. Both of the exits the evening review graded
+            # "premature" on 2026-08-26 (EPD, MRVL) were first sales and sailed
+            # straight through.
+            #
+            # Failing closed here means HOLDING, and every position carries a
+            # broker-resident stop (AGENTS.md invariant 3), so the downside of
+            # a wrongly-blocked exit is bounded by that stop. The downside of a
+            # wrongly-allowed one is the pattern that emptied the book.
+            # Phase 3.4 — the AI Risk Manager reviewed these exits and
+            # rejected this one. Its authority over exits mirrors the veto it
+            # has always had over entries.
+            if act in ("SELL", "REDUCE") and symbol in (risk_vetoed_symbols or set()):
                 logger.warning(
-                    "Position reviewer: skipping %s %s — already trimmed today "
-                    "and no hard trigger cited. Reason: %r",
-                    act, symbol, (action_item.get("reason") or "")[:160],
+                    "Position reviewer: skipping %s %s — vetoed by AI Risk",
+                    act, symbol,
                 )
                 continue
+
+            reason_text = action_item.get("reason", "")
+            if act in ("SELL", "REDUCE") and not _reason_cites_hard_trigger(reason_text):
+                logger.warning(
+                    "Position reviewer: blocking %s %s — the reason names no "
+                    "recognised trigger. Exits require NEW INFORMATION "
+                    "(thesis invalidation, adverse news, earnings, regime "
+                    "shift, sector shock, correlation breach, stop hit); "
+                    "price action and soft flags are not triggers. Reason "
+                    "was: %r",
+                    act, symbol, reason_text[:200],
+                )
+                try:
+                    self.db.record_intraday_evaluation(
+                        symbol=symbol, run_id=run_id,
+                        status="exit_blocked_no_named_trigger",
+                        detail=f"{act}: {reason_text[:400]}",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("exit gate: audit write failed: %s", e)
+                continue
+
+            # The same-day-trim gate that used to sit here is GONE, not
+            # relaxed: it read `symbol in already_trimmed and not
+            # _reason_cites_hard_trigger(...)`, and the unconditional gate
+            # above now `continue`s on every untriggered SELL/REDUCE before
+            # control ever reaches it. Leaving it in place would have been
+            # dead code wearing the costume of a safety check, which is worse
+            # than no check at all.
+            #
+            # RESIDUAL GAP, deliberately not closed here: the old gate exempted
+            # hard triggers, and so does this one. A symbol trimmed at midday
+            # on "bearish earnings" can be trimmed again at close on the SAME
+            # "bearish earnings" — one event, two cuts, which is the 2026-05-04
+            # AMZN shape with a valid trigger instead of a soft flag. Closing
+            # it needs per-event dedup (has THIS trigger already been acted on
+            # for this symbol today?), which is a different mechanism from a
+            # phrase gate and is not in Phase 3.3's scope. Surfaced rather than
+            # silently expanded.
+            if act in ("SELL", "REDUCE") and symbol in already_trimmed:
+                logger.warning(
+                    "Position reviewer: %s %s is a SECOND sell-side action "
+                    "today, allowed because the reason names a trigger. Check "
+                    "the evening grade for one-event double-application. "
+                    "Reason: %r",
+                    act, symbol, (action_item.get("reason") or "")[:160],
+                )
             existing = [p for p in positions if p.symbol == symbol]
             if not existing or existing[0].qty <= 0:
                 logger.warning("Midday: skipping %s %s — no matching position",
@@ -7089,11 +7325,20 @@ class TradingPipeline:
                     "stop_coverage_gaps": coverage_gaps,
                 }
             else:
+                # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
+                # as well as entries. Until this landed the entire sell side
+                # skipped the veto layer the buy side has always had.
+                risk_vetoed, _exit_verdict = self._risk_review_exits(
+                    review, review_positions, run_id=run_id,
+                    total_value=total_value, macro_summary=macro_summary,
+                    position_facts=position_facts,
+                )
                 orders.extend(self._midday_execute_llm_actions(
                     review_positions, review, run_id,
                     blocked_symbols=blocked_position_symbols,
                     already_trimmed_today=already_trimmed_today,
                     metric_deltas=metric_deltas,
+                    risk_vetoed_symbols=risk_vetoed,
                 ))
 
             # Snapshot AFTER the review so the next session compares against
