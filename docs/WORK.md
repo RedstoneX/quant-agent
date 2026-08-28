@@ -671,10 +671,19 @@ Two facts worth acting on:
 9. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-10. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
-   on the residual); deterministic macro regime with the model confined to FOMC
-   text; earnings multi-quarter trends. Several need new data sources and an
-   owner decision first.
+10. **Analyst upgrades.** News cascade — **stage 1 (dedup) is DONE**
+   (`src/data/news_dedup.py`); stage 2 (novelty scoring against a rolling
+   48–72h per-ticker buffer) and stage 3 (a model on the residual only) remain,
+   and the seam for them is `NewsCluster.novelty`. Also: deterministic macro
+   regime with the model confined to FOMC text; earnings multi-quarter trends.
+   Several need new data sources and an owner decision first.
+
+   Note for whoever picks up stage 2: the measured duplication rate is small.
+   Across 589 archived articles the old stage removed 4.2% and the new one
+   removes a further 1.2% — so dedup is a correctness fix (it stops one story
+   reading as N confirmations), **not** a cost saving. Two of nine feeds
+   (Reuters, AP) are dead, which suppresses exactly the wire-syndication case
+   dedup targets; the true rate is unknown until those are fixed.
 
 **Identified 2026-08-28, not yet fixed**
 

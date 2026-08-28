@@ -76,7 +76,7 @@ Largely addressed by Phase 1 / 1b. Before that work it received twenty daily bar
 | Two of nine feeds dead | Reuters Business returns 404, AP Business returns 403. Failures are logged as warnings and silently dropped (`src/data/news.py:100-102`). |
 | Never reads an article | RSS summary only, truncated to 300 characters (`src/data/news.py:127`). |
 | No source credibility weighting | A Federal Reserve press release and a MarketWatch aggregator are equal-weight text blocks. |
-| Weak deduplication | Word-Jaccard > 0.7 on titles. The same story reworded across outlets survives as multiple "signals". |
+| ~~Weak deduplication~~ **FIXED** | Was word-Jaccard > 0.7 on titles, which measurement confirmed cannot separate at any threshold. Replaced by a term-frequency cosine stage (`src/data/news_dedup.py`) calibrated on 589 real archived headlines, with collapsed counts preserved and rendered to the analyst as syndication breadth. |
 | No novelty assessment | Cannot distinguish new information from recycled commentary — see `RESEARCH_FINDINGS.md`, where novelty is the property that actually predicts returns. |
 | Degradation invisible downstream | The PM cannot tell "the wires were down" from "a quiet news day". |
 
