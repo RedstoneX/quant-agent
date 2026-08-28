@@ -263,14 +263,14 @@ def test_notifier_send_appends_configured_mission_control_link(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
     monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
-    n = TelegramNotifier(mission_control_url="http://100.111.170.97:8810/cockpit")
+    n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = MagicMock(raise_for_status=MagicMock())
         ok = n.send("session result")
 
     assert ok is True
     sent = mock_post.call_args.kwargs["json"]["text"]
-    assert '<a href="http://100.111.170.97:8810/cockpit">' in sent
+    assert '<a href="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/">' in sent
     assert "Mission Control" in sent
 
 
@@ -320,7 +320,7 @@ def test_notifier_send_truncation_reserves_room_for_the_link(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
     monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
-    n = TelegramNotifier(mission_control_url="http://100.111.170.97:8810/cockpit")
+    n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
     huge = "x" * 10000
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = MagicMock(raise_for_status=MagicMock())
@@ -328,7 +328,7 @@ def test_notifier_send_truncation_reserves_room_for_the_link(monkeypatch):
     sent = mock_post.call_args.kwargs["json"]["text"]
     assert len(sent) <= TelegramNotifier.MAX_MESSAGE_CHARS
     assert "[...truncated]" in sent
-    assert '<a href="http://100.111.170.97:8810/cockpit">' in sent
+    assert '<a href="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/">' in sent
 
 
 def test_notifier_failure_still_swallowed_with_link_and_escaping_active(monkeypatch):
@@ -339,7 +339,7 @@ def test_notifier_failure_still_swallowed_with_link_and_escaping_active(monkeypa
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
     monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
-    n = TelegramNotifier(mission_control_url="http://100.111.170.97:8810/cockpit")
+    n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.side_effect = requests.HTTPError(
             "400 Bad Request: can't parse entities"
