@@ -581,3 +581,43 @@ def test_full_sell_qty_refuses_a_short():
     assert TradingPipeline._reduce_sell_qty(-40.0) is None
     # Long-only unchanged.
     assert TradingPipeline._full_sell_qty(40.0) == 40.0
+
+
+# --------------------------------------------------------------------------
+# fail closed on a side we do not recognise
+# --------------------------------------------------------------------------
+
+def test_an_unrecognised_entry_side_is_refused_not_guessed():
+    """The fail-OPEN case caught in review.
+
+    `protective_side = "sell" if side == "buy" else "buy"` reads harmlessly,
+    but everything that is not exactly "buy" falls into the short branch. A
+    typo, a None, or some future side string would put a BUY stop ABOVE a
+    LONG — not weak protection, but a standing order to buy more of a
+    position that is already losing.
+
+    Refusing is safe: the caller treats a raise like any other protection
+    failure and logs the position as naked. Naked-but-known is survivable.
+    Naked-and-believed-covered is what costs money.
+    """
+    from src.execution.broker import AlpacaBroker
+
+    broker = AlpacaBroker.__new__(AlpacaBroker)
+    for bad in ("byu", "long", "BUY_TO_COVER", "", "   ", None):
+        result = AlpacaBroker.place_entry_protection(
+            broker, "AAPL", "order-1", 100.0, side=bad,
+        )
+        # No stop, and — critically — no broker call at all. `broker` here is
+        # an uninitialised instance with no `.client`, so any attempt to reach
+        # the broker would blow up with AttributeError. Returning cleanly
+        # proves the guard fires before anything is submitted.
+        assert result is None, f"{bad!r} should place no stop"
+
+
+@pytest.mark.parametrize("side", ["buy", "BUY", " Buy ", "sell", "sell_short", "SELL_SHORT"])
+def test_recognised_entry_sides_are_accepted_case_and_space_insensitively(side):
+    """The guard must not become brittle: real callers pass mixed case, and
+    Alpaca's own enum stringifies upper-case."""
+    from src.execution.broker import _ENTRY_SIDES
+
+    assert (side or "").strip().lower() in _ENTRY_SIDES

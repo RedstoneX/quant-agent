@@ -217,6 +217,12 @@ def _get_sector(symbol: str) -> str:
     return canonical
 
 
+#: Entry sides `place_entry_protection` will derive a protective side from.
+#: Anything else is refused rather than guessed — see the fail-closed note in
+#: `place_entry_protection`. "sell" and "sell_short" both open/extend a short.
+_ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
+
+
 class AlpacaBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True):
         self.api_key = api_key
@@ -1574,6 +1580,29 @@ class AlpacaBroker:
         abort the session, but it DOES leave the position naked, so it logs
         at ERROR and relies on the coverage-reconcile auto-repair belt.
         """
+        # Fail closed on a side we do not recognise, BEFORE touching the
+        # broker. `"sell" if side == "buy" else "buy"` reads harmlessly but is
+        # fail-OPEN: a typo, a None, or some future side string falls into the
+        # short branch, and a LONG then gets a BUY stop placed ABOVE it — not
+        # weak protection, but a standing order to buy more of a position that
+        # is already losing.
+        #
+        # This returns rather than raising, because the contract above is that
+        # this function never aborts a session. Returning None is the same
+        # outcome as any other protection failure: logged at ERROR, position
+        # left naked-but-KNOWN, and picked up by the coverage-reconcile
+        # auto-repair belt. Naked-and-believed-covered is the state that
+        # actually costs money, and refusing here is what prevents it.
+        normalized = (side or "").strip().lower()
+        if normalized not in _ENTRY_SIDES:
+            logger.error(
+                "entry protection: %s refusing to guess a protective side for "
+                "entry side %r (expected one of %s) — NO stop placed, position "
+                "will be left uncovered and must be repaired by reconcile",
+                symbol, side, sorted(_ENTRY_SIDES),
+            )
+            return None
+
         try:
             status = self.wait_for_order_terminal(
                 order_id, timeout_seconds=_ENTRY_FILL_TIMEOUT_S,
@@ -1634,7 +1663,7 @@ class AlpacaBroker:
         # still submits without error, it just sits on the wrong side of the
         # trigger and can never fill, so the position runs unprotected in
         # exactly the direction it needed protecting.
-        protective_side = "sell" if side.lower() == "buy" else "buy"
+        protective_side = "sell" if normalized == "buy" else "buy"
         buffer_mult = (
             (1 - self.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell"
             else (1 + self.STOP_LIMIT_BUFFER_PCT)
