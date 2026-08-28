@@ -102,6 +102,38 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
+**Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
+matches the production box byte for byte. Until this change the box carried
+five hand-edited values that existed nowhere in git, so any deploy that lost
+the stash/pop step would have silently reverted them — including the two that
+were raised specifically to end the 2026-08-28 outage. Reconciled:
+
+| setting | was in git | now (and live) |
+| --- | --- | --- |
+| `intraday_scan.enabled` | `false` | `true` |
+| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
+| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
+| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
+| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
+
+Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
+git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
+(`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
+was also a git delta — the box had been running `2.75` against a committed
+`1.50`.
+
+**These are not the final values.** `max_paid_sessions_per_mode_per_day: 8` and
+`daily_reserved_exposure_limit_usd: 5.50` are stopgaps that the four
+cost-circuit fixes are expected to supersede — the session cap should become
+dollar-based, and the reservation ceiling should fall once the estimator
+reserves from measured history instead of the theoretical maximum. Committing
+them is deliberate: git must describe the running system even while the
+running system is wrong.
+
+There are now **no uncommitted config deltas on the box.** Verify with
+`sudo -n -u qamc git -C /home/qamc/quant-agent status --porcelain`.
+
+
 **Live production state (2026-08-27 evening ET, deployed this session):**
 deployed at `32c174b` on the paper account — PR #114, the deploy-drift alarm,
 merged on top of `e6ada88`. (Earlier same-day notes claimed `18dd4bc`, then

@@ -736,7 +736,9 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
             rows = conn.execute(
                 "SELECT symbol, qty, avg_entry, current_price, "
                 "market_value, unrealized_pnl FROM positions "
-                "WHERE qty > 0 ORDER BY unrealized_pnl DESC"
+                # qty != 0: a short's qty is negative and it is still an open
+                # position the operator must see in the evening snapshot.
+                "WHERE qty != 0 ORDER BY unrealized_pnl DESC"
             ).fetchall()
         finally:
             conn.close()
