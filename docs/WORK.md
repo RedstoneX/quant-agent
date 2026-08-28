@@ -633,6 +633,29 @@ Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested h
 - Documentation is the source of truth. Wrong documentation is corrected on sight without asking.
 - Rehearsal alerts are suppressed rather than routed to a second Telegram bot.
 
+#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — measure before changing
+On 2026-08-28, the reward:risk floor added the previous day rejected four candidates outright. Recorded reward:risk after the stop was widened past the noise band: CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30, against a 1.50 minimum.
+
+Three of the four offered **less reward than risk** — those are correctly refused. NVDA at 1.30 is the borderline case.
+
+This is the rule working as designed, but it is also a signal worth measuring rather than reacting to: with honest stop distances, the technical analyst's targets are frequently too close to clear a 1.5 payoff. Either the targets are too conservative or the widened stops are too wide. Do not adjust the 1.50 floor on impression — gather a week of these rejections first, then decide which of the two numbers is wrong.
+
+Note this means 2026-08-28's zero trades had **two independent causes**, not one: the cost circuit blocked the morning before the Portfolio Manager ran, and separately these four were refused on payoff.
+
+#### RECURSION FAULT IN THE BAR FETCH
+`broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.
+
+#### DELISTED WARRANTS REACHING THE DATA LAYER
+Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW, LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at all — this is universe/admission hygiene, and it is also what triggers the recursion fault above.
+
+#### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
+Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
+
+#### COCKPIT — MORE COMPLETE THAN FIRST REPORTED
+Re-checked 2026-08-28. `HoldingsStrip.tsx` is written in full (113 lines) and there are substantial edits to `HeroBand.tsx` (+68), `PriceChartPanel.tsx` (+93, including the average-entry price line), `DecisionStateBanner.tsx` (+30) and `TodaySessionsStrip.tsx` (+9).
+
+**What is NOT started:** `DesktopCockpitWorkspace.tsx` is untouched, so the split of "Positions & Liquidity" into two dockable panels is not begun, and the `qamc.dockview.cockpit.v1` localStorage key has not been bumped. Nothing has been built or tested and nothing is committed.
+
 **Set aside — small, easily forgotten**
 
 - `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
