@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -16,6 +17,7 @@ from src.cost_circuit import (
     LLMCostCircuitBreaker,
     OptionalPaidAnalysisRetrySkipped,
     PaidAnalysisSuspended,
+    _ET,
     _is_known_zero_cost_failure,
     _trigger_scope,
 )
@@ -50,7 +52,10 @@ def _config(**overrides):
         "enabled": True,
         "session_cost_limit_usd": 10.0,
         "daily_cost_limit_usd": 20.0,
-        "max_paid_sessions_per_mode_per_day": 2,
+        # Backstop only as of Defect 4 (2026-08-28) -- matches
+        # src/config.py's production default. Tests exercising the count
+        # cap itself override it explicitly.
+        "max_paid_sessions_per_mode_per_day": 8,
         "max_provider_attempts_per_call": 2,
         "max_retry_attempts_per_session": 2,
         "reservation_ttl_minutes": 30,
@@ -477,6 +482,248 @@ def test_unrecognized_failure_defaults_to_ambiguous_not_zero_cost(tmp_path):
 
     assert _is_known_zero_cost_failure(error) is False
     _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+# ============================================================================
+# Defect 4 (2026-08-28): `max_paid_sessions_per_mode_per_day` (default 2)
+# was the OPERATIVE per-mode limit, not a backstop -- intra_check fires 14
+# times between 09:30-16:00 ET, so its 3rd session of the day tripped at
+# 11:30 ET with only $0.1765 spent all day. Replaced with a dollar-based
+# per-mode allowance (`max_mode_daily_exposure_pct`) plus an afternoon
+# reserve (`afternoon_reserve_pct` / `afternoon_reserve_release_et_hour`);
+# the session count is kept only as a much-higher backstop against an
+# infinite loop.
+# ============================================================================
+
+def _settle_cheap_session(circuit, path, run_id, mode, cost):
+    circuit.activate_session(run_id, mode)
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, cost, actual_model=reservation.model)
+
+
+def test_old_session_count_default_would_have_blocked_the_2026_08_28_scenario(tmp_path):
+    """Confirms the failure was real: with the OLD default (2), a 3rd
+    same-day intra_check session is blocked regardless of how little money
+    has actually been spent -- exactly the 11:30 ET stop at $0.1765/day."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_paid_sessions_per_mode_per_day=2), notifier,
+    )
+    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.0588)
+    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.0588)
+
+    circuit.activate_session("intra_check-2", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    state = circuit.status()
+    assert state["trigger_code"] == "session_retry_limit"
+    assert state["current_daily_cost_usd"] < 0.20
+
+
+def test_fixed_default_no_longer_blocks_the_2026_08_28_scenario(tmp_path):
+    """NEW behaviour with the fixed default (8, backstop only): the same
+    three cheap intra_check sessions from the test above do not trip
+    anything -- the gate is now dollars, and $0.1765/day is nowhere near
+    any dollar ceiling."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)  # max_sessions default now 8
+    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.0588)
+    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.0588)
+    _settle_cheap_session(circuit, path, "intra_check-2", "intra_check", 0.0588)
+
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert notifier.messages == []
+
+
+def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
+    """The count cap must still exist as a backstop: a loop of sessions
+    that spend essentially nothing (e.g. every attempt is a Defect-2
+    known-zero-cost rejection) would never trip a dollar-based check, so
+    something must still stop it."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_paid_sessions_per_mode_per_day=3), notifier,
+    )
+    for i in range(3):
+        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
+
+    circuit.activate_session("intra_check-3", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    state = circuit.status()
+    assert state["trigger_code"] == "session_retry_limit"
+
+
+def test_mode_daily_spend_limit_trips_on_dollars_not_session_count(tmp_path):
+    """The new operative per-mode gate: two sessions of the SAME mode have
+    already settled more than the per-mode dollar ceiling between them; a
+    3rd is blocked on dollars while the session-count backstop (100,
+    deliberately out of the way here) never enters into it."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            daily_reserved_exposure_limit_usd=1.0,
+            daily_cost_limit_usd=1.0,
+            max_mode_daily_exposure_pct=50.0,  # $0.50 ceiling for one mode
+            max_paid_sessions_per_mode_per_day=100,
+        ),
+        notifier,
+    )
+    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.30)
+    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.25)
+
+    circuit.activate_session("intra_check-2", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    state = circuit.status()
+    assert state["trigger_code"] == "mode_daily_spend_limit"
+    assert state["current_daily_cost_usd"] == pytest.approx(0.55)
+
+
+def test_mode_daily_spend_limit_does_not_block_a_different_mode(tmp_path):
+    """The allowance is per-MODE: a different mode on the same day, with
+    its own budget untouched, is unaffected by another mode's spend."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            daily_reserved_exposure_limit_usd=1.0,
+            daily_cost_limit_usd=1.0,
+            max_mode_daily_exposure_pct=50.0,
+            max_paid_sessions_per_mode_per_day=100,
+        ),
+        notifier,
+    )
+    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.45)
+
+    circuit.activate_session("run-morning", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id
+
+
+def test_morning_spend_ceiling_pure_computation():
+    """Direct unit coverage of the time-gated ceiling itself: active before
+    the release hour, released at/after it, and disabled at pct=0."""
+    path_cfg = _config(
+        afternoon_reserve_pct=40.0, afternoon_reserve_release_et_hour=12,
+        daily_reserved_exposure_limit_usd=2.0, daily_cost_limit_usd=2.0,
+    )
+    circuit = LLMCostCircuitBreaker.__new__(LLMCostCircuitBreaker)
+    circuit.config = path_cfg
+
+    before_release = datetime(2026, 8, 28, 10, 0, tzinfo=_ET)
+    at_release = datetime(2026, 8, 28, 12, 0, tzinfo=_ET)
+    after_release = datetime(2026, 8, 28, 15, 0, tzinfo=_ET)
+    assert circuit._morning_spend_ceiling(before_release) == pytest.approx(1.2)
+    assert circuit._morning_spend_ceiling(at_release) is None
+    assert circuit._morning_spend_ceiling(after_release) is None
+
+    circuit.config = _config(afternoon_reserve_pct=0.0)
+    assert circuit._morning_spend_ceiling(before_release) is None
+
+
+def test_afternoon_reserve_blocks_morning_spend_above_the_ceiling(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            daily_reserved_exposure_limit_usd=1.0,
+            daily_cost_limit_usd=1.0,
+            afternoon_reserve_pct=40.0,
+            afternoon_reserve_release_et_hour=12,
+        ),
+        notifier,
+    )
+    circuit.activate_session("run-morning", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=0.65 "
+            "WHERE run_id='run-morning'"
+        )
+        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.65")
+
+    with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=0.60):
+        with pytest.raises(PaidAnalysisSuspended) as excinfo:
+            circuit.begin_call(
+                agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+                system_prompt="s", user_message="u", max_output_tokens=100,
+            )
+    assert excinfo.value.state["trigger_code"] == "morning_spend_ceiling"
+    with sqlite3.connect(path) as conn:
+        event = conn.execute(
+            "SELECT trigger_code FROM llm_circuit_events WHERE event_type='quota_held' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert event[0] == "morning_spend_ceiling"
+
+
+def test_afternoon_reserve_recovers_the_same_day_without_a_rollover(tmp_path):
+    """The defining behavioural difference from every other quota hold in
+    this file: this one must stop blocking once the clock crosses the
+    release hour on the SAME ET day -- not at the next day's rollover."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            daily_reserved_exposure_limit_usd=1.0,
+            daily_cost_limit_usd=1.0,
+            afternoon_reserve_pct=40.0,
+            afternoon_reserve_release_et_hour=12,
+        ),
+        notifier,
+    )
+    circuit.activate_session("run-morning", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=0.65 "
+            "WHERE run_id='run-morning'"
+        )
+        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.65")
+
+    with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=0.60):
+        with pytest.raises(PaidAnalysisSuspended):
+            circuit.begin_call(
+                agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+                system_prompt="s", user_message="u", max_output_tokens=100,
+            )
+
+    # No sticky hold: nothing in this call chain persisted a suspension.
+    assert circuit.status()["suspended"] is False
+
+    # Simulate the clock crossing the release hour -- same ET day, no
+    # rollover -- and confirm the identical session can now proceed.
+    with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=None):
+        reservation = circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert reservation.reservation_id
+    assert notifier.messages == []
 
 
 def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
@@ -967,6 +1214,7 @@ def test_production_pm_sized_prompt_fits_reserved_exposure_cap(tmp_path):
         ("provider_projected_daily_cost_limit", "day"),
         ("outstanding_projected_daily_cost_limit", "day"),
         ("session_retry_limit", "mode_day"),
+        ("mode_daily_spend_limit", "mode_day"),
         ("session_cost_limit", "session"),
         ("projected_session_cost_limit", "session"),
         ("provider_projected_session_cost_limit", "session"),

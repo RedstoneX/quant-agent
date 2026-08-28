@@ -45,7 +45,7 @@ _DAY_QUOTA_TRIGGERS = frozenset({
     "provider_projected_daily_cost_limit",
     "outstanding_projected_daily_cost_limit",
 })
-_MODE_DAY_QUOTA_TRIGGERS = frozenset({"session_retry_limit"})
+_MODE_DAY_QUOTA_TRIGGERS = frozenset({"session_retry_limit", "mode_daily_spend_limit"})
 _SESSION_QUOTA_TRIGGERS = frozenset({
     "session_cost_limit",
     "projected_session_cost_limit",
@@ -53,6 +53,19 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
     "outstanding_projected_session_cost_limit",
     "session_retry_attempt_limit",
 })
+
+# NOTE on "morning_spend_ceiling" (Defect 4, 2026-08-28): that trigger code
+# is deliberately absent from every set above and never passed to
+# `_trip_locked`. It protects a fraction of the day's budget for sessions
+# at/after `afternoon_reserve_release_et_hour`, which must stop blocking
+# the moment the clock crosses that hour -- WITHIN the same ET day, not at
+# the next day's rollover. Every scope above (day/mode_day/session) persists
+# as an `llm_quota_holds` row that only `_reconcile_quota_holds_locked`
+# clears, and that only fires on an ET-day boundary (see its docstring) --
+# so persisting this one the same way would correctly stop the morning
+# overspend and then incorrectly keep blocking the very afternoon sessions
+# it exists to protect. It is instead re-evaluated fresh, from current
+# wall-clock time, on every `begin_call`; see `_morning_spend_ceiling`.
 
 
 def _trigger_scope(code: Any) -> str:
@@ -2189,6 +2202,55 @@ class LLMCostCircuitBreaker:
             self.config.daily_cost_limit_usd,
         ))
 
+    def _mode_daily_exposure_limit(self) -> float:
+        """Dollar ceiling any ONE mode may reserve/spend in a single ET day.
+
+        Defect 4 (2026-08-28): `begin_call` used to gate a new session on a
+        flat COUNT of paid sessions per mode per day
+        (`max_paid_sessions_per_mode_per_day`), which produced the 11:30 ET
+        stop at 17 cents of actual spend -- intra_check's 3rd session that
+        day, nowhere near any dollar limit. A count can't fit every mode:
+        an intra_check tick can cost a few cents, a morning
+        portfolio_manager call tens of cents. This is a fraction of
+        `_daily_exposure_limit()` -- the same reserved-exposure ceiling
+        every other projected-cost check in this file already uses --
+        rather than an independent dollar figure that could silently drift
+        out of sync with it. The session-count cap remains as a backstop
+        against an infinite loop (see its config docstring), not as the
+        operative limit.
+        """
+        pct = float(getattr(self.config, "max_mode_daily_exposure_pct", 100.0))
+        return self._daily_exposure_limit() * (pct / 100.0)
+
+    def _morning_spend_ceiling(self, now: datetime | None = None) -> float | None:
+        """How much of today's reserved-exposure ceiling may be spent before
+        the afternoon reserve releases; None once released or disabled.
+
+        Defect 4 / spec Phase 6.1 (2026-08-28): a fraction of
+        `_daily_exposure_limit()` is walled off from every session, across
+        every mode, until `afternoon_reserve_release_et_hour` ET. The
+        morning is where the cheap, plentiful setups look most attractive
+        and where a retry storm is most likely; the afternoon is where
+        every exit decision lives (position_reviewer, risk_manager, the
+        close pass). A day that spends itself out by noon has funded
+        entries and defunded exits -- exactly backwards for capital
+        preservation.
+
+        Deliberately re-evaluated from current wall-clock time on every
+        call rather than persisted as a quota hold: see the module-level
+        NOTE by `_MODE_DAY_QUOTA_TRIGGERS` for why a persisted version of
+        this specific check would incorrectly keep blocking the very
+        afternoon sessions it exists to protect.
+        """
+        pct = float(getattr(self.config, "afternoon_reserve_pct", 0.0) or 0.0)
+        if pct <= 0:
+            return None
+        hour = int(getattr(self.config, "afternoon_reserve_release_et_hour", 12))
+        local = (now or datetime.now(timezone.utc)).astimezone(_ET)
+        if local.hour >= hour:
+            return None
+        return self._daily_exposure_limit() * (1.0 - pct / 100.0)
+
     def begin_call(
         self,
         *,
@@ -2291,6 +2353,26 @@ class LLMCostCircuitBreaker:
                 current_has_attempt = attempts > 0
                 max_sessions = int(self.config.max_paid_sessions_per_mode_per_day)
                 max_session_retries = int(self.config.max_retry_attempts_per_session)
+                # Defect 4: dollar-based per-mode allowance, checked on every
+                # call (not just session admission) -- a session already
+                # admitted can still push its OWN mode over the allowance
+                # through its later agent calls.
+                mode_settled_row = conn.execute(
+                    "SELECT COALESCE(SUM(actual_cost_usd), 0) AS cost "
+                    "FROM llm_budget_sessions WHERE day=? AND mode=?",
+                    (day, mode),
+                ).fetchone()
+                mode_settled = float(mode_settled_row["cost"] or 0)
+                mode_reserved_row = conn.execute(
+                    "SELECT COALESCE(SUM(reserved_cost_usd), 0) AS cost "
+                    "FROM llm_budget_reservations WHERE day=? AND mode=? "
+                    "AND status='active'",
+                    (day, mode),
+                ).fetchone()
+                mode_reserved = float(mode_reserved_row["cost"] or 0)
+                # Defect 4 afternoon reserve: None once released/disabled, in
+                # which case the elif below simply never matches.
+                morning_ceiling = self._morning_spend_ceiling()
 
                 if retry_kind and session_retries + 1 > max_session_retries:
                     detail = (
@@ -2320,13 +2402,90 @@ class LLMCostCircuitBreaker:
                         costs_exact=False,
                     )
                 elif not current_has_attempt and paid_sessions >= max_sessions:
+                    # Backstop only (see max_paid_sessions_per_mode_per_day's
+                    # config docstring): catches an infinite retry/session
+                    # loop that the dollar check below cannot, because after
+                    # the Defect 2 fix a loop of provably-zero-cost failures
+                    # spends nothing and would never trip a dollar ceiling.
                     self._trip_locked(
                         conn, code="session_retry_limit",
                         detail=(f"{mode} paid session attempt {paid_sessions + 1} exceeds "
-                                f"daily safe limit {max_sessions}"),
+                                f"daily safe backstop {max_sessions}"),
                         run_id=run_id, mode=mode, agent_name=agent_name, attempts=attempts,
                         session_cost=session, daily_cost=daily,
                         costs_exact=False,
+                    )
+                elif mode_settled + mode_reserved + reserve > self._mode_daily_exposure_limit():
+                    # Defect 4's operative per-mode limit -- dollars, not a
+                    # session count. Mode-day scoped: like session_retry_limit,
+                    # this stays blocked until the next ET day (spend only
+                    # grows within a day, so rollover-only recovery is
+                    # correct here, unlike the afternoon reserve below).
+                    projected_mode = mode_settled + mode_reserved + reserve
+                    self._trip_locked(
+                        conn, code="mode_daily_spend_limit",
+                        detail=(f"next {agent_name} call would project {mode} spend today "
+                                f"to ${projected_mode:.4f}, above per-mode daily ceiling "
+                                f"${self._mode_daily_exposure_limit():.2f}"),
+                        run_id=run_id, mode=mode, agent_name=agent_name, attempts=attempts,
+                        session_cost=session + active_session_reserve,
+                        daily_cost=daily + reserved_day,
+                        costs_exact=False,
+                    )
+                elif (
+                    morning_ceiling is not None
+                    and daily + reserved_day + reserve > morning_ceiling
+                ):
+                    # Defect 4 afternoon reserve. Deliberately NOT routed
+                    # through _trip_locked/_hold_quota_locked -- see the
+                    # module-level NOTE by _MODE_DAY_QUOTA_TRIGGERS for why a
+                    # persisted hold here would wrongly keep blocking the
+                    # afternoon sessions this exists to protect. Still
+                    # audited (a `quota_held` event is recorded) and still
+                    # raises PaidAnalysisSuspended for this call; it simply
+                    # never becomes a sticky state another call can inherit.
+                    release_hour = int(
+                        getattr(self.config, "afternoon_reserve_release_et_hour", 12)
+                    )
+                    projected = daily + reserved_day + reserve
+                    detail = (
+                        f"next {agent_name} call would project daily cost to "
+                        f"${projected:.4f}, above the morning spend ceiling "
+                        f"${morning_ceiling:.2f} -- "
+                        f"${self._daily_exposure_limit() - morning_ceiling:.2f} of "
+                        f"today's ${self._daily_exposure_limit():.2f} exposure ceiling "
+                        f"is reserved for sessions at/after {release_hour:02d}:00 ET"
+                    )
+                    conn.execute(
+                        "INSERT INTO llm_circuit_events "
+                        "(event_type, trigger_code, detail, run_id, mode, agent_name, "
+                        "attempts, session_cost_usd, daily_cost_usd) VALUES "
+                        "('quota_held', ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            "morning_spend_ceiling", detail, run_id, mode, agent_name,
+                            attempts, session + active_session_reserve,
+                            daily + reserved_day,
+                        ),
+                    )
+                    conn.commit()
+                    raise PaidAnalysisSuspended(
+                        detail,
+                        {
+                            "enabled": True,
+                            "suspended": True,
+                            "suspension_class": "quota",
+                            "auto_rearm": True,
+                            "requires_operator_reset": False,
+                            "trigger_code": "morning_spend_ceiling",
+                            "trigger_detail": detail,
+                            "run_id": run_id,
+                            "mode": mode,
+                            "agent_name": agent_name,
+                            "session_attempts": attempts,
+                            "costs_exact": False,
+                            "session_cost_usd": session + active_session_reserve,
+                            "daily_cost_usd": daily + reserved_day,
+                        },
                     )
                 elif session + active_session_reserve + reserve > self._session_exposure_limit():
                     projected = session + active_session_reserve + reserve

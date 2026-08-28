@@ -514,7 +514,40 @@ class LLMCostCircuitConfig(BaseModel):
     daily_reserved_exposure_limit_usd: float = Field(
         default=1.90, gt=0, allow_inf_nan=False,
     )
-    max_paid_sessions_per_mode_per_day: int = Field(default=2, ge=1)
+    # RUNAWAY BACKSTOP, not the working budget (Defect 4, 2026-08-28). Until
+    # this fix it was 2 and it WAS the binding constraint on every trading
+    # day: intra_check fires 14 times between 09:30 and 16:00 ET, two of
+    # those could think and the other twelve suspended. Measured 2026-08-25/
+    # 26/27: 4, 7 and 6 suspensions per day while only $1.02 of a $2.75 daily
+    # budget was spent -- the 2026-08-28 11:30 ET stop hit this at 17 cents
+    # of actual spend. max_mode_daily_exposure_pct below is the real,
+    # dollar-based per-mode limit now; this exists only to stop a retry loop
+    # spinning forever within one mode without ever spending real money (a
+    # provably-zero-cost failure loop, now possible after the Defect 2 fix,
+    # would never trip a dollar-based check at all) -- an infinite-loop
+    # backstop, not a budget.
+    max_paid_sessions_per_mode_per_day: int = Field(default=8, ge=1)
+    # Defect 4 operative per-mode limit: the fraction of
+    # daily_reserved_exposure_limit_usd any ONE mode may reserve/spend in a
+    # single ET day. A fraction of the existing day-wide exposure ceiling
+    # (not an independent dollar figure) so it stays proportionate if that
+    # ceiling is ever retuned, and because a mode's own call cost varies too
+    # much for a flat count to fit every mode (an intra_check tick can be a
+    # few cents; a morning portfolio_manager call can be tens of cents).
+    # 100 disables the per-mode ceiling (falls back to the day-wide one).
+    max_mode_daily_exposure_pct: float = Field(default=60.0, gt=0.0, le=100.0)
+    # Phase 6.1 afternoon reserve: the fraction of daily_reserved_exposure_
+    # limit_usd that is NOT spendable by any session before
+    # afternoon_reserve_release_et_hour, regardless of mode. The morning is
+    # where the cheap, plentiful setups look most attractive and where a
+    # retry storm is most likely; the afternoon is where every exit decision
+    # lives (position_reviewer, risk_manager, the close pass). A day that
+    # spends itself out by noon has funded entries and defunded exits, which
+    # is exactly backwards for capital preservation. 0 disables the reserve.
+    afternoon_reserve_pct: float = Field(default=40.0, ge=0.0, le=90.0)
+    # ET hour (0-23, local wall clock) at which the reserve above releases
+    # and the full daily_reserved_exposure_limit_usd becomes spendable again.
+    afternoon_reserve_release_et_hour: int = Field(default=12, ge=0, le=23)
     # Includes the initial request.  Two means one transient retry at most;
     # a provider failover would be attempt three and is blocked/latches.
     max_provider_attempts_per_call: int = Field(default=2, ge=1)
