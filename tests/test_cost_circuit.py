@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -724,6 +724,337 @@ def test_afternoon_reserve_recovers_the_same_day_without_a_rollover(tmp_path):
         )
     assert reservation.reservation_id
     assert notifier.messages == []
+
+
+# ============================================================================
+# Defect 1 (2026-08-28): the pre-fix reservation treated one UTF-8 byte as
+# one token and always reserved the full max_output_tokens ceiling. The
+# 09:32 ET portfolio_manager call reserved $1.8657 for a call that actually
+# cost ~$0.11. Reservation is now derived from this agent+model's own
+# measured history in agent_logs (LLMCostCircuitBreaker.
+# _measure_reservation_tokens), with an explicit, tested fallback to
+# exactly the old formula for thin/unknown/unreadable history.
+# ============================================================================
+
+# 24 real production portfolio_manager / openai/gpt-5.5 calls, 2026-08-25
+# through 2026-08-28, read from the production ledger snapshot:
+# (bytes of the logged user_message, actual input_tokens, actual
+# output_tokens). Matches the spec's headline figures exactly: worst-ever
+# actual cost $0.578255, max output_tokens 11034 (never near a 16,000
+# reservation).
+_REAL_PM_GPT55_HISTORY = [
+    (11132, 13827, 3480), (185259, 50345, 9160), (10933, 13803, 5363),
+    (181159, 49447, 11034), (11163, 13885, 5587), (185793, 50270, 8432),
+    (11628, 13980, 6601), (174419, 48139, 8436), (12309, 14272, 4653),
+    (183283, 50027, 8096), (11814, 14098, 6501), (183182, 50396, 7018),
+    (13659, 14653, 3726), (13194, 14534, 4072), (189705, 51904, 8760),
+    (17547, 16277, 5159), (16709, 16073, 3614), (34066, 20875, 3989),
+    (32620, 20498, 4579), (32072, 20317, 3395), (30453, 19955, 4669),
+    (29954, 19893, 4945), (28469, 19480, 3688), (29604, 19781, 3197),
+]
+_REAL_PM_GPT55_WORST_COST = 0.578255
+_REAL_PM_GPT55_MAX_OUTPUT = 11034
+
+# Mirrors the 09:32 ET call's inferred size (spec: "~259 KB prompt bounded
+# as 259k tokens" under the old byte=token formula). Plain ASCII so
+# len(str) == UTF-8 byte length exactly, keeping the arithmetic in these
+# tests exact rather than approximate.
+_INCIDENT_SYSTEM_PROMPT = "S" * 48_000
+_INCIDENT_USER_MESSAGE = "U" * 210_744  # + system + 256 == 259,000 bytes
+_INCIDENT_TOTAL_PROMPT_BYTES = 259_000
+
+
+def _seed_agent_log_history(path, *, agent_name, model, rows):
+    # Backdated well outside "today"'s UTC window: _seed_today() auto-
+    # creates a legacy llm_budget_sessions row (logical_calls=1) for every
+    # DISTINCT run_id it finds in agent_logs within TODAY's window, which
+    # would otherwise make each of these synthetic history rows count as
+    # an already-paid session today and trip the session-count backstop
+    # before the reservation logic under test is even reached. Real
+    # history legitimately spans many prior days anyway.
+    past = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(path) as conn:
+        for i, (msg_bytes, input_tokens, output_tokens) in enumerate(rows):
+            conn.execute(
+                "INSERT INTO agent_logs (agent_name, run_id, input_message, "
+                "model, input_tokens, output_tokens, cost_usd, timestamp) VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    agent_name, f"history-{i}", "x" * msg_bytes, model,
+                    input_tokens, output_tokens, 0.01, past,
+                ),
+            )
+        conn.commit()
+
+
+def _loose_config(**overrides):
+    """A config with exposure ceilings wide enough that only the specific
+    check each test is exercising can fire."""
+    values = dict(
+        session_cost_limit_usd=10.0, daily_cost_limit_usd=10.0,
+        session_reserved_exposure_limit_usd=10.0,
+        daily_reserved_exposure_limit_usd=10.0,
+    )
+    values.update(overrides)
+    return _config(**values)
+
+
+def _old_formula_reserve(total_prompt_bytes: int, max_output_tokens: int,
+                          *, in_rate=5.0, out_rate=30.0, multiplier=1.05) -> float:
+    """The exact pre-fix formula (byte=token, full output ceiling), for
+    comparison. openai/gpt-5.5 rates ($5/$30 per 1M) per src/cost_table.py."""
+    return multiplier * (
+        total_prompt_bytes * in_rate / 1_000_000
+        + max_output_tokens * out_rate / 1_000_000
+    )
+
+
+def test_reservation_from_real_measured_history_sits_between_worst_and_old(tmp_path):
+    """The required proof: given the REAL measured distribution, the new
+    reservation for a call the size of the 09:32 ET incident sits above
+    the worst actual cost ever recorded for this agent+model, but far
+    below what the old formula would have reserved for the same prompt."""
+    path = _db_path(tmp_path)
+    _seed_agent_log_history(
+        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
+        rows=_REAL_PM_GPT55_HISTORY,
+    )
+    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
+    circuit.activate_session("run-real-history", "morning")
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
+        max_output_tokens=16_000,
+    )
+    with sqlite3.connect(path) as conn:
+        reserved = conn.execute(
+            "SELECT reserved_cost_usd FROM llm_budget_reservations "
+            "WHERE reservation_id=?", (reservation.reservation_id,),
+        ).fetchone()[0]
+
+    old_reserve = _old_formula_reserve(_INCIDENT_TOTAL_PROMPT_BYTES, 16_000)
+    assert old_reserve == pytest.approx(1.86375, abs=1e-3)  # sanity: ~= spec's $1.8657
+
+    assert reserved > _REAL_PM_GPT55_WORST_COST
+    assert reserved < old_reserve
+    # Comfortably below, not just technically below (spec: "far below").
+    assert reserved < old_reserve * 0.6
+    # Also reserves less output than the ceiling -- driven by the real max
+    # observed output (11034), not by max_output_tokens.
+    assert reservation.max_output_tokens < 16_000
+    assert reservation.max_output_tokens >= _REAL_PM_GPT55_MAX_OUTPUT
+
+
+def test_regression_2026_08_28_0932_scenario_no_longer_blocks(tmp_path):
+    """The actual incident, reproduced: session spend $0.0461, day spend
+    $0.0476, a portfolio_manager call the size of the one that tripped
+    projected_session_cost_limit at 09:32 ET. Under production exposure
+    ceilings (session $2.60, daily $5.50) and real measured history, it
+    must not trip anything."""
+    path = _db_path(tmp_path)
+    _seed_agent_log_history(
+        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
+        rows=_REAL_PM_GPT55_HISTORY,
+    )
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            session_cost_limit_usd=0.90, daily_cost_limit_usd=2.75,
+            session_reserved_exposure_limit_usd=2.60,
+            daily_reserved_exposure_limit_usd=5.50,
+        ),
+        notifier,
+    )
+    circuit.activate_session("run-be9f8f06", "morning")
+    # Day spend ($0.0476) was this session ($0.0461) plus a separate
+    # already-settled call earlier that day; the day/session ledgers must
+    # agree exactly (_validate_accounting_invariants) or _seed_today fails
+    # closed on the fixture itself before the reservation logic under test
+    # is even reached.
+    circuit.activate_session("intra_check-earlier-am", "intra_check")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=0.0461 "
+            "WHERE run_id='run-be9f8f06'"
+        )
+        conn.execute(
+            "UPDATE llm_budget_sessions SET actual_cost_usd=0.0015 "
+            "WHERE run_id='intra_check-earlier-am'"
+        )
+        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.0476")
+    circuit.activate_session("run-be9f8f06", "morning")
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
+        max_output_tokens=16_000,
+    )
+
+    assert reservation.reservation_id
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert notifier.messages == []
+
+
+def test_thin_history_falls_back_to_old_worst_case_formula(tmp_path):
+    """Fewer rows than reservation_min_history_samples (default 20) for
+    this exact agent+model -- must not guess from a handful of calls."""
+    path = _db_path(tmp_path)
+    _seed_agent_log_history(
+        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
+        rows=_REAL_PM_GPT55_HISTORY[:5],
+    )
+    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
+    circuit.activate_session("run-thin-history", "morning")
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
+        max_output_tokens=16_000,
+    )
+
+    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
+    assert reservation.max_output_tokens == 16_000
+
+
+def test_unknown_agent_falls_back_to_old_worst_case_formula(tmp_path):
+    """A brand-new agent_name with zero rows in agent_logs at all."""
+    path = _db_path(tmp_path)
+    _seed_agent_log_history(
+        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
+        rows=_REAL_PM_GPT55_HISTORY,
+    )
+    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
+    circuit.activate_session("run-unknown-agent", "morning")
+
+    reservation = circuit.begin_call(
+        agent_name="brand_new_agent_seat", model="openai/gpt-5.5",
+        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
+        max_output_tokens=16_000,
+    )
+
+    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
+    assert reservation.max_output_tokens == 16_000
+
+
+def test_unknown_model_price_still_trips_regardless_of_history(tmp_path):
+    """A model this history exists for but that has no pinned price must
+    still trip unknown_model_price -- history changes what is RESERVED,
+    never whether an unpriceable model is allowed to proceed."""
+    path = _db_path(tmp_path)
+    _seed_agent_log_history(
+        path, agent_name="portfolio_manager", model="not-a-real/model",
+        rows=_REAL_PM_GPT55_HISTORY,
+    )
+    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
+    circuit.activate_session("run-unknown-model", "morning")
+
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.begin_call(
+            agent_name="portfolio_manager", model="not-a-real/model",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert circuit.status()["trigger_code"] == "unknown_model_price"
+
+
+def test_corrupt_history_schema_falls_back_to_old_worst_case_formula(tmp_path):
+    """agent_logs exists but is missing the columns this measurement reads
+    (a real production shape drift, not merely empty/thin data). seed_today
+    only reads run_id/cost_usd/timestamp, so it still succeeds; only the
+    measurement itself must fail closed."""
+    path = _db_path(tmp_path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE agent_logs")
+        conn.execute(
+            "CREATE TABLE agent_logs (id INTEGER PRIMARY KEY, agent_name TEXT, "
+            "run_id TEXT, model TEXT, cost_usd REAL, "
+            "timestamp TEXT NOT NULL DEFAULT (datetime('now')))"
+        )
+        conn.commit()
+    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
+    circuit.activate_session("run-corrupt-schema", "morning")
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
+        max_output_tokens=16_000,
+    )
+
+    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
+    assert reservation.max_output_tokens == 16_000
+
+
+def test_error_reading_history_falls_back_to_old_worst_case_formula(tmp_path, monkeypatch):
+    """A transient DB-level failure reading agent_logs (lock contention,
+    I/O error, ...) -- distinct from a structurally corrupt table above --
+    must fail the SAME way: to the conservative fallback, not to circuit
+    unavailability and not to a cheaper guess."""
+    path = _db_path(tmp_path)
+    _seed_agent_log_history(
+        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
+        rows=_REAL_PM_GPT55_HISTORY,
+    )
+    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
+    circuit.activate_session("run-read-error", "morning")
+
+    # sqlite3.Connection is a C-implemented, immutable type -- its methods
+    # can't be monkeypatched directly. Wrap the connection _connect()
+    # returns instead, so exactly one query (the history measurement's,
+    # uniquely identified by its `msg_bytes` alias) fails while everything
+    # else -- seeding, accounting, the reservation insert -- goes through
+    # the real connection untouched.
+    real_connect = circuit._connect
+
+    class _FlakyConn:
+        def __init__(self, real_conn):
+            self._real = real_conn
+
+        def execute(self, sql, *args, **kwargs):
+            if "msg_bytes" in sql:
+                raise sqlite3.OperationalError("disk I/O error")
+            return self._real.execute(sql, *args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return self._real.__exit__(*exc_info)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(circuit, "_connect", lambda: _FlakyConn(real_connect()))
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
+        max_output_tokens=16_000,
+    )
+
+    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
+    assert reservation.max_output_tokens == 16_000
+
+
+def test_reservation_conservative_percentile_config_rejects_non_low_values():
+    """A structural guard against defeating the fix by configuration: the
+    percentile must stay below the median (the whole point of "conservative
+    low percentile" -- see reservation_conservative_percentile's docstring
+    in src/config.py)."""
+    from src.config import LLMCostCircuitConfig
+
+    with pytest.raises(Exception):
+        LLMCostCircuitConfig(reservation_conservative_percentile=0.75)
+
+
+def test_percentile_helper_matches_linear_interpolation():
+    from src.cost_circuit import _percentile
+
+    assert _percentile([1.0, 2.0, 3.0, 4.0], 0.0) == 1.0
+    assert _percentile([1.0, 2.0, 3.0, 4.0], 1.0) == 4.0
+    assert _percentile([1.0, 2.0, 3.0, 4.0], 0.5) == pytest.approx(2.5)
+    assert _percentile([5.0], 0.1) == 5.0
 
 
 def test_daily_reservation_is_atomic_across_process_objects(tmp_path):

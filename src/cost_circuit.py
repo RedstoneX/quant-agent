@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import json
+import math
 import os
 import fcntl
 import sqlite3
@@ -162,6 +163,21 @@ def _is_known_zero_cost_failure(error: BaseException) -> bool:
             return True
         node = node.__cause__ or node.__context__
     return False
+
+
+def _percentile(sorted_values: list[float], fraction: float) -> float:
+    """Linear-interpolated percentile of an already-sorted, non-empty
+    sequence (numpy's default 'linear' method). `fraction` is in [0, 1]."""
+
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    fraction = min(1.0, max(0.0, fraction))
+    rank = (len(sorted_values) - 1) * fraction
+    lo = math.floor(rank)
+    hi = math.ceil(rank)
+    if lo == hi:
+        return sorted_values[int(rank)]
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (rank - lo)
 
 
 class PaidAnalysisSuspended(RuntimeError):
@@ -2188,6 +2204,107 @@ class LLMCostCircuitBreaker:
             + output_tokens * float(rates["output"]) / 1_000_000
         )
 
+    def _measure_reservation_tokens(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        agent_name: str,
+        model: str,
+        system_bytes: int,
+        total_prompt_bytes: int,
+        max_output_tokens: int,
+    ) -> tuple[int, int] | None:
+        """Derive (input_tokens_est, output_tokens_est) from this agent's
+        own recent history for this model in `agent_logs`, or None if that
+        history cannot be trusted -- the caller MUST then fall back to the
+        worst-case bound (`begin_call`: prompt bytes treated 1:1 as tokens,
+        output reserved at the full `max_output_tokens` ceiling; exactly
+        today's pre-fix formula).
+
+        Defect 1 (2026-08-28): that pre-fix formula reserved $1.8657 for one
+        portfolio_manager call that cost ~$0.11 -- ~3.2x the worst real
+        portfolio_manager call ever recorded ($0.5783 over 37 calls) and
+        ~11x the average ($0.1718). The docs/WORK.md write-up proposed
+        fixing only the output half, which is 27% of that error ($0.504 of
+        $1.8657, fixed regardless of prompt size); the input half is 73%
+        and is fixed here too.
+
+        FAIL CLOSED, unconditionally: an unrecognized agent/model (no
+        matching rows), thin history (fewer than
+        `reservation_min_history_samples` rows), a non-positive/non-finite
+        computed ratio, or ANY exception reading or computing from history
+        (a locked/corrupt DB, a missing table, a malformed row -- anything)
+        all return None. None of those is permission to reserve less; they
+        mean "use the conservative fallback," never "guess something
+        cheaper."
+
+        Input: the measured bytes-per-token ratio corrects for the one
+        thing `agent_logs` cannot tell us on its own -- `input_message` is
+        only the user_message half of the historical prompt (every writer
+        sets it to exactly that, e.g. `input_message=result.user_message`
+        in src/pipeline_stages.py / src/pipeline.py), while `input_tokens`
+        is the provider's count for system_prompt + user_message together.
+        For a short user_message against a large, roughly-constant
+        system_prompt, that omission alone drags a naive per-call ratio
+        below 1 -- nowhere near a real tokenizer's bytes-per-token rate.
+        This call's system_prompt is known exactly, right now (it is not
+        historical), so its byte length is added back to each historical
+        row before computing that row's ratio. Measured effect on 23 real
+        portfolio_manager/openai-gpt-5.5 calls (mixing two very different
+        prompt sizes -- intra_check's small prompts and morning's large
+        ones): naive per-call ratios ranged 0.79-3.70 (bimodal, dominated by
+        which prompt size a call happened to be); corrected, they tighten
+        to 3.9-4.65 -- a coherent single distribution a low percentile can
+        meaningfully bound. The LOW percentile is the conservative end: a
+        low ratio means MORE tokens per byte, i.e. higher cost.
+
+        Output: the maximum output_tokens this agent+model has ever
+        produced, times a safety margin, capped at this call's own
+        max_output_tokens -- so this can only ever narrow the old
+        always-reserve-the-ceiling behaviour, never widen past it.
+        """
+
+        try:
+            min_samples = int(getattr(self.config, "reservation_min_history_samples", 20))
+            rows = conn.execute(
+                "SELECT LENGTH(CAST(COALESCE(input_message, '') AS BLOB)) "
+                "AS msg_bytes, input_tokens, output_tokens FROM agent_logs "
+                "WHERE agent_name=? AND model=? AND input_tokens IS NOT NULL "
+                "AND input_tokens > 0 AND output_tokens IS NOT NULL "
+                "AND output_tokens >= 0",
+                (agent_name, model),
+            ).fetchall()
+            if len(rows) < min_samples:
+                return None
+
+            ratios = sorted(
+                (system_bytes + float(row["msg_bytes"])) / float(row["input_tokens"])
+                for row in rows
+            )
+            percentile = float(
+                getattr(self.config, "reservation_conservative_percentile", 0.10)
+            )
+            ratio = _percentile(ratios, percentile)
+            if not (ratio > 0) or not math.isfinite(ratio):
+                return None
+
+            max_observed_output = max(int(row["output_tokens"]) for row in rows)
+            margin = float(getattr(self.config, "reservation_output_margin", 1.20))
+
+            input_tokens_est = max(1, math.ceil(total_prompt_bytes / ratio))
+            output_tokens_est = min(
+                int(max_output_tokens),
+                max(1, math.ceil(max_observed_output * margin)),
+            )
+            return input_tokens_est, output_tokens_est
+        except Exception:
+            logger.warning(
+                "cost-circuit could not measure reservation history for "
+                "%s/%s; falling back to the conservative worst-case bound",
+                agent_name, model, exc_info=True,
+            )
+            return None
+
     def _session_exposure_limit(self) -> float:
         return float(getattr(
             self.config,
@@ -2270,17 +2387,20 @@ class LLMCostCircuitBreaker:
         self._raise_if_unavailable(agent_name)
         run_id, mode = self._context()
         day, _, _ = _et_day_and_utc_bounds()
-        # A chars/token average is useful for dashboards but is not a safe
-        # financial upper bound: dense JSON, ticker strings and Unicode can
-        # tokenize much more heavily.  Every token represents at least one
-        # source byte for the provider tokenizers in scope, so UTF-8 byte
-        # length plus fixed message-framing headroom is conservative without
-        # importing nine model-specific tokenizers into the trading process.
-        input_est = max(
+        # `total_prompt_bytes` is the worst-case-bound numerator either way:
+        # every token represents at least one source byte for the provider
+        # tokenizers in scope, so UTF-8 byte length plus fixed message-
+        # framing headroom is conservative without importing nine model-
+        # specific tokenizers into the trading process. `system_bytes` feeds
+        # `_measure_reservation_tokens` below -- see its docstring (Defect 1,
+        # 2026-08-28) for why the current call's own system_prompt length,
+        # known exactly right now, has to be added back to each historical
+        # row before that history's bytes-per-token ratio means anything.
+        system_bytes = len(system_prompt.encode("utf-8"))
+        total_prompt_bytes = max(
             1,
             len((system_prompt + user_message).encode("utf-8")) + 256,
         )
-        reserve = self._attempt_reserve(model, input_est, max_output_tokens)
         reservation_id = uuid.uuid4().hex
 
         with self._connect() as conn:
@@ -2288,6 +2408,21 @@ class LLMCostCircuitBreaker:
             self._seed_today(conn)
             self._expire_reservations(conn)
             self._reconcile_quota_holds_locked(conn, current_day=day)
+            # Defect 1: reserve from this agent+model's own measured history
+            # when there is enough of it to trust; otherwise -- unknown
+            # agent/model, thin history, any error reading history -- fall
+            # back to EXACTLY today's pre-fix worst-case bound. Never a
+            # cheaper guess in between.
+            measured = self._measure_reservation_tokens(
+                conn, agent_name=agent_name, model=model,
+                system_bytes=system_bytes, total_prompt_bytes=total_prompt_bytes,
+                max_output_tokens=max_output_tokens,
+            )
+            if measured is not None:
+                input_est, output_est = measured
+            else:
+                input_est, output_est = total_prompt_bytes, max_output_tokens
+            reserve = self._attempt_reserve(model, input_est, output_est)
             state = self._effective_state_locked(
                 conn, day=day, run_id=run_id, mode=mode,
             )
@@ -2521,6 +2656,17 @@ class LLMCostCircuitBreaker:
                 raise PaidAnalysisSuspended(str(state.get("trigger_detail") or "circuit open"), state)
 
             expires_min = int(getattr(self.config, "reservation_ttl_minutes", 30))
+            # `max_output_tokens` here is intentionally output_est (the
+            # measured-or-fallback reservation this call's `reserve` dollar
+            # amount was actually computed from), not the raw caller ceiling
+            # -- before_provider_attempt's retry re-reserve and complete_
+            # call's per-attempt reconciliation both re-derive dollars from
+            # this same stored pair via _attempt_reserve, and must recover
+            # the same number `reserve` above did. Nothing outside this
+            # module reads CallReservation.max_output_tokens (the actual
+            # provider request is capped by the agent's own self.max_tokens,
+            # independent of the breaker); this column is reservation
+            # bookkeeping only.
             conn.execute(
                 "INSERT INTO llm_budget_reservations "
                 "(reservation_id, run_id, day, mode, agent_name, model, "
@@ -2528,7 +2674,7 @@ class LLMCostCircuitBreaker:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
                 (
                     reservation_id, run_id, day, mode, agent_name, model,
-                    input_est, max_output_tokens, reserve, f"+{expires_min} minutes",
+                    input_est, output_est, reserve, f"+{expires_min} minutes",
                 ),
             )
             updated_session = conn.execute(
@@ -2542,7 +2688,7 @@ class LLMCostCircuitBreaker:
                 )
             conn.commit()
         return CallReservation(
-            reservation_id, run_id, mode, agent_name, model, input_est, max_output_tokens
+            reservation_id, run_id, mode, agent_name, model, input_est, output_est
         )
 
     def before_provider_attempt(self, reservation: CallReservation, *, model: str) -> int:

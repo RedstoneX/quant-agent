@@ -557,6 +557,39 @@ class LLMCostCircuitConfig(BaseModel):
     reservation_multiplier: float = Field(
         default=1.05, ge=1.0, le=2.0, allow_inf_nan=False,
     )
+    # Defect 1 (2026-08-28): the pre-fix reservation treated one UTF-8 byte
+    # of the prompt as one token and always reserved the full
+    # max_output_tokens ceiling. On the production 09:32 ET portfolio_manager
+    # call that reserved $1.8657 against a call that actually cost ~$0.11 --
+    # ~3.2x the worst real portfolio_manager call ever recorded (measured
+    # $0.5783) and ~11x the average ($0.1718). Below this, the reservation
+    # is instead derived from that agent+model's own recent history in
+    # agent_logs (see LLMCostCircuitBreaker._measure_reservation_tokens).
+    # Below the minimum sample count, or on any unknown model/agent or
+    # error reading history, the ORIGINAL byte=token / max_output_tokens
+    # formula is still the fallback -- conservative, unchanged, and now
+    # exercised only as a fail-closed floor rather than every call.
+    #
+    # Minimum number of (agent, model) rows in agent_logs required before
+    # trusting measured history at all. Below this, guessing from a
+    # handful of calls is worse than the conservative fallback.
+    reservation_min_history_samples: int = Field(default=20, ge=10, le=1000)
+    # Percentile of the observed prompt-bytes-per-token ratio used to
+    # convert this call's prompt size into a token estimate. A LOW ratio
+    # means MORE tokens per byte -- denser text, therefore a HIGHER cost --
+    # so the low percentile is the conservative end; bounded well below the
+    # median (lt=0.5) so a misconfiguration can't quietly pick the cheap
+    # end of the distribution.
+    reservation_conservative_percentile: float = Field(
+        default=0.10, gt=0.0, lt=0.5, allow_inf_nan=False,
+    )
+    # Safety margin applied to the maximum output tokens observed for this
+    # agent+model's history; the result is still capped at that call's own
+    # max_output_tokens, so this can only ever narrow the old
+    # always-reserve-the-ceiling behaviour, never widen past it.
+    reservation_output_margin: float = Field(
+        default=1.20, ge=1.0, le=3.0, allow_inf_nan=False,
+    )
 
     @model_validator(mode="after")
     def _daily_not_below_session(self):
