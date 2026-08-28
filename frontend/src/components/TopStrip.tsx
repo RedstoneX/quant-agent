@@ -65,7 +65,7 @@ export function TopStrip({
         </div>
       )}
 
-      <div className="ml-auto flex items-center gap-3 flex-shrink-0 text-[0.8125rem] text-dim">
+      <div className="ml-auto flex flex-wrap items-center gap-3 text-[0.8125rem] text-dim">
         <span>{label}</span>
         {updatedAt && <span>updated {updatedAt.toLocaleTimeString()}</span>}
         <a href="/ui/" className="underline hover:text-accent" title="Original Stage 3-5 dashboard">
