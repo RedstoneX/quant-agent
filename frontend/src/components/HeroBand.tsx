@@ -8,7 +8,7 @@ import {
   Text,
   Title,
 } from "@tremor/react";
-import { AccountResponse, PositionItem, RunFunnelResponse } from "../api/client";
+import { AccountResponse, MacroBroaderContext, PositionItem } from "../api/client";
 import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
 import { LevelBar } from "./ui/Meter";
 import { Pill } from "./ui/Pill";
@@ -21,17 +21,30 @@ function equityHistorySeries(account: AccountResponse | null): { date: string; e
     .filter((p) => p.equity > 0);
 }
 
-function RegimeCard({ funnel }: { funnel: RunFunnelResponse | null }) {
-  const macro = funnel?.macro_context;
-  if (!macro?.regime) {
-    return (
-      <Card className="!bg-panel !p-3.5 !ring-border h-full">
-        <Text className="uppercase tracking-wide">Market regime</Text>
-        <Title className="mt-2 text-ink">Awaiting macro evidence</Title>
-        <Text className="mt-2 leading-relaxed">This reads once a run&rsquo;s macro specialist reports.</Text>
-      </Card>
-    );
-  }
+/** "as of HH:MM" for a regime reading's age — naive timestamps (no
+ * trailing Z/offset) are UTC, same convention lib/format.ts::fmtTime
+ * already uses everywhere else a run timestamp is displayed. */
+function regimeAge(asOf: string | null): string | null {
+  if (!asOf) return null;
+  const d = new Date(asOf.endsWith("Z") || asOf.includes("+") ? asOf : `${asOf}Z`);
+  if (isNaN(d.getTime())) return null;
+  return `as of ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/* Item 7 (cockpit trader rework): "Market Regime" used to be a permanent
+ * empty state ("Awaiting macro evidence") whenever funnel-of-the-moment
+ * carried no macro context — including the common case of a midday/close
+ * position-review run with a perfectly good morning regime reading a few
+ * hours old. App.tsx's `latestRegime` now looks across all of today's
+ * already-fetched runs for the most recent real regime and passes it
+ * here, with the reading's own age — so this shows the last known regime
+ * WITH its age, and renders nothing at all (reclaiming the space rather
+ * than reserving a placeholder) only on a day with truly no regime
+ * evidence yet. */
+function RegimeCard({ regime }: { regime: { macro: MacroBroaderContext; asOf: string | null } | null }) {
+  if (!regime?.macro.regime) return null;
+  const macro = regime.macro;
+  const age = regimeAge(regime.asOf);
 
   const outlookTone =
     macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim";
@@ -39,7 +52,10 @@ function RegimeCard({ funnel }: { funnel: RunFunnelResponse | null }) {
 
   return (
     <Card decoration="top" decorationColor="violet" className="!bg-panel !p-3.5 !ring-border h-full">
-      <Text className="uppercase tracking-wide">Market regime</Text>
+      <div className="flex items-start justify-between gap-2">
+        <Text className="uppercase tracking-wide">Market regime</Text>
+        {age && <span className="text-[length:var(--fs-micro)] text-dim whitespace-nowrap">{age}</span>}
+      </div>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         <Pill text={macro.regime} />
         <span className={`text-sm font-bold tracking-wide ${outlookTone}`}>
@@ -66,19 +82,20 @@ export function HeroBand({
   account,
   accountError,
   positions,
-  funnel,
+  regime,
   collapsed = false,
 }: {
   account: AccountResponse | null;
   accountError: string | null;
   positions: PositionItem[];
-  funnel: RunFunnelResponse | null;
-  /* Compact chrome (see App.tsx's chrome-collapse control): the same
-   * facts — net liquidation value, today's P&L, unrealized, deployed
-   * exposure, regime — rendered as one dense line instead of three cards.
-   * Nothing is hidden that isn't recoverable by expanding; what goes is
-   * the equity sparkline and the card chrome, which is what was costing
-   * the chart its vertical room. */
+  /** Last known regime reading across today's runs, with its age — see
+   * App.tsx's `latestRegime`. Null on a day with no regime evidence yet. */
+  regime: { macro: MacroBroaderContext; asOf: string | null } | null;
+  /* Item 6 (cockpit trader rework): this is now the SECONDARY, compact
+   * portfolio-abstractions band — Holdings (App.tsx's HoldingsStrip) leads
+   * the header instead. Collapsed is the default; nothing here is
+   * unreachable when collapsed, the same facts are still shown, just
+   * denser, and "Show full header" switches back to the full cards. */
   collapsed?: boolean;
 }) {
   if (!account) {
@@ -104,15 +121,28 @@ export function HeroBand({
   const history = equityHistorySeries(account);
 
   if (collapsed) {
-    const macro = funnel?.macro_context;
     return (
-      <div className="mx-3 mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg border border-border bg-panel px-3 py-2">
+      <div className="mx-3 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-panel px-3 py-2">
         <span className="flex items-baseline gap-2">
           <span className="label-xs">NLV</span>
           <span className="font-mono text-[length:var(--fs-stat)] font-semibold tabular-nums text-ink">
             {fmtMoney(account.portfolio_value)}
           </span>
         </span>
+        {/* Item 11: the equity curve now lives here too, not only behind
+            "Show full header" — this collapsed line is what a trader sees
+            by default, so "+$X today and nothing else" needed fixing in
+            the state that's actually on screen most of the time. */}
+        {history.length > 1 && (
+          <SparkAreaChart
+            data={history}
+            index="date"
+            categories={["equity"]}
+            colors={["cyan"]}
+            className="h-6 w-20"
+            showGradient
+          />
+        )}
         <span className={`font-mono text-[length:var(--fs-body)] font-semibold tabular-nums ${pnlClass(account.daily_pnl)}`}>
           {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
         </span>
@@ -123,19 +153,17 @@ export function HeroBand({
           {riskDeployedPct.toFixed(0)}% deployed
           {maxTotalPct !== null ? ` / ${maxTotalPct.toFixed(0)}% ceiling` : ""}
         </span>
-        <span className="text-[length:var(--fs-meta)] text-dim">
-          Deployable <strong className="font-mono text-ink">{fmtMoneyCompact(liquidity?.deployable_cash)}</strong>
-        </span>
-        {macro?.regime && (
+        {regime?.macro.regime && (
           <span className="flex items-center gap-1.5">
-            <Pill text={macro.regime} />
+            <Pill text={regime.macro.regime} />
             <span
               className={`text-[length:var(--fs-meta)] font-bold tracking-wide ${
-                macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim"
+                regime.macro.equity_outlook === "bullish" ? "text-pos" : regime.macro.equity_outlook === "bearish" ? "text-neg" : "text-dim"
               }`}
             >
-              {(macro.equity_outlook || "unknown").toUpperCase()}
+              {(regime.macro.equity_outlook || "unknown").toUpperCase()}
             </span>
+            {regimeAge(regime.asOf) && <span className="text-[length:var(--fs-micro)] text-dim">{regimeAge(regime.asOf)}</span>}
           </span>
         )}
         {accountError && (
@@ -148,7 +176,7 @@ export function HeroBand({
   }
 
   return (
-    <div className="mx-3 mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
+    <div className={`mx-3 mt-3 grid grid-cols-1 gap-3 ${regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
       <Card
         decoration="top"
         decorationColor={accountError ? "amber" : "cyan"}
@@ -208,7 +236,7 @@ export function HeroBand({
         </Grid>
       </Card>
 
-      <RegimeCard funnel={funnel} />
+      <RegimeCard regime={regime} />
     </div>
   );
 }

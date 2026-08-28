@@ -253,6 +253,69 @@ def test_smart_money_sec_limits_fail_closed():
         SmartMoneyConfig(max_external_candidates=0)
 
 
+def test_reconciliation_config_defaults_to_seven_day_lookback():
+    """2026-08-28 ONDS/CCJ fix: a settings.yaml without a `reconciliation`
+    section must still get a working stop-out reconciler, not a disabled
+    one — unlike cash_sweep/intraday_scan, there is no safe 'off' state for
+    accounting correctness, so the default is a real, working lookback
+    rather than a feature flag defaulting False."""
+    from src.config import ReconciliationConfig
+    assert ReconciliationConfig().stop_out_lookback_days == 7
+
+
+def test_reconciliation_config_lookback_bounds_are_enforced():
+    from pydantic import ValidationError
+    from src.config import ReconciliationConfig
+
+    with pytest.raises(ValidationError):
+        ReconciliationConfig(stop_out_lookback_days=0)
+    with pytest.raises(ValidationError):
+        ReconciliationConfig(stop_out_lookback_days=61)
+    # In-bounds values are accepted at both ends.
+    assert ReconciliationConfig(stop_out_lookback_days=1).stop_out_lookback_days == 1
+    assert ReconciliationConfig(stop_out_lookback_days=60).stop_out_lookback_days == 60
+
+
+def test_load_config_reconciliation_section_overrides_default(tmp_path):
+    """A settings.yaml that DOES set `reconciliation` must actually take."""
+    yaml_content = """
+api_keys:
+  anthropic: "test-key"
+  fred: "fred-key"
+  alpaca_key: "alpaca-key"
+  alpaca_secret: "alpaca-secret"
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  paper: true
+llm:
+  tech_analyst_model: "claude-sonnet-4-6"
+  max_tokens: 4096
+risk:
+  max_position_pct: 20
+  max_total_position_pct: 90
+  max_daily_loss_pct: 3
+  max_sector_pct: 40
+  require_stop_loss: true
+trading:
+  universe: ["SPY", "QQQ"]
+  lookback_days: 120
+  schedule:
+    morning: "06:00"
+    midday: "12:00"
+    evening: "16:30"
+storage:
+  db_path: "data/quant_agent.db"
+reconciliation:
+  stop_out_lookback_days: 3
+"""
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+
+    from src.config import load_config
+    cfg = load_config(config_file)
+    assert cfg.reconciliation.stop_out_lookback_days == 3
+
+
 def test_llm_config_get_max_tokens_respects_per_agent_override():
     """When a per-agent override is set, it takes precedence over the global."""
     from src.config import LLMConfig

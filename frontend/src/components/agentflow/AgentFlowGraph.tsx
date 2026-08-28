@@ -3,8 +3,9 @@ import { ReactFlow, Background, BackgroundVariant, type Node, type Edge, type Re
 import "@xyflow/react/dist/style.css";
 import { NODE_TYPES } from "./nodes";
 
-/* Shared, deliberately non-interactive React Flow mount. QAMC's primary
- * Decision Room is a fixed, "deliberately composed" surface (the same
+/* Shared, deliberately non-interactive React Flow mount, used by
+ * CandidateDetailModal's drill-down graph and RunDetailModal's run-level
+ * aggregate. This is a fixed, "deliberately composed" surface (the same
  * principle that keeps Dockview out of the primary cockpit) — React Flow's
  * real interactivity (drag/pan/zoom/connect) is switched off here even
  * though the library is fully capable of it, so this renders as a fixed
@@ -12,14 +13,13 @@ import { NODE_TYPES } from "./nodes";
  *
  * `fitView` only frames the topology once, at mount — the same class of
  * bug Stage 6g already found and fixed for the price chart's `autoSize`.
- * On iPad, DecisionRoomPanel mounts inside the Candidates/Chart/Decision
- * Room tab strip's `hidden` pane (App.tsx's `mobilePane` state defaults to
- * "watchlist"), so React Flow's one-time `fitView` measures a 0x0
- * container and collapses the graph into a corner; switching to the
- * Decision Room tab later never re-triggers it. Fixed the same way the
+ * This graph can mount inside a container that starts at zero size (e.g.
+ * a modal whose layout settles a tick after mount), in which case React
+ * Flow's one-time `fitView` measures a 0x0 box and collapses the graph
+ * into a corner with no later trigger to fix it. Fixed the same way the
  * chart was: an explicit `ResizeObserver` on the wrapping element calls
  * `fitView()` again on every real size change, including the 0->nonzero
- * transition a hidden->visible tab switch produces. */
+ * transition. */
 export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; edges: Edge[]; height?: number }) {
   const instanceRef = useRef<ReactFlowInstance | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);

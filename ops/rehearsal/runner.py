@@ -320,12 +320,47 @@ def _pricing_cache_note(sandbox) -> str:
             "this rehearsal stops before any model call"
         )
     age_h = (time.time() - cache.stat().st_mtime) / 3600
+    # The boundaries below are read from config rather than hardcoded at 24h.
+    # Until 2026-08-28 a cache over 24h old suspended paid analysis outright,
+    # and this note said so. That policy has since been graduated: a stale
+    # cache within `openrouter_pricing_grace_period_hours` is now USED, with
+    # the reservation multiplier widened in proportion to its age, and only a
+    # cache past the grace window (or absent, or missing a rate for a model in
+    # use) still fails closed. A note that kept quoting a flat 24h would have
+    # been wrong for the whole grace band — the exact kind of stale-by-hand
+    # claim this project has been bitten by repeatedly.
+    grace_h = _pricing_grace_hours(sandbox)
+    if age_h >= 24 + grace_h:
+        return (
+            f"the OpenRouter pricing cache is {age_h:.0f}h old — past the "
+            f"{24 + grace_h:.0f}h limit (24h fresh + {grace_h:.0f}h grace). "
+            f"The cost circuit will treat pricing as unconfirmed and suspend "
+            f"paid analysis. Its timestamp is deliberately NOT refreshed — "
+            f"making stale pricing look current would be faking a safety check"
+        )
     if age_h >= 24:
         return (
-            f"the OpenRouter pricing cache is {age_h:.0f}h old (stale past "
-            f"24h). The cost circuit will treat pricing as unconfirmed and "
-            f"suspend paid analysis. Its timestamp is deliberately NOT "
-            f"refreshed — making stale pricing look current would be faking a "
-            f"safety check"
+            f"the OpenRouter pricing cache is {age_h:.0f}h old — stale but "
+            f"inside the {grace_h:.0f}h grace window, so paid analysis "
+            f"proceeds with a widened reservation multiplier. Its timestamp "
+            f"is deliberately NOT refreshed"
         )
     return f"OpenRouter pricing cache is {age_h:.0f}h old (fresh, under 24h)"
+
+
+def _pricing_grace_hours(sandbox) -> float:
+    """The configured grace window, read from the sandbox's own settings so
+    the note describes the policy this rehearsal actually ran under rather
+    than a number written here by hand."""
+    try:
+        import yaml
+        cfg = yaml.safe_load((sandbox.root / "config" / "settings.yaml").read_text())
+        return float(
+            (cfg.get("llm_cost_circuit") or {}).get(
+                "openrouter_pricing_grace_period_hours", 0.0
+            )
+        )
+    except Exception:
+        # Unknown grace means describe the strict policy — never claim more
+        # tolerance than we can prove is configured.
+        return 0.0
