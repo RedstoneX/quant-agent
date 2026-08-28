@@ -219,6 +219,20 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         return RuleResult(kind, PASS if ok else FAIL, note,
                           f"{rule.get('key')} = {got!r} (expected {want!r})")
 
+    if kind == "setting_present":
+        # Unlike setting_equals, this rule makes no claim about the value —
+        # only that the key exists at all. That is the shape needed for a
+        # setting that is expected to keep changing (a stopgap re-tuned over
+        # time): pinning a specific value would make every legitimate re-tune
+        # look like rot, and the day the key is finally removed on purpose is
+        # exactly the moment a value-pinned rule would go quiet instead of
+        # flagging that the phase needs re-evaluating.
+        got = _setting(cfg, str(rule.get("key", "")))
+        present = got is not KeyError
+        return RuleResult(kind, PASS if present else FAIL, note,
+                          f"{rule.get('key')} {'is present' if present else 'is NOT present'} "
+                          "in settings")
+
     return RuleResult(kind, UNKNOWN, note, f"unrecognised rule kind {kind!r}")
 
 

@@ -121,6 +121,26 @@ def test_setting_equals_fails_when_the_key_is_gone():
     assert r.verdict == sb.FAIL
 
 
+def test_setting_present_passes_when_the_key_exists_regardless_of_value():
+    """`setting_present` makes no claim about the value, only that the key is
+    there at all — the shape needed for a stopgap setting that is expected to
+    be re-tuned over time without that re-tuning reading as rot."""
+    cfg = {"llm_cost_circuit": {"max_paid_sessions_per_mode_per_day": 40}}
+    r = sb.check_rule(
+        {"kind": "setting_present",
+         "key": "llm_cost_circuit.max_paid_sessions_per_mode_per_day"}, cfg,
+    )
+    assert r.verdict == sb.PASS
+
+
+def test_setting_present_fails_when_the_key_is_gone():
+    r = sb.check_rule(
+        {"kind": "setting_present",
+         "key": "llm_cost_circuit.max_paid_sessions_per_mode_per_day"}, {},
+    )
+    assert r.verdict == sb.FAIL
+
+
 def test_missing_file_fails_rather_than_erroring():
     r = sb.check_rule({"kind": "file_exists", "path": "src/definitely_not_here.py"}, {})
     assert r.verdict == sb.FAIL
@@ -184,7 +204,7 @@ def test_the_real_manifest_parses_and_every_rule_is_well_formed():
     assert phases, "manifest carries no phases"
 
     known = {"commit_in_main", "pr_merged", "file_exists", "symbol_in_file",
-             "test_exists", "setting_equals", "manual"}
+             "test_exists", "setting_equals", "setting_present", "manual"}
     malformed = []
     for entry in phases:
         assert entry.get("id"), "every phase needs an id"
