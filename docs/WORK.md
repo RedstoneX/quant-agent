@@ -831,6 +831,7 @@ paid) if it's wanted.
 - #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
 - #116 shorts countable — proven a no-op on a long-only book.
 - #117 doc sync.
+- #132 news feeds + coverage — dead-feed-vanishes-silently fix (`NewsCoverage`, `data_status["news"]`), Reuters/AP removed (neither fixable for free, live-verified 2026-08-28), Yahoo Finance News added, `feat/news-dedup` folded in. Branch `fix/news-feeds-and-coverage`.
 
 #### BRANCHES READY, NO PR YET
 `feat/insider-signal-filter` (56.2% of 2,188 real Form 4 rows measured routine), `feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
