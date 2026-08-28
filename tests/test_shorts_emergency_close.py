@@ -619,7 +619,40 @@ def test_reprotect_residual_picks_lowest_stop_for_a_short():
 
 
 # ==========================================================================
-# 8. Revert cross-check helper (not a test — see conversation report)
+# 8. Position reviewer surfaces EMERGENCY_COVER as a system action
+# ==========================================================================
+
+def test_position_reviewer_surfaces_emergency_cover_from_morning_trades():
+    """The reviewer's "Non-LLM System Actions Earlier Today" block already
+    surfaced FORCE_DELEVER and EMERGENCY_SELL so the reviewer isn't left
+    reasoning in a vacuum about a shrunken book. A circuit-breaker
+    buy-to-cover on a short shrinks the book exactly as materially as a
+    forced sell on a long — it must show up in the same block, not be
+    silently dropped because its label is EMERGENCY_COVER rather than
+    EMERGENCY_SELL."""
+    from unittest.mock import patch
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+
+    msg = agent.build_user_message(
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        cash_balance=10_000.0, total_value=50_000.0,
+        session_type="midday",
+        morning_trades=[
+            {"symbol": "TSLA", "action": "EMERGENCY_COVER", "qty": 20,
+             "fill_status": "filled", "fill_qty": 20,
+             "reasoning": "daily loss -5.0% breached circuit breaker"},
+        ],
+    )
+    assert "Non-LLM System Actions Earlier Today" in msg
+    assert "EMERGENCY_COVER TSLA" in msg
+
+
+# ==========================================================================
+# 9. Revert cross-check helper (not a test — see conversation report)
 # ==========================================================================
 # The revert cross-check itself (src/ reset to main with this test file
 # left in place, failure count reported) is a one-off git operation done
