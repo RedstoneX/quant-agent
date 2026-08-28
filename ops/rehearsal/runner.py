@@ -126,6 +126,13 @@ def _sentinel_credentials():
     previous = {name: os.environ.get(name) for name in names}
     for name in names:
         os.environ[name] = SENTINEL_KEY
+    # Suppress operator alerts for the duration. A rehearsal replays a real
+    # session and therefore raises real alerts; delivered unmarked to the
+    # operator's normal chat they are indistinguishable from production. An
+    # env var rather than config because it has to hold for any code path
+    # that builds a notifier, including ones reading `.env` directly.
+    previous_rehearsal = os.environ.get("QAMC_REHEARSAL")
+    os.environ["QAMC_REHEARSAL"] = "1"
     try:
         yield
     finally:
@@ -134,6 +141,10 @@ def _sentinel_credentials():
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+        if previous_rehearsal is None:
+            os.environ.pop("QAMC_REHEARSAL", None)
+        else:
+            os.environ["QAMC_REHEARSAL"] = previous_rehearsal
 
 
 def build_rehearsal_config(sandbox, *, base_settings: Path | None = None,
