@@ -138,10 +138,33 @@ def check_rule(rule: dict, cfg: dict) -> RuleResult:
 
     if kind == "pr_merged":
         num = rule.get("number")
+        # Ask git before asking GitHub. A merged PR leaves its own merge
+        # commit in main's history ("Merge pull request #N from ..."), which
+        # is the same fact, checkable offline, with no credential.
+        #
+        # This matters where the board actually runs. `gh` is installed on the
+        # production box but the runtime account is not authenticated, and
+        # putting a GitHub token on the account that trades is a credential
+        # decision for the owner, not a convenience for this script. Without
+        # the git path, 13 of the manifest's rules would report `unknown` on
+        # the box for no better reason than that.
+        rc, out = _run(
+            ["git", "log", "origin/main", "--merges", "--format=%s",
+             f"--grep=^Merge pull request #{num} from ", "-1"],
+            REPO_ROOT,
+        )
+        if rc == 0 and out.strip():
+            return RuleResult(kind, PASS, note, f"PR #{num} merge commit is in main")
+        # No merge commit found. That is not proof of absence — a squash or
+        # rebase merge leaves none — so fall through to GitHub rather than
+        # calling it a failure, and report unknown if that is unavailable too.
         rc, out = _run(["gh", "pr", "view", str(num), "--repo", "RedstoneX/quant-agent",
                         "--json", "state", "-q", ".state"], REPO_ROOT)
         if rc != 0:
-            return RuleResult(kind, UNKNOWN, note, "could not reach GitHub")
+            return RuleResult(
+                kind, UNKNOWN, note,
+                f"PR #{num}: no merge commit in main, and GitHub is unreachable "
+                "from here (the runtime account has no gh credential)")
         return RuleResult(kind, PASS if out.strip() == "MERGED" else FAIL, note,
                           f"PR #{num} is {out.strip()}")
 

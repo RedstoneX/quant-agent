@@ -245,3 +245,28 @@ def test_unknown_live_values_render_as_unknown_not_as_zero():
     out = sb.render(phases, state, template)
     assert "unknown" in out
     assert "$0.00" not in out
+
+
+def test_merged_pr_rules_resolve_from_git_without_a_github_credential():
+    """The board runs on the production box, where `gh` exists but the runtime
+    account is deliberately NOT authenticated — putting a GitHub token on the
+    account that trades is the owner's decision, not this script's convenience.
+
+    A merged PR leaves its own merge commit in main, which is the same fact
+    with no credential attached. Without this path, 13 of the manifest's rules
+    would report `unknown` on the box for no good reason.
+    """
+    # #102 is merged and its merge commit is in main's history.
+    r = sb.check_rule({"kind": "pr_merged", "number": 102}, {})
+    assert r.verdict == sb.PASS
+    assert "merge commit" in r.detail
+
+
+def test_an_unmerged_pr_is_not_reported_as_merged_from_git_alone():
+    """Absence of a merge commit is not proof of absence — a squash merge
+    leaves none — so the git path must never turn a miss into a FAIL on its
+    own. It falls through to GitHub, and to `unknown` if that is unreachable.
+    """
+    r = sb.check_rule({"kind": "pr_merged", "number": 999999}, {})
+    assert r.verdict in (sb.FAIL, sb.UNKNOWN)
+    assert r.verdict != sb.PASS
