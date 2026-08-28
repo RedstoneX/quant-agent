@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import json
+import math
 import os
 import fcntl
 import sqlite3
@@ -45,7 +46,7 @@ _DAY_QUOTA_TRIGGERS = frozenset({
     "provider_projected_daily_cost_limit",
     "outstanding_projected_daily_cost_limit",
 })
-_MODE_DAY_QUOTA_TRIGGERS = frozenset({"session_retry_limit"})
+_MODE_DAY_QUOTA_TRIGGERS = frozenset({"session_retry_limit", "mode_daily_spend_limit"})
 _SESSION_QUOTA_TRIGGERS = frozenset({
     "session_cost_limit",
     "projected_session_cost_limit",
@@ -53,6 +54,19 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
     "outstanding_projected_session_cost_limit",
     "session_retry_attempt_limit",
 })
+
+# NOTE on "morning_spend_ceiling" (Defect 4, 2026-08-28): that trigger code
+# is deliberately absent from every set above and never passed to
+# `_trip_locked`. It protects a fraction of the day's budget for sessions
+# at/after `afternoon_reserve_release_et_hour`, which must stop blocking
+# the moment the clock crosses that hour -- WITHIN the same ET day, not at
+# the next day's rollover. Every scope above (day/mode_day/session) persists
+# as an `llm_quota_holds` row that only `_reconcile_quota_holds_locked`
+# clears, and that only fires on an ET-day boundary (see its docstring) --
+# so persisting this one the same way would correctly stop the morning
+# overspend and then incorrectly keep blocking the very afternoon sessions
+# it exists to protect. It is instead re-evaluated fresh, from current
+# wall-clock time, on every `begin_call`; see `_morning_spend_ceiling`.
 
 
 def _trigger_scope(code: Any) -> str:
@@ -65,6 +79,105 @@ def _trigger_scope(code: Any) -> str:
     if code in _SESSION_QUOTA_TRIGGERS:
         return "session"
     return "hard"
+
+
+# === Defect 2 (2026-08-28): provider failures that provably cost $0 ===
+#
+# `fail_call` charges the full conservative reservation for every failed
+# attempt, on the reasoning that a stream can be cut off after the provider
+# already generated (and billed for) tokens. That reasoning is right for a
+# response that started and wrong for a request the provider rejected
+# before generating anything, or one that never reached the provider at
+# all. On 2026-08-28 a single tech_analyst HTTP 429 -- by definition zero
+# tokens billed, since a 429 means the provider refused the request before
+# any generation started -- was accounted as `unknown_cost_rows`, made the
+# day inexact, and hard-latched trading for three-plus hours until an
+# operator reset it by hand.
+#
+# `_is_known_zero_cost_failure` below is the ONLY thing trusted to prove
+# $0 cost, and it is deliberately narrow. This module does not import the
+# anthropic/openai/httpx SDKs (see the module docstring -- the breaker has
+# to stay independent of every provider client), so, exactly like
+# `src/agents/base.py:_is_retryable`, classification is done by matching
+# `status_code` / exception class name rather than `isinstance` against a
+# provider SDK class.
+
+# The provider explicitly rejected the request before generating a
+# response. 429 (rate limited), 400 (bad request), 401 (bad/expired key),
+# 403 (forbidden) and 404 (not found/deprecated model) all happen at the
+# provider's request-validation boundary, strictly before any output (and,
+# per every provider's own billing model, any input) tokens are metered.
+# A 402 ("insufficient balance" -- handled elsewhere in base.py as a
+# fast-fail-to-failover signal, not here) is deliberately NOT included:
+# it is not in the design's enumerated zero-cost list, and adding an
+# entry for it on our own initiative would be exactly the "allow-list of
+# ambiguous errors" inversion this fix must not become.
+_KNOWN_ZERO_COST_STATUS_CODES = frozenset({400, 401, 403, 404, 429})
+
+# Exception class names that can ONLY occur while establishing a TCP/TLS
+# connection -- i.e. strictly before a single byte of the request could
+# have been written to the socket: DNS resolution failure, a refused/reset
+# connection, and a failed (or timed-out) TLS handshake. Deliberately
+# narrow, and deliberately excludes read/write/protocol-level failures
+# (`ReadTimeout`, `ReadError`, `WriteError`, `RemoteProtocolError`,
+# `APITimeoutError`, ...), which can only happen AFTER the request was
+# already sent and are left ambiguous below -- that is the same pre-send/
+# post-send line the design draws between "timeout after send" (ambiguous)
+# and "pre-send transport failure" (zero-cost).
+_PRE_SEND_TRANSPORT_EXC_NAMES = frozenset({
+    "ConnectError", "ConnectTimeout", "ConnectionRefusedError",
+    "gaierror", "SSLError", "SSLCertVerificationError",
+    "SSLZeroReturnError", "SSLWantReadError", "SSLWantWriteError",
+})
+
+
+def _is_known_zero_cost_failure(error: BaseException) -> bool:
+    """True only for a provider failure PROVEN to have cost $0.
+
+    Fail closed: anything not explicitly matched here -- an unrecognized
+    exception, a 5xx, a timeout waiting for a response, a truncated
+    stream, a missing/unexpected status code -- returns False (ambiguous,
+    today's conservative accounting, unchanged by this function). This is
+    an allow-list of what is safe to call zero-cost; it must never grow
+    into (or be replaced by) an allow-list of what counts as ambiguous.
+    """
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        return status in _KNOWN_ZERO_COST_STATUS_CODES
+    # No HTTP status code was ever received: this is either a genuine
+    # pre-send transport failure or something ambiguous (a read/write
+    # timeout, a connection dropped mid-response, ...). Walk the
+    # exception's cause chain -- SDKs wrap the concrete httpx/socket/ssl
+    # exception (`raise APIConnectionError(...) from exc`) rather than
+    # replacing it, so the original, specific failure is almost always
+    # still reachable even though the top-level wrapper's own class name
+    # ("APIConnectionError") is, by itself, ambiguous about which side of
+    # the connection failed.
+    seen: set[int] = set()
+    node: BaseException | None = error
+    for _ in range(6):  # generous bound against a pathological chain; never expected to matter
+        if node is None or id(node) in seen:
+            break
+        seen.add(id(node))
+        if type(node).__name__ in _PRE_SEND_TRANSPORT_EXC_NAMES:
+            return True
+        node = node.__cause__ or node.__context__
+    return False
+
+
+def _percentile(sorted_values: list[float], fraction: float) -> float:
+    """Linear-interpolated percentile of an already-sorted, non-empty
+    sequence (numpy's default 'linear' method). `fraction` is in [0, 1]."""
+
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    fraction = min(1.0, max(0.0, fraction))
+    rank = (len(sorted_values) - 1) * fraction
+    lo = math.floor(rank)
+    hi = math.ceil(rank)
+    if lo == hi:
+        return sorted_values[int(rank)]
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (rank - lo)
 
 
 class PaidAnalysisSuspended(RuntimeError):
@@ -1165,6 +1278,26 @@ class LLMCostCircuitBreaker:
         self.enforce_current_limits(agent_name="session_start")
         return self.status()
 
+    def set_session_context(self, run_id: str, mode: str) -> None:
+        """Bind this call's run/mode WITHOUT the validating seed-and-check path.
+
+        `activate_session` re-seeds and validates the current day's ledger
+        before returning, which is exactly right for every normal caller:
+        a broken ledger latches immediately, before any paid call can be
+        authorized against it.  `scripts/cost_circuit.py reset` is the one
+        legitimate exception.  On 2026-08-28 an operator ran that script to
+        clear a hard latch and `main()`'s unconditional `activate_session()`
+        call re-validated the day's ledger and raised before `reset` was
+        ever dispatched -- the tool meant to clear the emergency was itself
+        blocked by it, and the reset had to be done by hand from a Python
+        shell instead. `reset()` never depends on the seeded/validated
+        state (it reads the `llm_circuit_state` singleton row and the
+        emergency-latch file directly, not `_seed_today`), so all this needs
+        to do is set the run/mode context `reset()`'s audit trail reads --
+        deliberately nothing else.
+        """
+        self._session_context.set((run_id, mode))
+
     def _context(self) -> tuple[str, str]:
         return self._session_context.get()
 
@@ -2071,6 +2204,107 @@ class LLMCostCircuitBreaker:
             + output_tokens * float(rates["output"]) / 1_000_000
         )
 
+    def _measure_reservation_tokens(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        agent_name: str,
+        model: str,
+        system_bytes: int,
+        total_prompt_bytes: int,
+        max_output_tokens: int,
+    ) -> tuple[int, int] | None:
+        """Derive (input_tokens_est, output_tokens_est) from this agent's
+        own recent history for this model in `agent_logs`, or None if that
+        history cannot be trusted -- the caller MUST then fall back to the
+        worst-case bound (`begin_call`: prompt bytes treated 1:1 as tokens,
+        output reserved at the full `max_output_tokens` ceiling; exactly
+        today's pre-fix formula).
+
+        Defect 1 (2026-08-28): that pre-fix formula reserved $1.8657 for one
+        portfolio_manager call that cost ~$0.11 -- ~3.2x the worst real
+        portfolio_manager call ever recorded ($0.5783 over 37 calls) and
+        ~11x the average ($0.1718). The docs/WORK.md write-up proposed
+        fixing only the output half, which is 27% of that error ($0.504 of
+        $1.8657, fixed regardless of prompt size); the input half is 73%
+        and is fixed here too.
+
+        FAIL CLOSED, unconditionally: an unrecognized agent/model (no
+        matching rows), thin history (fewer than
+        `reservation_min_history_samples` rows), a non-positive/non-finite
+        computed ratio, or ANY exception reading or computing from history
+        (a locked/corrupt DB, a missing table, a malformed row -- anything)
+        all return None. None of those is permission to reserve less; they
+        mean "use the conservative fallback," never "guess something
+        cheaper."
+
+        Input: the measured bytes-per-token ratio corrects for the one
+        thing `agent_logs` cannot tell us on its own -- `input_message` is
+        only the user_message half of the historical prompt (every writer
+        sets it to exactly that, e.g. `input_message=result.user_message`
+        in src/pipeline_stages.py / src/pipeline.py), while `input_tokens`
+        is the provider's count for system_prompt + user_message together.
+        For a short user_message against a large, roughly-constant
+        system_prompt, that omission alone drags a naive per-call ratio
+        below 1 -- nowhere near a real tokenizer's bytes-per-token rate.
+        This call's system_prompt is known exactly, right now (it is not
+        historical), so its byte length is added back to each historical
+        row before computing that row's ratio. Measured effect on 23 real
+        portfolio_manager/openai-gpt-5.5 calls (mixing two very different
+        prompt sizes -- intra_check's small prompts and morning's large
+        ones): naive per-call ratios ranged 0.79-3.70 (bimodal, dominated by
+        which prompt size a call happened to be); corrected, they tighten
+        to 3.9-4.65 -- a coherent single distribution a low percentile can
+        meaningfully bound. The LOW percentile is the conservative end: a
+        low ratio means MORE tokens per byte, i.e. higher cost.
+
+        Output: the maximum output_tokens this agent+model has ever
+        produced, times a safety margin, capped at this call's own
+        max_output_tokens -- so this can only ever narrow the old
+        always-reserve-the-ceiling behaviour, never widen past it.
+        """
+
+        try:
+            min_samples = int(getattr(self.config, "reservation_min_history_samples", 20))
+            rows = conn.execute(
+                "SELECT LENGTH(CAST(COALESCE(input_message, '') AS BLOB)) "
+                "AS msg_bytes, input_tokens, output_tokens FROM agent_logs "
+                "WHERE agent_name=? AND model=? AND input_tokens IS NOT NULL "
+                "AND input_tokens > 0 AND output_tokens IS NOT NULL "
+                "AND output_tokens >= 0",
+                (agent_name, model),
+            ).fetchall()
+            if len(rows) < min_samples:
+                return None
+
+            ratios = sorted(
+                (system_bytes + float(row["msg_bytes"])) / float(row["input_tokens"])
+                for row in rows
+            )
+            percentile = float(
+                getattr(self.config, "reservation_conservative_percentile", 0.10)
+            )
+            ratio = _percentile(ratios, percentile)
+            if not (ratio > 0) or not math.isfinite(ratio):
+                return None
+
+            max_observed_output = max(int(row["output_tokens"]) for row in rows)
+            margin = float(getattr(self.config, "reservation_output_margin", 1.20))
+
+            input_tokens_est = max(1, math.ceil(total_prompt_bytes / ratio))
+            output_tokens_est = min(
+                int(max_output_tokens),
+                max(1, math.ceil(max_observed_output * margin)),
+            )
+            return input_tokens_est, output_tokens_est
+        except Exception:
+            logger.warning(
+                "cost-circuit could not measure reservation history for "
+                "%s/%s; falling back to the conservative worst-case bound",
+                agent_name, model, exc_info=True,
+            )
+            return None
+
     def _session_exposure_limit(self) -> float:
         return float(getattr(
             self.config,
@@ -2084,6 +2318,55 @@ class LLMCostCircuitBreaker:
             "daily_reserved_exposure_limit_usd",
             self.config.daily_cost_limit_usd,
         ))
+
+    def _mode_daily_exposure_limit(self) -> float:
+        """Dollar ceiling any ONE mode may reserve/spend in a single ET day.
+
+        Defect 4 (2026-08-28): `begin_call` used to gate a new session on a
+        flat COUNT of paid sessions per mode per day
+        (`max_paid_sessions_per_mode_per_day`), which produced the 11:30 ET
+        stop at 17 cents of actual spend -- intra_check's 3rd session that
+        day, nowhere near any dollar limit. A count can't fit every mode:
+        an intra_check tick can cost a few cents, a morning
+        portfolio_manager call tens of cents. This is a fraction of
+        `_daily_exposure_limit()` -- the same reserved-exposure ceiling
+        every other projected-cost check in this file already uses --
+        rather than an independent dollar figure that could silently drift
+        out of sync with it. The session-count cap remains as a backstop
+        against an infinite loop (see its config docstring), not as the
+        operative limit.
+        """
+        pct = float(getattr(self.config, "max_mode_daily_exposure_pct", 100.0))
+        return self._daily_exposure_limit() * (pct / 100.0)
+
+    def _morning_spend_ceiling(self, now: datetime | None = None) -> float | None:
+        """How much of today's reserved-exposure ceiling may be spent before
+        the afternoon reserve releases; None once released or disabled.
+
+        Defect 4 / spec Phase 6.1 (2026-08-28): a fraction of
+        `_daily_exposure_limit()` is walled off from every session, across
+        every mode, until `afternoon_reserve_release_et_hour` ET. The
+        morning is where the cheap, plentiful setups look most attractive
+        and where a retry storm is most likely; the afternoon is where
+        every exit decision lives (position_reviewer, risk_manager, the
+        close pass). A day that spends itself out by noon has funded
+        entries and defunded exits -- exactly backwards for capital
+        preservation.
+
+        Deliberately re-evaluated from current wall-clock time on every
+        call rather than persisted as a quota hold: see the module-level
+        NOTE by `_MODE_DAY_QUOTA_TRIGGERS` for why a persisted version of
+        this specific check would incorrectly keep blocking the very
+        afternoon sessions it exists to protect.
+        """
+        pct = float(getattr(self.config, "afternoon_reserve_pct", 0.0) or 0.0)
+        if pct <= 0:
+            return None
+        hour = int(getattr(self.config, "afternoon_reserve_release_et_hour", 12))
+        local = (now or datetime.now(timezone.utc)).astimezone(_ET)
+        if local.hour >= hour:
+            return None
+        return self._daily_exposure_limit() * (1.0 - pct / 100.0)
 
     def begin_call(
         self,
@@ -2104,17 +2387,20 @@ class LLMCostCircuitBreaker:
         self._raise_if_unavailable(agent_name)
         run_id, mode = self._context()
         day, _, _ = _et_day_and_utc_bounds()
-        # A chars/token average is useful for dashboards but is not a safe
-        # financial upper bound: dense JSON, ticker strings and Unicode can
-        # tokenize much more heavily.  Every token represents at least one
-        # source byte for the provider tokenizers in scope, so UTF-8 byte
-        # length plus fixed message-framing headroom is conservative without
-        # importing nine model-specific tokenizers into the trading process.
-        input_est = max(
+        # `total_prompt_bytes` is the worst-case-bound numerator either way:
+        # every token represents at least one source byte for the provider
+        # tokenizers in scope, so UTF-8 byte length plus fixed message-
+        # framing headroom is conservative without importing nine model-
+        # specific tokenizers into the trading process. `system_bytes` feeds
+        # `_measure_reservation_tokens` below -- see its docstring (Defect 1,
+        # 2026-08-28) for why the current call's own system_prompt length,
+        # known exactly right now, has to be added back to each historical
+        # row before that history's bytes-per-token ratio means anything.
+        system_bytes = len(system_prompt.encode("utf-8"))
+        total_prompt_bytes = max(
             1,
             len((system_prompt + user_message).encode("utf-8")) + 256,
         )
-        reserve = self._attempt_reserve(model, input_est, max_output_tokens)
         reservation_id = uuid.uuid4().hex
 
         with self._connect() as conn:
@@ -2122,6 +2408,21 @@ class LLMCostCircuitBreaker:
             self._seed_today(conn)
             self._expire_reservations(conn)
             self._reconcile_quota_holds_locked(conn, current_day=day)
+            # Defect 1: reserve from this agent+model's own measured history
+            # when there is enough of it to trust; otherwise -- unknown
+            # agent/model, thin history, any error reading history -- fall
+            # back to EXACTLY today's pre-fix worst-case bound. Never a
+            # cheaper guess in between.
+            measured = self._measure_reservation_tokens(
+                conn, agent_name=agent_name, model=model,
+                system_bytes=system_bytes, total_prompt_bytes=total_prompt_bytes,
+                max_output_tokens=max_output_tokens,
+            )
+            if measured is not None:
+                input_est, output_est = measured
+            else:
+                input_est, output_est = total_prompt_bytes, max_output_tokens
+            reserve = self._attempt_reserve(model, input_est, output_est)
             state = self._effective_state_locked(
                 conn, day=day, run_id=run_id, mode=mode,
             )
@@ -2187,6 +2488,26 @@ class LLMCostCircuitBreaker:
                 current_has_attempt = attempts > 0
                 max_sessions = int(self.config.max_paid_sessions_per_mode_per_day)
                 max_session_retries = int(self.config.max_retry_attempts_per_session)
+                # Defect 4: dollar-based per-mode allowance, checked on every
+                # call (not just session admission) -- a session already
+                # admitted can still push its OWN mode over the allowance
+                # through its later agent calls.
+                mode_settled_row = conn.execute(
+                    "SELECT COALESCE(SUM(actual_cost_usd), 0) AS cost "
+                    "FROM llm_budget_sessions WHERE day=? AND mode=?",
+                    (day, mode),
+                ).fetchone()
+                mode_settled = float(mode_settled_row["cost"] or 0)
+                mode_reserved_row = conn.execute(
+                    "SELECT COALESCE(SUM(reserved_cost_usd), 0) AS cost "
+                    "FROM llm_budget_reservations WHERE day=? AND mode=? "
+                    "AND status='active'",
+                    (day, mode),
+                ).fetchone()
+                mode_reserved = float(mode_reserved_row["cost"] or 0)
+                # Defect 4 afternoon reserve: None once released/disabled, in
+                # which case the elif below simply never matches.
+                morning_ceiling = self._morning_spend_ceiling()
 
                 if retry_kind and session_retries + 1 > max_session_retries:
                     detail = (
@@ -2216,13 +2537,90 @@ class LLMCostCircuitBreaker:
                         costs_exact=False,
                     )
                 elif not current_has_attempt and paid_sessions >= max_sessions:
+                    # Backstop only (see max_paid_sessions_per_mode_per_day's
+                    # config docstring): catches an infinite retry/session
+                    # loop that the dollar check below cannot, because after
+                    # the Defect 2 fix a loop of provably-zero-cost failures
+                    # spends nothing and would never trip a dollar ceiling.
                     self._trip_locked(
                         conn, code="session_retry_limit",
                         detail=(f"{mode} paid session attempt {paid_sessions + 1} exceeds "
-                                f"daily safe limit {max_sessions}"),
+                                f"daily safe backstop {max_sessions}"),
                         run_id=run_id, mode=mode, agent_name=agent_name, attempts=attempts,
                         session_cost=session, daily_cost=daily,
                         costs_exact=False,
+                    )
+                elif mode_settled + mode_reserved + reserve > self._mode_daily_exposure_limit():
+                    # Defect 4's operative per-mode limit -- dollars, not a
+                    # session count. Mode-day scoped: like session_retry_limit,
+                    # this stays blocked until the next ET day (spend only
+                    # grows within a day, so rollover-only recovery is
+                    # correct here, unlike the afternoon reserve below).
+                    projected_mode = mode_settled + mode_reserved + reserve
+                    self._trip_locked(
+                        conn, code="mode_daily_spend_limit",
+                        detail=(f"next {agent_name} call would project {mode} spend today "
+                                f"to ${projected_mode:.4f}, above per-mode daily ceiling "
+                                f"${self._mode_daily_exposure_limit():.2f}"),
+                        run_id=run_id, mode=mode, agent_name=agent_name, attempts=attempts,
+                        session_cost=session + active_session_reserve,
+                        daily_cost=daily + reserved_day,
+                        costs_exact=False,
+                    )
+                elif (
+                    morning_ceiling is not None
+                    and daily + reserved_day + reserve > morning_ceiling
+                ):
+                    # Defect 4 afternoon reserve. Deliberately NOT routed
+                    # through _trip_locked/_hold_quota_locked -- see the
+                    # module-level NOTE by _MODE_DAY_QUOTA_TRIGGERS for why a
+                    # persisted hold here would wrongly keep blocking the
+                    # afternoon sessions this exists to protect. Still
+                    # audited (a `quota_held` event is recorded) and still
+                    # raises PaidAnalysisSuspended for this call; it simply
+                    # never becomes a sticky state another call can inherit.
+                    release_hour = int(
+                        getattr(self.config, "afternoon_reserve_release_et_hour", 12)
+                    )
+                    projected = daily + reserved_day + reserve
+                    detail = (
+                        f"next {agent_name} call would project daily cost to "
+                        f"${projected:.4f}, above the morning spend ceiling "
+                        f"${morning_ceiling:.2f} -- "
+                        f"${self._daily_exposure_limit() - morning_ceiling:.2f} of "
+                        f"today's ${self._daily_exposure_limit():.2f} exposure ceiling "
+                        f"is reserved for sessions at/after {release_hour:02d}:00 ET"
+                    )
+                    conn.execute(
+                        "INSERT INTO llm_circuit_events "
+                        "(event_type, trigger_code, detail, run_id, mode, agent_name, "
+                        "attempts, session_cost_usd, daily_cost_usd) VALUES "
+                        "('quota_held', ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            "morning_spend_ceiling", detail, run_id, mode, agent_name,
+                            attempts, session + active_session_reserve,
+                            daily + reserved_day,
+                        ),
+                    )
+                    conn.commit()
+                    raise PaidAnalysisSuspended(
+                        detail,
+                        {
+                            "enabled": True,
+                            "suspended": True,
+                            "suspension_class": "quota",
+                            "auto_rearm": True,
+                            "requires_operator_reset": False,
+                            "trigger_code": "morning_spend_ceiling",
+                            "trigger_detail": detail,
+                            "run_id": run_id,
+                            "mode": mode,
+                            "agent_name": agent_name,
+                            "session_attempts": attempts,
+                            "costs_exact": False,
+                            "session_cost_usd": session + active_session_reserve,
+                            "daily_cost_usd": daily + reserved_day,
+                        },
                     )
                 elif session + active_session_reserve + reserve > self._session_exposure_limit():
                     projected = session + active_session_reserve + reserve
@@ -2258,6 +2656,17 @@ class LLMCostCircuitBreaker:
                 raise PaidAnalysisSuspended(str(state.get("trigger_detail") or "circuit open"), state)
 
             expires_min = int(getattr(self.config, "reservation_ttl_minutes", 30))
+            # `max_output_tokens` here is intentionally output_est (the
+            # measured-or-fallback reservation this call's `reserve` dollar
+            # amount was actually computed from), not the raw caller ceiling
+            # -- before_provider_attempt's retry re-reserve and complete_
+            # call's per-attempt reconciliation both re-derive dollars from
+            # this same stored pair via _attempt_reserve, and must recover
+            # the same number `reserve` above did. Nothing outside this
+            # module reads CallReservation.max_output_tokens (the actual
+            # provider request is capped by the agent's own self.max_tokens,
+            # independent of the breaker); this column is reservation
+            # bookkeeping only.
             conn.execute(
                 "INSERT INTO llm_budget_reservations "
                 "(reservation_id, run_id, day, mode, agent_name, model, "
@@ -2265,7 +2674,7 @@ class LLMCostCircuitBreaker:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
                 (
                     reservation_id, run_id, day, mode, agent_name, model,
-                    input_est, max_output_tokens, reserve, f"+{expires_min} minutes",
+                    input_est, output_est, reserve, f"+{expires_min} minutes",
                 ),
             )
             updated_session = conn.execute(
@@ -2279,7 +2688,7 @@ class LLMCostCircuitBreaker:
                 )
             conn.commit()
         return CallReservation(
-            reservation_id, run_id, mode, agent_name, model, input_est, max_output_tokens
+            reservation_id, run_id, mode, agent_name, model, input_est, output_est
         )
 
     def before_provider_attempt(self, reservation: CallReservation, *, model: str) -> int:
@@ -2745,14 +3154,28 @@ class LLMCostCircuitBreaker:
         self._notify_if_needed()
 
     def fail_call(self, reservation: CallReservation, error: BaseException) -> None:
-        """Conservatively account an unfinished paid request and fail closed.
+        """Conservatively account an unfinished paid request and fail closed
+        -- except for the narrow set of failures PROVEN to have cost $0.
 
-        A transport/provider exception does not prove that the provider billed
-        nothing: the prompt may already have been accepted and a streamed
-        response may have been cut off before usage telemetry arrived.  Moving
-        the reservation into spend prevents a failed request from silently
-        restoring budget.  The exact amount is unknowable, so the global latch
-        opens after accounting the conservative reserved exposure.
+        A transport/provider exception does not, in general, prove that the
+        provider billed nothing: the prompt may already have been accepted
+        and a streamed response may have been cut off before usage
+        telemetry arrived.  Moving the reservation into spend prevents a
+        failed request from silently restoring budget.  The exact amount is
+        unknowable, so the global latch opens after accounting the
+        conservative reserved exposure.
+
+        That reasoning breaks down for a KNOWN-ZERO-COST failure -- an HTTP
+        429/400/401/403/404 rejection, or a pre-send transport failure (DNS,
+        connection refused, TLS handshake).  The provider rejected the
+        request, or was never reached, strictly BEFORE any generation could
+        have started, so it billed nothing.  On 2026-08-28 exactly this --
+        one tech_analyst 429, zero tokens billed by definition -- was
+        charged as `unknown_cost_rows`, made the day inexact, and hard-
+        latched trading for three-plus hours until an operator reset it by
+        hand. See `_is_known_zero_cost_failure` for the exact, deliberately
+        narrow classification: fail closed, anything not explicitly proven
+        $0 is accounted exactly as before.
         """
 
         if not self.enabled or reservation.reservation_id == "disabled":
@@ -2761,6 +3184,7 @@ class LLMCostCircuitBreaker:
         with self._infrastructure_lock:
             if self._unavailable_sentinel is not None:
                 return
+        known_zero_cost = _is_known_zero_cost_failure(error)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -2776,7 +3200,10 @@ class LLMCostCircuitBreaker:
                 return
             day = str(row["day"])
             attempted = int(row["attempt_count"] or 0) > 0
-            accounted = float(row["reserved_cost_usd"] or 0) if attempted else 0.0
+            accounted = (
+                0.0 if known_zero_cost
+                else (float(row["reserved_cost_usd"] or 0) if attempted else 0.0)
+            )
             updated_reservation = conn.execute(
                 "UPDATE llm_budget_reservations SET status='failed', actual_cost_usd=?, "
                 "reserved_cost_usd=0, completed_at=datetime('now') "
@@ -2788,13 +3215,26 @@ class LLMCostCircuitBreaker:
                     f"cost-circuit reservation {reservation.reservation_id} "
                     "could not be failed exactly once"
                 )
-            updated_session = conn.execute(
-                "UPDATE llm_budget_sessions SET status='call_failed', "
-                "actual_cost_usd=actual_cost_usd+?, "
-                "costs_exact=CASE WHEN ? THEN 0 ELSE costs_exact END, "
-                "updated_at=datetime('now') WHERE run_id=?",
-                (accounted, int(attempted), reservation.run_id),
-            )
+            if known_zero_cost:
+                # Release only -- no charge, no status change, costs_exact
+                # left exactly as it was. A provably-$0 rejection (a rate
+                # limit, a bad request, a connection that never reached the
+                # provider) is not evidence the SESSION went wrong; it is
+                # evidence this one attempt cost nothing and the caller is
+                # free to retry.
+                updated_session = conn.execute(
+                    "UPDATE llm_budget_sessions SET updated_at=datetime('now') "
+                    "WHERE run_id=?",
+                    (reservation.run_id,),
+                )
+            else:
+                updated_session = conn.execute(
+                    "UPDATE llm_budget_sessions SET status='call_failed', "
+                    "actual_cost_usd=actual_cost_usd+?, "
+                    "costs_exact=CASE WHEN ? THEN 0 ELSE costs_exact END, "
+                    "updated_at=datetime('now') WHERE run_id=?",
+                    (accounted, int(attempted), reservation.run_id),
+                )
             if updated_session.rowcount != 1:
                 raise RuntimeError(
                     f"cost-circuit session {reservation.run_id} is missing at failure"
