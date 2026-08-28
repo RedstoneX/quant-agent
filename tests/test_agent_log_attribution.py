@@ -248,7 +248,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     )
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 
@@ -386,7 +386,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     )
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 
@@ -443,7 +443,7 @@ def test_position_reviewer_persists_actual_model_on_failover():
     pipeline.config = _mock_config()
     pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
-    pipeline._run_news_update = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()

@@ -86,6 +86,15 @@ class NewsAnalystAgent(BaseAgent):
         previous_narrative: dict | None = kwargs.get("previous_narrative")
         session: str = kwargs.get("session", "morning")
         prior_session_report: dict | None = kwargs.get("prior_session_report")
+        # NewsCoverage (src/data/news.py) — how many of the configured wire
+        # feeds actually returned data this run. 2026-08-28: two dead feeds
+        # (Reuters 404, AP 403) were dropped with a log warning and the
+        # model never saw a hint that anything was missing, so it had no
+        # way to distinguish "wires quiet" from "wires unreachable". This
+        # section is the fix on the prompt side — see NewsCoverage.describe
+        # for the deterministic half and the "Feed coverage" guardrail in
+        # config/prompts/news_analyst.md for what the model does with it.
+        news_coverage = kwargs.get("news_coverage")
 
         universe_text = ", ".join(universe) if universe else "N/A"
 
@@ -148,7 +157,21 @@ State changes captured earlier:
             for key in order:
                 source, title = key
                 syms = ", ".join(grouped[key])
-                stock_lines.append(f"  [{source}] ({syms}) {title}")
+                # Same reason as the general-news block: if one syndicated
+                # story was collapsed into this item, say so explicitly and
+                # say what it does not mean. Silence here would let the model
+                # read a single widely-carried story as a single small one.
+                item = item_by_key[key]
+                collapsed = getattr(item, "collapsed_count", 1) or 1
+                breadth = ""
+                if collapsed > 1:
+                    n_src = getattr(item, "source_count", 1) or 1
+                    breadth = (
+                        f" [carried by {n_src} outlet{'s' if n_src != 1 else ''}"
+                        f", {collapsed} articles - syndication breadth, "
+                        f"NOT independent corroboration]"
+                    )
+                stock_lines.append(f"  [{source}] ({syms}) {title}{breadth}")
                 summary = getattr(item_by_key[key], "summary", "")
                 if summary:
                     stock_lines.append(f"    > {summary[:200]}")
@@ -159,9 +182,23 @@ State changes captured earlier:
         from src.trading_calendar import session_date_key
         today = session_date_key()
 
+        # Coverage section — always present, even when coverage is full,
+        # so its absence never has to be interpreted as "coverage was fine"
+        # by anyone reading a saved prompt after the fact. `news_coverage`
+        # is None only for a caller that hasn't been updated to pass it
+        # (defensive; every production call site does).
+        if news_coverage is not None:
+            coverage_section = f"## News Coverage\n{news_coverage.describe()}\n"
+        else:
+            coverage_section = (
+                "## News Coverage\nNews coverage: UNKNOWN (caller did not report "
+                "feed coverage). Treat with the same caution as a reported gap.\n"
+            )
+
         return f"""## Today's Date: {today}
 
 {session_section}
+{coverage_section}
 {prior_section}
 {narrative_section}
 
@@ -273,7 +310,8 @@ Analyze all the above and produce your intelligence report as JSON."""
                 stock_mentions: dict | None = None,
                 previous_narrative: dict | None = None,
                 session: str = "morning",
-                prior_session_report: dict | None = None) -> tuple[NewsIntelligenceReport | None, AgentResult]:
+                prior_session_report: dict | None = None,
+                news_coverage=None) -> tuple[NewsIntelligenceReport | None, AgentResult]:
         result = self.run(
             news_text=news_text,
             universe=universe or [],
@@ -281,6 +319,7 @@ Analyze all the above and produce your intelligence report as JSON."""
             previous_narrative=previous_narrative,
             session=session,
             prior_session_report=prior_session_report,
+            news_coverage=news_coverage,
         )
         parsed = result.parse_json()
         if parsed is None:
