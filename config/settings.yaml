@@ -472,6 +472,21 @@ llm_cost_circuit:
   # Safety margin over the maximum output_tokens observed for an agent+
   # model; still capped at that call's own max_output_tokens.
   reservation_output_margin: 1.20
+  # Pricing-staleness SPOF fix (2026-08-28): before this, an OpenRouter
+  # catalog outage overlapping the first session past the cache's 24h
+  # freshness boundary latched the whole desk via mark_unavailable(),
+  # requiring an operator to run reset() by hand -- verified reproducible via
+  # test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_is_down.
+  # 24h of grace ON TOP OF the 24h freshness window (48h total tolerance)
+  # covers a full extra outage cycle before genuinely failing closed, which
+  # is the point at which an unattended desk should stop and a human should
+  # actually look at it.
+  openrouter_pricing_grace_period_hours: 24.0
+  # Reservation multiplier at the far edge of that grace window -- 50% wider
+  # than the in-hours 1.05 above, scaling up linearly from 1.05 (no
+  # widening) the instant the cache turns stale. See
+  # cost_table.openrouter_pricing_reservation_multiplier.
+  openrouter_pricing_stale_multiplier_max: 1.50
 
 evolution:
   # Quarterly meta-reflection can auto-append "Learnings" bullets to the six

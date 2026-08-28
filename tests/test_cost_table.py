@@ -871,3 +871,217 @@ def test_mandatory_openrouter_refresh_applies_live_catalog_rates(
     assert cost_table.PRICING["google/gemini-2.5-flash-lite"] == {
         "input": 0.11, "output": 0.44,
     }
+
+
+# === Pricing-staleness grace window (SPOF fix, 2026-08-28) ===
+#
+# The defect: refresh_openrouter_pricing() accepted a cached rate ONLY
+# under 24h old. Past that boundary it had to reach openrouter.ai or return
+# False, and both callers (TradingPipeline.__init__ / activate_paid_call_
+# session) respond to False with mark_unavailable() -- the durable,
+# operator-reset-only emergency latch. test_mandatory_openrouter_refresh_
+# rejects_stale_cache_when_network_is_down above reproduces this: a cache
+# 60s past 24h old, with the catalog unreachable, returns False today. That
+# test still passes unmodified because grace_period_hours defaults to 0.0
+# -- "not opted in" reproduces the exact pre-fix behaviour for any caller
+# (an old script, a test) that doesn't pass the new params.
+#
+# The fix an operator actually opts into via config/settings.yaml's
+# llm_cost_circuit.openrouter_pricing_grace_period_hours /
+# openrouter_pricing_stale_multiplier_max is exercised below.
+
+
+def test_grace_window_fresh_cache_behaviour_is_unchanged(tmp_path, monkeypatch, _restore_pricing):
+    """Passing grace params must not change one thing about the FRESH
+    path -- it must not even look at the file's age. Hard literals, not a
+    truthy check, per the fix's own requirement that "today's behaviour"
+    stays byte-for-byte identical."""
+    from src import cost_table
+
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    rates["openai/gpt-5.5"] = {"input": 5.25, "output": 31.0}
+    cache = tmp_path / "openrouter.json"
+    cache.write_text(_json_mod.dumps(rates))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(
+        cost_table, "_fetch_openrouter_pricing",
+        lambda: (_ for _ in ()).throw(AssertionError("fresh cache must avoid network")),
+    )
+
+    ok = cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    )
+    assert ok is True
+    assert cost_table.PRICING["openai/gpt-5.5"] == {"input": 5.25, "output": 31.0}
+    assert cost_table.openrouter_pricing_reservation_multiplier(
+        1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
+    ) == 1.05
+
+
+def test_stale_within_grace_proceeds_with_widened_multiplier(tmp_path, monkeypatch, _restore_pricing):
+    """The core fix: a cache 6h past its 24h freshness boundary, with the
+    live catalog unreachable, must still load PRICING -- trading continues
+    -- instead of returning False (which both real call sites turn into
+    the durable operator-reset latch). The multiplier that would apply to
+    a reservation built from this cache must be strictly wider than a
+    fresh cache's."""
+    import os
+    import time
+    from src import cost_table
+
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    cache = tmp_path / "openrouter.json"
+    cache.write_text(_json_mod.dumps(rates))
+    stale_age_s = cost_table._CACHE_MAX_AGE_SECONDS + 6 * 3600  # 30h old: 6h into a 24h grace
+    old = time.time() - stale_age_s
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    ok = cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    )
+    assert ok is True
+    assert cost_table.PRICING["openai/gpt-5.5"] == cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]
+
+    fresh_multiplier = cost_table.openrouter_pricing_reservation_multiplier(
+        1.05, grace_period_hours=0.0, max_stale_multiplier=1.5,
+    )
+    stale_multiplier = cost_table.openrouter_pricing_reservation_multiplier(
+        1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
+    )
+    assert fresh_multiplier == 1.05
+    assert stale_multiplier > fresh_multiplier
+    # 6h into a 24h grace window -> 25% of the way from 1.05 to 1.5.
+    assert stale_multiplier == pytest.approx(1.05 + 0.25 * (1.5 - 1.05))
+
+    input_tokens, output_tokens = 50_000, 2_000
+    rate = cost_table.PRICING["openai/gpt-5.5"]
+
+    def _reservation(multiplier):
+        return multiplier * (
+            input_tokens * rate["input"] / 1_000_000
+            + output_tokens * rate["output"] / 1_000_000
+        )
+
+    assert _reservation(stale_multiplier) > _reservation(fresh_multiplier)
+
+
+def test_beyond_grace_window_fails_closed(tmp_path, monkeypatch, _restore_pricing):
+    """A cache older than 24h + the configured grace window is exactly as
+    unknown as it was before this fix -- must still return False."""
+    import os
+    import time
+    from src import cost_table
+
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    cache = tmp_path / "openrouter.json"
+    cache.write_text(_json_mod.dumps(rates))
+    beyond_grace_s = cost_table._CACHE_MAX_AGE_SECONDS + 24 * 3600 + 60  # 24h grace + 1 minute
+    old = time.time() - beyond_grace_s
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    ok = cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    )
+    assert ok is False
+
+
+def test_no_cache_at_all_fails_closed_even_with_grace_configured(tmp_path, monkeypatch, _restore_pricing):
+    """A grace window bounds STALENESS, not ABSENCE. No file on disk at all
+    is the same genuinely-unknown case a fresh install / first run hits,
+    regardless of how generous the grace window is configured."""
+    from src import cost_table
+
+    monkeypatch.setattr(
+        cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "never_written.json",
+    )
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    ok = cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    )
+    assert ok is False
+
+
+def test_stale_cache_missing_a_configured_model_still_fails_closed(tmp_path, monkeypatch, _restore_pricing):
+    """A grace-eligible cache that simply never priced one of the accepted
+    models (e.g. an operator added a new OpenRouter model to
+    config/settings.yaml after the cache was written) must still fail
+    closed -- a widened multiplier cannot compensate for a rate that does
+    not exist at all."""
+    import os
+    import time
+    from src import cost_table
+
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    del rates["openai/gpt-5.5"]
+    cache = tmp_path / "openrouter.json"
+    cache.write_text(_json_mod.dumps(rates))
+    stale_age_s = cost_table._CACHE_MAX_AGE_SECONDS + 6 * 3600  # well within a 24h grace
+    old = time.time() - stale_age_s
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    ok = cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    )
+    assert ok is False
+
+
+def test_stale_multiplier_scales_monotonically_with_age(tmp_path, monkeypatch):
+    """The widened multiplier must be a monotonically increasing function
+    of staleness: continuous at the freshness boundary (no discontinuous
+    jump the instant a cache turns stale), scaling proportionally through
+    the grace window, and clamped at the configured ceiling from the edge
+    of the grace window onward."""
+    import os
+    import time
+    from src import cost_table
+
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    cache.write_text(_json_mod.dumps({}))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+
+    def _multiplier_at(age_hours):
+        mtime = time.time() - age_hours * 3600
+        os.utime(cache, (mtime, mtime))
+        return cost_table.openrouter_pricing_reservation_multiplier(
+            1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
+        )
+
+    fresh_hours = cost_table._CACHE_MAX_AGE_SECONDS / 3600.0
+    at_boundary = _multiplier_at(fresh_hours)          # exactly at the freshness edge
+    quarter = _multiplier_at(fresh_hours + 6)          # 25% into the grace window
+    half = _multiplier_at(fresh_hours + 12)            # 50% into the grace window
+    at_grace_edge = _multiplier_at(fresh_hours + 24)   # 100% into the grace window
+    beyond_grace = _multiplier_at(fresh_hours + 48)    # past the grace window entirely
+
+    assert at_boundary == pytest.approx(1.05)
+    assert quarter == pytest.approx(1.05 + 0.25 * (1.5 - 1.05))
+    assert half == pytest.approx(1.05 + 0.5 * (1.5 - 1.05))
+    assert at_grace_edge == pytest.approx(1.5)
+    assert beyond_grace == pytest.approx(1.5)  # clamped -- never exceeds the configured ceiling
+    assert at_boundary < quarter < half < at_grace_edge
+    assert at_grace_edge == beyond_grace
+
+
+def test_stale_multiplier_disabled_by_default_grace(tmp_path, monkeypatch):
+    """grace_period_hours=0 -- the function's own default, matching any
+    caller that has not opted in -- must never widen anything, no matter
+    how old the cache is. This is what keeps a script/test that predates
+    2026-08-28 behaviourally identical to before this fix."""
+    import os
+    import time
+    from src import cost_table
+
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    cache.write_text(_json_mod.dumps({}))
+    very_old = time.time() - 10 * 24 * 3600
+    os.utime(cache, (very_old, very_old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+
+    assert cost_table.openrouter_pricing_reservation_multiplier(1.05) == 1.05
