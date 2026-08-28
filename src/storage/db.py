@@ -1008,8 +1008,11 @@ class Database:
     def get_positions(self, open_only: bool = False) -> list[dict]:
         with self._lock:
             if open_only:
+                # qty != 0, not qty > 0: a short carries a negative qty
+                # (Alpaca convention) and is an OPEN position. `qty > 0` hid
+                # every short from the operator's open-position view.
                 rows = self.conn.execute(
-                    "SELECT * FROM positions WHERE qty > 0"
+                    "SELECT * FROM positions WHERE qty != 0"
                 ).fetchall()
             else:
                 rows = self.conn.execute("SELECT * FROM positions").fetchall()
