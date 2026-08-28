@@ -4997,7 +4997,11 @@ class TradingPipeline:
 
         # Sector weights (gross multiplier for leveraged ETFs)
         for p in positions:
-            if p.qty <= 0 or total_value <= 0:
+            # qty != 0 — a short is a real sector exposure (a negative one).
+            # Its market_value is already negative, so the weight it adds is
+            # signed and a short hedge nets against the long book instead of
+            # vanishing from the sector table.
+            if p.qty == 0 or total_value <= 0:
                 continue
             weight = p.market_value * _gross_multiplier(p.symbol) / total_value * 100
             sector = p.sector or _sector_of(p.symbol) or "Unknown"
@@ -6972,7 +6976,13 @@ class TradingPipeline:
             weight_pct = (p.market_value / total_value * 100) if total_value else 0
 
             # Winner flags.
-            pnl_pct = (p.unrealized_pnl / (entry * p.qty) * 100) if (entry and p.qty) else 0
+            # abs(): cost basis is |entry x qty|. A short's negative qty
+            # flipped the sign, rendering a winning short as a loser (and
+            # feeding parabolic/drift flags the wrong side).
+            pnl_pct = (
+                p.unrealized_pnl / abs(entry * p.qty) * 100
+                if (entry and p.qty) else 0
+            )
             parabolic_flag = (
                 pnl_pct >= 15 and days_held is not None and days_held < 3
             )
