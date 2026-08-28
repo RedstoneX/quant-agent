@@ -3,11 +3,12 @@ import { fmtNum, isExecutedTrade } from "../lib/format";
 import { FlowStage, FlowStatus } from "./agentflow/types";
 
 // Shared Specialists -> PM -> AI Risk -> Deterministic Gate -> Execution
-// run-level presentation building blocks, used by both the compact
-// Decision Room rail (DecisionRoomPanel) and the run detail modal
-// (RunDetailModal's FunnelSteps). Split out from the old full-width
-// DecisionFunnelPanel once the cockpit redesign replaced that panel with
-// the narrower Decision Room.
+// run-level presentation building blocks, used by the run detail modal
+// (RunDetailModal's FunnelSteps). Originally also used by the cockpit's
+// Decision Room panel; that panel was removed from the cockpit entirely
+// in the trader-focused rework (its content either moved inline under the
+// chart — see DecisionSummaryLine.tsx/PositionHoldingStrip.tsx — or
+// already existed on the Research Desk as DecisionDeltaPanel).
 
 export const STATE_LABELS: Record<DecisionState, string> = {
   executed: "EXECUTED",
@@ -183,16 +184,14 @@ export function bestPrimaryRunId(
 
 /* ------------------------------------------------------------------ *
  * Per-candidate Specialists -> PM -> AI Risk -> Deterministic Gate ->
- * Execution stage derivation. Originally CandidateDetailModal-local; moved
- * here so DecisionRoomPanel (the primary, non-modal cockpit view) can
- * render the same real per-specialist agent graph for whichever candidate
- * is currently charted, not only behind a drill-down click — the vision
- * board's "compact graphical story" is meant to be visible on the primary
- * screen. Every stage's reached/outcome status comes purely from fields
- * CandidateDetailResponse already carries (cross-checked against the run
- * funnel's per-candidate `executed`/`hard_risk_block` when that
- * supplementary fetch succeeds) — never a fabricated guess about a stage
- * with no evidence.
+ * Execution stage derivation. Used by CandidateDetailModal's full
+ * drill-down graph, and by DecisionSummaryLine.tsx's one-line cockpit
+ * summary (via furthestReachedStage, below) to decide whether there is
+ * any real content to report at all for the charted symbol. Every stage's
+ * reached/outcome status comes purely from fields CandidateDetailResponse
+ * already carries (cross-checked against the run funnel's per-candidate
+ * `executed`/`hard_risk_block` when that supplementary fetch succeeds) —
+ * never a fabricated guess about a stage with no evidence.
  * ------------------------------------------------------------------ */
 export function skipText(reason: string | null, detail: string | null): string | null {
   if (!reason) return null;
@@ -282,4 +281,19 @@ export function buildCandidateStages(detail: CandidateDetailResponse, funnel: Ru
     { key: "gate", label: "Deterministic Gate", status: gateStatus, caption: gateCaption },
     { key: "exec", label: "Execution", status: execStatus, caption: execCaption },
   ];
+}
+
+// The last stage (in pipeline order) that actually has status !==
+// "not_reached" — used both by CandidateDetailModal's OutcomeBanner
+// ("Stopped at: …") and by DecisionSummaryLine.tsx to decide whether
+// there is any real content to show on the cockpit at all. A funnel/
+// candidate where every stage is "not_reached" returns null; callers use
+// that to render nothing at all — never a column of "Not reached"
+// placeholders (item 5 of the cockpit trader rework; the owner later
+// escalated this to "delete the panel entirely," see PR description).
+export function furthestReachedStage(stages: FlowStage[]): FlowStage | null {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i].status !== "not_reached") return stages[i];
+  }
+  return null;
 }
