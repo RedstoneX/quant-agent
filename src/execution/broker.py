@@ -1359,6 +1359,118 @@ class AlpacaBroker:
             )
             return None
 
+    def list_filled_sell_orders(self, symbol: str, after) -> list[dict] | None:
+        """Every FILLED sell-side order for `symbol` whose FILL happened at
+        or after `after` — broker truth, independent of anything this
+        process itself submitted or remembers.
+
+        2026-08-28 ONDS/CCJ: both positions were closed by their broker-
+        resident protective stop (a GTC stop-limit order placed by
+        `place_entry_protection` / `_repair_stop_coverage` /
+        `shift_stops_down`), and none of those paths ever write the STOP
+        ORDER ITSELF into `trades` — only every system-DECIDED exit (SELL /
+        REDUCE / TRAIL_STOP / SWEEP_SELL) does that, at submission time.
+        `_reconcile_stop_out_fills` (src/pipeline.py) uses this method to
+        ask the broker directly rather than trusting the ledger's own
+        opinion of what happened, then diffs the result against
+        `Database.get_known_broker_order_ids` to find fills the ledger has
+        never recorded.
+
+        `after` is applied CLIENT-SIDE against each order's `filled_at`,
+        deliberately NOT passed to Alpaca's own `after=` query parameter
+        (unlike `list_recent_orders`, which correctly uses it that way for
+        its own purpose). Alpaca's `after`/`until` filter on `submitted_at`
+        — when it was ACCEPTED, not when it EXECUTED — and a GTC protective
+        stop is typically submitted at entry and can rest for a long time
+        before firing. Verified 2026-08-28 against the real paper account
+        (MRVL): the stop was submitted 2026-08-21 13:35 and filled
+        2026-08-24 13:48 — a naive `after=now-7d` broker-side query anchored
+        4 days before "now" would have excluded it entirely (its
+        submitted_at sat 7h before that cutoff) even though the FILL was
+        comfortably inside the 7-day window everyone actually cares about.
+        Silently missing a stop-out because the underlying order happened
+        to be placed slightly outside an arbitrary lookback is exactly the
+        failure mode this reconciler exists to prevent, so the broker query
+        below is intentionally unbounded on symbol+side and every date
+        filtering happens here, against the field that actually means
+        "when did this become a real exit".
+
+        Distinct from `list_recent_orders`: that method returns orders of
+        ANY status and is used by the orphan-BUY sweep to match a KNOWN
+        write-ahead row by qty, submitted within a tight recent window —
+        `submitted_at` is exactly the right anchor there. This method is
+        scoped to already-FILLED sells and is used to discover fills the
+        ledger has NEVER SEEN, including ones this process itself placed at
+        the broker (a protective stop) but never logged — `filled_at` is
+        the only anchor that means what the caller needs it to mean.
+
+        Returns None on a query failure — the caller must retry on the
+        next reconciliation pass rather than concluding "no fills" and
+        risking a missed exit (same None-means-retry contract as
+        `list_recent_orders`). On success, a list of lightweight dicts:
+        {id, symbol, qty (the ACTUAL filled qty), price (the ACTUAL filled
+        avg price), filled_at (ISO-8601 UTC string, or None if the broker
+        didn't report one), order_type} — orders with no filled_at at all
+        are KEPT (never silently excluded by the date filter; None means
+        "unknown timing", not "too old").
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+
+            orders = self.client.get_orders(
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.ALL,
+                    symbols=[_alpaca_symbol(symbol)],
+                    side=OrderSide.SELL, nested=False,
+                )
+            )
+            out: list[dict] = []
+            for o in orders or []:
+                status = str(getattr(getattr(o, "status", None), "value",
+                                     getattr(o, "status", ""))).lower()
+                if status != "filled":
+                    continue
+                oid = str(getattr(o, "id", "") or "")
+                if not oid:
+                    continue
+                try:
+                    filled_qty = float(getattr(o, "filled_qty", 0) or 0)
+                except (TypeError, ValueError):
+                    filled_qty = 0.0
+                try:
+                    filled_avg_price = float(getattr(o, "filled_avg_price", 0) or 0)
+                except (TypeError, ValueError):
+                    filled_avg_price = 0.0
+                if filled_qty <= 0 or filled_avg_price <= 0:
+                    # "filled" with no actual qty/price is not a real fill
+                    # to reconstruct a ledger row from — nothing to record.
+                    continue
+                filled_at = getattr(o, "filled_at", None)
+                if filled_at is not None and after is not None:
+                    cutoff = after if getattr(after, "tzinfo", None) else after.replace(
+                        tzinfo=filled_at.tzinfo,
+                    )
+                    if filled_at < cutoff:
+                        continue
+                order_type = getattr(o, "type", None) or getattr(o, "order_type", None)
+                out.append({
+                    "id": oid,
+                    "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
+                    "qty": filled_qty,
+                    "price": filled_avg_price,
+                    "filled_at": filled_at.isoformat() if hasattr(filled_at, "isoformat") else None,
+                    "order_type": str(getattr(order_type, "value", order_type)) if order_type else None,
+                })
+            return out
+        except Exception as exc:
+            logger.warning(
+                "list_filled_sell_orders failed for %s: %s — returning None "
+                "so the caller retries rather than concluding there was no "
+                "fill (a missed stop-out is a money-relevant accounting "
+                "gap, not just a stale read)", symbol, exc,
+            )
+            return None
+
     def get_order_fill_info(self, order_id: str) -> dict | None:
         """Return {status, filled_qty, filled_avg_price} for an order, or None.
 

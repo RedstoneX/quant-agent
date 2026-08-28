@@ -403,6 +403,16 @@ trading:
 storage:
   db_path: "data/quant_agent.db"
 
+# 2026-08-28 ONDS/CCJ incident: both positions were closed by their broker-
+# resident protective stop and the `trades` ledger never heard about it — no
+# SELL row, `realized_pnl` stuck NULL on the BUY forever. See
+# src/config.py::ReconciliationConfig and src/pipeline.py::
+# _reconcile_stop_out_fills for the fix. This section is optional; omitting
+# it keeps the documented default (7-day lookback) unchanged.
+reconciliation:
+  stop_out_lookback_days: 7   # how far back to ask the broker for a filled
+                               # SELL the ledger doesn't already know about
+
 # Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and
 # shared atomically across systemd processes.  Opening it suspends only model
 # requests; broker-resident orders and deterministic safety work continue.
@@ -420,12 +430,23 @@ llm_cost_circuit:
   session_reserved_exposure_limit_usd: 2.60
   daily_reserved_exposure_limit_usd: 5.50
   # Backstop only (Defect 4, 2026-08-28) -- NOT the operative per-mode
-  # limit. Was 2 and WAS operative: intra_check fires 14x/day, so its 3rd
-  # session tripped this regardless of dollars spent (measured 2026-08-25/
-  # 26/27: 4, 7, 6 such stops/day against ~$1.02 of a $2.75 budget). Catches
-  # an infinite-loop session storm the dollar check below cannot, because a
-  # loop of provably-zero-cost failures (Defect 2) spends nothing.
-  max_paid_sessions_per_mode_per_day: 8
+  # limit. Catches an infinite-loop session storm that the dollar check
+  # below cannot, because a loop of provably-zero-cost failures (Defect 2)
+  # spends nothing and so would never reach a dollar ceiling.
+  #
+  # It MUST sit far above legitimate operation, and twice now it has not.
+  # At 2 it stopped intra_check on its 3rd session (measured 2026-08-25/26/
+  # 27: 4, 7, 6 such stops/day against ~$1.02 of a $2.75 budget). Raised to
+  # 8 as a stopgap -- still too low, and it fired again at 20:00 UTC on
+  # 2026-08-28, benching intra_check on its 9th session having spent $0.68
+  # of $2.75. intra_check is scheduled every 30 minutes from 09:30 to 16:00
+  # ET: 14 ticks is a NORMAL day, so any backstop at or below 14 is not a
+  # backstop, it is a daily outage.
+  #
+  # 40 is ~3x the maximum scheduled count for the busiest mode. A mode that
+  # opens 40 paid sessions in one ET day is looping, not trading. The
+  # per-mode dollar allowance below is what actually governs spend.
+  max_paid_sessions_per_mode_per_day: 40
   # Defect 4 operative limit: fraction of daily_reserved_exposure_limit_usd
   # any ONE mode may reserve/spend per ET day.
   max_mode_daily_exposure_pct: 60.0

@@ -2647,8 +2647,13 @@ def test_pipeline_midday_blocks_llm_sells_while_auto_take_profit_pending():
         market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
     )
     # First entry feeds the session-entry broker-truth coverage reconciler;
-    # the remaining entries feed the session's own position reads.
-    pipeline.broker.get_positions.side_effect = [[position], [position], [position]]
+    # the second feeds the stop-out reconciler (2026-08-28 ONDS/CCJ —
+    # _reconcile_stop_out_fills also reads broker.get_positions() to diff
+    # against the ledger); the remaining entries feed the session's own
+    # position reads (including the auto-TP refresh re-read).
+    pipeline.broker.get_positions.side_effect = [
+        [position], [position], [position], [position],
+    ]
     pipeline.broker.wait_for_order_terminal.return_value = "accepted"
     pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
