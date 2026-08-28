@@ -1837,3 +1837,179 @@ def test_place_entry_protection_swallows_stop_submit_failure(mock_tc_cls):
     broker.get_order_fill_info = MagicMock(return_value={"filled_qty": 10.0})
 
     assert broker.place_entry_protection("NVDA", "e1", 90.0) is None  # no raise
+
+
+# ---------------------------------------------------------------------------
+# list_filled_sell_orders — 2026-08-28 ONDS/CCJ stop-out reconciliation.
+#
+# Both positions were closed by their broker-resident protective stop
+# (a GTC stop-limit order `place_entry_protection` places but never logs
+# into `trades`), and nothing in the codebase ever asked the broker "what
+# SELL orders actually filled that the ledger doesn't already know about?"
+# This method is that question. `_reconcile_stop_out_fills` (src/pipeline.py)
+# is the caller; `Database.insert_stop_out_trade` is what turns an answer
+# into a ledger row.
+# ---------------------------------------------------------------------------
+
+@patch("src.execution.broker.TradingClient")
+def test_list_filled_sell_orders_maps_real_stop_fill(mock_tc_cls):
+    """Field mapping against the ACTUAL ONDS broker order (verified via a
+    read-only probe against the paper account on 2026-08-28): a GTC
+    stop-limit SELL, order id 865a3187-..., 17 sh filled @ 7.93, submitted
+    2026-08-27 14:32:06 UTC, filled 2026-08-28 16:16:07 UTC. The BUY was
+    17 @ 8.53, so this fill is a real -$10.20 loss."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    filled_stop = SimpleNamespace(
+        id="865a3187-af9d-4752-be45-f121dcb9a390",
+        status="filled",
+        symbol="ONDS",
+        type="stop_limit",
+        filled_qty="17",
+        filled_avg_price="7.93",
+        filled_at=datetime(2026, 8, 28, 16, 16, 7, 476647, tzinfo=timezone.utc),
+    )
+    mock_client.get_orders.return_value = [filled_stop]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    after = datetime(2026, 8, 23, tzinfo=timezone.utc)
+    out = broker.list_filled_sell_orders("ONDS", after)
+
+    assert out == [{
+        "id": "865a3187-af9d-4752-be45-f121dcb9a390",
+        "symbol": "ONDS",
+        "qty": 17.0,
+        "price": 7.93,
+        "filled_at": "2026-08-28T16:16:07.476647+00:00",
+        "order_type": "stop_limit",
+    }]
+    used_filter = mock_client.get_orders.call_args.kwargs["filter"]
+    assert used_filter.symbols == ["ONDS"]
+    # `after` is NOT forwarded to Alpaca's own query parameter — see
+    # test_list_filled_sell_orders_includes_stale_submitted_recent_fill
+    # for why (Alpaca's after/until filters on submitted_at, not
+    # filled_at, which would silently miss a long-resting GTC stop).
+    assert used_filter.after is None
+
+
+@patch("src.execution.broker.TradingClient")
+def test_list_filled_sell_orders_excludes_non_filled_and_zero_fills(mock_tc_cls):
+    """Only genuinely FILLED orders with a real qty/price come back — a
+    canceled/rejected/still-open order, or a 'filled' status with no actual
+    fill data, is not something to reconstruct a ledger row from."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [
+        SimpleNamespace(id="a", status="canceled", symbol="NVDA",
+                        filled_qty="0", filled_avg_price="0", filled_at=None,
+                        type="stop_limit"),
+        SimpleNamespace(id="b", status="new", symbol="NVDA",
+                        filled_qty="0", filled_avg_price="0", filled_at=None,
+                        type="limit"),
+        # Status says filled but no real fill data — malformed/edge case,
+        # must not be treated as a real exit.
+        SimpleNamespace(id="c", status="filled", symbol="NVDA",
+                        filled_qty="0", filled_avg_price="0", filled_at=None,
+                        type="stop_limit"),
+        SimpleNamespace(id="d", status="filled", symbol="NVDA",
+                        filled_qty="5", filled_avg_price="101.5",
+                        filled_at=datetime(2026, 8, 28, 15, 0, 0, tzinfo=timezone.utc),
+                        type="stop_limit"),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    # A cutoff safely BEFORE every fixture's filled_at — this test is
+    # about the filled/non-filled distinction, not date filtering.
+    out = broker.list_filled_sell_orders("NVDA", datetime(2026, 1, 1, tzinfo=timezone.utc))
+    assert [o["id"] for o in out] == ["d"]
+    assert out[0]["qty"] == 5.0
+    assert out[0]["price"] == 101.5
+
+
+@patch("src.execution.broker.TradingClient")
+def test_list_filled_sell_orders_includes_stale_submitted_recent_fill(mock_tc_cls):
+    """The exact bug found verifying this feature against the real paper
+    account (2026-08-28, MRVL): a GTC protective stop SUBMITTED 2026-08-21
+    13:35 sat resting for 3 days and FILLED 2026-08-24 13:48. Alpaca's own
+    `after`/`until` query parameter filters on submitted_at, so a naive
+    `after=` passthrough with a 7-day lookback (cutoff ~2026-08-21 20:48)
+    would have excluded this order — its submitted_at sat ~7h before that
+    cutoff — even though the FILL itself was comfortably inside the window.
+    `list_filled_sell_orders` must never pass `after` to Alpaca's query and
+    must filter client-side on filled_at instead, so a long-resting stop's
+    submission date can never hide a recent fill."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [
+        SimpleNamespace(
+            id="6f5a4781-1690-4bf1-8a3c-cd9c63a33652", status="filled",
+            symbol="MRVL", type="stop_limit",
+            filled_qty="2", filled_avg_price="224.60",
+            submitted_at=datetime(2026, 8, 21, 13, 35, 14, tzinfo=timezone.utc),
+            filled_at=datetime(2026, 8, 24, 13, 48, 2, tzinfo=timezone.utc),
+        ),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    # 7-day lookback anchored at 2026-08-28 20:48 -> cutoff 2026-08-21
+    # 20:48, which is AFTER this order's submitted_at but BEFORE its
+    # filled_at.
+    after = datetime(2026, 8, 21, 20, 48, tzinfo=timezone.utc)
+    out = broker.list_filled_sell_orders("MRVL", after)
+
+    assert [o["id"] for o in out] == ["6f5a4781-1690-4bf1-8a3c-cd9c63a33652"]
+    assert out[0]["qty"] == 2.0
+    assert out[0]["price"] == 224.6
+    # The broker call itself must be unbounded on date — no after= passed.
+    used_filter = mock_client.get_orders.call_args.kwargs["filter"]
+    assert used_filter.after is None
+
+
+@patch("src.execution.broker.TradingClient")
+def test_list_filled_sell_orders_excludes_fills_before_cutoff(mock_tc_cls):
+    """A genuinely OLD fill (outside the lookback window) must still be
+    excluded — the fix above widens what counts as 'recent enough', it
+    does not remove date filtering altogether."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [
+        SimpleNamespace(id="old-1", status="filled", symbol="NVDA",
+                        type="stop_limit", filled_qty="3", filled_avg_price="90.0",
+                        filled_at=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    out = broker.list_filled_sell_orders("NVDA", datetime(2026, 8, 1, tzinfo=timezone.utc))
+    assert out == []
+
+
+@patch("src.execution.broker.TradingClient")
+def test_list_filled_sell_orders_returns_none_on_api_failure(mock_tc_cls):
+    """Same None-means-retry contract as list_recent_orders (audit F4
+    review #2) — a transient Alpaca failure must never be read as 'no
+    fills happened', or a real stop-out could be silently missed forever."""
+    from datetime import datetime, timezone
+
+    mock_client = MagicMock()
+    mock_client.get_orders.side_effect = RuntimeError("alpaca 503")
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    after = datetime.now(timezone.utc)
+    assert broker.list_filled_sell_orders("ONDS", after) is None
+
+    mock_client.get_orders.side_effect = None
+    mock_client.get_orders.return_value = []
+    assert broker.list_filled_sell_orders("ONDS", after) == []

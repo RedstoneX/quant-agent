@@ -703,6 +703,31 @@ class EvolutionConfig(BaseModel):
     the second belt at the editor layer."""
 
 
+class ReconciliationConfig(BaseModel):
+    """Broker-truth reconciliation of the `trades` ledger against Alpaca.
+
+    2026-08-28 ONDS/CCJ incident: both positions were closed by their
+    broker-resident protective stop (a GTC stop-limit order placed by
+    `AlpacaBroker.place_entry_protection` / `_repair_stop_coverage` /
+    `shift_stops_down`, none of which ever wrote a `trades` row for the
+    stop order itself). The stop fired, the position vanished from the
+    broker, and the ledger never heard about it — the BUY rows sat forever
+    at `realized_pnl IS NULL` and the `positions` table (synced directly
+    from broker truth) quietly diverged from the story `trades` told.
+    `_reconcile_stop_out_fills` (src/pipeline.py) closes that gap by
+    diffing the ledger's own implied share count against the broker's
+    actual position and pulling any untracked filled SELL order it finds.
+    """
+
+    stop_out_lookback_days: int = Field(default=7, ge=1, le=60)
+    """How far back to ask the broker for filled SELL orders when the
+    ledger believes a symbol is still (partly) held but the broker shows
+    less. Wide enough to survive a multi-day outage of the reconciler
+    itself (weekends + a stuck timer) without being so wide it makes the
+    per-session broker query expensive. Alpaca's own order-history
+    retention is the real outer bound this can't exceed."""
+
+
 class AppConfig(BaseModel):
     api_keys: ApiKeysConfig
     alpaca: AlpacaConfig
@@ -721,6 +746,9 @@ class AppConfig(BaseModel):
     # unchanged unless explicitly opted in.
     intraday_scan: IntradayScanConfig = Field(default_factory=IntradayScanConfig)
     smart_money: SmartMoneyConfig = Field(default_factory=SmartMoneyConfig)
+    # Optional section — a settings.yaml without it gets the documented
+    # default lookback (7 days), so older configs keep working unchanged.
+    reconciliation: ReconciliationConfig = Field(default_factory=ReconciliationConfig)
 
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):

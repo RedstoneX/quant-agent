@@ -403,6 +403,16 @@ trading:
 storage:
   db_path: "data/quant_agent.db"
 
+# 2026-08-28 ONDS/CCJ incident: both positions were closed by their broker-
+# resident protective stop and the `trades` ledger never heard about it — no
+# SELL row, `realized_pnl` stuck NULL on the BUY forever. See
+# src/config.py::ReconciliationConfig and src/pipeline.py::
+# _reconcile_stop_out_fills for the fix. This section is optional; omitting
+# it keeps the documented default (7-day lookback) unchanged.
+reconciliation:
+  stop_out_lookback_days: 7   # how far back to ask the broker for a filled
+                               # SELL the ledger doesn't already know about
+
 # Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and
 # shared atomically across systemd processes.  Opening it suspends only model
 # requests; broker-resident orders and deterministic safety work continue.
