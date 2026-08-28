@@ -836,6 +836,27 @@ unrelated to any of the three items above; not fixed here per the standing
 rule to report pre-existing breakage rather than self-authorize an unrelated
 fix.
 
+**Update (branch `fix/mobile-table-overflow`) — fixed, and the diagnosis above
+was wrong.** The Trades `<table>` was never the leak: `Panel`'s `Card` already
+has `overflow-hidden`, `DataTable.tsx`'s wrapper already has `overflow-x-auto`,
+and Tailwind's `grid-cols-1` already keeps the Orders/Trades grid track at
+viewport width — all three DataTable consumers on the mobile path (Positions,
+Orders, Trades, plus Runs/Missed-Opportunities in the other SupportTabs tabs)
+measured fully contained at 390px, before any fix. Proof: with a Playwright
+repro on the exact mocked dataset the project's own
+`scripts/dashboard-visual-acceptance.mjs` uses, hiding only the page's
+`<header>` took `document.documentElement.scrollWidth` from 468px to exactly
+390px (`clientWidth`) — across every SupportTabs tab and every data scenario
+(populated/error/empty) tested, at 320/371/390px. The real, sole cause was
+`TopStrip.tsx`'s status row (`ml-auto flex items-center gap-3 flex-shrink-0`):
+rigid, non-shrinking, non-wrapping content ("all systems reachable" + "updated
+HH:MM:SS" + "legacy view") that doesn't fit the header's own `flex-wrap` line
+at phone width. Fixed by dropping `flex-shrink-0` and adding `flex-wrap` to
+that one row, matching every other status row in this codebase (`HeroBand`,
+`LiquidityPanel`, `PositionHoldingStrip`, `DirectionalBiasPanel` already use
+`flex flex-wrap`). Left as-is above rather than rewritten, since the original
+misdiagnosis is itself a useful record.
+
 #### COCKPIT — DELIVERED (PR #120)
 All five owner requests are implemented, built and tested on branch
 `feat/cockpit-trader-view`: chart vertical space, a holdings + P&L strip visible
