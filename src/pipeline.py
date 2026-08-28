@@ -2029,6 +2029,125 @@ class TradingPipeline:
                 symbol, exc,
             )
 
+    def _drain_pending_repegs(self) -> int:
+        """Repoint trade rows the re-peg WAL says were left behind (see
+        `pending_repegs`). Returns the number of rows cleared.
+
+        Recovers the one window the bounded re-peg cannot make atomic: the
+        broker accepted a replacement — minting a NEW order id and killing the
+        old one — and the process died before `trades.broker_order_id` caught
+        up. The stale id will report status 'replaced' forever, which is in
+        neither of `_reconcile_fills`'s terminal sets, so the trade would sit
+        unreconciled while a live order worked untracked.
+
+        The broker is the authority here, not the WAL. A row whose
+        `new_order_id` is still the sentinel is resolved by asking Alpaca what
+        the old order became (`replaced_by`); a broker read that FAILS leaves
+        the row in place for the next session rather than guessing.
+
+        Runs at session start, before `_reconcile_fills`, alongside the other
+        recovery drains.
+        """
+        try:
+            rows = self.db.get_pending_repegs()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("drain_pending_repegs: DB read failed: %s", exc)
+            return 0
+        if not rows:
+            return 0
+
+        from src.pipeline_stages import _WAL_REPEG_SENTINEL
+
+        drained = 0
+        for row in rows:
+            row_id = row["id"]
+            symbol = row["symbol"]
+            old_id = str(row["old_order_id"])
+            new_id = str(row["new_order_id"] or "")
+
+            if new_id == _WAL_REPEG_SENTINEL or not new_id:
+                # Crash inside the replace window: we do not know whether the
+                # PATCH landed. Ask.
+                try:
+                    resolved = self.broker.resolve_replacement_chain(old_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "drain_pending_repegs: chain read raised for %s (%s) "
+                        "— leaving row %d for next session",
+                        old_id, exc, row_id,
+                    )
+                    continue
+                if resolved is None:
+                    logger.warning(
+                        "drain_pending_repegs: broker could not resolve %s — "
+                        "leaving row %d for next session", old_id, row_id,
+                    )
+                    continue
+                if resolved == old_id:
+                    # The replacement never landed. The trades row was already
+                    # correct the whole time; nothing to repair.
+                    logger.info(
+                        "drain_pending_repegs: %s order %s was never replaced "
+                        "— clearing row %d", symbol, old_id, row_id,
+                    )
+                    self._delete_repeg_row(row_id)
+                    drained += 1
+                    continue
+                new_id = resolved
+                try:
+                    self.db.resolve_pending_repeg(row_id, new_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "drain_pending_repegs: could not record %s on row %d: "
+                        "%s", new_id, row_id, exc,
+                    )
+
+            trade_row_id = row.get("trade_row_id")
+            if not trade_row_id:
+                logger.error(
+                    "drain_pending_repegs: row %d (%s, %s → %s) has no trades "
+                    "row to repoint — MANUAL REVIEW: the live order id is %s",
+                    row_id, symbol, old_id, new_id, new_id,
+                )
+                continue
+            try:
+                updated = self.db.repoint_trade_broker_order_id(
+                    trade_row_id, old_order_id=old_id, new_order_id=new_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "drain_pending_repegs: repoint of trades row %s failed: "
+                    "%s — leaving row %d", trade_row_id, exc, row_id,
+                )
+                continue
+            if updated:
+                logger.warning(
+                    "drain_pending_repegs: recovered %s — trades row %s "
+                    "repointed from replaced order %s to %s",
+                    symbol, trade_row_id, old_id, new_id,
+                )
+            else:
+                # Already repointed (the in-session code got there before the
+                # crash, or a previous drain did). Nothing left to do.
+                logger.info(
+                    "drain_pending_repegs: trades row %s already off %s — "
+                    "clearing row %d", trade_row_id, old_id, row_id,
+                )
+            self._delete_repeg_row(row_id)
+            drained += 1
+
+        if drained:
+            logger.info("drain_pending_repegs: cleared %d row(s)", drained)
+        return drained
+
+    def _delete_repeg_row(self, row_id: int) -> None:
+        try:
+            self.db.delete_pending_repeg(row_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "drain_pending_repegs: could not delete row %d: %s", row_id, exc,
+            )
+
     def _drain_pending_protection_restores(self) -> int:
         """Re-attempt orphaned protection restores from previous sessions.
 
@@ -6511,6 +6630,7 @@ class TradingPipeline:
             # converge, or broker API hiccup). Each drained row brings a
             # symbol's stop coverage back in line with broker reality.
             self._drain_pending_protection_restores()
+            self._drain_pending_repegs()
             # audit F4: resolve BUY write-ahead orphans from a prior
             # crashed session before this run touches positions/cash.
             self._reconcile_orphan_pending_submits()
@@ -7203,6 +7323,7 @@ class TradingPipeline:
         # terminal, recover stop coverage NOW rather than waiting for
         # next-morning's drain — codex r8 #2.
         self._drain_pending_protection_restores()
+        self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
@@ -7627,6 +7748,7 @@ class TradingPipeline:
         # matches the drain pattern used in run_morning / run_position_review
         # / run_intra_check / run_evening.
         self._drain_pending_protection_restores()
+        self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
 
         # Refresh the credentialless SEC Form 4 cache before any paid-analysis
@@ -7791,6 +7913,7 @@ class TradingPipeline:
         # 30 min so this is the most frequent recovery opportunity for
         # bails that landed during morning. Codex r8 #2.
         self._drain_pending_protection_restores()
+        self._drain_pending_repegs()
         # Broker-truth coverage audit + auto-repair every tick (audit round
         # 2): an entry that fills after place_entry_protection's wait, or a
         # repair that failed once, otherwise stayed naked until the NEXT
@@ -8495,6 +8618,7 @@ class TradingPipeline:
         # since gone terminal, recover coverage now rather than carrying
         # a naked position overnight. Codex r8 #2.
         self._drain_pending_protection_restores()
+        self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit — last check before carrying positions
         # overnight (independent of the WAL).
@@ -8913,6 +9037,12 @@ class TradingPipeline:
                 logger.info("Pruned %d stale pending_protection_restores rows", pruned_p)
         except Exception as e:
             logger.warning("pending_protection_restores prune failed: %s", e)
+        try:
+            pruned_rp = self.db.prune_pending_repegs(keep_days=30)
+            if pruned_rp:
+                logger.info("Pruned %d stale pending_repegs rows", pruned_rp)
+        except Exception as e:
+            logger.warning("pending_repegs prune failed: %s", e)
         # File-store housekeeping: the news dated dirs + narrative backups grow
         # unbounded (the DB side prunes; the file-stores didn't). Nothing reads
         # news artifacts older than ~14 days, so 1000d is very safe headroom.
