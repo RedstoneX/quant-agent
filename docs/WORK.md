@@ -782,6 +782,60 @@ first.
 Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
 **Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
 
+#### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
+Branch `feat/cockpit-pass-3`, PR not yet merged. Three owner requests, all from
+using the cockpit live:
+
+1. **Price-axis rescale bug (priority).** Clicking a symbol after manually
+   dragging the chart's price axis left the axis pinned to the old symbol's
+   range — lightweight-charts permanently disables its own `autoScale` the
+   moment the operator drags the price axis by hand, and nothing in this repo
+   ever re-enabled it. Fixed in `PriceChartPanel.tsx` by re-asserting
+   `priceScale().applyOptions({ autoScale: true })` in the effect keyed on
+   `[symbol, timeframe]`, so a symbol or timeframe switch always starts from a
+   clean fit while a manual zoom on the *same* symbol/timeframe still survives
+   the 20s quote poll. Demonstrated live against the running paper-trading
+   backend (MSFT ~$513 -> CMCSA ~$27 and back, plus a timeframe switch),
+   not just read from the code.
+2. **Two-row default workspace.** `DesktopCockpitWorkspace.tsx`'s default
+   layout changed from one row of three columns (Positions | Chart | Orders)
+   to a full-width Chart row on top and a Positions / free workspace slot /
+   Orders three-column row underneath — a real second grid row via dockview's
+   own `direction: "below"`, so it gets a genuine independent resize handle,
+   not more tabs folded into an existing group. The workspace container is now
+   deliberately taller than one viewport (chart row keeps its old full-height
+   budget, the new row adds ~480px on top) so the page scrolls vertically
+   instead of every panel fighting for room inside one fixed-height box. Every
+   panel remains exactly as movable/dockable as before — this only changes the
+   starting point. Layout key bumped `qamc.dockview.cockpit.v4` ->
+   `.v5` so a stale saved layout never hides the new default.
+3. **Directional Bias panel re-engineered onto Tremor primitives.** The old
+   panel was five bordered sections of hand-drawn ratio bars and paragraphs —
+   "instrument signal direction, effective market exposure" as dense text.
+   Replaced with a Tremor `BadgeDelta` "net lean" chip plus one Tremor
+   `DonutChart` (long/short/neutral share of exposure-corrected candidate
+   direction, the number the panel's own logic says actually answers "is QAMC
+   structurally long-only" — see `exposureDirection()`), a one-line hedge
+   footnote, and a compact PM-proposals summary. **Dropped, not reformatted:**
+   the inverse-ETF stat-card grid and the AI Risk Manager verdict section (3
+   of 25 runs and 4 of 25 runs respectively on live data — too thin a sample
+   for an at-a-glance panel) and the decision-state outcome histogram (not a
+   directional read at all, and it duplicates the sibling Runs tab one click
+   away in the same workspace group).
+
+99 frontend tests pass (up from 84 at PR #120's baseline via #130's pass-2
+additions), `tsc -b` clean, `npm run build` clean, rebuilt bundle committed
+alongside source (see PR #120's discovery below — still true: production
+serves `src/api/static_cockpit/` from disk and never runs `npm run build`).
+
+**Found and left alone, pre-existing:** at phone width (~390px) the mobile
+`SupportTabs` Trades table overflows the page horizontally — a wide Tremor
+`<table>` with no containing horizontal scroll at that breakpoint. Reproduced
+with this branch's changes backed out too, so it predates this pass and is
+unrelated to any of the three items above; not fixed here per the standing
+rule to report pre-existing breakage rather than self-authorize an unrelated
+fix.
+
 #### COCKPIT — DELIVERED (PR #120)
 All five owner requests are implemented, built and tested on branch
 `feat/cockpit-trader-view`: chart vertical space, a holdings + P&L strip visible
