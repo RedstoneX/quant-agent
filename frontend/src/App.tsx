@@ -1,9 +1,10 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card } from "@tremor/react";
 import {
   api,
   AccountResponse,
   HealthResponse,
+  MacroBroaderContext,
   OrderItem,
   PositionItem,
   RunFunnelResponse,
@@ -14,12 +15,15 @@ import { usePoll } from "./lib/usePoll";
 import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
 import { HeroBand } from "./components/HeroBand";
+import { LiquidityStrip } from "./components/LiquidityPanel";
 import { HoldingsStrip } from "./components/HoldingsStrip";
 import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
 import { CandidateRail } from "./components/CandidateRail";
-import { DecisionRoomPanel } from "./components/DecisionRoomPanel";
 import { PriceChartPanel } from "./components/PriceChartPanel";
+import { PositionHoldingStrip } from "./components/PositionHoldingStrip";
+import { DecisionSummaryLine } from "./components/DecisionSummaryLine";
+import { PositionsPanel } from "./components/PositionsPanel";
 import { SupportTabs } from "./components/SupportTabs";
 import { DesktopCockpitWorkspace } from "./components/DesktopCockpitWorkspace";
 import { SupportWorkspaceProvider } from "./context/SupportWorkspaceContext";
@@ -35,7 +39,11 @@ import { todayEtDate } from "./lib/format";
 import { ResearchDesk } from "./components/research/ResearchDesk";
 
 type View = "cockpit" | "desk" | "journal";
-type MobilePane = "watchlist" | "chart" | "decision";
+// "decision" removed (owner correction — the Decision Room panel is gone
+// from the cockpit entirely; see PositionHoldingStrip/DecisionSummaryLine
+// rendered inline under the chart pane instead, and PR description for
+// where its content went).
+type MobilePane = "positions" | "watchlist" | "chart";
 
 /* Top-level view switcher — Cockpit (the live working surface) vs Journal
  * (the day-by-day narrative). Kept as two views rather than one more
@@ -74,19 +82,21 @@ function ViewNav({
 }
 
 const PANE_LABELS: Record<MobilePane, string> = {
+  positions: "Positions",
   watchlist: "Candidates",
   chart: "Chart",
-  decision: "Decision Room",
 };
 
 // Below the `xl` breakpoint (covers every iPad size, portrait or
 // landscape) the three cockpit panes become an explicit tab strip instead
 // of being squeezed side by side — a real tabbed surface, not a
-// compressed desktop layout.
+// compressed desktop layout. Positions leads (item 1 of the cockpit
+// trader rework): it's the first tab and the default landing pane on
+// every breakpoint, matching the desktop Dockview layout below.
 function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePane) => void }) {
   return (
     <div className="xl:hidden flex border-b border-border">
-      {(["watchlist", "chart", "decision"] as const).map((p) => (
+      {(["positions", "watchlist", "chart"] as const).map((p) => (
         <button
           key={p}
           type="button"
@@ -163,6 +173,13 @@ export default function App() {
   const [orderStatus, setOrderStatus] = useOrderStatus();
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  // Open orders specifically — polled independently of the Orders panel's
+  // own `orderStatus` display filter, so a stop-order lookup for the
+  // charted/held symbol (chart's protective-stop line, the Decision
+  // Room's holding card) stays correct even when the operator has that
+  // filter set to "closed" or "all". See SupportWorkspaceContext.
+  const [openOrders, setOpenOrders] = useState<OrderItem[]>([]);
+  const [openOrdersError, setOpenOrdersError] = useState<string | null>(null);
   const [trades, setTrades] = useState<TradeItem[]>([]);
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -177,7 +194,7 @@ export default function App() {
   // endpoints' existing ET-trading-day grouping — see
   // docs/architecture/MISSION_CONTROL_API.md's Stage 5 entry — rather than
   // re-implementing date bucketing here), `selectedRunId` is whichever one
-  // currently drives Candidates/Chart/Decision Room, and `autoFollow`
+  // currently drives Candidates/Chart, and `autoFollow`
   // tracks whether that selection is still automatic (best-primary-run,
   // see funnelShared.ts::bestPrimaryRunId) or the operator pinned one via
   // TodaySessionsStrip.
@@ -205,6 +222,27 @@ export default function App() {
   const selectedSessionTrades = selectedRunId
     ? todaysTrades.filter((trade) => trade.run_id === selectedRunId)
     : [];
+
+  // Item 7 (cockpit trader rework): "Market Regime" was a permanent empty
+  // state whenever the currently SELECTED run happened to carry no macro
+  // context — which includes every midday/close position-review session,
+  // even on a day whose morning scan established a real regime a few
+  // hours earlier. This looks across every one of today's already-fetched
+  // funnels (not just the selected one) for the most recent one that
+  // actually reported a regime, and carries its timestamp along as the
+  // reading's age — so HeroBand can show "last known regime, N ago"
+  // instead of manufacturing a false "no evidence" for a day that has
+  // real evidence, just not on the selected run.
+  const latestRegime = useMemo((): { macro: MacroBroaderContext; asOf: string | null } | null => {
+    const withRegime = todaysRuns
+      .filter((run) => todaysFunnels[run.run_id]?.macro_context?.regime)
+      .sort((a, b) => (b.first_timestamp || "").localeCompare(a.first_timestamp || ""));
+    const run = withRegime[0];
+    if (!run) return null;
+    const f = todaysFunnels[run.run_id];
+    if (!f?.macro_context) return null;
+    return { macro: f.macro_context, asOf: f.timestamp };
+  }, [todaysRuns, todaysFunnels]);
 
   // Fix 1 (visual convergence plan §2.2, Finding D): the primary 3-column
   // row below claims a fixed viewport-bounded height so it's a real
@@ -242,8 +280,8 @@ export default function App() {
   }, []);
 
   // Fix 3 (visual convergence plan §2.4, Finding C): when there is
-  // truthfully no session data for the day, the Candidates/Decision Room
-  // side columns stop claiming the full viewport-locked height (which,
+  // truthfully no session data for the day, the Candidates side column
+  // stops claiming the full viewport-locked height (which,
   // with nothing but a centered sentence to show, just produces a large
   // inert void) and instead collapse to their actual content height; the
   // price chart — the one column with genuine content in this state, real
@@ -259,9 +297,16 @@ export default function App() {
   // exists; a real per-run candidate always overrides it once one exists
   // (see the selectedRunId effect below).
   const [chartSymbol, setChartSymbol] = useState<string | null>("SPY");
+  // Mobile chart pane's inline holding strip (owner correction — no
+  // modal/drawer, see PositionHoldingStrip). Desktop's Dockview ChartPane
+  // derives the same thing from SupportWorkspace context directly.
+  const chartHeldPosition = chartSymbol ? positions.find((p) => p.symbol === chartSymbol) : undefined;
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [view, setView] = useState<View>("cockpit");
-  const [mobilePane, setMobilePane] = useState<MobilePane>("watchlist");
+  // Positions leads on every breakpoint (item 1) — the trader's first
+  // question on arrival is "what do I hold," not "what did the scanner
+  // find."
+  const [mobilePane, setMobilePane] = useState<MobilePane>("positions");
   // Defaults compact: the price chart is the primary "answer at a glance"
   // surface and was reported cramped. HeroBand/TodaySessionsStrip/
   // DecisionStateBanner each already ship a `collapsed`/`compact` mode
@@ -313,6 +358,14 @@ export default function App() {
         setTradesError(null);
       })
       .catch((err) => setTradesError(err.message));
+
+    api
+      .orders("open")
+      .then((r) => {
+        setOpenOrders(r.orders);
+        setOpenOrdersError(r.error);
+      })
+      .catch((err) => setOpenOrdersError(err.message));
 
     api
       .health()
@@ -458,6 +511,18 @@ export default function App() {
     }
   }
 
+  // Position-panel-specific: chart the symbol so PositionHoldingStrip picks
+  // it up inline under the chart (it already reads chartSymbol/positions)
+  // — and nothing else. Deliberately never opens the candidate-detail
+  // modal, unlike inspectSymbol above: clicking a holding answers "what is
+  // my position?", not "what did this candidate do in some run?", and no
+  // popup/modal/dialog/drawer may ever cover the chart on a position
+  // click (cockpit trader rework, item 2/3 as corrected by the owner).
+  function chartPositionSymbol(symbol: string) {
+    setChartSymbol(symbol);
+    setMobilePane("chart");
+  }
+
   function inspectTrade(trade: TradeItem) {
     setChartSymbol(trade.symbol);
     setMobilePane("chart");
@@ -519,12 +584,20 @@ export default function App() {
 
         {view === "cockpit" && (
           <>
-            <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} collapsed={chromeCompact} />
-            {/* Holdings + P&L visible on arrival — no scrolling, no tab
-                click. Reuses the same broker-marked positions state
-                HeroBand/PositionsPanel already render; a click charts the
-                symbol via the same handler CandidateRail uses. */}
-            <HoldingsStrip positions={positions} error={positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={inspectSymbol} />
+            {/* Item 6 (cockpit trader rework): holdings and P&L lead —
+                the first question a trader asks on arrival — with the
+                portfolio abstractions (NLV card, exposure gauge, regime)
+                demoted below as compact, secondary chrome. Reuses the same
+                broker-marked positions state HeroBand/PositionsPanel
+                already render; a click charts the symbol in place, no
+                modal (item 2/3 — see chartPositionSymbol). */}
+            <HoldingsStrip positions={positions} error={positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={chartPositionSymbol} />
+            <HeroBand account={account} accountError={accountError} positions={positions} regime={latestRegime} collapsed={chromeCompact} />
+            {/* Item 9: six liquidity stat tiles condensed to one compact
+                row, and moved out of the workspace tab strip entirely —
+                secondary portfolio-abstraction chrome, same spirit as
+                HeroBand's own demotion (item 6). */}
+            <LiquidityStrip account={account} accountError={accountError} positions={positions} />
             <TodaySessionsStrip
               runs={todaysRuns}
               funnels={todaysFunnels}
@@ -536,7 +609,6 @@ export default function App() {
               onSelect={selectSession}
               onFollowLatest={followPrimarySession}
               onSelectTrade={selectSessionTrade}
-              compact={chromeCompact}
             />
             <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} compact={chromeCompact} />
           </>
@@ -550,10 +622,11 @@ export default function App() {
               account, accountError, positions, positionsError,
               positionsLoading: !account && !positionsError, positionsUpdatedAt,
               orders, ordersError, ordersLoading: !account, orderStatus,
-              onOrderStatusChange: setOrderStatus, trades, tradesError,
+              onOrderStatusChange: setOrderStatus, openOrders, trades, tradesError,
               tradesLoading: !account, runs, runsError,
               runsLoading: runs.length === 0 && !runsError, health, healthError,
-              onSelectSymbol: inspectSymbol, onInspectOrder: inspectOrder, onInspectTrade: inspectTrade,
+              onSelectSymbol: inspectSymbol, onSelectPositionSymbol: chartPositionSymbol,
+              onInspectOrder: inspectOrder, onInspectTrade: inspectTrade,
             }}>
               <CockpitWorkspaceProvider value={{
                 funnel, loading: todaysLoading, error: todaysError,
@@ -567,18 +640,19 @@ export default function App() {
             <>
               <PaneNav pane={mobilePane} onChange={setMobilePane} />
               <div className="p-3">
+                {mobilePane === "positions" && <PositionsPanel positions={positions} error={positionsError} loading={!account && !positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={chartPositionSymbol} />}
                 {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
-                {mobilePane === "chart" && <div className="flex min-h-[520px] flex-col"><SelectedSymbolContext funnel={funnel} symbol={chartSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} /><div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} positions={positions} /></div></div>}
-                {mobilePane === "decision" && <DecisionRoomPanel funnel={funnel} symbol={chartSymbol} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />}
+                {mobilePane === "chart" && (
+                  <div className="flex min-h-[520px] flex-col gap-2">
+                    <SelectedSymbolContext funnel={funnel} symbol={chartSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} />
+                    {chartHeldPosition && <PositionHoldingStrip position={chartHeldPosition} openOrders={openOrders} trades={trades} />}
+                    <DecisionSummaryLine funnel={funnel} symbol={chartSymbol} />
+                    <div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} positionTrades={trades} positions={positions} openOrders={openOrders} /></div>
+                  </div>
+                )}
               </div>
               <div className="px-3 pb-3">
               <SupportTabs
-                account={account}
-                accountError={accountError}
-                positions={positions}
-                positionsError={positionsError}
-                positionsLoading={!account && !positionsError}
-                positionsUpdatedAt={positionsUpdatedAt}
                 orders={orders}
                 ordersError={ordersError}
                 ordersLoading={!account}

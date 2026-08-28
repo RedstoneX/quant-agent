@@ -22,10 +22,10 @@ import { useModalActions } from "../context/ModalContext";
 import type { FlowStage } from "./agentflow/types";
 import { AgentFlowGraph } from "./agentflow/AgentFlowGraph";
 import { buildCandidateGraph } from "./agentflow/buildGraph";
-import { buildCandidateStages } from "./funnelShared";
+import { buildCandidateStages, furthestReachedStage } from "./funnelShared";
 import { LifecycleTimeline } from "./LifecycleTimeline";
 import { TradeTable } from "./TradesPanel";
-export { buildCandidateStages, skipText } from "./funnelShared";
+export { buildCandidateStages, furthestReachedStage, skipText } from "./funnelShared";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
   if (!tech) return null;
@@ -185,9 +185,10 @@ function StopAndExecutionTruth({ detail, funnel }: { detail: CandidateDetailResp
  * CandidateDetailResponse already carries (cross-checked against the run
  * funnel's per-candidate `executed`/`hard_risk_block` when that
  * supplementary fetch succeeds) — never a fabricated guess about a stage
- * Mission Control has no evidence for. Shared with DecisionRoomPanel,
- * which reuses the same derivation for the cockpit's primary (non-modal)
- * per-candidate agent graph. */
+ * Mission Control has no evidence for. Also feeds DecisionSummaryLine.tsx's
+ * one-line cockpit summary (via furthestReachedStage), which is all that
+ * remains of this chain outside this modal now that the Decision Room
+ * panel has been removed from the cockpit entirely. */
 
 // "clean" = approved untouched, "modified" = approved with a modification,
 // "rejected" = not approved. Exactly the derivation the product brief
@@ -198,13 +199,6 @@ function riskOutcome(detail: CandidateDetailResponse): "clean" | "modified" | "r
   if (v.approved === false) return "rejected";
   const hasMods = !!detail.risk_modification || v.modifications.length > 0;
   return hasMods ? "modified" : "clean";
-}
-
-export function furthestReachedStage(stages: FlowStage[]): FlowStage | null {
-  for (let i = stages.length - 1; i >= 0; i--) {
-    if (stages[i].status !== "not_reached") return stages[i];
-  }
-  return null;
 }
 
 function OutcomeBanner({ detail, stages, executed }: { detail: CandidateDetailResponse; stages: FlowStage[]; executed: boolean }) {

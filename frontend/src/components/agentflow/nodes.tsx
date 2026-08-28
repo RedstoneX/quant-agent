@@ -55,8 +55,9 @@ export interface SpecialistNodeData extends Record<string, unknown> {
   reasoning: string;
   alignment?: { label: string; tone: "pos" | "warn" | "neg" } | null;
   onClick?: () => void;
-  /** True for DecisionRoomPanel's stacked top-to-bottom rail layout. Edge
-   * handles must face the direction nodes actually stack in — a hardcoded
+  /** True for buildGraph.ts's "vertical" stacked top-to-bottom rail
+   * layout (currently unused — see that file's comment). Edge handles
+   * must face the direction nodes actually stack in — a hardcoded
    * Left/Right pair on vertically-stacked nodes forces React Flow's bezier
    * edges to swoop out sideways and back in to reach a target directly
    * below, reading as crossed/broken connectors instead of a clean
@@ -138,37 +139,33 @@ export interface GateNodeData extends Record<string, unknown> {
   vertical?: boolean;
 }
 
-// The one node in the graph that is not a rounded rectangle — a hexagonal
-// "hard interlock" outline (clip-path), thick double-toned border, and a
-// faint diagonal hazard-stripe fill. Deliberately reads as a physically
-// different kind of object, the same way a real circuit-breaker/interlock
-// is drawn differently from an ordinary relay in a schematic: this is the
-// one non-negotiable, non-LLM authority in the chain.
+// Cockpit trader rework, item 5: this used to be a hand-drawn hexagonal
+// "hard interlock" outline (CSS clip-path) with a diagonal hazard-stripe
+// fill — flagged by the owner as unprofessional, bespoke ASCII-art-style
+// graphics, against a standing rule of using only the project's existing,
+// standardized component library. Rebuilt as the same Tremor `Card` every
+// other node in this graph uses (StageNode above), still visually
+// distinguished from an ordinary stage — a stronger border weight and an
+// explicit "FINAL AUTHORITY" badge — but as a standard card, not a custom
+// shape.
 export function GateNode({ data }: { data: GateNodeData }) {
-  const stripe =
-    data.tone === "neg"
-      ? "rgb(var(--c-red) / 0.14)"
-      : data.tone === "pos"
-      ? "rgb(var(--c-green) / 0.14)"
-      : "rgb(var(--c-amber) / 0.14)";
   const targetPos = data.vertical ? Position.Top : Position.Left;
   const sourcePos = data.vertical ? Position.Bottom : Position.Right;
   return (
-    <div
-      className={`w-[248px] py-3.5 px-4 border-[3px] ${TONE_BORDER[data.tone]}`}
-      style={{
-        clipPath: "polygon(12% 0%, 88% 0%, 100% 50%, 88% 100%, 12% 100%, 0% 50%)",
-        background: `repeating-linear-gradient(135deg, ${stripe}, ${stripe} 6px, transparent 6px, transparent 12px), rgb(var(--c-surface))`,
-      }}
+    <Card
+      decoration="left"
+      decorationColor={TONE_COLOR[data.tone]}
+      className={`w-[248px] !bg-panel !p-3 !ring-2 !ring-border-strong`}
     >
       <Handle type="target" position={targetPos} className={INVISIBLE_HANDLE} />
       <Handle type="source" position={sourcePos} className={INVISIBLE_HANDLE} />
-      <div className="text-center">
-        <div className="text-[0.7rem] uppercase tracking-wider text-dim font-bold">Deterministic gate</div>
-        <div className="text-[0.7rem] uppercase tracking-wide text-faint font-semibold">Final authority</div>
-        <Badge color={TONE_COLOR[data.tone]} size="xs" className="mt-1">{data.statusText}</Badge>
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="font-bold text-[0.875rem] leading-tight">Deterministic gate</span>
+        <Badge color="slate" size="xs">Final authority</Badge>
       </div>
-    </div>
+      <Badge color={TONE_COLOR[data.tone]} size="xs" className="mt-1.5">{data.statusText}</Badge>
+      {data.caption && <div className="text-[0.75rem] text-dim mt-1 leading-snug line-clamp-2">{data.caption}</div>}
+    </Card>
   );
 }
 
