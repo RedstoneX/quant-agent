@@ -222,7 +222,7 @@ cash_sweep:
 # Flip `enabled: true` after reviewing this PR (same rollout pattern
 # cash_sweep followed: built once, enabled in a later explicit step).
 intraday_scan:
-  enabled: false
+  enabled: true
   move_threshold_pct: 3.0   # min |% move| since last close to qualify
   cooldown_hours: 3.0       # min hours between two decisions for the same symbol
   max_candidates_per_scan: 5  # hard cap per tick — bounded, not high-frequency
@@ -410,13 +410,13 @@ llm_cost_circuit:
   enabled: true
   require_telegram_alerts: true
   session_cost_limit_usd: 0.90
-  daily_cost_limit_usd: 1.50
+  daily_cost_limit_usd: 2.75
   # Reservations use a strict UTF-8-byte token upper bound. These exposure
   # ceilings permit one normal large PM prompt while actual settled spending
   # remains governed by the lower limits above.
-  session_reserved_exposure_limit_usd: 1.80
-  daily_reserved_exposure_limit_usd: 1.90
-  max_paid_sessions_per_mode_per_day: 2
+  session_reserved_exposure_limit_usd: 2.60
+  daily_reserved_exposure_limit_usd: 5.50
+  max_paid_sessions_per_mode_per_day: 8
   max_provider_attempts_per_call: 2
   max_retry_attempts_per_session: 2
   reservation_ttl_minutes: 30
