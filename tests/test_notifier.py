@@ -1180,3 +1180,53 @@ def test_deterministic_escalation_ignores_realtime_loss_when_4pm_small():
     }
     msg = format_session_result("evening", result, 10.0)
     assert "DETERMINISTIC ALERT" not in msg
+
+
+def test_rehearsal_mode_suppresses_operator_alerts(monkeypatch):
+    """A rehearsal replays a real session, so it raises real alerts.
+
+    Delivered unmarked to the operator's normal chat they are
+    indistinguishable from production — worse than useless, because it teaches
+    him to distrust the channel that exists to tell him something is wrong.
+
+    The owner chose suppression over a second Telegram bot (2026-08-28):
+    "I don't wanna bother with another bot since we're gonna turn this off at
+    some point."
+    """
+    import importlib
+    import src.notifier as notifier_module
+
+    monkeypatch.setenv("QAMC_REHEARSAL", "1")
+    importlib.reload(notifier_module)
+    try:
+        notifier = notifier_module.TelegramNotifier(token="fake", chat_id="1")
+        assert notifier.enabled is True, "the guard must not work by disabling the notifier"
+        assert notifier.send("PAID ANALYSIS SUSPENDED") is False
+    finally:
+        monkeypatch.delenv("QAMC_REHEARSAL", raising=False)
+        importlib.reload(notifier_module)
+
+
+def test_alerts_are_delivered_when_not_rehearsing(monkeypatch):
+    """The guard must be off by default — production must still alert."""
+    import importlib
+    import src.notifier as notifier_module
+
+    monkeypatch.delenv("QAMC_REHEARSAL", raising=False)
+    importlib.reload(notifier_module)
+    assert notifier_module._REHEARSAL_MODE is False
+
+    sent = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+    def _fake_post(url, json=None, timeout=None):
+        sent["text"] = json["text"]
+        return _Resp()
+
+    monkeypatch.setattr(notifier_module.requests, "post", _fake_post)
+    notifier = notifier_module.TelegramNotifier(token="fake", chat_id="1")
+    assert notifier.send("real alert") is True
+    assert sent["text"] == "real alert"

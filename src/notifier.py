@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 # from somewhere else — the latter used to silently miss the cost line
 # and position snapshot because `Path("data/...")` resolved relative to
 # the caller's CWD.
+#: Set by the rehearsal harness (`ops/rehearsal/`). When true, no operator
+#: alert leaves this process — see `TelegramNotifier.send`. It is an env var
+#: rather than config because it must hold for any code path that builds a
+#: notifier, including ones that construct their own from `.env` directly.
+_REHEARSAL_MODE = os.environ.get("QAMC_REHEARSAL") == "1"
+
+
 _DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
 
 # Cash-sweep parking vehicles — cash equivalents, never "deployed capital".
@@ -118,6 +125,23 @@ class TelegramNotifier:
         if not self.enabled:
             return False
         if not text:
+            return False
+        if _REHEARSAL_MODE:
+            # A rehearsal replays a real session, so it raises real alerts —
+            # "PAID ANALYSIS SUSPENDED", "STOP COVERAGE REPAIRED", trade
+            # notifications. Delivered unmarked to the operator's normal chat
+            # they are indistinguishable from production, which is worse than
+            # useless: it teaches him to distrust the channel that exists to
+            # tell him something is wrong.
+            #
+            # Refusing outright is the wrong answer too — what a rehearsal
+            # WOULD have sent is evidence, and the harness captures it for the
+            # report. So this suppresses delivery and says so, rather than
+            # silently dropping.
+            logger.info(
+                "REHEARSAL: suppressed operator alert (%d chars): %s",
+                len(text), text.splitlines()[0][:120] if text else "",
+            )
             return False
         if len(text) > self.MAX_MESSAGE_CHARS:
             text = text[: self.MAX_MESSAGE_CHARS - 30] + "\n[...truncated]"
@@ -712,7 +736,9 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
             rows = conn.execute(
                 "SELECT symbol, qty, avg_entry, current_price, "
                 "market_value, unrealized_pnl FROM positions "
-                "WHERE qty > 0 ORDER BY unrealized_pnl DESC"
+                # qty != 0: a short's qty is negative and it is still an open
+                # position the operator must see in the evening snapshot.
+                "WHERE qty != 0 ORDER BY unrealized_pnl DESC"
             ).fetchall()
         finally:
             conn.close()

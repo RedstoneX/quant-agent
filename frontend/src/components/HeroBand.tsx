@@ -25,7 +25,7 @@ function RegimeCard({ funnel }: { funnel: RunFunnelResponse | null }) {
   const macro = funnel?.macro_context;
   if (!macro?.regime) {
     return (
-      <Card className="!bg-panel !ring-border h-full">
+      <Card className="!bg-panel !p-3.5 !ring-border h-full">
         <Text className="uppercase tracking-wide">Market regime</Text>
         <Title className="mt-2 text-ink">Awaiting macro evidence</Title>
         <Text className="mt-2 leading-relaxed">This reads once a run&rsquo;s macro specialist reports.</Text>
@@ -38,7 +38,7 @@ function RegimeCard({ funnel }: { funnel: RunFunnelResponse | null }) {
   const confidenceTone = macro.confidence === "high" ? "pos" : macro.confidence === "medium" ? "warn" : "dim";
 
   return (
-    <Card decoration="top" decorationColor="violet" className="!bg-panel !ring-border h-full">
+    <Card decoration="top" decorationColor="violet" className="!bg-panel !p-3.5 !ring-border h-full">
       <Text className="uppercase tracking-wide">Market regime</Text>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         <Pill text={macro.regime} />
@@ -67,15 +67,23 @@ export function HeroBand({
   accountError,
   positions,
   funnel,
+  collapsed = false,
 }: {
   account: AccountResponse | null;
   accountError: string | null;
   positions: PositionItem[];
   funnel: RunFunnelResponse | null;
+  /* Compact chrome (see App.tsx's chrome-collapse control): the same
+   * facts — net liquidation value, today's P&L, unrealized, deployed
+   * exposure, regime — rendered as one dense line instead of three cards.
+   * Nothing is hidden that isn't recoverable by expanding; what goes is
+   * the equity sparkline and the card chrome, which is what was costing
+   * the chart its vertical room. */
+  collapsed?: boolean;
 }) {
   if (!account) {
     return (
-      <Card className="mx-3 mt-3 !w-auto !bg-panel !ring-border text-center">
+      <Card className="mx-3 mt-3 !w-auto !bg-panel !p-3 !ring-border text-center">
         <Text>{accountError ? `Account unavailable: ${accountError}` : "Loading account…"}</Text>
       </Card>
     );
@@ -95,17 +103,61 @@ export function HeroBand({
   const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
   const history = equityHistorySeries(account);
 
+  if (collapsed) {
+    const macro = funnel?.macro_context;
+    return (
+      <div className="mx-3 mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg border border-border bg-panel px-3 py-2">
+        <span className="flex items-baseline gap-2">
+          <span className="label-xs">NLV</span>
+          <span className="font-mono text-[length:var(--fs-stat)] font-semibold tabular-nums text-ink">
+            {fmtMoney(account.portfolio_value)}
+          </span>
+        </span>
+        <span className={`font-mono text-[length:var(--fs-body)] font-semibold tabular-nums ${pnlClass(account.daily_pnl)}`}>
+          {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
+        </span>
+        <span className={`font-mono text-[length:var(--fs-body)] tabular-nums ${pnlClass(unrealized)}`}>
+          {fmtMoney(unrealized)} unrealized
+        </span>
+        <span className="text-[length:var(--fs-meta)] text-dim">
+          {riskDeployedPct.toFixed(0)}% deployed
+          {maxTotalPct !== null ? ` / ${maxTotalPct.toFixed(0)}% ceiling` : ""}
+        </span>
+        <span className="text-[length:var(--fs-meta)] text-dim">
+          Deployable <strong className="font-mono text-ink">{fmtMoneyCompact(liquidity?.deployable_cash)}</strong>
+        </span>
+        {macro?.regime && (
+          <span className="flex items-center gap-1.5">
+            <Pill text={macro.regime} />
+            <span
+              className={`text-[length:var(--fs-meta)] font-bold tracking-wide ${
+                macro.equity_outlook === "bullish" ? "text-pos" : macro.equity_outlook === "bearish" ? "text-neg" : "text-dim"
+              }`}
+            >
+              {(macro.equity_outlook || "unknown").toUpperCase()}
+            </span>
+          </span>
+        )}
+        {accountError && (
+          <Badge color="amber" size="xs" className="ml-auto">
+            stale
+          </Badge>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-3 mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
       <Card
         decoration="top"
         decorationColor={accountError ? "amber" : "cyan"}
-        className="!bg-panel !ring-border h-full"
+        className="!bg-panel !p-3.5 !ring-border h-full"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
             <Text className="uppercase tracking-wide">Net liquidation value</Text>
-            <Metric className="mt-1 font-mono !text-3xl tabular-nums text-ink">{fmtMoney(account.portfolio_value)}</Metric>
+            <Metric className="mt-1 font-mono !text-2xl tabular-nums text-ink">{fmtMoney(account.portfolio_value)}</Metric>
           </div>
           {accountError && <Badge color="amber">stale</Badge>}
         </div>
@@ -121,7 +173,7 @@ export function HeroBand({
             index="date"
             categories={["equity"]}
             colors={["cyan"]}
-            className="mt-2 h-9"
+            className="mt-2 h-8"
             showGradient
           />
         )}
@@ -140,7 +192,7 @@ export function HeroBand({
         </div>
       </Card>
 
-      <Card decoration="top" decorationColor="cyan" className="!bg-panel !ring-border h-full">
+      <Card decoration="top" decorationColor="cyan" className="!bg-panel !p-3.5 !ring-border h-full">
         <div className="flex items-start justify-between gap-3">
           <div>
             <Text className="uppercase tracking-wide">Portfolio exposure</Text>
@@ -149,7 +201,7 @@ export function HeroBand({
           {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
         </div>
         <ProgressBar value={riskDeployedPct} color="cyan" className="mt-3" />
-        <Grid numItems={3} className="mt-4 gap-2">
+        <Grid numItems={3} className="mt-3 gap-2">
           <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
           <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
           <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>

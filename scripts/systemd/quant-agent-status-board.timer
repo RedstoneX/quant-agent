@@ -1,0 +1,16 @@
+# Rebuilds the human status board.
+[Unit]
+Description=quant-agent status board — hourly on weekdays, once at the weekend
+
+[Timer]
+# Hourly through the trading day so the board is never more than an hour stale
+# while the desk is working, plus one weekend rebuild so a Saturday glance is
+# not showing Friday's picture. Cheap: no model calls, no network beyond a
+# git fetch, about a second.
+OnCalendar=Mon..Fri 07..21:05 America/New_York
+OnCalendar=Sat,Sun 09:05 America/New_York
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

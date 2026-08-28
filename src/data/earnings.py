@@ -22,6 +22,20 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+#: What a financial statement looks like, as text: dollar-prefixed amounts
+#: ($1,234), bare comma-separated thousands (1,234,567), and parenthesized
+#: negatives ((123)). Dense in income statements, balance sheets and cash
+#: flow statements; near-absent in cover pages, tables of contents, XBRL
+#: taxonomy boilerplate and the auditor's opinion letter.
+#:
+#: Defined once because two places need the SAME definition: the test for
+#: whether extracted sections are worth keeping, and the search for the
+#: densest region to fall back to. When those two disagreed, structured
+#: extraction could pass a bar the fallback would have failed it on.
+_FINANCIAL_FIGURE_RE = re.compile(
+    r"\$[\d,]+(?:\.\d+)?|\d{1,3}(?:,\d{3})+|\(\d{1,3}(?:,\d{3})*\)"
+)
+
 SEC_BASE = "https://data.sec.gov"
 SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -425,17 +439,49 @@ class EarningsDataProvider:
             if parts:
                 structured_output = "\n\n".join(parts)
 
-        # If structured extraction produced meaningful content (≥3K chars),
-        # use it. Below that the sections are either sparse ('see 10-K')
-        # stubs or our patterns missed the real headers — fall back to the
-        # truncated full text so the LLM still has something to work with.
+        # Accept the structured extraction only if it is BOTH long enough and
+        # actually contains financial figures.
+        #
+        # Length alone was the test until 2026-08-28, and it silently gutted
+        # the entire earnings evidence source. `_extract_key_sections` matches
+        # the phrase "financial statements", which also appears in the
+        # auditor's opinion letter — "...the related notes (collectively
+        # referred to as the financial statements)". That letter is prose, it
+        # is several thousand characters long, and it therefore cleared a
+        # 3,000-character bar comfortably. Clearing the bar SUPPRESSED the
+        # density-seeking fallback below, which is the code that would have
+        # found the real tables.
+        #
+        # Measured over the 68 filings cached on the production box: 56 of
+        # them extracted fewer than 20 dollar amounts, and 12 — including
+        # MSFT, AAPL, GOOGL, BAC, CVX and NFLX — extracted exactly ZERO. The
+        # earnings analyst had never seen a single number for those names.
+        #
+        # A financial statement is defined by its figures, so that is what is
+        # tested. Same pattern `_find_financial_dense_region` scores with, so
+        # "dense enough to keep" and "dense enough to seek" mean one thing.
         MIN_STRUCTURED_SIZE = 3000
-        if structured_output and len(structured_output) >= MIN_STRUCTURED_SIZE:
+        MIN_STRUCTURED_FIGURES = 40
+        figure_count = len(_FINANCIAL_FIGURE_RE.findall(structured_output))
+        if (
+            structured_output
+            and len(structured_output) >= MIN_STRUCTURED_SIZE
+            and figure_count >= MIN_STRUCTURED_FIGURES
+        ):
             logger.info(
-                "Extracted %d section(s) from filing → %d chars (down from %d)",
-                len(sections), len(structured_output), len(text),
+                "Extracted %d section(s) from filing → %d chars, %d figures "
+                "(down from %d)",
+                len(sections), len(structured_output), figure_count, len(text),
             )
             return structured_output
+
+        if structured_output and len(structured_output) >= MIN_STRUCTURED_SIZE:
+            logger.warning(
+                "Structured extraction produced %d chars but only %d financial "
+                "figures (need %d) — this is narrative, not statements. "
+                "Falling back to the density-seeking slice.",
+                len(structured_output), figure_count, MIN_STRUCTURED_FIGURES,
+            )
 
         # Fallback: truncated full text. The naive "first max_chars" slice
         # is wrong for iXBRL 10-Q filings — the front of the cleaned text is
@@ -473,7 +519,7 @@ class EarningsDataProvider:
         if len(text) <= window:
             return 0
         # Slide in 10 steps across the document; cheap, ~10 regex passes.
-        pattern = re.compile(r"\$[\d,]+(?:\.\d+)?|\d{1,3}(?:,\d{3})+|\(\d{1,3}(?:,\d{3})*\)")
+        pattern = _FINANCIAL_FIGURE_RE
         step = max(window // 10, 1000)
         scores: list[tuple[int, int]] = []  # (count, start)
         for start in range(0, len(text) - window + 1, step):

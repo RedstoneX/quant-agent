@@ -514,7 +514,40 @@ class LLMCostCircuitConfig(BaseModel):
     daily_reserved_exposure_limit_usd: float = Field(
         default=1.90, gt=0, allow_inf_nan=False,
     )
-    max_paid_sessions_per_mode_per_day: int = Field(default=2, ge=1)
+    # RUNAWAY BACKSTOP, not the working budget (Defect 4, 2026-08-28). Until
+    # this fix it was 2 and it WAS the binding constraint on every trading
+    # day: intra_check fires 14 times between 09:30 and 16:00 ET, two of
+    # those could think and the other twelve suspended. Measured 2026-08-25/
+    # 26/27: 4, 7 and 6 suspensions per day while only $1.02 of a $2.75 daily
+    # budget was spent -- the 2026-08-28 11:30 ET stop hit this at 17 cents
+    # of actual spend. max_mode_daily_exposure_pct below is the real,
+    # dollar-based per-mode limit now; this exists only to stop a retry loop
+    # spinning forever within one mode without ever spending real money (a
+    # provably-zero-cost failure loop, now possible after the Defect 2 fix,
+    # would never trip a dollar-based check at all) -- an infinite-loop
+    # backstop, not a budget.
+    max_paid_sessions_per_mode_per_day: int = Field(default=8, ge=1)
+    # Defect 4 operative per-mode limit: the fraction of
+    # daily_reserved_exposure_limit_usd any ONE mode may reserve/spend in a
+    # single ET day. A fraction of the existing day-wide exposure ceiling
+    # (not an independent dollar figure) so it stays proportionate if that
+    # ceiling is ever retuned, and because a mode's own call cost varies too
+    # much for a flat count to fit every mode (an intra_check tick can be a
+    # few cents; a morning portfolio_manager call can be tens of cents).
+    # 100 disables the per-mode ceiling (falls back to the day-wide one).
+    max_mode_daily_exposure_pct: float = Field(default=60.0, gt=0.0, le=100.0)
+    # Phase 6.1 afternoon reserve: the fraction of daily_reserved_exposure_
+    # limit_usd that is NOT spendable by any session before
+    # afternoon_reserve_release_et_hour, regardless of mode. The morning is
+    # where the cheap, plentiful setups look most attractive and where a
+    # retry storm is most likely; the afternoon is where every exit decision
+    # lives (position_reviewer, risk_manager, the close pass). A day that
+    # spends itself out by noon has funded entries and defunded exits, which
+    # is exactly backwards for capital preservation. 0 disables the reserve.
+    afternoon_reserve_pct: float = Field(default=40.0, ge=0.0, le=90.0)
+    # ET hour (0-23, local wall clock) at which the reserve above releases
+    # and the full daily_reserved_exposure_limit_usd becomes spendable again.
+    afternoon_reserve_release_et_hour: int = Field(default=12, ge=0, le=23)
     # Includes the initial request.  Two means one transient retry at most;
     # a provider failover would be attempt three and is blocked/latches.
     max_provider_attempts_per_call: int = Field(default=2, ge=1)
@@ -523,6 +556,39 @@ class LLMCostCircuitConfig(BaseModel):
     reservation_ttl_minutes: int = Field(default=30, ge=5, le=180)
     reservation_multiplier: float = Field(
         default=1.05, ge=1.0, le=2.0, allow_inf_nan=False,
+    )
+    # Defect 1 (2026-08-28): the pre-fix reservation treated one UTF-8 byte
+    # of the prompt as one token and always reserved the full
+    # max_output_tokens ceiling. On the production 09:32 ET portfolio_manager
+    # call that reserved $1.8657 against a call that actually cost ~$0.11 --
+    # ~3.2x the worst real portfolio_manager call ever recorded (measured
+    # $0.5783) and ~11x the average ($0.1718). Below this, the reservation
+    # is instead derived from that agent+model's own recent history in
+    # agent_logs (see LLMCostCircuitBreaker._measure_reservation_tokens).
+    # Below the minimum sample count, or on any unknown model/agent or
+    # error reading history, the ORIGINAL byte=token / max_output_tokens
+    # formula is still the fallback -- conservative, unchanged, and now
+    # exercised only as a fail-closed floor rather than every call.
+    #
+    # Minimum number of (agent, model) rows in agent_logs required before
+    # trusting measured history at all. Below this, guessing from a
+    # handful of calls is worse than the conservative fallback.
+    reservation_min_history_samples: int = Field(default=20, ge=10, le=1000)
+    # Percentile of the observed prompt-bytes-per-token ratio used to
+    # convert this call's prompt size into a token estimate. A LOW ratio
+    # means MORE tokens per byte -- denser text, therefore a HIGHER cost --
+    # so the low percentile is the conservative end; bounded well below the
+    # median (lt=0.5) so a misconfiguration can't quietly pick the cheap
+    # end of the distribution.
+    reservation_conservative_percentile: float = Field(
+        default=0.10, gt=0.0, lt=0.5, allow_inf_nan=False,
+    )
+    # Safety margin applied to the maximum output tokens observed for this
+    # agent+model's history; the result is still capped at that call's own
+    # max_output_tokens, so this can only ever narrow the old
+    # always-reserve-the-ceiling behaviour, never widen past it.
+    reservation_output_margin: float = Field(
+        default=1.20, ge=1.0, le=3.0, allow_inf_nan=False,
     )
 
     @model_validator(mode="after")
