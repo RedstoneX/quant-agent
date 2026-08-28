@@ -275,6 +275,20 @@ universe membership and the Technical prefilter; current Technical analysis,
 PM grounding, AI Risk, deterministic risk/funding, broker protection and
 Alpaca Paper remain mandatory. The configured 101-stock universe is unchanged.
 
+**Insider routine/opportunistic filter — committed, not yet merged or
+deployed** — `f3aeba4` + `866e423` on branch `feat/insider-signal-filter`.
+`src/data/insider_signal.py` classifies every parsed Form 4 P/S row as
+`routine`, `opportunistic` or `indeterminate` (Cohen/Malloy/Pomorski calendar
+test, a recurring-cadence fallback, and proportional-size rules on sells; a
+10b5-1 flag alone never marks a large sale routine). A routine purchase can no
+longer make a symbol `admission_eligible`, narrowing the lane described above;
+no other admission check changed. Measured on the live cache: 56.2% of
+open-market P/S rows routine — but zero of those matched the calendar test in
+this measurement, since the required multi-year history index did not exist
+before this branch. See `docs/WORK.md` "Landed" for the full measurement and
+caveat. Recorded here as branch work in progress, not as deployed behavior;
+production admission logic is unchanged until this merges and deploys.
+
 The production checkout retains exactly one intended tracked local configuration delta:
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`

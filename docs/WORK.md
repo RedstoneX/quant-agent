@@ -400,6 +400,50 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   covered the moment it lands. Import is deliberately shallow — it proves a
   tool still agrees with the schemas it's built on, not that the tool works.
   2470 tests pass.
+- **Insider routine/opportunistic filter — committed, not yet merged or
+  deployed.** `f3aeba4` + `866e423` on branch `feat/insider-signal-filter`
+  (worktree `insider-filter`). New `src/data/insider_signal.py::classify_transaction`
+  implements the Cohen/Malloy/Pomorski (JF 2012) routine-versus-opportunistic
+  test in pure Python, first-match-wins: non-open-market codes, incomplete
+  amounts and zero-price rows are handled first (mostly contract guards —
+  `SECForm4Provider` already drops everything but non-derivative P/S), then
+  the calendar-month test (same insider, same issuer, same calendar month,
+  same direction, in each of the 3 preceding years), then a recurring-cadence
+  fallback (>=3 prior same-direction trades, mean gap 20-120 days, coefficient
+  of variation <=0.25) for when 3 years of history is not yet available, then
+  proportional-size rules on sells (routine under 5% of the pre-transaction
+  holding) and all buys opportunistic. `SmartMoneyObservation` gains
+  `signal_class`/`signal_class_reason`/`signal_class_detail`/`signal_weight`;
+  a routine purchase can no longer make a symbol `admission_eligible` (narrows
+  the existing gate only — broker/price/liquidity/history/sector gates in
+  `pipeline.py` are untouched); `smart_money_analyst.md` and the analyst's
+  compact payload now carry the verdict and weight dollar totals by class. New
+  `data/smart_money/insider_history.json`, pruned at 5 years, because
+  `observations.json` is pruned to the lookback window and the calendar test
+  needs years of retained history. **Deliberate departure from the folk
+  version of this filter:** a 10b5-1 checkbox alone never marks a sale
+  routine — `RESEARCH_FINDINGS.md` §1 states plainly that planned and
+  discretionary high-value sales show similar opportunism, so the flag only
+  ever supports a routine label for a sale that is already proportionally
+  small; a large planned sale stays `material_stake_sale` and its reason text
+  records that the flag was seen and not acted on. Two tests pin this.
+  Measured against the real production cache (`/home/qamc/quant-agent/data/smart_money/`,
+  2,188 parsed open-market P/S rows, 2,025 filings, 2026-08-21 to 2026-08-27):
+  **56.2% routine (1,230), 43.6% opportunistic (955), 0.1% indeterminate (3)**
+  — verifying the backlog's "over half of Form 4 trades carry zero predictive
+  power" claim, and understating it once the codes the parser already drops
+  are counted (55.3% of all 5,046 raw non-derivative + derivative rows in the
+  same cache never reach the classifier at all; combined, 955 of 5,046 raw
+  rows — 18.9% — are opportunistic open-market trades). **Caveat that must
+  travel with the 56.2% figure:** zero rows in this measurement matched the
+  calendar-month rule or the cadence fallback — the production cache holds
+  only 7 days of disclosures and `insider_history.json` did not exist before
+  this branch, so the 56.2% is driven entirely by the proportional-sale
+  rules. The calendar test, the strongest rule and the one the literature
+  actually validates, starts contributing only once the history index
+  accumulates several years of refreshes. 2,545 tests pass (2,516 on
+  `origin/main`, +29, `tests/test_insider_signal.py`). Nothing here is
+  deployed; branch work only.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -546,8 +590,10 @@ Two facts worth acting on:
    report and table of contents."* The earnings seat has never seen MSFT's
    numbers. Cheap fix (locate MD&A / financial statements rather than slicing
    from the top) and it restores an entire evidence source.
-4. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
-   ratio in the system — over half of Form 4 trades carry zero predictive power.
+4. **Insider routine/opportunistic filter — implemented on a branch, needs
+   merge/deploy.** See the "Landed" entry above (`feat/insider-signal-filter`,
+   `f3aeba4`/`866e423`) for what it does and the measured 56.2% routine split
+   with its caveat.
 5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
 6. **Phase 4.2 — repair the data feeds.** Fix Reuters/AP/FRED; surface degraded

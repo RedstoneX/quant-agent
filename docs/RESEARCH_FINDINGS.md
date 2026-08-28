@@ -51,6 +51,16 @@ QAMC already filters to P/S and to non-derivative rows (`src/data/smart_money.py
 ### What to implement, ranked
 
 1. **Routine versus opportunistic classification** — same insider, same calendar month, three consecutive years. Drop routine entirely. Pure Python; highest value per line of code in the whole system.
+   **Built** on branch `feat/insider-signal-filter` (`f3aeba4` + `866e423`,
+   `src/data/insider_signal.py`; not yet merged or deployed — see
+   `docs/WORK.md` "Landed" and `docs/STATE.md`). The 10b5-1 caveat below was
+   followed rather than the common folk rule: the flag never marks a large
+   sale routine on its own, only ever supports a routine label for a sale
+   that is already proportionally small. Measured on the live cache: 56.2%
+   of open-market P/S rows routine, but the calendar-month test contributed
+   zero of those matches — the multi-year history it needs did not exist
+   before this branch, so the measured split is currently driven entirely by
+   the proportional-sale rules, not the strongest, best-evidenced rule.
 2. **Cluster confirmation** — already partly present; rank clusters above solitary buys rather than merely detecting them.
 3. **Purchase as a percentage of the insider's existing holdings** — the raw fields are already captured, the ratio simply is not computed.
 4. **Role weighting** — upweight CFO and non-celebrity officers.
@@ -137,7 +147,7 @@ Also: **anomaly decay after publication** (McLean & Pontiff, 2016) — published
 
 | Priority | Item | Type |
 |---|---|---|
-| 1 | Routine/opportunistic insider filter | Python |
+| 1 | Routine/opportunistic insider filter | Python — built on branch, not merged/deployed |
 | 2 | Lazy Prices 10-K year-over-year diff | Python |
 | 3 | News cascade: dedup → novelty score → LLM on the residual | Python + LLM |
 | 4 | Deterministic macro regime; LLM confined to FOMC text | Python + LLM |
