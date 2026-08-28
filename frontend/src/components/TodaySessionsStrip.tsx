@@ -43,6 +43,7 @@ export function TodaySessionsStrip({
   onSelect,
   onFollowLatest,
   onSelectTrade,
+  compact = false,
 }: {
   runs: RunSummary[];
   funnels: Record<string, RunFunnelResponse | null | undefined>;
@@ -54,6 +55,12 @@ export function TodaySessionsStrip({
   onSelect: (runId: string) => void;
   onFollowLatest: () => void;
   onSelectTrade: (trade: TradeItem) => void;
+  /* Compact chrome (App.tsx's chrome-collapse control): the session tabs
+   * stay — picking which session drives the cockpit is the strip's whole
+   * job — while the per-session executions table folds away. That table is
+   * the single tallest block in the header stack, and the same fills are
+   * still reachable in the Trades panel of the workspace below. */
+  compact?: boolean;
 }) {
   if (runs.length === 0) {
     if (loading) return <Text className="mx-3 mt-3">Loading today&rsquo;s sessions&hellip;</Text>;
@@ -98,6 +105,7 @@ export function TodaySessionsStrip({
           })}
         </TabList>
       </TabGroup>
+      {!compact && (
       <div className="mt-2 rounded-lg border border-border bg-panel-alt px-3 py-2" aria-label="Selected session trades">
         <div className="mb-1.5 flex items-center gap-2">
           <Text className="font-semibold uppercase tracking-wide">
@@ -139,6 +147,7 @@ export function TodaySessionsStrip({
           </div>
         )}
       </div>
+      )}
     </section>
   );
 }
