@@ -635,6 +635,36 @@ def test_already_trimmed_section_renders_in_prompt():
     assert "TARGET_BREACH" in msg or "target_breach" in msg.lower()
 
 
+def test_stop_out_surfaces_as_system_action_not_silent():
+    """2026-08-28 ONDS/CCJ: a same-session STOP_OUT (the broker's own
+    protective stop firing, written back by _reconcile_stop_out_fills)
+    must surface in the 'Non-LLM System Actions' section exactly like
+    FORCE_DELEVER/EMERGENCY_SELL — otherwise the reviewer reasons about a
+    shrunken book with no idea a position was involuntarily closed."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            session_type="midday",
+            positions=[Position(
+                symbol="AAPL", qty=10, avg_entry=250.0, current_price=275.0,
+                market_value=2750.0, unrealized_pnl=250.0, sector="Tech",
+            )],
+            macro_summary={"vix": {"current": 17.0}},
+            cash_balance=10_000.0,
+            total_value=12_750.0,
+            morning_trades=[{
+                "symbol": "ONDS", "action": "STOP_OUT", "qty": 17.0,
+                "reasoning": "Broker-initiated protective-stop fill",
+            }],
+        )
+
+    assert "Non-LLM System Actions" in msg
+    assert "STOP_OUT ONDS" in msg
+    assert "qty=17.0" in msg
+
+
 def test_already_trimmed_section_omitted_when_empty():
     """No symbols trimmed today → no warning section, prompt stays clean."""
     from src.agents.position_reviewer import PositionReviewerAgent

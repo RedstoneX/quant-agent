@@ -11,10 +11,11 @@ import {
   Time,
 } from "lightweight-charts";
 import { Button } from "@tremor/react";
-import { api, ChartTimeframe, LiveQuote, PositionItem, PriceBar, TradeItem } from "../api/client";
+import { api, ChartTimeframe, LiveQuote, OrderItem, PositionItem, PriceBar, TradeItem } from "../api/client";
 import { Panel } from "./ui/Panel";
 import { isExecutedTrade, etDateKey, fmtMoney, fmtNum } from "../lib/format";
 import { usePoll } from "../lib/usePoll";
+import { findPositionStop, stopBandRange } from "../lib/positionStop";
 
 // Theme vars are space-separated "R G B" (Tailwind's arbitrary-alpha
 // convention, valid modern CSS) — lightweight-charts' internal color
@@ -31,14 +32,27 @@ function readThemeColors() {
   const green = rgb("--c-green");
   const red = rgb("--c-red");
   const accent = rgb("--c-accent");
+  const amber = rgb("--c-amber");
   return {
     text: solid(text),
     border: solid(border),
     green: solid(green),
     red: solid(red),
     accent: solid(accent),
+    amber: solid(amber),
     greenAlpha: alpha(green, 0.35),
     redAlpha: alpha(red, 0.35),
+    // The live-price line is deliberately muted (item 4 of the cockpit
+    // trader rework): a thin dashed line in the same dim ink used for
+    // axis/grid text, not the bright accent color, so it never reads as
+    // more important than the candles or the trader's own entry/stop
+    // lines. See livePriceLineRef below.
+    textMuted: alpha(text, 0.6),
+    // The stop-risk band's fill — amber/warn, not green/red: it marks a
+    // PLANNED risk boundary, not a live P&L fact, so it stays out of the
+    // money-direction palette entry/exit lines use (see styles/index.css's
+    // token grammar and item 12 of the cockpit trader rework).
+    amberBand: alpha(amber, 0.1),
   };
 }
 
@@ -170,15 +184,31 @@ export function entryPriceLine(
   };
 }
 
-/* Prev-close decision: kept on the intraday timeframes, dropped on 1D.
- * Intraday, "where did we close yesterday" is the reference the whole
- * session's move is measured against, so the line carries real
- * information. On the 120-day daily chart the previous close is simply the
- * second-to-last candle — already on screen, visually indistinguishable
- * from the last one — so the line is pure clutter across the full width of
- * the panel. Reported by the operator as noise on the daily view. */
-export function shouldShowPrevClose(timeframe: ChartTimeframe): boolean {
-  return timeframe !== "1d";
+/* "Where is my stop and how far am I from it" — item 10 of the cockpit
+ * trader rework. Sourced from findPositionStop (lib/positionStop.ts): a
+ * resting stop order at the broker when one exists, else the most recent
+ * entry trade's recorded stop. Deliberately amber/warn, not the money-
+ * direction green/red the entry line uses — a stop is a planned risk
+ * boundary, not a live gain/loss fact (see styles/index.css's token
+ * grammar and item 12). Returns null (draws nothing) when the symbol
+ * isn't held or no stop evidence exists — never a fabricated level. */
+export function positionStopLine(
+  symbol: string | null,
+  positions: PositionItem[],
+  openOrders: OrderItem[],
+  trades: TradeItem[],
+  colors: { amber: string }
+): { price: number; color: string; title: string } | null {
+  if (!symbol) return null;
+  const position = positions.find((item) => item.symbol === symbol);
+  if (!position) return null;
+  const stop = findPositionStop(position, openOrders, trades);
+  if (!stop) return null;
+  return {
+    price: stop.price,
+    color: colors.amber,
+    title: `STOP ${fmtMoney(stop.price)}${stop.source === "open_order" ? "" : " (recorded)"}`,
+  };
 }
 
 // The chart must always resize to a real, non-trivial height even on a
@@ -197,21 +227,42 @@ export function PriceChartPanel({
   symbol,
   trades = [],
   positions = [],
+  openOrders = [],
+  positionTrades,
 }: {
   symbol: string | null;
+  /** Drives the BUY/SELL execution arrows on the price series — typically
+   * scoped to whichever session is currently selected elsewhere in the
+   * cockpit. */
   trades?: TradeItem[];
-  /* Live broker positions — used only to draw the operator's own average
-   * entry for the charted symbol (see entryPriceLine above). Read-only,
-   * like everything else on this surface. */
+  /* Live broker positions — used to draw the operator's own average entry
+   * (see entryPriceLine above) and protective stop (see positionStopLine
+   * above) for the charted symbol. Read-only, like everything else on
+   * this surface. */
   positions?: PositionItem[];
+  /* Open broker orders — used only to find a resting stop order for the
+   * charted symbol (see positionStopLine/findPositionStop). Not the same
+   * list the Orders panel's status filter shows; always "open" regardless
+   * of what filter an operator has picked there. */
+  openOrders?: OrderItem[];
+  /** Trades used ONLY as the trade-record fallback for the protective-stop
+   * lookup (see positionStopLine) — deliberately separate from `trades`
+   * above. A held position may have been entered in an earlier session
+   * than whichever one is currently selected, so this defaults to the
+   * broader recent-trades list rather than reusing the session-scoped
+   * `trades` prop, which would silently miss it. Falls back to `trades`
+   * itself when not given. */
+  positionTrades?: TradeItem[];
 }) {
+  const stopLookupTrades = positionTrades ?? trades;
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const stopBandSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const livePriceLineRef = useRef<IPriceLine | null>(null);
-  const previousCloseLineRef = useRef<IPriceLine | null>(null);
   const entryLineRef = useRef<IPriceLine | null>(null);
+  const stopLineRef = useRef<IPriceLine | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [barCount, setBarCount] = useState(0);
@@ -243,6 +294,26 @@ export function PriceChartPanel({
       width: initialWidth,
       height: initialHeight,
     });
+    // Added BEFORE the candlestick series so it paints behind the candles
+    // — item 10's "shade the band between current price and stop." A
+    // Baseline series fills between its (constant, current-price) line and
+    // `baseValue` (the stop); only the "top" or "bottom" half is ever
+    // colored (whichever the current price is actually on), the other
+    // half stays fully transparent. Data/colors are set in the render
+    // effect below once a stop is known; empty until then.
+    const stopBandSeries = chart.addBaselineSeries({
+      baseValue: { type: "price", price: 0 },
+      lineVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      topLineColor: "transparent",
+      bottomLineColor: "transparent",
+      topFillColor1: "transparent",
+      topFillColor2: "transparent",
+      bottomFillColor1: "transparent",
+      bottomFillColor2: "transparent",
+    });
     const candleSeries = chart.addCandlestickSeries({
       upColor: colors.green,
       downColor: colors.red,
@@ -251,8 +322,7 @@ export function PriceChartPanel({
       wickDownColor: colors.red,
       // The series' default last-value line would label the final
       // historical close as if it were current. Only the explicitly
-      // sourced LIVE (and, intraday, PREV CLOSE) lines below may make
-      // that claim.
+      // sourced LIVE line below may make that claim.
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -265,6 +335,7 @@ export function PriceChartPanel({
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    stopBandSeriesRef.current = stopBandSeries;
 
     // Handled manually rather than via lightweight-charts' own
     // `autoSize: true` — this cockpit mounts the chart inside a pane that
@@ -304,6 +375,7 @@ export function PriceChartPanel({
   function clearChart() {
     candleSeriesRef.current?.setData([]);
     volumeSeriesRef.current?.setData([]);
+    stopBandSeriesRef.current?.setData([]);
     setBars([]);
   }
 
@@ -409,12 +481,32 @@ export function PriceChartPanel({
     setBarCount(candles.length);
 
     if (livePriceLineRef.current) candleSeries.removePriceLine(livePriceLineRef.current);
-    if (previousCloseLineRef.current) candleSeries.removePriceLine(previousCloseLineRef.current);
     if (entryLineRef.current) candleSeries.removePriceLine(entryLineRef.current);
+    if (stopLineRef.current) candleSeries.removePriceLine(stopLineRef.current);
     livePriceLineRef.current = null;
-    previousCloseLineRef.current = null;
     entryLineRef.current = null;
+    stopLineRef.current = null;
 
+    // Owner correction: the LIVE line is created FIRST, on purpose — every
+    // price line added after it (ENTRY, STOP) stacks visually on top of
+    // it, so it never obscures the trader's own reference lines. It's
+    // also thin, dashed and muted (the same dim ink as axis text, never
+    // the bright accent, and never green/red — those are reserved for
+    // P&L) rather than a bold solid line — it needs to be readable, not
+    // dominant ("in my face"). The label still renders pinned to the
+    // price axis (axisLabelVisible), never floating over the chart body.
+    // PREV CLOSE was removed entirely (every timeframe) per the same
+    // correction — the owner called it "not relevant."
+    if (quote?.last_price != null) {
+      livePriceLineRef.current = candleSeries.createPriceLine({
+        price: quote.last_price,
+        color: colors.textMuted,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "LIVE",
+      });
+    }
     const entry = entryPriceLine(symbol, positions, { green: colors.green, red: colors.red });
     if (entry) {
       entryLineRef.current = candleSeries.createPriceLine({
@@ -426,28 +518,42 @@ export function PriceChartPanel({
         title: entry.title,
       });
     }
-    if (shouldShowPrevClose(timeframe) && quote?.prev_close != null) {
-      previousCloseLineRef.current = candleSeries.createPriceLine({
-        price: quote.prev_close,
-        color: colors.text,
-        lineWidth: 1,
+    const stop = positionStopLine(symbol, positions, openOrders, stopLookupTrades, { amber: colors.amber });
+    if (stop) {
+      stopLineRef.current = candleSeries.createPriceLine({
+        price: stop.price,
+        color: stop.color,
+        lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: "PREV CLOSE",
+        title: stop.title,
       });
     }
-    if (quote?.last_price != null) {
-      livePriceLineRef.current = candleSeries.createPriceLine({
-        price: quote.last_price,
-        color: colors.accent,
-        lineWidth: 2,
-        lineStyle: LineStyle.Solid,
-        axisLabelVisible: true,
-        title: "LIVE",
-      });
+
+    // Item 10: shade the band between current price and the stop — see
+    // the Baseline series added alongside the candlesticks above. Only
+    // meaningful once both a stop AND a real current price are known;
+    // cleared (empty data) otherwise so no stray band lingers from a
+    // previously-charted symbol.
+    const bandSeries = stopBandSeriesRef.current;
+    if (bandSeries) {
+      if (stop && quote?.last_price != null && candles.length) {
+        const { low, high } = stopBandRange(quote.last_price, stop.price);
+        bandSeries.applyOptions({
+          baseValue: { type: "price", price: low },
+          topFillColor1: colors.amberBand,
+          topFillColor2: colors.amberBand,
+          bottomFillColor1: "transparent",
+          bottomFillColor2: "transparent",
+        });
+        bandSeries.setData(candles.map((candle) => ({ time: candle.time, value: high })));
+      } else {
+        bandSeries.setData([]);
+      }
     }
+
     chartRef.current?.timeScale().fitContent();
-  }, [bars, quote, timeframe, symbol, positions]);
+  }, [bars, quote, timeframe, symbol, positions, openOrders, stopLookupTrades]);
 
   // Real BUY/SELL execution markers on the price series — the vision
   // board's chart mockup shows these; `lightweight-charts` already

@@ -19,6 +19,12 @@ export interface SupportWorkspaceState {
   ordersLoading: boolean;
   orderStatus: "open" | "closed" | "all";
   onOrderStatusChange: (status: "open" | "closed" | "all") => void;
+  /** Open broker orders — polled independently of `orderStatus` above (the
+   * Orders panel's own display filter), so a stop-order lookup for the
+   * charted/held symbol (PriceChartPanel, the Decision Room's holding
+   * card) never goes stale just because the operator switched that filter
+   * to "closed"/"all". See App.tsx's dedicated openOrders poll. */
+  openOrders: OrderItem[];
   trades: TradeItem[];
   tradesError: string | null;
   tradesLoading: boolean;
@@ -28,6 +34,13 @@ export interface SupportWorkspaceState {
   health: HealthResponse | null;
   healthError: string | null;
   onSelectSymbol?: (symbol: string) => void;
+  /** Position-panel-specific symbol click: charts the symbol and updates
+   * the Decision Room/detail pane in place. Deliberately distinct from
+   * `onSelectSymbol` above (which also opens the candidate-detail modal
+   * for panels like Missed Opportunities, where drilling into a specific
+   * run's evidence is exactly what a click should do) — clicking a
+   * POSITION must never open a modal (cockpit trader rework, item 2). */
+  onSelectPositionSymbol?: (symbol: string) => void;
   onInspectOrder?: (order: OrderItem) => void;
   onInspectTrade?: (trade: TradeItem) => void;
 }

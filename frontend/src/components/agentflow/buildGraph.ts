@@ -180,15 +180,19 @@ function edgeToneForDirection(dir: Direction): string {
  * didn't), converging on PM, then the same PM -> Risk -> Gate -> Execution
  * chain the run-level graph uses.
  *
- * `"horizontal"` (default, for the wide CandidateDetailModal): specialists
- * in a left column, the linear chain running left-to-right.
- * `"vertical"` (for DecisionRoomPanel's ~300px cockpit rail): a single
- * column — every specialist card gets its own row, then the PM/Risk/Gate/
- * Execution chain continues stacked below. The horizontal layout's ~600px
- * natural width does not degrade gracefully into a narrow rail (React
- * Flow's `fitView` can only zoom the whole layout uniformly, so a wide
- * sparse layout either clips or shrinks specialist text to unreadable —
- * this is a real, different node ARRANGEMENT, not a zoom-level fix). */
+ * `"horizontal"` (default, and currently the only mode in active use —
+ * CandidateDetailModal's wide drill-down): specialists in a left column,
+ * the linear chain running left-to-right. `"vertical"` (a single column —
+ * every specialist card gets its own row, then the PM/Risk/Gate/Execution
+ * chain continues stacked below) was built for the cockpit's narrow
+ * Decision Room rail; that panel has since been removed from the cockpit
+ * entirely, so this mode is currently unused but kept — it's a real,
+ * different node ARRANGEMENT for a narrow container (the horizontal
+ * layout's ~600px natural width does not degrade gracefully into one;
+ * React Flow's `fitView` can only zoom the whole layout uniformly, so a
+ * wide sparse layout in a narrow box either clips or shrinks specialist
+ * text to unreadable), not a one-off worth deleting outright if a future
+ * narrow-rail surface needs the same graph again. */
 export function buildCandidateGraph(
   detail: CandidateDetailResponse,
   candidateStages: FlowStage[],

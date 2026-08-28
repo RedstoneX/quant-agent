@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LiveQuote, PositionItem, PriceBar } from "../api/client";
-import { chartCandles, entryPriceLine, shouldShowPrevClose, tradeMarkers } from "./PriceChartPanel";
+import { LiveQuote, OrderItem, PositionItem, PriceBar, TradeItem } from "../api/client";
+import { chartCandles, entryPriceLine, positionStopLine, tradeMarkers } from "./PriceChartPanel";
 
 function position(overrides: Partial<PositionItem> = {}): PositionItem {
   return {
@@ -117,14 +117,34 @@ describe("entryPriceLine", () => {
   });
 });
 
-describe("shouldShowPrevClose", () => {
-  it("is dropped on the 1D view", () => {
-    expect(shouldShowPrevClose("1d")).toBe(false);
+describe("positionStopLine", () => {
+  const AMBER = { amber: "amber" };
+  const openOrder: OrderItem = {
+    id: "o1", symbol: "MRVL", side: "sell", qty: 10, order_type: "stop", status: "open",
+    limit_price: null, stop_price: 220, filled_qty: null, filled_avg_price: null,
+    submitted_at: "2026-08-27T13:00:00Z", filled_at: null,
+  };
+  const entryTrade: TradeItem = {
+    id: 1, symbol: "MRVL", action: "BUY", qty: 10, price: 240, reasoning: null, run_id: "run-1",
+    decision_id: null, fill_status: "filled", fill_qty: 10, fill_price: 240,
+    timestamp: "2026-08-20 13:30:00", stop_loss: 215, take_profit: null,
+  };
+
+  it("draws the resting broker stop order when one exists", () => {
+    const line = positionStopLine("MRVL", [position()], [openOrder], [entryTrade], AMBER);
+    expect(line).toEqual({ price: 220, color: "amber", title: "STOP $220.00" });
   });
 
-  it("still shows on intraday views", () => {
-    expect(shouldShowPrevClose("5m")).toBe(true);
-    expect(shouldShowPrevClose("15m")).toBe(true);
-    expect(shouldShowPrevClose("1h")).toBe(true);
+  it("falls back to the recorded entry-trade stop, labelled as recorded", () => {
+    const line = positionStopLine("MRVL", [position()], [], [entryTrade], AMBER);
+    expect(line?.price).toBe(215);
+    expect(line?.title).toBe("STOP $215.00 (recorded)");
+  });
+
+  it("returns null when the symbol is not held or no stop evidence exists", () => {
+    expect(positionStopLine("AAPL", [position()], [openOrder], [entryTrade], AMBER)).toBeNull();
+    expect(positionStopLine("MRVL", [position()], [], [], AMBER)).toBeNull();
+    expect(positionStopLine(null, [position()], [openOrder], [entryTrade], AMBER)).toBeNull();
   });
 });
+

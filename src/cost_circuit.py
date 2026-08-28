@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from src.cost_table import PRICING
+from src.cost_table import PRICING, openrouter_pricing_reservation_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -2199,7 +2199,35 @@ class LLMCostCircuitBreaker:
         rates = PRICING.get(model)
         if not rates:
             return None
-        return float(getattr(self.config, "reservation_multiplier", 1.05)) * (
+        base_multiplier = float(getattr(self.config, "reservation_multiplier", 1.05))
+        multiplier = base_multiplier
+        # Pricing-staleness SPOF fix (2026-08-28): `model` ids containing
+        # "/" are OpenRouter `vendor/model` ids -- the only ones
+        # `refresh_openrouter_pricing` ever prices (see cost_table.py's
+        # `_resolve_unknown_model`, which uses the same "/" test to route
+        # between OpenRouter and LiteLLM). When that catalog is currently
+        # being served from a stale-but-in-grace cache rather than a live
+        # fetch, widen the reservation to compensate for the pricing being
+        # a bound rather than a confirmed-current rate; a fresh or missing
+        # cache (or grace disabled) returns exactly `base_multiplier`
+        # unchanged. Never applied to a bare vendor id (Anthropic/OpenAI
+        # direct) or a `_PRICING_PINNED` id (DeepSeek) -- neither of those
+        # rates comes from the OpenRouter catalog, so its staleness says
+        # nothing about theirs.
+        if "/" in model:
+            multiplier = openrouter_pricing_reservation_multiplier(
+                base_multiplier,
+                grace_period_hours=float(
+                    getattr(self.config, "openrouter_pricing_grace_period_hours", 0.0)
+                ),
+                max_stale_multiplier=float(
+                    getattr(
+                        self.config, "openrouter_pricing_stale_multiplier_max",
+                        base_multiplier,
+                    )
+                ),
+            )
+        return multiplier * (
             input_tokens * float(rates["input"]) / 1_000_000
             + output_tokens * float(rates["output"]) / 1_000_000
         )
@@ -3428,7 +3456,25 @@ def activate_paid_call_session(
         )
     try:
         from src.cost_table import refresh_openrouter_pricing
-        pricing_ok = refresh_openrouter_pricing()
+        # Pricing-staleness SPOF fix (2026-08-28): pass the configured grace
+        # window/multiplier through explicitly so a stale-but-recent cache
+        # is used (widened, logged loudly) instead of latching this whole
+        # process the moment openrouter.ai is briefly unreachable -- see the
+        # long note above `refresh_openrouter_pricing` in src/cost_table.py.
+        pricing_ok = refresh_openrouter_pricing(
+            grace_period_hours=float(
+                getattr(
+                    app_config.llm_cost_circuit,
+                    "openrouter_pricing_grace_period_hours", 0.0,
+                )
+            ),
+            max_stale_multiplier=float(
+                getattr(
+                    app_config.llm_cost_circuit,
+                    "openrouter_pricing_stale_multiplier_max", 1.0,
+                )
+            ),
+        )
     except Exception as exc:
         breaker.mark_unavailable(
             exc,

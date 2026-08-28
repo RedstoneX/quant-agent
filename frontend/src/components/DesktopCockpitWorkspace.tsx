@@ -7,8 +7,8 @@ import { useSupportWorkspace } from "../context/SupportWorkspaceContext";
 import { useModalActions } from "../context/ModalContext";
 import { CandidateRail } from "./CandidateRail";
 import { PriceChartPanel } from "./PriceChartPanel";
-import { DecisionRoomPanel } from "./DecisionRoomPanel";
-import { LiquidityPanel } from "./LiquidityPanel";
+import { PositionHoldingStrip } from "./PositionHoldingStrip";
+import { DecisionSummaryLine } from "./DecisionSummaryLine";
 import { PositionsPanel } from "./PositionsPanel";
 import { OrdersPanel } from "./OrdersPanel";
 import { TradesPanel } from "./TradesPanel";
@@ -19,24 +19,51 @@ import { SearchPanel } from "./SearchPanel";
 import { HealthPanel } from "./HealthPanel";
 import { Pill } from "./ui/Pill";
 
+// Item 1 of the cockpit trader rework: Positions is the panel a trader
+// lands on, not one tab among several — see PositionsPane below and
+// buildDefaultLayout's placement of it as the leftmost, active-by-default
+// group.
+function PositionsPane() {
+  const state = useSupportWorkspace();
+  return (
+    <div className="h-full overflow-y-auto p-2">
+      <PositionsPanel
+        positions={state.positions}
+        error={state.positionsError}
+        loading={state.positionsLoading}
+        updatedAt={state.positionsUpdatedAt}
+        onSelectSymbol={state.onSelectPositionSymbol}
+      />
+    </div>
+  );
+}
+
 function CandidatesPane() {
   const state = useCockpitWorkspace();
   return <div className="h-full overflow-y-auto p-2"><CandidateRail funnel={state.funnel} loading={state.loading} error={state.error} updatedAt={state.updatedAt} selectedSymbol={state.chartSymbol} onSelectSymbol={state.onSelectSymbol} /></div>;
 }
 
+// Owner correction: the Decision Room panel is gone (see PR description).
+// What used to be its "position I hold" answer is now
+// PositionHoldingStrip — an inline compact strip under the chart, never a
+// popup/modal/drawer — and its "what did this run's candidate do" answer
+// is DecisionSummaryLine, a single line that renders nothing at all
+// unless there is real content. Both sit directly under the chart, in the
+// same pane, so nothing ever covers the candles.
 function ChartPane() {
   const state = useCockpitWorkspace();
-  // Read-only broker positions, sourced from the same SupportWorkspace
-  // state PositionsPane/LiquidityPane render — needed so the chart's
-  // average-entry reference line (PriceChartPanel::entryPriceLine) actually
-  // has data to draw from in the desktop Dockview workspace, not just the
-  // mobile/tablet pane.
+  // Read-only broker positions/orders/trades, sourced from the same
+  // SupportWorkspace state PositionsPane/OrdersPane render — needed so the
+  // chart's average-entry (entryPriceLine) and protective-stop
+  // (positionStopLine) reference lines actually have data to draw from in
+  // the desktop Dockview workspace, not just the mobile/iPad pane.
   const support = useSupportWorkspace();
   const { openCandidateDetail } = useModalActions();
   const candidate = state.funnel?.candidates.find((item) => item.symbol === state.chartSymbol);
+  const heldPosition = state.chartSymbol ? support.positions.find((p) => p.symbol === state.chartSymbol) : undefined;
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden p-2">
-      <Card className="mb-2 flex !bg-panel-alt !p-2.5 !ring-border">
+    <div className="flex h-full min-w-0 flex-col overflow-x-hidden overflow-y-auto p-2 gap-2">
+      <Card className="flex !bg-panel-alt !p-2.5 !ring-border">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <span className="font-bold">{state.chartSymbol || "Market"}</span>
           {candidate && <><Pill text={candidate.direction} /><Pill text={candidate.order_status || (candidate.executed ? "executed" : "not executed")} /></>}
@@ -46,28 +73,19 @@ function ChartPane() {
           )}
         </div>
       </Card>
-      <div className="min-h-0 flex-1"><PriceChartPanel symbol={state.chartSymbol} trades={state.chartTrades} positions={support.positions} /></div>
+      {heldPosition && <PositionHoldingStrip position={heldPosition} openOrders={support.openOrders} trades={support.trades} />}
+      <DecisionSummaryLine funnel={state.funnel} symbol={state.chartSymbol} />
+      <div className="min-h-[320px] flex-1">
+        <PriceChartPanel
+          symbol={state.chartSymbol}
+          trades={state.chartTrades}
+          positions={support.positions}
+          openOrders={support.openOrders}
+          positionTrades={support.trades}
+        />
+      </div>
     </div>
   );
-}
-
-function DecisionPane() {
-  const state = useCockpitWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><DecisionRoomPanel funnel={state.funnel} symbol={state.chartSymbol} loading={state.loading} error={state.error} updatedAt={state.updatedAt} /></div>;
-}
-
-// Positions and Liquidity were previously one combined pane (a vertical
-// stack of both panels inside a single Dockview tab). The owner asked for
-// them as two independently dockable panels — each can now be dragged,
-// resized, or tabbed on its own instead of always moving together.
-function PositionsPane() {
-  const state = useSupportWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><PositionsPanel positions={state.positions} error={state.positionsError} loading={state.positionsLoading} updatedAt={state.positionsUpdatedAt} onSelectSymbol={state.onSelectSymbol} /></div>;
-}
-
-function LiquidityPane() {
-  const state = useSupportWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><LiquidityPanel account={state.account} accountError={state.accountError} positions={state.positions} /></div>;
 }
 
 function OrdersPane() {
@@ -83,44 +101,62 @@ function TradesPane() {
 function RunsPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><RunsPanel runs={state.runs} error={state.runsError} loading={state.runsLoading} /></div>; }
 function BiasPane() { return <div className="h-full overflow-y-auto p-2"><DirectionalBiasPanel /></div>; }
 function MissedPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><MissedOpportunitiesPanel onSelectSymbol={state.onSelectSymbol} /></div>; }
-function SearchPane() { return <div className="h-full overflow-y-auto p-2"><SearchPanel /></div>; }
-function SystemPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><HealthPanel health={state.health} error={state.healthError} /></div>; }
+
+// Item 13 (cockpit trader rework): System and Search — named by the owner
+// as "not trading" — used to each be their own top-level tab in this
+// workspace's chart-group tab strip. Folded into one Diagnostics tab
+// instead of standing on their own; same two panels, just one click away
+// together rather than two clicks apart.
+function DiagnosticsPane() {
+  const state = useSupportWorkspace();
+  return (
+    <div className="h-full overflow-y-auto p-2 flex flex-col gap-3">
+      <HealthPanel health={state.health} error={state.healthError} />
+      <SearchPanel />
+    </div>
+  );
+}
 
 const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
+  positions: PositionsPane,
   candidates: CandidatesPane,
   chart: ChartPane,
-  decision: DecisionPane,
-  positions: PositionsPane,
-  liquidity: LiquidityPane,
   orders: OrdersPane,
   trades: TradesPane,
   runs: RunsPane,
   bias: BiasPane,
   missed: MissedPane,
-  search: SearchPane,
-  system: SystemPane,
+  diagnostics: DiagnosticsPane,
 };
 
-// Bumped v1 -> v2: splitting the combined "Positions & Liquidity" panel
-// into two separate panels (below) changes the saved layout's panel-id
-// shape, so a v1 layout persisted from localStorage would reference a
-// "positions" panel that no longer means the same thing and would never
-// resolve the new "liquidity" panel at all. A fresh key means every
-// browser simply falls back to buildDefaultLayout below instead of
-// throwing/half-rendering against a stale shape.
-const STORAGE_KEY = "qamc.dockview.cockpit.v2";
+// Bumped v3 -> v4: the Decision Room panel is removed from the workspace
+// entirely (owner correction — see PR description; its content either
+// moved inline under the chart as PositionHoldingStrip/DecisionSummaryLine
+// or already exists on the Research Desk as DecisionDeltaPanel). A v3
+// layout persisted from localStorage would still reference a "decision"
+// panel id that no longer resolves to any component. A fresh key means
+// every browser falls back to buildDefaultLayout below instead of
+// throwing/half-rendering against a stale shape. (v2 -> v3 history:
+// Positions moved from a background tab inside the chart group to its own
+// leftmost, active-by-default group; Liquidity left the workspace
+// entirely for a compact header row — item 9; System+Search merged into
+// one Diagnostics panel — item 13.)
+const STORAGE_KEY = "qamc.dockview.cockpit.v4";
 
 function buildDefaultLayout(api: DockviewApi) {
-  api.addPanel({ id: "chart", component: "chart", title: "Chart" });
-  api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "chart", direction: "left" }, initialWidth: 320 });
-  api.addPanel({ id: "positions", component: "positions", title: "Positions", position: { referencePanel: "chart", direction: "within" }, inactive: true });
-  api.addPanel({ id: "liquidity", component: "liquidity", title: "Liquidity", position: { referencePanel: "positions", direction: "within" }, inactive: true });
-  api.addPanel({ id: "missed", component: "missed", title: "Missed", position: { referencePanel: "chart", direction: "within" }, inactive: true });
-  api.addPanel({ id: "decision", component: "decision", title: "Decision Room", position: { referencePanel: "chart", direction: "right" }, initialWidth: 400 });
-  for (const [id, title] of [["orders", "Orders"], ["trades", "Trades"], ["runs", "Runs"], ["bias", "Directional Bias"], ["search", "Search"], ["system", "System"]]) {
+  // Positions leads (item 1): leftmost group, and the one made active
+  // below — the panel a trader actually lands on, not a background tab.
+  api.addPanel({ id: "positions", component: "positions", title: "Positions", initialWidth: 360 });
+  api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "positions", direction: "within" }, inactive: true });
+  api.addPanel({ id: "chart", component: "chart", title: "Chart", position: { referencePanel: "positions", direction: "right" } });
+  // Orders/Trades: still one click away on the right, not buried behind
+  // Diagnostics with the non-trading panels.
+  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "chart", direction: "right" }, initialWidth: 360 });
+  api.addPanel({ id: "trades", component: "trades", title: "Trades", position: { referencePanel: "orders", direction: "within" }, inactive: true });
+  for (const [id, title] of [["missed", "Missed"], ["runs", "Runs"], ["bias", "Directional Bias"], ["diagnostics", "Diagnostics"]]) {
     api.addPanel({ id, component: id, title, position: { referencePanel: "chart", direction: "within" }, inactive: true });
   }
-  api.getPanel("chart")?.api.setActive();
+  api.getPanel("positions")?.api.setActive();
 }
 
 export function DesktopCockpitWorkspace() {

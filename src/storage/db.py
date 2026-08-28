@@ -704,6 +704,152 @@ class Database:
                 target_pnl = pnl
         return target_pnl
 
+    def get_symbols_with_open_ledger_qty(self) -> dict[str, float]:
+        """Per-symbol net share count the `trades` ledger BELIEVES it holds.
+
+        BUY / SWEEP_BUY add executed qty; every other non-HOLD executed
+        action subtracts it — mirrors the accounting `_realized_pnl_
+        through_trade` and `compute_trade_calibration` already do,
+        collapsed to a running total per symbol instead of per-lot detail,
+        because this function only needs to know WHETHER the ledger and
+        the broker still agree, not how a mismatch would price out.
+
+        This is the ledger's own, self-contained belief — it has no idea
+        the broker did anything it was never told about. Comparing this
+        number against `AlpacaBroker.get_positions()` is exactly how the
+        2026-08-28 ONDS/CCJ gap was found: both BUY rows left this
+        function reporting 17 and 2 shares respectively long after the
+        broker's own book had gone to zero, because the protective stop
+        that closed them was never written back to `trades`.
+        `_reconcile_stop_out_fills` (src/pipeline.py) is the caller that
+        acts on a mismatch.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT symbol, action, qty, fill_qty FROM trades "
+                f"WHERE {self._executed_trade_predicate()} ORDER BY id",
+            ).fetchall()
+        net: dict[str, float] = {}
+        for row in rows:
+            action = (row["action"] or "").upper()
+            if action == "HOLD":
+                continue
+            qty = float(row["fill_qty"] if row["fill_qty"] else row["qty"] or 0)
+            if qty <= 0:
+                continue
+            sign = 1.0 if action in ("BUY", "SWEEP_BUY") else -1.0
+            symbol = row["symbol"]
+            net[symbol] = net.get(symbol, 0.0) + sign * qty
+        return net
+
+    def get_known_broker_order_ids(self, symbol: str) -> set[str]:
+        """Every `broker_order_id` already recorded in `trades` for `symbol`.
+
+        The dedup key `_reconcile_stop_out_fills` uses to tell "the broker
+        already told us about this order" apart from "this fill has never
+        touched the ledger". The reconciler re-runs every session
+        (morning / intra_check / midday / close / evening), so this set is
+        what keeps recording a stop-out an exactly-once operation no
+        matter how many passes see the same gap.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT broker_order_id FROM trades "
+                "WHERE symbol = ? AND broker_order_id IS NOT NULL",
+                (symbol,),
+            ).fetchall()
+        return {r[0] for r in rows}
+
+    def insert_stop_out_trade(
+        self, *, symbol: str, qty: float, price: float,
+        broker_order_id: str, filled_at: str | None,
+        run_id: str | None = None, action: str = "STOP_OUT",
+        reasoning: str | None = None,
+    ) -> tuple[int, bool]:
+        """Idempotently record a broker-initiated exit the ledger never saw.
+
+        2026-08-28: ONDS (17 @ 8.53, stopped 7.93 → realized -$10.20) and
+        CCJ (2 @ 107.465, stopped 102.955 → realized -$9.02) were both
+        closed by their broker-resident protective stop with NO row ever
+        written to `trades`. The stop order was placed by
+        `AlpacaBroker.place_entry_protection` / `_repair_stop_coverage` /
+        `shift_stops_down`, none of which log the ORDER ITSELF as a ledger
+        row — unlike every system-DECIDED exit (SELL / REDUCE / TRAIL_STOP
+        / SWEEP_SELL), which all call `insert_trade` at submission time and
+        get picked up by `_reconcile_fills` once terminal. This is the
+        write-back for that other class of order. There is no 'submitted'
+        phase for a row created here: by the time `_reconcile_stop_out_
+        fills` learns the order exists, the broker has already reported it
+        as terminally filled.
+
+        Idempotency: keyed on `broker_order_id`, checked and inserted
+        under the SAME lock, so no matter how many times a session's
+        reconciliation pass runs — or how many overlapping sessions
+        observe the same gap — one broker order id can only ever produce
+        ONE row. Mirrors `update_trade_fill`'s realized_pnl write, just
+        for a row that does not exist yet rather than one already
+        'submitted'.
+
+        `realized_pnl` is computed the instant the row exists, via the
+        SAME average-cost walk every other exit uses
+        (`_realized_pnl_through_trade`) — it stays NULL, not a guess, when
+        the ledger's own BUY history can't cover the exited quantity (an
+        unmatched exit; `_reconcile_stop_out_fills` flags that case rather
+        than silently accepting an unpriced row).
+
+        Returns `(row_id, created)`. `created=False` means the order was
+        already recorded — the existing row's id is returned so a caller
+        never needs a second lookup to stay idempotent-safe.
+        """
+        if not broker_order_id:
+            # Every caller constructs this from a REAL broker order dict
+            # that is only ever produced with a non-empty id (see
+            # AlpacaBroker.list_filled_sell_orders) — a falsy id here means
+            # a caller bug, not a legitimate row. Refusing loudly beats
+            # silently inserting a row the idempotency key can never find
+            # again (broker_order_id IS NULL would never match on replay,
+            # and this exit could get double-recorded on the next pass —
+            # exactly the failure mode this function exists to prevent).
+            raise ValueError(
+                "insert_stop_out_trade requires a non-empty broker_order_id "
+                "— it is the idempotency key that makes a stop-out record "
+                "exactly-once across repeated reconciliation passes"
+            )
+
+        def _do():
+            existing = self.conn.execute(
+                "SELECT id FROM trades WHERE broker_order_id = ?",
+                (broker_order_id,),
+            ).fetchone()
+            if existing is not None:
+                return existing["id"], False
+            ts = filled_at or self._sqlite_utc_timestamp(datetime.now(UTC))
+            cur = self.conn.execute(
+                "INSERT INTO trades (symbol, action, qty, price, reasoning, "
+                "run_id, broker_order_id, fill_status, fill_qty, fill_price, "
+                "fill_reconciled_at, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'filled', ?, ?, datetime('now'), ?)",
+                (
+                    symbol, action, qty, price,
+                    reasoning or (
+                        "Broker-initiated protective-stop fill — the system "
+                        "never submitted this order as a decision; written "
+                        "back by the stop-out reconciler (2026-08-28 "
+                        "ONDS/CCJ gap; see ReconciliationConfig)."
+                    ),
+                    run_id, broker_order_id, qty, price, ts,
+                ),
+            )
+            row_id = cur.lastrowid
+            realized = self._realized_pnl_through_trade(symbol, row_id)
+            self.conn.execute(
+                "UPDATE trades SET realized_pnl = ? WHERE id = ?",
+                (realized, row_id),
+            )
+            self.conn.commit()
+            return row_id, True
+        return self._locked_write(_do, label="insert_stop_out_trade")
+
     def get_unreconciled_orders(self, run_id: str | None = None) -> list[dict]:
         """Trade rows with broker_order_id set but fill_status still 'submitted'.
 
@@ -1457,9 +1603,9 @@ class Database:
         """Win rate + avg realized return on BUYs that closed in the window.
 
         Matches each BUY to the next SELL-family action (SELL, PARTIAL_SELL%,
-        EMERGENCY_SELL, FORCE_DELEVER, REDUCE, TAKE_PROFIT) for the same
-        symbol, FIFO. Open positions are excluded because their outcome isn't
-        known yet.
+        EMERGENCY_SELL, FORCE_DELEVER, REDUCE, TAKE_PROFIT, STOP_OUT, and a
+        FILLED TRAIL_STOP) for the same symbol, FIFO. Open positions are
+        excluded because their outcome isn't known yet.
 
         Bucketed by allocation size (proxy for conviction): a larger dollar
         commitment implies higher conviction when PM sized it. Lets PM see
@@ -1509,8 +1655,15 @@ class Database:
                 open_lots[sym].append({"qty": qty, "price": price, "ts": ts})
             elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
                   or act in ("EMERGENCY_SELL", "FORCE_DELEVER",
-                             "REDUCE", "TAKE_PROFIT")
+                             "REDUCE", "TAKE_PROFIT", "STOP_OUT")
                   or _is_filled_trail_stop(row, act)):
+                # STOP_OUT (added 2026-08-28, ONDS/CCJ) is written by
+                # _reconcile_stop_out_fills ONLY once the broker has already
+                # confirmed the fill — unlike TRAIL_STOP, which is written
+                # at placement and might never fire — so it needs no
+                # analogous "_is_filled_stop_out" guard: every STOP_OUT row
+                # that exists at all is, by construction, a realized exit.
+                #
                 # A FILLED TRAIL_STOP is a realized exit — the broker sold the
                 # shares. Omitting it (2026-07-16 audit) left phantom open lots
                 # for every stop-out and no close at all: LLY BUY8 → stop-filled
