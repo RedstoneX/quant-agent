@@ -467,6 +467,77 @@ class SmartMoneyConfig(BaseModel):
     min_external_avg_dollar_volume_usd: float = Field(default=10_000_000, ge=1_000_000)
     min_external_history_days: int = Field(default=20, ge=10, le=120)
 
+    # --- Routine-versus-opportunistic Form 4 classification ---------------
+    # `src/data/insider_signal.py::classify_transaction`. Evidence basis is
+    # Cohen, Malloy & Pomorski, *Decoding Inside Information* (JF 2012), via
+    # `docs/RESEARCH_FINDINGS.md` section 1. These were module-level
+    # constants during initial development; moved here 2026-08-28 per the
+    # standing rule that a threshold able to change classification output is
+    # an operator-tunable setting, not a fixed number buried in code.
+    #
+    # A routine insider trades the same issuer in the same calendar month in
+    # each of this many consecutive preceding years. This is Cohen/Malloy/
+    # Pomorski's own definition, so 3 is the literature's number, not a
+    # guess — but it is still exposed here rather than hardcoded, since a
+    # future re-derivation against QAMC's own filing history may want a
+    # different value.
+    insider_calendar_routine_years: int = Field(default=3, ge=1, le=10)
+    # Fallback cadence test for insiders who lack the full calendar-year
+    # history above (the common case on a fresh cache — see the 2026-08-28
+    # measurement note in `docs/WORK.md`, where zero of 2,188 filings matched
+    # the calendar rule because the history index was brand new). Needs at
+    # least this many prior same-direction trades before the gap statistics
+    # are trusted.
+    insider_min_cadence_trades: int = Field(default=3, ge=2, le=20)
+    # Mean gap between trades, in days, that reads as a scheduled programme
+    # rather than a one-off. 20-120 days admits a monthly-to-quarterly
+    # cadence; narrower or wider than that is either noise (too frequent to
+    # be a real event) or too sparse to call a pattern.
+    insider_cadence_min_mean_gap_days: float = Field(default=20.0, gt=0)
+    insider_cadence_max_mean_gap_days: float = Field(default=120.0, gt=0)
+    # Coefficient of variation (population stdev / mean) of the trade gaps.
+    # 0.25 admits a monthly or quarterly programme that drifts by a few days;
+    # it rejects lumpy, irregularly-spaced discretionary trading.
+    insider_cadence_max_gap_dispersion: float = Field(default=0.25, gt=0, le=2.0)
+    # A disposition smaller than this share of the insider's pre-transaction
+    # holding is diversification/liquidity noise rather than a directional
+    # view — RESEARCH_FINDINGS.md: "only sales that are also large relative
+    # to the insider's total position predict negative returns." Deliberately
+    # NOT combined with the 10b5-1 flag on its own: a large planned sale is
+    # never demoted to routine by this filter, only a proportionally small
+    # one may additionally cite the plan (see `insider_signal.py` module
+    # docstring, departure #1).
+    insider_min_material_sell_fraction: float = Field(default=0.05, ge=0.0, le=1.0)
+    # How long `data/smart_money/insider_history.json` retains a trade date
+    # before it is pruned. Must comfortably exceed the calendar-routine
+    # lookback (`insider_calendar_routine_years` years) with slack for late
+    # and amended filings — `observations.json` itself is pruned to
+    # `lookback_days`, far too short for the calendar test, which is the
+    # entire reason a separate long-horizon index exists. Default is 5
+    # years (5 * 366 days, leap-safe).
+    insider_history_retention_days: int = Field(default=5 * 366, ge=366, le=20 * 366)
+
+    @model_validator(mode="after")
+    def _insider_cadence_window_is_well_formed(self):
+        if self.insider_cadence_min_mean_gap_days >= self.insider_cadence_max_mean_gap_days:
+            raise ValueError(
+                "smart_money.insider_cadence_min_mean_gap_days must be less "
+                "than insider_cadence_max_mean_gap_days; got "
+                f"{self.insider_cadence_min_mean_gap_days} >= "
+                f"{self.insider_cadence_max_mean_gap_days}"
+            )
+        required_days = self.insider_calendar_routine_years * 366
+        if self.insider_history_retention_days < required_days:
+            raise ValueError(
+                "smart_money.insider_history_retention_days "
+                f"({self.insider_history_retention_days}) is shorter than "
+                f"insider_calendar_routine_years ({self.insider_calendar_routine_years}) "
+                f"requires (>= {required_days} days) — the calendar-routine "
+                "test would silently lose its own history before it could "
+                "ever match."
+            )
+        return self
+
 
 class ScheduleConfig(BaseModel):
     earnings_preprocess: str = "08:00"

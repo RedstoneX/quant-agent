@@ -457,9 +457,10 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   covered the moment it lands. Import is deliberately shallow — it proves a
   tool still agrees with the schemas it's built on, not that the tool works.
   2470 tests pass.
-- **Insider routine/opportunistic filter — committed, not yet merged or
-  deployed.** `f3aeba4` + `866e423` on branch `feat/insider-signal-filter`
-  (worktree `insider-filter`). New `src/data/insider_signal.py::classify_transaction`
+- **Insider routine/opportunistic filter — PR opened against `main`, not yet
+  merged or deployed.** `f3aeba4` + `866e423` (original implementation) plus
+  a 2026-08-28 finishing pass on branch `feat/insider-signal-filter`
+  (worktree `insider-filter`). `src/data/insider_signal.py::classify_transaction`
   implements the Cohen/Malloy/Pomorski (JF 2012) routine-versus-opportunistic
   test in pure Python, first-match-wins: non-open-market codes, incomplete
   amounts and zero-price rows are handled first (mostly contract guards —
@@ -475,32 +476,110 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   the existing gate only — broker/price/liquidity/history/sector gates in
   `pipeline.py` are untouched); `smart_money_analyst.md` and the analyst's
   compact payload now carry the verdict and weight dollar totals by class. New
-  `data/smart_money/insider_history.json`, pruned at 5 years, because
-  `observations.json` is pruned to the lookback window and the calendar test
-  needs years of retained history. **Deliberate departure from the folk
-  version of this filter:** a 10b5-1 checkbox alone never marks a sale
-  routine — `RESEARCH_FINDINGS.md` §1 states plainly that planned and
-  discretionary high-value sales show similar opportunism, so the flag only
-  ever supports a routine label for a sale that is already proportionally
-  small; a large planned sale stays `material_stake_sale` and its reason text
-  records that the flag was seen and not acted on. Two tests pin this.
-  Measured against the real production cache (`/home/qamc/quant-agent/data/smart_money/`,
-  2,188 parsed open-market P/S rows, 2,025 filings, 2026-08-21 to 2026-08-27):
-  **56.2% routine (1,230), 43.6% opportunistic (955), 0.1% indeterminate (3)**
-  — verifying the backlog's "over half of Form 4 trades carry zero predictive
-  power" claim, and understating it once the codes the parser already drops
-  are counted (55.3% of all 5,046 raw non-derivative + derivative rows in the
-  same cache never reach the classifier at all; combined, 955 of 5,046 raw
-  rows — 18.9% — are opportunistic open-market trades). **Caveat that must
-  travel with the 56.2% figure:** zero rows in this measurement matched the
-  calendar-month rule or the cadence fallback — the production cache holds
-  only 7 days of disclosures and `insider_history.json` did not exist before
-  this branch, so the 56.2% is driven entirely by the proportional-sale
-  rules. The calendar test, the strongest rule and the one the literature
-  actually validates, starts contributing only once the history index
-  accumulates several years of refreshes. 2,545 tests pass (2,516 on
-  `origin/main`, +29, `tests/test_insider_signal.py`). Nothing here is
-  deployed; branch work only.
+  `data/smart_money/insider_history.json`, pruned at `insider_history_retention_days`
+  (default 5 years), because `observations.json` is pruned to the lookback
+  window and the calendar test needs years of retained history.
+  **Deliberate departure from the folk version of this filter:** a 10b5-1
+  checkbox alone never marks a sale routine — `RESEARCH_FINDINGS.md` §1
+  states plainly that planned and discretionary high-value sales show
+  similar opportunism, so the flag only ever supports a routine label for a
+  sale that is already proportionally small; a large planned sale stays
+  `material_stake_sale` and its reason text records that the flag was seen
+  and not acted on. Two tests pin this.
+
+  **2026-08-28 finishing pass** (this PR) closed two gaps found on review of
+  the original commits:
+  1. **Every classification threshold was a module-level constant** —
+     `MIN_MATERIAL_SELL_FRACTION`, `CALENDAR_ROUTINE_YEARS`,
+     `MIN_CADENCE_TRADES`, the cadence gap/dispersion bounds, and
+     `HISTORY_RETENTION_DAYS` — which violates the standing rule that a
+     number able to change classification output is an operator setting,
+     not a hardcoded one. Moved to seven new fields on `SmartMoneyConfig`
+     (`src/config.py`, all prefixed `insider_`, defaults unchanged from the
+     old constants so unconfigured behavior is identical), threaded through
+     a new `InsiderSignalThresholds` dataclass into `classify_transaction`/
+     `classify_observations`, and wired end-to-end through
+     `SECForm4Provider.__init__` → `src/pipeline.py`'s construction of it →
+     `config/settings.yaml`. A config-load validator rejects a cadence
+     window with `min >= max` and a history retention shorter than the
+     calendar-routine lookback requires.
+  2. **Test gaps required by the finishing task:** every reachable
+     transaction-code path pinned with hard literals (P, S, and the `""`
+     contract-guard path directly; `SmartMoneyObservation.transaction_code`
+     is `Literal["", "P", "S"]`, so A/M/F/G/D/X cannot reach the classifier
+     at all — those six are instead pinned at the parser boundary in
+     `tests/test_smart_money.py::test_every_non_open_market_code_is_dropped_before_the_classifier`,
+     proving they never arrive); an indeterminate (unclassifiable) filing
+     confirmed KEPT through the full `fetch()` pipeline, not just at
+     `classify_transaction`; three tests proving the thresholds are
+     genuinely configurable (same input, different threshold, different
+     verdict — something a hardcoded constant could not do); and a revert
+     cross-check (`src/` reverted to `origin/main` with these tests left in
+     place) that failed 4 tests directly plus a whole-module collection
+     error on `tests/test_insider_signal.py` (36 tests that never got to
+     run) — i.e. the tests actually depend on this implementation existing.
+     `tests/test_smart_money.py` (pre-existing, untouched by the original
+     commits) continues to pass unchanged, pinning that non-routine Smart
+     Money behavior — admission, materiality, clustering — is unaffected.
+
+  **Measured against the real production cache**
+  (`/home/qamc/quant-agent/data/smart_money/observations.json`, read-only,
+  2026-08-28): **2,742 stream=insider rows within the 7-day lookback, 1,224
+  filings, 2026-08-21 to 2026-08-28 — 57.3% routine (1,572), 42.6%
+  opportunistic (1,167), 0.1% indeterminate (3).** This re-confirms the
+  original 56.2%-of-2,188 figure (measured a day earlier, 2026-08-21 to
+  2026-08-27) rather than replacing it — same order of magnitude, same
+  caveat: **zero rows matched the calendar-month or cadence rules** in
+  either measurement, because `insider_history.json` still does not exist
+  in production (this PR is not deployed). The 57.3% is still driven
+  entirely by the proportional-sell rules (`planned_small_disposition` +
+  `immaterial_stake_sale` = 1,568 of 1,572 routine rows; the remaining 4 are
+  `zero_price_transaction`) plus, this time, one previously-unmeasured
+  finding: **only 1 of the 413 buy-side (code `P`) rows was routine at all**
+  (a single `$0`-price transaction) — the routine label is concentrated
+  almost entirely on the sell side, which the admission gate never reads.
+
+  **Before/after on `SECForm4Provider.fetch()`, same real cache, same
+  `config/settings.yaml`, uncapped `max_observations` (measuring the gate,
+  not the 40-row display limit), classifier vs. a stub that force-labels
+  every row `opportunistic` (byte-for-byte what `fetch()` did before this
+  branch — the only change is the added `and verdict.label != "routine"`
+  clause):**
+  - **Admission-eligible symbols: unchanged, 43 both before and after** —
+    the sole buy-side row the classifier demotes (the `$0` transaction
+    above) was already excluded by the pre-existing materiality floor
+    regardless of its label, so on today's snapshot the narrower admission
+    gate has not yet flipped any symbol's eligibility. This will not stay
+    true forever — it holds only because no *material* buy in the current
+    7-day window happens to be routine yet, and because the calendar test
+    has no history to draw on.
+  - **Ranking impact is real and large even though admission isn't**: of
+    the 1,842 rows that clear `fetch()`'s materiality/cluster gates, 1,113
+    (60.4%) are routine and now sort last / contribute `$0` to the
+    dollar-weighted ranking sum `smart_money_analyst.py::_symbol_rank`
+    uses. **94 symbols in the fetch() output have their entire visible
+    dollar volume down-weighted to `$0`** — including one (`IHT`) whose raw
+    total was **$2.04 billion**, entirely two routine sales, that would
+    previously have dominated the ranked list ahead of every genuine
+    opportunistic signal in the universe.
+
+  **Pre-existing gap found, not fixed (out of this task's scope, flagged
+  per the stop-on-pre-existing-rot rule):** a row with
+  `transaction_value_usd is None` (e.g. `incomplete_amounts`) can never
+  survive `fetch()`'s survivors loop at all — both the individual-
+  materiality and cluster-window branches require
+  `transaction_value_usd is not None` before a row is even added to the
+  candidate set, dropping it regardless of `signal_class`. This predates
+  the classifier (`b1944cd`, "add SEC smart-money transient admissions")
+  and is a materiality-gate limitation, not a routine/opportunistic
+  classification defect — the classifier itself still returns
+  `indeterminate`, never `routine`, for this case
+  (`tests/test_insider_signal.py::test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine`
+  pins that). Worth a separate look if unpriced Form 4 rows turn out to be
+  common enough to matter.
+
+  Full suite: 2,713 tests pass (2,696 after merging current `main`, +17 net
+  new in this finishing pass). Nothing here is deployed; PR only.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -837,9 +916,15 @@ Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested h
 - #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
 - #116 shorts countable — proven a no-op on a long-only book.
 - #117 doc sync.
+- Insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above; PR number to be added once opened.
 
 #### BRANCHES READY, NO PR YET
-`feat/insider-signal-filter` (56.2% of 2,188 real Form 4 rows measured routine), `feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
+`feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
+
+`feat/insider-signal-filter` moved to "OPEN PRs" above (2026-08-28): finished
+(thresholds moved to config, per-code and fail-closed tests added) and PR
+opened against `main` — 57.3% of 2,742 real Form 4 rows measured routine,
+consistent with the earlier 56.2%-of-2,188 figure.
 
 #### DECISIONS RATIFIED 2026-08-28
 - Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.

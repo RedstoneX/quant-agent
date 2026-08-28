@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from src.data.insider_signal import (
     InsiderHistory,
     InsiderPriorTrade,
+    InsiderSignalThresholds,
     classify_observations,
     classify_transaction,
 )
@@ -207,12 +208,46 @@ def test_small_planned_sale_names_the_10b5_1_plan_in_its_reason():
     assert "10b5-1" in verdict.detail
 
 
-def test_non_open_market_code_is_routine():
-    """Awards, option exercises and tax withholding carry no direction."""
+# --- every SEC Form 4 transaction code, pinned individually --------------
+#
+# ``SmartMoneyObservation.transaction_code`` is itself typed
+# ``Literal["", "P", "S"]`` (`src/models.py`) — a row carrying any other SEC
+# code cannot be constructed at all, because ``SECForm4Provider._parse_
+# submission`` filters ``transactionCode not in {"P", "S"}`` before a
+# ``SmartMoneyObservation`` is ever built (see ``tests/test_smart_money.py``,
+# which pins the parser boundary for codes A/M/F/G/D/X — the grant/award,
+# option-exercise, tax-withholding, gift and issuer-disposition codes never
+# reach this module). What *this* module can be asked to classify is P, S,
+# or the empty string a defensive caller might pass; ``non_open_market_code``
+# is a contract guard for that last case, not a live filter on real SEC
+# codes. Each of the three is pinned below with a hard literal.
+def test_code_empty_is_routine_via_the_contract_guard():
     verdict = classify_transaction(_row(code="", direction="buy"), InsiderHistory())
-
     assert verdict.label == "routine"
     assert verdict.reason == "non_open_market_code"
+    assert verdict.weight == 0.0
+
+
+def test_code_p_open_market_purchase_is_opportunistic():
+    """Pinned separately from ``test_discretionary_officer_purchase_is_
+    opportunistic`` so every code in the reference list above has its own
+    literal-asserted test, P included."""
+    verdict = classify_transaction(_row(code="P", direction="buy"), InsiderHistory())
+    assert verdict.label == "opportunistic"
+    assert verdict.reason == "opportunistic_purchase"
+    assert verdict.weight == 1.0
+
+
+def test_code_s_open_market_sale_is_opportunistic_when_material():
+    """Pinned separately from ``test_sale_large_relative_to_the_holding_is_
+    opportunistic`` for the same reason — code S gets its own literal test."""
+    verdict = classify_transaction(
+        _row(code="S", direction="sell", shares=40_000.0, post_shares=10_000.0),
+        InsiderHistory(),
+    )
+    assert verdict.label == "opportunistic"
+    assert verdict.reason == "material_stake_sale"
+    assert verdict.weight == 1.0
 
 
 def test_zero_price_transaction_is_routine():
@@ -442,3 +477,126 @@ def test_history_index_is_append_only_across_refreshes(tmp_path):
     assert json.loads(provider.history_path.read_text()) == {
         "1|NVDA": ["2024-08-03|buy", "2025-08-14|buy"],
     }
+
+
+# --- fail closed: an unclassifiable filing is kept, never dropped ---------
+#
+# The owner's rule: a filing the classifier cannot place (missing data, an
+# unrecognised stream, ...) comes back ``indeterminate``, never ``routine``
+# — losing a real signal is worse than keeping noise. This section checks
+# that guarantee survives the full ``SECForm4Provider.fetch`` pipeline, not
+# just ``classify_transaction`` in isolation: an indeterminate row must
+# still clear materiality/cluster gating and appear in the returned
+# observations exactly like an opportunistic one would.
+
+def test_indeterminate_filing_is_kept_by_fetch_not_dropped(tmp_path):
+    """A sale with no reported post-transaction holding cannot be sized
+    against the insider's position (``unknown_holding``), so the classifier
+    returns ``indeterminate`` rather than guessing. Fail-closed means this
+    row must still reach the operator — it is materially large enough to
+    matter and nothing else about it is invalid."""
+    provider = _provider(tmp_path, min_transaction_value_usd=100_000)
+    unclassifiable = _row(
+        symbol="NVDA", direction="sell", shares=2_000.0, price=100.0,
+        post_shares=None, transaction_date=date.today(),
+    )
+    _cached(provider, [unclassifiable])
+
+    observations, error = provider.fetch(["NVDA"])
+
+    assert error is None
+    assert len(observations) == 1  # kept, not dropped
+    assert observations[0].signal_class == "indeterminate"
+    assert observations[0].signal_class_reason == "unknown_holding"
+    assert observations[0].signal_weight == 0.5
+
+
+def test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine():
+    """Same guarantee, different unclassifiable cause: shares/value missing
+    entirely (``incomplete_amounts``) rather than just the post-transaction
+    holding.
+
+    Note on scope: a row with ``transaction_value_usd is None`` can never
+    reach ``SECForm4Provider.fetch()``'s returned observations at all —
+    the survivors loop (both the individual-materiality and the cluster
+    path) requires ``transaction_value_usd is not None`` before a row is
+    even added to the candidate window, so a value-unknown row is dropped
+    there regardless of its signal_class. That gate is a materiality filter
+    inherited unchanged from `b1944cd` (pre-dates this branch and
+    routine/opportunistic classification entirely), not something this
+    classifier introduced or can fail-closed around — you cannot assess
+    dollar materiality for a transaction of unknown dollar value. It is
+    flagged in the PR description as a separate, pre-existing gap rather
+    than fixed here. What this test pins is the part that *is* this
+    classifier's contract: at the classification layer itself, missing
+    amounts produce ``indeterminate``, never ``routine`` — so nothing
+    silently zeroes this row's weight or reason before the materiality gate
+    even gets a chance to run.
+    """
+    verdict = classify_transaction(_row(shares=None, price=None), InsiderHistory())
+
+    assert verdict.label == "indeterminate"
+    assert verdict.reason == "incomplete_amounts"
+    assert verdict.weight == 0.5
+
+
+# --- configurable thresholds: no hardcoded constants -----------------------
+#
+# Every number the classifier compares against is an ``InsiderSignalThresholds``
+# field, not a module constant — these tests change the thresholds and check
+# the verdict actually moves, which a hardcoded number could not do.
+
+def test_custom_sell_fraction_threshold_changes_the_verdict():
+    """The same 3% sale is routine noise under the 5% default but material
+    (opportunistic) under a stricter 1% threshold — proving the boundary is
+    read from ``thresholds``, not compiled into the function."""
+    row = _row(direction="sell", shares=3_000.0, post_shares=97_000.0)
+
+    default_verdict = classify_transaction(row, InsiderHistory())
+    assert default_verdict.label == "routine"
+    assert default_verdict.reason == "immaterial_stake_sale"
+
+    strict_verdict = classify_transaction(
+        row, InsiderHistory(),
+        InsiderSignalThresholds(min_material_sell_fraction=0.01),
+    )
+    assert strict_verdict.label == "opportunistic"
+    assert strict_verdict.reason == "material_stake_sale"
+
+
+def test_custom_calendar_routine_years_changes_the_verdict():
+    """One year of matching history is not routine under the literature's
+    3-year default, but is routine under a 1-year threshold."""
+    history = _history(days=[date(2025, 8, 14)])
+    row = _row(transaction_date=date(2026, 8, 20))
+
+    default_verdict = classify_transaction(row, history)
+    assert default_verdict.label == "opportunistic"
+
+    lenient_verdict = classify_transaction(
+        row, history, InsiderSignalThresholds(calendar_routine_years=1),
+    )
+    assert lenient_verdict.label == "routine"
+    assert lenient_verdict.reason == "calendar_routine"
+
+
+def test_provider_threading_a_custom_sell_fraction_reaches_fetch(tmp_path):
+    """The same configurability, exercised end-to-end through the provider
+    constructor kwargs that ``src/pipeline.py`` wires from
+    ``config.smart_money.insider_min_material_sell_fraction``."""
+    lenient = _provider(
+        tmp_path, min_transaction_value_usd=10_000,
+        insider_min_material_sell_fraction=0.01,
+    )
+    row = _row(
+        symbol="NVDA", direction="sell", shares=3_000.0, price=100.0,
+        post_shares=97_000.0, transaction_date=date.today(),
+    )
+    _cached(lenient, [row])
+    observations, _ = lenient.fetch(["NVDA"])
+    assert [obs.signal_class for obs in observations] == ["opportunistic"]
+
+    strict = _provider(tmp_path / "strict", min_transaction_value_usd=10_000)
+    _cached(strict, [row])
+    observations, _ = strict.fetch(["NVDA"])
+    assert [obs.signal_class for obs in observations] == ["routine"]

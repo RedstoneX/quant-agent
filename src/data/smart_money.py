@@ -25,6 +25,7 @@ import requests
 from src.data.insider_signal import (
     InsiderHistory,
     InsiderPriorTrade,
+    InsiderSignalThresholds,
     classify_transaction,
 )
 from src.models import SmartMoneyObservation
@@ -32,9 +33,14 @@ from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
 
-# Five years covers the three preceding years the calendar-month routine test
-# needs, with slack for late and amended filings.
-HISTORY_RETENTION_DAYS = 5 * 366
+# Fallback if the provider is constructed without an explicit
+# ``insider_history_retention_days`` (every production call site passes one
+# from ``config.smart_money.insider_history_retention_days`` — see
+# ``src/pipeline.py``). Five years covers the three preceding years the
+# default calendar-month routine test needs, with slack for late and
+# amended filings; kept in sync with ``SmartMoneyConfig``'s own default in
+# ``src/config.py``.
+_DEFAULT_HISTORY_RETENTION_DAYS = 5 * 366
 
 
 def _history_entry_date(entry: str) -> date | None:
@@ -131,6 +137,19 @@ class SECForm4Provider:
         refresh_deadline_s: float = 180,
         max_filings_per_refresh: int = 1000,
         session: requests.Session | None = None,
+        # Routine-versus-opportunistic classification thresholds
+        # (`src/data/insider_signal.py`). Defaults mirror
+        # `InsiderSignalThresholds`'s own defaults; production wiring
+        # (`src/pipeline.py`) passes every one of these explicitly from
+        # `config.smart_money.insider_*`, so a settings.yaml edit reaches
+        # the classifier without a code change.
+        insider_calendar_routine_years: int = 3,
+        insider_min_cadence_trades: int = 3,
+        insider_cadence_min_mean_gap_days: float = 20.0,
+        insider_cadence_max_mean_gap_days: float = 120.0,
+        insider_cadence_max_gap_dispersion: float = 0.25,
+        insider_min_material_sell_fraction: float = 0.05,
+        insider_history_retention_days: int = _DEFAULT_HISTORY_RETENTION_DAYS,
     ):
         self.data_dir = Path(data_dir)
         self.raw_dir = self.data_dir / "filings"
@@ -163,6 +182,15 @@ class SECForm4Provider:
         self.max_filings_per_refresh = max(1, int(max_filings_per_refresh))
         self.session = session or requests.Session()
         self._cache_lock = threading.Lock()
+        self.history_retention_days = max(1, int(insider_history_retention_days))
+        self._signal_thresholds = InsiderSignalThresholds(
+            calendar_routine_years=max(1, int(insider_calendar_routine_years)),
+            min_cadence_trades=max(2, int(insider_min_cadence_trades)),
+            cadence_min_mean_gap_days=max(0.0, float(insider_cadence_min_mean_gap_days)),
+            cadence_max_mean_gap_days=max(0.0, float(insider_cadence_max_mean_gap_days)),
+            cadence_max_gap_dispersion=max(0.0, float(insider_cadence_max_gap_dispersion)),
+            min_material_sell_fraction=max(0.0, float(insider_min_material_sell_fraction)),
+        )
 
     def _load_json(self, path: Path, fallback):
         try:
@@ -217,7 +245,7 @@ class SECForm4Provider:
             except ValueError:
                 continue
             merged.setdefault(f"{actor_cik}|{symbol}", set()).add(f"{day}|{direction}")
-        cutoff = et_today() - timedelta(days=HISTORY_RETENTION_DAYS)
+        cutoff = et_today() - timedelta(days=self.history_retention_days)
         pruned: dict[str, list[str]] = {}
         for key, values in merged.items():
             kept = sorted(
@@ -676,7 +704,7 @@ class SECForm4Provider:
                 continue
             if item.stream != "insider" or item.disclosure_age_days > self.lookback_days:
                 continue
-            verdict = classify_transaction(item, history)
+            verdict = classify_transaction(item, history, self._signal_thresholds)
             item = item.model_copy(update={
                 "signal_class": verdict.label,
                 "signal_class_reason": verdict.reason,

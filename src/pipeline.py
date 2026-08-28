@@ -412,6 +412,13 @@ class TradingPipeline:
             ),
             cluster_window_days=config.smart_money.cluster_window_days,
             min_cluster_owners=config.smart_money.min_cluster_owners,
+            insider_calendar_routine_years=config.smart_money.insider_calendar_routine_years,
+            insider_min_cadence_trades=config.smart_money.insider_min_cadence_trades,
+            insider_cadence_min_mean_gap_days=config.smart_money.insider_cadence_min_mean_gap_days,
+            insider_cadence_max_mean_gap_days=config.smart_money.insider_cadence_max_mean_gap_days,
+            insider_cadence_max_gap_dispersion=config.smart_money.insider_cadence_max_gap_dispersion,
+            insider_min_material_sell_fraction=config.smart_money.insider_min_material_sell_fraction,
+            insider_history_retention_days=config.smart_money.insider_history_retention_days,
         )
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),

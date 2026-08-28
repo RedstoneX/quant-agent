@@ -29,6 +29,20 @@ taken from ``RESEARCH_FINDINGS.md`` rather than from intuition:
    predict negative returns."
 
 The classifier is pure Python, deterministic, and makes no model call.
+
+Every numeric threshold below (materiality fraction, calendar-routine years,
+cadence window) is an operator-tunable setting, not a fixed number in this
+file — the owner rejects hardcoded thresholds on sight, and a threshold able
+to change classification output is exactly the kind of number that belongs
+in config. Defaults live on `SmartMoneyConfig` in `src/config.py` (fields
+prefixed `insider_`) and arrive here as an `InsiderSignalThresholds`,
+constructed once by the caller (`SECForm4Provider.__init__`) from the loaded
+`AppConfig`, mirroring how `SECForm4Provider` already receives every other
+smart-money threshold as an explicit constructor argument rather than
+reading config itself. Passing `thresholds=None` (the default, and every
+call site in this module's own tests) falls back to
+`InsiderSignalThresholds()`, whose field defaults equal the values this
+module used before 2026-08-28 — so unconfigured behaviour is unchanged.
 """
 from __future__ import annotations
 
@@ -36,24 +50,6 @@ import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-
-# A disposition smaller than this share of the insider's pre-transaction
-# holding is diversification/liquidity noise rather than a directional view.
-MIN_MATERIAL_SELL_FRACTION = 0.05
-
-# Cohen/Malloy/Pomorski define a routine insider as one who traded in the same
-# calendar month in each of the three preceding years.
-CALENDAR_ROUTINE_YEARS = 3
-
-# Fallback cadence test, used when three years of history are not on hand.
-# Deliberately narrower than the calendar test: it needs at least this many
-# prior trades whose spacing is close to uniform.
-MIN_CADENCE_TRADES = 3
-CADENCE_MIN_MEAN_GAP_DAYS = 20.0
-CADENCE_MAX_MEAN_GAP_DAYS = 120.0
-# Coefficient of variation of the gaps. 0.25 admits a monthly or quarterly
-# programme that drifts by a few days; it rejects lumpy discretionary trading.
-CADENCE_MAX_GAP_DISPERSION = 0.25
 
 OPPORTUNISTIC = "opportunistic"
 ROUTINE = "routine"
@@ -64,6 +60,30 @@ _WEIGHTS = {OPPORTUNISTIC: 1.0, INDETERMINATE: 0.5, ROUTINE: 0.0}
 # Roles that carry published signal. CFO purchases beat CEO purchases; a
 # reporting owner with no officer/director/10% standing is a weaker source.
 _INSIDE_ROLE_MARKERS = ("officer", "director", "tenpercentowner")
+
+
+@dataclass(frozen=True)
+class InsiderSignalThresholds:
+    """The classifier's operator-tunable numbers, in one place.
+
+    Field defaults are the values this module hardcoded before 2026-08-28;
+    changing behaviour now requires an explicit `SmartMoneyConfig` override
+    (`config/settings.yaml` -> `smart_money.insider_*`), not a code edit. See
+    the corresponding fields on `SmartMoneyConfig` in `src/config.py` for the
+    evidence basis behind each default — kept in sync by
+    `SECForm4Provider.__init__`, the only production call site that builds
+    one of these from loaded config.
+    """
+
+    calendar_routine_years: int = 3
+    min_cadence_trades: int = 3
+    cadence_min_mean_gap_days: float = 20.0
+    cadence_max_mean_gap_days: float = 120.0
+    cadence_max_gap_dispersion: float = 0.25
+    min_material_sell_fraction: float = 0.05
+
+
+_DEFAULT_THRESHOLDS = InsiderSignalThresholds()
 
 
 @dataclass(frozen=True)
@@ -168,12 +188,14 @@ def _has_inside_role(roles) -> bool:
 
 
 def _calendar_routine_years(
-    prior: Sequence[InsiderPriorTrade], transaction_date: date,
+    prior: Sequence[InsiderPriorTrade],
+    transaction_date: date,
+    thresholds: InsiderSignalThresholds,
 ) -> int:
     """Consecutive preceding years with a trade in the same calendar month."""
     months = {(trade.transaction_date.year, trade.transaction_date.month) for trade in prior}
     streak = 0
-    for offset in range(1, CALENDAR_ROUTINE_YEARS + 1):
+    for offset in range(1, thresholds.calendar_routine_years + 1):
         if (transaction_date.year - offset, transaction_date.month) not in months:
             break
         streak += 1
@@ -181,18 +203,20 @@ def _calendar_routine_years(
 
 
 def _cadence_gap_stats(
-    prior: Sequence[InsiderPriorTrade], transaction_date: date,
+    prior: Sequence[InsiderPriorTrade],
+    transaction_date: date,
+    thresholds: InsiderSignalThresholds,
 ) -> tuple[float, float] | None:
     """Mean gap and coefficient of variation across the trade series."""
     dates = sorted({trade.transaction_date for trade in prior} | {transaction_date})
-    if len(dates) < MIN_CADENCE_TRADES + 1:
+    if len(dates) < thresholds.min_cadence_trades + 1:
         return None
     gaps = [
         float((later - earlier).days)
         for earlier, later in zip(dates, dates[1:])
         if (later - earlier).days > 0
     ]
-    if len(gaps) < MIN_CADENCE_TRADES:
+    if len(gaps) < thresholds.min_cadence_trades:
         return None
     mean_gap = statistics.fmean(gaps)
     if mean_gap <= 0:
@@ -204,12 +228,18 @@ def _cadence_gap_stats(
 def classify_transaction(
     observation,
     history: InsiderHistory | None = None,
+    thresholds: InsiderSignalThresholds | None = None,
 ) -> InsiderSignalClass:
     """Label one Form 4 row routine or opportunistic, with the reason.
 
     Rules are evaluated in precedence order and the first match wins, so the
     reason on the result is always the single rule that decided it.
+
+    ``thresholds`` carries every operator-tunable number this classifier
+    uses; ``None`` (the default) falls back to ``InsiderSignalThresholds()``,
+    whose field defaults are this module's pre-2026-08-28 hardcoded values.
     """
+    thresholds = thresholds or _DEFAULT_THRESHOLDS
     if str(getattr(observation, "stream", "") or "") != "insider":
         return InsiderSignalClass.of(
             INDETERMINATE, "not_form4",
@@ -252,20 +282,22 @@ def classify_transaction(
         )
 
     if prior and isinstance(transaction_date, date):
-        streak = _calendar_routine_years(prior, transaction_date)
-        if streak >= CALENDAR_ROUTINE_YEARS:
+        streak = _calendar_routine_years(prior, transaction_date, thresholds)
+        if streak >= thresholds.calendar_routine_years:
             return InsiderSignalClass.of(
                 ROUTINE, "calendar_routine",
                 f"Same insider traded {symbol} in {transaction_date:%B} in each "
                 f"of the {streak} preceding years — a routine trader under "
                 "Cohen/Malloy/Pomorski, which carries no predictive power.",
             )
-        stats = _cadence_gap_stats(prior, transaction_date)
+        stats = _cadence_gap_stats(prior, transaction_date, thresholds)
         if stats is not None:
             mean_gap, dispersion = stats
             if (
-                CADENCE_MIN_MEAN_GAP_DAYS <= mean_gap <= CADENCE_MAX_MEAN_GAP_DAYS
-                and dispersion <= CADENCE_MAX_GAP_DISPERSION
+                thresholds.cadence_min_mean_gap_days
+                <= mean_gap
+                <= thresholds.cadence_max_mean_gap_days
+                and dispersion <= thresholds.cadence_max_gap_dispersion
             ):
                 return InsiderSignalClass.of(
                     ROUTINE, "recurring_cadence",
@@ -283,7 +315,7 @@ def classify_transaction(
                 "Post-transaction holding is missing, so the sale cannot be "
                 "sized against the insider's position.",
             )
-        if fraction < MIN_MATERIAL_SELL_FRACTION:
+        if fraction < thresholds.min_material_sell_fraction:
             if is_10b5_1:
                 return InsiderSignalClass.of(
                     ROUTINE, "planned_small_disposition",
@@ -319,18 +351,24 @@ def classify_transaction(
     )
 
 
-def classify_observations(observations, history: InsiderHistory | None = None) -> list:
+def classify_observations(
+    observations,
+    history: InsiderHistory | None = None,
+    thresholds: InsiderSignalThresholds | None = None,
+) -> list:
     """Return copies of ``observations`` carrying their classification.
 
     ``history`` defaults to an index built from the observations themselves,
     which is enough for the cadence test inside one cache window but not for
     the three-year calendar test — pass the long-horizon index for that.
+    ``thresholds`` defaults to ``InsiderSignalThresholds()``; see
+    ``classify_transaction``.
     """
     rows = list(observations or [])
     index = history if history is not None else InsiderHistory.from_observations(rows)
     classified = []
     for row in rows:
-        verdict = classify_transaction(row, index)
+        verdict = classify_transaction(row, index, thresholds)
         classified.append(row.model_copy(update={
             "signal_class": verdict.label,
             "signal_class_reason": verdict.reason,

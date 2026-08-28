@@ -253,6 +253,70 @@ def test_smart_money_sec_limits_fail_closed():
         SmartMoneyConfig(max_external_candidates=0)
 
 
+def test_smart_money_insider_thresholds_default_to_pre_config_values():
+    """These fields replaced module-level constants in
+    `src/data/insider_signal.py` on 2026-08-28 (the owner rejects hardcoded
+    classification thresholds on sight — every one must be an operator
+    setting with a default here). The defaults must equal the values that
+    module hardcoded before the change, or unconfigured behavior changes
+    silently."""
+    from src.config import SmartMoneyConfig
+
+    config = SmartMoneyConfig()
+    assert config.insider_calendar_routine_years == 3
+    assert config.insider_min_cadence_trades == 3
+    assert config.insider_cadence_min_mean_gap_days == 20.0
+    assert config.insider_cadence_max_mean_gap_days == 120.0
+    assert config.insider_cadence_max_gap_dispersion == 0.25
+    assert config.insider_min_material_sell_fraction == 0.05
+    assert config.insider_history_retention_days == 5 * 366
+
+
+def test_smart_money_insider_thresholds_are_operator_overridable():
+    """A settings.yaml edit must reach the classifier without a code
+    change — the whole point of moving these out of insider_signal.py."""
+    from src.config import SmartMoneyConfig
+
+    config = SmartMoneyConfig(
+        insider_calendar_routine_years=2,
+        insider_min_cadence_trades=4,
+        insider_cadence_min_mean_gap_days=25.0,
+        insider_cadence_max_mean_gap_days=100.0,
+        insider_cadence_max_gap_dispersion=0.15,
+        insider_min_material_sell_fraction=0.10,
+        insider_history_retention_days=1000,
+    )
+    assert config.insider_calendar_routine_years == 2
+    assert config.insider_min_material_sell_fraction == 0.10
+    assert config.insider_history_retention_days == 1000
+
+
+def test_smart_money_insider_cadence_window_must_be_well_formed():
+    from pydantic import ValidationError
+    from src.config import SmartMoneyConfig
+
+    with pytest.raises(ValidationError):
+        SmartMoneyConfig(
+            insider_cadence_min_mean_gap_days=120.0,
+            insider_cadence_max_mean_gap_days=20.0,
+        )
+
+
+def test_smart_money_insider_history_retention_must_cover_the_calendar_years():
+    """A retention window shorter than the calendar-routine lookback would
+    silently prune the very history the calendar test depends on before it
+    could ever match — fail at config load, not with a quietly-worse
+    classifier months later."""
+    from pydantic import ValidationError
+    from src.config import SmartMoneyConfig
+
+    with pytest.raises(ValidationError):
+        SmartMoneyConfig(
+            insider_calendar_routine_years=5,
+            insider_history_retention_days=400,
+        )
+
+
 def test_llm_config_get_max_tokens_respects_per_agent_override():
     """When a per-agent override is set, it takes precedence over the global."""
     from src.config import LLMConfig
