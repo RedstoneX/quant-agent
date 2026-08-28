@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from src.config import AppConfig, RiskConfig
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroDataProvider
-from src.data.news import NewsDataProvider
+from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
@@ -461,7 +461,21 @@ class TradingPipeline:
                 self.cost_circuit = LLMCostCircuitBreaker(
                     self._storage_db_path, config.llm_cost_circuit,
                 )
-                openrouter_pricing_ok = refresh_openrouter_pricing()
+                # Pricing-staleness SPOF fix (2026-08-28): pass the
+                # configured grace window/multiplier through so a stale-
+                # but-recent cache is used (widened, logged loudly) instead
+                # of latching the whole desk the moment openrouter.ai is
+                # briefly unreachable past the cache's 24h freshness mark --
+                # see the long note above refresh_openrouter_pricing in
+                # src/cost_table.py.
+                openrouter_pricing_ok = refresh_openrouter_pricing(
+                    grace_period_hours=(
+                        config.llm_cost_circuit.openrouter_pricing_grace_period_hours
+                    ),
+                    max_stale_multiplier=(
+                        config.llm_cost_circuit.openrouter_pricing_stale_multiplier_max
+                    ),
+                )
                 if not openrouter_pricing_ok:
                     self.cost_circuit.mark_unavailable(
                         RuntimeError(
@@ -2652,6 +2666,292 @@ class TradingPipeline:
             logger.info("orphan-sweep: resolved %d pending_submit row(s)", resolved)
         return resolved
 
+    @staticmethod
+    def _parse_broker_fill_timestamp(filled_at: str | None) -> str | None:
+        """Convert a broker `filled_at` ISO-8601 string to the naive-UTC
+        `trades.timestamp` format (`Database._sqlite_utc_timestamp`).
+
+        Backdating a stop-out row to when it ACTUALLY filled (rather than
+        to whenever this reconciler happened to notice) is what makes
+        `compute_trade_calibration`'s hold-days and win/loss dating, and
+        `_build_post_exit_reality`'s window filtering, measure the real
+        exit instead of the detection lag. This is safe to do: the FIFO
+        cost-basis walk in `_realized_pnl_through_trade` orders by `id`,
+        not `timestamp`, so backdating this column can never corrupt a
+        realized_pnl computation — id order already reflects insertion
+        order, which is always AFTER every row it needs to net against.
+
+        Returns None (→ `insert_stop_out_trade` falls back to "now") when
+        the broker didn't report a fill time or the string doesn't parse —
+        never raises, never guesses a fake time.
+        """
+        if not filled_at:
+            return None
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(filled_at)
+        except (TypeError, ValueError):
+            return None
+        return Database._sqlite_utc_timestamp(dt)
+
+    def _flag_stop_out_anomaly(
+        self, *, run_id: str | None, symbol: str, outcome: str, detail: str,
+        **extra,
+    ) -> None:
+        """Write a `specialist_evidence` flag for a stop-out reconciliation
+        anomaly — mirrors `_reconcile_fills`'s `_record_broker_event` shape
+        so ops tooling that already reads `kind='pipeline_event'` rows sees
+        this the same way. Always ALSO logged at ERROR: the whole point of
+        "fail loud" is that this must not depend on anyone going looking in
+        the evidence table (2026-08-28 ONDS/CCJ sat silent for a full
+        trading day before anyone noticed realized_pnl was NULL)."""
+        import json
+        logger.error("stop-out reconcile: %s %s — %s", symbol, outcome, detail)
+        if not run_id:
+            return
+        try:
+            payload = {
+                "stage": "reconciliation", "outcome": outcome,
+                "reason": "stop_out_reconciler", "detail": detail, **extra,
+            }
+            self.db.insert_specialist_evidence(
+                run_id=run_id, agent_name="pipeline", kind="pipeline_event",
+                scope="symbol", symbol=symbol,
+                evidence_json=json.dumps(payload, sort_keys=True, default=str),
+            )
+        except Exception as exc:  # noqa: BLE001 — evidence is never trading authority
+            logger.warning("stop-out reconcile: flag write failed: %s", exc)
+
+    def _reconcile_stop_out_fills(self, run_id: str | None = None) -> list[dict]:
+        """Write back exits the broker made unilaterally that the ledger
+        never heard about — closing the 2026-08-28 ONDS/CCJ accounting gap.
+
+        WHAT HAPPENED: ONDS (17 sh @ 8.53, bought 2026-08-27) and CCJ (2 sh
+        @ 107.465, bought 2026-08-27) were both closed by their broker-
+        resident GTC protective stop-limit order on 2026-08-28 — ONDS at
+        7.93 (realized -$10.20), CCJ at 102.955 (realized -$9.02). The
+        `positions` table (synced directly from `AlpacaBroker.get_positions`
+        every session — see `Database.sync_positions`) correctly went to
+        zero for both. The `trades` table did not: no SELL/exit row was
+        ever written, and the original BUY rows sat forever at
+        `realized_pnl IS NULL`. Across the whole ledger, `realized_pnl` was
+        set on exactly 4 of 36 trades — every one an exit the system itself
+        had submitted (SELL / REDUCE / TRAIL_STOP / SWEEP_SELL all call
+        `insert_trade` at submission time, and `_reconcile_fills` /
+        `update_trade_fill` fill in `realized_pnl` once the broker confirms
+        the fill). A protective stop is different: `place_entry_protection`,
+        `_repair_stop_coverage`, and `shift_stops_down` all place a REAL
+        order at the broker, but none of them ever write that order into
+        `trades` — there was no row for `_reconcile_fills` to find, so a
+        stop-out was invisible to the ledger by construction, not by bug in
+        the reconciliation LOOP itself.
+
+        Why this matters more than a bookkeeping nit: every exit the ledger
+        DOES record is one the system chose; every exit it misses is one
+        the market forced. Those are not a random sample of trades — a
+        protective stop only fires on a LOSS. Silently dropping stop-outs
+        biases every realized-P&L figure upward and starves
+        `compute_trade_calibration` / the position reviewer / Phase 7
+        measurement of exactly the outcomes most worth learning from.
+
+        HOW THIS DETECTS IT (broker-truth diff, not a stop-order allowlist):
+        compare what the ledger BELIEVES it holds per symbol
+        (`Database.get_symbols_with_open_ledger_qty` — BUY/SWEEP_BUY minus
+        every other executed exit) against what the broker ACTUALLY shows
+        (`AlpacaBroker.get_positions`). Whenever the ledger claims more
+        shares than the broker has, something closed part or all of that
+        position without telling the ledger. For each such symbol, ask the
+        broker directly for filled SELL orders since the reconciliation
+        lookback window (`ReconciliationConfig.stop_out_lookback_days`) and
+        record any whose broker_order_id the ledger has never seen — this
+        catches the ORIGINAL entry-protection stop, a coverage-repair
+        replacement, an ex-dividend-shifted stop, or any other broker-side
+        SELL this process placed but never logged, without needing to
+        enumerate every code path that can place one.
+
+        Scoped to LONGS only (a positive ledger/broker qty gap): a short's
+        protective stop is a BUY-to-cover, which is deliberately deferred —
+        no order path in this repo can open a short's exit position yet
+        that this reconciler would need to untangle from a BUY-to-cover
+        stop (see shorts-safe's staged rollout). Flagged, not silently
+        skipped, if a short ever does show a mismatch (see below).
+
+        Idempotent by construction: `Database.insert_stop_out_trade` keys
+        on `broker_order_id` under the same lock as the check, so however
+        many of the 5 session entry points (morning / intra_check / midday
+        / close / evening) run this, and however many times each does, a
+        given stop-out fill is written exactly once.
+
+        FAIL LOUD, NEVER GUESS: when a gap is found but the broker's own
+        order history doesn't explain it (query failure, or genuinely no
+        matching filled SELL inside the lookback window), this does NOT
+        invent a price or silently move on — it logs at ERROR and writes a
+        `specialist_evidence` flag an operator can find. Same discipline
+        for a recorded stop-out whose `realized_pnl` comes back NULL
+        because the ledger's own BUY history can't cover the exited
+        quantity (`_realized_pnl_through_trade` already refuses to guess
+        there) — the row is still written (never dropped), just flagged.
+
+        Returns a list of `{symbol, ledger_qty, broker_qty, matched,
+        recorded}` dicts describing what this pass found, for the caller /
+        tests to inspect. Every branch is defensive: a broker or DB failure
+        on one symbol is logged and skipped, never aborts the pass for the
+        rest of the book.
+        """
+        reco_cfg = getattr(getattr(self, "config", None), "reconciliation", None)
+        if reco_cfg is None:
+            # No config attached (unit-test pipelines built via
+            # TradingPipeline.__new__, or a settings.yaml genuinely missing
+            # the section before ReconciliationConfig's default_factory
+            # applies) — mirrors _force_delever's same defensive bail.
+            return []
+        lookback_days = reco_cfg.stop_out_lookback_days
+
+        try:
+            ledger_qty = self.db.get_symbols_with_open_ledger_qty()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stop-out reconcile: ledger qty lookup failed: %s", exc)
+            return []
+        if not ledger_qty:
+            return []
+
+        try:
+            broker_positions = self.broker.get_positions()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stop-out reconcile: broker positions lookup failed: %s", exc)
+            return []
+        broker_qty: dict[str, float] = {}
+        for p in broker_positions or []:
+            symbol = getattr(p, "symbol", None)
+            if not symbol:
+                continue
+            try:
+                broker_qty[symbol] = float(getattr(p, "qty", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+
+        from datetime import datetime, timedelta, timezone
+        after = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+
+        results: list[dict] = []
+        for symbol, ledger_open in ledger_qty.items():
+            if ledger_open <= 1e-6:
+                continue  # ledger already believes it's flat — nothing to reconcile
+            held = broker_qty.get(symbol, 0.0)
+            gap = ledger_open - held
+            if gap <= 1e-6:
+                # Broker holds AT LEAST what the ledger expects. A broker
+                # showing MORE than the ledger (gap negative) is a
+                # different defect class — an untracked BUY — and not
+                # something this reconciler invents a fix for; it is
+                # visibly a short scenario too (ledger_open is a LONG-only
+                # count so a negative-qty broker position also lands here
+                # with gap << 0 and is correctly skipped).
+                continue
+
+            try:
+                known_ids = self.db.get_known_broker_order_ids(symbol)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "stop-out reconcile: known-order lookup failed for %s: %s",
+                    symbol, exc,
+                )
+                continue
+            try:
+                fills = self.broker.list_filled_sell_orders(symbol, after=after)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "stop-out reconcile: broker fill query raised for %s: %s",
+                    symbol, exc,
+                )
+                continue
+            if fills is None:
+                # Query FAILED (not "no fills") — same None-means-retry
+                # contract as list_recent_orders. Leave the gap for the
+                # next reconciliation pass rather than concluding anything.
+                logger.warning(
+                    "stop-out reconcile: broker order query unavailable for "
+                    "%s (ledger=%.4f, broker=%.4f) — leaving the gap for "
+                    "the next pass", symbol, ledger_open, held,
+                )
+                continue
+
+            new_fills = [f for f in fills if f.get("id") and f["id"] not in known_ids]
+            if not new_fills:
+                self._flag_stop_out_anomaly(
+                    run_id=run_id, symbol=symbol,
+                    outcome="stop_out_gap_unexplained",
+                    detail=(
+                        f"ledger believes {ledger_open:.4f} sh open, broker "
+                        f"shows {held:.4f}, but no untracked filled SELL "
+                        f"order was found in the last {lookback_days} "
+                        f"day(s) — recording nothing rather than guessing"
+                    ),
+                    ledger_qty=ledger_open, broker_qty=held,
+                    lookback_days=lookback_days,
+                )
+                results.append({
+                    "symbol": symbol, "ledger_qty": ledger_open,
+                    "broker_qty": held, "matched": False, "recorded": 0,
+                })
+                continue
+
+            recorded = 0
+            for fill in new_fills:
+                try:
+                    row_id, created = self.db.insert_stop_out_trade(
+                        symbol=symbol, qty=fill["qty"], price=fill["price"],
+                        broker_order_id=fill["id"],
+                        filled_at=self._parse_broker_fill_timestamp(fill.get("filled_at")),
+                        run_id=run_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "stop-out reconcile: failed to record %s order %s: %s "
+                        "— will retry next pass (NOT lost, just not yet "
+                        "written)", symbol, fill.get("id"), exc,
+                    )
+                    continue
+                if not created:
+                    # Another session's pass already recorded this exact
+                    # broker order — expected under the idempotency
+                    # contract, not an error.
+                    continue
+                recorded += 1
+                row = self.db.get_trades(symbol=symbol, limit=1)
+                realized = None
+                for r in row:
+                    if r.get("id") == row_id:
+                        realized = r.get("realized_pnl")
+                        break
+                logger.warning(
+                    "STOP-OUT RECORDED: %s %s sh @ $%.4f (order %s, "
+                    "realized_pnl=%s) — broker-initiated protective-stop "
+                    "fill written back to the ledger by the stop-out "
+                    "reconciler", symbol, self._format_qty(fill["qty"]),
+                    fill["price"], fill["id"],
+                    "unknown" if realized is None else f"${realized:.2f}",
+                )
+                if realized is None:
+                    self._flag_stop_out_anomaly(
+                        run_id=run_id, symbol=symbol,
+                        outcome="stop_out_pnl_unmatched",
+                        detail=(
+                            f"order {fill['id']} recorded ({fill['qty']} sh "
+                            f"@ ${fill['price']:.4f}) but realized_pnl could "
+                            f"not be computed — the ledger's own BUY history "
+                            f"doesn't cover this exit quantity; needs manual "
+                            f"review, not a guessed number"
+                        ),
+                        broker_order_id=fill["id"], qty=fill["qty"],
+                        price=fill["price"],
+                    )
+            results.append({
+                "symbol": symbol, "ledger_qty": ledger_open,
+                "broker_qty": held, "matched": True, "recorded": recorded,
+            })
+        return results
+
     def _build_position_history(self, positions) -> dict[str, dict]:
         """L2 memory: for each held symbol, entry context + Tech rating trajectory.
 
@@ -3726,8 +4026,14 @@ class TradingPipeline:
 
     # Realized-exit actions whose post-exit trajectory is worth auditing.
     # SWEEP_SELL is deliberately absent — parking churn is not a decision.
+    # STOP_OUT (2026-08-28 ONDS/CCJ) belongs here even though it is not a
+    # reviewer decision — precisely BECAUSE it isn't one: "did the market
+    # force us out right before a bounce" is exactly the question this
+    # audit exists to answer, and a forced exit is where the answer is
+    # most likely to be uncomfortable.
     _EXIT_AUDIT_ACTIONS = (
         "SELL", "REDUCE", "EMERGENCY_SELL", "FORCE_DELEVER", "TAKE_PROFIT",
+        "STOP_OUT",
     )
 
     def _build_post_exit_reality(
@@ -5259,7 +5565,7 @@ class TradingPipeline:
     def _run_news_update(
         self, run_id: str, session: str = "morning",
         universe: list[str] | None = None,
-    ) -> "NewsIntelligenceReport | None":
+    ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
         """Fetch news, run intelligence analysis, save report. Session-aware.
 
         - morning: full 3-layer build. prior_session_report=None.
@@ -5268,10 +5574,20 @@ class TradingPipeline:
 
         Session-tagged reports persist alongside the latest full_report.json so
         each session's output is individually recoverable for audit / debug.
+
+        Returns `(intel_report, coverage)`. `coverage` (src.data.news.
+        NewsCoverage) is the 2026-08-28 fix for a dead feed vanishing
+        silently: before this, a feed that 404'd or 403'd was dropped with a
+        log warning and the news stage still reported "ok" regardless of
+        how many wires actually came back. `coverage` is returned even when
+        the analyst call itself fails below, since the fetch already
+        happened and the caller (MorningResearchStage) needs it either way
+        to set data_status["news"] honestly.
         """
+        coverage = None
         try:
             research_universe = universe or self.config.trading.universe
-            news_items = self.news_provider.fetch_news()
+            news_items, coverage = self.news_provider.fetch_news()
             news_text = self.news_provider.format_for_prompt(news_items)
             stock_mentions = self.news_provider.tag_symbol_mentions(
                 news_items, research_universe)
@@ -5294,6 +5610,7 @@ class TradingPipeline:
                 previous_narrative=previous_narrative,
                 session=session,
                 prior_session_report=prior_session_report,
+                news_coverage=coverage,
             )
             if intel_report:
                 report_dict = intel_report.model_dump()
@@ -5301,15 +5618,24 @@ class TradingPipeline:
                 self.news_store.save_macro_narrative(report_dict["macro_narrative"])
                 if report_dict.get("stock_news"):
                     self.news_store.save_stock_alerts(report_dict["stock_news"])
+                # collapsed_count / source_count are persisted so the dedup
+                # stage stays auditable after the fact — you can re-measure
+                # the duplication rate from the archive without re-fetching.
                 self.news_store.save_raw_headlines(
-                    [{"title": i.title, "source": i.source, "summary": i.summary} for i in news_items])
+                    [{"title": i.title, "source": i.source, "summary": i.summary,
+                      "collapsed_count": getattr(i, "collapsed_count", 1),
+                      "source_count": getattr(i, "source_count", 1)}
+                     for i in news_items])
                 n_changes = len(intel_report.state_changes)
                 n_stocks = len(intel_report.stock_news)
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
                             session, intel_report.market_sentiment, n_changes, n_stocks)
             self.db.insert_agent_log(
                 agent_name=f"news_analyst_{session}", run_id=run_id,
-                input_summary=f"{len(news_items)} news items",
+                input_summary=(
+                    f"{len(news_items)} news items "
+                    f"({coverage.describe() if coverage is not None else 'coverage unknown'})"
+                ),
                 input_message=result.user_message,
                 output_summary=f"sentiment={intel_report.market_sentiment}, changes={len(intel_report.state_changes)}" if intel_report else "parse_error",
                 full_response=result.raw_text,
@@ -5320,12 +5646,12 @@ class TradingPipeline:
                 cost_usd=result.cost_usd,
                 **agent_log_kwargs(result),
             )
-            return intel_report
+            return intel_report, coverage
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
             logger.error("[%s] News analyst failed: %s", session, e)
-            return None
+            return None, coverage
 
     def _load_earnings_analyses(
         self, run_id: str, session: str = "morning",
@@ -6582,6 +6908,15 @@ class TradingPipeline:
             # 0b. Broker-truth coverage audit (independent of the WAL): catch
             # any long that's gone naked WITHOUT leaving a recovery row.
             coverage_gaps = self._reconcile_stop_coverage()
+            # 0c. Broker-truth EXIT audit (2026-08-28 ONDS/CCJ): a protective
+            # stop firing overnight is exactly the case morning must catch
+            # first — the position has been closed for hours by the time
+            # this runs, and every other session entry point runs this same
+            # check again in case morning's own attempt failed.
+            try:
+                self._reconcile_stop_out_fills(run_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("morning stop-out reconcile failed (non-fatal): %s", exc)
 
             # 0. Cancel stale entry orders from previous sessions, but preserve live protective exits.
             self.broker.cancel_open_entry_orders()
@@ -7277,6 +7612,17 @@ class TradingPipeline:
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
+        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — midday/close run
+        # every trading day, so this is the most frequent chance to catch a
+        # stop that fired since the last pass and write it back before the
+        # reviewer builds its "what happened today" picture.
+        try:
+            self._reconcile_stop_out_fills(run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "%s stop-out reconcile failed (non-fatal): %s",
+                session_type, exc,
+            )
 
         # 1. Sync positions (snapshot into ctx)
         account = self.broker.get_account()
@@ -7378,7 +7724,8 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture developments since morning.
         try:
-            session_news = self._run_news_update(run_id, session=session_type)
+            session_news, session_news_coverage = self._run_news_update(
+                run_id, session=session_type)
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
@@ -7388,6 +7735,13 @@ class TradingPipeline:
                 extra={"session": session_type, "positions": len(positions),
                        "stop_coverage_gaps": coverage_gaps},
             )
+        if session_news_coverage is not None and session_news_coverage.status != "ok":
+            # midday/close have no data_status mechanism of their own (that
+            # is a morning-only construct today — see MorningResearchStage),
+            # so a degraded wire here would otherwise be silent even after
+            # the 2026-08-28 coverage fix. At minimum this keeps it out of
+            # the log-only failure mode the fix exists to close.
+            logger.warning("%s: %s", session_type, session_news_coverage.describe())
         if session_news:
             logger.info("%s news: %s", session_type.capitalize(), session_news.pm_briefing[:200])
         try:
@@ -7872,6 +8226,15 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
         self._reconcile_orphan_pending_submits()  # audit F4
+        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
+        # every ~30 min, so this is the tightest window this reconciler
+        # runs on — a stop that fires mid-session is written back within
+        # one tick instead of sitting unrecorded until the next scheduled
+        # session hours later.
+        try:
+            self._reconcile_stop_out_fills(run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
 
         try:
             account = self.broker.get_account()
@@ -8570,6 +8933,14 @@ class TradingPipeline:
         # Broker-truth coverage audit — last check before carrying positions
         # overnight (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
+        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — last chance before
+        # the daily P&L snapshot below is computed, so a same-day stop-out
+        # is reflected in tonight's report rather than showing up as an
+        # unexplained gap the next time someone looks at realized_pnl.
+        try:
+            self._reconcile_stop_out_fills(run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("evening stop-out reconcile failed (non-fatal): %s", exc)
 
         # 1. Record daily PnL — use Alpaca's last_equity (previous trading-day close)
         # as the baseline. This correctly handles weekends/holidays (Alpaca updates
@@ -8646,7 +9017,8 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture end-of-day developments
         try:
-            evening_news = self._run_news_update(run_id, session="evening")
+            evening_news, evening_news_coverage = self._run_news_update(
+                run_id, session="evening")
         except PaidAnalysisSuspended as exc:
             self.db.insert_daily_pnl(
                 date=today_str, total_value=total_value,
@@ -8659,6 +9031,11 @@ class TradingPipeline:
                 stop_coverage_gaps=coverage_gaps,
             )
             return payload
+        if evening_news_coverage is not None and evening_news_coverage.status != "ok":
+            # Same gap noted in run_position_review: evening has no
+            # data_status mechanism of its own to carry this further, so at
+            # minimum it does not disappear into a log-only "ok".
+            logger.warning("evening: %s", evening_news_coverage.describe())
         if evening_news:
             logger.info("Evening news: %s", evening_news.pm_briefing[:200])
         try:

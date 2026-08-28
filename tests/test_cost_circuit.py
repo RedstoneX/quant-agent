@@ -20,6 +20,7 @@ from src.cost_circuit import (
     _ET,
     _is_known_zero_cost_failure,
     _trigger_scope,
+    activate_paid_call_session,
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
@@ -1951,3 +1952,159 @@ def test_legacy_quota_without_day_provenance_remains_hard(tmp_path):
     assert state["available"] is False
     assert state["trigger_code"] == "circuit_infrastructure_unavailable"
     assert Path(f"{path}.llm-circuit-unavailable").exists()
+
+
+# === Pricing-staleness SPOF fix (2026-08-28) ===
+#
+# Before this fix, `cost_table.refresh_openrouter_pricing()` accepted a
+# cached OpenRouter rate ONLY under 24h old. Past that boundary, both
+# `TradingPipeline.__init__` (src/pipeline.py) and `activate_paid_call_
+# session` above respond to a False return with `breaker.mark_unavailable`
+# -- the durable, cross-process latch that only `LLMCostCircuitBreaker.
+# reset()` (operator-only, reason mandatory) can clear. Because the cache
+# is rewritten only when a fetch happens, and a fetch only happens once the
+# cache is already stale, one openrouter.ai outage overlapping the first
+# session past the 24h mark could stop the desk until a human intervened --
+# see `test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_
+# is_down` in tests/test_cost_table.py, which reproduces exactly that.
+#
+# These tests exercise the fix at the level a real deployment actually
+# hits it: `activate_paid_call_session`, and `begin_call`'s persisted
+# reservation amount.
+
+
+def test_stale_within_grace_reservation_is_larger_than_fresh(tmp_path, monkeypatch):
+    """Integration-level proof, not just the pure-function one in
+    test_cost_table.py: for the IDENTICAL prompt/model/max_output_tokens,
+    begin_call's actual persisted reserved_cost_usd is provably larger when
+    the OpenRouter pricing cache is stale-but-within-grace than when it is
+    fresh -- the widened multiplier from cost_table.
+    openrouter_pricing_reservation_multiplier reaching all the way through
+    _attempt_reserve into the reservation row a real call would see."""
+    import os
+    import time
+    from src import cost_table
+
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    cache.write_text("{}")  # only the file's mtime matters here
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+
+    grace_config = _loose_config(
+        openrouter_pricing_grace_period_hours=24.0,
+        openrouter_pricing_stale_multiplier_max=1.5,
+    )
+
+    def _reserve(age_hours: float, run_id: str) -> tuple[float, float]:
+        mtime = time.time() - age_hours * 3600
+        os.utime(cache, (mtime, mtime))
+        multiplier = cost_table.openrouter_pricing_reservation_multiplier(
+            1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
+        )
+        db_dir = tmp_path / run_id
+        db_dir.mkdir()
+        path = _db_path(db_dir)
+        circuit = LLMCostCircuitBreaker(path, grace_config, _Notifier())
+        circuit.activate_session(run_id, "morning")
+        reservation = circuit.begin_call(
+            agent_name="portfolio_manager", model="openai/gpt-5.5",
+            system_prompt="system prompt", user_message="user message",
+            max_output_tokens=16_000,
+        )
+        with sqlite3.connect(path) as conn:
+            reserved = conn.execute(
+                "SELECT reserved_cost_usd FROM llm_budget_reservations "
+                "WHERE reservation_id=?", (reservation.reservation_id,),
+            ).fetchone()[0]
+        return float(reserved), multiplier
+
+    fresh_reserved, fresh_multiplier = _reserve(1.0, "run-fresh-cache")   # well under 24h
+    stale_reserved, stale_multiplier = _reserve(30.0, "run-stale-cache")  # 6h into 24h grace
+
+    assert fresh_multiplier == 1.05  # hard literal: fresh path is untouched
+    assert stale_multiplier > fresh_multiplier
+    assert stale_reserved > fresh_reserved
+    # Loose (1%) relative tolerance: `multiplier` above is captured just
+    # BEFORE begin_call, which recomputes the same function internally a
+    # few milliseconds later against the same fixed cache mtime -- real
+    # wall-clock drift between the two reads, not a modeling error.
+    assert stale_reserved == pytest.approx(
+        fresh_reserved * stale_multiplier / fresh_multiplier, rel=1e-2,
+    )
+
+
+def test_activate_paid_call_session_proceeds_on_stale_within_grace_pricing(tmp_path, monkeypatch):
+    """The actual SPOF: before this fix, a stale-past-24h OpenRouter cache
+    with the catalog unreachable made activate_paid_call_session latch via
+    mark_unavailable on every call. Within the configured grace window it
+    must instead proceed -- no suspension, and a real call can still be
+    reserved -- exactly the "scoped/self-healing, not a human-reset latch"
+    behaviour the fix is required to produce."""
+    import os
+    import time
+    from src import cost_table
+
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    cache.write_text(json.dumps(rates))
+    stale_age_s = cost_table._CACHE_MAX_AGE_SECONDS + 6 * 3600  # 6h into a 24h grace window
+    old = time.time() - stale_age_s
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    app_config = SimpleNamespace(
+        llm_cost_circuit=_loose_config(
+            openrouter_pricing_grace_period_hours=24.0,
+            openrouter_pricing_stale_multiplier_max=1.5,
+        ),
+    )
+    circuit = activate_paid_call_session(
+        app_config, run_id="run-stale-grace", mode="morning",
+        notifier=_Notifier(), db_path=_db_path(tmp_path),
+    )
+
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert not Path(f"{circuit.db_path}.llm-circuit-unavailable").exists()
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt="p", user_message="m", max_output_tokens=1000,
+    )
+    assert reservation.reservation_id != "disabled"
+
+
+def test_activate_paid_call_session_still_latches_beyond_grace_pricing(tmp_path, monkeypatch):
+    """The grace window is a bound, not a blank check: a cache older than
+    24h + the configured grace, with the catalog unreachable, is genuinely
+    unknown pricing and must still latch exactly as it did before this fix
+    -- the global operator-reset latch is the CORRECT response to truly
+    unbounded cost, and this proves the fix didn't accidentally remove it."""
+    import os
+    import time
+    from src import cost_table
+
+    cache = tmp_path / "openrouter_pricing_cache.json"
+    rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    cache.write_text(json.dumps(rates))
+    beyond_grace_s = cost_table._CACHE_MAX_AGE_SECONDS + 24 * 3600 + 3600  # 1h past the grace edge
+    old = time.time() - beyond_grace_s
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
+
+    app_config = SimpleNamespace(
+        llm_cost_circuit=_loose_config(
+            openrouter_pricing_grace_period_hours=24.0,
+            openrouter_pricing_stale_multiplier_max=1.5,
+        ),
+    )
+    circuit = activate_paid_call_session(
+        app_config, run_id="run-beyond-grace", mode="morning",
+        notifier=_Notifier(), db_path=_db_path(tmp_path),
+    )
+
+    state = circuit.status()
+    assert state["suspended"] is True
+    assert state["available"] is False
+    assert Path(f"{circuit.db_path}.llm-circuit-unavailable").exists()

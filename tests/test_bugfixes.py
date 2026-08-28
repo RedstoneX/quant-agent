@@ -724,7 +724,7 @@ def test_evening_reconciles_before_loading_trade_inputs():
     pipeline.evening_analyst = MagicMock()
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
-    pipeline._run_news_update = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=([], []))
 
     events: list = []
@@ -766,7 +766,7 @@ def test_evening_persists_daily_pnl_when_analysis_raises():
     pipeline.evening_analyst = MagicMock()
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
-    pipeline._run_news_update = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=([], []))
     pipeline._build_recent_sells_for_grading = MagicMock(return_value=[])
     pipeline._build_recent_buys_for_grading = MagicMock(return_value=[])
