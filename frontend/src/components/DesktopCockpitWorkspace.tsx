@@ -26,6 +26,12 @@ function CandidatesPane() {
 
 function ChartPane() {
   const state = useCockpitWorkspace();
+  // Read-only broker positions, sourced from the same SupportWorkspace
+  // state PositionsPane/LiquidityPane render — needed so the chart's
+  // average-entry reference line (PriceChartPanel::entryPriceLine) actually
+  // has data to draw from in the desktop Dockview workspace, not just the
+  // mobile/tablet pane.
+  const support = useSupportWorkspace();
   const { openCandidateDetail } = useModalActions();
   const candidate = state.funnel?.candidates.find((item) => item.symbol === state.chartSymbol);
   return (
@@ -40,7 +46,7 @@ function ChartPane() {
           )}
         </div>
       </Card>
-      <div className="min-h-0 flex-1"><PriceChartPanel symbol={state.chartSymbol} trades={state.chartTrades} /></div>
+      <div className="min-h-0 flex-1"><PriceChartPanel symbol={state.chartSymbol} trades={state.chartTrades} positions={support.positions} /></div>
     </div>
   );
 }
@@ -50,9 +56,18 @@ function DecisionPane() {
   return <div className="h-full overflow-y-auto p-2"><DecisionRoomPanel funnel={state.funnel} symbol={state.chartSymbol} loading={state.loading} error={state.error} updatedAt={state.updatedAt} /></div>;
 }
 
+// Positions and Liquidity were previously one combined pane (a vertical
+// stack of both panels inside a single Dockview tab). The owner asked for
+// them as two independently dockable panels — each can now be dragged,
+// resized, or tabbed on its own instead of always moving together.
 function PositionsPane() {
   const state = useSupportWorkspace();
-  return <div className="grid h-full grid-cols-1 gap-3 overflow-y-auto p-2"><LiquidityPanel account={state.account} accountError={state.accountError} positions={state.positions} /><PositionsPanel positions={state.positions} error={state.positionsError} loading={state.positionsLoading} updatedAt={state.positionsUpdatedAt} onSelectSymbol={state.onSelectSymbol} /></div>;
+  return <div className="h-full overflow-y-auto p-2"><PositionsPanel positions={state.positions} error={state.positionsError} loading={state.positionsLoading} updatedAt={state.positionsUpdatedAt} onSelectSymbol={state.onSelectSymbol} /></div>;
+}
+
+function LiquidityPane() {
+  const state = useSupportWorkspace();
+  return <div className="h-full overflow-y-auto p-2"><LiquidityPanel account={state.account} accountError={state.accountError} positions={state.positions} /></div>;
 }
 
 function OrdersPane() {
@@ -76,6 +91,7 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   chart: ChartPane,
   decision: DecisionPane,
   positions: PositionsPane,
+  liquidity: LiquidityPane,
   orders: OrdersPane,
   trades: TradesPane,
   runs: RunsPane,
@@ -85,12 +101,20 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   system: SystemPane,
 };
 
-const STORAGE_KEY = "qamc.dockview.cockpit.v1";
+// Bumped v1 -> v2: splitting the combined "Positions & Liquidity" panel
+// into two separate panels (below) changes the saved layout's panel-id
+// shape, so a v1 layout persisted from localStorage would reference a
+// "positions" panel that no longer means the same thing and would never
+// resolve the new "liquidity" panel at all. A fresh key means every
+// browser simply falls back to buildDefaultLayout below instead of
+// throwing/half-rendering against a stale shape.
+const STORAGE_KEY = "qamc.dockview.cockpit.v2";
 
 function buildDefaultLayout(api: DockviewApi) {
   api.addPanel({ id: "chart", component: "chart", title: "Chart" });
   api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "chart", direction: "left" }, initialWidth: 320 });
-  api.addPanel({ id: "positions", component: "positions", title: "Positions & Liquidity", position: { referencePanel: "chart", direction: "within" }, inactive: true });
+  api.addPanel({ id: "positions", component: "positions", title: "Positions", position: { referencePanel: "chart", direction: "within" }, inactive: true });
+  api.addPanel({ id: "liquidity", component: "liquidity", title: "Liquidity", position: { referencePanel: "positions", direction: "within" }, inactive: true });
   api.addPanel({ id: "missed", component: "missed", title: "Missed", position: { referencePanel: "chart", direction: "within" }, inactive: true });
   api.addPanel({ id: "decision", component: "decision", title: "Decision Room", position: { referencePanel: "chart", direction: "right" }, initialWidth: 400 });
   for (const [id, title] of [["orders", "Orders"], ["trades", "Trades"], ["runs", "Runs"], ["bias", "Directional Bias"], ["search", "Search"], ["system", "System"]]) {
