@@ -22,10 +22,26 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from src.data.insider_signal import (
+    InsiderHistory,
+    InsiderPriorTrade,
+    classify_transaction,
+)
 from src.models import SmartMoneyObservation
 from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
+
+# Five years covers the three preceding years the calendar-month routine test
+# needs, with slack for late and amended filings.
+HISTORY_RETENTION_DAYS = 5 * 366
+
+
+def _history_entry_date(entry: str) -> date | None:
+    try:
+        return date.fromisoformat(str(entry).partition("|")[0])
+    except ValueError:
+        return None
 
 EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
 SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
@@ -120,6 +136,11 @@ class SECForm4Provider:
         self.raw_dir = self.data_dir / "filings"
         self.observations_path = self.data_dir / "observations.json"
         self.manifest_path = self.data_dir / "manifest.json"
+        # Long-horizon (insider, issuer) trade dates. ``observations.json`` is
+        # pruned to the lookback window, which is far too short for the
+        # three-year calendar-month routine test; this file is the only place
+        # that history survives. It stores dates and direction only.
+        self.history_path = self.data_dir / "insider_history.json"
         self.tickers_path = self.data_dir / "company_tickers_exchange.json"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
@@ -149,6 +170,64 @@ class SECForm4Provider:
         except (OSError, json.JSONDecodeError, TypeError) as exc:
             logger.warning("Smart-money cache unreadable at %s: %s", path, exc)
             return fallback
+
+    def _load_history(self) -> InsiderHistory:
+        """Read the accumulated (insider, issuer) trade index, fail-soft."""
+        raw = self._load_json(self.history_path, {})
+        trades: dict[tuple[str, str], list[InsiderPriorTrade]] = {}
+        for key, entries in (raw if isinstance(raw, dict) else {}).items():
+            actor_cik, _, symbol = str(key).partition("|")
+            if not actor_cik or not symbol or not isinstance(entries, list):
+                continue
+            parsed: list[InsiderPriorTrade] = []
+            for entry in entries:
+                day, _, direction = str(entry).partition("|")
+                try:
+                    parsed.append(InsiderPriorTrade(
+                        transaction_date=date.fromisoformat(day),
+                        direction=direction,
+                    ))
+                except ValueError:
+                    continue
+            if parsed:
+                trades[(actor_cik, symbol)] = parsed
+        return InsiderHistory(trades)
+
+    def _record_history(self, rows: list[dict]) -> None:
+        """Merge this refresh's trades into the long-horizon index.
+
+        Append-only apart from a hard age prune. Entries are ``date|direction``
+        strings so the file stays a fraction of the observation cache.
+        """
+        raw = self._load_json(self.history_path, {})
+        merged: dict[str, set[str]] = {
+            str(key): {str(value) for value in values}
+            for key, values in (raw if isinstance(raw, dict) else {}).items()
+            if isinstance(values, list)
+        }
+        for row in rows:
+            actor_cik = str(row.get("actor_cik") or "").strip()
+            symbol = str(row.get("symbol") or "").strip().upper()
+            direction = str(row.get("direction") or "").strip()
+            day = str(row.get("transaction_date") or "")[:10]
+            if not actor_cik or not symbol or direction not in {"buy", "sell"}:
+                continue
+            try:
+                date.fromisoformat(day)
+            except ValueError:
+                continue
+            merged.setdefault(f"{actor_cik}|{symbol}", set()).add(f"{day}|{direction}")
+        cutoff = et_today() - timedelta(days=HISTORY_RETENTION_DAYS)
+        pruned: dict[str, list[str]] = {}
+        for key, values in merged.items():
+            kept = sorted(
+                value for value in values
+                if _history_entry_date(value) is not None
+                and _history_entry_date(value) >= cutoff
+            )
+            if kept:
+                pruned[key] = kept
+        _atomic_json(self.history_path, pruned)
 
     @staticmethod
     def _remaining(deadline: float) -> float:
@@ -519,6 +598,13 @@ class SECForm4Provider:
             except (TypeError, ValueError):
                 continue
         with self._cache_lock:
+            # History is recorded from every row seen this refresh, including
+            # those the lookback prune is about to drop — that prune is what
+            # makes a separate long-horizon index necessary.
+            try:
+                self._record_history(list(observations.values()))
+            except OSError as exc:
+                logger.warning("Insider history index write failed: %s", exc)
             _atomic_json(self.observations_path, kept)
             _atomic_json(self.manifest_path, {
                 "processed_accessions": sorted(processed),
@@ -540,6 +626,27 @@ class SECForm4Provider:
             "error": error,
         }
 
+    def _merged_history(self, raw_rows) -> InsiderHistory:
+        """Long-horizon index plus the trades in the current cache window."""
+        merged = self._load_history().as_mapping()
+        for raw in raw_rows if isinstance(raw_rows, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            actor_cik = str(raw.get("actor_cik") or "").strip()
+            symbol = str(raw.get("symbol") or "").strip().upper()
+            direction = str(raw.get("direction") or "").strip()
+            if not actor_cik or not symbol or direction not in {"buy", "sell"}:
+                continue
+            try:
+                day = date.fromisoformat(str(raw.get("transaction_date"))[:10])
+            except (TypeError, ValueError):
+                continue
+            entry = InsiderPriorTrade(transaction_date=day, direction=direction)
+            bucket = merged.setdefault((actor_cik, symbol), [])
+            if entry not in bucket:
+                bucket.append(entry)
+        return InsiderHistory(merged)
+
     @staticmethod
     def _observation_key(item: SmartMoneyObservation) -> tuple:
         return (
@@ -555,6 +662,10 @@ class SECForm4Provider:
         """Cache-only broad fetch; ``symbols`` marks core but does not filter."""
         core = {_symbol(s) for s in symbols if str(s).strip()}
         raw_rows = self._load_json(self.observations_path, [])
+        # The long-horizon index carries the three-year calendar history; the
+        # current cache window contributes this refresh's own trades so a
+        # cadence inside the window is still visible on the first ever run.
+        history = self._merged_history(raw_rows)
         parsed: list[SmartMoneyObservation] = []
         invalid = 0
         for raw in raw_rows if isinstance(raw_rows, list) else []:
@@ -565,6 +676,13 @@ class SECForm4Provider:
                 continue
             if item.stream != "insider" or item.disclosure_age_days > self.lookback_days:
                 continue
+            verdict = classify_transaction(item, history)
+            item = item.model_copy(update={
+                "signal_class": verdict.label,
+                "signal_class_reason": verdict.reason,
+                "signal_class_detail": verdict.detail,
+                "signal_weight": verdict.weight,
+            })
             age_days = max(0, (et_today() - item.disclosure_date).days)
             freshness = "fresh" if age_days <= 7 else (
                 "delayed" if age_days <= self.lookback_days else "stale"
@@ -580,6 +698,10 @@ class SECForm4Provider:
                 and not item.amendment
                 and item.direction == "buy"
                 and item.transaction_code == "P"
+                # A routine purchase has no predictive power (Cohen/Malloy/
+                # Pomorski); it must never be the reason a symbol enters the
+                # trading surface. Strictly narrows the existing gate.
+                and verdict.label != "routine"
                 and item.transaction_value_usd is not None
                 and item.transaction_value_usd >= threshold
                 and item.freshness != "stale"
@@ -630,6 +752,10 @@ class SECForm4Provider:
             key=lambda item: (
                 not item.transient_admission_eligible,
                 not item.in_core_universe,
+                # Routine rows stay visible (the operator still sees them and
+                # their reason) but sort last, so they are the first cut when
+                # ``max_observations`` binds and a real signal is competing.
+                -item.signal_weight,
                 -(item.transaction_value_usd or 0),
                 -(item.accepted_at.timestamp() if item.accepted_at else 0),
             ),

@@ -385,6 +385,13 @@ class SmartMoneyObservation(BaseModel):
     lag_days: int = Field(ge=0)
     disclosure_age_days: int = Field(ge=0)
     freshness: Literal["fresh", "delayed", "stale"]
+    # Routine/opportunistic verdict from src.data.insider_signal. Defaults are
+    # empty so rows cached before the classifier existed still validate; they
+    # are populated deterministically on every ``fetch``.
+    signal_class: Literal["", "opportunistic", "routine", "indeterminate"] = ""
+    signal_class_reason: str = ""
+    signal_class_detail: str = ""
+    signal_weight: float = Field(default=1.0, ge=0.0, le=1.0)
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
 
     @field_validator("symbol")
@@ -402,6 +409,10 @@ class SmartMoneyObservation(BaseModel):
             if self.admission_eligible or self.transient_admission_eligible:
                 eligible = (
                     self.direction == "buy" and self.transaction_code == "P"
+                    # A routine purchase carries no predictive power, so it can
+                    # never be the reason a symbol is admitted to the trading
+                    # surface. This only ever narrows admission.
+                    and self.signal_class != "routine"
                 )
                 self.admission_eligible = eligible
                 self.transient_admission_eligible = eligible

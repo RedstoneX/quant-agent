@@ -796,9 +796,21 @@ class TradingPipeline:
                 str(getattr(row, "actor", "") or "").strip() for row in rows
                 if str(getattr(row, "actor", "") or "").strip()
             })
+            # Every admitting row is opportunistic by construction — the
+            # provider strips routine purchases from ``admission_eligible``.
+            # Carrying the reasons through anyway makes the operator's
+            # admission record self-explaining rather than requiring a
+            # re-derivation from the raw filing.
+            signal_reasons = sorted({
+                str(getattr(row, "signal_class_reason", "") or "")
+                for row in rows
+                if getattr(row, "signal_class_reason", "")
+            })
             details[symbol] = {
                 "temporary": True,
                 "reason": "material_sec_form4_purchase",
+                "signal_class": "opportunistic",
+                "signal_class_reasons": signal_reasons,
                 "accessions": accessions,
                 "owners": owners,
                 "transaction_value_usd": total_value,
