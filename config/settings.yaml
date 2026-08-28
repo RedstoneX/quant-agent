@@ -416,12 +416,12 @@ reconciliation:
 # Tap-through link TelegramNotifier appends to session alerts so the
 # operator can jump from a phone notification straight into Mission
 # Control. Empty string disables the link — never emit a broken one.
-# Defaults to the tailnet address the API server already serves /cockpit
-# on (src/api/server.py; same host/port as ops/preview/branch_preview.py
-# and docs/STATE.md). Tailscale-only — matches Mission Control's private,
-# read-only posture.
+# Defaults to the tailnet address Tailscale Serve exposes for the qamc
+# API (ovh-vps.wallaby-bowfin.ts.net, proxying tailnet-only port 443 to
+# the API on 127.0.0.1:8800), which mounts /cockpit (src/api/server.py).
+# Tailscale-only — matches Mission Control's private, read-only posture.
 notifications:
-  mission_control_url: "http://100.111.170.97:8810/cockpit"
+  mission_control_url: "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 # Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and
 # shared atomically across systemd processes.  Opening it suspends only model

@@ -766,15 +766,15 @@ class NotificationsConfig(BaseModel):
     alerts (see src/notifier.py, src/trader_feed.py). An empty string
     disables the link entirely — never emit a broken one instead.
 
-    Defaults to the tailnet address the API server already serves the
-    cockpit on (`app.mount("/cockpit", ...)` in src/api/server.py); same
-    host/port ops/preview/branch_preview.py and docs/STATE.md use.
-    100.111.170.97 is the VPS's Tailscale IP (ovh-vps.wallaby-bowfin.ts.net)
-    — unreachable from the public internet, matching Mission Control's
-    "private, read-only, non-critical to trading" posture.
+    Defaults to the tailnet address Tailscale Serve exposes for the qamc
+    API (`ovh-vps.wallaby-bowfin.ts.net`, proxying tailnet-only port 443 to
+    the API on 127.0.0.1:8800), which mounts the cockpit
+    (`app.mount("/cockpit", ...)` in src/api/server.py). Unreachable from
+    the public internet, matching Mission Control's "private, read-only,
+    non-critical to trading" posture.
     """
 
-    mission_control_url: str = "http://100.111.170.97:8810/cockpit"
+    mission_control_url: str = "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
     """Base URL Telegram alerts link to. Empty string = no link. Must be
     http(s) when non-empty — the value lands inside an href="..." attribute,
     and rejecting other schemes here (e.g. an accidental "javascript:") is

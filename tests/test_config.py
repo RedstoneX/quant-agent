@@ -903,13 +903,12 @@ def test_provider_order_absent_loads_exactly_as_before():
 # === NotificationsConfig — Telegram alert tap-through link ===
 
 def test_notifications_config_defaults_to_tailnet_cockpit_url():
-    """Default target matches the tailnet host/port the API server
-    actually serves /cockpit on (src/api/server.py app.mount("/cockpit",
-    ...)) — see ops/preview/branch_preview.py and docs/STATE.md for the
-    same host/port used elsewhere."""
+    """Default target matches the tailnet address Tailscale Serve exposes
+    for the qamc API (proxying tailnet-only port 443 to 127.0.0.1:8800),
+    which mounts /cockpit (src/api/server.py app.mount("/cockpit", ...))."""
     from src.config import NotificationsConfig
     cfg = NotificationsConfig()
-    assert cfg.mission_control_url == "http://100.111.170.97:8810/cockpit"
+    assert cfg.mission_control_url == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 
 def test_notifications_config_allows_empty_url_to_disable_the_link():
@@ -964,7 +963,7 @@ storage:
 
     from src.config import load_config
     cfg = load_config(config_file)
-    assert cfg.notifications.mission_control_url == "http://100.111.170.97:8810/cockpit"
+    assert cfg.notifications.mission_control_url == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 
 def test_shipped_settings_yaml_notifications_url_matches_default():
@@ -973,4 +972,4 @@ def test_shipped_settings_yaml_notifications_url_matches_default():
     raw = _yaml.safe_load(
         (_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
     )
-    assert raw["notifications"]["mission_control_url"] == "http://100.111.170.97:8810/cockpit"
+    assert raw["notifications"]["mission_control_url"] == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
