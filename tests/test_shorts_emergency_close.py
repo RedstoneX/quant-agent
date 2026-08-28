@@ -652,7 +652,214 @@ def test_position_reviewer_surfaces_emergency_cover_from_morning_trades():
 
 
 # ==========================================================================
-# 9. Revert cross-check helper (not a test — see conversation report)
+# 9. _derive_close_side_for_drain and the crash-recovery drain path
+# ==========================================================================
+# This is the one corner of the branch with zero coverage: the WAL/drain
+# machinery in _drain_pending_protection_restores predates shorts and
+# carries no side column, so a short's orphaned row looks byte-identical
+# to a long's. _derive_close_side_for_drain closes that gap by reading
+# the broker's LIVE signed position instead of trusting the row. These
+# tests pin the derivation itself, both call sites that consume it, and
+# the deliberate degrade-to-'sell' fallback for the one case broker truth
+# can't settle.
+
+def _bare_pipe():
+    """A __new__'d pipeline with nothing wired up — _derive_close_side_for_drain
+    has exactly one dependency, _current_position_qty_for_finalize, which
+    every test below stubs directly (same seam tests/test_pipeline.py's
+    WAL/drain tests already stub, e.g. test_drain_sentinel_restores_when_
+    position_intact)."""
+    return TradingPipeline.__new__(TradingPipeline)
+
+
+def test_derive_close_side_for_drain_returns_buy_for_a_short():
+    pipe = _bare_pipe()
+    pipe._current_position_qty_for_finalize = lambda s: -20.0
+    assert pipe._derive_close_side_for_drain("TSLA") == "buy"
+
+
+def test_derive_close_side_for_drain_returns_sell_for_a_long():
+    pipe = _bare_pipe()
+    pipe._current_position_qty_for_finalize = lambda s: 20.0
+    assert pipe._derive_close_side_for_drain("NVDA") == "sell"
+
+
+def test_derive_close_side_for_drain_returns_none_when_flat():
+    """A flat (0) position deliberately does NOT default to 'sell' here.
+    The caller's downstream restore/reprotect call independently
+    re-checks flatness before doing anything side-dependent, so a
+    fabricated side for an already-flat symbol would just look like a
+    real answer to a question nobody is going to ask."""
+    pipe = _bare_pipe()
+    pipe._current_position_qty_for_finalize = lambda s: 0.0
+    assert pipe._derive_close_side_for_drain("NVDA") is None
+
+
+def test_derive_close_side_for_drain_returns_none_when_broker_unreadable():
+    pipe = _bare_pipe()
+    pipe._current_position_qty_for_finalize = lambda s: None
+    assert pipe._derive_close_side_for_drain("NVDA") is None
+
+
+def test_drain_sentinel_restores_buy_side_stops_for_a_short(tmp_path):
+    """Call site 1: the write-ahead sentinel branch (a SELL that was
+    never confirmed submitted before a crash). The row itself can't say
+    which side it needs — the broker reporting a live short here must
+    still result in BUY stops being restored, not the pre-shorts SELL
+    default."""
+    from src.storage.db import Database
+    from src.pipeline import _WAL_SELL_SENTINEL
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    pipe = TradingPipeline.__new__(TradingPipeline)
+    pipe.db = db
+    pipe.broker = MagicMock()
+    pipe._format_qty = lambda q: str(q)
+
+    specs = [{"id": "s1", "qty": 73, "stop_price": 262.0, "limit_price": 264.0}]
+    db.insert_pending_protection_restore(
+        symbol="TSLA", sell_order_id=_WAL_SELL_SENTINEL,
+        position_qty_before_sell=73.0, specs_json=json.dumps(specs),
+    )
+    # Broker reports a live short — this is what must drive the side,
+    # not anything persisted on the row.
+    pipe._current_position_qty_for_finalize = lambda s: -73.0
+    pipe.broker._restore_stop_orders.return_value = (1, [])
+
+    drained = pipe._drain_pending_protection_restores()
+
+    assert drained == 1
+    pipe.broker._restore_stop_orders.assert_called_once()
+    assert pipe.broker._restore_stop_orders.call_args.kwargs.get("side") == "buy"
+    db.close()
+
+
+def test_drain_finalize_restores_buy_side_stops_for_a_short(tmp_path):
+    """Call site 2: the terminal-order replay branch (a real
+    sell_order_id, not the sentinel). Same live-broker side derivation
+    as the sentinel branch above, exercised through the other row
+    shape."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    cancelled = [{"id": "stop-old", "qty": 73, "stop_price": 262.0, "limit_price": 264.0}]
+    db.insert_pending_protection_restore(
+        symbol="TSLA", sell_order_id="alpaca-resolved",
+        position_qty_before_sell=73.0, specs_json=json.dumps(cancelled),
+    )
+
+    pipe = TradingPipeline.__new__(TradingPipeline)
+    pipe.db = db
+    pipe.broker = MagicMock()
+    pipe._format_qty = lambda q: str(q)
+    pipe.broker.get_order_fill_info.return_value = {
+        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+    }
+    pipe.broker._restore_stop_orders.return_value = (1, [])
+    # Broker reports a live short.
+    pipe._current_position_qty_for_finalize = lambda s: -73.0
+
+    drained = pipe._drain_pending_protection_restores()
+
+    assert drained == 1
+    pipe.broker._restore_stop_orders.assert_called_once()
+    assert pipe.broker._restore_stop_orders.call_args.kwargs.get("side") == "buy"
+    db.close()
+
+
+def test_drain_finalize_long_row_has_no_side_kwarg_unchanged(tmp_path):
+    """A long's row through call site 2 must produce a byte-identical
+    downstream call to every pre-shorts drain test in
+    tests/test_pipeline.py: no `side` kwarg at all — not even an
+    explicit side='sell' — since side_kwargs is only ever non-empty for
+    the 'buy' case."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    cancelled = [{"id": "stop-old", "qty": 73, "stop_price": 95.0, "limit_price": 92.0}]
+    db.insert_pending_protection_restore(
+        symbol="NVDA", sell_order_id="alpaca-resolved",
+        position_qty_before_sell=73.0, specs_json=json.dumps(cancelled),
+    )
+
+    pipe = TradingPipeline.__new__(TradingPipeline)
+    pipe.db = db
+    pipe.broker = MagicMock()
+    pipe._format_qty = lambda q: str(q)
+    pipe.broker.get_order_fill_info.return_value = {
+        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+    }
+    pipe.broker._restore_stop_orders.return_value = (1, [])
+    # Broker reports a live long.
+    pipe._current_position_qty_for_finalize = lambda s: 73.0
+
+    drained = pipe._drain_pending_protection_restores()
+
+    assert drained == 1
+    pipe.broker._restore_stop_orders.assert_called_once()
+    assert "side" not in pipe.broker._restore_stop_orders.call_args.kwargs
+    db.close()
+
+
+def test_drain_finalize_degrades_to_sell_default_when_broker_unreadable(tmp_path):
+    """Pins a deliberate trade-off, not an accident: when the broker
+    position can't be read at all (get_positions failure — the same
+    None-on-error contract _current_position_qty_for_finalize documents
+    on itself), _derive_close_side_for_drain returns None, so call site
+    2's finalize_side_kwargs stays empty and
+    _finalize_protection_after_sell_core falls through to its
+    pre-existing 'sell' default rather than stalling the row forever.
+
+    This is only safe today because shorts still cannot be OPENED
+    anywhere in this system (PortfolioConstructor's Stage-1 guard, the
+    position-reviewer's SELL/REDUCE loop, and ExecutionStage's
+    SELL-decision loop all still refuse a negative-qty position) — so an
+    unreadable broker can never actually be masking an orphaned SHORT's
+    row today. Closing that compound case for real needs a persisted
+    side column on the WAL row, which this branch deliberately does not
+    add. If this test ever starts failing because a future change
+    tightens the fallback to stall the row instead of degrading, that
+    is a deliberate policy change to make with eyes open, not a
+    regression to silently absorb."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0}]
+    db.insert_pending_protection_restore(
+        symbol="NVDA", sell_order_id="alpaca-resolved",
+        position_qty_before_sell=100.0, specs_json=json.dumps(cancelled),
+    )
+
+    pipe = TradingPipeline.__new__(TradingPipeline)
+    pipe.db = db
+    pipe.broker = MagicMock()
+    pipe._format_qty = lambda q: str(q)
+    pipe.broker.get_order_fill_info.return_value = {
+        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+    }
+    pipe.broker._restore_stop_orders.return_value = (1, [])
+    # Broker position genuinely unreadable — not flat, not signed, unknown.
+    pipe._current_position_qty_for_finalize = lambda s: None
+
+    drained = pipe._drain_pending_protection_restores()
+
+    assert drained == 1, (
+        "an unreadable broker must not stall the row — it degrades to "
+        "the pre-existing 'sell' default instead"
+    )
+    assert "side" not in pipe.broker._restore_stop_orders.call_args.kwargs, (
+        "degraded case must fall back to the plain 'sell' default, never guess 'buy'"
+    )
+    assert db.get_pending_protection_restores() == []
+    db.close()
+
+
+# ==========================================================================
+# 10. Revert cross-check helper (not a test — see conversation report)
 # ==========================================================================
 # The revert cross-check itself (src/ reset to main with this test file
 # left in place, failure count reported) is a one-off git operation done
