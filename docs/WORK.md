@@ -121,6 +121,43 @@ were raised specifically to end the 2026-08-28 outage. Reconciled:
 | `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
 | `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
 
+**The Mission Control URL — and a stale preview that was masking a week of
+work (2026-08-28).**
+
+- The correct, production Mission Control address is
+  `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. Tailscale Serve proxies
+  tailnet-only port 443 to the qamc API on `127.0.0.1:8800`.
+- The qamc API binds loopback-only by design (`QUANT_AGENT_API_HOST=127.0.0.1`
+  in `quant-agent-api.service`). Tailscale Serve, not the bind address, is what
+  makes it reachable. Do not "fix" reachability by rebinding the service.
+- `http://100.111.170.97:8810/cockpit` is NOT Mission Control. It was
+  `ops/preview/branch_preview.py`, the ephemeral branch-preview server,
+  running as the parked `dev` account out of
+  `/home/dev/projects/quant-agent-dashboard`. Its own module docstring states
+  it has no systemd unit and no auto-start and is meant to be killed after a
+  review session.
+- It was started 2026-08-21 16:16 ET and was still running on 2026-08-28,
+  seven days later. It served a bundle built 2026-08-21 09:43 containing no
+  dockview layout key at all — predating PR #120 entirely. None of the cockpit
+  trader-view work (PR #120, pass 2 via PR #130, pass 3 via PR #137) was
+  visible at that address.
+- The orphaned process (PID 2267757) was killed on 2026-08-28. Port 8810 is
+  now closed. The production URL was re-checked immediately afterward and
+  returned HTTP 200.
+- **Diagnostic worth keeping:** to tell the two apart in one step, compare the
+  hashed bundle filename returned by `curl -sk
+  https://ovh-vps.wallaby-bowfin.ts.net/cockpit/` against whatever else claims
+  to be the cockpit. Different filenames mean something other than production
+  is being served.
+- **Consequence for `feat/telegram-links` (PR #136):** it defaults
+  `notifications.mission_control_url` to the stale
+  `http://100.111.170.97:8810/cockpit` in both `config/settings.yaml` and
+  `src/config.py`. That is being corrected to the HTTPS tailnet host before
+  merge; note it here so the reason is on record.
+- State plainly that this is the likely explanation for the operator
+  repeatedly seeing old cockpit code after deploys that had in fact landed
+  correctly.
+
 Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
 git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
 (`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
@@ -886,6 +923,9 @@ Desktop is unaffected.
 
 Note explicitly that a phone-width check of this page is only meaningful when the
 status text is at its longest, since the healthy state hides the defect.
+
+PR #138 merged and deployed to production on 2026-08-28, and the fix was
+confirmed live at the production URL.
 
 #### COCKPIT — DELIVERED (PR #120)
 All five owner requests are implemented, built and tested on branch
