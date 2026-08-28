@@ -9,7 +9,7 @@ import yfinance as yf
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest,
-    TakeProfitRequest, StopLossRequest,
+    TakeProfitRequest, StopLossRequest, ReplaceOrderRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
@@ -1494,9 +1494,153 @@ class AlpacaBroker:
         "done_for_day", "stopped", "suspended",
     })
 
+    # Bounded number of `replaced_by` hops to follow when resolving what a
+    # replaced order became. Each re-peg adds exactly one hop and re-pegs are
+    # capped in the low single digits, so 8 is generous; the bound exists so a
+    # broker-side cycle or a pathological chain can never spin this forever.
+    _MAX_REPLACEMENT_HOPS = 8
+
+    def cancel_entry_order(self, order_id: str) -> bool:
+        """Cancel one order by id. True when the broker accepted the cancel.
+
+        A named seam rather than a raw `client.cancel_order_by_id` call so the
+        re-peg race path — "the superseded order filled, kill the replacement
+        before it buys the same idea again" — is explicit, mockable, and
+        cannot be confused with `cancel_open_entry_orders`, which cancels
+        every working entry for a symbol.
+        """
+        try:
+            self.client.cancel_order_by_id(order_id)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "cancel_entry_order: cancel of %s FAILED: %s — if this was a "
+                "re-peg replacement racing a partial fill, the position may "
+                "end up larger than intended; the next coverage reconcile "
+                "must be checked", order_id, exc,
+            )
+            return False
+
+    def resolve_replacement_chain(self, order_id: str) -> str | None:
+        """Follow Alpaca's `replaced_by` links to the order that is live now.
+
+        A replaced order keeps its own identity forever: status 'replaced',
+        `filled_qty` frozen at whatever it filled before the swap, and
+        `replaced_by` pointing at its successor. This walks that chain and
+        returns the id at the end of it — which is the only id worth polling
+        for a fill.
+
+        Returns the input id unchanged when the order was never replaced.
+        Returns None when the broker read FAILED, which callers must treat as
+        "unknown, retry later" and never as "no replacement" — repointing a
+        trades row on a failed read would be inventing a fact.
+        """
+        current = str(order_id)
+        for _ in range(self._MAX_REPLACEMENT_HOPS):
+            try:
+                order = self.client.get_order_by_id(current)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "resolve_replacement_chain: broker read failed for %s: %s "
+                    "— returning None so the caller retries rather than "
+                    "concluding the order was never replaced", current, exc,
+                )
+                return None
+            status = str(
+                getattr(getattr(order, "status", None), "value",
+                        getattr(order, "status", ""))
+            ).lower()
+            successor = getattr(order, "replaced_by", None)
+            successor = str(successor) if successor else ""
+            if status != "replaced" or not successor or successor == current:
+                return current
+            current = successor
+        logger.error(
+            "resolve_replacement_chain: %s exceeded %d hops — refusing to "
+            "keep walking", order_id, self._MAX_REPLACEMENT_HOPS,
+        )
+        return None
+
+    def replace_entry_limit(
+        self, order_id: str, new_limit_price: float, *, qty: float | None = None,
+    ) -> dict:
+        """PATCH a working entry limit to a new price. Returns the NEW order id.
+
+        This is the only place in the codebase that calls Alpaca's replace
+        endpoint, and the reason it is wrapped rather than inlined is the
+        footgun: **the replacement is a different order**. The response
+        carries a new id; the id passed in is dead from that moment.
+
+        `qty` is passed through explicitly rather than left to the broker's
+        default. The caller only ever re-pegs an order that has filled ZERO
+        shares, so "remaining" and "original" are the same number here — but
+        stating it removes any dependence on how the endpoint interprets an
+        omitted qty against a partially filled order, which is exactly the
+        ambiguity that turns a re-peg into an over-buy.
+
+        Never raises. Failure shapes, all with `id=None`:
+          - 'replace_invalid_price' — nothing was sent to the broker.
+          - 'replace_rejected'      — the broker refused. The overwhelmingly
+            likely cause is that the order reached a terminal state (it
+            FILLED) between the caller's check and this call. The caller must
+            re-read the ORIGINAL id, which is still authoritative in that
+            case, and must not retry blindly.
+        """
+        price = _quantize_price(new_limit_price)
+        if price is None or price <= 0:
+            logger.warning(
+                "replace_entry_limit refused for %s: non-quotable price %r",
+                order_id, new_limit_price,
+            )
+            return {"id": None, "status": "replace_invalid_price"}
+
+        kwargs: dict = {"limit_price": price}
+        if qty is not None:
+            try:
+                int_qty = int(qty)
+            except (TypeError, ValueError):
+                int_qty = 0
+            if int_qty > 0:
+                kwargs["qty"] = int_qty
+
+        try:
+            order = self.client.replace_order_by_id(
+                order_id, ReplaceOrderRequest(**kwargs),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "replace_entry_limit: broker refused replacement of %s at "
+                "$%.4f: %s — the order most likely reached a terminal state "
+                "(filled) first; the ORIGINAL id remains authoritative",
+                order_id, price, exc,
+            )
+            return {"id": None, "status": "replace_rejected", "detail": str(exc)}
+
+        new_id = str(getattr(order, "id", "") or "")
+        if not new_id:
+            logger.error(
+                "replace_entry_limit: broker accepted the replacement of %s "
+                "but returned no order id — treating as rejected so the "
+                "caller keeps polling the original", order_id,
+            )
+            return {"id": None, "status": "replace_rejected"}
+        status = str(
+            getattr(getattr(order, "status", None), "value",
+                    getattr(order, "status", ""))
+        ).lower()
+        logger.info(
+            "replace_entry_limit: %s → %s @ $%.4f (status %s)",
+            order_id, new_id, price, status or "unknown",
+        )
+        return {
+            "id": new_id, "status": status or "accepted",
+            "limit_price": price, "replaces": str(order_id),
+        }
+
     def place_entry_protection(
         self, symbol: str, order_id: str, stop_price: float,
         *, requested_qty: float | None = None,
+        superseded_filled_qty: float = 0.0,
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
         protective stop-limit for the ACTUAL filled qty.
@@ -1509,6 +1653,16 @@ class AlpacaBroker:
         emergency liquidation). Cancelling converges the order; whatever DID
         fill by then gets its stop from the post-cancel re-read. Losing the
         unfilled remainder is the accepted cost of protection-first.
+
+        `superseded_filled_qty` is shares this entry already acquired under a
+        DIFFERENT order id — the ancestors of a re-peg chain. `order_id` is
+        the last order in that chain, and Alpaca's fill counters do not carry
+        across a replacement, so the shares an ancestor filled are invisible
+        here. They are real shares in a real position, and a stop sized to
+        only the last order's fill would leave them naked. Adding them is what
+        keeps the invariant "every filled share is under a stop" true across a
+        re-peg. Default 0.0: for every caller that never re-pegs, this method
+        behaves exactly as it did before.
 
         Returns the stop order dict, or None when nothing was placed (entry
         filled 0 / stop submit failed). Never raises — a failure here must not
@@ -1556,6 +1710,17 @@ class AlpacaBroker:
             filled_qty = float(info.get("filled_qty") or 0)
         except (TypeError, ValueError):
             filled_qty = 0.0
+        try:
+            carried = float(superseded_filled_qty or 0)
+        except (TypeError, ValueError):
+            carried = 0.0
+        if carried > 0:
+            logger.info(
+                "entry protection: %s carries %.4f share(s) filled under a "
+                "superseded order id; stop will cover %.4f + %.4f",
+                symbol, carried, filled_qty, carried,
+            )
+            filled_qty += carried
         if filled_qty <= 0:
             logger.warning(
                 "entry protection: %s entry %s filled 0 (status=%s) — no stop "
