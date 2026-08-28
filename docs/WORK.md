@@ -599,14 +599,24 @@ Also: the circuit was reset, two quota holds released, and the day's `costs_exac
 Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
 **Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
 
-#### COCKPIT — promised, about 60% done, uncommitted
-Worktree `/home/ubuntu/projects/quant-agent-worktrees/cockpit`, branch `feat/cockpit-trader-view`. Never built or tested. Five owner requests:
-- the chart needs real vertical space; the fixed bands above it consume the viewport
-- holdings and P&L visible on arrival, without hunting through a tab
-- his average entry price drawn as a line on the chart, with unrealized P&L
-- remove the PREV CLOSE line on the 1D view
-- split "Positions & Liquidity" into two independently dockable panels
-Must bump the `qamc.dockview.cockpit.v1` localStorage key or returning users keep the old layout. Mission Control is read-only, so this can ship at any time without affecting trading.
+#### COCKPIT — uncommitted, never built or tested
+Worktree `/home/ubuntu/projects/quant-agent-worktrees/cockpit`, branch
+`feat/cockpit-trader-view`. Five owner requests, verified against the working
+tree on 2026-08-28 rather than estimated:
+
+| Request | State |
+|---|---|
+| Chart needs real vertical space — the fixed bands above consume the viewport | edits to `HeroBand.tsx` (+68), `DecisionStateBanner.tsx` (+30), `TodaySessionsStrip.tsx` (+9) |
+| Holdings and P&L visible on arrival, not behind a tab | `HoldingsStrip.tsx` written in full (113 lines) |
+| Average entry drawn on the chart with unrealized P&L | in `PriceChartPanel.tsx` (+93) |
+| Remove the PREV CLOSE line on the 1D view | in the same `PriceChartPanel.tsx` edit |
+| Split "Positions & Liquidity" into two dockable panels | **NOT STARTED** — `DesktopCockpitWorkspace.tsx` is untouched |
+
+The `qamc.dockview.cockpit.v1` localStorage key has NOT been bumped, so
+returning users would keep the old layout and never see the new panels.
+
+**Nothing is committed, built or tested.** Mission Control is read-only, so
+this can ship at any time without affecting trading.
 
 #### NEWS FEEDS
 Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested hypothesis: a 403 is usually a blocked User-Agent rather than a dead feed. No paid dependency without the owner's approval. The part that must land regardless: a dead feed currently logs a warning and vanishes, so the system reports complete news coverage while missing two wire services.
@@ -650,11 +660,6 @@ Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DS
 
 #### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
 Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
-
-#### COCKPIT — MORE COMPLETE THAN FIRST REPORTED
-Re-checked 2026-08-28. `HoldingsStrip.tsx` is written in full (113 lines) and there are substantial edits to `HeroBand.tsx` (+68), `PriceChartPanel.tsx` (+93, including the average-entry price line), `DecisionStateBanner.tsx` (+30) and `TodaySessionsStrip.tsx` (+9).
-
-**What is NOT started:** `DesktopCockpitWorkspace.tsx` is untouched, so the split of "Positions & Liquidity" into two dockable panels is not begun, and the `qamc.dockview.cockpit.v1` localStorage key has not been bumped. Nothing has been built or tested and nothing is committed.
 
 **Set aside — small, easily forgotten**
 
