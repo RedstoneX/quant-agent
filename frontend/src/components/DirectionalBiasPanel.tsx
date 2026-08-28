@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, CandidateFunnelItem, DecisionState, RunFunnelResponse } from "../api/client";
+import { BadgeDelta, DonutChart, type Color } from "@tremor/react";
+import { api, CandidateFunnelItem, RunFunnelResponse } from "../api/client";
 import { Panel, StateMessage } from "./ui/Panel";
 import { Pill } from "./ui/Pill";
 
@@ -14,40 +15,10 @@ const AGGREGATION_WINDOW_RUNS = 25;
 
 type Direction = CandidateFunnelItem["direction"];
 
-const DECISION_STATE_ORDER: DecisionState[] = [
-  "executed",
-  "proposed_not_executed",
-  "hard_risk_block",
-  "no_proposal",
-  "no_candidates",
-];
-
-const DECISION_STATE_LABELS: Record<DecisionState, string> = {
-  executed: "EXECUTED",
-  proposed_not_executed: "PROPOSED — NOT EXECUTED",
-  hard_risk_block: "DETERMINISTIC GATE BLOCKED",
-  no_proposal: "NO TRADE — PM STAYED NEUTRAL",
-  no_candidates: "NO CANDIDATES CONSIDERED",
-};
-
-const DECISION_STATE_BAR_CLASS: Record<DecisionState, string> = {
-  executed: "bg-pos",
-  proposed_not_executed: "bg-warn",
-  hard_risk_block: "bg-neg",
-  no_proposal: "bg-dim",
-  no_candidates: "bg-dim",
-};
-
 interface DirectionCounts {
   bullish: number;
   bearish: number;
   neutralOrUnknown: number;
-}
-
-interface RiskBucket {
-  approved: number;
-  rejected: number;
-  total: number;
 }
 
 interface Aggregates {
@@ -59,24 +30,17 @@ interface Aggregates {
   candidateDirectionCounts: DirectionCounts;
   // Effective market/portfolio exposure direction — instrument direction
   // with inverse-ETF candidates flipped via exposureDirection(). This is
-  // the number that actually answers "is QAMC structurally long-only?".
+  // the number that actually answers "is QAMC structurally long-only?",
+  // and the one the panel leads with below.
   candidateExposureCounts: DirectionCounts;
 
   hedgeRunsConsidered: number;
   hedgeCandidatesCount: number;
-  hedgeCandidatesProposed: number;
-  hedgeCandidatesExecuted: number;
 
   proposedTotal: number;
   proposedDirectionCounts: DirectionCounts;
   proposedExposureCounts: DirectionCounts;
   proposedActionCounts: Record<string, number>;
-
-  riskReachingRuns: number;
-  riskHedgeRuns: RiskBucket;
-  riskNonHedgeRuns: RiskBucket;
-
-  decisionStateCounts: Record<DecisionState, number>;
 }
 
 function emptyDirectionCounts(): DirectionCounts {
@@ -112,33 +76,27 @@ function exposureDirection(direction: Direction, isBearishHedge: boolean): Direc
 // Pure aggregation over already-fetched funnel data — kept separate from
 // the fetching effect below so the counting logic is easy to trace/verify
 // by hand against a small hypothetical dataset.
+//
+// Cockpit pass 3, item 3: this used to also tally AI Risk Manager
+// approve/reject verdicts and a full decision-state (executed/no-trade/
+// blocked) histogram. Both are dropped here, not just re-skinned — see
+// the panel's render function below for why (in short: they're a
+// different concern than direction, thin samples on real data, and the
+// decision-state breakdown duplicates the Runs tab one click away in the
+// same workspace group).
 function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): Aggregates {
   const candidateDirectionCounts = emptyDirectionCounts();
   const candidateExposureCounts = emptyDirectionCounts();
   const proposedDirectionCounts = emptyDirectionCounts();
   const proposedExposureCounts = emptyDirectionCounts();
   const proposedActionCounts: Record<string, number> = {};
-  const decisionStateCounts: Record<DecisionState, number> = {
-    executed: 0,
-    proposed_not_executed: 0,
-    hard_risk_block: 0,
-    no_proposal: 0,
-    no_candidates: 0,
-  };
 
   let totalCandidates = 0;
   let hedgeRunsConsidered = 0;
   let hedgeCandidatesCount = 0;
-  let hedgeCandidatesProposed = 0;
-  let hedgeCandidatesExecuted = 0;
   let proposedTotal = 0;
 
-  let riskReachingRuns = 0;
-  const riskHedgeRuns: RiskBucket = { approved: 0, rejected: 0, total: 0 };
-  const riskNonHedgeRuns: RiskBucket = { approved: 0, rejected: 0, total: 0 };
-
   for (const f of funnels) {
-    decisionStateCounts[f.decision_state] = (decisionStateCounts[f.decision_state] ?? 0) + 1;
     if (f.bearish_hedge_considered) hedgeRunsConsidered += 1;
 
     for (const c of f.candidates) {
@@ -146,11 +104,7 @@ function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): A
       bucketDirection(candidateDirectionCounts, c.direction);
       bucketDirection(candidateExposureCounts, exposureDirection(c.direction, c.is_bearish_hedge));
 
-      if (c.is_bearish_hedge) {
-        hedgeCandidatesCount += 1;
-        if (c.reached_proposed_order) hedgeCandidatesProposed += 1;
-        if (c.executed) hedgeCandidatesExecuted += 1;
-      }
+      if (c.is_bearish_hedge) hedgeCandidatesCount += 1;
 
       if (c.reached_proposed_order) {
         proposedTotal += 1;
@@ -159,18 +113,6 @@ function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): A
         const action = c.proposed_action || "none";
         proposedActionCounts[action] = (proposedActionCounts[action] ?? 0) + 1;
       }
-    }
-
-    // risk_verdict is run-wide, not per-candidate — see the caveat rendered
-    // alongside this data below. We can only honestly bucket by whether the
-    // run involved a bearish-hedge candidate, not by individual direction.
-    const verdict = f.risk_verdict?.verdict;
-    if (verdict) {
-      riskReachingRuns += 1;
-      const bucket = f.bearish_hedge_considered ? riskHedgeRuns : riskNonHedgeRuns;
-      bucket.total += 1;
-      if (verdict.approved) bucket.approved += 1;
-      else bucket.rejected += 1;
     }
   }
 
@@ -182,70 +124,62 @@ function computeAggregates(funnels: RunFunnelResponse[], fetchFailed: number): A
     candidateExposureCounts,
     hedgeRunsConsidered,
     hedgeCandidatesCount,
-    hedgeCandidatesProposed,
-    hedgeCandidatesExecuted,
     proposedTotal,
     proposedDirectionCounts,
     proposedExposureCounts,
     proposedActionCounts,
-    riskReachingRuns,
-    riskHedgeRuns,
-    riskNonHedgeRuns,
-    decisionStateCounts,
   };
 }
 
-function DirectionRatioBar({ counts, total }: { counts: DirectionCounts; total: number }) {
-  if (total === 0) return null;
-  const segments: { label: string; count: number; barClass: string; textClass: string }[] = [
-    { label: "bullish", count: counts.bullish, barClass: "bg-pos", textClass: "text-pos" },
-    { label: "bearish", count: counts.bearish, barClass: "bg-neg", textClass: "text-neg" },
-    { label: "neutral/unknown", count: counts.neutralOrUnknown, barClass: "bg-dim", textClass: "text-dim" },
-  ];
-  return (
-    <div>
-      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-panel-alt border border-border">
-        {segments.map(
-          (s) =>
-            s.count > 0 && (
-              <div
-                key={s.label}
-                className={s.barClass}
-                style={{ width: `${(s.count / total) * 100}%` }}
-                title={`${s.label}: ${s.count} (${((s.count / total) * 100).toFixed(0)}%)`}
-              />
-            )
-        )}
-      </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[0.72rem]">
-        {segments.map((s) => (
-          <span key={s.label} className={s.textClass}>
-            {s.label} {s.count}
-            <span className="text-dim"> ({((s.count / total) * 100).toFixed(0)}%)</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
+// A single -100..+100-shaped read of "which way is the signal leaning",
+// derived from EXPOSURE-corrected counts (never raw instrument direction
+// — see exposureDirection above, this is exactly the number its own
+// comment says answers "is QAMC structurally long-only?"). All-bearish
+// scores -100, all-bullish scores +100, balanced or all-neutral scores 0.
+function netLean(counts: DirectionCounts, total: number): number {
+  if (total === 0) return 0;
+  return Math.round(((counts.bullish - counts.bearish) / total) * 100);
 }
 
-function StatRow({ label, count, total, barClass }: { label: string; count: number; total: number; barClass: string }) {
-  const pct = total > 0 ? (count / total) * 100 : 0;
-  return (
-    <div className="mb-2 last:mb-0">
-      <div className="flex justify-between text-[0.75rem] mb-0.5">
-        <span>{label}</span>
-        <span className="tabular-nums text-dim">
-          {count} of {total} ({pct.toFixed(0)}%)
-        </span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-panel-alt overflow-hidden">
-        <div className={`h-full ${barClass}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
+const DIRECTION_TONE: Record<"bullish" | "bearish" | "neutral", { label: string; color: Color; dot: string; text: string }> = {
+  bullish: { label: "Long-leaning (bullish signal)", color: "emerald", dot: "bg-pos", text: "text-pos" },
+  bearish: { label: "Short-leaning (bearish signal)", color: "rose", dot: "bg-neg", text: "text-neg" },
+  neutral: { label: "Neutral / no signal", color: "slate", dot: "bg-dim", text: "text-dim" },
+};
 
+// Item 3 of the cockpit trader rework: this panel used to present the
+// candidates-considered/proposed/hedge/risk/outcome breakdown as five
+// bordered sub-sections stacked with hand-drawn ratio bars — "instrument
+// signal direction, effective market exposure" as dense paragraphs of
+// text the owner said he couldn't scan at a glance. He asked for the same
+// underlying facts (long vs short vs cash share of exposure, and a single
+// net-lean read) as standard chart components — Tremor's, the toolset
+// already in this project — donuts specifically. No hand-drawn graphics:
+// a previous panel was deleted for exactly that (see componentPolicy.test.ts's
+// list of banned chart/table implementations this codebase has explicitly
+// ruled out).
+//
+// What changed vs. the old five-section layout:
+//  - "Candidates considered — direction" collapses into ONE donut plus a
+//    BadgeDelta net-lean chip, both built on the EXPOSURE-corrected counts
+//    (not the raw instrument-signal counts) — that's the number that
+//    actually answers "is the system leaning long or short", the raw
+//    instrument split is folded into one footnote sentence instead of a
+//    second near-identical donut.
+//  - "PM proposals" keeps its own (smaller-sample) exposure split and
+//    action pills, but as one compact line instead of a second pair of bars.
+//  - "Inverse-ETF (bearish-hedge) consideration" (a 4-stat-card grid) is
+//    DROPPED. On live data it's 3 of 25 runs / 5 of 323 candidates — too
+//    thin a sample to earn a dedicated section on an at-a-glance panel,
+//    and the one fact worth keeping (hedge candidates exist and are
+//    exposure-flipped) is already the one footnote sentence above.
+//  - "AI Risk Manager verdicts, by run" is DROPPED outright. It answers
+//    "how often does the risk gate approve", which is a different
+//    question than directional bias, and on live data only 4 of 25 runs
+//    ever reach a verdict — too thin to trust at this window size.
+//  - "Outcome across window" (the executed/no-trade/blocked histogram) is
+//    DROPPED outright. It isn't a directional read at all, and it
+//    duplicates the Runs tab one click away in this same workspace group.
 export function DirectionalBiasPanel() {
   const [agg, setAgg] = useState<Aggregates | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -284,16 +218,27 @@ export function DirectionalBiasPanel() {
   }, []);
 
   const status = error ? "error" : loading ? "loading" : "ok";
-  const dominantState =
-    agg && agg.runsIncluded > 0
-      ? DECISION_STATE_ORDER.reduce((best, s) =>
-          agg.decisionStateCounts[s] > agg.decisionStateCounts[best] ? s : best
-        , DECISION_STATE_ORDER[0])
-      : null;
+
+  const donutData = agg
+    ? (["bullish", "bearish", "neutral"] as const)
+        .map((key) => {
+          const tone = DIRECTION_TONE[key];
+          const value = key === "neutral" ? agg.candidateExposureCounts.neutralOrUnknown : agg.candidateExposureCounts[key];
+          return { key, label: tone.label, value, color: tone.color, dot: tone.dot, text: tone.text };
+        })
+        .filter((d) => d.value > 0)
+    : [];
+
+  const lean = agg ? netLean(agg.candidateExposureCounts, agg.totalCandidates) : 0;
+  const leanDeltaType = lean > 0 ? "increase" : lean < 0 ? "decrease" : "unchanged";
+  const leanText =
+    lean === 0
+      ? "Balanced"
+      : `${lean > 0 ? "+" : ""}${lean} net ${lean > 0 ? "long-leaning" : "short-leaning"}`;
 
   return (
     <Panel
-      title="Directional bias across recent runs"
+      title="Directional Bias"
       subtitle="Read-only lens on past runs — not a trading signal or recommendation."
       status={status}
       full
@@ -306,101 +251,83 @@ export function DirectionalBiasPanel() {
       )}
 
       {!error && agg && agg.runsIncluded > 0 && (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4">
           <div className="text-dim text-[0.72rem]">
             Window: last {agg.runsIncluded} of up to {AGGREGATION_WINDOW_RUNS} runs requested
             {agg.runsFetchFailed > 0 ? ` (${agg.runsFetchFailed} run${agg.runsFetchFailed === 1 ? "" : "s"} failed to load and were excluded)` : ""}.
           </div>
 
-          {/* Instrument signal direction vs effective market exposure —
-              deliberately shown as two separate bars, never collapsed into
-              one number. A bullish signal on an inverse ETF (SQQQ, etc.)
-              expresses BEARISH market exposure; conflating the two would
-              hide exactly the structural-long-bias signal this panel
-              exists to surface. */}
-          <div>
-            <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-2 pb-1 border-b border-border">
-              Candidates considered — direction
-            </div>
-            {agg.totalCandidates === 0 ? (
-              <StateMessage text="No candidates were considered in this window." />
-            ) : (
-              <div className="flex flex-col gap-3">
-                <div>
-                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">Instrument signal direction</div>
-                  <DirectionRatioBar counts={agg.candidateDirectionCounts} total={agg.totalCandidates} />
+          {agg.totalCandidates === 0 ? (
+            <StateMessage text="No candidates were considered in this window." />
+          ) : (
+            <>
+              {/* Net directional lean — one number, one glance. Built on
+                  exposure-corrected counts (see netLean above), never the
+                  raw instrument signal. */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                <BadgeDelta deltaType={leanDeltaType} size="lg">
+                  {leanText}
+                </BadgeDelta>
+                <span className="text-dim text-[0.75rem]">
+                  across {agg.totalCandidates} candidate consideration{agg.totalCandidates === 1 ? "" : "s"} this window
+                </span>
+              </div>
+
+              {/* Long vs short vs neutral share of exposure — the donut. */}
+              <div className="flex flex-wrap items-center gap-5">
+                <DonutChart
+                  data={donutData}
+                  category="value"
+                  index="label"
+                  colors={donutData.map((d) => d.color)}
+                  variant="donut"
+                  showAnimation={false}
+                  showTooltip
+                  className="h-36 w-36 shrink-0"
+                  valueFormatter={(v) => `${v}`}
+                />
+                <div className="flex flex-col gap-1.5 text-[0.78rem] min-w-[180px]">
+                  {donutData.map((d) => (
+                    <div key={d.key} className="flex items-center gap-1.5">
+                      <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${d.dot}`} aria-hidden="true" />
+                      <span>{d.label}</span>
+                      <span className="text-dim tabular-nums ml-auto pl-2">
+                        {d.value} ({((d.value / agg.totalCandidates) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">
-                    Effective market exposure{" "}
-                    <span className="normal-case font-normal text-dim">(inverse-ETF candidates flipped)</span>
-                  </div>
-                  <DirectionRatioBar counts={agg.candidateExposureCounts} total={agg.totalCandidates} />
-                </div>
+              </div>
+
+              {agg.hedgeCandidatesCount > 0 && (
                 <div className="text-dim text-[0.72rem]">
-                  {agg.totalCandidates} candidate consideration(s) total
-                  {agg.hedgeCandidatesCount > 0
-                    ? ` — ${agg.hedgeCandidatesCount} on an inverse ETF, where a bullish instrument signal expresses bearish market exposure (and vice versa).`
-                    : "."}
+                  {agg.hedgeCandidatesCount} of {agg.totalCandidates} candidates ({agg.hedgeRunsConsidered} run
+                  {agg.hedgeRunsConsidered === 1 ? "" : "s"}) were an inverse-ETF hedge — already reflected in the
+                  exposure figures above, since a bullish signal on those expresses bearish exposure (and vice versa).
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </>
+          )}
 
-          {/* Inverse-ETF / bearish-hedge consideration */}
-          <div>
-            <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-2 pb-1 border-b border-border">
-              Inverse-ETF (bearish-hedge) consideration
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-              <div className="card">
-                <div className="text-[1.05rem] font-extrabold tabular-nums text-hedge">{agg.hedgeRunsConsidered}</div>
-                <div className="text-[0.62rem] text-dim uppercase tracking-wide mt-0.5">Runs w/ hedge candidate</div>
-              </div>
-              <div className="card">
-                <div className="text-[1.05rem] font-extrabold tabular-nums text-hedge">{agg.hedgeCandidatesCount}</div>
-                <div className="text-[0.62rem] text-dim uppercase tracking-wide mt-0.5">Hedge candidates</div>
-              </div>
-              <div className="card">
-                <div className="text-[1.05rem] font-extrabold tabular-nums text-hedge">
-                  {agg.hedgeCandidatesCount > 0 ? `${agg.hedgeCandidatesProposed} of ${agg.hedgeCandidatesCount}` : "—"}
-                </div>
-                <div className="text-[0.62rem] text-dim uppercase tracking-wide mt-0.5">Reached proposed order</div>
-              </div>
-              <div className="card">
-                <div className="text-[1.05rem] font-extrabold tabular-nums text-hedge">
-                  {agg.hedgeCandidatesCount > 0 ? `${agg.hedgeCandidatesExecuted} of ${agg.hedgeCandidatesCount}` : "—"}
-                </div>
-                <div className="text-[0.62rem] text-dim uppercase tracking-wide mt-0.5">Executed</div>
-              </div>
-            </div>
-            {agg.hedgeCandidatesCount === 0 && (
-              <div className="state-message mt-1.5">No bearish-hedge candidates were considered in this window.</div>
-            )}
-          </div>
-
-          {/* PM directional proposals */}
-          <div>
-            <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-2 pb-1 border-b border-border">
-              PM proposals — candidates that reached a proposed order
-            </div>
+          {/* PM proposals — the smaller-sample subset that actually reached
+              a proposed order. Kept as one compact line + pills rather than
+              a second pair of bars/donut: at this sample size (13 on live
+              data vs. 323 considered) a second full chart would mostly be
+              chart chrome around a handful of candidates. */}
+          <div className="border-t border-border pt-3">
+            <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-1.5">PM proposals</div>
             {agg.proposedTotal === 0 ? (
               <StateMessage text="No candidates reached a proposed order in this window." />
             ) : (
-              <div className="flex flex-col gap-2.5">
-                <div>
-                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">Instrument signal direction</div>
-                  <DirectionRatioBar counts={agg.proposedDirectionCounts} total={agg.proposedTotal} />
-                </div>
-                <div>
-                  <div className="text-[0.68rem] text-dim uppercase tracking-wide mb-1">
-                    Effective market exposure{" "}
-                    <span className="normal-case font-normal text-dim">(inverse-ETF candidates flipped)</span>
-                  </div>
-                  <DirectionRatioBar counts={agg.proposedExposureCounts} total={agg.proposedTotal} />
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[0.8rem]">
+                  Of {agg.proposedTotal} candidate{agg.proposedTotal === 1 ? "" : "s"} that reached a proposed order:{" "}
+                  <span className="text-pos font-semibold">{agg.proposedExposureCounts.bullish} long-leaning</span>,{" "}
+                  <span className="text-neg font-semibold">{agg.proposedExposureCounts.bearish} short-leaning</span>,{" "}
+                  <span className="text-dim">{agg.proposedExposureCounts.neutralOrUnknown} neutral</span>.
                 </div>
                 <div className="flex flex-wrap gap-2 items-center">
-                  <span className="text-dim text-[0.72rem]">Proposed actions:</span>
+                  <span className="text-dim text-[0.72rem]">Actions:</span>
                   {Object.entries(agg.proposedActionCounts).map(([action, count]) => (
                     <span key={action} className="inline-flex items-center gap-1.5">
                       <Pill text={action === "none" ? "no action" : action} />
@@ -411,72 +338,6 @@ export function DirectionalBiasPanel() {
               </div>
             )}
           </div>
-
-          {/* Risk approvals/rejections by direction (run-level granularity) */}
-          <div>
-            <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-2 pb-1 border-b border-border">
-              AI Risk Manager verdicts, by run
-            </div>
-            <div className="text-dim text-[0.72rem] mb-2">
-              The risk verdict is recorded per run, not per candidate — a run can cover multiple candidates under one
-              verdict. Grouped here by whether the run involved a bearish-hedge candidate, not by individual direction.
-            </div>
-            {agg.riskReachingRuns === 0 ? (
-              <StateMessage text="No runs reached the AI Risk Manager in this window." />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <div className="text-[0.78rem] font-semibold mb-1">
-                    Runs with a bearish-hedge candidate <span className="text-hedge">({agg.riskHedgeRuns.total})</span>
-                  </div>
-                  {agg.riskHedgeRuns.total === 0 ? (
-                    <div className="state-message">None reached the Risk Manager in this window.</div>
-                  ) : (
-                    <StatRow label="Approved" count={agg.riskHedgeRuns.approved} total={agg.riskHedgeRuns.total} barClass="bg-pos" />
-                  )}
-                </div>
-                <div>
-                  <div className="text-[0.78rem] font-semibold mb-1">
-                    Runs without a bearish-hedge candidate <span className="text-dim">({agg.riskNonHedgeRuns.total})</span>
-                  </div>
-                  {agg.riskNonHedgeRuns.total === 0 ? (
-                    <div className="state-message">None reached the Risk Manager in this window.</div>
-                  ) : (
-                    <StatRow
-                      label="Approved"
-                      count={agg.riskNonHedgeRuns.approved}
-                      total={agg.riskNonHedgeRuns.total}
-                      barClass="bg-pos"
-                    />
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Dominant no-trade reason / outcome histogram */}
-          <div>
-            <div className="text-[0.75rem] uppercase tracking-wide text-dim mb-2 pb-1 border-b border-border">
-              Outcome across window
-            </div>
-            {dominantState && (
-              <div className="text-[0.8rem] mb-2.5">
-                Most common outcome this window: <strong>{DECISION_STATE_LABELS[dominantState]}</strong> (
-                {agg.decisionStateCounts[dominantState]} of {agg.runsIncluded} runs).
-              </div>
-            )}
-            <div>
-              {DECISION_STATE_ORDER.map((s) => (
-                <StatRow
-                  key={s}
-                  label={DECISION_STATE_LABELS[s]}
-                  count={agg.decisionStateCounts[s]}
-                  total={agg.runsIncluded}
-                  barClass={DECISION_STATE_BAR_CLASS[s]}
-                />
-              ))}
-            </div>
-          </div>
         </div>
       )}
     </Panel>
@@ -486,5 +347,5 @@ export function DirectionalBiasPanel() {
 // Exported for unit testing (DirectionalBiasPanel.test.ts) — the pure
 // aggregation/derivation logic, kept separate from data-fetching and
 // rendering so it's directly verifiable without mounting a component.
-export { exposureDirection, computeAggregates };
+export { exposureDirection, computeAggregates, netLean };
 export type { Aggregates, DirectionCounts };
