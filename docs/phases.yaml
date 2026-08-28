@@ -1,0 +1,443 @@
+# Machine-readable status manifest for docs/QAMC_REMEDIATION_SPEC.md.
+#
+# Purpose: let a script re-derive whether each recorded `status` is still
+# true, without a human re-reading the spec or the docs (which have been
+# confidently wrong before). Each phase carries `evidence`: a list of
+# mechanically checkable rules. None of them require judgement — a script
+# can evaluate every one of them and flag drift.
+#
+# What "mechanical" does and doesn't cover here:
+#   - commit_in_main / pr_merged / file_exists / symbol_in_file / test_exists
+#     / setting_equals can all be checked from a plain clone of this repo.
+#   - Whether a commit that is on `main` has actually reached the production
+#     box is NOT something a rule kind in this schema can check (that needs
+#     `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` against
+#     a real host) — those checks are recorded as `kind: manual` and named
+#     explicitly. Phases marked DONE, NOT DEPLOYED always carry both: the
+#     mechanical rules that prove the work is real and merged, and the one
+#     manual rule that says how to check whether it has shipped since.
+#
+# Verified at generation time (2026-08-28):
+#   origin/main HEAD:        1801ce95ade9113065e204e6b894b25592759cdd  (PR #120)
+#   production HEAD:         224722e0b09c2f8b24b86c73fe1f6319b06ceb01  (PR #119)
+#   production verified via: sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1
+#   production is 12 commits / 3 merged PRs behind origin/main: #115 (earnings
+#   extraction), #116 (shorts countable, Stage 1), #120 (cockpit trader view).
+#
+# Status values: DONE AND LIVE | DONE, NOT DEPLOYED | PARTIAL | NOT STARTED | OVERTAKEN
+
+generated_at: "2026-08-28"
+spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
+repo: "RedstoneX/quant-agent"
+verified_against:
+  origin_main_sha: "1801ce95ade9113065e204e6b894b25592759cdd"
+  production_head_sha_at_audit: "224722e0b09c2f8b24b86c73fe1f6319b06ceb01"
+  production_check_command: "sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1"
+  production_drift_alarm: "scripts/check_deploy_drift.py, quant-agent-drift-check.timer (Mon-Fri 08:45 ET) — catches this automatically, once a day"
+
+phases:
+
+  - id: mandate
+    title: "The Mandate (§0)"
+    plain_summary: "The system exists to make money trading, not to run a research experiment on cheap models — that correction is written into the docs, and the money/risk limits it describes (paper-only, 0.5-5% per trade, 25% total at risk) are wired into the live trading config."
+    status: "DONE AND LIVE"
+    confidence: "high"
+    evidence:
+      - kind: commit_in_main
+        sha: "d3d5b2d8a25e6fc400fb2d33a0deb6704bf1bd27"
+        note: "docs(outcome): correct the mandate to profit, and authorize short selling — rewrites docs/OUTCOME.md away from the 'research experiment' framing"
+      - kind: file_exists
+        path: "docs/OUTCOME.md"
+        note: "the corrected mandate document"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "alpaca.paper"
+        value: true
+        note: "Alpaca Paper only, per the operating-parameters table"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_position_risk_pct"
+        value: 5
+        note: "5% per-trade ceiling"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.min_position_risk_pct"
+        value: 0.5
+        note: "0.5% per-trade floor"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_portfolio_risk_pct"
+        value: 25
+        note: "25% total-at-risk ceiling"
+
+  - id: phase_0
+    title: "Phase 0 — Gates"
+    plain_summary: "Before any trading-logic change could merge, the project needed a real CI test gate, a rule saying only the owner can accept changes to the governing documents, and the live server's secretly-hand-edited settings committed to git. All three are done."
+    status: "DONE AND LIVE"
+    confidence: "high"
+    evidence:
+      - kind: manual
+        note: "CI gate is a GitHub repo setting, not a file in this repo: confirm with `gh api repos/RedstoneX/quant-agent/branches/main/protection` — required_status_checks.contexts must include \"pytest\" and enforce_admins.enabled must be true. Verified true at audit time."
+      - kind: pr_merged
+        number: 96
+        note: "fix(ci): add API deps to the dev extra so the test suite can be collected"
+      - kind: pr_merged
+        number: 97
+        note: "TEMP: prove CI gate blocks a failing test — the deliberate-failure proof the spec required"
+      - kind: pr_merged
+        number: 99
+        note: "docs(agents): require owner ratification of governance documents (Phase 0.2)"
+      - kind: symbol_in_file
+        path: "AGENTS.md"
+        symbol: "only the **owner** may **accept** those changes"
+        note: "the ratification rule text (Phase 0.2)"
+      - kind: pr_merged
+        number: 119
+        note: "fix(config): reconcile the live box's hand-edited settings into git (Phase 0.3) — this is also the PR currently deployed to production"
+      - kind: manual
+        note: "Phase 0.3 needs re-verifying periodically, not just once: `sudo -n -u qamc git -C /home/qamc/quant-agent status --porcelain` must show no modified tracked files. True at audit time; it has drifted before."
+
+  - id: phase_1
+    title: "Phase 1 — Tech Analyst returns real structure"
+    plain_summary: "The technical analyst used to invent its stop-loss and price target out of thin air. It now has to find real support/resistance levels from five years of price history, or the trade is refused. This is live in production."
+    status: "DONE AND LIVE"
+    confidence: "high"
+    evidence:
+      - kind: pr_merged
+        number: 102
+        note: "feat(tech-analyst): require structural levels; delete invented stops and targets"
+      - kind: commit_in_main
+        sha: "138edd2e63fe8c02d79f58548b08d740ae3a7227"
+        note: "structural levels required by the TechAnalysisResult validator"
+      - kind: commit_in_main
+        sha: "6207d6bc160830b01d6bd5fe00a2efe3567024e9"
+        note: "src/data/levels.py — deterministic support/resistance over 5 years of bars"
+      - kind: commit_in_main
+        sha: "c22f69fb2f6d5768ae2acacc87c7ee2c79febb71"
+        note: "src/data/context.py — Phase 1b market context, not in the original spec text"
+      - kind: file_exists
+        path: "src/data/levels.py"
+      - kind: file_exists
+        path: "src/data/context.py"
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "support_levels: list[float] = Field(default_factory=list)"
+        note: "structural levels are first-class fields on TechAnalysisResult"
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "expected_horizon_sessions: int | None = None"
+      - kind: symbol_in_file
+        path: "src/data/context.py"
+        symbol: "def format_context_block"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "trading.lookback_days"
+        value: 1800
+        note: "~5 years of history, raised from 320 so levels are computed over real structure"
+      - kind: test_exists
+        path: "tests/test_context.py"
+        test: "test_context.py exists as a dedicated test module for src/data/context.py (27 tests per the spec's own note)"
+      - kind: symbol_in_file
+        path: "src/data/market.py"
+        symbol: "def get_next_earnings_date"
+        note: "KNOWN GAP: this method exists and is tested, but nothing in src/pipeline.py calls it — grep src/pipeline.py for days_to_earnings= and expect no match. If that ever starts matching, this sub-item has been completed."
+
+  - id: phase_2
+    title: "Phase 2 — Risk-based sizing and correlation-aware budgeting"
+    plain_summary: "Trade size used to be a raw percent of the portfolio with no regard for how far away the stop-loss was, and correlated bets (e.g. four different nuclear-power stocks) could each consume a full budget slot. Both are fixed: size is now derived from how much the idea could lose, and correlated names share one risk budget. This landed only after the exit-rework phase, on the owner's explicit reordering, and it is now live."
+    status: "DONE AND LIVE"
+    confidence: "high"
+    evidence:
+      - kind: pr_merged
+        number: 106
+        note: "Phase 2a — the book's real risk (drawdown scale, correlation matrix, portfolio heat, R-multiple)"
+      - kind: commit_in_main
+        sha: "c89e957deda5e6103c136866f42817cd26425c7f"
+        note: "Phase 2a landed commit"
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "def apply_drawdown_scale"
+      - kind: symbol_in_file
+        path: "src/data/correlation.py"
+        symbol: "def correlation_clusters"
+      - kind: pr_merged
+        number: 113
+        note: "Phase 2b — risk-based sizing (§2.1), correlation-aware budget (§2.2), plus the two same-day follow-on fixes (single-name clamp, stop-width floor). Merge commit 46b2029 IS an ancestor of the current production HEAD (224722e0) — this is fully deployed, not merely merged, contradicting the spec's own text which still says 'Neither fix is deployed.'"
+      - kind: commit_in_main
+        sha: "75c023356af53381dc3fab2206a30fc898aee0b9"
+        note: "feat(risk): size positions by risk, and ration that risk across correlated themes"
+      - kind: commit_in_main
+        sha: "b712f4c98f4ca6f3e73b420d79b62f3d31f239d7"
+        note: "fix(risk): size under the single-name ceiling instead of into a hard block"
+      - kind: commit_in_main
+        sha: "3dff9408b199dad6cce9da3f80e01d8b64b39467"
+        note: "fix(risk): stops must clear the noise, and by an amount the trade earns"
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "risk_allocation_pct: float | None = Field(default=None, ge=0.0, le=5.0)"
+        note: "§2.1: TargetPosition sizing field is risk, not raw weight"
+      - kind: symbol_in_file
+        path: "src/risk/budget.py"
+        symbol: "def allocate_risk_budget"
+        note: "§2.2: correlation-aware budget gate"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_cluster_risk_share_pct"
+        value: 40
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_position_pct"
+        value: 20
+        note: "single-name ceiling the constructor now clamps to (b712f4c)"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.min_stop_atr_multiple"
+        value: 3.0
+        note: "stop-width floor (3dff940)"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.min_reward_risk_after_widening"
+        value: 1.5
+      - kind: manual
+        note: "Confirm production deployment directly: sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1, and check that 46b2029 (or a later SHA) is an ancestor. True at audit time — verified with git merge-base --is-ancestor 46b2029 <production HEAD>."
+
+  - id: phase_3
+    title: "Phase 3 — Exit rework"
+    plain_summary: "This is where most of the trading losses were traced to: a self-tightening 'the position looks stalled, sell it' feedback loop, a reviewer with no memory of its own past calls, exits that could sell on vague reasoning, exits that skipped risk review, and stops that fired on ordinary daily wiggle. All of it is fixed and live except one item (upgrading the exit reviewer's model), which the owner decided NOT to do because the evidence for it turned out to be wrong."
+    status: "DONE AND LIVE"
+    confidence: "high"
+    evidence:
+      - kind: pr_merged
+        number: 107
+        note: "Phase 3.1/3.2 — break the pace feedback loop, give the reviewer its memory"
+      - kind: pr_merged
+        number: 108
+        note: "Phase 3.3/3.4 — every exit names a trigger, and every exit meets AI Risk"
+      - kind: pr_merged
+        number: 109
+        note: "Phase 3.6/3.7 — noise band on exits, deterministic trailing stops"
+      - kind: commit_in_main
+        sha: "aea82ee8986f3ac08dbc3d2f692fd529f5ee4ba7"
+        note: "§3.1/3.2: pace_status replaces the self-referential avg_hold_days calibration; reviewer memory"
+      - kind: commit_in_main
+        sha: "2f177e33de60f0d22aeb03bc835b450d4b13b008"
+        note: "§3.3: every SELL/REDUCE must name a recognized trigger"
+      - kind: commit_in_main
+        sha: "d6e9ad932f02814cddc1595bf2f2f894683f0066"
+        note: "§3.4: exits route through AI Risk, fail-open by design"
+      - kind: commit_in_main
+        sha: "57ce342d415e1755c99dc2f4615f183cb83ee66b"
+        note: "§3.6/3.7: ATR noise band on exits, deterministic broker-resident trailing stops"
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "pace_status = \"measured\""
+        note: "§3.1: the four-state pace label (measured/too_early/n/a_breakout/unavailable) replacing the fabricated figure"
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "_HARD_TRIGGER_KEYWORDS"
+        note: "§3.3: hard-trigger phrase gate"
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "def _risk_review_exits"
+        note: "§3.4: exits put in front of AI Risk"
+      - kind: symbol_in_file
+        path: "src/risk/exit_guard.py"
+        symbol: "def veto_contradicted_exit"
+        note: "§3.2: veto a deterioration claim when the reviewer's own numbers improved"
+      - kind: symbol_in_file
+        path: "src/risk/trailing.py"
+        symbol: "def compute_trailing_stop"
+        note: "§3.7: deterministic broker-resident trailing"
+      - kind: file_exists
+        path: "src/risk/exit_guard.py"
+      - kind: file_exists
+        path: "src/risk/trailing.py"
+      - kind: manual
+        note: "§3.5 (upgrade the exit reviewer's model) is deliberately NOT implemented — the owner resolved it as a decision, not a code change, after ops/model_policy/results/merged.json showed the 'weakest model in the stack' premise was false. Re-read that file's midday_exit scores if re-litigating this; do not re-open from the spec text alone."
+
+  - id: phase_4
+    title: "Phase 4 — Evidence symmetry and feed repair"
+    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries (partly fixed: FRED retries already existed, but the Reuters and AP news feeds are still dead as of today)."
+    status: "PARTIAL"
+    confidence: "high"
+    evidence:
+      - kind: commit_in_main
+        sha: "fb88e08cdf3d3c1e209e09afc8ab242ad02642af"
+        note: "§4.1: stop blindfolding the intra_check Portfolio Manager — carries morning macro/news forward instead of re-fetching"
+      - kind: commit_in_main
+        sha: "c9d7eb67a77bb07ae7bf4124e9adcd6d7d4674bb"
+        note: "same-day fix for a crash the §4.1 carry-forward surfaced (sector_guidance shape mismatch)"
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "def _carry_forward_macro"
+        note: "§4.1 done"
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "def _carry_forward_news"
+      - kind: pr_merged
+        number: 113
+        note: "§4.1 shipped as part of feat/pm-flex-routing, deployed (46b2029 is an ancestor of production HEAD)"
+      - kind: symbol_in_file
+        path: "src/data/macro.py"
+        symbol: "One bounded retry per series"
+        note: "§4.2 FRED retry/backoff — already existed before the spec was written; not new work, but satisfies the requirement"
+      - kind: manual
+        note: "§4.2 news-feed repair is NOT done: src/data/news.py's Reuters and AP URLs are unchanged, and docs/WORK.md (PR #118, open, unmerged) records both confirmed dead again on 2026-08-28 (Reuters 404, AP 403) with no fix landed and no owner decision yet on a paid alternative. Re-check by grepping src/data/news.py for the same two URLs and hitting them directly."
+
+  - id: phase_5
+    title: "Phase 5 — Short selling"
+    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assume every position is a long. It is being built in three stages. Stage 1, making a short position count correctly in the risk math, is finished but not yet deployed. Stages 2 and 3 — actually being able to open and safely manage a short — have not been built."
+    status: "PARTIAL"
+    confidence: "high"
+    evidence:
+      - kind: pr_merged
+        number: 116
+        note: "Stage 1 — make a short position countable in current_weights / risk metrics. Merged to main, NOT yet on production (production HEAD 224722e0 predates it)."
+      - kind: commit_in_main
+        sha: "71325b1dc59f3eb3f73f701e44f536ac69fb06a3"
+        note: "Stage 1 shorts: make a short position countable"
+      - kind: commit_in_main
+        sha: "a81bfdec81e2719ff661f92bee45bec0a9068c1a"
+        note: "Tests: shorts countable, with long-only no-op proofs"
+      - kind: test_exists
+        path: "tests/test_shorts_countable.py"
+        test: "test_current_weights_reports_a_held_short_as_held"
+      - kind: test_exists
+        path: "tests/test_shorts_countable.py"
+        test: "test_current_weights_long_only_unchanged"
+      - kind: symbol_in_file
+        path: "src/portfolio_constructor.py"
+        symbol: "no action emitted; shorts are not tradeable yet"
+        note: "the constructor still explicitly refuses to act on a held short — proves Stage 2/3 (actual short trading) do not exist yet. If this string disappears, re-check whether short trading has been implemented."
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "action: Literal[\"BUY\", \"SELL\", \"HOLD\"]"
+        note: "TradeDecision still has no open-short or cover action. If this literal ever includes a short-side value, Stage 2/3 has landed and this phase's status must be re-evaluated."
+      - kind: manual
+        note: "Owner-side account facts (shorting_enabled, 4x margin, equity above the $2,000 floor) were verified against the live Alpaca account on 2026-08-28 and are not expected to change; re-verifying them is not the blocker — the blocker is entirely code, in src/execution/broker.py and src/portfolio_constructor.py."
+
+  - id: phase_6
+    title: "Phase 6 — Cost circuit and transparency"
+    plain_summary: "None of the three planned fixes (spend capped in dollars with an afternoon reserve, a dashboard that explains why a trade happened, an accurate end-of-day P&L in the alert) are built. Worse than the spec anticipated: on 2026-08-28 the existing cost-circuit's over-cautious spend estimate and an unrelated session-count cap together stopped the desk from trading almost the entire day, on 17 cents of actual spend. Four distinct defects were diagnosed in detail; a stopgap was applied (raising the count cap); none of the four is actually fixed yet."
+    status: "PARTIAL"
+    confidence: "medium"
+    evidence:
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "llm_cost_circuit.max_paid_sessions_per_mode_per_day"
+        value: 8
+        note: "the session-count stopgap, still session-based rather than dollar-based — §6.1 not done. If this key is ever removed in favor of a pure-dollar gate, re-check."
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "llm_cost_circuit.daily_cost_limit_usd"
+        value: 2.75
+      - kind: manual
+        note: "§6.1 (dollar-based cap with afternoon reserve): branch fix/dollar-based-session-cap exists but is explicitly recorded as unfinished in docs/WORK.md. No PR open for it at audit time — check `gh pr list --repo RedstoneX/quant-agent --state open` for a PR off that branch."
+      - kind: manual
+        note: "§6.2 (position_id linking a buy to its closing sell, GET /positions/{id}/history, reasoning rendered in the trades table): none of this exists. Mechanically re-checkable — grep src/storage/db.py for 'position_id' and grep frontend/src/components/TradesPanel.tsx for 'reasoning'; both currently return no matches."
+      - kind: manual
+        note: "§6.3 (true end-of-day P&L figure, expressed against risk capital as well as equity, in the Telegram alert): no dedicated function found in src/notifier.py. Re-check by grepping src/notifier.py for 'risk_capital' or an end-of-day summary function distinct from the existing position list."
+
+  - id: phase_7
+    title: "Phase 7 — Measurement"
+    plain_summary: "There is still no way to test a strategy change against history before risking real (paper) money on it, no measurement of whether stated conviction actually predicts outcomes, and no dashboard of the core trading-edge numbers (win rate, average win vs. average loss, expectancy). None of this has been started."
+    status: "NOT STARTED"
+    confidence: "high"
+    evidence:
+      - kind: file_exists
+        path: "src/replay.py"
+        note: "exists but is decision replay for debugging, not a strategy backtester — the spec's own §7.1 text makes this distinction explicitly"
+      - kind: manual
+        note: "No backtest module exists anywhere in the repo (confirmed via `find . -iname '*backtest*'` returning nothing at audit time) and no branch or open PR addresses §7.1/7.2/7.3. Re-run that find to check for movement."
+
+  - id: phase_8
+    title: "Phase 8 — Documentation correction"
+    plain_summary: "The one-time corrections the spec asked for (rewrite the mandate doc, fix specific wrong claims in the state doc, add the ratification rule, tidy up branches) were all done. But the underlying problem — docs going stale within a day or two — has kept recurring since, including in the very document (STATE.md) this phase was supposed to fix: it currently states a production commit that is three merged pull requests behind the truth."
+    status: "PARTIAL"
+    confidence: "high"
+    evidence:
+      - kind: commit_in_main
+        sha: "d3d5b2d8a25e6fc400fb2d33a0deb6704bf1bd27"
+        note: "docs(outcome): correct the mandate to profit — done"
+      - kind: commit_in_main
+        sha: "fcc6fda22a2ad34377ee7b83969613b2e4eff515"
+        note: "docs(state): correct claims contradicted by the 2026-08-27 review — done"
+      - kind: commit_in_main
+        sha: "665d92fa9c3602e1bc467069df59378dfa0bb76f"
+        note: "docs(agents): define document authority tiers and close the stack"
+      - kind: pr_merged
+        number: 99
+        note: "the AGENTS.md ratification rule — done"
+      - kind: manual
+        note: "Repo hygiene: the two named VPS-security branches (claude/vps-security-hardening-t8m3qz, claude/vps-deployment-hardening-q3f7k2) still exist on origin, unmerged, exactly as 'rescued but not yet triaged' — check `git ls-remote --heads origin | grep vps`."
+      - kind: manual
+        note: "STATE.md currently claims 'Current production HEAD is 32c174b' (grep docs/STATE.md for that exact string). At audit time this was three merged PRs stale (#113, #119, and the gap to #115/#116/#120) versus the real production HEAD from `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`. An open, unmerged, currently CONFLICTING PR (#117, docs/night-sync) attempts a correction but has not landed. This is live evidence the staleness problem Phase 8 targeted is not actually solved, only patched once."
+
+  - id: phase_9
+    title: "Phase 9 — The research desk actually deliberates"
+    plain_summary: "The owner's actual ask — that all the research seats (news, earnings, macro, insider-trading signals) get to propose trade ideas and argue about them, instead of the technical-chart analyst being the only seat allowed to originate a candidate — is fully designed on paper but has no code yet."
+    status: "NOT STARTED"
+    confidence: "high"
+    evidence:
+      - kind: commit_in_main
+        sha: "5ca9dce9ca3c85177fd1df7758c6eea8c82f1564"
+        note: "docs: record today's decisions and design Phase 9 (the desk deliberates) — design only"
+      - kind: manual
+        note: "No 'nominate' concept exists in code: grep -rn 'nominat' src/ config/prompts/ at audit time matched only the unrelated word 'denominator'. Re-run that grep (case-insensitive, whole word 'nominat') to check for movement — a real hit outside a 'denominator' context means work has started."
+      - kind: manual
+        note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is now DONE AND LIVE (see phase_2), so Phase 9 is unblocked and is the next unclaimed item in docs/WORK.md's ordered backlog — but nothing has picked it up yet."
+
+  - id: invariants
+    title: "Invariants (must hold at all times)"
+    plain_summary: "Eight rules that are supposed to never be violated — paper trading only, every position always has a hard stop, no single trade can lose more than 5% of the account, deterministic safety code has the final say over any AI decision, and only the owner can change the rulebook. All are currently true in the running code; none has an automated proof that runs continuously."
+    status: "DONE AND LIVE"
+    confidence: "medium"
+    evidence:
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "alpaca.paper"
+        value: true
+        note: "invariant 1"
+      - kind: symbol_in_file
+        path: "src/portfolio_constructor.py"
+        symbol: "def _resolve_stop"
+        note: "invariant 3 & 6: every BUY gets a structural stop or is rejected outright"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_position_risk_pct"
+        value: 5
+        note: "invariant 4, per-trade ceiling"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_portfolio_risk_pct"
+        value: 25
+        note: "invariant 4, total-at-risk ceiling"
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "def _risk_review_exits"
+        note: "invariant 5, exits go through the same chain as entries"
+      - kind: symbol_in_file
+        path: "AGENTS.md"
+        symbol: "only the **owner** may **accept** those changes"
+        note: "invariant 8"
+      - kind: manual
+        note: "Invariant 2 (deterministic Python is final authority and fails closed) and invariant 7 (the system never blocks awaiting human approval) are properties of the whole pipeline's control flow, not any one symbol. No automated proof runs continuously. Confirm by reading src/pipeline.py's RiskStage and the absence of any wait-for-approval code path; this is the reason this phase's confidence is medium rather than high."
+
+  - id: execution_order
+    title: "Execution order diagram"
+    plain_summary: "The plan's original build order (gates, then levels, then sizing, then exits) was explicitly overridden by the owner partway through — exits were rebuilt before the rest of the sizing work — and the spec's own diagram admits it was never redrawn to match what actually happened."
+    status: "OVERTAKEN"
+    confidence: "high"
+    evidence:
+      - kind: symbol_in_file
+        path: "docs/QAMC_REMEDIATION_SPEC.md"
+        symbol: "has not been redrawn"
+        note: "the spec document itself flags its own execution-order diagram as stale"
+      - kind: commit_in_main
+        sha: "8bd5dd62f1574ff9a1527e950eea262eb3ff6ac6"
+        note: "docs: sync every pertinent doc to Phase 2a, and record the owner's reordering"
+      - kind: commit_in_main
+        sha: "a6f3ad5cdc054079ea3c20dbb00938b9054d6767"
+        note: "docs: record Phase 3 complete and deployed, and correct the §3.5 premise — Phase 3 finished ahead of the rest of Phase 2, contradicting the diagram's Phase 2 -> Phase 3 order"
+      - kind: manual
+        note: "The actual order executed was: Phase 0 -> Phase 1 -> Phase 2a -> Phase 3 (all of it) -> Phase 2b (the rest) -> Phase 4.1 -> Phase 5 (partial, in flight) -> Phase 6 (emergency triage only, unplanned) -> Phase 8 (ongoing, imperfectly) -> Phase 9 (not started). This is a judgement call about intent, hence manual."
