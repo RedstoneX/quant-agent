@@ -322,11 +322,10 @@ phases:
     status: "PARTIAL"
     confidence: "medium"
     evidence:
-      - kind: setting_equals
+      - kind: setting_present
         path: "config/settings.yaml"
         key: "llm_cost_circuit.max_paid_sessions_per_mode_per_day"
-        value: 8
-        note: "the session-count stopgap, still session-based rather than dollar-based — §6.1 not done. If this key is ever removed in favor of a pure-dollar gate, re-check."
+        note: "the key's PRESENCE, not its value, is the evidence: while this session-count stopgap exists at all, the cap is still session-based rather than dollar-based, so §6.1 is not done. Its value is deliberately not asserted here — it is a stopgap expected to be re-tuned (raised from 8 to 40 by commit 76646af on 2026-08-28 to stop it benching intra_check mid-day on normal spend), and a specific number would make every legitimate re-tune read as false rot. If this key is ever removed in favor of a pure-dollar gate, that means §6.1 has landed and this phase must be re-evaluated."
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "llm_cost_circuit.daily_cost_limit_usd"
