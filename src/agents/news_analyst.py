@@ -148,7 +148,21 @@ State changes captured earlier:
             for key in order:
                 source, title = key
                 syms = ", ".join(grouped[key])
-                stock_lines.append(f"  [{source}] ({syms}) {title}")
+                # Same reason as the general-news block: if one syndicated
+                # story was collapsed into this item, say so explicitly and
+                # say what it does not mean. Silence here would let the model
+                # read a single widely-carried story as a single small one.
+                item = item_by_key[key]
+                collapsed = getattr(item, "collapsed_count", 1) or 1
+                breadth = ""
+                if collapsed > 1:
+                    n_src = getattr(item, "source_count", 1) or 1
+                    breadth = (
+                        f" [carried by {n_src} outlet{'s' if n_src != 1 else ''}"
+                        f", {collapsed} articles - syndication breadth, "
+                        f"NOT independent corroboration]"
+                    )
+                stock_lines.append(f"  [{source}] ({syms}) {title}{breadth}")
                 summary = getattr(item_by_key[key], "summary", "")
                 if summary:
                     stock_lines.append(f"    > {summary[:200]}")

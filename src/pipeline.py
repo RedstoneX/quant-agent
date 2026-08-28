@@ -5282,8 +5282,14 @@ class TradingPipeline:
                 self.news_store.save_macro_narrative(report_dict["macro_narrative"])
                 if report_dict.get("stock_news"):
                     self.news_store.save_stock_alerts(report_dict["stock_news"])
+                # collapsed_count / source_count are persisted so the dedup
+                # stage stays auditable after the fact — you can re-measure
+                # the duplication rate from the archive without re-fetching.
                 self.news_store.save_raw_headlines(
-                    [{"title": i.title, "source": i.source, "summary": i.summary} for i in news_items])
+                    [{"title": i.title, "source": i.source, "summary": i.summary,
+                      "collapsed_count": getattr(i, "collapsed_count", 1),
+                      "source_count": getattr(i, "source_count", 1)}
+                     for i in news_items])
                 n_changes = len(intel_report.state_changes)
                 n_stocks = len(intel_report.stock_news)
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
