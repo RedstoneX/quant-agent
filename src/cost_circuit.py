@@ -67,6 +67,90 @@ def _trigger_scope(code: Any) -> str:
     return "hard"
 
 
+# === Defect 2 (2026-08-28): provider failures that provably cost $0 ===
+#
+# `fail_call` charges the full conservative reservation for every failed
+# attempt, on the reasoning that a stream can be cut off after the provider
+# already generated (and billed for) tokens. That reasoning is right for a
+# response that started and wrong for a request the provider rejected
+# before generating anything, or one that never reached the provider at
+# all. On 2026-08-28 a single tech_analyst HTTP 429 -- by definition zero
+# tokens billed, since a 429 means the provider refused the request before
+# any generation started -- was accounted as `unknown_cost_rows`, made the
+# day inexact, and hard-latched trading for three-plus hours until an
+# operator reset it by hand.
+#
+# `_is_known_zero_cost_failure` below is the ONLY thing trusted to prove
+# $0 cost, and it is deliberately narrow. This module does not import the
+# anthropic/openai/httpx SDKs (see the module docstring -- the breaker has
+# to stay independent of every provider client), so, exactly like
+# `src/agents/base.py:_is_retryable`, classification is done by matching
+# `status_code` / exception class name rather than `isinstance` against a
+# provider SDK class.
+
+# The provider explicitly rejected the request before generating a
+# response. 429 (rate limited), 400 (bad request), 401 (bad/expired key),
+# 403 (forbidden) and 404 (not found/deprecated model) all happen at the
+# provider's request-validation boundary, strictly before any output (and,
+# per every provider's own billing model, any input) tokens are metered.
+# A 402 ("insufficient balance" -- handled elsewhere in base.py as a
+# fast-fail-to-failover signal, not here) is deliberately NOT included:
+# it is not in the design's enumerated zero-cost list, and adding an
+# entry for it on our own initiative would be exactly the "allow-list of
+# ambiguous errors" inversion this fix must not become.
+_KNOWN_ZERO_COST_STATUS_CODES = frozenset({400, 401, 403, 404, 429})
+
+# Exception class names that can ONLY occur while establishing a TCP/TLS
+# connection -- i.e. strictly before a single byte of the request could
+# have been written to the socket: DNS resolution failure, a refused/reset
+# connection, and a failed (or timed-out) TLS handshake. Deliberately
+# narrow, and deliberately excludes read/write/protocol-level failures
+# (`ReadTimeout`, `ReadError`, `WriteError`, `RemoteProtocolError`,
+# `APITimeoutError`, ...), which can only happen AFTER the request was
+# already sent and are left ambiguous below -- that is the same pre-send/
+# post-send line the design draws between "timeout after send" (ambiguous)
+# and "pre-send transport failure" (zero-cost).
+_PRE_SEND_TRANSPORT_EXC_NAMES = frozenset({
+    "ConnectError", "ConnectTimeout", "ConnectionRefusedError",
+    "gaierror", "SSLError", "SSLCertVerificationError",
+    "SSLZeroReturnError", "SSLWantReadError", "SSLWantWriteError",
+})
+
+
+def _is_known_zero_cost_failure(error: BaseException) -> bool:
+    """True only for a provider failure PROVEN to have cost $0.
+
+    Fail closed: anything not explicitly matched here -- an unrecognized
+    exception, a 5xx, a timeout waiting for a response, a truncated
+    stream, a missing/unexpected status code -- returns False (ambiguous,
+    today's conservative accounting, unchanged by this function). This is
+    an allow-list of what is safe to call zero-cost; it must never grow
+    into (or be replaced by) an allow-list of what counts as ambiguous.
+    """
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        return status in _KNOWN_ZERO_COST_STATUS_CODES
+    # No HTTP status code was ever received: this is either a genuine
+    # pre-send transport failure or something ambiguous (a read/write
+    # timeout, a connection dropped mid-response, ...). Walk the
+    # exception's cause chain -- SDKs wrap the concrete httpx/socket/ssl
+    # exception (`raise APIConnectionError(...) from exc`) rather than
+    # replacing it, so the original, specific failure is almost always
+    # still reachable even though the top-level wrapper's own class name
+    # ("APIConnectionError") is, by itself, ambiguous about which side of
+    # the connection failed.
+    seen: set[int] = set()
+    node: BaseException | None = error
+    for _ in range(6):  # generous bound against a pathological chain; never expected to matter
+        if node is None or id(node) in seen:
+            break
+        seen.add(id(node))
+        if type(node).__name__ in _PRE_SEND_TRANSPORT_EXC_NAMES:
+            return True
+        node = node.__cause__ or node.__context__
+    return False
+
+
 class PaidAnalysisSuspended(RuntimeError):
     """Raised before a paid provider request when the circuit is open."""
 
@@ -2765,14 +2849,28 @@ class LLMCostCircuitBreaker:
         self._notify_if_needed()
 
     def fail_call(self, reservation: CallReservation, error: BaseException) -> None:
-        """Conservatively account an unfinished paid request and fail closed.
+        """Conservatively account an unfinished paid request and fail closed
+        -- except for the narrow set of failures PROVEN to have cost $0.
 
-        A transport/provider exception does not prove that the provider billed
-        nothing: the prompt may already have been accepted and a streamed
-        response may have been cut off before usage telemetry arrived.  Moving
-        the reservation into spend prevents a failed request from silently
-        restoring budget.  The exact amount is unknowable, so the global latch
-        opens after accounting the conservative reserved exposure.
+        A transport/provider exception does not, in general, prove that the
+        provider billed nothing: the prompt may already have been accepted
+        and a streamed response may have been cut off before usage
+        telemetry arrived.  Moving the reservation into spend prevents a
+        failed request from silently restoring budget.  The exact amount is
+        unknowable, so the global latch opens after accounting the
+        conservative reserved exposure.
+
+        That reasoning breaks down for a KNOWN-ZERO-COST failure -- an HTTP
+        429/400/401/403/404 rejection, or a pre-send transport failure (DNS,
+        connection refused, TLS handshake).  The provider rejected the
+        request, or was never reached, strictly BEFORE any generation could
+        have started, so it billed nothing.  On 2026-08-28 exactly this --
+        one tech_analyst 429, zero tokens billed by definition -- was
+        charged as `unknown_cost_rows`, made the day inexact, and hard-
+        latched trading for three-plus hours until an operator reset it by
+        hand. See `_is_known_zero_cost_failure` for the exact, deliberately
+        narrow classification: fail closed, anything not explicitly proven
+        $0 is accounted exactly as before.
         """
 
         if not self.enabled or reservation.reservation_id == "disabled":
@@ -2781,6 +2879,7 @@ class LLMCostCircuitBreaker:
         with self._infrastructure_lock:
             if self._unavailable_sentinel is not None:
                 return
+        known_zero_cost = _is_known_zero_cost_failure(error)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -2796,7 +2895,10 @@ class LLMCostCircuitBreaker:
                 return
             day = str(row["day"])
             attempted = int(row["attempt_count"] or 0) > 0
-            accounted = float(row["reserved_cost_usd"] or 0) if attempted else 0.0
+            accounted = (
+                0.0 if known_zero_cost
+                else (float(row["reserved_cost_usd"] or 0) if attempted else 0.0)
+            )
             updated_reservation = conn.execute(
                 "UPDATE llm_budget_reservations SET status='failed', actual_cost_usd=?, "
                 "reserved_cost_usd=0, completed_at=datetime('now') "
@@ -2808,13 +2910,26 @@ class LLMCostCircuitBreaker:
                     f"cost-circuit reservation {reservation.reservation_id} "
                     "could not be failed exactly once"
                 )
-            updated_session = conn.execute(
-                "UPDATE llm_budget_sessions SET status='call_failed', "
-                "actual_cost_usd=actual_cost_usd+?, "
-                "costs_exact=CASE WHEN ? THEN 0 ELSE costs_exact END, "
-                "updated_at=datetime('now') WHERE run_id=?",
-                (accounted, int(attempted), reservation.run_id),
-            )
+            if known_zero_cost:
+                # Release only -- no charge, no status change, costs_exact
+                # left exactly as it was. A provably-$0 rejection (a rate
+                # limit, a bad request, a connection that never reached the
+                # provider) is not evidence the SESSION went wrong; it is
+                # evidence this one attempt cost nothing and the caller is
+                # free to retry.
+                updated_session = conn.execute(
+                    "UPDATE llm_budget_sessions SET updated_at=datetime('now') "
+                    "WHERE run_id=?",
+                    (reservation.run_id,),
+                )
+            else:
+                updated_session = conn.execute(
+                    "UPDATE llm_budget_sessions SET status='call_failed', "
+                    "actual_cost_usd=actual_cost_usd+?, "
+                    "costs_exact=CASE WHEN ? THEN 0 ELSE costs_exact END, "
+                    "updated_at=datetime('now') WHERE run_id=?",
+                    (accounted, int(attempted), reservation.run_id),
+                )
             if updated_session.rowcount != 1:
                 raise RuntimeError(
                     f"cost-circuit session {reservation.run_id} is missing at failure"

@@ -11,11 +11,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.agents.base import BaseAgent
+from src.agents.base import BaseAgent, LLMStreamInterruptedError
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
     OptionalPaidAnalysisRetrySkipped,
     PaidAnalysisSuspended,
+    _is_known_zero_cost_failure,
     _trigger_scope,
 )
 from src.pipeline import TradingPipeline
@@ -280,6 +281,202 @@ def test_failed_call_without_usage_consumes_reserve_and_latches(tmp_path, monkey
     assert state["current_session_cost_usd"] > 0
     assert state["current_daily_cost_usd"] > 0
     assert "without final usage telemetry" in notifier.messages[0]
+
+
+# ============================================================================
+# Defect 2 (2026-08-28): a provably-$0 provider rejection must not be
+# charged, and must not trip the circuit. `_is_known_zero_cost_failure`
+# is deliberately narrow -- every one of these tests confirms one specific
+# admitted class; the very last one confirms the fail-closed default is
+# untouched (an unrecognized/ambiguous failure is charged and trips
+# exactly as before this fix).
+# ============================================================================
+
+class _StatusCodeError(Exception):
+    """Stand-in for `anthropic.APIStatusError` / `openai.APIStatusError` --
+    both SDKs set `.status_code` on every subclass (RateLimitError,
+    BadRequestError, AuthenticationError, PermissionDeniedError,
+    NotFoundError, InternalServerError, ...)."""
+
+    def __init__(self, status_code: int, message: str = "provider error"):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _wrapped(outer_message: str, *, outer_name: str, cause: BaseException) -> Exception:
+    """Build `OuterName("outer_message")` with `__cause__ == cause`, the way
+    the anthropic/openai SDKs wrap the concrete httpx/socket/ssl failure
+    (`raise APIConnectionError(...) from exc`) instead of replacing it."""
+    outer_cls = type(outer_name, (Exception,), {})
+    err = outer_cls(outer_message)
+    err.__cause__ = cause
+    return err
+
+
+def _authorize_and_fail(circuit, error: BaseException, *, run_id: str,
+                         agent_name: str = "tech_analyst",
+                         model: str = "google/gemini-2.5-flash-lite"):
+    """Reserve + authorize one provider attempt (so `attempt_count > 0`,
+    matching every real call this classification applies to -- provider
+    authorization always happens before the network call that can fail),
+    then fail it with `error`. Returns the reservation."""
+    circuit.activate_session(run_id, "morning")
+    reservation = circuit.begin_call(
+        agent_name=agent_name, model=model,
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.fail_call(reservation, error)
+    return reservation
+
+
+def _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation):
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert not state.get("trigger_code")
+    assert state["current_session_cost_usd"] == 0
+    assert state["current_daily_cost_usd"] == 0
+    assert notifier.messages == []
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT status, actual_cost_usd, reserved_cost_usd "
+            "FROM llm_budget_reservations WHERE reservation_id=?",
+            (reservation.reservation_id,),
+        ).fetchone()
+    assert row == ("failed", 0.0, 0.0)
+
+
+def _assert_charged_and_tripped(circuit, notifier, reservation):
+    state = circuit.status()
+    assert state["suspended"] is True
+    assert state["trigger_code"] == "failed_call_unknown_cost"
+    assert state["current_session_cost_usd"] > 0
+    assert state["current_daily_cost_usd"] > 0
+    assert "without final usage telemetry" in notifier.messages[0]
+
+
+@pytest.mark.parametrize("status_code", [429, 400, 401, 403, 404])
+def test_known_zero_cost_status_codes_charge_nothing_and_do_not_trip(tmp_path, status_code):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = _StatusCodeError(status_code, f"provider rejected ({status_code})")
+
+    reservation = _authorize_and_fail(circuit, error, run_id=f"run-{status_code}")
+
+    assert _is_known_zero_cost_failure(error) is True
+    _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
+
+
+def test_known_zero_cost_pre_send_connection_refused_charges_nothing(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    # A bare, unwrapped connection-refused failure -- e.g. a local outbound
+    # proxy/firewall reachability problem before the request ever left the
+    # box. No status code was ever received because nothing was ever sent.
+    error = ConnectionRefusedError("Connection refused")
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-conn-refused")
+
+    assert _is_known_zero_cost_failure(error) is True
+    _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
+
+
+def test_known_zero_cost_pre_send_dns_failure_wrapped_by_sdk_charges_nothing(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    # DNS resolution failed before a connection attempt was even possible.
+    # Both provider SDKs wrap the concrete httpx/socket cause into their own
+    # `APIConnectionError` rather than raising it directly -- the top-level
+    # wrapper's own name is ambiguous; the *cause* is what proves this was
+    # pre-send.
+    import socket
+    error = _wrapped(
+        "Connection error.", outer_name="APIConnectionError",
+        cause=socket.gaierror("Name or service not known"),
+    )
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-dns")
+
+    assert _is_known_zero_cost_failure(error) is True
+    _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
+
+
+def test_known_zero_cost_pre_send_tls_handshake_failure_charges_nothing(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    ssl_error_cls = type("SSLError", (Exception,), {})
+    error = _wrapped(
+        "Connection error.", outer_name="APIConnectionError",
+        cause=ssl_error_cls("[SSL] handshake failure"),
+    )
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-tls")
+
+    assert _is_known_zero_cost_failure(error) is True
+    _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
+
+
+@pytest.mark.parametrize("status_code", [500, 502, 503])
+def test_5xx_keeps_conservative_charge_and_trip(tmp_path, status_code):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = _StatusCodeError(status_code, f"provider error ({status_code})")
+
+    reservation = _authorize_and_fail(circuit, error, run_id=f"run-{status_code}")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_timeout_after_send_keeps_conservative_charge_and_trips(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    # The request was already written to the socket; the provider stopped
+    # responding while QAMC was waiting for output. Unlike ConnectTimeout
+    # (never even connected), a ReadTimeout cannot prove nothing was billed.
+    error = _wrapped(
+        "Request timed out.", outer_name="APITimeoutError",
+        cause=_wrapped("timed out", outer_name="ReadTimeout", cause=Exception("stub")),
+    )
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-read-timeout")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_truncated_stream_keeps_conservative_charge_and_trips(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = LLMStreamInterruptedError("stream cut mid-response, no usage telemetry")
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-truncated")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_unrecognized_failure_defaults_to_ambiguous_not_zero_cost(tmp_path):
+    """Fail closed: an exception this classification has never seen (no
+    status_code, no recognized pre-send transport name anywhere in its
+    cause chain) must be treated exactly as conservatively as before --
+    never assumed to be the cheaper, zero-cost outcome."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = RuntimeError("something the classifier has never heard of")
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-unknown")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
 
 
 def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
