@@ -6,6 +6,7 @@ from xml.etree import ElementTree
 
 import feedparser
 
+from src.data.news_dedup import NewsCluster, cluster_news, normalize_link
 from src.trading_calendar import et_now
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,17 @@ class NewsItem:
     source: str
     published: datetime | None
     link: str
+    # Syndication breadth, filled in by the dedup stage (src/data/news_dedup).
+    # `collapsed_count` is how many articles reported this same event —
+    # including this one — and `source_count` how many distinct outlets. They
+    # default to 1 so an item that never went through dedup reads correctly.
+    #
+    # These exist because "twelve outlets carried this" is real information
+    # about SALIENCE, while being emphatically NOT twelve independent
+    # confirmations. Dropping the duplicates without recording the count would
+    # trade one distortion for another.
+    collapsed_count: int = 1
+    source_count: int = 1
 
 
 class NewsDataProvider:
@@ -147,69 +159,51 @@ class NewsDataProvider:
     def _normalize_link(link: str) -> str:
         """Normalize an article URL for cross-source dedup.
 
-        Strip query parameters (utm_*, ?ref=, ?source=) and fragments,
-        lowercase the host, drop trailing slashes. Same article syndicated
-        across Reuters / CNBC / AP carries a distinct URL per-outlet, BUT
-        many outlets republish from the same wire source (AP / Reuters
-        feed) with identical underlying URLs differing only in tracking
-        params. Stripping those catches the exact-duplicate case before
-        the noisier Jaccard pass.
+        Thin wrapper over :func:`src.data.news_dedup.normalize_link`, kept as
+        a method because callers and tests reference it here.
         """
-        if not link:
-            return ""
-        try:
-            from urllib.parse import urlsplit, urlunsplit
-            parts = urlsplit(link)
-            host = (parts.netloc or "").lower()
-            path = (parts.path or "").rstrip("/")
-            # Drop query (tracking params) and fragment entirely. If two
-            # articles legitimately differ only by a query param, we'd
-            # rather lose one than have both pollute the prompt.
-            return urlunsplit((parts.scheme.lower(), host, path, "", ""))
-        except Exception:
-            return link.strip().lower()
+        return normalize_link(link)
+
+    def cluster_news(self, items: list[NewsItem]) -> list[NewsCluster]:
+        """Group articles reporting the same underlying event.
+
+        This is the cascade's stage 1. Returns clusters rather than bare
+        items so a future novelty stage (stage 2) can score whole events
+        against a rolling buffer without re-deriving the grouping — see
+        ``src/data/news_dedup.py`` for the full cascade note.
+        """
+        return cluster_news(items)
 
     def _deduplicate(self, items: list[NewsItem]) -> list[NewsItem]:
-        """Remove duplicates: first by normalized URL (catches exact
-        cross-source republishes), then by word-level Jaccard on title
-        (catches near-duplicates with different URLs).
+        """Collapse syndicated copies of one event down to one item each.
 
-        Word-Jaccard alone misses URL-identical duplicates because the
-        Reuters / CNBC / AP boilerplate dilutes title intersection below
-        the 0.7 threshold (e.g., "Stocks rise on Fed pause" vs "Markets
-        rally as Fed signals pause" both link to the same AP wire URL
-        but score Jaccard ~0.3). URL pre-dedup catches these cheaply.
+        Returns the cluster representatives, each stamped with
+        ``collapsed_count`` / ``source_count`` so downstream consumers can
+        see how widely a story was carried without mistaking that breadth
+        for independent corroboration.
+
+        The old implementation dropped duplicates via word-Jaccard > 0.7 on
+        titles and discarded the count entirely. That threshold was measured
+        against real cached headlines and does not separate: several genuine
+        duplicates scored below distinct same-day events. See
+        ``src/data/news_dedup.py`` for the replacement method and its
+        calibration.
         """
-        # Pass 1: URL dedup
-        url_deduped: list[NewsItem] = []
-        seen_urls: set[str] = set()
-        for item in items:
-            key = self._normalize_link(item.link)
-            if key and key in seen_urls:
-                continue
-            if key:
-                seen_urls.add(key)
-            url_deduped.append(item)
-
-        # Pass 2: word-Jaccard on title for near-duplicates
-        unique: list[NewsItem] = []
-        seen_word_sets: list[set[str]] = []
-        for item in url_deduped:
-            words = set(item.title.lower().split())
-            if not words:
-                continue
-            is_dup = False
-            for seen in seen_word_sets:
-                intersection = len(words & seen)
-                union = len(words | seen)
-                if union > 0 and intersection / union > 0.7:
-                    is_dup = True
-                    break
-            if not is_dup:
-                seen_word_sets.append(words)
-                unique.append(item)
-
-        return unique
+        clusters = self.cluster_news(items)
+        representatives: list[NewsItem] = []
+        for cluster in clusters:
+            rep = cluster.representative
+            rep.collapsed_count = cluster.collapsed_count
+            rep.source_count = cluster.source_count
+            representatives.append(rep)
+        collapsed = len(items) - len(representatives)
+        if collapsed:
+            logger.info(
+                "news dedup: %d article(s) collapsed into %d event(s) "
+                "(from %d raw)",
+                collapsed, len(representatives), len(items),
+            )
+        return representatives
 
     def tag_symbol_mentions(self, items: list[NewsItem], universe: list[str]) -> dict[str, list[NewsItem]]:
         """Tag which news items mention symbols from the universe. Uses word-boundary matching."""
@@ -236,7 +230,21 @@ class NewsDataProvider:
         lines = []
         for item in limited:
             time_str = item.published.strftime("%Y-%m-%d %H:%M UTC") if item.published else "unknown"
-            lines.append(f"[{item.source}] ({time_str}) {item.title}")
+            # Syndication breadth is rendered explicitly. Without it, the
+            # analyst either sees N copies of one story (and reads them as N
+            # confirmations) or sees one copy with no idea how widely it was
+            # carried. Naming the count, and naming what it does NOT mean, is
+            # the whole point of the dedup stage.
+            breadth = ""
+            collapsed = getattr(item, "collapsed_count", 1) or 1
+            if collapsed > 1:
+                sources = getattr(item, "source_count", 1) or 1
+                breadth = (
+                    f" [carried by {sources} outlet{'s' if sources != 1 else ''}"
+                    f", {collapsed} articles - syndication breadth, "
+                    f"NOT independent corroboration]"
+                )
+            lines.append(f"[{item.source}] ({time_str}) {item.title}{breadth}")
             if item.summary:
                 lines.append(f"  > {item.summary}")
 
