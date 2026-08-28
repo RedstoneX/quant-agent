@@ -291,7 +291,7 @@ universe membership and the Technical prefilter; current Technical analysis,
 PM grounding, AI Risk, deterministic risk/funding, broker protection and
 Alpaca Paper remain mandatory. The configured 101-stock universe is unchanged.
 
-**Insider routine/opportunistic filter — PR opened against `main`, not yet
+**Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
 merged or deployed** — `f3aeba4` + `866e423` plus a 2026-08-28 finishing
 pass on branch `feat/insider-signal-filter`. `src/data/insider_signal.py`
 classifies every parsed Form 4 P/S row as `routine`, `opportunistic` or

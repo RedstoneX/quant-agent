@@ -457,7 +457,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   covered the moment it lands. Import is deliberately shallow — it proves a
   tool still agrees with the schemas it's built on, not that the tool works.
   2470 tests pass.
-- **Insider routine/opportunistic filter — PR opened against `main`, not yet
+- **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
   merged or deployed.** `f3aeba4` + `866e423` (original implementation) plus
   a 2026-08-28 finishing pass on branch `feat/insider-signal-filter`
   (worktree `insider-filter`). `src/data/insider_signal.py::classify_transaction`
@@ -741,7 +741,7 @@ Two facts worth acting on:
    shared module constant) in addition to length; failing the content check
    falls through to the fallback instead of returning. Re-measured across all
    68: 17 improved, 51 unchanged, 0 regressed, 0 starved.
-4. **Insider routine/opportunistic filter — PR opened against `main`, not yet
+4. **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
    merged/deployed.** See the "Landed" entry above (`feat/insider-signal-filter`)
    for what it does and the measured routine split with its caveat.
 5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
@@ -916,7 +916,7 @@ Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested h
 - #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
 - #116 shorts countable — proven a no-op on a long-only book.
 - #117 doc sync.
-- Insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above; PR number to be added once opened.
+- #133 insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above.
 
 #### BRANCHES READY, NO PR YET
 `feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.

@@ -139,5 +139,5 @@ The uncomfortable part: its most safety-critical contribution is **covering for 
 |---|---|
 | **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple — **landed as Phase 2a, commit `c89e957`** |
 | **Phase 3** (exits) | §1.5 reviewer memory — **landed, commit `aea82ee` on branch `feat/exit-rework-pace-and-memory` (not yet merged)** |
-| **Right after Phase 2** | §2.5 routine/opportunistic filter — **finished, PR opened against `main`, commit `f3aeba4`/`866e423` + 2026-08-28 finishing pass on branch `feat/insider-signal-filter` (not yet merged)** |
+| **Right after Phase 2** | §2.5 routine/opportunistic filter — **finished, PR #133 opened against `main`, commit `f3aeba4`/`866e423` + 2026-08-28 finishing pass on branch `feat/insider-signal-filter` (not yet merged)** |
 | **Separate pass, needs owner decisions** | §2.2 news cascade · §2.3 macro series · §2.4 earnings trends — several need new data sources |
