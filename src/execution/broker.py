@@ -776,11 +776,21 @@ class AlpacaBroker:
             return []
 
     def get_current_stop_price(self, symbol: str) -> float | None:
-        """Return the stop_price of the current open sell-stop for a symbol.
+        """Return the price of the current open protective stop for a symbol.
 
         Used by ex-dividend / trailing-stop logic that needs to read the
-        existing stop before replacing it. Returns None if no sell-stop
+        existing stop before replacing it. Returns None if no protective stop
         exists or the query fails.
+
+        A long's protective stop is a SELL stop (fires as price falls); a
+        short's is a BUY stop (fires as price rises) — Alpaca has no notion
+        of "protective" on the order itself, only a side. Pre-shorts this
+        method only ever looked for SELL stops, so a short's live BUY stop
+        was invisible here: every downstream caller (ex-div shift,
+        deterministic trailing, coverage repair) would treat a perfectly
+        protected short as unprotected. This reads BOTH sides and reports
+        whichever one is actually present, rather than asking the caller to
+        already know the position's direction.
         """
         try:
             from alpaca.trading.requests import GetOrdersRequest
@@ -793,34 +803,61 @@ class AlpacaBroker:
         except Exception as exc:
             logger.warning("get_current_stop_price failed for %s: %s", symbol, exc)
             return None
-        # Post-#102 a position can legitimately carry SEVERAL sell-stops
-        # (one GTC stop per entry BUY, plus coverage-repair top-ups). The
-        # old first-match return made "the current stop" depend on Alpaca's
-        # ordering (audit round 2). Consumers want the level that fires
-        # FIRST on the way down = the HIGHEST stop; qty-weighting would
-        # blur two real levels into a price nobody set.
-        stops: list[float] = []
+        # Post-#102 a position can legitimately carry SEVERAL stops on its
+        # protective side (one GTC stop per entry BUY, plus coverage-repair
+        # top-ups). The old first-match return made "the current stop"
+        # depend on Alpaca's ordering (audit round 2). Consumers want the
+        # level that fires FIRST; qty-weighting would blur two real levels
+        # into a price nobody set.
+        sell_stops: list[float] = []
+        buy_stops: list[float] = []
         for order in orders or []:
             order_type = str(getattr(getattr(order, "order_type", None), "value",
                                     getattr(order, "order_type", ""))).lower()
             order_side = str(getattr(getattr(order, "side", None), "value",
                                     getattr(order, "side", ""))).lower()
-            if "stop" in order_type and order_side == "sell":
-                try:
-                    px = float(getattr(order, "stop_price", 0) or 0)
-                except (TypeError, ValueError):
-                    continue
-                if px > 0:
-                    stops.append(px)
-        if not stops:
-            return None
-        if len(stops) > 1:
-            logger.info(
-                "get_current_stop_price: %s carries %d sell-stops %s — "
-                "reporting the highest (first to trigger)",
-                symbol, len(stops), sorted(stops),
+            if "stop" not in order_type:
+                continue
+            try:
+                px = float(getattr(order, "stop_price", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if px <= 0:
+                continue
+            if order_side == "sell":
+                sell_stops.append(px)
+            elif order_side == "buy":
+                buy_stops.append(px)
+        if sell_stops and buy_stops:
+            # A single symbol can't legitimately be both long and short at
+            # once, so seeing both sides means stale orders survived a
+            # direction flip. Reporting either price would be a guess about
+            # which one is "the" stop — fail closed instead so the caller
+            # treats this as needing attention rather than trusting a number
+            # that might belong to a position that no longer exists.
+            logger.error(
+                "get_current_stop_price: %s carries BOTH sell-stops %s and "
+                "buy-stops %s — direction is ambiguous, refusing to report "
+                "a stop", symbol, sorted(sell_stops), sorted(buy_stops),
             )
-        return max(stops)
+            return None
+        if sell_stops:
+            if len(sell_stops) > 1:
+                logger.info(
+                    "get_current_stop_price: %s carries %d sell-stops %s — "
+                    "reporting the highest (first to trigger on the way "
+                    "down)", symbol, len(sell_stops), sorted(sell_stops),
+                )
+            return max(sell_stops)
+        if buy_stops:
+            if len(buy_stops) > 1:
+                logger.info(
+                    "get_current_stop_price: %s carries %d buy-stops %s — "
+                    "reporting the lowest (first to trigger on the way up)",
+                    symbol, len(buy_stops), sorted(buy_stops),
+                )
+            return min(buy_stops)
+        return None
 
     def get_latest_price(self, symbol: str) -> float | None:
         try:
@@ -1026,9 +1063,9 @@ class AlpacaBroker:
             return 0
 
     def snapshot_protective_stops(
-        self, symbol: str,
+        self, symbol: str, *, side: str = "sell",
     ) -> tuple[bool, list[dict]]:
-        """List + snapshot open SELL stop orders WITHOUT cancelling them.
+        """List + snapshot open protective stop orders WITHOUT cancelling them.
 
         audit F1 (review #1): the write-ahead recovery row must be
         persisted BEFORE any broker mutation. Splitting the read
@@ -1039,13 +1076,19 @@ class AlpacaBroker:
         stops at the broker — a kill in that window left a naked
         position with no recovery intent.
 
+        `side` is the STOP order's own side: "sell" (default) finds the
+        stops protecting a long; "buy" finds the stops protecting a short.
+        Every existing caller cancels/restores/re-protects a long being
+        SOLD, so the default is unchanged; the coverage reconciler is the
+        one caller that passes `side="buy"` to check a short.
+
         Returns ``(ok, specs)``. ``ok`` is kept for call-site symmetry
         with cancel_protective_stops; a pure read can't "fail to clear"
         so it is always True (a listing API error is swallowed by
-        _list_open_sell_stop_orders and surfaces as no stops, exactly
+        _list_open_protective_stop_orders and surfaces as no stops, exactly
         as in the pre-split behaviour).
         """
-        stops = self._list_open_sell_stop_orders(symbol)
+        stops = self._list_open_protective_stop_orders(symbol, side=side)
         if not stops:
             return True, []
         specs: list[dict] = []
@@ -1481,11 +1524,21 @@ class AlpacaBroker:
             "pending_stop_price": stop_loss_price if use_stop else None,
         }
 
-    # 3% below the stop: a stop-MARKET fills at whatever the book has on a
-    # gap-down (10%+ worse than the stop); a stop-limit caps the worst-case
-    # fill. The buffer must be wide enough that routine volatility clears it
-    # ("prioritize fill over price"). Trade-off: on gaps beyond -3% the limit
+    # 3% beyond the stop: a stop-MARKET fills at whatever the book has on a
+    # gap (10%+ worse than the stop); a stop-limit caps the worst-case fill.
+    # The buffer must be wide enough that routine volatility clears it
+    # ("prioritize fill over price"). Trade-off: on gaps beyond 3% the limit
     # won't fill and the position stays open until a session can act.
+    #
+    # "Beyond", not "below": a long's protective order is a SELL stop, so
+    # its limit sits 3% BELOW the trigger (a SELL needs its floor under the
+    # stop to have room to fill on the way down). A short's protective order
+    # is a BUY stop, so its limit must sit 3% ABOVE the trigger — a BUY
+    # needs headroom over the stop to fill on the way up. Getting this
+    # backwards for a short is silent: the order still submits, but the
+    # limit sits on the wrong side of the trigger, so it can never fill.
+    # The stop then "fires" and does nothing, and the position runs
+    # unprotected in the one direction that matters.
     STOP_LIMIT_BUFFER_PCT = 0.03
 
     # Order states that mean "this order can never fill another share".
@@ -1496,7 +1549,7 @@ class AlpacaBroker:
 
     def place_entry_protection(
         self, symbol: str, order_id: str, stop_price: float,
-        *, requested_qty: float | None = None,
+        *, requested_qty: float | None = None, side: str = "buy",
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
         protective stop-limit for the ACTUAL filled qty.
@@ -1509,6 +1562,12 @@ class AlpacaBroker:
         emergency liquidation). Cancelling converges the order; whatever DID
         fill by then gets its stop from the post-cancel re-read. Losing the
         unfilled remainder is the accepted cost of protection-first.
+
+        `side` is the ENTRY order's own side — "buy" opens or adds to a long
+        (the only side any order path in this repo has ever submitted, hence
+        the default), "sell"/"sell_short" opens a short. The protective stop
+        is always the OPPOSITE side, at the opposite buffer: a SELL stop
+        below a long, a BUY stop above a short. See `STOP_LIMIT_BUFFER_PCT`.
 
         Returns the stop order dict, or None when nothing was placed (entry
         filled 0 / stop submit failed). Never raises — a failure here must not
@@ -1567,14 +1626,27 @@ class AlpacaBroker:
                 "entry protection: %s partially filled %.4f/%.4f — stop sized to "
                 "the ACTUAL fill", symbol, filled_qty, requested_qty,
             )
+        # The protective order's side is the OPPOSITE of the entry's: a BUY
+        # entry (long) is protected by a SELL stop below it; a SELL/SELL_SHORT
+        # entry (short) is protected by a BUY stop above it. The buffer
+        # mirrors the same way — see STOP_LIMIT_BUFFER_PCT above. Getting
+        # this backwards is THE most dangerous bug in shorts-safe: the order
+        # still submits without error, it just sits on the wrong side of the
+        # trigger and can never fill, so the position runs unprotected in
+        # exactly the direction it needed protecting.
+        protective_side = "sell" if side.lower() == "buy" else "buy"
+        buffer_mult = (
+            (1 - self.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell"
+            else (1 + self.STOP_LIMIT_BUFFER_PCT)
+        )
         try:
             stop_order = self._submit_stop_limit_order(
                 symbol=symbol, qty=filled_qty, stop_price=stop_price,
-                limit_price=stop_price * (1 - self.STOP_LIMIT_BUFFER_PCT),
+                limit_price=stop_price * buffer_mult, side=protective_side,
             )
             logger.info(
-                "entry protection: GTC stop-limit placed for %s qty=%.4f @ stop $%.2f",
-                symbol, filled_qty, stop_price,
+                "entry protection: GTC %s stop-limit placed for %s qty=%.4f @ stop $%.2f",
+                protective_side, symbol, filled_qty, stop_price,
             )
             return stop_order
         except Exception as exc:  # noqa: BLE001
@@ -1591,6 +1663,63 @@ class AlpacaBroker:
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status))}
+
+    def _list_open_stop_orders_by_side(self, symbol: str) -> tuple[list, list]:
+        """Single order-book fetch for `symbol`, split into (sell_stops, buy_stops).
+
+        A long's protective stop is a SELL stop; a short's is a BUY stop.
+        `replace_stop_loss` needs to know WHICH side a symbol's live stop is
+        on before it can decide what to list/cancel/ratchet-check — but it
+        can't yet know the position's direction without a second API call.
+        Fetching once and filtering both ways here answers "which side has a
+        stop" from a single snapshot, rather than two separate fetches that
+        could each see a different broker state.
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+
+            orders = self.client.get_orders(
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN,
+                    symbols=[_alpaca_symbol(symbol)],
+                    nested=True,
+                )
+            )
+        except Exception as exc:
+            logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            return [], []
+
+        sell_orders: list = []
+        buy_orders: list = []
+        for order in orders or []:
+            order_type = str(getattr(getattr(order, "order_type", None), "value",
+                                    getattr(order, "order_type", ""))).lower()
+            if "stop" not in order_type:
+                continue
+            order_side = str(getattr(getattr(order, "side", None), "value",
+                                    getattr(order, "side", ""))).lower()
+            if order_side == "sell":
+                sell_orders.append(order)
+            elif order_side == "buy":
+                buy_orders.append(order)
+        return sell_orders, buy_orders
+
+    def _list_open_protective_stop_orders(self, symbol: str, *, side: str = "sell") -> list:
+        """List open stop orders on `side` for `symbol`.
+
+        `side="sell"` (default) finds the stops protecting a long — the only
+        case that existed before shorts were countable, and delegates to
+        `_list_open_sell_stop_orders` (the name a long list of tests and
+        call sites pin) rather than duplicating it. `side="buy"` finds the
+        stops protecting a short: a short's protective order is a BUY stop,
+        so a filter hardcoded to "sell" made a short's live stop invisible
+        to every caller (coverage reconcile would report a perfectly
+        protected short as NAKED and try to "repair" over it).
+        """
+        if side.lower() == "buy":
+            _, buy_orders = self._list_open_stop_orders_by_side(symbol)
+            return buy_orders
+        return self._list_open_sell_stop_orders(symbol)
 
     def _list_open_sell_stop_orders(self, symbol: str) -> list:
         try:
@@ -1646,15 +1775,36 @@ class AlpacaBroker:
         qty: float,
         stop_price: float,
         limit_price: float | None = None,
+        *,
+        side: str = "sell",
     ) -> dict:
+        """Submit a GTC stop-limit order. `side` is the STOP ORDER's own
+        side — "sell" (default) protects a long and fires as price falls;
+        "buy" protects a short and fires as price rises. Defaults to "sell"
+        so every pre-shorts call site (none of which pass `side`) submits
+        byte-identical orders to before.
+
+        When `limit_price` is not supplied, the fallback buffer must sit on
+        the correct side of the trigger too: a SELL's limit belongs BELOW
+        the stop (same STOP_LIMIT_BUFFER_PCT the entry-protection path
+        uses), a BUY's belongs ABOVE it. A SELL limit placed above its stop,
+        or a BUY limit placed below its, can never fill — the order looks
+        accepted but is dead on arrival.
+        """
+        order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         stop_price_q = _quantize_price(stop_price)
-        limit_price_q = _quantize_price(
-            limit_price if limit_price and limit_price > 0 else stop_price * 0.97,
-        )
+        if limit_price and limit_price > 0:
+            limit_price_q = _quantize_price(limit_price)
+        else:
+            buffer_mult = (
+                (1 + self.STOP_LIMIT_BUFFER_PCT) if order_side == OrderSide.BUY
+                else (1 - self.STOP_LIMIT_BUFFER_PCT)
+            )
+            limit_price_q = _quantize_price(stop_price * buffer_mult)
         req = StopLimitOrderRequest(
             symbol=_alpaca_symbol(symbol),
             qty=qty,
-            side=OrderSide.SELL,
+            side=order_side,
             time_in_force=TimeInForce.GTC,
             stop_price=stop_price_q,
             limit_price=limit_price_q,
@@ -1669,9 +1819,16 @@ class AlpacaBroker:
         self, symbol: str, stop_specs: list[dict],
         *,
         check_idempotency: bool = False,
+        side: str = "sell",
     ) -> tuple[int, list[dict]]:
         """Re-submit a set of cancelled stop specs. Best-effort per-spec —
         a single broker rejection doesn't abort the loop.
+
+        `side` is the specs' own side — "sell" (default) restores stops that
+        protect a long. `replace_stop_loss` is the one caller that can pass
+        `side="buy"`, when the position it's trailing is a short; every
+        other caller only ever restores a long's SELL stops, so the default
+        keeps them unchanged.
 
         ``check_idempotency`` controls whether we first query broker for
         already-alive stops and skip matching specs:
@@ -1707,7 +1864,7 @@ class AlpacaBroker:
         existing_alive: list[dict] = []
         if check_idempotency:
             try:
-                for order in self._list_open_sell_stop_orders(symbol):
+                for order in self._list_open_protective_stop_orders(symbol, side=side):
                     snap = self._snapshot_stop_order(order)
                     if snap is not None:
                         existing_alive.append(snap)
@@ -1755,6 +1912,7 @@ class AlpacaBroker:
                     qty=spec["qty"],
                     stop_price=spec["stop_price"],
                     limit_price=spec.get("limit_price"),
+                    side=side,
                 )
                 restored += 1
             except Exception as exc:
@@ -1793,6 +1951,16 @@ class AlpacaBroker:
         first re-placed stop) or None when nothing was shifted. Best-effort
         with rollback: cancel failures roll back already-cancelled stops;
         re-place failures restore the ORIGINAL spec for that stop.
+
+        SELL-stops only, deliberately not generalised to a short's BUY-stop
+        (shorts-safe, Stage 2): the caller (`pipeline._handle_ex_dividends`)
+        already excludes shorts before reaching this method, because the
+        economics are genuinely different, not just the arithmetic sign — a
+        long owns the shares and receives the dividend (the mechanical
+        gap-down needs absorbing); a short instead OWES the dividend to the
+        lender, a cash liability with no corresponding price-gap-absorption
+        logic here. Mirroring the sign without modelling that liability
+        would be a guess, not a fix.
         """
         if amount <= 0:
             return None
@@ -1841,19 +2009,46 @@ class AlpacaBroker:
         *,
         allow_lowering: bool = False,
     ) -> dict | None:
-        """Replace an existing sell-stop with rollback so protection is preserved on failure.
+        """Replace an existing protective stop with rollback so protection is preserved on failure.
 
         Used by the midday trailing-stop logic. Alpaca's OTO stop-loss leg cannot be edited
         in place, so we cancel + resubmit. Because that sequence is not atomic, this method
         snapshots existing stops and best-effort restores them if the replacement submit fails.
         Returns {id, status, symbol} on successful replacement, else None.
+
+        A short's protective stop is a BUY stop above the market, and
+        "trailing" for a short means ratcheting it DOWN — the mirror of a
+        long's stop-only-rises rule. Direction is read from whichever side
+        ALREADY has a live stop (`_list_open_stop_orders_by_side` checks
+        both with one fetch, since a long-only "sell" listing would make a
+        short's BUY stop invisible); the position's own qty sign — read
+        below to confirm the position exists, same as before shorts were
+        possible — is the authoritative vote once there's something to cross-
+        check it against, and the sole vote when there was no live stop yet
+        to infer direction from.
         """
         if new_stop_price <= 0:
             logger.warning("replace_stop_loss ignored: non-positive new_stop_price=%s", new_stop_price)
             return None
 
+        sell_orders, buy_orders = self._list_open_stop_orders_by_side(symbol)
+        if sell_orders and buy_orders:
+            # A single symbol can't legitimately be both long and short at
+            # once, so live stops on both sides means stale orders survived
+            # a direction flip. Reporting/acting on either would be a guess
+            # — fail closed instead.
+            logger.error(
+                "replace_stop_loss: %s carries BOTH sell-stops and buy-stops "
+                "— direction is ambiguous, refusing to trail", symbol,
+            )
+            return None
+        # "sell" is also the default when NEITHER side has a live stop yet;
+        # the position check below is what actually decides direction in
+        # that case (see the qty_side cross-check).
+        side = "buy" if buy_orders else "sell"
+
         stop_specs: list[dict] = []
-        for order in self._list_open_sell_stop_orders(symbol):
+        for order in (buy_orders or sell_orders):
             spec = self._snapshot_stop_order(order)
             if spec is None:
                 logger.warning(
@@ -1863,27 +2058,54 @@ class AlpacaBroker:
                 return None
             stop_specs.append(spec)
 
-        # Direction check: "trailing" means stop ratchets UP, never DOWN. If the
-        # LLM hallucinates a lower stop (or the caller passes the wrong value),
-        # accepting it would weaken existing protection — the opposite of what
-        # a trail is for. Ex-dividend adjustments intentionally lower the stop
-        # to absorb tomorrow's mechanical dividend gap, so that caller opts in
-        # via allow_lowering=True.
+        # Direction check: "trailing" means the stop moves toward less risk
+        # — UP for a long, DOWN for a short — never the other way. If the
+        # LLM hallucinates a stop on the wrong side (or the caller passes the
+        # wrong value), accepting it would weaken existing protection. Ex-
+        # dividend adjustments intentionally lower a LONG's stop to absorb
+        # tomorrow's mechanical dividend gap, so that caller opts in via
+        # allow_lowering=True — ex-div's own position loop never reaches a
+        # short (see pipeline.py's `_handle_ex_dividends`), so this flag is
+        # not something a short's trail can accidentally trip.
         if stop_specs and not allow_lowering:
-            highest_existing = max(spec["stop_price"] for spec in stop_specs)
-            if new_stop_price <= highest_existing:
-                logger.warning(
-                    "replace_stop_loss rejected for %s: new_stop $%.4f is not "
-                    "above highest existing stop $%.4f — trailing stops must "
-                    "ratchet up only (protection would weaken).",
-                    symbol, new_stop_price, highest_existing,
-                )
-                return None
+            if side == "buy":
+                tightest_existing = min(spec["stop_price"] for spec in stop_specs)
+                if new_stop_price >= tightest_existing:
+                    logger.warning(
+                        "replace_stop_loss rejected for %s: new_stop $%.4f is "
+                        "not below lowest existing buy-stop $%.4f — a "
+                        "short's trailing stop must ratchet down only "
+                        "(protection would weaken).",
+                        symbol, new_stop_price, tightest_existing,
+                    )
+                    return None
+            else:
+                tightest_existing = max(spec["stop_price"] for spec in stop_specs)
+                if new_stop_price <= tightest_existing:
+                    logger.warning(
+                        "replace_stop_loss rejected for %s: new_stop $%.4f is not "
+                        "above highest existing stop $%.4f — trailing stops must "
+                        "ratchet up only (protection would weaken).",
+                        symbol, new_stop_price, tightest_existing,
+                    )
+                    return None
 
         positions = [p for p in self.get_positions() if p.symbol == symbol]
-        if not positions or positions[0].qty <= 0:
+        if not positions or positions[0].qty == 0:
             logger.warning("replace_stop_loss: no open position in %s, nothing to protect", symbol)
             return None
+        qty_side = "buy" if positions[0].qty < 0 else "sell"
+        if stop_specs and qty_side != side:
+            # Live stops on one side, but the held position is on the other
+            # — the same stale-order shape as the both-sides check above,
+            # just caught against the position instead of the order book.
+            logger.error(
+                "replace_stop_loss: %s has live %s-stop(s) but qty=%.4f says "
+                "the opposite side — refusing to trail an ambiguous position",
+                symbol, side, positions[0].qty,
+            )
+            return None
+        side = qty_side  # authoritative now that a position confirms direction
 
         cancelled_specs: list[dict] = []
         for spec in stop_specs:
@@ -1901,7 +2123,7 @@ class AlpacaBroker:
                 # at worst we end up with slightly more stops than minimal,
                 # but full original coverage is preserved.
                 if cancelled_specs:
-                    restored, _failed = self._restore_stop_orders(symbol, cancelled_specs)
+                    restored, _failed = self._restore_stop_orders(symbol, cancelled_specs, side=side)
                     logger.warning(
                         "replace_stop_loss: rolled back %d/%d already-cancelled "
                         "stop(s) for %s after partial cancel failure",
@@ -1916,19 +2138,24 @@ class AlpacaBroker:
         # mismatch AND our rollback would then re-attach a phantom stop to
         # a non-existent position. Bail cleanly in that case.
         fresh_positions = [p for p in self.get_positions() if p.symbol == symbol]
-        if not fresh_positions or fresh_positions[0].qty <= 0:
+        if not fresh_positions or fresh_positions[0].qty == 0:
             logger.warning(
                 "replace_stop_loss: %s was closed between cancel and submit; "
                 "NOT restoring old stops (position no longer exists)",
                 symbol,
             )
             return None
-        qty = fresh_positions[0].qty
+        # Order qty is always the unsigned share count — the SIDE parameter
+        # carries direction. `fresh_positions[0].qty` is negative for a
+        # short; submitting that raw would hand Alpaca a negative qty.
+        qty = abs(fresh_positions[0].qty)
         try:
-            order = self._submit_stop_limit_order(symbol=symbol, qty=qty, stop_price=new_stop_price)
+            order = self._submit_stop_limit_order(
+                symbol=symbol, qty=qty, stop_price=new_stop_price, side=side,
+            )
             logger.info(
-                "Trailing stop placed for %s: replaced %d old stop(s), new stop @ $%.2f",
-                symbol, len(cancelled_specs), new_stop_price,
+                "Trailing stop placed for %s: replaced %d old stop(s), new %s stop @ $%.2f",
+                symbol, len(cancelled_specs), side, new_stop_price,
             )
             return order
         except Exception as exc:
@@ -1961,13 +2188,13 @@ class AlpacaBroker:
             cancelled_ids = {
                 str(spec.get("id")) for spec in cancelled_specs if spec.get("id")
             }
-            visible = self._list_open_sell_stop_orders(symbol)
+            visible = self._list_open_protective_stop_orders(symbol, side=side)
             live_stops = [o for o in visible if _is_live_protection(o)]
             covered_qty = sum(_stop_qty(o) for o in live_stops)
-            position_qty = qty  # captured pre-submit at line 906; the position
+            position_qty = qty  # captured pre-submit above; the position
                                 # cannot have grown between then and now (this
-                                # path doesn't BUY), so this is an upper bound
-                                # for required coverage.
+                                # path doesn't BUY/SELL_SHORT to open), so this
+                                # is an upper bound for required coverage.
             if live_stops and covered_qty >= position_qty:
                 logger.warning(
                     "replace_stop_loss: %d active stop(s) cover %.4f >= position %.4f for %s after submit failure; leaving stop state unchanged",
@@ -1979,7 +2206,7 @@ class AlpacaBroker:
                     "replace_stop_loss: %d active stop(s) cover only %.4f of %.4f shares for %s; restoring cancelled specs to close the gap",
                     len(live_stops), covered_qty, position_qty, symbol,
                 )
-            restored, _failed = self._restore_stop_orders(symbol, cancelled_specs)
+            restored, _failed = self._restore_stop_orders(symbol, cancelled_specs, side=side)
             if restored == 0:
                 logger.error(
                     "replace_stop_loss: %s has no confirmed stop protection after replacement failure",

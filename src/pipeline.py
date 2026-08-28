@@ -1198,10 +1198,11 @@ class TradingPipeline:
     def _reconcile_stop_coverage(self) -> list[dict]:
         """Broker-truth stop-coverage audit, independent of the WAL queue.
 
-        At session entry, enumerate held LONG positions and compare each one's
-        held qty against the qty actually covered by open protective SELL-stops
-        at the broker. Flag (log + return) any long whose covered qty is
-        materially below its held qty.
+        At session entry, enumerate every held position — long or short —
+        and compare its held qty against the qty actually covered by its
+        open protective stops at the broker (SELL-stops for a long,
+        BUY-stops for a short). Flag (log + return) any position whose
+        covered qty is materially below its held qty.
 
         Why this exists (design review's strongest finding): the whole
         naked-protection guarantee otherwise rests on some code path having
@@ -1212,13 +1213,19 @@ class TradingPipeline:
         audit of ACTUAL broker coverage. This reconciler closes that gap by
         reading broker truth directly.
 
-        Read-only and best-effort: it lists positions + open stops and logs
-        gaps; it does NOT auto-submit a replacement stop (the original
-        protective level is unknown for a position with no live stop, and
-        picking one is a policy decision). Symbols already queued for WAL
-        recovery are skipped — the drain owns them. Returns the list of
-        under-covered ``{symbol, held_qty, covered_qty}`` for the caller to
-        surface to the operator.
+        Read-only for longs, auto-repairing for longs only (see
+        `_repair_stop_coverage` — it reconstructs the stop from the recorded
+        BUY row, which only exists for a long). A short's gap is still
+        detected and returned — Stage 1 made a held short visible to this
+        audit; leaving it unchecked would have made a naked short the ONE
+        risk state this reconciler can't see — but it is flagged rather than
+        repaired: no order path can open a short yet, so there is no
+        recorded entry row to reconstruct its original stop from, and
+        inventing a level here would be exactly the policy call this
+        reconciler has always refused to make for an unrecorded stop.
+        Symbols already queued for WAL recovery are skipped — the drain owns
+        them. Returns the list of under-covered ``{symbol, held_qty,
+        covered_qty, repaired}`` for the caller to surface to the operator.
         """
         try:
             positions = self.broker.get_positions()
@@ -1236,6 +1243,7 @@ class TradingPipeline:
 
         gaps: list[dict] = []
         longs_checked = 0
+        shorts_checked = 0
         sweeper = self._sweeper()
         sweep_symbol = sweeper.symbol if sweeper is not None else None
         for p in positions:
@@ -1244,37 +1252,59 @@ class TradingPipeline:
                 qty = float(getattr(p, "qty", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            # Longs only — a SELL-stop can't protect a short, and inverse-ETF
-            # hedges have their own handling. Skip symbols the drain already owns.
-            if not symbol or qty <= 0 or symbol in pending_syms:
+            # A short carries a negative qty (Alpaca convention) and is a
+            # real, currently-unreachable-but-possible position (shorts-safe,
+            # Stage 2). `qty <= 0` used to exempt every short from this audit
+            # outright — the "a SELL-stop can't protect a short" reasoning
+            # was true, but the fix is to check the OTHER side's stops, not
+            # to skip the check. Inverse-ETF hedges have their own handling.
+            # Skip symbols the drain already owns.
+            if not symbol or qty == 0 or symbol in pending_syms:
                 continue
             # The cash-sweep vehicle is deliberately stopless (cash-equivalent;
             # see src/execution/cash_sweep.py) — flagging it every session
             # would train the operator to ignore the 🔴 banner.
             if sweep_symbol is not None and symbol == sweep_symbol:
                 continue
-            longs_checked += 1
+            is_short = qty < 0
+            if is_short:
+                shorts_checked += 1
+            else:
+                longs_checked += 1
             try:
-                _ok, specs = self.broker.snapshot_protective_stops(symbol)
+                _ok, specs = self.broker.snapshot_protective_stops(
+                    symbol, side=("buy" if is_short else "sell"),
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "coverage reconcile: snapshot failed for %s: %s", symbol, exc,
                 )
                 continue
             covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
-            if covered + 1e-6 < qty:
+            held = abs(qty)
+            if covered + 1e-6 < held:
                 gap = {"symbol": symbol, "held_qty": qty, "covered_qty": covered}
                 logger.warning(
                     "STOP-COVERAGE GAP: %s held=%.4f but only %.4f covered by "
-                    "open protective stops — (partially) unprotected with no WAL "
-                    "recovery row.", symbol, qty, covered,
+                    "open protective %s-stops — (partially) unprotected with "
+                    "no WAL recovery row.", symbol, qty, covered,
+                    "buy" if is_short else "sell",
                 )
-                gap["repaired"] = self._repair_stop_coverage(symbol, qty - covered)
+                if is_short:
+                    # No order path can open a short yet, so there is no BUY
+                    # trade row to reconstruct its original stop level from
+                    # (_repair_stop_coverage reads the last BUY). Flag it for
+                    # the operator; inventing a level would be exactly the
+                    # policy call this reconciler refuses to make for a long
+                    # too when the level is unknown.
+                    gap["repaired"] = False
+                else:
+                    gap["repaired"] = self._repair_stop_coverage(symbol, held - covered)
                 gaps.append(gap)
-        if longs_checked and not gaps:
+        if (longs_checked or shorts_checked) and not gaps:
             logger.info(
-                "Stop-coverage reconcile: all %d long position(s) adequately "
-                "stop-covered", longs_checked,
+                "Stop-coverage reconcile: all %d long / %d short position(s) "
+                "adequately stop-covered", longs_checked, shorts_checked,
             )
         return gaps
 
@@ -2748,6 +2778,11 @@ class TradingPipeline:
             next_trading_day += _td(days=1)
 
         for p in positions:
+            # Deliberately long-only, not just "not yet generalised" — a
+            # short OWES the dividend to the share lender (a cash liability)
+            # rather than receiving it, so there is no mechanical gap-down
+            # here for a stop-shift to absorb. See broker.shift_stops_down's
+            # docstring for the fuller reasoning (shorts-safe, Stage 2).
             if p.qty <= 0:
                 continue
             # Check today's trades for a prior ex-div adjustment — idempotent
@@ -5645,6 +5680,13 @@ class TradingPipeline:
                 reference_target=(buy or {}).get("take_profit"),
                 bars=bars,
                 atr=self._atr_for_symbol(symbol),
+                # Shorts-safe (Stage 2): `qty` supplies only the side so a
+                # short's trail mirrors instead of running the long formula
+                # backwards. `get_symbol_last_buy` above only ever returns a
+                # BUY row, so a short is filtered out before this point
+                # regardless — this is forward-compatible plumbing, not a
+                # behaviour change on today's long-only book.
+                qty=position.qty,
             )
             if proposal is None:
                 continue

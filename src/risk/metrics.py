@@ -7,11 +7,12 @@ in prose for months without any code ever computing them.
 **Budget risk** — what a position costs against its own cost basis if the stop
 is hit: `abs(qty) x max(0, entry - stop)` for a long, `abs(qty) x max(0, stop -
 entry)` for a short. This is the number the owner-ratified 25%
-at-risk ceiling is defined against, and it is the one that gets *released*: once
-a trailing stop sits at or above entry the position can no longer lose money
-relative to entry, so its budget risk is zero and it stops consuming the book's
-risk budget (spec §2.3). The book therefore expands while trades work and
-contracts while they do not, with nobody choosing a position count (§2.4).
+at-risk ceiling is defined against, and it is the one that gets *released*:
+once a trailing stop sits on the side of entry that can no longer lose money
+— at or above for a long, at or below for a short — its budget risk is zero
+and it stops consuming the book's risk budget (spec §2.3). The book therefore
+expands while trades work and contracts while they do not, with nobody
+choosing a position count (§2.4).
 
 **Open risk** — what the book loses from TODAY's price if every stop fires at
 once: `abs(qty) x max(0, current_price - stop)` for a long, mirrored for a short.
@@ -103,7 +104,8 @@ class PositionRisk:
     budget_risk_dollars: float
     #: Loss from today's price if the stop fired now (audit §1.3 heat).
     open_risk_dollars: float
-    #: True when a stop is known and sits at or above entry — risk released.
+    #: True when a stop is known and sits on the no-longer-losing side of
+    #: entry (at/above for a long, at/below for a short) — risk released.
     risk_released: bool
     #: False when no stop is known. Full notional is charged to the budget.
     protected: bool
@@ -290,7 +292,7 @@ def format_heat_block(
     ]
     if heat.released:
         lines.append(
-            f"- Risk RELEASED (stop at or above entry, consumes no budget): "
+            f"- Risk RELEASED (stop can no longer lose vs entry, consumes no budget): "
             f"{', '.join(heat.released)}"
         )
     if heat.unprotected:
