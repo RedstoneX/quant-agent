@@ -136,7 +136,7 @@ phases:
         note: "~5 years of history, raised from 320 so levels are computed over real structure"
       - kind: test_exists
         path: "tests/test_context.py"
-        test: "test_context.py exists as a dedicated test module for src/data/context.py (27 tests per the spec's own note)"
+        test: test_context_is_a_frozen_value_object
       - kind: symbol_in_file
         path: "src/data/market.py"
         symbol: "def get_next_earnings_date"
