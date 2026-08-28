@@ -10,6 +10,7 @@ first live run exposed, where a malformed rule masqueraded as documentation rot.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -247,7 +248,47 @@ def test_unknown_live_values_render_as_unknown_not_as_zero():
     assert "$0.00" not in out
 
 
-def test_merged_pr_rules_resolve_from_git_without_a_github_credential():
+def _git(repo: Path, *args: str) -> None:
+    env = {
+        "GIT_AUTHOR_NAME": "board-test", "GIT_AUTHOR_EMAIL": "board-test@example.com",
+        "GIT_COMMITTER_NAME": "board-test", "GIT_COMMITTER_EMAIL": "board-test@example.com",
+    }
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True,
+                    text=True, env=env)
+
+
+def _repo_with_merged_pr(tmp_path: Path, number: int) -> Path:
+    """A throwaway repo with a known merge commit, standing in for main.
+
+    The real test target — `git log origin/main --merges --grep=...` — must
+    not depend on the ambient checkout's history. On a developer's machine
+    that history is full; in GitHub Actions the PR job checks out a shallow
+    (fetch-depth: 1) clone of the ephemeral `pull/N/merge` ref, which carries
+    no `origin/main` ref and no historical merge commits at all. A test that
+    only passes on a full clone is not pinning the behaviour, it's pinning the
+    environment it happened to be written in. Building the fixture here makes
+    the result independent of clone depth or which repo happens to be checked
+    out.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "f.txt").write_text("base\n")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "f.txt").write_text("feature\n")
+    _git(repo, "commit", "-q", "-am", "feature work")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff",
+         "-m", f"Merge pull request #{number} from RedstoneX/feature", "feature")
+    # `check_rule` looks up `origin/main` by name; give this throwaway repo a
+    # ref with that name rather than an actual remote, which it doesn't need.
+    _git(repo, "branch", "origin/main", "main")
+    return repo
+
+
+def test_merged_pr_rules_resolve_from_git_without_a_github_credential(tmp_path):
     """The board runs on the production box, where `gh` exists but the runtime
     account is deliberately NOT authenticated — putting a GitHub token on the
     account that trades is the owner's decision, not this script's convenience.
@@ -256,8 +297,8 @@ def test_merged_pr_rules_resolve_from_git_without_a_github_credential():
     with no credential attached. Without this path, 13 of the manifest's rules
     would report `unknown` on the box for no good reason.
     """
-    # #102 is merged and its merge commit is in main's history.
-    r = sb.check_rule({"kind": "pr_merged", "number": 102}, {})
+    repo = _repo_with_merged_pr(tmp_path, 102)
+    r = sb.check_rule({"kind": "pr_merged", "number": 102}, {}, repo_root=repo)
     assert r.verdict == sb.PASS
     assert "merge commit" in r.detail
 

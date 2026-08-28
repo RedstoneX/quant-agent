@@ -122,7 +122,7 @@ def _setting(cfg: dict, dotted: str) -> Any:
     return node
 
 
-def check_rule(rule: dict, cfg: dict) -> RuleResult:
+def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult:
     kind = str(rule.get("kind", "?"))
     note = str(rule.get("note", ""))
 
@@ -131,7 +131,7 @@ def check_rule(rule: dict, cfg: dict) -> RuleResult:
 
     if kind == "commit_in_main":
         sha = str(rule.get("sha", ""))
-        rc, _ = _run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], REPO_ROOT)
+        rc, _ = _run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], repo_root)
         ok = rc == 0
         return RuleResult(kind, PASS if ok else FAIL, note,
                           f"{sha[:9]} {'is' if ok else 'is NOT'} in main")
@@ -148,10 +148,15 @@ def check_rule(rule: dict, cfg: dict) -> RuleResult:
         # decision for the owner, not a convenience for this script. Without
         # the git path, 13 of the manifest's rules would report `unknown` on
         # the box for no better reason than that.
+        #
+        # `repo_root` defaults to this checkout but is injectable so tests can
+        # point it at a throwaway repo with known history — the production
+        # box's git history is not a fixture and a CI runner's shallow clone
+        # is not full history either.
         rc, out = _run(
             ["git", "log", "origin/main", "--merges", "--format=%s",
              f"--grep=^Merge pull request #{num} from ", "-1"],
-            REPO_ROOT,
+            repo_root,
         )
         if rc == 0 and out.strip():
             return RuleResult(kind, PASS, note, f"PR #{num} merge commit is in main")
@@ -159,7 +164,7 @@ def check_rule(rule: dict, cfg: dict) -> RuleResult:
         # rebase merge leaves none — so fall through to GitHub rather than
         # calling it a failure, and report unknown if that is unavailable too.
         rc, out = _run(["gh", "pr", "view", str(num), "--repo", "RedstoneX/quant-agent",
-                        "--json", "state", "-q", ".state"], REPO_ROOT)
+                        "--json", "state", "-q", ".state"], repo_root)
         if rc != 0:
             return RuleResult(
                 kind, UNKNOWN, note,
