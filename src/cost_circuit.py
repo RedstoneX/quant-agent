@@ -1165,6 +1165,26 @@ class LLMCostCircuitBreaker:
         self.enforce_current_limits(agent_name="session_start")
         return self.status()
 
+    def set_session_context(self, run_id: str, mode: str) -> None:
+        """Bind this call's run/mode WITHOUT the validating seed-and-check path.
+
+        `activate_session` re-seeds and validates the current day's ledger
+        before returning, which is exactly right for every normal caller:
+        a broken ledger latches immediately, before any paid call can be
+        authorized against it.  `scripts/cost_circuit.py reset` is the one
+        legitimate exception.  On 2026-08-28 an operator ran that script to
+        clear a hard latch and `main()`'s unconditional `activate_session()`
+        call re-validated the day's ledger and raised before `reset` was
+        ever dispatched -- the tool meant to clear the emergency was itself
+        blocked by it, and the reset had to be done by hand from a Python
+        shell instead. `reset()` never depends on the seeded/validated
+        state (it reads the `llm_circuit_state` singleton row and the
+        emergency-latch file directly, not `_seed_today`), so all this needs
+        to do is set the run/mode context `reset()`'s audit trail reads --
+        deliberately nothing else.
+        """
+        self._session_context.set((run_id, mode))
+
     def _context(self) -> tuple[str, str]:
         return self._session_context.get()
 
