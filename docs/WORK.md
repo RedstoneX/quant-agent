@@ -579,7 +579,7 @@ Two facts worth acting on:
 
 **Identified 2026-08-28, not yet fixed**
 
-## THE FOUR COST-CIRCUIT DEFECTS
+#### THE FOUR COST-CIRCUIT DEFECTS
 A full trading day (2026-08-28) was lost to these. Fix them together and prove them with the rehearsal harness before deploying.
 
 1. **The estimator predicts nothing.** It reserves the theoretical maximum output at full price, duplicating the hard cap's job while failing its own. The Portfolio Manager was estimated at $1.91 against an actual cost of $0.11 — 8x. Fix: reserve from measured per-agent history (33 PM calls already recorded; average output 4,795 tokens, never above 11,034), falling back to worst-case when history is thin.
@@ -587,7 +587,7 @@ A full trading day (2026-08-28) was lost to these. Fix them together and prove t
 3. **The operator reset tool is blocked by the emergency it exists to reset.** `scripts/cost_circuit.py reset` calls `status()` first, which raises. Had to be worked around by hand.
 4. **A separate cap of 2 paid sessions per mode per day** — unrelated to the estimator, and the reason nothing ran after 10:00 ET. Raised to 8 on the live box as a stopgap. Proper fix is dollar-based with an afternoon reserve, partially written on branch `fix/dollar-based-session-cap`.
 
-## LIVE-BOX CHANGES NOT IN GIT — next deploy silently reverts them
+#### LIVE-BOX CHANGES NOT IN GIT — next deploy silently reverts them
 Made by hand on 2026-08-28 in `config/settings.yaml` on the production box:
 - `session_reserved_exposure_limit_usd` 1.80 to 2.60
 - `daily_reserved_exposure_limit_usd` 3.20 to 5.50
@@ -595,11 +595,11 @@ Made by hand on 2026-08-28 in `config/settings.yaml` on the production box:
 - Hard spend caps UNCHANGED at $0.90/session and $2.75/day
 Also: the circuit was reset, two quota holds released, and the day's `costs_exact` flag settled without refunding any charge. The database was backed up first.
 
-## THE REHEARSAL HARNESS — built, acceptance test not passing
+#### THE REHEARSAL HARNESS — built, acceptance test not passing
 Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
 **Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
 
-## COCKPIT — promised, about 60% done, uncommitted
+#### COCKPIT — promised, about 60% done, uncommitted
 Worktree `/home/ubuntu/projects/quant-agent-worktrees/cockpit`, branch `feat/cockpit-trader-view`. Never built or tested. Five owner requests:
 - the chart needs real vertical space; the fixed bands above it consume the viewport
 - holdings and P&L visible on arrival, without hunting through a tab
@@ -608,24 +608,24 @@ Worktree `/home/ubuntu/projects/quant-agent-worktrees/cockpit`, branch `feat/coc
 - split "Positions & Liquidity" into two independently dockable panels
 Must bump the `qamc.dockview.cockpit.v1` localStorage key or returning users keep the old layout. Mission Control is read-only, so this can ship at any time without affecting trading.
 
-## NEWS FEEDS
+#### NEWS FEEDS
 Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested hypothesis: a 403 is usually a blocked User-Agent rather than a dead feed. No paid dependency without the owner's approval. The part that must land regardless: a dead feed currently logs a warning and vanishes, so the system reports complete news coverage while missing two wire services.
 
-## SMALLER, RECORDED
+#### SMALLER, RECORDED
 - `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
 - After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
 - OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
 - OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
 
-## OPEN PRs, none deployed
+#### OPEN PRs, none deployed
 - #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
 - #116 shorts countable — proven a no-op on a long-only book.
 - #117 doc sync.
 
-## BRANCHES READY, NO PR YET
+#### BRANCHES READY, NO PR YET
 `feat/insider-signal-filter` (56.2% of 2,188 real Form 4 rows measured routine), `feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
 
-## DECISIONS RATIFIED 2026-08-28
+#### DECISIONS RATIFIED 2026-08-28
 - Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
 - Real short selling, not inverse ETFs. Three stages: countable, safe, live.
 - No dev/prod mirror. Production is paper and resets, so the case for enterprise staging collapses. Build the rehearsal harness instead.
