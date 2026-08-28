@@ -84,6 +84,22 @@ def report(tmp_path):
     )
 
 
+def _statement_rows(n: int = 60) -> str:
+    """A statements section's worth of line items.
+
+    Real condensed financial statements carry hundreds of figures across the
+    operations, balance-sheet and cash-flow tables. The fixture needs that
+    density to represent what it claims to be: `_extract_text` now requires
+    genuine financial content before it will accept a structured extraction,
+    precisely because a few thousand words of prose containing the phrase
+    "financial statements" is what the auditor's opinion letter looks like.
+    """
+    return " ".join(
+        f"Line item {i}: ${1000 + i * 137:,} versus ${900 + i * 131:,} "
+        f"({100 + i:,}) change {i * 3:,}."
+        for i in range(n)
+    )
+
 def test_extract_text_compresses_standard_10q(tmp_path):
     """Full 10-Q with TOC + all standard sections → structured extraction path."""
     from src.data.earnings import EarningsDataProvider
@@ -95,7 +111,7 @@ def test_extract_text_compresses_standard_10q(tmp_path):
     {"Cover page filler filler filler. " * 400}
     <h2>CONDENSED CONSOLIDATED STATEMENTS OF OPERATIONS</h2>
     <p>Net sales: Products $113,743 Services $26,340. Total $140,083.
-    Operating income $42,832. Diluted EPS $2.40. {filler}</p>
+    Operating income $42,832. Diluted EPS $2.40. {_statement_rows()} {filler}</p>
     <h2>Item 2. Management's Discussion and Analysis of Financial Condition</h2>
     <p>Products revenue grew 8% YoY driven by iPhone. Services grew 14%.
     Gross margin expanded 120bps to 46.9%. Guidance implies mid-single-digit
@@ -341,3 +357,71 @@ def test_save_analysis_cleans_tmp_on_rename_failure(agent, report, tmp_path, mon
     assert final_path.with_suffix(final_path.suffix + ".tmp").exists() is False, (
         "tmp file must be cleaned up on failure; leftover tmp would confuse next run"
     )
+
+
+def test_auditors_letter_is_not_mistaken_for_financial_statements(tmp_path):
+    """The bug this guards, measured on production data 2026-08-28.
+
+    `_extract_key_sections` matches the phrase "financial statements", which
+    also appears inside the auditor's opinion letter — "...the related notes
+    (collectively referred to as the financial statements)". That letter is
+    prose thousands of characters long, so it cleared the old length-only
+    acceptance test, and clearing it SUPPRESSED the density-seeking fallback
+    that would have found the real tables.
+
+    17 of the 68 filings cached on the production box were affected. Twelve of
+    them — MSFT, AAPL, GOOGL, BAC, CVX, NFLX among them — reached the earnings
+    analyst with ZERO financial figures. It failed silently: the analyst got a
+    plausible document and reported on it.
+    """
+    from src.data.earnings import EarningsDataProvider
+
+    auditors_letter = (
+        "We have audited the accompanying consolidated balance sheets, and "
+        "the related consolidated statements of income, comprehensive income, "
+        "cash flows, and stockholders' equity, for each of the three years in "
+        "the period ended June 30, 2026, and the related notes (collectively "
+        "referred to as the financial statements). In our opinion, the "
+        "financial statements present fairly, in all material respects, the "
+        "financial position of the Company. " * 30
+    )
+    real_tables = _statement_rows(120)
+    html = f"""<html><body>
+    <h1>Form 10-K</h1>
+    <h2>Item 8. Financial Statements and Supplementary Data</h2>
+    <p>{auditors_letter}</p>
+    <h2>CONSOLIDATED STATEMENTS OF OPERATIONS</h2>
+    <p>Revenue $245,122 versus $211,915. Net income $88,136. {real_tables}</p>
+    </body></html>"""
+    html_path = tmp_path / "10k.html"
+    html_path.write_bytes(html.encode())
+
+    p = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
+    out = p._extract_text(str(html_path), max_chars=30000)
+
+    # Whatever path it takes, the analyst must end up holding actual numbers.
+    import re
+    from src.data.earnings import _FINANCIAL_FIGURE_RE
+    assert len(_FINANCIAL_FIGURE_RE.findall(out)) >= 40, (
+        "extraction returned narrative with no financial figures"
+    )
+    assert "245,122" in out or "88,136" in out
+
+
+def test_a_genuinely_sparse_filing_still_returns_something(tmp_path):
+    """Degrade, never blank. A shell filing has no tables to find, and the
+    analyst is better served by the prose than by an empty string."""
+    from src.data.earnings import EarningsDataProvider
+
+    html = (
+        "<html><body><h2>Item 1. Financial Statements</h2>"
+        "<p>" + ("No material operations during the period. " * 200) + "</p>"
+        "</body></html>"
+    )
+    html_path = tmp_path / "shell.html"
+    html_path.write_bytes(html.encode())
+
+    p = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
+    out = p._extract_text(str(html_path), max_chars=30000)
+    assert out.strip()
+    assert "material operations" in out
