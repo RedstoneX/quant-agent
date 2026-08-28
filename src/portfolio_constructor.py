@@ -203,6 +203,22 @@ class PortfolioConstructor:
                 target_pct = target.target_weight_pct or 0.0
             delta_pct = target_pct - current_pct
 
+            # Stage 1 of short selling: shorts are COUNTABLE, not tradeable.
+            # A negative current_pct means we already hold this name short.
+            # No order in this codebase may yet open or cover a short, so the
+            # constructor emits nothing for it rather than routing a cover
+            # into _build_buy or an add-to-short into _build_sell. Before this
+            # guard the short was simply absent from current_weights, which
+            # read as "not held" — strictly worse, because the delta loop then
+            # sized a fresh entry against a book that already had the exposure.
+            if current_pct < 0:
+                logger.warning(
+                    "Constructor: %s held SHORT (current weight %.2f%%) — "
+                    "no action emitted; shorts are not tradeable yet",
+                    sym, current_pct,
+                )
+                continue
+
             # target_weight_pct == 0 is PM saying "CLOSE this position", not
             # "rebalance toward ~0". The churn filter must not swallow it: a
             # 0.4%-weight dreg with an explicit close target was silently
@@ -522,10 +538,26 @@ class PortfolioConstructor:
         # Local import to avoid the cyclic risk -> portfolio_constructor
         # import chain at module load.
         from src.risk.rules import _gross_multiplier
+        # SIGNED, not absolute. A short has a negative qty and a negative
+        # market_value (Alpaca convention), so it lands in the map as a
+        # NEGATIVE weight. Signed is the correct choice because every consumer
+        # of this map does exposure arithmetic, not magnitude arithmetic:
+        #   - the delta loop computes `target_pct - current_pct`, and only the
+        #     signed form makes "held -8%, want 0%" read as +8% of buying to
+        #     do rather than 8% of selling;
+        #   - the close test `target_pct == 0 and current_pct > 0` must NOT
+        #     fire for a short, because a SELL on a short adds to it;
+        #   - `_build_sell` already refuses `current_pct <= 0`, so a short is
+        #     structurally excluded from the sell path rather than mis-sized.
+        # An absolute weight would make a short indistinguishable from a long
+        # of the same size at exactly the places where the direction is the
+        # whole question. The previous `p.qty > 0` filter dropped shorts from
+        # the map entirely, so `current_weights.get(sym, 0.0)` reported a held
+        # short as unheld and the delta loop would re-open it every session.
         return {
             p.symbol: (p.market_value * _gross_multiplier(p.symbol) / total_value * 100)
             for p in positions
-            if p.qty > 0
+            if p.qty != 0
         }
 
     @staticmethod
