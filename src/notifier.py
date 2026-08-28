@@ -391,18 +391,24 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
     _append_coverage_gap_banner(lines, result)
     orders = result.get("orders") or []
 
-    # FORCE_DELEVER / EMERGENCY_SELL banner — these actions mean the
-    # autonomous loop intervened automatically. force_delever fires when
-    # cash < -$1 (margin disabled) and biggest-loser-first sells until
-    # cash >= 0. emergency_sell fires from intra_check's flash-crash
-    # protection. Both look identical to a routine SELL on the wire
-    # otherwise — operator's most important "system intervened" signal
-    # would be invisible without this banner. Prepended before the
+    # FORCE_DELEVER / EMERGENCY_SELL / EMERGENCY_COVER banner — these
+    # actions mean the autonomous loop intervened automatically.
+    # force_delever fires when cash < -$1 (margin disabled) and
+    # biggest-loser-first sells until cash >= 0. emergency_sell fires from
+    # intra_check's / midday's flash-crash protection closing a long;
+    # emergency_cover is the same circuit breaker covering a SHORT (a
+    # distinct action name — not "emergency_sell" — because it's a BUY,
+    # and reusing the SELL name here would also have to be reused in
+    # db.py's realized-P&L FIFO lot matching, which assumes a "sell-family"
+    # action closes a long against open BUY lots; a short has no BUY lot to
+    # match against). All three look identical to a routine order on the
+    # wire otherwise — operator's most important "system intervened"
+    # signal would be invisible without this banner. Prepended before the
     # order list so it's the first thing read.
     forced = [
         o for o in orders
         if isinstance(o, dict) and str(o.get("action", "")).upper() in (
-            "FORCE_DELEVER", "EMERGENCY_SELL"
+            "FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER",
         )
     ]
     if forced:
@@ -433,7 +439,14 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
                 label = "  🚨EMER "
             lines.append(f"{label}{_order_summary(o)}")
         for o in buys[:10]:
-            lines.append(f"  BUY   {_order_summary(o)}")
+            # EMERGENCY_COVER is a forced BUY (covering a short) — tag it
+            # the same way the sells loop above tags a forced SELL, so the
+            # operator can spot it without cross-referencing the banner.
+            action = str(o.get("action", "")).upper() if isinstance(o, dict) else ""
+            label = "  BUY   "
+            if action == "EMERGENCY_COVER":
+                label = "  🚨EMER "
+            lines.append(f"{label}{_order_summary(o)}")
         omitted = max(0, len(buys) - 10) + max(0, len(sells) - 10)
         if omitted:
             lines.append(f"  (+{omitted} more — see audit log)")
@@ -887,7 +900,7 @@ def _order_side(order: Any) -> str:
         "FORCE_DELEVER", "PARTIAL_SELL",
     )):
         return "sell"
-    if action == "BUY":
+    if action in ("BUY", "EMERGENCY_COVER"):
         return "buy"
     return ""
 
