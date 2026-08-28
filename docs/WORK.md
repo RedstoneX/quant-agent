@@ -783,7 +783,7 @@ Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-wor
 **Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
 
 #### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
-Branch `feat/cockpit-pass-3`, PR not yet merged. Three owner requests, all from
+Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
 using the cockpit live:
 
 1. **Price-axis rescale bug (priority).** Clicking a symbol after manually
@@ -856,6 +856,36 @@ that one row, matching every other status row in this codebase (`HeroBand`,
 `LiquidityPanel`, `PositionHoldingStrip`, `DirectionalBiasPanel` already use
 `flex flex-wrap`). Left as-is above rather than rewritten, since the original
 misdiagnosis is itself a useful record.
+
+**Second verification, against live production data — and why two repros disagreed.**
+The fix was re-verified independently against the running production cockpit with
+real account data, not the mocked dataset: viewports 320px, 371px and 390px, across
+all five mobile SupportTabs tabs (Orders & Trades, Runs, Directional Bias, Missed
+Opportunities, Diagnostics).
+
+In every one of those 15 combinations the only element leaking at page level was the
+`TopStrip` status row and its `legacy view` link. No table leaked at page level in
+any tab at any width — `DataTable`'s wrapper carries `max-w-full overflow-x-auto`,
+`Panel`'s `Card` carries `overflow-hidden` and `.panel-body` carries
+`overflow-x-auto`, so a wide table is contained by construction, independent of how
+wide its data is.
+
+**The overflow is state-dependent, which is why the original report and the mocked
+repro disagreed on the numbers.** The header's health label is variable-length. With
+the healthy label "all systems reachable" there is no overflow at 390px at all. With
+the longest label the code can emit — "scoped paid-analysis quota hold — other
+sessions eligible" from `healthColor()` — the same page measures `scrollWidth` 571px
+against a 390px viewport. That is within 9px of the 562px originally recorded, and
+the original observation was made while paid analysis was degraded. So both repros
+were the same defect seen in two different system states, and neither measurement was
+wrong.
+
+Measured effect of the fix: 571px to 390px at a 390px viewport under the
+worst-case label, and 45px of overflow to zero at 320px under today's healthy label.
+Desktop is unaffected.
+
+Note explicitly that a phone-width check of this page is only meaningful when the
+status text is at its longest, since the healthy state hides the defect.
 
 #### COCKPIT — DELIVERED (PR #120)
 All five owner requests are implemented, built and tested on branch
