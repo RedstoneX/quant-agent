@@ -73,12 +73,12 @@ Largely addressed by Phase 1 / 1b. Before that work it received twenty daily bar
 
 | Gap | Detail |
 |---|---|
-| Two of nine feeds dead | Reuters Business returns 404, AP Business returns 403. Failures are logged as warnings and silently dropped (`src/data/news.py:100-102`). |
+| ~~Two of nine feeds dead~~ **PARTLY FIXED** | Investigated live 2026-08-28. The UA hypothesis (403 = blocked User-Agent) was WRONG for both: Reuters killed public RSS in June 2020 and reutersagency.com is now a paid-licensing marketing page with no feed link left at all; AP's own feed (`apnews.com/index.rss`) answers 401 "Invalid client credentials" (paid Content API, OAuth2), and the third-party proxy previously used sits behind a Cloudflare JS challenge no UA can pass. Neither is fixable for free — both entries removed from `RSS_FEEDS` rather than left permanently red, and Yahoo Finance News (verified live, free, publisher-hosted) added as a partial substitute. Dedicated Reuters/AP wire access remains an owner decision (paid) — see `docs/WORK.md`. |
 | Never reads an article | RSS summary only, truncated to 300 characters (`src/data/news.py:127`). |
 | No source credibility weighting | A Federal Reserve press release and a MarketWatch aggregator are equal-weight text blocks. |
 | ~~Weak deduplication~~ **FIXED** | Was word-Jaccard > 0.7 on titles, which measurement confirmed cannot separate at any threshold. Replaced by a term-frequency cosine stage (`src/data/news_dedup.py`) calibrated on 589 real archived headlines, with collapsed counts preserved and rendered to the analyst as syndication breadth. |
 | No novelty assessment | Cannot distinguish new information from recycled commentary — see `RESEARCH_FINDINGS.md`, where novelty is the property that actually predicts returns. |
-| Degradation invisible downstream | The PM cannot tell "the wires were down" from "a quiet news day". |
+| ~~Degradation invisible downstream~~ **FIXED** | The PM could not tell "the wires were down" from "a quiet news day" — a dead feed logged a warning and `data_status["news"]` still read "ok" as long as the LLM call parsed. `NewsCoverage` (`src/data/news.py`) now tracks configured/succeeded/failed feeds per run, threaded into the analyst's own prompt ("News Coverage" section) and into `data_status["news"]` (`ok`/`partial`/`failed`, coverage-failure dominates a parsed-but-empty report) — which is what `trader_feed.py` / `notifier.py` already render as `⚠️ Data degraded: news`. |
 
 ### 2.3 Macro Analyst
 

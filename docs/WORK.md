@@ -622,9 +622,19 @@ Two facts worth acting on:
    ratio in the system — over half of Form 4 trades carry zero predictive power.
 5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-6. **Phase 4.2 — repair the data feeds.** Fix Reuters/AP/FRED; surface degraded
-   coverage to the operator. (4.1, un-blindfolding the intraday buy path, is
-   done — `fb88e08`, `feat/pm-flex-routing`, see the landed section above.)
+6. **Phase 4.2 — repair the data feeds.** News-feed half **DONE** (branch
+   `fix/news-feeds-and-coverage`, 2026-08-28): Reuters/AP investigated live —
+   neither is fixable for free (Reuters retired public RSS in 2020; AP's own
+   feed requires a paid OAuth2 API, and the free third-party proxy is
+   Cloudflare-walled) — both removed from `RSS_FEEDS`, Yahoo Finance News
+   added as a partial free substitute, and `NewsCoverage` (`src/data/news.py`)
+   now makes a dead feed impossible to miss: it's in the analyst's own prompt
+   and in `data_status["news"]` (`ok`/`partial`/`failed`), which is what
+   `trader_feed.py`/`notifier.py` already render as the operator-facing
+   `⚠️ Data degraded` banner. **FRED still open** — separate provider
+   (`src/data/macro.py`), unrelated to the RSS pipeline, not touched here.
+   (4.1, un-blindfolding the intraday buy path, is done — `fb88e08`,
+   `feat/pm-flex-routing`, see the landed section above.)
 7. **Phase 5 — short selling, now a three-stage plan.** The prior estimate
    recorded here — "bounded and additive, roughly a day, NOT a rewrite" — was
    **wrong**. A survey for Stage 1 found roughly 50 long-only assumptions
@@ -788,8 +798,28 @@ is included in PR #120. Anyone changing frontend source must do the same.
 
 Mission Control is read-only, so this ships without affecting trading.
 
-#### NEWS FEEDS
-Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested hypothesis: a 403 is usually a blocked User-Agent rather than a dead feed. No paid dependency without the owner's approval. The part that must land regardless: a dead feed currently logs a warning and vanishes, so the system reports complete news coverage while missing two wire services.
+#### NEWS FEEDS — RESOLVED (branch `fix/news-feeds-and-coverage`, 2026-08-28)
+The coverage-honesty half — the part that "must land regardless" — is done:
+`NewsCoverage` (`src/data/news.py`) tracks configured/succeeded/failed feeds
+on every fetch and threads it into both the analyst's own prompt ("News
+Coverage" section) and `data_status["news"]` (`ok`/`partial`/`failed`), which
+`trader_feed.py`/`notifier.py` already render to the operator. A dead feed can
+no longer vanish behind a log line.
+
+The UA hypothesis was tested and was WRONG for both feeds: Reuters killed
+public RSS in June 2020 (`reutersagency.com` now 200s but is a HubSpot
+marketing page for paid Reuters Connect licensing, no feed link left);
+`reuters.com` itself 401s behind a DataDome JS/CAPTCHA wall. AP's own feed
+(`apnews.com/index.rss`, found via `<link rel="alternate">` autodiscovery)
+answers 401 "Invalid client credentials" — gated behind AP's paid
+Content/Breaking News API (OAuth2) — and the free third-party proxy previously
+used is now behind a Cloudflare managed JS challenge no User-Agent can pass.
+Neither is fixable for free. Per the standing no-paid-dependency rule, both
+were removed from `RSS_FEEDS` rather than left permanently red, and Yahoo
+Finance News (verified live, free, publisher-hosted, ~49 same-day items) was
+added as a partial substitute — net 8 feeds, down from 9. Dedicated Reuters/AP
+wire access is an owner decision (Reuters Connect or the AP Content API, both
+paid) if it's wanted.
 
 #### SMALLER, RECORDED
 - `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
