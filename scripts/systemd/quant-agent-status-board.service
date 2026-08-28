@@ -1,0 +1,23 @@
+# Human status board — pairs with quant-agent-status-board.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-status-board.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-status-board.timer
+[Unit]
+Description=quant-agent status board (no LLM, no trading, read-only)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Read-only. It re-evaluates docs/phases.yaml against the tree, reads the
+# deployed SHA, and opens the ledger through a read-only SQLite URI. It writes
+# exactly one thing: data/board/index.html. `data/` is gitignored, so
+# regenerating the board can never dirty the checkout and become deploy drift.
+ExecStart=/home/qamc/quant-agent/.venv/bin/python scripts/status_board.py --out data/board/index.html
+# Exit 1 means a phase recorded as finished no longer proves out. That is a
+# real finding, not a crash, so the unit is allowed to "fail" loudly and be
+# visible in `systemctl --user status` rather than being swallowed.
+SuccessExitStatus=0
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
