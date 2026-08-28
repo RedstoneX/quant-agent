@@ -609,6 +609,152 @@ Two facts worth acting on:
    text; earnings multi-quarter trends. Several need new data sources and an
    owner decision first.
 
+**Identified 2026-08-28, not yet fixed**
+
+#### THE FOUR COST-CIRCUIT DEFECTS
+A full trading day (2026-08-28) was lost to these. Fix them together and prove them with the rehearsal harness before deploying.
+
+**Corrected 2026-08-28 against `llm_circuit_events` on the live box.** The
+earlier version of this section blamed defect 2 for the outage. The ledger
+says defect 1 did, an hour and a half earlier. What actually happened:
+
+| ET time | what tripped | agent | spend at that moment |
+|---|---|---|---|
+| 09:32 | defect 1 — projected session cost | portfolio_manager | session $0.0461 / day $0.0476 |
+| 11:15 | operator reset by hand | — | — |
+| 11:30 | defect 4 — paid-session count cap | tech_analyst | day $0.1765 |
+
+1. **The estimator predicts nothing — and it is what stopped the desk.** It
+   bounds a prompt by treating every UTF-8 byte as a token and reserves the
+   full `max_output_tokens` at list price. At 09:32 ET it reserved **$1.8657**
+   for one Portfolio Manager call and refused to proceed, on a day that had
+   spent 4.6 cents. Decomposed exactly: **$0.504 of that is the output half**
+   (`1.05 x 16,000 tokens x $30/1M`, the same regardless of prompt) and
+   **$1.3617 is the input half**. Measured over 37 recorded PM calls: average
+   actual cost **$0.1718**, worst ever **$0.5783**, output never above 11,034
+   of the 16,000 tokens reserved, and roughly **3.6 UTF-8 bytes per input
+   token** on the large prompts. So the reservation runs ~3.2x the worst call
+   ever recorded and ~11x the average.
+   **The fix previously proposed here targeted only the output half — 27% of
+   the error.** Input is the other 73% and must be fixed too. Reserve from
+   measured per-(agent, model) history in `agent_logs`: divide prompt bytes by
+   a measured bytes-per-token ratio at a conservative low percentile, and
+   reserve observed maximum output times a safety margin, capped at
+   `max_output_tokens`. Fall back to today's worst-case bound whenever history
+   is thin. Percentile, margin and minimum sample count are settings — no
+   hardcoded numbers.
+2. **A failed request is charged as if it ran.** A provider 429 returns
+   nothing and bills nothing, but is recorded as unknown cost, which makes the
+   day unreconcilable and hard-stops the desk. Real, and it contributed to the
+   11:15 ET manual reset — but it is the second cause, not the first. Fix:
+   classify the failure. Known-zero-cost rejections (429, 400, 401, 403, 404,
+   pre-send transport failures) release the reservation and charge nothing;
+   genuinely ambiguous failures (timeout after send, 5xx, truncated stream)
+   keep today's conservative behaviour. Fail closed — anything unclassified is
+   ambiguous.
+3. **The operator reset tool is blocked by the emergency it exists to reset.**
+   `scripts/cost_circuit.py` calls `activate_session()` unconditionally before
+   dispatching the command; that runs `_seed_today` ->
+   `_validate_accounting_invariants`, which raises on exactly the fault being
+   cleared, so `reset` is never reached. (The earlier note said `status()` was
+   the blocker — same effect, wrong function.) Had to be worked around by hand.
+4. **A separate cap of 2 paid sessions per mode per day** — unrelated to the
+   estimator. It stopped the desk again at **11:30 ET** on 17 cents of actual
+   spend, under trigger `session_retry_limit`. Raised to 8 on the live box as a
+   stopgap and now committed. Proper fix is dollar-based with an afternoon
+   reserve so a runaway morning cannot consume the day, keeping a deliberately
+   high count only as an infinite-loop backstop. Partial prior work on branch
+   `fix/dollar-based-session-cap`.
+
+#### LIVE-BOX CONFIG DRIFT — RECONCILED (PR #119, live `224722e`)
+Closed 2026-08-28. It was **five** settings, not three, and two of the recorded
+baselines were wrong. `config/settings.yaml` in git is now byte-identical to the
+production box and the box's working tree is clean.
+
+| setting | was in git | now (and live) |
+| --- | --- | --- |
+| `intraday_scan.enabled` | `false` | `true` |
+| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
+| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
+| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
+| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
+
+Corrections to the original note: the git baseline for
+`daily_reserved_exposure_limit_usd` was `1.90`, not `3.20` (`3.20` was itself an
+earlier uncommitted box value), and `daily_cost_limit_usd` was also a git delta
+— the box had been running `2.75` against a committed `1.50` — and was not on
+the list at all. Hard spend caps unchanged at $0.90/session and $2.75/day.
+
+The 8-session cap and the 5.50 ceiling are STOPGAPS the four fixes above should
+supersede. They were committed anyway so git describes the running system.
+
+Also on 2026-08-28: the circuit was reset, two quota holds released, and the
+day's `costs_exact` flag settled without refunding any charge. DB backed up
+first.
+
+#### THE REHEARSAL HARNESS — built, acceptance test not passing
+Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
+**Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
+
+#### COCKPIT — DELIVERED (PR #120)
+All five owner requests are implemented, built and tested on branch
+`feat/cockpit-trader-view`: chart vertical space, a holdings + P&L strip visible
+on arrival, the average-entry line drawn on the chart with live P&L, PREV CLOSE
+dropped on the 1D view only, and Positions/Liquidity split into two dockable
+panels. The Dockview layout key is bumped to `qamc.dockview.cockpit.v2` so a
+stale saved layout cannot break on load. 84 frontend tests pass, up from 71.
+
+**Discovered while shipping it:** this repo commits its built frontend bundle to
+`src/api/static_cockpit/` and the API serves that directory from disk —
+production never runs `npm run build`. A frontend source change therefore does
+not reach the screen until the rebuilt bundle is committed. The refreshed bundle
+is included in PR #120. Anyone changing frontend source must do the same.
+
+Mission Control is read-only, so this ships without affecting trading.
+
+#### NEWS FEEDS
+Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested hypothesis: a 403 is usually a blocked User-Agent rather than a dead feed. No paid dependency without the owner's approval. The part that must land regardless: a dead feed currently logs a warning and vanishes, so the system reports complete news coverage while missing two wire services.
+
+#### SMALLER, RECORDED
+- `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
+- After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
+- OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
+- OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
+
+#### OPEN PRs, none deployed
+- #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
+- #116 shorts countable — proven a no-op on a long-only book.
+- #117 doc sync.
+
+#### BRANCHES READY, NO PR YET
+`feat/insider-signal-filter` (56.2% of 2,188 real Form 4 rows measured routine), `feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
+
+#### DECISIONS RATIFIED 2026-08-28
+- Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
+- Real short selling, not inverse ETFs. Three stages: countable, safe, live.
+- No dev/prod mirror. Production is paper and resets, so the case for enterprise staging collapses. Build the rehearsal harness instead.
+- The system already sends marketable limit orders, which is a market order with a bounded worst case. No change needed.
+- Documentation is the source of truth. Wrong documentation is corrected on sight without asking.
+- Rehearsal alerts are suppressed rather than routed to a second Telegram bot.
+
+#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — measure before changing
+On 2026-08-28, the reward:risk floor added the previous day rejected four candidates outright. Recorded reward:risk after the stop was widened past the noise band: CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30, against a 1.50 minimum.
+
+Three of the four offered **less reward than risk** — those are correctly refused. NVDA at 1.30 is the borderline case.
+
+This is the rule working as designed, but it is also a signal worth measuring rather than reacting to: with honest stop distances, the technical analyst's targets are frequently too close to clear a 1.5 payoff. Either the targets are too conservative or the widened stops are too wide. Do not adjust the 1.50 floor on impression — gather a week of these rejections first, then decide which of the two numbers is wrong.
+
+Note this means 2026-08-28's zero trades had **two independent causes**, not one: the cost circuit blocked the morning before the Portfolio Manager ran, and separately these four were refused on payoff.
+
+#### RECURSION FAULT IN THE BAR FETCH
+`broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.
+
+#### DELISTED WARRANTS REACHING THE DATA LAYER
+Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW, LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at all — this is universe/admission hygiene, and it is also what triggers the recursion fault above.
+
+#### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
+Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
+
 **Set aside — small, easily forgotten**
 
 - `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
