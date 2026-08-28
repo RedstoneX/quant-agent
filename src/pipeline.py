@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from src.config import AppConfig, RiskConfig
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroDataProvider
-from src.data.news import NewsDataProvider
+from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
@@ -5546,7 +5546,7 @@ class TradingPipeline:
     def _run_news_update(
         self, run_id: str, session: str = "morning",
         universe: list[str] | None = None,
-    ) -> "NewsIntelligenceReport | None":
+    ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
         """Fetch news, run intelligence analysis, save report. Session-aware.
 
         - morning: full 3-layer build. prior_session_report=None.
@@ -5555,10 +5555,20 @@ class TradingPipeline:
 
         Session-tagged reports persist alongside the latest full_report.json so
         each session's output is individually recoverable for audit / debug.
+
+        Returns `(intel_report, coverage)`. `coverage` (src.data.news.
+        NewsCoverage) is the 2026-08-28 fix for a dead feed vanishing
+        silently: before this, a feed that 404'd or 403'd was dropped with a
+        log warning and the news stage still reported "ok" regardless of
+        how many wires actually came back. `coverage` is returned even when
+        the analyst call itself fails below, since the fetch already
+        happened and the caller (MorningResearchStage) needs it either way
+        to set data_status["news"] honestly.
         """
+        coverage = None
         try:
             research_universe = universe or self.config.trading.universe
-            news_items = self.news_provider.fetch_news()
+            news_items, coverage = self.news_provider.fetch_news()
             news_text = self.news_provider.format_for_prompt(news_items)
             stock_mentions = self.news_provider.tag_symbol_mentions(
                 news_items, research_universe)
@@ -5581,6 +5591,7 @@ class TradingPipeline:
                 previous_narrative=previous_narrative,
                 session=session,
                 prior_session_report=prior_session_report,
+                news_coverage=coverage,
             )
             if intel_report:
                 report_dict = intel_report.model_dump()
@@ -5588,15 +5599,24 @@ class TradingPipeline:
                 self.news_store.save_macro_narrative(report_dict["macro_narrative"])
                 if report_dict.get("stock_news"):
                     self.news_store.save_stock_alerts(report_dict["stock_news"])
+                # collapsed_count / source_count are persisted so the dedup
+                # stage stays auditable after the fact — you can re-measure
+                # the duplication rate from the archive without re-fetching.
                 self.news_store.save_raw_headlines(
-                    [{"title": i.title, "source": i.source, "summary": i.summary} for i in news_items])
+                    [{"title": i.title, "source": i.source, "summary": i.summary,
+                      "collapsed_count": getattr(i, "collapsed_count", 1),
+                      "source_count": getattr(i, "source_count", 1)}
+                     for i in news_items])
                 n_changes = len(intel_report.state_changes)
                 n_stocks = len(intel_report.stock_news)
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
                             session, intel_report.market_sentiment, n_changes, n_stocks)
             self.db.insert_agent_log(
                 agent_name=f"news_analyst_{session}", run_id=run_id,
-                input_summary=f"{len(news_items)} news items",
+                input_summary=(
+                    f"{len(news_items)} news items "
+                    f"({coverage.describe() if coverage is not None else 'coverage unknown'})"
+                ),
                 input_message=result.user_message,
                 output_summary=f"sentiment={intel_report.market_sentiment}, changes={len(intel_report.state_changes)}" if intel_report else "parse_error",
                 full_response=result.raw_text,
@@ -5607,12 +5627,12 @@ class TradingPipeline:
                 cost_usd=result.cost_usd,
                 **agent_log_kwargs(result),
             )
-            return intel_report
+            return intel_report, coverage
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
             logger.error("[%s] News analyst failed: %s", session, e)
-            return None
+            return None, coverage
 
     def _load_earnings_analyses(
         self, run_id: str, session: str = "morning",
@@ -7685,7 +7705,8 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture developments since morning.
         try:
-            session_news = self._run_news_update(run_id, session=session_type)
+            session_news, session_news_coverage = self._run_news_update(
+                run_id, session=session_type)
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
@@ -7695,6 +7716,13 @@ class TradingPipeline:
                 extra={"session": session_type, "positions": len(positions),
                        "stop_coverage_gaps": coverage_gaps},
             )
+        if session_news_coverage is not None and session_news_coverage.status != "ok":
+            # midday/close have no data_status mechanism of their own (that
+            # is a morning-only construct today — see MorningResearchStage),
+            # so a degraded wire here would otherwise be silent even after
+            # the 2026-08-28 coverage fix. At minimum this keeps it out of
+            # the log-only failure mode the fix exists to close.
+            logger.warning("%s: %s", session_type, session_news_coverage.describe())
         if session_news:
             logger.info("%s news: %s", session_type.capitalize(), session_news.pm_briefing[:200])
         try:
@@ -8970,7 +8998,8 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture end-of-day developments
         try:
-            evening_news = self._run_news_update(run_id, session="evening")
+            evening_news, evening_news_coverage = self._run_news_update(
+                run_id, session="evening")
         except PaidAnalysisSuspended as exc:
             self.db.insert_daily_pnl(
                 date=today_str, total_value=total_value,
@@ -8983,6 +9012,11 @@ class TradingPipeline:
                 stop_coverage_gaps=coverage_gaps,
             )
             return payload
+        if evening_news_coverage is not None and evening_news_coverage.status != "ok":
+            # Same gap noted in run_position_review: evening has no
+            # data_status mechanism of its own to carry this further, so at
+            # minimum it does not disappear into a log-only "ok".
+            logger.warning("evening: %s", evening_news_coverage.describe())
         if evening_news:
             logger.info("Evening news: %s", evening_news.pm_briefing[:200])
         try:

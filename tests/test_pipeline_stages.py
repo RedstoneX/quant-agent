@@ -10,6 +10,7 @@ existing pipeline integration tests in test_pipeline.py.
 import json
 from unittest.mock import MagicMock, patch
 
+from src.data.news import FeedFailure, NewsCoverage
 from src.pipeline_context import RunContext
 from src.pipeline_stages import (
     DecisionStage,
@@ -1034,7 +1035,7 @@ def test_morning_research_stage_constructs_with_all_deps():
         tech_analyst=MagicMock(),
         earnings_analyst=MagicMock(),
         has_actionable_signal_fn=lambda *args, **kw: True,
-        run_news_update_fn=lambda *a, **kw: None,
+        run_news_update_fn=lambda *a, **kw: (None, None),
         load_earnings_analyses_fn=lambda *a, **kw: ([], []),
     )
     assert stage is not None
@@ -1093,7 +1094,7 @@ def test_morning_research_stage_populates_ctx_on_success():
         tech_analyst=MagicMock(),
         earnings_analyst=MagicMock(),
         has_actionable_signal_fn=lambda *args, **kw: False,
-        run_news_update_fn=lambda run_id, session: None,
+        run_news_update_fn=lambda run_id, session: (None, None),
         load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
     )
 
@@ -1167,7 +1168,7 @@ def test_morning_research_stage_records_admission_reason_without_collision():
             {"RSG"}, {"RSG": admission},
         ),
         has_actionable_signal_fn=lambda *args, **kwargs: False,
-        run_news_update_fn=lambda *args, **kwargs: None,
+        run_news_update_fn=lambda *args, **kwargs: (None, None),
         load_earnings_analyses_fn=lambda *args, **kwargs: ([], []),
     )
     ctx = RunContext.start("morning")
@@ -1263,7 +1264,7 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
         tech_analyst=tech_analyst,
         earnings_analyst=MagicMock(),
         has_actionable_signal_fn=lambda *args, **kw: True,
-        run_news_update_fn=lambda run_id, session: None,
+        run_news_update_fn=lambda run_id, session: (None, None),
         load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
     )
 
@@ -1276,6 +1277,120 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
     assert [a.symbol for a in result_ctx.analyses] == ["AAPL"]
     assert result_ctx.data_status["tech"] == "partial"
     tech_store.update.assert_called_once_with([resolved])
+
+
+def _minimal_news_report():
+    from src.models import MacroNarrative, NewsIntelligenceReport
+    return NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-08-28", era_themes=["AI capex"],
+            current_regime="risk-on",
+        ),
+        pm_briefing="Quiet tape.",
+        market_sentiment="neutral", confidence="medium",
+    )
+
+
+def _news_coverage_stage(run_news_update_fn):
+    """Minimal MorningResearchStage wiring shared by the coverage tests
+    below — only the news branch varies between them."""
+    mock_config = MagicMock()
+    mock_config.trading.universe = ["AAPL"]
+    mock_config.trading.lookback_days = 30
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = []  # skip tech entirely, not under test here
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+
+    return MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=MagicMock(),
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: False,
+        run_news_update_fn=run_news_update_fn,
+        load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+    )
+
+
+def test_morning_research_stage_news_partial_coverage_marks_status_partial():
+    """2026-08-28 coverage fix, pipeline level: two feeds down (Reuters 404,
+    AP 403) out of nine configured, but the seven survivors were enough for
+    the analyst to produce a valid report. Before the fix, data_status['news']
+    was 'ok' purely because the LLM call parsed — this asserts it is now
+    'partial', which is the whole point of tracking coverage at all."""
+    report = _minimal_news_report()
+    coverage = NewsCoverage(
+        configured=9, succeeded=7,
+        failed=[
+            FeedFailure(name="Reuters Business", reason="HTTP Error 404: Not Found"),
+            FeedFailure(name="AP Business", reason="HTTP Error 403: Forbidden"),
+        ],
+    )
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.news_intel is report
+    assert result_ctx.news_coverage is coverage
+    assert result_ctx.data_status["news"] == "partial"
+    assert result_ctx.data_status["news"] != "ok"
+
+
+def test_morning_research_stage_news_total_feed_failure_marks_status_failed_even_when_report_parses():
+    """The exact scenario the fix targets: ALL configured feeds fail (a
+    total wire outage), yet the analyst still returns a technically-valid
+    report (e.g. 'no fresh headlines, neutral sentiment'). Coverage failure
+    must dominate — this must read as 'failed', never 'ok', regardless of
+    whether the LLM call itself succeeded on empty input. This is the
+    'coverage is NOT reported complete' assertion at the pipeline layer."""
+    report = _minimal_news_report()
+    coverage = NewsCoverage(
+        configured=9, succeeded=0,
+        failed=[FeedFailure(name=f"Feed {i}", reason="timed out") for i in range(9)],
+    )
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "failed"
+    assert result_ctx.data_status["news"] != "ok"
+
+
+def test_morning_research_stage_news_full_coverage_marks_status_ok():
+    """Control case: 9/9 feeds returned data and the report parsed — this
+    is the one scenario that legitimately reads as 'ok'."""
+    report = _minimal_news_report()
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "ok"
 
 
 @patch("src.pipeline_stages.compute_indicators")
@@ -1380,7 +1495,7 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
             tech_analyst=tech_agent,
             earnings_analyst=MagicMock(),
             has_actionable_signal_fn=lambda *args, **kw: True,
-            run_news_update_fn=lambda run_id, session: news_intel,
+            run_news_update_fn=lambda run_id, session: (news_intel, None),
             load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
         )
         ctx = RunContext.start("morning")
@@ -1500,7 +1615,7 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
         tech_analyst=tech_agent,
         earnings_analyst=MagicMock(),
         has_actionable_signal_fn=lambda *args, **kw: True,
-        run_news_update_fn=lambda run_id, session: None,
+        run_news_update_fn=lambda run_id, session: (None, None),
         load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
     )
 
