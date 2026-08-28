@@ -261,7 +261,13 @@ Production logs show Reuters Business 404, AP Business 403, repeated FRED timeou
 
 Owner-authorized. Currently **absent** from `src/execution/broker.py` — not disabled, not implemented. `allow_margin: false` is unrelated (it governs buying beyond cash).
 
-- **Owner action:** switch the Alpaca paper account to a **margin** account. Shorting will not function on a cash account.
+Now a three-stage plan — see `docs/WORK.md` Phase 5 backlog entry for current
+status. Stage 1 (make shorts countable) is PR #116, open/unmerged.
+
+- **No owner action outstanding.** The account was verified on 2026-08-28 as
+  margin-enabled: `shorting_enabled: True`, `multiplier: 4`, equity
+  $9,871.87. This corrects the line previously here asking the owner to
+  switch the account to margin.
 - Implement short entry/exit in the broker layer.
 - Add borrow-availability and hard-to-borrow checks before submitting.
 - **New risk math:** a short's loss is unbounded. Deterministic risk must treat shorts differently from longs — a stop is mandatory, gap risk is materially worse, and the position must be force-covered on breach.

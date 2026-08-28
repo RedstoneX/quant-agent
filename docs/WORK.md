@@ -7,7 +7,8 @@ Status: **STALE — see "Session start" below for current production state.**
 The block below was accurate for the SHA it names but that SHA is no longer
 production. Production has since moved through PR #109/#110 (Phase 3,
 `058273f1`), PR #111/#112 (execution fix, `e6ada88`), and PR #114 (deploy-drift
-alarm, `32c174b` — current). For what is actually deployed now, read
+alarm, `32c174b`), and PR #113 (Phase 2b sizing + stop-width fix,
+`46b2029` — current). For what is actually deployed now, read
 "Session start" under "Active finish line" below; this section is kept only
 because the PR #92/#93 forensic narrative isn't duplicated elsewhere.
 
@@ -102,28 +103,32 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
-**Live production state (2026-08-27 evening ET, deployed this session):**
-deployed at `32c174b` on the paper account — PR #114, the deploy-drift alarm,
-merged on top of `e6ada88`. (Earlier same-day notes claimed `18dd4bc`, then
-`e6ada88`; `18dd4bc` was never actually on the box, and `e6ada88` was
-superseded by this deploy within the session — corrected here.) Phase 3 (exit
-rework), the execution limit fix, and the deploy-drift alarm are LIVE. Seven
-positions open, all with broker-resident stops. `paper: true`. Daily LLM
-budget raised to $2.75.
+**Live production state, current pointer: `46b2029`** (merge of PR #113,
+`feat/pm-flex-routing`), deployed 2026-08-27 evening ET. This supersedes
+`32c174b` (PR #114, the deploy-drift alarm, merged on top of `e6ada88`) —
+PR #113 carries `32c174b` in its own merge history, so both are live. Phase 3
+(exit rework), the execution limit fix, the deploy-drift alarm, Phase 2b
+risk-based sizing, the stop-width fix, the OpenRouter flex-routing change and
+the intraday un-blindfolding are all LIVE. `paper: true`.
 
-**New this deploy — deploy-drift alarm (PR #114, `9eef617` + `38a985c`):**
-`scripts/check_deploy_drift.py` plus `quant-agent-drift-check.timer`
-(Mon-Fri 08:45 ET) alerts over Telegram when the box's deployed HEAD falls
-behind `origin/main`. Built because PR #111 sat merged-but-undeployed for
-eight hours with nothing catching it (see the correction above). Verified
+**2026-08-28: nothing deployed tonight, deliberately.** The sizing and
+stop-width change (`3dff940`, part of the 2026-08-27 deploy above) has its
+first live session 2026-08-28 09:30 ET. Nothing should confound that read —
+PR #115 (earnings fix) and PR #116 (shorts Stage 1) are both open, reviewed,
+and intentionally left undeployed tonight.
+
+**New in the 2026-08-27 deploy — deploy-drift alarm (PR #114, `9eef617` +
+`38a985c`):** `scripts/check_deploy_drift.py` plus
+`quant-agent-drift-check.timer` (Mon-Fri 08:45 ET) alerts over Telegram when
+the box's deployed HEAD falls behind `origin/main`. Built because PR #111 sat
+merged-but-undeployed for eight hours with nothing catching it. Verified
 firing.
 
-**Not deployed:** everything merged after `32c174b`, plus the whole of
-**PR #113** (`feat/pm-flex-routing`), which is open, CI-green and unmerged.
-None of it is on production. It carries, in review order:
+**Also in the 2026-08-27 deploy, PR #113 (`feat/pm-flex-routing`, merged as
+`46b2029`):**
 
 - `75c0233` Phase 2b risk-based sizing + the correlation-aware risk budget
-  gate — **the highest-consequence change here; review first.** It decides how
+  gate — **the highest-consequence change in this deploy.** It decides how
   much money each trade may lose. `b712f4c` and `3dff940` land on top of it,
   same branch: the constructor now clamps to the risk engine's 20%
   single-name ceiling instead of proposing orders it hard-blocks, and entry
@@ -132,8 +137,8 @@ None of it is on production. It carries, in review order:
   widened stop that drops reward:risk below 1.5 rejects the trade outright.
   Measured against the real book: MSFT's stop went 2.4% → 7.0%, VLO 4.5% →
   9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% conviction now produces
-  7.1/14.2/20.0% positions instead of clamping all three to 20%. None of
-  this is deployed — PR #113 is still open.
+  7.1/14.2/20.0% positions instead of clamping all three to 20%. First live
+  session under this change is 2026-08-28 09:30 ET.
 - `fb88e08` the intraday PM un-blindfolding.
 - `16f6535` the PM's OpenRouter `openai/flex` endpoint routing.
 - `6b7af86` the Mission Control `input_message` surface, `cdb387b` the
@@ -538,14 +543,27 @@ Two facts worth acting on:
    the moving NBBO up to the slippage ceiling. Note the footgun — an Alpaca
    replacement mints a NEW order id, so the state machine must track it and
    handle partial fills rather than blind-looping PATCHes.
-3. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
-   (`src/data/earnings.py`) takes the first 30,000 characters of a filing. For
-   a 10-K that is the cover page, auditor's report and table of contents — the
-   financial statements are hundreds of pages further in. MSFT's own analysis
-   says so: *"Filing text is heavily truncated, consisting mainly of auditor's
-   report and table of contents."* The earnings seat has never seen MSFT's
-   numbers. Cheap fix (locate MD&A / financial statements rather than slicing
-   from the top) and it restores an entire evidence source.
+3. **Earnings filing extraction fix — PR #115 (`009ab78`, branch
+   `feat/shorts-visible`, misnamed — it carries the earnings fix, not
+   shorting), OPEN, NOT MERGED, NOT DEPLOYED.** Corrects the diagnosis
+   previously recorded here, which was wrong: the class is
+   `EarningsDataProvider` (`src/data/earnings.py`), not `EarningsProvider`,
+   and it was never doing a naive first-30,000-characters slice — structured
+   section extraction and a density-seeking fallback both already existed.
+   The real defect: `_extract_key_sections` matches the phrase "financial
+   statements", which also appears verbatim inside the auditor's opinion
+   letter ("...the related notes (collectively referred to as the financial
+   statements)"). The acceptance test measured only LENGTH (≥3,000 chars), so
+   that prose comfortably cleared the bar and suppressed the density-seeking
+   fallback that would have found the real tables. Measured over the 68
+   filings cached on the production box: 17 reached the earnings analyst
+   starved (<40 financial figures), 12 of those with ZERO — MSFT, AAPL,
+   GOOGL, BAC, CVX, NFLX among them. Fix: require ≥40 financial figures
+   (dollar amounts, comma-grouped thousands, parenthesized negatives — the
+   same pattern `_find_financial_dense_region` already scored by, now a
+   shared module constant) in addition to length; failing the content check
+   falls through to the fallback instead of returning. Re-measured across all
+   68: 17 improved, 51 unchanged, 0 regressed, 0 starved.
 4. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
    ratio in the system — over half of Form 4 trades carry zero predictive power.
 5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
@@ -553,19 +571,43 @@ Two facts worth acting on:
 6. **Phase 4.2 — repair the data feeds.** Fix Reuters/AP/FRED; surface degraded
    coverage to the operator. (4.1, un-blindfolding the intraday buy path, is
    done — `fb88e08`, `feat/pm-flex-routing`, see the landed section above.)
-7. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
-   emits `sell` / `strong_sell`, so bearish candidates are identified today.
-   What is missing is everything downstream: `PortfolioConstructor._build_sell`
-   returns `None` when the symbol is not already held, so a bearish view on a
-   name you do not own dies silently in one line; `TradeDecision.action` has no
-   open-short value; and sizing, stops (inverted — above entry) and margin
-   accounting all assume long. Bounded and additive, roughly a day, NOT a
-   rewrite. **Inverse ETFs are explicitly NOT the answer** — the owner has
-   rejected that workaround; he wants real short selling. Alpaca is ready:
-   `shorting_enabled:
-   true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
-   $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
-   entirely a code change; no account work is outstanding.
+7. **Phase 5 — short selling, now a three-stage plan.** The prior estimate
+   recorded here — "bounded and additive, roughly a day, NOT a rewrite" — was
+   **wrong**. A survey for Stage 1 found roughly 50 long-only assumptions
+   across the money path, several failing silently: the constructor would
+   re-open a held short every session (a short's weight was absent from
+   `_current_weights`, so `.get(sym, 0.0)` read an already-held short as
+   unheld); short orders bypass the risk engine entirely via an early
+   `return []` on SELL; and shorts counted as zero portfolio risk in
+   `portfolio_heat` (`qty <= 0` was excluded). Discovery still ALREADY WORKS —
+   `TechAnalysisResult.rating` emits `sell` / `strong_sell` today. **Inverse
+   ETFs are explicitly NOT the answer** — the owner rejected that workaround;
+   he wants real short selling. Split into:
+   1. **Make shorts countable — PR #116 (`feat/shorts-countable`, two commits
+      `71325b1` + `a81bfde`), OPEN, NOT MERGED, NOT DEPLOYED.** Signed weights
+      in `_current_weights`, side-aware `r_multiple`/`position_risk`/
+      `portfolio_heat` in `src/risk/metrics.py`, and `qty != 0` (not `qty >
+      0`) in every reporting filter (`src/storage/db.py`,
+      `src/notifier.py`, `src/trader_feed.py`, `src/pipeline.py`). No order
+      path is touched — the constructor emits nothing for a held short
+      (`current_pct < 0`) rather than routing a cover or an add-to-short
+      through paths that don't yet handle direction. 40 tests added
+      (`tests/test_shorts_countable.py`), 21 of which fail on `main` today;
+      the rest are a no-op wall proving long arithmetic is unperturbed.
+   2. **Make shorts safe (not yet started).** Risk-engine routing so a SELL
+      on an unheld symbol doesn't skip the deterministic gate via the early
+      `return []`; stop direction (above entry) and trailing direction
+      inverted for shorts; unbounded-loss margin accounting.
+   3. **Turn it on (not yet started).** Order placement in the broker layer,
+      then retire the inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`) as the
+      bearish-expression mechanism.
+   Alpaca is ready: `shorting_enabled: true`, `no_shorting: false`,
+   `max_margin_multiplier: 4`, assets `shortable` with `borrow_status:
+   easy_to_borrow`. The Alpaca paper account was verified on 2026-08-28 as
+   already margin-enabled (`shorting_enabled: True`, `multiplier: 4`, equity
+   $9,871.87) — no owner action is outstanding. (`docs/QAMC_REMEDIATION_SPEC.md`
+   Phase 5 previously recorded an owner action to switch the account to
+   margin; that is stale and has been corrected there.)
 8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
@@ -579,6 +621,11 @@ Two facts worth acting on:
 
 **Set aside — small, easily forgotten**
 
+- `db_reads.get_recent_agent_logs` uses `SELECT *`, and `GET /agents/{agent_name}`
+  returns 20 rows as `recent_calls`. PM prompts run 13KB-190KB, so that response
+  could reach several MB. Harmless today because nothing in `frontend/src/`
+  calls the route — fix before anything does, by trimming the large columns
+  from the LIST query and keeping them on the detail route.
 - `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
   the Tech Analyst accepts a `days_to_earnings` kwarg that nothing supplies.
 - Nothing tells the Portfolio Manager that `SH`, `SDS`, `PSQ` and `SQQQ` are
@@ -756,7 +803,10 @@ Do not interrupt natural validation for these unless current evidence shows they
 ## Hard boundaries
 
 - **Current execution authorization is Alpaca Paper only.**
-- No margin, options or direct stock shorting; bearish expression remains through approved inverse ETFs.
+- Options/theta strategies remain outside accepted architecture. Direct stock
+  shorting and margin were authorized 2026-08-27 (`docs/STATE.md`) and are
+  pending implementation, not yet in production — see the Phase 5 backlog
+  entry above for status.
 - Deterministic Python/broker protections remain final safety authority.
 - Do not force/manufacture trades or weaken safeguards to increase activity.
 - Do not create paper-only trading semantics.
@@ -769,7 +819,7 @@ Do not interrupt natural validation for these unless current evidence shows they
 
 **Active work:** natural Alpaca Paper observation continues. *(The rest of this
 paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are stale;
-current production state is `32c174b`, see "Session start" above.)* The
+current production state is `46b2029`, see "Session start" above.)* The
 remaining acceptance item is a future eligible session traversing PM, AI Risk,
 deterministic gate and broker execution when warranted, followed by
 management/exit and measured outcome. No trade may be forced or manufactured;

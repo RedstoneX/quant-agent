@@ -204,14 +204,21 @@ The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runti
 
 ## Production position — current pointer and history
 
-**Current production HEAD is `32c174b`** (merge of PR #114, the deploy-drift
-alarm — see below), deployed 2026-08-27 evening ET. It descends from `e6ada88`
-(PR #112) and `058273f1` (Phase 3, PR #109/#110), so everything recorded
-against those SHAs elsewhere in this file still holds. It does **not**
-include Phase 2b risk-based sizing (`75c0233`) or the OpenRouter flex-routing
-change (`16f6535`) — both are on `feat/pm-flex-routing` (PR #113), still open
-and unmerged. See `docs/WORK.md` "Session start" for the full not-deployed
-list.
+**Current production HEAD is `46b2029`** (merge of PR #113,
+`feat/pm-flex-routing`), deployed 2026-08-27 evening ET. It supersedes
+`32c174b` (PR #114, the deploy-drift alarm — see below), which is carried
+inside PR #113's own merge history, so both are live. It descends from
+`e6ada88` (PR #112) and `058273f1` (Phase 3, PR #109/#110), so everything
+recorded against those SHAs elsewhere in this file still holds, and it now
+**includes** Phase 2b risk-based sizing (`75c0233`), the stop-width fix
+(`3dff940`) and the OpenRouter flex-routing change (`16f6535`) — none of
+those are still pending despite older passages in this file saying so; see
+`docs/WORK.md` "Session start" for the current deploy contents. **2026-08-28:
+nothing further has been deployed, deliberately** — the sizing/stop-width
+change's first live session is 2026-08-28 09:30 ET and nothing should
+confound that read. PR #115 (earnings extraction fix) and PR #116 (shorts
+Stage 1, countable) are both open and undeployed; see the `docs/WORK.md`
+backlog.
 
 The `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7` / PR #93 SHA recorded below is
 **historical** — it was production on 2026-08-26 and has since been
@@ -465,7 +472,9 @@ Phase 4.2, which also adds a feed-health signal to the alerts and dashboard.
 ## Not authorized
 
 - Live-broker order submission or live-capital activation.
-- Direct stock shorting, options/theta strategies, or margin.
+- Options/theta strategies. (Direct stock shorting and margin were authorized
+  2026-08-27, see "Intraday opportunity discovery" above — pending
+  implementation, not yet in production; see `docs/WORK.md` Phase 5.)
 - New timers, daemons, databases, proxies, credential systems or durable infrastructure without explicit architectural approval.
 - Deterministic risk/execution semantic redesign outside accepted work.
 - Paper-specific trading shortcuts that would create a second trading architecture.
