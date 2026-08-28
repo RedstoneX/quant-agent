@@ -91,6 +91,10 @@ class BrokerSnapshot:
     positions: list[dict] = field(default_factory=list)
     prices: dict[str, float] = field(default_factory=dict)
     equity_curve: list[tuple[str, float]] = field(default_factory=list)
+    #: symbol -> stop price of the protective order production is holding for
+    #: it right now. Reconstructed from the trade ledger, see
+    #: `_standing_stops`.
+    standing_stops: dict[str, float] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     @classmethod
@@ -113,6 +117,25 @@ class BrokerSnapshot:
                 "WHERE qty > 0 ORDER BY symbol"
             ).fetchall()
             positions = [dict(r) for r in rows]
+            standing_stops = _standing_stops(
+                conn, [str(p["symbol"]) for p in positions], as_of,
+            )
+            if standing_stops:
+                notes.append(
+                    f"{len(standing_stops)} protective stop(s) reconstructed "
+                    "from the trade ledger, so the session starts with the "
+                    "coverage production actually holds"
+                )
+            missing = [
+                str(p["symbol"]) for p in positions
+                if str(p["symbol"]) not in standing_stops
+            ]
+            if missing:
+                notes.append(
+                    "no recorded stop for " + ", ".join(sorted(missing))
+                    + " — the session will see these as uncovered, which is "
+                    "correct only if production has no stop for them either"
+                )
 
             pnl_row = conn.execute(
                 "SELECT date, total_value, equity_close FROM daily_pnl "
@@ -162,8 +185,34 @@ class BrokerSnapshot:
                 if p.get("current_price")
             },
             equity_curve=curve,
+            standing_stops=standing_stops,
             notes=notes,
         )
+
+
+def _standing_stops(conn, symbols: list[str], as_of) -> dict[str, float]:
+    """The protective stop production is holding for each symbol.
+
+    Read from the trade ledger rather than left empty. An empty order book
+    makes every held position look unprotected, so the session's stop-coverage
+    repair fires on all of them at open — which is both noise and, worse, a
+    mask: a genuine coverage gap becomes invisible among the false ones.
+
+    The most recent row carrying a stop wins, so a stop that has ratcheted up
+    via TRAIL_STOP is reflected rather than the original entry stop. Sells are
+    included for that reason; a symbol sold to flat is not in `symbols`.
+    """
+    stops: dict[str, float] = {}
+    for symbol in symbols:
+        row = conn.execute(
+            "SELECT stop_loss FROM trades WHERE symbol=? AND stop_loss IS NOT NULL "
+            "AND stop_loss > 0 AND date(timestamp) <= ? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (symbol, as_of.isoformat()),
+        ).fetchone()
+        if row and row["stop_loss"]:
+            stops[symbol] = float(row["stop_loss"])
+    return stops
 
 
 # --------------------------------------------------------- SDK stand-ins
@@ -217,6 +266,35 @@ class RehearsalTradingClient:
         self.cancelled: list[str] = []
         self._orders: dict[str, RecordedOrder] = {}
         self.unsupported_calls: list[str] = []
+        self._seed_standing_stops(now)
+
+    def _seed_standing_stops(self, now: datetime) -> None:
+        """Open the order book with the protective stops production holds.
+
+        Without these the session sees every position as uncovered and repairs
+        all of them at open — noise that also hides a real coverage gap.
+        These are marked `pre_existing` so the report can tell what the
+        session placed from what it inherited.
+        """
+        held = {str(p["symbol"]): float(p.get("qty") or 0.0)
+                for p in self._snapshot.positions}
+        for symbol, stop in sorted(self._snapshot.standing_stops.items()):
+            qty = held.get(symbol, 0.0)
+            if qty <= 0:
+                continue
+            order_id = f"pre-existing-stop-{symbol}"
+            self._orders[order_id] = RecordedOrder(
+                order_id=order_id,
+                symbol=symbol,
+                side="sell",
+                qty=qty,
+                order_type="stop_limit",
+                limit_price=round(stop * 0.97, 2),
+                stop_price=stop,
+                time_in_force="gtc",
+                submitted_at=now,
+                status="pre_existing",
+            )
 
     # -- account / positions ------------------------------------------------
 

@@ -292,8 +292,15 @@ def _copy_data_tree_as_user(
     for name in excludes:
         exclude_args.append(f"--exclude={name}")
     exclude_args.append("--exclude=quant_agent.db*")
+    # Copy as ROOT, not as `user`. The destination is created by the invoking
+    # account (typically `ubuntu`), so an rsync running as `qamc` cannot write
+    # into it — it can read the source but not the target, which fails with a
+    # wall of per-directory permission errors. Root can read the production
+    # tree and write the sandbox, and the ownership is corrected immediately
+    # below so nothing is left root-owned. The production tree is only ever
+    # the rsync SOURCE, so this cannot write to it.
     result = subprocess.run(
-        ["sudo", "-n", "-u", user, "rsync", "-a", *exclude_args,
+        ["sudo", "-n", "rsync", "-a", *exclude_args,
          f"{source}/", f"{dest}/"],
         capture_output=True, text=True, timeout=900,
     )
@@ -302,13 +309,15 @@ def _copy_data_tree_as_user(
             f"could not copy {source} as user '{user}': "
             f"{result.stderr.strip() or result.stdout.strip()}"
         )
+    # Hand the sandbox back to the invoking account. Done as root because the
+    # tree is root-owned for the moment between the rsync above and this call.
     subprocess.run(
-        ["sudo", "-n", "-u", user, "chmod", "-R", "u+rwX,go+rX", str(dest)],
+        ["sudo", "-n", "chown", "-R",
+         f"{os.getuid()}:{os.getgid()}", str(dest)],
         capture_output=True, text=True, timeout=300,
     )
     subprocess.run(
-        ["sudo", "-n", "-u", user, "chown", "-R",
-         f"{os.getuid()}:{os.getgid()}", str(dest)],
+        ["chmod", "-R", "u+rwX", str(dest)],
         capture_output=True, text=True, timeout=300,
     )
     return sum(f.stat().st_size for f in dest.rglob("*") if f.is_file())
