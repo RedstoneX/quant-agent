@@ -1,15 +1,19 @@
 # QAMC Current Work
 
-Status: **STALE — see "Session start" below for current production state.**
+Status: **STALE — this file does not track a live production pointer. Check
+reality: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.**
 
 ## Current integration truth — historical (2026-08-26, PR #93), superseded
 
 The block below was accurate for the SHA it names but that SHA is no longer
 production. Production has since moved through PR #109/#110 (Phase 3,
-`058273f1`), PR #111/#112 (execution fix, `e6ada88`), and PR #114 (deploy-drift
-alarm, `32c174b`), and PR #113 (Phase 2b sizing + stop-width fix,
-`46b2029` — current). For what is actually deployed now, read
-"Session start" under "Active finish line" below; this section is kept only
+`058273f1`), PR #111/#112 (execution fix, `e6ada88`), PR #114 (deploy-drift
+alarm, `32c174b`), and PR #113 (Phase 2b sizing + stop-width fix, `46b2029`).
+That chain is itself now historical, not current — this section has recorded
+five different "current" production SHAs in two days, which was the actual
+bug. For what production has and what is still pending, read
+"Session start" under "Active finish line" below, and use the command above
+rather than trusting any SHA written in this file; this section is kept only
 because the PR #92/#93 forensic narrative isn't duplicated elsewhere.
 
 - Production was deployed and verified at
@@ -103,29 +107,75 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
-**Live production state, current pointer: `46b2029`** (merge of PR #113,
-`feat/pm-flex-routing`), deployed 2026-08-27 evening ET. This supersedes
-`32c174b` (PR #114, the deploy-drift alarm, merged on top of `e6ada88`) —
-PR #113 carries `32c174b` in its own merge history, so both are live. Phase 3
-(exit rework), the execution limit fix, the deploy-drift alarm, Phase 2b
-risk-based sizing, the stop-width fix, the OpenRouter flex-routing change and
-the intraday un-blindfolding are all LIVE. `paper: true`.
+**Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
+matches the production box byte for byte. Until this change the box carried
+five hand-edited values that existed nowhere in git, so any deploy that lost
+the stash/pop step would have silently reverted them — including the two that
+were raised specifically to end the 2026-08-28 outage. Reconciled:
 
-**2026-08-28: nothing deployed tonight, deliberately.** The sizing and
-stop-width change (`3dff940`, part of the 2026-08-27 deploy above) has its
-first live session 2026-08-28 09:30 ET. Nothing should confound that read —
-PR #115 (earnings fix) and PR #116 (shorts Stage 1) are both open, reviewed,
-and intentionally left undeployed tonight.
+| setting | was in git | now (and live) |
+| --- | --- | --- |
+| `intraday_scan.enabled` | `false` | `true` |
+| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
+| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
+| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
+| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
 
-**New in the 2026-08-27 deploy — deploy-drift alarm (PR #114, `9eef617` +
-`38a985c`):** `scripts/check_deploy_drift.py` plus
+Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
+git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
+(`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
+was also a git delta — the box had been running `2.75` against a committed
+`1.50`.
+
+**These are not the final values.** `max_paid_sessions_per_mode_per_day: 8` and
+`daily_reserved_exposure_limit_usd: 5.50` are stopgaps that the four
+cost-circuit fixes are expected to supersede — the session cap should become
+dollar-based, and the reservation ceiling should fall once the estimator
+reserves from measured history instead of the theoretical maximum. Committing
+them is deliberate: git must describe the running system even while the
+running system is wrong.
+
+There are now **no uncommitted config deltas on the box.** Verify with
+`sudo -n -u qamc git -C /home/qamc/quant-agent status --porcelain`.
+
+**This section does not record a live production pointer — check it
+directly:** `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.
+This file has documented five different "current" production SHAs in two
+days; that was a documentation bug, not something worth repeating. Compare
+the SHA you get against `git log origin/main` and the ordered backlog below
+to see what production has and what is still pending.
+
+**Historical — the 2026-08-27 evening deploy.** As of that evening,
+production was deployed at `46b2029` (merge of PR #113,
+`feat/pm-flex-routing`), superseding `32c174b` (PR #114, the deploy-drift
+alarm, merged on top of `e6ada88` — PR #113 carries `32c174b` in its own
+merge history). Phase 3 (exit rework), the execution limit fix, the
+deploy-drift alarm, Phase 2b risk-based sizing, the stop-width fix, the
+OpenRouter flex-routing change and the intraday un-blindfolding were all live
+as of that deploy: seven positions open, all with broker-resident stops,
+`paper: true`, daily LLM budget raised to $2.75. (Earlier same-day notes had
+claimed `18dd4bc`, then `e6ada88`, as the deploy SHA; `18dd4bc` was never
+actually on the box, and `e6ada88` was superseded within the same session —
+recorded here only for the forensic trail, not because it matters now.)
+**None of this paragraph describes current state** — use the command above.
+
+**Historical — 2026-08-27 night, nothing further deployed, deliberately.**
+The sizing and stop-width change (`3dff940`, part of the deploy above) had
+its first live session 2026-08-28 09:30 ET, and the operator chose not to
+confound that read with another deploy that night. PR #115 (earnings fix)
+and PR #116 (shorts Stage 1) were both open, reviewed, and intentionally left
+undeployed that night. **Whether they are deployed now is a different
+question — check reality, above, and see the ordered backlog below.**
+
+**Historical — deploy-drift alarm (PR #114, `9eef617` + `38a985c`), landed in
+the 2026-08-27 deploy.** `scripts/check_deploy_drift.py` plus
 `quant-agent-drift-check.timer` (Mon-Fri 08:45 ET) alerts over Telegram when
 the box's deployed HEAD falls behind `origin/main`. Built because PR #111 sat
 merged-but-undeployed for eight hours with nothing catching it. Verified
 firing.
 
-**Also in the 2026-08-27 deploy, PR #113 (`feat/pm-flex-routing`, merged as
-`46b2029`):**
+**Historical — also in the 2026-08-27 deploy, PR #113 (`feat/pm-flex-routing`,
+merged as `46b2029`):**
 
 - `75c0233` Phase 2b risk-based sizing + the correlation-aware risk budget
   gate — **the highest-consequence change in this deploy.** It decides how
@@ -228,7 +278,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   invented stops and targets deleted. PRs #103, #104 and #105 followed
   (audit + research docs, then the document-authority tiers).
 - **Phase 2a** — committed as `c89e957` on branch
-  `feat/risk-metrics-and-pm-correlation` (not yet merged). Folds in the four
+  `feat/risk-metrics-and-pm-correlation`, merged and deployed. Folds in the four
   audit findings that were blocking real Phase 2 sizing work: the drawdown-halve
   is now deterministic code (§1.1, `src/risk/rules.py::apply_drawdown_scale` +
   `drawdown_buy_cap`), the Portfolio Manager sees the correlation matrix before
@@ -237,7 +287,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   Reviewer (§1.4). New `risk.max_portfolio_risk_pct` (25%) is **reporting-only**
   — it does not gate anything yet.
 - **Phase 3.1 + 3.2** — committed as `aea82ee` on branch
-  `feat/exit-rework-pace-and-memory` (not yet merged). §3.1: the `pace` feedback
+  `feat/exit-rework-pace-and-memory`, merged and deployed. §3.1: the `pace` feedback
   loop is broken — `expected_horizon_sessions` and `setup_type` are pinned on
   the `trades` row at BUY time and never recomputed, the rolling-calibration
   `avg_hold_days` query is deleted from the review path, and `pace_status`
@@ -249,7 +299,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   a deterioration claim when every metric that moved actually improved. Exits
   on new information are never vetoed. 2323 tests pass (2283 on main, +40).
 - **Phase 3.3** — committed as `2f177e33` on branch
-  `feat/exit-gate-and-risk-routing` (not yet merged). The hard-trigger phrase
+  `feat/exit-gate-and-risk-routing`, merged and deployed. The hard-trigger phrase
   gate previously applied only to a symbol already trimmed that day, so a
   position's *first* sale executed on soft reasoning unchecked — almost
   every sale. Two of 2026-08-26's evening-graded `premature` exits (EPD,
@@ -296,10 +346,11 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   blocks, and the `trades` migration (`expected_horizon_sessions`,
   `setup_type`) plus the reviewer-memory reader were pre-run so the 09:30
   session would not hit a cold migration. **Phase 2b was NOT deployed at this
-  point — see below, it has since been committed.**
+  point — see below; it has since been merged and deployed too (same evening,
+  as part of PR #113).**
 
 - **GPT-5.5 Flex for the Portfolio Manager — done.** `16f6535` on branch
-  `feat/pm-flex-routing` (committed, not merged/deployed). OpenRouter serves
+  `feat/pm-flex-routing`, merged and deployed as part of PR #113. OpenRouter serves
   the PM's exact model (`openai/gpt-5.5-20260423`) from `openai/flex` at half
   price ($2.50/$15 vs $5/$30 per M tokens) — an endpoint choice, not a model
   choice, so no benchmark was needed. New `llm.<agent>_provider_order`
@@ -332,8 +383,8 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   uncommitted attempt at this same phase still sits in the `phase2b`
   worktree and needs reconciling.
 
-  **Two follow-on fixes landed on top, same branch, both PR #113, neither
-  deployed.** `b712f4c`: `max_position_pct` (20%) is a HARD BLOCK rule in the
+  **Two follow-on fixes landed on top, same branch, both PR #113, both merged
+  and deployed 2026-08-27 evening.** `b712f4c`: `max_position_pct` (20%) is a HARD BLOCK rule in the
   risk engine, not a trim, and nothing connected it to §2.1's sizing — the
   constructor was free to build orders the engine existed to refuse. Measured
   against the book: the 17 most recent BUYs carried stops a median 4.3% below
@@ -358,8 +409,9 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   now produces 7.1/14.2/20.0% positions instead of clamping all three to 20%
   — conviction changes size again. `config/prompts/portfolio_manager.md`'s
   conviction bands and `tech_analyst.md`'s stop guidance were recalibrated to
-  match (2026-08-27 doc-sync pass). 2487 tests pass. **None of this is
-  deployed** — PR #113 is open, CI-green, unmerged.
+  match (2026-08-27 doc-sync pass). 2487 tests pass. **This bullet does not
+  track live deploy status** — see "Session start" above for how to check
+  what production is actually running.
 - **`intra_check` un-blindfolded — done.** `fb88e08`, same branch. It cost
   $0.222/run vs morning's $0.221 while the PM received a technical-only
   evidence registry. The morning's macro/news are now carried forward
@@ -476,13 +528,13 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   confirmed 5% is the ratified envelope and that the 0.5% figure was a
   constructor default nobody chose. Floor stays 0.5%; total stays 25%,
   correlation-adjusted. **This envelope has since been implemented** as Phase
-  2b (`75c0233`, `feat/pm-flex-routing`, not yet merged/deployed) — see the
+  2b (`75c0233`, `feat/pm-flex-routing`, merged and deployed) — see the
   landed section above.
 
 **Measured LLM spend (10 days to 2026-08-27) — read before proposing any budget change**
 
 **These figures predate the flex-routing and intra_check fixes below** (both
-committed on `feat/pm-flex-routing`, not yet merged/deployed) — they are the
+merged and deployed as part of `feat/pm-flex-routing` / PR #113) — they are the
 baseline those changes were made against, not current production numbers.
 
 $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
@@ -545,7 +597,9 @@ Two facts worth acting on:
    handle partial fills rather than blind-looping PATCHes.
 3. **Earnings filing extraction fix — PR #115 (`009ab78`, branch
    `feat/shorts-visible`, misnamed — it carries the earnings fix, not
-   shorting), OPEN, NOT MERGED, NOT DEPLOYED.** Corrects the diagnosis
+   shorting), merged into `main`.** Deploy status is not tracked here — check
+   `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` against
+   `git log origin/main` to see whether it has shipped yet. Corrects the diagnosis
    previously recorded here, which was wrong: the class is
    `EarningsDataProvider` (`src/data/earnings.py`), not `EarningsProvider`,
    and it was never doing a naive first-30,000-characters slice — structured
@@ -584,7 +638,9 @@ Two facts worth acting on:
    ETFs are explicitly NOT the answer** — the owner rejected that workaround;
    he wants real short selling. Split into:
    1. **Make shorts countable — PR #116 (`feat/shorts-countable`, two commits
-      `71325b1` + `a81bfde`), OPEN, NOT MERGED, NOT DEPLOYED.** Signed weights
+      `71325b1` + `a81bfde`), merged into `main`.** Deploy status is not
+      tracked here — check `sudo -n -u qamc git -C /home/qamc/quant-agent log
+      --oneline -1` against `git log origin/main`. Signed weights
       in `_current_weights`, side-aware `r_multiple`/`position_risk`/
       `portfolio_heat` in `src/risk/metrics.py`, and `qty != 0` (not `qty >
       0`) in every reporting filter (`src/storage/db.py`,
@@ -592,8 +648,9 @@ Two facts worth acting on:
       path is touched — the constructor emits nothing for a held short
       (`current_pct < 0`) rather than routing a cover or an add-to-short
       through paths that don't yet handle direction. 40 tests added
-      (`tests/test_shorts_countable.py`), 21 of which fail on `main` today;
-      the rest are a no-op wall proving long arithmetic is unperturbed.
+      (`tests/test_shorts_countable.py`), 21 of which failed pre-merge on
+      `main` without this fix; the rest are a no-op wall proving long
+      arithmetic is unperturbed.
    2. **Make shorts safe (not yet started).** Risk-engine routing so a SELL
       on an unheld symbol doesn't skip the deterministic gate via the early
       `return []`; stop direction (above entry) and trailing direction
@@ -818,8 +875,9 @@ Do not interrupt natural validation for these unless current evidence shows they
 - No public exposure of QAMC or OneCLI.
 
 **Active work:** natural Alpaca Paper observation continues. *(The rest of this
-paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are stale;
-current production state is `46b2029`, see "Session start" above.)* The
+paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are
+stale; see "Session start" above for how to check current production
+state.)* The
 remaining acceptance item is a future eligible session traversing PM, AI Risk,
 deterministic gate and broker execution when warranted, followed by
 management/exit and measured outcome. No trade may be forced or manufactured;

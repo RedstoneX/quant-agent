@@ -178,7 +178,9 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
         try:
             rows = conn.execute(
                 "SELECT symbol, qty, avg_entry, current_price, market_value, "
-                "unrealized_pnl FROM positions WHERE qty > 0 "
+                # qty != 0: shorts have a negative qty and must not be
+                # invisible in the trader feed.
+                "unrealized_pnl FROM positions WHERE qty != 0 "
                 "ORDER BY ABS(market_value) DESC",
             ).fetchall()
             snapshot["positions"] = [dict(row) for row in rows]

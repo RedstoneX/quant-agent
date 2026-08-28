@@ -11,9 +11,9 @@ import {
   Time,
 } from "lightweight-charts";
 import { Button } from "@tremor/react";
-import { api, ChartTimeframe, LiveQuote, PriceBar, TradeItem } from "../api/client";
+import { api, ChartTimeframe, LiveQuote, PositionItem, PriceBar, TradeItem } from "../api/client";
 import { Panel } from "./ui/Panel";
-import { isExecutedTrade, etDateKey, fmtMoney } from "../lib/format";
+import { isExecutedTrade, etDateKey, fmtMoney, fmtNum } from "../lib/format";
 import { usePoll } from "../lib/usePoll";
 
 // Theme vars are space-separated "R G B" (Tailwind's arbitrary-alpha
@@ -137,10 +137,55 @@ export function tradeMarkers(
     .sort((a, b) => String(a.time).localeCompare(String(b.time)));
 }
 
+/* "Where am I versus the market" — the trader's own average entry for the
+ * charted symbol, drawn as a labelled horizontal line with its live
+ * unrealized P&L. Sourced from the same broker-marked PositionItem the
+ * Positions panel and the holdings strip render; never inferred from the
+ * bar data. Returns null when the symbol is not held (or the entry price
+ * is missing/zero), in which case nothing is drawn at all — an absent
+ * position must never produce a line at 0.
+ *
+ * Cash-parking rows (SGOV) are included deliberately: if the operator
+ * charts the sweep instrument, its real average entry is still the honest
+ * answer to "where am I". */
+export function entryPriceLine(
+  symbol: string | null,
+  positions: PositionItem[],
+  colors: { green: string; red: string }
+): { price: number; color: string; title: string } | null {
+  if (!symbol) return null;
+  const position = positions.find((item) => item.symbol === symbol);
+  if (!position) return null;
+  const price = position.avg_entry;
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  const pnl = position.unrealized_pnl;
+  const pnlText = pnl == null || !Number.isFinite(pnl) ? "" : ` · ${pnl >= 0 ? "+" : ""}${fmtMoney(pnl)}`;
+  return {
+    price,
+    // Market truth keeps the market-truth palette: green when the
+    // position is up, red when it is down (never the cyan system accent,
+    // which is reserved for chrome — see styles/index.css's token grammar).
+    color: (pnl ?? 0) < 0 ? colors.red : colors.green,
+    title: `ENTRY ${fmtNum(position.qty)} @ ${fmtMoney(price)}${pnlText}`,
+  };
+}
+
+/* Prev-close decision: kept on the intraday timeframes, dropped on 1D.
+ * Intraday, "where did we close yesterday" is the reference the whole
+ * session's move is measured against, so the line carries real
+ * information. On the 120-day daily chart the previous close is simply the
+ * second-to-last candle — already on screen, visually indistinguishable
+ * from the last one — so the line is pure clutter across the full width of
+ * the panel. Reported by the operator as noise on the daily view. */
+export function shouldShowPrevClose(timeframe: ChartTimeframe): boolean {
+  return timeframe !== "1d";
+}
+
 // The chart must always resize to a real, non-trivial height even on a
 // short/laptop viewport where `calc(100vh-150px)` leaves less room than a
 // tall desktop monitor — never so short the candles become unreadable.
-const MIN_CHART_HEIGHT = 240;
+// Matches the container's own `min-h-[280px]` floor below.
+const MIN_CHART_HEIGHT = 280;
 const TIMEFRAMES: Array<{ value: ChartTimeframe; label: string; lookbackDays: number }> = [
   { value: "5m", label: "5m Today", lookbackDays: 1 },
   { value: "15m", label: "15m", lookbackDays: 5 },
@@ -148,13 +193,25 @@ const TIMEFRAMES: Array<{ value: ChartTimeframe; label: string; lookbackDays: nu
   { value: "1d", label: "1D", lookbackDays: 120 },
 ];
 
-export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null; trades?: TradeItem[] }) {
+export function PriceChartPanel({
+  symbol,
+  trades = [],
+  positions = [],
+}: {
+  symbol: string | null;
+  trades?: TradeItem[];
+  /* Live broker positions — used only to draw the operator's own average
+   * entry for the charted symbol (see entryPriceLine above). Read-only,
+   * like everything else on this surface. */
+  positions?: PositionItem[];
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const livePriceLineRef = useRef<IPriceLine | null>(null);
   const previousCloseLineRef = useRef<IPriceLine | null>(null);
+  const entryLineRef = useRef<IPriceLine | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [barCount, setBarCount] = useState(0);
@@ -194,7 +251,8 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
       wickDownColor: colors.red,
       // The series' default last-value line would label the final
       // historical close as if it were current. Only the explicitly
-      // sourced LIVE and PREV CLOSE lines below may make that claim.
+      // sourced LIVE (and, intraday, PREV CLOSE) lines below may make
+      // that claim.
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -352,10 +410,23 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
 
     if (livePriceLineRef.current) candleSeries.removePriceLine(livePriceLineRef.current);
     if (previousCloseLineRef.current) candleSeries.removePriceLine(previousCloseLineRef.current);
+    if (entryLineRef.current) candleSeries.removePriceLine(entryLineRef.current);
     livePriceLineRef.current = null;
     previousCloseLineRef.current = null;
+    entryLineRef.current = null;
 
-    if (quote?.prev_close != null) {
+    const entry = entryPriceLine(symbol, positions, { green: colors.green, red: colors.red });
+    if (entry) {
+      entryLineRef.current = candleSeries.createPriceLine({
+        price: entry.price,
+        color: entry.color,
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: entry.title,
+      });
+    }
+    if (shouldShowPrevClose(timeframe) && quote?.prev_close != null) {
       previousCloseLineRef.current = candleSeries.createPriceLine({
         price: quote.prev_close,
         color: colors.text,
@@ -376,7 +447,7 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
       });
     }
     chartRef.current?.timeScale().fitContent();
-  }, [bars, quote, timeframe]);
+  }, [bars, quote, timeframe, symbol, positions]);
 
   // Real BUY/SELL execution markers on the price series — the vision
   // board's chart mockup shows these; `lightweight-charts` already
@@ -438,6 +509,15 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
   const intradayThrough = timeframe !== "1d" && lastBarTime
     ? new Date(lastBarTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : null;
+  // The operator's own position in the charted symbol, echoed in the panel
+  // subtitle as well as on the chart's entry line — the line label is
+  // small and sits against the price scale; this is the readable version.
+  const heldPosition = symbol ? positions.find((item) => item.symbol === symbol) : undefined;
+  const positionLine = heldPosition
+    ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)} · ${
+        (heldPosition.unrealized_pnl ?? 0) >= 0 ? "+" : ""
+      }${fmtMoney(heldPosition.unrealized_pnl)} unrealized`
+    : "";
   const quoteLine = !symbol
     ? undefined
     : quote?.last_price != null
@@ -458,7 +538,7 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
     <Panel
       title={symbol ? `Price — ${symbol}` : "Price chart"}
       status={status}
-      subtitle={quoteLine}
+      subtitle={quoteLine ? `${quoteLine}${positionLine}` : positionLine || undefined}
       actions={
         <div className="flex items-center gap-1" aria-label="Chart timeframe">
           {TIMEFRAMES.map((item) => (
@@ -482,14 +562,20 @@ export function PriceChartPanel({ symbol, trades = [] }: { symbol: string | null
           the manual ResizeObserver above needs a real box to measure from
           the start. `h-full` lets it inherit whatever height App.tsx's
           flex-1 chart wrapper actually computed (viewport-bounded on
-          desktop, a fixed fallback below `xl` — see App.tsx); `min-h-[240px]`
-          is the same floor as MIN_CHART_HEIGHT so the container and the
-          chart's own resize logic can never disagree. The overlay below
-          sits on top of that same grid rather than adding a second block
-          of vertical space beneath it, so an empty/degraded state reads as
-          a designed placeholder instead of prime chart space going to
-          waste on a blank "OK" box. */}
-      <div className="relative h-[320px] xl:h-full min-h-[240px]">
+          desktop). Below `xl` (the mobile/iPad single-pane view, which has
+          no viewport-bounded ancestor to inherit from) the chart was
+          previously pinned to a flat 320px regardless of the device's
+          actual screen — cramped on every iPad size, reported by the
+          operator. `60vh` scales with the real viewport instead (an iPad
+          in portrait gets meaningfully more chart than landscape, both get
+          far more than the old constant); `min-h-[280px]` is still the
+          same floor as MIN_CHART_HEIGHT so the container and the chart's
+          own resize logic can never disagree. The overlay below sits on
+          top of that same grid rather than adding a second block of
+          vertical space beneath it, so an empty/degraded state reads as a
+          designed placeholder instead of prime chart space going to waste
+          on a blank "OK" box. */}
+      <div className="relative h-[60vh] xl:h-full min-h-[280px]">
         <div ref={containerRef} className="w-full h-full" />
         {overlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
