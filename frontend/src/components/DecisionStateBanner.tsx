@@ -52,6 +52,7 @@ export function DecisionStateBanner({
   loading,
   error,
   updatedAt,
+  compact = false,
 }: {
   funnel: RunFunnelResponse | null;
   /** Recent trades (any run) — filtered here to this funnel's run_id, same
@@ -62,6 +63,11 @@ export function DecisionStateBanner({
   loading: boolean;
   error: string | null;
   updatedAt: Date | null;
+  /* Compact chrome (App.tsx's chrome-collapse control): the verdict is
+   * far too important to hide, so it is not hidden — it is re-rendered as
+   * one dense line (state label + why, stale marker preserved) instead of
+   * a three-line Callout with its own padding and run-id row. */
+  compact?: boolean;
 }) {
   if (!funnel) {
     if (loading) return null;
@@ -70,6 +76,13 @@ export function DecisionStateBanner({
       // runs (or on a non-trading day) there is truthfully nothing to
       // report yet — see docs/OUTCOME.md's "empty/no-trade states should
       // look intentional" principle.
+      if (compact) {
+        return (
+          <div className="mx-3 mt-3 rounded-lg border border-border bg-panel-alt px-3 py-1.5 text-[length:var(--fs-meta)] text-dim">
+            No decision yet — no sessions recorded yet today.
+          </div>
+        );
+      }
       return (
         <Callout title="No decision yet" color="slate" className="mx-3 mt-3 !bg-panel-alt !ring-border">
           No sessions recorded yet today.
@@ -89,6 +102,23 @@ export function DecisionStateBanner({
   const tone: Color = sweepOnly ? "slate" : STATE_TONE[funnel.decision_state];
   const label = sweepOnly ? "CASH SWEEP ONLY" : STATE_LABELS[funnel.decision_state];
   const stale = Boolean(error);
+
+  if (compact) {
+    return (
+      <div className="mx-3 mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-border bg-panel-alt px-3 py-1.5">
+        <Badge color={tone} size="xs">
+          {label}
+        </Badge>
+        <span className="text-[length:var(--fs-meta)] leading-snug text-ink">{whySummary(funnel, sweepOnly)}</span>
+        {stale && (
+          <span className="ml-auto flex items-center gap-1.5 text-[length:var(--fs-micro)] font-semibold text-warn">
+            <Badge color="amber" size="xs">stale</Badge>
+            last known{updatedAt ? ` as of ${updatedAt.toLocaleTimeString()}` : ""}
+          </span>
+        )}
+      </div>
+    );
+  }
 
   return (
     <Callout title={label} color={tone} className="mx-3 mt-3 !bg-panel-alt !ring-border">

@@ -5,7 +5,7 @@
 
 ## 🎯 What QAMC is
 
-**QAMC is an autonomous AI-assisted Alpaca Paper trading experiment that acts like a small virtual trading desk.**
+QAMC is an autonomous AI-assisted Alpaca Paper trading experiment that acts like a small virtual trading desk.
 
 Specialists analyze the market, a Portfolio Manager synthesizes the evidence, AI Risk challenges the plan, and deterministic Python decides what is allowed to execute.
 
@@ -13,57 +13,62 @@ The experiment asks:
 
 > **Does inexpensive modern AI add measurable out-of-sample trading value beyond ordinary deterministic signals?**
 
-Bearish views are currently expressed through approved inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`). Direct stock shorting, options and margin remain outside QAMC.
+This is a **paper-only experiment**. Live-money trading is not authorized. The account itself is more capable than the system currently uses: it carries a 4x margin limit and 96 of its 101 symbols can be sold short. Margin is deliberately left unused; short selling is being built now.
 
-Live-money trading is **not authorized**.
+## 🛂 What is allowed and what still needs approval
 
-## 🚦 RIGHT NOW
+**Currently approved:**
+- Paper trading with deterministic signals, AI analysis, and risk management
+- Inverse ETF positions (`SH`, `SDS`, `PSQ`, `SQQQ`) to express bearish views
+- Margin account operations (currently used unlevered)
 
-Production is verified at `16c52715b3ee05ec9e38c12958a14ee77a6d38d7` with rollback SHA `a6758f935910c5cf380cc6a7acedc5f3b78f6366`.
+**Still requires explicit owner approval:**
+- Live capital deployment
+- New paid external dependencies
+- Secrets or credential redesign
+- Material architecture changes outside current authority
 
-Current priorities:
+## 📍 How bearish views work today
 
-1. Finish any already-running pipeline-repair work and verify it in Paper.
-2. Continue natural Paper validation of the full opportunity → decision → execution → management → measurement chain.
-3. Then execute the authorized Research Intelligence Desk + Smart Money Analyst tranche from latest `main`.
+Right now, the system expresses a bearish market view by holding inverse ETFs. These are funds whose value moves in the opposite direction from their underlying indexes. The code handles their leverage correctly—a 3x fund like `SQQQ` is sized at three times its notional value, not treated as an ordinary position.
 
-## 👥 OPERATING MODEL
+This approach works today. But it is a temporary solution. Real short selling of individual stocks is being built to replace it, which will give finer control and better transparency. Shorting is already enabled at the broker with easy-to-borrow terms on 96 stocks. The transition will happen in stages as the safety logic is validated.
 
-- **`ubuntu` — engineering/operator.** Codex/Claude, Git/GitHub, development tooling, tests, browser verification, Docker/sudo engineering work and deployment orchestration.
-- **`qamc` — runtime only.** Production checkout, runtime `.env`/OneCLI, services/timers and QAMC Paper execution.
-- **`dev` — parked.** Not part of normal work.
+## ✅ What is already built
 
-## ⚡ PAPER-BETA ENGINEERING MODE
+The core system is solid:
+- Real continuous integration gates the production code
+- Governance corrections are in place
+- Structural risk modeling is complete
+- Risk measurement and sizing logic is complete, including correlation awareness and volatility-based stop widths
+- Exit logic has been rewritten
+- Execution fixes are complete
+- An alarm system watches for deploy drift
+- Mission Control, the trading cockpit, is live and read-only with a Research Intelligence Desk (agent research, disagreement markers, PM/Risk deltas, Smart Money evidence tracking) and a Smart Money seat for deliberation
 
-While QAMC remains Alpaca Paper, authorized engineering is end-to-end autonomous:
+## 🔨 What is in flight
 
-**diagnose → implement → test → PR → merge → deploy → verify → rollback if needed**
+- Short selling stages 2 and 3 (safety validation and live deployment)
+- Cockpit trader-view improvements
+- News feed reliability (Reuters and AP feeds are currently dead; dead feeds log a warning rather than blocking the system)
+- Cost-circuit defects that impacted operations
 
-There is no mandatory external code-review, merge or deployment gate in Paper beta. Git/PR history and the known-good production state provide traceability and rollback.
+## 🗺️ What comes next
 
-Parallel work/subagents are encouraged when they save time:
-- strong reasoning models for architecture, trading logic, hard debugging, safety-sensitive changes and difficult UX/product judgment;
-- cheaper/faster workers for tests, searches, logs, inventory and bounded evidence collection;
-- no duplicate fan-out just to use more agents.
+The remaining milestones, in order:
 
-Live capital, paid dependencies, secrets/credential redesign and material new architecture still require explicit approval.
+1. **The desk actually deliberates** — seats nominate trades with evidence, disagree, and are adjudicated by the Portfolio Manager. This moves QAMC from a bot running technical analysis to something resembling a real trading desk with intellectual synergy.
+2. **Bounded re-peg toward the moving NBBO** — executing tighter to the best bid and offer.
+3. **Evidence symmetry and transparency** — short selling fully operational and auditable.
+4. **Measurement** — a backtester and conviction calibration to answer "is any of this working" with evidence, not opinion.
+
+## 👥 How the work is organized
+
+- **`ubuntu` — engineering/operator.** Codex/Claude, Git/GitHub, development, tests, deployment.
+- **`qamc` — runtime only.** Production checkout and QAMC Paper execution.
+
+**Paper-beta engineering is end-to-end autonomous:** diagnose → implement → test → PR → merge → deploy → verify. There is no mandatory external code-review gate while on paper. Cheap fast models do bounded work; strong models do trading logic, safety, and architecture.
 
 ## 📊 Mission Control
 
-The accepted cockpit uses Tremor/TanStack for ordinary UI, Lightweight Charts for price/trade visualization and Dockview for the desktop workspace. Custom visualization is justified only for QAMC-specific decision topology.
-
-The next major product expansion is the Research Intelligence Desk: readable agent research, disagreement, PM/Risk deltas, Smart Money evidence, after-the-bell learning and a movable/persisted research workspace.
-
-## 🔬 NATURAL PAPER VALIDATION
-
-We still need ordinary Alpaca Paper sessions to demonstrate:
-
-**opportunity → evaluation → PM/Risk decision → deterministic eligibility/funding/execution → management/exit → measured result**
-
-Do not force trades to manufacture proof. A no-trade outcome is valid when the reason is specific and defensible.
-
-## 🚧 CURRENT BLOCKERS
-
-No standing external review/process blocker exists in Paper beta. Stop only for a genuine unresolved product/safety/architecture conflict, live-capital boundary, paid dependency, or external credential/authorization requirement.
-
-_Last refreshed: 2026-08-25._
+The accepted cockpit is live and read-only. It uses Tremor/TanStack for UI, Lightweight Charts for price and trade visualization, and Dockview for the desktop workspace.

@@ -97,29 +97,41 @@ The Tech Analyst must return, per candidate:
 
 `src/agents/tech_analyst.py` wires this in per symbol and accepts an optional `days_to_earnings` kwarg to render an earnings-proximity warning line. **Not wired end to end**: `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()`, which estimates trading sessions to the next scheduled earnings report (approximate — calendar days × 5/7, not a precise trading-calendar count) — the first place in the system that has ever known a *future* earnings date, as distinct from `src/data/earnings.py`, which is retrospective (it finds filings already on EDGAR). This method exists and is tested but **nothing in the pipeline calls it or passes `days_to_earnings` to the Tech Analyst** — the kwarg is accepted and handled but always empty in practice today. `tests/test_context.py` (new, 27 tests) covers the module.
 
-**Status of everything below (2026-08-27).** This line was previously a blanket
-"none of this work has been implemented", which stopped being true the moment
-Phase 2a landed and is exactly the kind of stale absolute that misleads the next
-session. Per-phase truth, which each phase's own section repeats:
+**Status of everything below (2026-08-27, corrected 2026-08-28).** This line
+was previously a blanket "none of this work has been implemented", which
+stopped being true the moment Phase 2a landed and is exactly the kind of
+stale absolute that misleads the next session. The status below is itself
+dated and will go stale the same way — it is not a live pointer. For what is
+actually deployed right now: `sudo -n -u qamc git -C /home/qamc/quant-agent
+log --oneline -1`, cross-referenced against `docs/STATE.md` → "Production
+position" and `docs/WORK.md`'s ordered backlog. As of the dates given below:
 
-- **Phase 2a** — landed (PR #106). The four audit-finding fold-ins: deterministic
+- **Phase 2a** — merged and deployed (PR #106). The four audit-finding fold-ins: deterministic
   drawdown gate, correlation to the PM, portfolio heat, R-multiple.
 - **Phase 2b** (§2.1 risk-based sizing, §2.2 correlation-aware budgeting,
-  §2.4 retire the position-count concept) — **COMPLETE** (commit `75c0233`,
-  branch `feat/pm-flex-routing`, not yet merged). `max_portfolio_risk_pct` is
+  §2.4 retire the position-count concept) — merged and deployed 2026-08-27
+  evening (commit `75c0233`, branch `feat/pm-flex-routing`, merged as
+  PR #113). `max_portfolio_risk_pct` is
   now an enforced gate, not a reported figure. Two follow-on fixes landed the
-  same day, same branch, also not yet merged: the constructor now clamps to
+  same day, same branch, also merged and deployed: the constructor now clamps to
   the 20% single-name ceiling instead of proposing orders the engine
   hard-blocks (`b712f4c`), and entry stops sitting inside ordinary volatility
   are widened to a regime/setup-scaled ATR floor before that clamp is even
   computed (`3dff940`) — see the Phase 2/Phase 3 sections below.
-- **Phase 3 (all of 3.1–3.4, 3.6, 3.7)** — **COMPLETE, DEPLOYED** to the live
+- **Phase 3 (all of 3.1–3.4, 3.6, 3.7)** — merged and deployed 2026-08-27
+  ~09:20 ET to the live
   paper account at `058273f1`. §3.5 resolved as an owner decision rather than
   implemented (see the correction note under §3.5); §3.8 unchanged by design.
-- **Phase 4.1** — **DONE** (commit `fb88e08`, branch `feat/pm-flex-routing`,
-  not yet merged): the intraday PM is no longer blindfolded to macro/news.
-  **Phase 4.2** (feed repair) — not started.
-- **Phases 5–7** — **not started**.
+- **Phase 4.1** — merged and deployed 2026-08-27 evening (commit `fb88e08`,
+  branch `feat/pm-flex-routing`, merged as PR #113): the intraday PM is no
+  longer blindfolded to macro/news.
+  **Phase 4.2** (feed repair) — not started as of 2026-08-27.
+- **Phase 5** (short selling) — now a three-stage plan, not the single "roughly
+  a day" task this document originally scoped it as. Stage 1 (make shorts
+  countable) merged into `main` as PR #116; stages 2 and 3 not started. See
+  `docs/WORK.md`'s Phase 5 backlog entry for current status — deploy status
+  changes daily and is not tracked here.
+- **Phases 6–7** — not started as of 2026-08-27.
 
 The owner reordered Phase 3 ahead of the rest of Phase 2 on 2026-08-27; the
 evidence and the decision are recorded in `docs/WORK.md`. The execution-order
@@ -130,7 +142,7 @@ and has not been redrawn.
 
 ## Phase 2 — Risk-based sizing and correlation-aware budgeting
 
-**Status note (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`, not yet merged):** landed as "Phase 2a" is the deterministic risk arithmetic this phase depends on — it closes four `AGENT_ROLE_AUDIT.md` audit findings (§1.1–§1.4), not this section's own numbered items:
+**Status note (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`, merged and deployed):** landed as "Phase 2a" is the deterministic risk arithmetic this phase depends on — it closes four `AGENT_ROLE_AUDIT.md` audit findings (§1.1–§1.4), not this section's own numbered items:
 
 - The drawdown-halve (audit §1.1) moved from a PM-prompt instruction into `src/risk/rules.py::apply_drawdown_scale`, with `drawdown_buy_cap` as a hard-block backstop. The PM prompt no longer pre-applies it.
 - The correlation matrix (audit §1.2) is now built before PM decides (`TradingPipeline._ensure_correlation_matrix`) and PM's Quantitative Facts render the measured clusters (`src/data/correlation.py::correlation_clusters`).
@@ -140,14 +152,14 @@ and has not been redrawn.
 
 **Phase 2b — COMPLETE (2026-08-27).**
 
-- **§2.1 landed.** `TargetPosition.risk_allocation_pct` (0.5–5.0, owner-ratified envelope) replaces `target_weight_pct` as the live sizing field, and `PortfolioConstructor._plan_risk_targets` derives the weight as `risk_pct x entry / (entry - stop)` — the §2.1 formula with the equity term cancelled, so it needs the stop distance and nothing else. `target_weight_pct` is retained as Optional purely so historical `agent_logs` / `specialist_evidence` rows still parse through `src/replay.py` and the Mission Control API; a target carrying neither field is rejected at the schema. `config/prompts/portfolio_manager.md` now emits risk, and its conviction bands have been through two revisions since: originally 2.0–4.0 / 1.0–2.5 / 0.5–1.0, then recalibrated (2026-08-27, `3dff940` + doc-sync, PR #113, not yet merged) to 1.5–3.0 / 1.0–2.0 / 0.5–1.0 once the stop-width fix below changed what the 20% single-name ceiling actually leaves — see that entry for why. The formula still reads `risk = min(raw, queued_cap, 5.0)`, pinned by `tests/test_prompts_anchors.py`.
+- **§2.1 landed.** `TargetPosition.risk_allocation_pct` (0.5–5.0, owner-ratified envelope) replaces `target_weight_pct` as the live sizing field, and `PortfolioConstructor._plan_risk_targets` derives the weight as `risk_pct x entry / (entry - stop)` — the §2.1 formula with the equity term cancelled, so it needs the stop distance and nothing else. `target_weight_pct` is retained as Optional purely so historical `agent_logs` / `specialist_evidence` rows still parse through `src/replay.py` and the Mission Control API; a target carrying neither field is rejected at the schema. `config/prompts/portfolio_manager.md` now emits risk, and its conviction bands have been through two revisions since: originally 2.0–4.0 / 1.0–2.5 / 0.5–1.0, then recalibrated (2026-08-27, `3dff940` + doc-sync, merged and deployed as PR #113) to 1.5–3.0 / 1.0–2.0 / 0.5–1.0 once the stop-width fix below changed what the 20% single-name ceiling actually leaves — see that entry for why. The formula still reads `risk = min(raw, queued_cap, 5.0)`, pinned by `tests/test_prompts_anchors.py`.
 - **§2.2 landed** as `src/risk/budget.py::allocate_risk_budget`, a pure function the constructor calls before sizing anything. Total ceiling 25%, per-cluster cap 40% of it (10% of equity), clusters from measured return correlation rather than a hand-maintained sector table. Rationing is largest-request-first with an alphabetical tie-break, so the outcome never depends on the order the PM listed its targets; a request rationed below the 0.5% floor is denied outright rather than shrunk to a token position. Every cut carries a note into the order's reasoning, because on 2026-08-20 an unexplained deterministic cut read to the AI Risk Manager as "plan inconsistency" and drew a full-plan veto.
 - **§2.4 verified already satisfied, and now genuinely so.** A grep of `config/prompts/` and `src/` confirms no fixed position-count target exists anywhere: `PMFacts.position_count` is a reported figure only. That was true before this tranche too — but §2.4 asks for the count to be *determined* by the budget, and until §2.2 was a gate rather than a report, nothing determined it at all. It now falls out of the risk budget: the book expands as stops reach entry and release budget (§2.3, already computed in `src/risk/metrics.py`) and contracts as they do not.
 
-**Two fixes on top of §2.1, found the same day, neither deployed (2026-08-27, PR #113, open/unmerged):**
+**Two fixes on top of §2.1, found the same day, both merged and deployed 2026-08-27 evening as PR #113:**
 
 - **The 20% single-name ceiling was reachable but unenforced by the constructor (`b712f4c`).** `risk.max_position_pct` sits in the risk engine's `HARD_BLOCK_RULES` — it drops an oversized order outright, it does not trim it. Nothing connected §2.1's sizing to that ceiling, so at this book's real stop distances (median 4.3%) any conviction above roughly 1% risk computed a notional weight the engine would refuse, and the failure mode was a silently empty book, not an error. One combination (4% risk, 3% stop) computed a 133% allocation and raised an uncaught `ValidationError` inside `construct_orders`, taking down order construction for the whole session. The constructor now clamps to the same ceiling the engine enforces (wired from `risk.max_position_pct`, same setting) and states in the order's reasoning that the position therefore risks LESS than the PM allocated — silently under-delivering risk is exactly the gap this closes, and an unexplained deterministic cut is what drew the 2026-08-20 veto.
-- **The stops feeding that formula were themselves too tight (`3dff940`).** See the root-cause note under §3.6 — the same 1.7-ATR median stop distance that fires exits inside ordinary volatility also, mechanically, forces the 20% clamp above to bind at nearly every conviction level. `PortfolioConstructor` now widens an entry stop placed inside `risk.min_stop_atr_multiple` ATRs (base 3.0, scaled 0.85x/1.15x by breakout/range setup type and 0.95x/1.10x/1.20x by risk-on/transitional/risk-off macro regime) and rejects the trade if the resulting reward:risk drops below `risk.min_reward_risk_after_widening` (1.5). Measured effect: MSFT 2.4% → 7.0%, VLO 4.5% → 9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% conviction now produces 7.1/14.2/20.0% positions instead of clamping all three to 20% — conviction changes size again, the entire premise of §2.1. 2487 tests pass. **Neither fix is deployed** — production still runs the pre-clamp, pre-widening constructor.
+- **The stops feeding that formula were themselves too tight (`3dff940`).** See the root-cause note under §3.6 — the same 1.7-ATR median stop distance that fires exits inside ordinary volatility also, mechanically, forces the 20% clamp above to bind at nearly every conviction level. `PortfolioConstructor` now widens an entry stop placed inside `risk.min_stop_atr_multiple` ATRs (base 3.0, scaled 0.85x/1.15x by breakout/range setup type and 0.95x/1.10x/1.20x by risk-on/transitional/risk-off macro regime) and rejects the trade if the resulting reward:risk drops below `risk.min_reward_risk_after_widening` (1.5). Measured effect: MSFT 2.4% → 7.0%, VLO 4.5% → 9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% conviction now produces 7.1/14.2/20.0% positions instead of clamping all three to 20% — conviction changes size again, the entire premise of §2.1. 2487 tests pass. **This paragraph does not track live deploy status** — see `docs/STATE.md` → "Production position" for how to check what production is actually running.
 
 **The one thing §2.2 does NOT do:** the gate is enforced only when the caller supplies `existing_risk_pct` and `clusters`. `pipeline_stages._book_risk_inputs` supplies both from `ctx.facts` — the same numbers the PM was shown before it decided — and returns `(None, None)` when the facts are unavailable, which leaves the portfolio ceilings unenforced. That is deliberate: enforcing a 25% ceiling against a book that cannot be measured would either block every trade or wave everything through. Per-position sizing and the 5% single-name cap still apply in that state.
 
@@ -228,7 +240,7 @@ The hard-trigger gate previously applied only to symbols already trimmed that da
 **3.6 — ATR noise band on exits. DONE (PR #109).**
 An adverse move inside ~1 × ATR of entry is noise, not thesis failure. OKLO was sold at 0.67 × ATR. An adverse move inside 1.0× ATR of entry can no longer trigger a price-derived exit; external-information triggers (news, earnings, regime shift, correlation breach, thesis invalidation) bypass the band.
 
-> **Root cause found later, not yet deployed (2026-08-27, `3dff940`, PR #113, open/unmerged).** §3.6 gates the *exit* side of the noise band — it stops a stop-hit-adjacent price move from firing a discretionary SELL. It does not touch where the *stop itself* sits. Measured against the book: entry stops were sitting a median 4.3% below entry against a median ATR of 2.56% of price — about 1.7 ATRs, barely past §3.6's own 1.25 ATR "ordinary day's range" threshold, on positions meant to be held for ten sessions. That is the same failure §3.6 was built to catch, one layer earlier: a stop that tight gets tripped by ordinary volatility before §3.6's exit-side gate is ever relevant, because the *broker-resident hard stop* (§3.7) fires first and unconditionally — it has no noise band. It is also, independently, why Phase 2b's single-name clamp (below) was binding on nearly every conviction level: `notional = risk_pct x entry/(entry - stop)` makes a tight stop demand an oversized position for any real risk. `src/portfolio_constructor.py` now pushes an entry stop out to `risk.min_stop_atr_multiple` (base 3.0 ATRs, scaled by setup type and macro regime) when structure placed it inside that floor — never tightening a wide stop — and rejects the trade outright if the resulting reward:risk falls under `risk.min_reward_risk_after_widening` (1.5). Structure still decides the level. **Not deployed** — PR #113 is open, CI-green, unmerged; production still runs entry stops as placed by Tech with no floor.
+> **Root cause found later, merged and deployed 2026-08-27 evening (`3dff940`, PR #113).** §3.6 gates the *exit* side of the noise band — it stops a stop-hit-adjacent price move from firing a discretionary SELL. It does not touch where the *stop itself* sits. Measured against the book: entry stops were sitting a median 4.3% below entry against a median ATR of 2.56% of price — about 1.7 ATRs, barely past §3.6's own 1.25 ATR "ordinary day's range" threshold, on positions meant to be held for ten sessions. That is the same failure §3.6 was built to catch, one layer earlier: a stop that tight gets tripped by ordinary volatility before §3.6's exit-side gate is ever relevant, because the *broker-resident hard stop* (§3.7) fires first and unconditionally — it has no noise band. It is also, independently, why Phase 2b's single-name clamp (below) was binding on nearly every conviction level: `notional = risk_pct x entry/(entry - stop)` makes a tight stop demand an oversized position for any real risk. `src/portfolio_constructor.py` now pushes an entry stop out to `risk.min_stop_atr_multiple` (base 3.0 ATRs, scaled by setup type and macro regime) when structure placed it inside that floor — never tightening a wide stop — and rejects the trade outright if the resulting reward:risk falls under `risk.min_reward_risk_after_widening` (1.5). Structure still decides the level. **This paragraph does not track live deploy status** — see `docs/STATE.md` → "Production position" for how to check what production is actually running.
 
 **3.7 — Trailing stops, broker-resident. DONE (PR #109, `src/risk/trailing.py`).**
 Trailing is arithmetic and belongs in deterministic code, not in an LLM's discretion:
@@ -242,7 +254,7 @@ Trailing is arithmetic and belongs in deterministic code, not in an LLM's discre
 
 ## Phase 4 — Evidence symmetry and feed repair
 
-**4.1 — Unblindfold the intraday buy path. DONE (2026-08-27, commit `fb88e08`, branch `feat/pm-flex-routing`, not yet merged).**
+**4.1 — Unblindfold the intraday buy path. DONE (2026-08-27, commit `fb88e08`, branch `feat/pm-flex-routing`, merged and deployed as PR #113).**
 `portfolio_manager.py` previously hard-returned a technical-only evidence registry whenever `session_type == "intra_check"`, even though the morning's macro was already loaded in memory. The 13:04 reviewer saw macro the 11:02 buyer was denied — which is precisely how OKLO was bought and killed within two hours on evidence that existed at purchase time. Measured over the 10 days to 2026-08-27, this session cost $0.222/run — essentially the same as a full `morning` run ($0.221), ~99% of it the PM call — while deciding on a fraction of the evidence: 33% of all LLM spend on blindfolded scanning.
 - **Done, with the remedy narrowed from the original design.** Earnings stay excluded — an intraday filing genuinely has not been read this tick — but today's macro and news are now carried forward from the store (`TradingPipeline._carry_forward_macro` / `_carry_forward_news`) rather than passed by reference from memory. `_carry_forward_macro` refuses anything not dated today (`load_last_state` is not date-scoped, so that check is this method's job); `_carry_forward_news` re-validates the stored dump against the `NewsIntelligenceReport` schema. Both degrade to `None` on any failure — a carry-forward problem costs the tick its context, never the deterministic loss protection that already ran.
 - `data_status` now reads `carried_from_morning` for macro/news instead of `not_run_intraday`, so RiskStage's existing 2+-degraded-sources advisory still fires honestly: a 09:30 regime call IS weaker evidence at 14:00, it is simply not NO evidence. `session_type` was removed from `build_evidence_registry` and `validate_grounding` entirely — rather than left inert — so no future reader assumes an intraday tick is still filtered somewhere.
@@ -261,7 +273,13 @@ Production logs show Reuters Business 404, AP Business 403, repeated FRED timeou
 
 Owner-authorized. Currently **absent** from `src/execution/broker.py` — not disabled, not implemented. `allow_margin: false` is unrelated (it governs buying beyond cash).
 
-- **Owner action:** switch the Alpaca paper account to a **margin** account. Shorting will not function on a cash account.
+Now a three-stage plan — see `docs/WORK.md` Phase 5 backlog entry for current
+status (merge/deploy status is not tracked here — it changes daily).
+
+- **No owner action outstanding.** The account was verified on 2026-08-28 as
+  margin-enabled: `shorting_enabled: True`, `multiplier: 4`, equity
+  $9,871.87. This corrects the line previously here asking the owner to
+  switch the account to margin.
 - Implement short entry/exit in the broker layer.
 - Add borrow-availability and hard-to-borrow checks before submitting.
 - **New risk math:** a short's loss is unbounded. Deterministic risk must treat shorts differently from longs — a stop is mandatory, gap risk is materially worse, and the position must be force-covered on breach.
