@@ -135,27 +135,103 @@ def test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure(tmp_path):
         "missing-response finding"
     )
 
-    # --- the actual acceptance criterion: the Portfolio Manager gets
-    # stopped by the reserved-exposure ceiling, exactly as it was on
-    # 2026-08-28 — zero trades, session ends suspended ---
-    assert report.status == "paid_analysis_suspended", (
-        f"expected the session to end paid_analysis_suspended, got "
-        f"{report.status!r} (error={report.error!r})"
+    # --- the acceptance criterion, INVERTED 2026-08-28 once the four
+    # cost-circuit fixes landed. This test was written to pin the bug: the
+    # Portfolio Manager stopped by the reserved-exposure ceiling, zero
+    # trades, session suspended. That is now the wrong answer.
+    #
+    # With the fixes in, the session gets PAST the ceiling and reaches the
+    # PM. The reproduction of the original failure has not been thrown
+    # away — it moved to
+    # `test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block`
+    # below, which forces the old estimator behaviour through config and
+    # asserts the block still happens. Deleting the reproduction would
+    # leave nothing to catch a regression that re-tightens the circuit.
+    ceiling_blocks = [
+        b for b in report.blocked_agents
+        if b["agent"] == "portfolio_manager"
+        and b["trigger_code"] in RESERVED_EXPOSURE_TRIP_CODES
+    ]
+    assert not ceiling_blocks, (
+        "the reserved-exposure ceiling blocked the portfolio_manager again — "
+        f"the estimator fix has regressed: {ceiling_blocks}"
+    )
+    assert report.status != "paid_analysis_suspended", (
+        f"session was suspended by the spending circuit: error={report.error!r}"
+    )
+    # The PM is REACHED but cannot be replayed, and that is itself the
+    # proof. This rehearsal is pinned to the incident run, and the incident
+    # run contains no recorded portfolio_manager response — precisely
+    # BECAUSE the estimator blocked the call before it was ever made. So
+    # "the circuit let us through to a question history never answered" is
+    # exactly the expected post-fix outcome, and it can only happen if the
+    # ceiling no longer fires.
+    pm_missing = [
+        f for f in report.findings
+        if f["kind"] == "missing_recorded_response"
+        and f["agent"] == "portfolio_manager"
+    ]
+    pm_ran = any(a["agent"] == "portfolio_manager" for a in report.agents_ran)
+    assert pm_ran or pm_missing, (
+        "the portfolio_manager was neither reached nor asked for — the "
+        "session stopped before it, which is the pre-fix behaviour. "
+        f"agents_ran={[a['agent'] for a in report.agents_ran]} "
+        f"status={report.status!r} error={report.error!r}"
+    )
+
+
+def test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block(tmp_path):
+    """The original failure, preserved.
+
+    Forces the pre-fix estimator by demanding more measured history than
+    exists, which is exactly the documented fail-closed path back to the old
+    byte-as-a-token worst-case bound, and restores the session ceiling that
+    was live that morning ($1.80). Under those settings the Portfolio Manager
+    must still be stopped by the reserved-exposure ceiling.
+
+    Without this, the suite would only prove the circuit is loose. It would
+    not prove the harness can still SEE the failure, and a change that
+    quietly re-tightened the estimator would pass unnoticed.
+    """
+    from ops.rehearsal.isolation import Sandbox
+    from ops.rehearsal.runner import run_rehearsal
+    from src.trading_calendar import ET
+
+    sandbox = Sandbox.prepare(
+        source_db=PRODUCTION_DB,
+        root=tmp_path / "sandbox",
+        source_data_dir=PRODUCTION_DATA,
+        sudo_user=SUDO_USER,
+    )
+    report = run_rehearsal(
+        sandbox,
+        session="morning",
+        now_et=datetime(2026, 8, 28, 9, 35, tzinfo=ET),
+        replay_run=INCIDENT_RUN_ID,
+        production_db=PRODUCTION_DB,
+        sudo_user=SUDO_USER,
+        config_overrides={
+            # More history than the ledger holds for any single agent (the
+            # busiest has under 150 rows) -> falls back to the old worst-case
+            # bound, which is the behaviour being reproduced. 1000 is the
+            # field's own validated maximum.
+            "llm_cost_circuit.reservation_min_history_samples": 1000,
+            # The ceiling that was actually live on the morning of the block.
+            "llm_cost_circuit.session_reserved_exposure_limit_usd": 1.80,
+        },
+    )
+
+    assert any("byte-identical" in c for c in report.isolation_checks)
+
+    ceiling_blocks = [
+        b for b in report.blocked_agents
+        if b["agent"] == "portfolio_manager"
+        and b["trigger_code"] in RESERVED_EXPOSURE_TRIP_CODES
+    ]
+    assert ceiling_blocks, (
+        "the pre-fix configuration no longer reproduces the 2026-08-28 block, "
+        "so this harness can no longer see the failure it was built for. "
+        f"blocked_agents={report.blocked_agents}"
     )
     assert report.executed == 0
     assert report.proposed == 0
-    assert not report.orders_recorded
-
-    pm_blocks = [b for b in report.blocked_agents if b["agent"] == "portfolio_manager"]
-    assert pm_blocks, (
-        f"portfolio_manager was not blocked at all — blocked_agents="
-        f"{report.blocked_agents}"
-    )
-    ceiling_blocks = [
-        b for b in pm_blocks if b["trigger_code"] in RESERVED_EXPOSURE_TRIP_CODES
-    ]
-    assert ceiling_blocks, (
-        f"portfolio_manager was blocked, but not by the reserved-exposure "
-        f"ceiling: {pm_blocks}"
-    )
-    assert any("reserved-exposure ceiling" in b["detail"] for b in ceiling_blocks)

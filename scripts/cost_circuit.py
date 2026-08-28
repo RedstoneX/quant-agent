@@ -33,6 +33,9 @@ def main() -> int:
     parser.add_argument("--reason", default="")
     args = parser.parse_args()
 
+    if args.command == "reset" and not args.reason.strip():
+        parser.error("reset requires --reason with a non-empty operator explanation")
+
     root = Path(__file__).resolve().parent.parent
     config_path = Path(args.config)
     if not config_path.is_absolute():
@@ -46,18 +49,48 @@ def main() -> int:
         config.llm_cost_circuit,
         notifier=TelegramNotifier(),
     )
-    breaker.activate_session(args.run_id, args.mode)
 
+    if args.command == "reset":
+        # `reset` must be reachable even when the ledger fault an operator is
+        # trying to clear would itself make the normal validating activation
+        # path raise (2026-08-28: `activate_session()` re-seeds/validates the
+        # day's accounting invariants and raised before `reset` was ever
+        # dispatched, forcing a hand-run Python snippet instead of this
+        # script). `reset()` reads the circuit's singleton state and the
+        # emergency latch directly -- it never depends on `_seed_today` --
+        # so establish the audit-trail run/mode context without it and go
+        # straight to `reset`. `status`/`check` below are unaffected and
+        # keep the full validating path.
+        breaker.set_session_context(args.run_id, args.mode)
+        breaker.reset(args.reason)
+        try:
+            status = breaker.status()
+        except Exception as exc:
+            # The reset itself is durable (it committed above); a ledger
+            # fault the reset does not itself repair can still make the
+            # post-reset status read fail closed. Report that plainly
+            # instead of losing the fact that the reset succeeded behind an
+            # uncaught traceback -- the second half of the same 2026-08-28
+            # failure mode.
+            print(json.dumps(
+                {
+                    "reset": True,
+                    "reset_reason": args.reason,
+                    "status_error": f"{type(exc).__name__}: {exc}",
+                },
+                indent=2, sort_keys=True,
+            ))
+            return 0
+        print(json.dumps(status, indent=2, sort_keys=True, default=str))
+        return 0
+
+    breaker.activate_session(args.run_id, args.mode)
     if args.command == "check":
         breaker.enforce_current_limits(agent_name="operator_check")
-    elif args.command == "reset":
-        if not args.reason.strip():
-            parser.error("reset requires --reason with a non-empty operator explanation")
-        breaker.reset(args.reason)
 
     status = breaker.status()
     print(json.dumps(status, indent=2, sort_keys=True, default=str))
-    if args.command in {"status", "check"} and status.get("suspended"):
+    if status.get("suspended"):
         return 2
     return 0
 

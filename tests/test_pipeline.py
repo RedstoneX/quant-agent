@@ -3658,7 +3658,8 @@ def test_reconcile_stop_coverage_flags_undercovered_long():
         SimpleNamespace(symbol="AAPL", qty=5.0),
     ]
 
-    def _snap(sym):
+    def _snap(sym, side="sell"):
+        assert side == "sell", "both positions here are longs"
         if sym == "NVDA":
             return (True, [{"id": "s1", "qty": 4.0}])   # only 4 of 10 covered
         return (True, [{"id": "s2", "qty": 5.0}])        # fully covered
@@ -3670,25 +3671,59 @@ def test_reconcile_stop_coverage_flags_undercovered_long():
     assert gaps[0]["held_qty"] == 10.0 and gaps[0]["covered_qty"] == 4.0
 
 
-def test_reconcile_stop_coverage_skips_shorts_pending_and_covered():
-    """Shorts/inverse (qty<=0), symbols the drain owns (pending row), and
-    fully-covered longs all produce no gap — and we don't even snapshot the
-    skipped ones."""
+def test_reconcile_stop_coverage_skips_pending_flags_neither_when_covered():
+    """Symbols the drain owns (pending row) are skipped — a fully-covered
+    long and a fully-covered SHORT both produce no gap.
+
+    Pre shorts-safe (Stage 2) a short was skipped outright here (`qty <= 0`)
+    with the reasoning "a SELL-stop can't protect a short" — true, but the
+    fix is to check the OTHER side's stops, not to skip the position. A
+    short is now read on its own side via `snapshot_protective_stops(...,
+    side="buy")`."""
     from types import SimpleNamespace
     pipe = TradingPipeline.__new__(TradingPipeline)
     pipe.broker = MagicMock()
     pipe.db = MagicMock()
     pipe.db.get_pending_protection_restores.return_value = [{"symbol": "TSLA"}]
     pipe.broker.get_positions.return_value = [
-        SimpleNamespace(symbol="SQQQ", qty=-3.0),   # short/inverse → skip
+        SimpleNamespace(symbol="SQQQ", qty=-2.0),   # short, fully covered
         SimpleNamespace(symbol="TSLA", qty=8.0),    # drain owns it → skip
-        SimpleNamespace(symbol="MSFT", qty=2.0),    # fully covered
+        SimpleNamespace(symbol="MSFT", qty=2.0),    # fully covered long
     ]
     pipe.broker.snapshot_protective_stops.return_value = (True, [{"id": "s", "qty": 2.0}])
 
     gaps = pipe._reconcile_stop_coverage()
     assert gaps == []
-    pipe.broker.snapshot_protective_stops.assert_called_once_with("MSFT")
+    # TSLA is the drain's — never even snapshotted.
+    assert pipe.broker.snapshot_protective_stops.call_count == 2
+    pipe.broker.snapshot_protective_stops.assert_any_call("MSFT", side="sell")
+    pipe.broker.snapshot_protective_stops.assert_any_call("SQQQ", side="buy")
+
+
+def test_reconcile_stop_coverage_flags_undercovered_short():
+    """The headline Stage 2 property for this reconciler: a short with a
+    real coverage gap is REPORTED, not silently skipped — but not
+    auto-repaired, because there is no BUY row to reconstruct its original
+    stop from (no order path can open a short yet)."""
+    from types import SimpleNamespace
+    pipe = TradingPipeline.__new__(TradingPipeline)
+    pipe.broker = MagicMock()
+    pipe.db = MagicMock()
+    pipe.db.get_pending_protection_restores.return_value = []
+    pipe.broker.get_positions.return_value = [
+        SimpleNamespace(symbol="TSLA", qty=-40.0),
+    ]
+    pipe.broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "s1", "qty": 25.0}],   # only 25 of 40 covered
+    )
+
+    gaps = pipe._reconcile_stop_coverage()
+    assert len(gaps) == 1
+    assert gaps[0]["symbol"] == "TSLA"
+    assert gaps[0]["held_qty"] == -40.0 and gaps[0]["covered_qty"] == 25.0
+    assert gaps[0]["repaired"] is False
+    pipe.broker.snapshot_protective_stops.assert_called_once_with("TSLA", side="buy")
+    pipe.broker._submit_stop_limit_order.assert_not_called()
 
 
 # === Stage 1 (QAMC provider/model plumbing) — paper/live isolation ===

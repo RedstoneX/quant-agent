@@ -411,16 +411,46 @@ llm_cost_circuit:
   require_telegram_alerts: true
   session_cost_limit_usd: 0.90
   daily_cost_limit_usd: 2.75
-  # Reservations use a strict UTF-8-byte token upper bound. These exposure
-  # ceilings permit one normal large PM prompt while actual settled spending
-  # remains governed by the lower limits above.
+  # Reservations are sized from measured per-(agent, model) history when
+  # there is enough of it (Defect 1, 2026-08-28; see
+  # reservation_min_history_samples etc. below), falling back to a strict
+  # UTF-8-byte token upper bound otherwise. These exposure ceilings permit
+  # one normal large PM prompt under EITHER path while actual settled
+  # spending remains governed by the lower limits above.
   session_reserved_exposure_limit_usd: 2.60
   daily_reserved_exposure_limit_usd: 5.50
+  # Backstop only (Defect 4, 2026-08-28) -- NOT the operative per-mode
+  # limit. Was 2 and WAS operative: intra_check fires 14x/day, so its 3rd
+  # session tripped this regardless of dollars spent (measured 2026-08-25/
+  # 26/27: 4, 7, 6 such stops/day against ~$1.02 of a $2.75 budget). Catches
+  # an infinite-loop session storm the dollar check below cannot, because a
+  # loop of provably-zero-cost failures (Defect 2) spends nothing.
   max_paid_sessions_per_mode_per_day: 8
+  # Defect 4 operative limit: fraction of daily_reserved_exposure_limit_usd
+  # any ONE mode may reserve/spend per ET day.
+  max_mode_daily_exposure_pct: 60.0
+  # Defect 4 afternoon reserve: fraction of daily_reserved_exposure_limit_usd
+  # withheld from every session, in every mode, until the release hour below
+  # -- close/evening/position_reviewer carry the exit decisions and must not
+  # find the day's budget already spent by a busy or runaway morning.
+  afternoon_reserve_pct: 40.0
+  afternoon_reserve_release_et_hour: 12
   max_provider_attempts_per_call: 2
   max_retry_attempts_per_session: 2
   reservation_ttl_minutes: 30
   reservation_multiplier: 1.05
+  # Defect 1 (2026-08-28): below this many (agent, model) rows in
+  # agent_logs, reservation falls back to the byte=token / full-
+  # max_output_tokens formula above rather than trusting a handful of
+  # calls.
+  reservation_min_history_samples: 20
+  # Conservative LOW percentile of the measured bytes-per-token ratio (a
+  # low ratio means MORE tokens per byte, i.e. higher cost). Deliberately
+  # well below the median.
+  reservation_conservative_percentile: 0.10
+  # Safety margin over the maximum output_tokens observed for an agent+
+  # model; still capped at that call's own max_output_tokens.
+  reservation_output_margin: 1.20
 
 evolution:
   # Quarterly meta-reflection can auto-append "Learnings" bullets to the six
