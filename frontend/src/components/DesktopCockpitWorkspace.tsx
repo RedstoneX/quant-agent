@@ -18,6 +18,28 @@ import { MissedOpportunitiesPanel } from "./MissedOpportunitiesPanel";
 import { SearchPanel } from "./SearchPanel";
 import { HealthPanel } from "./HealthPanel";
 import { Pill } from "./ui/Pill";
+import { Panel, StateMessage } from "./ui/Panel";
+
+// Item 2 of cockpit pass 3: the middle column of the bottom row is
+// deliberately empty by default — "free for him to populate" in the
+// owner's own words, not a panel we picked for him. Built from the same
+// approved Panel/StateMessage primitives every other pane in this
+// workspace uses (no bespoke graphic), reusing the existing ●/◐/■/○
+// glyph vocabulary (see ui/Panel.tsx's StateMessage) rather than
+// inventing a new icon for "nothing here yet."
+function WorkspaceSlotPane() {
+  return (
+    <div className="h-full overflow-y-auto p-2">
+      <Panel title="Workspace">
+        <StateMessage
+          hero
+          glyph="○"
+          text="Empty by default — drag any panel's tab here to fill this column, or use “Reset layout” to restore the default."
+        />
+      </Panel>
+    </div>
+  );
+}
 
 // Item 1 of the cockpit trader rework: Positions is the panel a trader
 // lands on, not one tab among several — see PositionsPane below and
@@ -127,35 +149,65 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   bias: BiasPane,
   missed: MissedPane,
   diagnostics: DiagnosticsPane,
+  workspaceSlot: WorkspaceSlotPane,
 };
 
-// Bumped v3 -> v4: the Decision Room panel is removed from the workspace
-// entirely (owner correction — see PR description; its content either
+// Bumped v4 -> v5 (cockpit pass 3, item 2): the default workspace shape
+// changed from one row of three columns (Positions | Chart | Orders) to
+// two rows — a full-width Chart row on top, then a Positions/free/Orders
+// three-column row below (see buildDefaultLayout). A v4 layout persisted
+// from localStorage is still a perfectly valid dockview shape (nothing
+// referenced by it was removed), so this bump exists purely to change
+// what EVERY BROWSER sees as the default on first load / after "Reset
+// layout" — without it, anyone who already has a saved v4 layout would
+// keep seeing the old one-row shape and never notice the new default
+// exists. Existing saved layouts are otherwise untouched: dockview state
+// is genuinely additive/positional, not a fixed schema, so a v4 blob
+// would have loaded fine under this key too. (v3 -> v4 / v2 -> v3
+// history: the Decision Room panel was removed entirely — its content
 // moved inline under the chart as PositionHoldingStrip/DecisionSummaryLine
-// or already exists on the Research Desk as DecisionDeltaPanel). A v3
-// layout persisted from localStorage would still reference a "decision"
-// panel id that no longer resolves to any component. A fresh key means
-// every browser falls back to buildDefaultLayout below instead of
-// throwing/half-rendering against a stale shape. (v2 -> v3 history:
-// Positions moved from a background tab inside the chart group to its own
-// leftmost, active-by-default group; Liquidity left the workspace
-// entirely for a compact header row — item 9; System+Search merged into
-// one Diagnostics panel — item 13.)
-const STORAGE_KEY = "qamc.dockview.cockpit.v4";
+// or already exists on the Research Desk as DecisionDeltaPanel; Positions
+// moved from a background tab inside the chart group to its own leftmost,
+// active-by-default group; Liquidity left the workspace entirely for a
+// compact header row — item 9; System+Search merged into one Diagnostics
+// panel — item 13.)
+const STORAGE_KEY = "qamc.dockview.cockpit.v5";
 
+// Item 2 of cockpit pass 3 ("a better DEFAULT, not a lock" — every panel
+// below stays exactly as movable/dockable/resizable as it always was;
+// this only changes what a brand-new session (or "Reset layout") starts
+// from). The owner's own framing: chart alone across the top because
+// it's the first thing he looks at, then a three-column row underneath —
+// Positions left, Orders right, middle column genuinely empty for him to
+// fill rather than a panel we picked on his behalf.
 function buildDefaultLayout(api: DockviewApi) {
-  // Positions leads (item 1): leftmost group, and the one made active
-  // below — the panel a trader actually lands on, not a background tab.
-  api.addPanel({ id: "positions", component: "positions", title: "Positions", initialWidth: 360 });
-  api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "positions", direction: "within" }, inactive: true });
-  api.addPanel({ id: "chart", component: "chart", title: "Chart", position: { referencePanel: "positions", direction: "right" } });
-  // Orders/Trades: still one click away on the right, not buried behind
-  // Diagnostics with the non-trading panels.
-  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "chart", direction: "right" }, initialWidth: 360 });
-  api.addPanel({ id: "trades", component: "trades", title: "Trades", position: { referencePanel: "orders", direction: "within" }, inactive: true });
+  // Top row: the chart, full width — nothing else in this row.
+  api.addPanel({ id: "chart", component: "chart", title: "Chart" });
+  // The non-trading analysis panels ride along as background tabs on the
+  // chart group (unchanged from before this pass) rather than moving to
+  // the bottom row — they pair conceptually with "studying a symbol/run",
+  // not with the Positions/Orders tables.
   for (const [id, title] of [["missed", "Missed"], ["runs", "Runs"], ["bias", "Directional Bias"], ["diagnostics", "Diagnostics"]]) {
     api.addPanel({ id, component: id, title, position: { referencePanel: "chart", direction: "within" }, inactive: true });
   }
+
+  // Bottom row: Positions (left) | free workspace slot (middle) | Orders
+  // (right) — a real second row (direction: "below"), not more tabs
+  // folded into the chart group, so it gets its own genuine height and
+  // its own independent resize handle against the chart row above it.
+  api.addPanel({
+    id: "positions",
+    component: "positions",
+    title: "Positions",
+    position: { referencePanel: "chart", direction: "below" },
+    initialWidth: 360,
+    initialHeight: 480,
+  });
+  api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "positions", direction: "within" }, inactive: true });
+  api.addPanel({ id: "workspaceSlot", component: "workspaceSlot", title: "Workspace", position: { referencePanel: "positions", direction: "right" } });
+  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "workspaceSlot", direction: "right" }, initialWidth: 360 });
+  api.addPanel({ id: "trades", component: "trades", title: "Trades", position: { referencePanel: "orders", direction: "within" }, inactive: true });
+
   api.getPanel("positions")?.api.setActive();
 }
 
@@ -186,7 +238,20 @@ export function DesktopCockpitWorkspace() {
         <span className="text-xs font-semibold uppercase tracking-wide text-dim">Trading workspace — move, resize or dock panels</span>
         <button type="button" onClick={reset} className="text-xs text-accent underline">Reset layout</button>
       </div>
-      <div className="h-[max(560px,calc(100vh-var(--chrome-h)))] overflow-hidden rounded-lg border border-border">
+      {/* Item 2 of cockpit pass 3: two genuinely tall rows instead of one
+          viewport-locked row split three ways. Before this, Positions/
+          Chart/Orders all shared ONE row capped at `100vh - chrome`, so
+          getting more room for the chart meant shrinking something else
+          inside that same fixed budget — there was nowhere else for the
+          height to come from. Now the chart row alone keeps that full
+          budget (`max(560px, 100vh-chrome)` — never shorter than before),
+          and the Positions/workspace/Orders row underneath adds a further
+          480px on top of it, so the container is deliberately taller than
+          one screen. The owner explicitly wants to reach for that with
+          scroll rather than have every panel shrunk to fit one viewport —
+          nothing here clips the page itself; `overflow-hidden` below only
+          rounds dockview's own corners, it does not cap page height. */}
+      <div className="h-[calc(max(560px,calc(100vh-var(--chrome-h)))+480px)] overflow-hidden rounded-lg border border-border">
         <DockviewReact className="dockview-theme-qamc" onReady={onReady} components={COMPONENTS} />
       </div>
     </div>

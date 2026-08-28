@@ -380,6 +380,24 @@ export function PriceChartPanel({
   }
 
   useEffect(() => {
+    // Bug fix (cockpit pass 3, item 1): lightweight-charts permanently
+    // disables the price scale's autoScale the moment the operator drags
+    // the price axis by hand (its own built-in "pin my manual zoom"
+    // behavior) — there is no code path in this file that ever did that,
+    // it's the library's default reaction to that one gesture. Once
+    // disabled, EVERY future setData() call (a new symbol, a new
+    // timeframe) keeps rendering against that stale manually-set range
+    // instead of fitting the new data, which is exactly the reported
+    // symptom: click MSFT (~$491) then CMCSA (~$26.78) and the axis stays
+    // parked in the old range with the new candles invisible, and no
+    // amount of dragging recovers it because the SAME gesture that would
+    // "fix" it is what broke it. Re-asserting autoScale here — scoped to
+    // this effect's [symbol, timeframe] deps, not the render effect below
+    // that also fires on every 20s quote poll — means a symbol/timeframe
+    // switch always starts from a clean fit, while a manual zoom the
+    // operator makes mid-session on the SAME symbol/timeframe survives
+    // until the next real switch instead of being wiped by the next poll.
+    candleSeriesRef.current?.priceScale().applyOptions({ autoScale: true });
     if (!symbol) {
       setBarCount(0);
       clearChart();

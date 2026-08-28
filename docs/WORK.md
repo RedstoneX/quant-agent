@@ -121,6 +121,43 @@ were raised specifically to end the 2026-08-28 outage. Reconciled:
 | `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
 | `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
 
+**The Mission Control URL — and a stale preview that was masking a week of
+work (2026-08-28).**
+
+- The correct, production Mission Control address is
+  `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. Tailscale Serve proxies
+  tailnet-only port 443 to the qamc API on `127.0.0.1:8800`.
+- The qamc API binds loopback-only by design (`QUANT_AGENT_API_HOST=127.0.0.1`
+  in `quant-agent-api.service`). Tailscale Serve, not the bind address, is what
+  makes it reachable. Do not "fix" reachability by rebinding the service.
+- `http://100.111.170.97:8810/cockpit` is NOT Mission Control. It was
+  `ops/preview/branch_preview.py`, the ephemeral branch-preview server,
+  running as the parked `dev` account out of
+  `/home/dev/projects/quant-agent-dashboard`. Its own module docstring states
+  it has no systemd unit and no auto-start and is meant to be killed after a
+  review session.
+- It was started 2026-08-21 16:16 ET and was still running on 2026-08-28,
+  seven days later. It served a bundle built 2026-08-21 09:43 containing no
+  dockview layout key at all — predating PR #120 entirely. None of the cockpit
+  trader-view work (PR #120, pass 2 via PR #130, pass 3 via PR #137) was
+  visible at that address.
+- The orphaned process (PID 2267757) was killed on 2026-08-28. Port 8810 is
+  now closed. The production URL was re-checked immediately afterward and
+  returned HTTP 200.
+- **Diagnostic worth keeping:** to tell the two apart in one step, compare the
+  hashed bundle filename returned by `curl -sk
+  https://ovh-vps.wallaby-bowfin.ts.net/cockpit/` against whatever else claims
+  to be the cockpit. Different filenames mean something other than production
+  is being served.
+- **Consequence for `feat/telegram-links` (PR #136):** it defaults
+  `notifications.mission_control_url` to the stale
+  `http://100.111.170.97:8810/cockpit` in both `config/settings.yaml` and
+  `src/config.py`. That is being corrected to the HTTPS tailnet host before
+  merge; note it here so the reason is on record.
+- State plainly that this is the likely explanation for the operator
+  repeatedly seeing old cockpit code after deploys that had in fact landed
+  correctly.
+
 Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
 git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
 (`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
@@ -781,6 +818,114 @@ first.
 #### THE REHEARSAL HARNESS — built, acceptance test not passing
 Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
 **Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
+
+#### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
+Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
+using the cockpit live:
+
+1. **Price-axis rescale bug (priority).** Clicking a symbol after manually
+   dragging the chart's price axis left the axis pinned to the old symbol's
+   range — lightweight-charts permanently disables its own `autoScale` the
+   moment the operator drags the price axis by hand, and nothing in this repo
+   ever re-enabled it. Fixed in `PriceChartPanel.tsx` by re-asserting
+   `priceScale().applyOptions({ autoScale: true })` in the effect keyed on
+   `[symbol, timeframe]`, so a symbol or timeframe switch always starts from a
+   clean fit while a manual zoom on the *same* symbol/timeframe still survives
+   the 20s quote poll. Demonstrated live against the running paper-trading
+   backend (MSFT ~$513 -> CMCSA ~$27 and back, plus a timeframe switch),
+   not just read from the code.
+2. **Two-row default workspace.** `DesktopCockpitWorkspace.tsx`'s default
+   layout changed from one row of three columns (Positions | Chart | Orders)
+   to a full-width Chart row on top and a Positions / free workspace slot /
+   Orders three-column row underneath — a real second grid row via dockview's
+   own `direction: "below"`, so it gets a genuine independent resize handle,
+   not more tabs folded into an existing group. The workspace container is now
+   deliberately taller than one viewport (chart row keeps its old full-height
+   budget, the new row adds ~480px on top) so the page scrolls vertically
+   instead of every panel fighting for room inside one fixed-height box. Every
+   panel remains exactly as movable/dockable as before — this only changes the
+   starting point. Layout key bumped `qamc.dockview.cockpit.v4` ->
+   `.v5` so a stale saved layout never hides the new default.
+3. **Directional Bias panel re-engineered onto Tremor primitives.** The old
+   panel was five bordered sections of hand-drawn ratio bars and paragraphs —
+   "instrument signal direction, effective market exposure" as dense text.
+   Replaced with a Tremor `BadgeDelta` "net lean" chip plus one Tremor
+   `DonutChart` (long/short/neutral share of exposure-corrected candidate
+   direction, the number the panel's own logic says actually answers "is QAMC
+   structurally long-only" — see `exposureDirection()`), a one-line hedge
+   footnote, and a compact PM-proposals summary. **Dropped, not reformatted:**
+   the inverse-ETF stat-card grid and the AI Risk Manager verdict section (3
+   of 25 runs and 4 of 25 runs respectively on live data — too thin a sample
+   for an at-a-glance panel) and the decision-state outcome histogram (not a
+   directional read at all, and it duplicates the sibling Runs tab one click
+   away in the same workspace group).
+
+99 frontend tests pass (up from 84 at PR #120's baseline via #130's pass-2
+additions), `tsc -b` clean, `npm run build` clean, rebuilt bundle committed
+alongside source (see PR #120's discovery below — still true: production
+serves `src/api/static_cockpit/` from disk and never runs `npm run build`).
+
+**Found and left alone, pre-existing:** at phone width (~390px) the mobile
+`SupportTabs` Trades table overflows the page horizontally — a wide Tremor
+`<table>` with no containing horizontal scroll at that breakpoint. Reproduced
+with this branch's changes backed out too, so it predates this pass and is
+unrelated to any of the three items above; not fixed here per the standing
+rule to report pre-existing breakage rather than self-authorize an unrelated
+fix.
+
+**Update (branch `fix/mobile-table-overflow`) — fixed, and the diagnosis above
+was wrong.** The Trades `<table>` was never the leak: `Panel`'s `Card` already
+has `overflow-hidden`, `DataTable.tsx`'s wrapper already has `overflow-x-auto`,
+and Tailwind's `grid-cols-1` already keeps the Orders/Trades grid track at
+viewport width — all three DataTable consumers on the mobile path (Positions,
+Orders, Trades, plus Runs/Missed-Opportunities in the other SupportTabs tabs)
+measured fully contained at 390px, before any fix. Proof: with a Playwright
+repro on the exact mocked dataset the project's own
+`scripts/dashboard-visual-acceptance.mjs` uses, hiding only the page's
+`<header>` took `document.documentElement.scrollWidth` from 468px to exactly
+390px (`clientWidth`) — across every SupportTabs tab and every data scenario
+(populated/error/empty) tested, at 320/371/390px. The real, sole cause was
+`TopStrip.tsx`'s status row (`ml-auto flex items-center gap-3 flex-shrink-0`):
+rigid, non-shrinking, non-wrapping content ("all systems reachable" + "updated
+HH:MM:SS" + "legacy view") that doesn't fit the header's own `flex-wrap` line
+at phone width. Fixed by dropping `flex-shrink-0` and adding `flex-wrap` to
+that one row, matching every other status row in this codebase (`HeroBand`,
+`LiquidityPanel`, `PositionHoldingStrip`, `DirectionalBiasPanel` already use
+`flex flex-wrap`). Left as-is above rather than rewritten, since the original
+misdiagnosis is itself a useful record.
+
+**Second verification, against live production data — and why two repros disagreed.**
+The fix was re-verified independently against the running production cockpit with
+real account data, not the mocked dataset: viewports 320px, 371px and 390px, across
+all five mobile SupportTabs tabs (Orders & Trades, Runs, Directional Bias, Missed
+Opportunities, Diagnostics).
+
+In every one of those 15 combinations the only element leaking at page level was the
+`TopStrip` status row and its `legacy view` link. No table leaked at page level in
+any tab at any width — `DataTable`'s wrapper carries `max-w-full overflow-x-auto`,
+`Panel`'s `Card` carries `overflow-hidden` and `.panel-body` carries
+`overflow-x-auto`, so a wide table is contained by construction, independent of how
+wide its data is.
+
+**The overflow is state-dependent, which is why the original report and the mocked
+repro disagreed on the numbers.** The header's health label is variable-length. With
+the healthy label "all systems reachable" there is no overflow at 390px at all. With
+the longest label the code can emit — "scoped paid-analysis quota hold — other
+sessions eligible" from `healthColor()` — the same page measures `scrollWidth` 571px
+against a 390px viewport. That is within 9px of the 562px originally recorded, and
+the original observation was made while paid analysis was degraded. So both repros
+were the same defect seen in two different system states, and neither measurement was
+wrong.
+
+Measured effect of the fix: 571px to 390px at a 390px viewport under the
+worst-case label, and 45px of overflow to zero at 320px under today's healthy label.
+Desktop is unaffected.
+
+Note explicitly that a phone-width check of this page is only meaningful when the
+status text is at its longest, since the healthy state hides the defect.
+
+PR #138 merged and deployed to production on 2026-08-28, and the fix was
+confirmed live at the production URL.
 
 #### COCKPIT — DELIVERED (PR #120)
 All five owner requests are implemented, built and tested on branch
