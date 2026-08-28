@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Button, Card } from "@tremor/react";
 import {
   api,
@@ -14,6 +14,7 @@ import { usePoll } from "./lib/usePoll";
 import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
 import { HeroBand } from "./components/HeroBand";
+import { HoldingsStrip } from "./components/HoldingsStrip";
 import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
 import { CandidateRail } from "./components/CandidateRail";
@@ -41,9 +42,20 @@ type MobilePane = "watchlist" | "chart" | "decision";
  * panel in the cockpit stack: Journal is a full day's worth of reading on
  * its own and dilutes "what is happening right now" if it shares scroll
  * space with the cockpit. */
-function ViewNav({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+function ViewNav({
+  view,
+  onChange,
+  trailing,
+}: {
+  view: View;
+  onChange: (v: View) => void;
+  /* Right-aligned slot (App.tsx's chrome-collapse control on the cockpit
+   * view) — kept generic rather than a cockpit-specific prop so this bar
+   * stays reusable for any future per-view control. */
+  trailing?: ReactNode;
+}) {
   return (
-    <nav className="flex items-center gap-1 px-4 border-b border-border bg-bg">
+    <nav className="flex flex-wrap items-center gap-1 px-4 border-b border-border bg-bg">
       {(["cockpit", "desk", "journal"] as const).map((v) => (
         <button
           key={v}
@@ -56,6 +68,7 @@ function ViewNav({ view, onChange }: { view: View; onChange: (v: View) => void }
           {v === "cockpit" ? "Cockpit" : v === "desk" ? "Research Desk" : "Journal"}
         </button>
       ))}
+      {trailing && <div className="ml-auto">{trailing}</div>}
     </nav>
   );
 }
@@ -249,6 +262,15 @@ export default function App() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [view, setView] = useState<View>("cockpit");
   const [mobilePane, setMobilePane] = useState<MobilePane>("watchlist");
+  // Defaults compact: the price chart is the primary "answer at a glance"
+  // surface and was reported cramped. HeroBand/TodaySessionsStrip/
+  // DecisionStateBanner each already ship a `collapsed`/`compact` mode
+  // (dense line instead of full cards/table) purpose-built to reclaim this
+  // exact vertical space — see their own comments. Nothing here is
+  // unreachable when collapsed: the same facts are still shown, just
+  // denser, and the toggle below switches back to the full layout on
+  // demand.
+  const [chromeCompact, setChromeCompact] = useState(true);
 
   const { state: modalState, value: modalActions } = useModalState();
   const isDesktop = useIsDesktop();
@@ -478,11 +500,31 @@ export default function App() {
           does not interfere with TopStrip's own `sticky` positioning. */}
       <div ref={chromeRef}>
         <TopStrip account={account} accountError={accountError} health={health} updatedAt={updatedAt} />
-        <ViewNav view={view} onChange={setView} />
+        <ViewNav
+          view={view}
+          onChange={setView}
+          trailing={
+            view === "cockpit" ? (
+              <button
+                type="button"
+                onClick={() => setChromeCompact((v) => !v)}
+                className="px-3 py-2 text-[0.75rem] font-semibold uppercase tracking-wide text-dim hover:text-ink"
+                aria-pressed={chromeCompact}
+              >
+                {chromeCompact ? "Show full header" : "Compact header"}
+              </button>
+            ) : undefined
+          }
+        />
 
         {view === "cockpit" && (
           <>
-            <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} />
+            <HeroBand account={account} accountError={accountError} positions={positions} funnel={funnel} collapsed={chromeCompact} />
+            {/* Holdings + P&L visible on arrival — no scrolling, no tab
+                click. Reuses the same broker-marked positions state
+                HeroBand/PositionsPanel already render; a click charts the
+                symbol via the same handler CandidateRail uses. */}
+            <HoldingsStrip positions={positions} error={positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={inspectSymbol} />
             <TodaySessionsStrip
               runs={todaysRuns}
               funnels={todaysFunnels}
@@ -494,8 +536,9 @@ export default function App() {
               onSelect={selectSession}
               onFollowLatest={followPrimarySession}
               onSelectTrade={selectSessionTrade}
+              compact={chromeCompact}
             />
-            <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />
+            <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} compact={chromeCompact} />
           </>
         )}
       </div>
@@ -525,7 +568,7 @@ export default function App() {
               <PaneNav pane={mobilePane} onChange={setMobilePane} />
               <div className="p-3">
                 {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
-                {mobilePane === "chart" && <div className="flex min-h-[520px] flex-col"><SelectedSymbolContext funnel={funnel} symbol={chartSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} /><div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} /></div></div>}
+                {mobilePane === "chart" && <div className="flex min-h-[520px] flex-col"><SelectedSymbolContext funnel={funnel} symbol={chartSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} /><div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} positions={positions} /></div></div>}
                 {mobilePane === "decision" && <DecisionRoomPanel funnel={funnel} symbol={chartSymbol} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} />}
               </div>
               <div className="px-3 pb-3">
