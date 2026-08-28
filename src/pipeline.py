@@ -454,7 +454,21 @@ class TradingPipeline:
                 self.cost_circuit = LLMCostCircuitBreaker(
                     self._storage_db_path, config.llm_cost_circuit,
                 )
-                openrouter_pricing_ok = refresh_openrouter_pricing()
+                # Pricing-staleness SPOF fix (2026-08-28): pass the
+                # configured grace window/multiplier through so a stale-
+                # but-recent cache is used (widened, logged loudly) instead
+                # of latching the whole desk the moment openrouter.ai is
+                # briefly unreachable past the cache's 24h freshness mark --
+                # see the long note above refresh_openrouter_pricing in
+                # src/cost_table.py.
+                openrouter_pricing_ok = refresh_openrouter_pricing(
+                    grace_period_hours=(
+                        config.llm_cost_circuit.openrouter_pricing_grace_period_hours
+                    ),
+                    max_stale_multiplier=(
+                        config.llm_cost_circuit.openrouter_pricing_stale_multiplier_max
+                    ),
+                )
                 if not openrouter_pricing_ok:
                     self.cost_circuit.mark_unavailable(
                         RuntimeError(
