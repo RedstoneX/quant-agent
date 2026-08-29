@@ -100,7 +100,14 @@ Every value is presented as a bare current level with, at best, a 30-day delta. 
 
 Correctly filters to transaction codes P/S, non-derivative rows only, with a $100k floor and a 14-day cluster window requiring two distinct owners.
 
-- **No routine-versus-opportunistic classification.** See `RESEARCH_FINDINGS.md` — this is the single highest-value omission in the whole agent set.
+- **Routine-versus-opportunistic classification — finished, PR opened, not
+  yet merged.** `f3aeba4` + `866e423` plus a 2026-08-28 finishing pass
+  (config-driven thresholds, per-code and fail-closed tests) on branch
+  `feat/insider-signal-filter`, `src/data/insider_signal.py`. See
+  `RESEARCH_FINDINGS.md` §1 and `docs/WORK.md` "Landed" for the mechanism
+  and the re-measured 57.3% routine split (with the caveat that the
+  calendar-month test has not yet contributed to that number — only the
+  proportional-sale rules have).
 - Post-transaction share count is captured but never converted into a purchase-as-percentage-of-holdings ratio.
 - `actor_roles` is captured but unweighted; CFO purchases are more informative than CEO purchases.
 - No market-cap tilt, though the documented effect concentrates in small and mid caps.
@@ -132,5 +139,5 @@ The uncomfortable part: its most safety-critical contribution is **covering for 
 |---|---|
 | **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple — **landed as Phase 2a, commit `c89e957`** |
 | **Phase 3** (exits) | §1.5 reviewer memory — **landed, commit `aea82ee` on branch `feat/exit-rework-pace-and-memory` (not yet merged)** |
-| **Right after Phase 2** | §2.5 routine/opportunistic filter — cheap, well-evidenced, highest value per line of code |
+| **Right after Phase 2** | §2.5 routine/opportunistic filter — **finished, PR #133 opened against `main`, commit `f3aeba4`/`866e423` + 2026-08-28 finishing pass on branch `feat/insider-signal-filter` (not yet merged)** |
 | **Separate pass, needs owner decisions** | §2.2 news cascade · §2.3 macro series · §2.4 earnings trends — several need new data sources |
