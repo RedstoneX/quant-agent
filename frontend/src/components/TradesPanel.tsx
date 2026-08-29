@@ -9,6 +9,35 @@ import { DataTable } from "./ui/DataTable";
 
 const columnHelper = createColumnHelper<TradeItem>();
 
+/** Reasoning strings can run long (a full LLM decision paragraph) — truncate
+ * in the cell and reveal the rest on click, same disclosure idiom
+ * AgentPromptViewer.tsx uses for full prompt/response text. A button (not
+ * the row) owns the click so this never fights the table's own onRowClick —
+ * mirrors the Symbol column's `event.stopPropagation()` above. */
+const REASONING_PREVIEW_CHARS = 70;
+
+function ReasoningCell({ text }: { text: string | null }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return <span className="text-dim">—</span>;
+  if (text.length <= REASONING_PREVIEW_CHARS) {
+    return <span className="block max-w-[22rem] whitespace-normal font-sans">{text}</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        setOpen((v) => !v);
+      }}
+      aria-expanded={open}
+      className="block max-w-[22rem] whitespace-normal text-left font-sans hover:text-accent"
+    >
+      {open ? text : `${text.slice(0, REASONING_PREVIEW_CHARS)}…`}
+      <span className="ml-1 text-dim">{open ? "(show less)" : "(show more)"}</span>
+    </button>
+  );
+}
+
 export function TradeTable({
   trades,
   onInspect,
@@ -46,6 +75,7 @@ export function TradeTable({
           ),
       }),
       columnHelper.accessor("action", { header: "Action", cell: (info) => <Badge color={info.getValue().includes("BUY") ? "emerald" : info.getValue().includes("SELL") ? "rose" : "slate"} size="xs">{info.getValue()}</Badge> }),
+      columnHelper.accessor("reasoning", { header: "Reasoning", cell: (info) => <ReasoningCell text={info.getValue()} /> }),
       columnHelper.accessor("fill_status", { header: "Fill status", cell: (info) => <Badge color={String(info.getValue()).includes("fill") ? "emerald" : String(info.getValue()).includes("reject") ? "rose" : "slate"} size="xs">{info.getValue() || "unfilled"}</Badge> }),
       columnHelper.accessor("fill_qty", { header: "Filled qty", cell: (info) => displayFillQty(info.row.original) }),
       columnHelper.accessor("fill_price", { header: "Fill price", cell: (info) => displayFillPrice(info.row.original) }),

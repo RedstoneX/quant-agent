@@ -66,3 +66,43 @@ describe("TradesPanel/TradeTable symbol click vs row inspect", () => {
     expect(screen.getByText("MRVL")).toBeTruthy();
   });
 });
+
+// Phase 6 (§6.2c): reasoning is fetched (TradeItem.reasoning) and shown
+// elsewhere (CandidateDetailModal, SearchPanel) but was missing from this
+// table entirely. Long strings truncate in the cell and reveal on demand,
+// same disclosure idiom AgentPromptViewer.tsx uses — and, like the Symbol
+// column, that disclosure must never fire the row's onInspect.
+describe("TradesPanel/TradeTable reasoning column", () => {
+  const LONG_REASON =
+    "Thesis invalid: guidance cut on the print, high-conviction bearish read from news_analyst, trimming the full position ahead of the open.";
+
+  it("short reasoning renders in full with no truncation control", () => {
+    render(<TradeTable trades={[trade({ reasoning: "clean entry, tech breakout" })]} />);
+    expect(screen.getByText("clean entry, tech breakout")).toBeTruthy();
+    expect(screen.queryByText(/show more/)).toBeNull();
+  });
+
+  it("null reasoning renders a placeholder, not blank", () => {
+    // stop_loss/take_profit/decision_id also render "—" for a null value on
+    // this fixture, so the reasoning cell isn't the only "—" on the row —
+    // assert at least one is present rather than assuming uniqueness.
+    render(<TradeTable trades={[trade({ reasoning: null })]} />);
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("long reasoning truncates and expands on click without firing onInspect", () => {
+    const onInspect = vi.fn();
+    const theTrade = trade({ reasoning: LONG_REASON });
+    render(<TradesPanel trades={[theTrade]} error={null} loading={false} onInspect={onInspect} />);
+
+    const toggle = screen.getByRole("button", { name: /show more/ });
+    expect(toggle.textContent).not.toContain("trimming the full position");
+
+    fireEvent.click(toggle);
+
+    expect(onInspect).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /show less/ }).textContent).toContain(
+      "trimming the full position",
+    );
+  });
+});

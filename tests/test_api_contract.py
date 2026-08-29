@@ -162,6 +162,84 @@ def test_trades_filters_by_run_id_and_decision_id(client, seeded_db):
 
 
 # ---------------------------------------------------------------------------
+# /positions/{position_id}/history (Phase 6, §6.2b)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def position_chain_db(tmp_path, monkeypatch):
+    """A dedicated DB (not `seeded_db`, which only writes one bare BUY row)
+    with a full entry -> interim -> exit chain, written through the same
+    `Database.insert_trade` position_id/exit_reason_category derivation the
+    trading process uses — proves the route reads real, already-persisted
+    data rather than needing any new write path."""
+    db_path = tmp_path / "position_history_test.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_trade(
+        symbol="AAPL", action="BUY", qty=10, price=150.0,
+        reasoning="tech breakout, high conviction", run_id="run-a",
+        stop_loss=140.0,
+    )
+    db.insert_trade(
+        symbol="AAPL", action="REDUCE", qty=3, price=160.0,
+        reasoning="macro regime flip to risk-off, trimming", run_id="run-b",
+    )
+    db.insert_trade(
+        symbol="AAPL", action="SELL", qty=7, price=165.0,
+        reasoning="stopped out", run_id="run-c",
+    )
+    closed_position_id = db.get_trades(symbol="AAPL")[0]["position_id"]
+
+    db.insert_trade(
+        symbol="MSFT", action="BUY", qty=5, price=300.0,
+        reasoning="still open", run_id="run-d", stop_loss=280.0,
+    )
+    open_position_id = db.get_trades(symbol="MSFT")[0]["position_id"]
+    db.close()
+
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+    return {"closed": closed_position_id, "open": open_position_id}
+
+
+def test_position_history_404_for_unknown_id(client, position_chain_db):
+    r = client.get("/positions/pos-doesnotexist/history")
+    assert r.status_code == 404
+
+
+def test_position_history_closed_chain_reconstructs_entry_interim_exit(client, position_chain_db):
+    pid = position_chain_db["closed"]
+    r = client.get(f"/positions/{pid}/history")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["position_id"] == pid
+    assert body["symbol"] == "AAPL"
+    assert body["status"] == "closed"
+    assert body["trade_count"] == 3
+
+    assert body["entry"]["action"] == "BUY"
+    assert body["entry"]["stop_loss"] == 140.0
+    assert body["entry"]["reasoning"] == "tech breakout, high conviction"
+
+    assert len(body["interim"]) == 1
+    assert body["interim"][0]["action"] == "REDUCE"
+    assert body["interim"][0]["exit_reason_category"] == "macro_regime_shift"
+
+    assert body["exit"]["action"] == "SELL"
+    assert body["exit"]["exit_reason_category"] == "broker_stop_fill"
+
+
+def test_position_history_open_chain_has_no_exit(client, position_chain_db):
+    pid = position_chain_db["open"]
+    r = client.get(f"/positions/{pid}/history")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "open"
+    assert body["exit"] is None
+    assert body["entry"]["action"] == "BUY"
+    assert body["interim"] == []
+
+
+# ---------------------------------------------------------------------------
 # /runs, /runs/{run_id}
 # ---------------------------------------------------------------------------
 
