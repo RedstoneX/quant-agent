@@ -35,6 +35,7 @@ export function SupportTabs({
   health,
   healthError,
   onSelectSymbol,
+  onSelectPositionSymbol,
   onInspectOrder,
   onInspectTrade,
 }: {
@@ -52,6 +53,14 @@ export function SupportTabs({
   health: HealthResponse | null;
   healthError: string | null;
   onSelectSymbol?: (symbol: string) => void;
+  /** Symbol-cell-specific click for the Orders/Trades tables below —
+   * modal-free, same as PositionsPanel's onSelectSymbol. Deliberately
+   * distinct from onSelectSymbol above (which Missed Opportunities uses,
+   * and which may open a candidate-detail modal) — see
+   * SupportWorkspaceContext's onSelectPositionSymbol for the full
+   * rationale; this is that same callback threaded to the mobile/iPad
+   * fallback layout. */
+  onSelectPositionSymbol?: (symbol: string) => void;
   onInspectOrder?: (order: OrderItem) => void;
   onInspectTrade?: (trade: TradeItem) => void;
 }) {
@@ -92,8 +101,9 @@ export function SupportTabs({
             status={orderStatus}
             onStatusChange={onOrderStatusChange}
             onInspect={onInspectOrder}
+            onSelectSymbol={onSelectPositionSymbol}
           />
-          <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} onInspect={onInspectTrade} />
+          <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} onInspect={onInspectTrade} onSelectSymbol={onSelectPositionSymbol} />
         </div>
       )}
 

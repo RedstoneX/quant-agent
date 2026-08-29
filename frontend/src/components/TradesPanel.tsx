@@ -9,11 +9,42 @@ import { DataTable } from "./ui/DataTable";
 
 const columnHelper = createColumnHelper<TradeItem>();
 
-export function TradeTable({ trades, onInspect }: { trades: TradeItem[]; onInspect?: (trade: TradeItem) => void }) {
+export function TradeTable({
+  trades,
+  onInspect,
+  onSelectSymbol,
+}: {
+  trades: TradeItem[];
+  onInspect?: (trade: TradeItem) => void;
+  /** Symbol-cell-specific click: charts the symbol in place, same as
+   * PositionsPanel's/OrdersPanel's onSelectSymbol. Deliberately separate
+   * from onInspect above (which opens the trade's Candidate Detail modal
+   * on the rest of the row) — clicking just the SYMBOL must never open a
+   * modal. Optional and omitted by JournalPanel/CandidateDetailModal's
+   * read-only uses of this table, where the symbol stays plain text. */
+  onSelectSymbol?: (symbol: string) => void;
+}) {
   const columns = useMemo(
     () => [
       columnHelper.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
-      columnHelper.accessor("symbol", { header: "Symbol", cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span> }),
+      columnHelper.accessor("symbol", {
+        header: "Symbol",
+        cell: (info) =>
+          onSelectSymbol ? (
+            <button
+              type="button"
+              className="font-bold text-accent hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectSymbol(info.getValue());
+              }}
+            >
+              {info.getValue()}
+            </button>
+          ) : (
+            <span className="font-bold text-accent">{info.getValue()}</span>
+          ),
+      }),
       columnHelper.accessor("action", { header: "Action", cell: (info) => <Badge color={info.getValue().includes("BUY") ? "emerald" : info.getValue().includes("SELL") ? "rose" : "slate"} size="xs">{info.getValue()}</Badge> }),
       columnHelper.accessor("fill_status", { header: "Fill status", cell: (info) => <Badge color={String(info.getValue()).includes("fill") ? "emerald" : String(info.getValue()).includes("reject") ? "rose" : "slate"} size="xs">{info.getValue() || "unfilled"}</Badge> }),
       columnHelper.accessor("fill_qty", { header: "Filled qty", cell: (info) => displayFillQty(info.row.original) }),
@@ -24,7 +55,7 @@ export function TradeTable({ trades, onInspect }: { trades: TradeItem[]; onInspe
       columnHelper.accessor("run_id", { header: "Run", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("decision_id", { header: "Decision", cell: (info) => info.getValue() || "—" }),
     ] as LegacyColumnDef<TradeItem, unknown>[],
-    []
+    [onSelectSymbol]
   );
   return <DataTable data={trades} columns={columns} getRowId={(trade) => String(trade.id)} initialSorting={[{ id: "timestamp", desc: true }]} onRowClick={onInspect} />;
 }
@@ -34,11 +65,13 @@ export function TradesPanel({
   error,
   loading,
   onInspect,
+  onSelectSymbol,
 }: {
   trades: TradeItem[];
   error: string | null;
   loading: boolean;
   onInspect?: (trade: TradeItem) => void;
+  onSelectSymbol?: (symbol: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -59,7 +92,7 @@ export function TradesPanel({
       {!error && trades.length === 0 && <StateMessage text="No trades recorded yet." />}
       {!error && trades.length > 0 && filtered.length === 0 && <StateMessage text="No trades match this filter." />}
       {!error && filtered.length > 0 && (
-        <TradeTable trades={filtered} onInspect={onInspect} />
+        <TradeTable trades={filtered} onInspect={onInspect} onSelectSymbol={onSelectSymbol} />
       )}
     </Panel>
   );
