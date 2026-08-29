@@ -27,6 +27,7 @@ from src.api.schemas import (
     CandidatesResponse,
     DecisionDetailResponse,
     MetaPeriodSummary,
+    PositionHistoryResponse,
     ReflectionItem,
     ReflectionsResponse,
     RunDetailResponse,
@@ -59,6 +60,30 @@ def get_trades(
     )
     trades = [TradeItem(**row) for row in rows]
     return TradesResponse(trades=trades, count=len(trades))
+
+
+@router.get("/positions/{position_id}/history", response_model=PositionHistoryResponse)
+def get_position_history(position_id: str) -> PositionHistoryResponse:
+    """The full chain for one position (Phase 6, §6.2b) — the entry thesis
+    and stop, each interim review decision, the exit reason, realized P&L,
+    and hold duration. See `db_reads.get_position_history` for how the
+    chain is assembled; distinct from the broker-live `/positions` in
+    routes_live.py, which lists currently-held positions, not history."""
+    detail = db_reads.get_position_history(position_id)
+    if detail is None:
+        raise HTTPException(404, "position not found")
+    return PositionHistoryResponse(
+        position_id=detail["position_id"],
+        symbol=detail["symbol"],
+        status=detail["status"],
+        entry=TradeItem(**detail["entry"]),
+        interim=[TradeItem(**row) for row in detail["interim"]],
+        exit=TradeItem(**detail["exit"]) if detail["exit"] is not None else None,
+        realized_pnl_total=detail["realized_pnl_total"],
+        realized_pnl_partial=detail["realized_pnl_partial"],
+        hold_days=detail["hold_days"],
+        trade_count=detail["trade_count"],
+    )
 
 
 @router.get("/runs", response_model=RunsResponse)

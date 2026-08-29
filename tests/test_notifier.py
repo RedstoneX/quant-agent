@@ -1414,6 +1414,65 @@ def test_format_evening_4pm_path_when_equity_close_zero():
     assert "   Equity: $0.00" in msg
 
 
+def test_format_evening_shows_pnl_vs_risk_capital():
+    """Phase 6 (§6.3b): the same day's P&L expressed against capital
+    actually at risk, not just equity — `risk_capital_dollars` is threaded
+    through from `TradingPipeline.run_evening`'s reuse of
+    `src.risk.metrics.portfolio_heat`'s `budget_risk_dollars`."""
+    result = {
+        "status": "analyzed", "run_id": "r",
+        "pnl_4pm": 500.0, "equity_close": 100_500.0,
+        "risk_capital_dollars": 2_000.0,
+        "analysis": {"risk_rating": "low"},
+    }
+    msg = format_session_result("evening", result, 10.0)
+    assert "vs risk capital" in msg
+    assert "+25.00%" in msg               # 500 / 2000
+    assert "$2,000.00 at risk" in msg
+
+
+def test_format_evening_risk_capital_flat_book_shows_labelled_absence():
+    """A flat book (or every stop trailed past entry, releasing all risk)
+    reports risk_capital_dollars=0.0 — must render a labelled absence, never
+    a ZeroDivisionError and never a fabricated 0%."""
+    result = {
+        "status": "analyzed", "run_id": "r",
+        "pnl_4pm": 0.0, "equity_close": 100_000.0,
+        "risk_capital_dollars": 0.0,
+        "analysis": {"risk_rating": "low"},
+    }
+    msg = format_session_result("evening", result, 10.0)
+    assert "vs risk capital: n/a — no capital currently at risk (flat book)" in msg
+    assert "%" not in msg.split("vs risk capital")[1].split("\n")[0]
+
+
+def test_format_evening_risk_capital_absent_key_renders_nothing():
+    """No risk_capital_dollars key at all (heat build failed, or a result
+    dict from before this field existed) — say nothing rather than guess."""
+    result = {
+        "status": "analyzed", "run_id": "r",
+        "pnl_4pm": 500.0, "equity_close": 100_500.0,
+        "analysis": {"risk_rating": "low"},
+    }
+    msg = format_session_result("evening", result, 10.0)
+    assert "vs risk capital" not in msg
+
+
+def test_format_evening_risk_capital_line_uses_realtime_fallback_pnl():
+    """When the 4pm figures aren't available, the risk-capital line still
+    appears, keyed off the SAME real-time daily_pnl the headline fell back
+    to (not silently dropped just because pnl_4pm is missing)."""
+    result = {
+        "status": "analyzed", "run_id": "r",
+        "daily_pnl": 300.0, "total_value": 100_300.0,
+        "risk_capital_dollars": 1_500.0,
+        "analysis": {"risk_rating": "low"},
+    }
+    msg = format_session_result("evening", result, 10.0)
+    assert "4pm close" not in msg
+    assert "vs risk capital: +20.00%" in msg   # 300 / 1500
+
+
 def test_deterministic_escalation_uses_4pm_basis_not_realtime():
     """[B] The deterministic alert must evaluate the SAME 4pm basis as the
     headline. Here the 4pm loss is 4.5% (≥80% of the 5% cap → fire) while the

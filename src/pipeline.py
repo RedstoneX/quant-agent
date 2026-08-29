@@ -9321,6 +9321,21 @@ class TradingPipeline:
         if sweeper is not None:
             positions, _parked = sweeper.split_positions(positions)
 
+        # Phase 6 (§6.3b): today's P&L expressed against capital actually AT
+        # RISK, not just total equity — reuses the same audit §1.3 heat
+        # calculation (`_build_portfolio_heat` -> `src.risk.metrics.
+        # portfolio_heat`) the risk-manager prompt already trusts, rather
+        # than recomputing it. None (not 0.0) on a failed build, so the
+        # notifier can say "unknown" instead of a fabricated number.
+        try:
+            risk_heat = self._build_portfolio_heat(positions, total_value)
+            risk_capital_dollars = (
+                risk_heat.budget_risk_dollars if risk_heat is not None else None
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("evening: risk-capital heat build failed: %s", e)
+            risk_capital_dollars = None
+
         # Sweep submitted orders before building the evening prompt so
         # canceled/expired orders do not get narrated as real trades, and
         # partial terminal fills are reflected in the trade list.
@@ -9773,6 +9788,12 @@ class TradingPipeline:
             "equity_close": equity_close,
             "pnl_4pm": pnl_4pm,
             "pnl_4pm_pct": pnl_4pm_pct,
+            # Phase 6 (§6.3b) — capital actually at risk (sum of
+            # (entry-stop) x shares across open positions), for the
+            # notifier's "P&L vs risk capital" line. None on a failed heat
+            # build; 0.0 for a genuinely flat/fully-released book — the
+            # notifier tells those two apart.
+            "risk_capital_dollars": risk_capital_dollars,
         }
 
     def _expected_sessions_missing_today(self) -> list[str]:

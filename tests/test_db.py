@@ -988,3 +988,222 @@ def test_terminal_partial_fill_books_only_confirmed_exit_quantity(db):
     )
     db.update_trade_fill("nv-sell", "canceled", fill_qty=3, fill_price=110)
     assert db.get_trades(symbol="NVDA")[0]["realized_pnl"] == 30.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 (§6.2a/e): position_id chain linking + exit_reason_category
+# ---------------------------------------------------------------------------
+
+def test_position_id_minted_on_buy_from_flat(db):
+    db.insert_trade("AAPL", "BUY", 10, 150.0, "clean setup", "run-1", stop_loss=140.0)
+    trade = db.get_trades(symbol="AAPL")[0]
+    assert trade["position_id"] is not None
+    assert trade["position_id"].startswith("pos-")
+
+
+def test_position_id_inherited_by_sell_reduce_trail_stop(db):
+    db.insert_trade("AAPL", "BUY", 10, 150.0, "entry", "run-1", stop_loss=140.0)
+    db.insert_trade("AAPL", "REDUCE", 3, 160.0, "risk-off macro shift", "run-1")
+    db.insert_trade("AAPL", "TRAIL_STOP", 7, 155.0, "trailing tighter", "run-1",
+                     broker_order_id="ts-1", fill_status="submitted")
+    db.insert_trade("AAPL", "SELL", 7, 165.0, "stop hit", "run-1")
+    trades = db.get_trades(symbol="AAPL")
+    position_ids = {t["position_id"] for t in trades}
+    assert len(position_ids) == 1
+    assert None not in position_ids
+
+
+def test_position_id_remints_after_position_goes_flat(db):
+    db.insert_trade("AAPL", "BUY", 10, 150.0, "entry 1", "run-1")
+    db.insert_trade("AAPL", "SELL", 10, 160.0, "thesis_invalid", "run-1")
+    db.insert_trade("AAPL", "BUY", 5, 170.0, "entry 2, unrelated", "run-2")
+    trades = db.get_trades(symbol="AAPL")  # newest first
+    by_action = {t["action"]: t["position_id"] for t in trades}
+    # trades are newest-first with duplicate actions across chains, so index
+    # explicitly by insertion order instead
+    ordered = sorted(trades, key=lambda t: t["id"])
+    first_chain = ordered[0]["position_id"]
+    second_buy = ordered[2]["position_id"]
+    assert ordered[0]["position_id"] == ordered[1]["position_id"]  # entry1 == sell
+    assert second_buy != first_chain
+    assert second_buy is not None
+
+
+def test_position_id_scale_in_buy_inherits_same_chain(db):
+    db.insert_trade("MSFT", "BUY", 10, 50.0, "initial", "run-1")
+    db.insert_trade("MSFT", "BUY", 5, 52.0, "adding to winner", "run-1")
+    trades = db.get_trades(symbol="MSFT")
+    assert trades[0]["position_id"] == trades[1]["position_id"]
+
+
+def test_position_id_unfilled_trail_stop_inherits_but_stays_uncategorised_until_fill(db):
+    db.insert_trade("NVDA", "BUY", 10, 100.0, "entry", "run-1", stop_loss=90.0)
+    db.insert_trade("NVDA", "TRAIL_STOP", 10, 95.0, "trail tighter", "run-1",
+                     broker_order_id="ts-nvda", fill_status="submitted")
+    trades = db.get_trades(symbol="NVDA")
+    trail = next(t for t in trades if t["action"] == "TRAIL_STOP")
+    buy = next(t for t in trades if t["action"] == "BUY")
+    assert trail["position_id"] == buy["position_id"]     # inherits regardless of fill
+    assert trail["exit_reason_category"] is None           # not confirmed fired yet
+
+    db.update_trade_fill("ts-nvda", "filled", fill_qty=10, fill_price=95.0)
+    trail_after = db.get_trades(symbol="NVDA")[0]
+    assert trail_after["exit_reason_category"] == "broker_stop_fill"
+    assert trail_after["position_id"] == buy["position_id"]  # unchanged by the fill update
+
+
+def test_position_id_left_null_when_no_open_chain_to_attach_to(db):
+    """A SELL with no prior BUY on record (a position that predates this
+    ledger) must not be guessed into a fabricated chain."""
+    db.insert_trade("LEGACY", "SELL", 5, 50.0, "closing an old position", "run-1")
+    trade = db.get_trades(symbol="LEGACY")[0]
+    assert trade["position_id"] is None
+
+
+def test_position_id_hold_and_sweep_rows_never_get_a_position_id(db):
+    db.insert_trade("SPY", "HOLD", 0, 0.0, "no action", "run-1")
+    db.insert_trade("SGOV", "SWEEP_BUY", 100, 100.0, "park idle cash", "run-1")
+    db.insert_trade("SGOV", "SWEEP_SELL", 100, 100.0, "redeploy cash", "run-1")
+    for sym in ("SPY", "SGOV"):
+        for t in db.get_trades(symbol=sym):
+            assert t["position_id"] is None
+
+
+def test_exit_reason_category_take_profit_gated_on_confirmed_fill(db):
+    db.insert_trade("AMZN", "BUY", 10, 100.0, "entry", "run-1")
+    db.insert_trade("AMZN", "TAKE_PROFIT", 2, 135.0,
+                     "Auto take-profit: +35.0% >= 30.0%, trimming 15%", "run-1",
+                     broker_order_id="tp-1", fill_status="submitted")
+    submitted = db.get_trades(symbol="AMZN")[0]
+    assert submitted["exit_reason_category"] is None
+    db.update_trade_fill("tp-1", "filled", fill_qty=2, fill_price=135.0)
+    filled = db.get_trades(symbol="AMZN")[0]
+    assert filled["exit_reason_category"] == "take_profit_target"
+
+
+@pytest.mark.parametrize("reasoning,expected", [
+    ("thesis_invalid: support broke", "thesis_invalidated"),
+    ("high-conviction bearish news on the sector", "adverse_news_or_state_change"),
+    ("bearish earnings, guidance cut", "earnings_or_filing"),
+    ("macro regime flip to risk-off", "macro_regime_shift"),
+    ("daily loss circuit breaker tripped", "risk_management_hard_stop"),
+    ("stopped out per broker fill", "broker_stop_fill"),
+    ("feels stretched, taking some off", "uncategorised"),
+])
+def test_exit_reason_category_derived_from_hard_trigger_vocabulary(db, reasoning, expected):
+    db.insert_trade("XOM", "BUY", 10, 100.0, "entry", "run-1")
+    db.insert_trade("XOM", "SELL", 10, 110.0, reasoning, "run-1")
+    sell = db.get_trades(symbol="XOM")[0]
+    assert sell["exit_reason_category"] == expected
+
+
+def test_exit_reason_category_stop_out_is_broker_stop_fill(db):
+    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "run-1", broker_order_id="buy-1", fill_status="filled")
+    db.insert_stop_out_trade(symbol="ONDS", qty=17, price=7.93, broker_order_id="stop-1", filled_at=None)
+    stop_out = db.get_trades(symbol="ONDS")[0]
+    assert stop_out["action"] == "STOP_OUT"
+    assert stop_out["exit_reason_category"] == "broker_stop_fill"
+    assert stop_out["position_id"] is not None
+
+
+def test_exit_reason_category_none_for_buy_and_hold(db):
+    db.insert_trade("KO", "BUY", 10, 60.0, "entry", "run-1")
+    db.insert_trade("KO", "HOLD", 0, 0.0, "steady", "run-1")
+    for t in db.get_trades(symbol="KO"):
+        assert t["exit_reason_category"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 (§6.2a): backfill_position_ids
+# ---------------------------------------------------------------------------
+
+def test_backfill_position_ids_assigns_confident_chains(db):
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('IBM', 'BUY', 10, 100.0, 'legacy entry', 'run-x', '2026-01-01 10:00:00')"
+    )
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('IBM', 'SELL', 10, 110.0, 'thesis_invalid', 'run-x', '2026-01-05 10:00:00')"
+    )
+    db.conn.commit()
+    result = db.backfill_position_ids(dry_run=False)
+    assert result["assigned"] == 2
+    assert result["left_null_ambiguous"] == 0
+    trades = db.get_trades(symbol="IBM")
+    assert trades[0]["position_id"] == trades[1]["position_id"]
+    assert trades[0]["position_id"] is not None
+
+
+def test_backfill_position_ids_refuses_to_guess_orphan_exit(db):
+    """A SELL with no prior BUY (a position that predates the ledger) must
+    be left NULL, not assigned a fabricated chain, and counted separately
+    from rows that were never eligible (HOLD/SWEEP_*)."""
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('ORPHAN', 'SELL', 5, 50.0, 'closing a pre-existing position', "
+        "'run-x', '2026-01-01 09:00:00')"
+    )
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('ORPHAN', 'HOLD', 0, 0.0, 'no action', 'run-x', '2026-01-02 09:00:00')"
+    )
+    db.conn.commit()
+    result = db.backfill_position_ids(dry_run=False)
+    assert result["left_null_ambiguous"] == 1
+    assert result["not_applicable"] == 1
+    assert result["assigned"] == 0
+    trades = db.get_trades(symbol="ORPHAN")
+    assert all(t["position_id"] is None for t in trades)
+
+
+def test_backfill_position_ids_dry_run_writes_nothing(db):
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('DIS', 'BUY', 10, 90.0, 'legacy entry', 'run-x', '2026-01-01 10:00:00')"
+    )
+    db.conn.commit()
+    dry = db.backfill_position_ids(dry_run=True)
+    assert dry["assigned"] == 1
+    assert db.get_trades(symbol="DIS")[0]["position_id"] is None
+
+
+def test_backfill_position_ids_is_idempotent(db):
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('GE', 'BUY', 10, 90.0, 'legacy entry', 'run-x', '2026-01-01 10:00:00')"
+    )
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('GE', 'SELL', 10, 95.0, 'thesis_invalid', 'run-x', '2026-01-05 10:00:00')"
+    )
+    db.conn.commit()
+    first = db.backfill_position_ids(dry_run=False)
+    assigned_id = db.get_trades(symbol="GE")[0]["position_id"]
+    second = db.backfill_position_ids(dry_run=False)
+    assert second["assigned"] == 0
+    assert second["already_assigned"] == first["assigned"]
+    assert db.get_trades(symbol="GE")[0]["position_id"] == assigned_id  # unchanged
+
+
+def test_backfill_position_ids_respects_rows_already_assigned_by_live_trading(db):
+    """Simulates the real deploy sequence: live trading (insert_trade) has
+    already minted a position_id for a NEW row while older history is still
+    NULL. The backfill must treat the live-assigned id as ground truth and
+    link the older row into the SAME chain, not mint a second one."""
+    db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, timestamp) "
+        "VALUES ('BA', 'BUY', 10, 200.0, 'legacy entry, pre-migration', 'run-x', "
+        "'2026-01-01 10:00:00')"
+    )
+    db.conn.commit()
+    # live insert AFTER the legacy row, for the same still-open position
+    db.insert_trade("BA", "TRAIL_STOP", 10, 190.0, "trail placed live", "run-2")
+    live_row = db.get_trades(symbol="BA", executed_only=False)[0]
+    assert live_row["position_id"] is not None
+
+    db.backfill_position_ids(dry_run=False)
+    trades = db.get_trades(symbol="BA")
+    position_ids = {t["position_id"] for t in trades}
+    assert len(position_ids) == 1
+    assert live_row["position_id"] in position_ids
