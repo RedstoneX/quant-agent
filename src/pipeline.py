@@ -1583,11 +1583,14 @@ class TradingPipeline:
         # Best-effort + symbol-scoped; partial trims (REDUCE, PARTIAL_SELL,
         # TAKE_PROFIT, SWEEP_SELL) keep their entries — trimming isn't exiting.
         # EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL added
-        # here: covering a short in a circuit-breaker event should cancel a
-        # resting entry BUY on the same symbol for the same reason a long
-        # exit does (though today it's a no-op either way — shorts can't be
-        # opened yet, so a short symbol never carries a resting entry order;
-        # this just keeps the two paths symmetric for when stage 3 lands).
+        # here: it runs the same entry-order cancel a long exit does. NOTE
+        # (Stage 3 made shorts openable, so this is no longer moot): as
+        # written, `cancel_open_entry_orders` only ever cancels resting
+        # BUY orders (see `src/execution/broker.py`) — it does NOT cancel
+        # a resting entry SHORT order, so an EMERGENCY_COVER here does not
+        # actually stop a still-live SHORT entry from re-opening the
+        # position it just covered. Flagged, not fixed here — out of this
+        # change's scope.
         if label in ("SELL", "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER"):
             try:
                 self.broker.cancel_open_entry_orders(symbol=symbol)
@@ -1837,6 +1840,7 @@ class TradingPipeline:
                     self._persist_orphaned_protection_restore(
                         order_id, symbol, position_qty_before_sell, cancelled_specs,
                         wal_row_id=wal_row_id,
+                        side=side,
                     )
                 return False, list(cancelled_specs)
             # Re-read post-cancel — broker may report partial fill that
@@ -1866,6 +1870,7 @@ class TradingPipeline:
                     self._persist_orphaned_protection_restore(
                         order_id, symbol, position_qty_before_sell, cancelled_specs,
                         wal_row_id=wal_row_id,
+                        side=side,
                     )
                 return False, list(cancelled_specs)
 
@@ -1915,6 +1920,7 @@ class TradingPipeline:
                             self._persist_orphaned_protection_restore(
                                 order_id, symbol, current_qty, cancelled_specs,
                                 wal_row_id=wal_row_id,
+                                side=side,
                             )
                         return False, list(cancelled_specs)
                     return True, []
@@ -1941,6 +1947,7 @@ class TradingPipeline:
                     self._persist_orphaned_protection_restore(
                         order_id, symbol, position_qty_before_sell, cancelled_specs,
                         wal_row_id=wal_row_id,
+                        side=side,
                     )
                 return False, list(cancelled_specs)
             # PARTIAL restore is incomplete coverage — restoring 1 of 2
@@ -1959,6 +1966,7 @@ class TradingPipeline:
                     self._persist_orphaned_protection_restore(
                         order_id, symbol, position_qty_before_sell, failed_specs,
                         wal_row_id=wal_row_id,
+                        side=side,
                     )
                 return False, list(failed_specs)
             return True, []
@@ -2013,6 +2021,7 @@ class TradingPipeline:
                 self._persist_orphaned_protection_restore(
                     order_id, symbol, position_qty_before_sell, cancelled_specs,
                     wal_row_id=wal_row_id,
+                    side=side,
                 )
             return False, list(cancelled_specs)
         return True, []
@@ -2022,6 +2031,8 @@ class TradingPipeline:
         symbol: str,
         position_qty_before_sell: float,
         specs: list[dict],
+        *,
+        side: str = "sell",
     ) -> int | None:
         """audit F1: persist the protection-restore intent.
 
@@ -2041,6 +2052,13 @@ class TradingPipeline:
         finalize confirms coverage. Returns the row id (to thread
         through), or None when there was nothing to protect or the DB
         write failed (no worse than the pre-F1 behaviour — logged).
+
+        ``side`` (Stage 3, shorts) — the closing order's side, passed
+        straight through to ``insert_pending_protection_restore``: 'sell'
+        (default) for a long being sold, 'buy' for a short being covered.
+        This is the REAL side, known here at write time — recorded so the
+        drain path (``_drain_pending_protection_restores``) doesn't have
+        to guess it back from live broker state later.
         """
         if not specs:
             return None
@@ -2050,6 +2068,7 @@ class TradingPipeline:
                 sell_order_id=_WAL_SELL_SENTINEL,
                 position_qty_before_sell=position_qty_before_sell,
                 specs_json=_json.dumps(specs),
+                side=side,
             )
             logger.info(
                 "WAL: wrote protection-restore intent for %s (row %d, "
@@ -2101,7 +2120,7 @@ class TradingPipeline:
         if not specs:
             return True, [], None
         wal_row_id = self._write_ahead_protection_restore(
-            symbol, position_qty_before_sell, specs,
+            symbol, position_qty_before_sell, specs, side=side,
         )
         if not self.broker.cancel_snapshotted_stops(symbol, specs):
             # Stops NOT cleared (rolled back by cancel_snapshotted_stops).
@@ -2148,10 +2167,10 @@ class TradingPipeline:
         Returns (ok, retry_specs) like the finalize core.
 
         ``side`` — 'sell' (default) for a long, 'buy' for a short's cover;
-        see ``_submit_protected_sell``. The caller (the drain loop) derives
-        this from LIVE broker position sign — this row's WAL schema
-        predates shorts and carries no side column, so broker truth is the
-        only source available.
+        see ``_submit_protected_sell``. The caller (the drain loop, via
+        ``_resolve_wal_row_side``) prefers this row's own persisted `side`
+        column (Stage 3) and only derives it from LIVE broker position
+        sign as a fallback for a row written before that column existed.
         """
         if not cancelled_specs:
             return True, []
@@ -2217,6 +2236,7 @@ class TradingPipeline:
         cancelled_specs: list[dict],
         *,
         wal_row_id: int | None = None,
+        side: str = "sell",
     ) -> None:
         """Persist (or update) a protection-restore recovery intent.
 
@@ -2235,6 +2255,14 @@ class TradingPipeline:
         tests) it INSERTs as before. Best-effort — DB failure logs but
         never propagates (the immediate path already had no good
         option).
+
+        ``side`` (Stage 3, shorts) — the closing order's side ('sell' for
+        a long, 'buy' for a short's cover), passed through to the
+        DB layer either way: on UPDATE it re-affirms the value the
+        write-ahead row was created with (belt-and-suspenders — the
+        write-ahead insert already set it correctly); on INSERT (the
+        legacy-caller / no-prior-row path) it's the only place this row
+        will ever get a side recorded.
         """
         if not cancelled_specs:
             return
@@ -2247,6 +2275,7 @@ class TradingPipeline:
                     sell_order_id=order_id,
                     position_qty_before_sell=position_qty_before_sell,
                     specs_json=specs_json,
+                    side=side,
                 )
                 logger.info(
                     "WAL: updated protection-restore row %d for %s "
@@ -2260,6 +2289,7 @@ class TradingPipeline:
                     sell_order_id=order_id,
                     position_qty_before_sell=position_qty_before_sell,
                     specs_json=specs_json,
+                    side=side,
                 )
                 logger.info(
                     "Persisted orphaned protection-restore for %s (order %s, "
@@ -2275,17 +2305,21 @@ class TradingPipeline:
             )
 
     def _derive_close_side_for_drain(self, symbol: str) -> str | None:
-        """Which stop side an orphaned WAL row needs, from LIVE broker
-        truth — not the row itself.
+        """Which stop side an orphaned WAL row needs, derived from LIVE
+        broker truth rather than the row itself.
 
-        ``pending_protection_restores`` predates shorts and carries no
-        side column (see ``_submit_protected_sell`` / the WAL insert
-        helpers): a row written for a short's cancelled BUY stops looks
-        byte-identical to one written for a long's cancelled SELL stops.
-        Reading the broker's CURRENT signed position for the symbol is the
-        only trustworthy source of the answer, and it's read fresh here
-        rather than trusted from whenever the row was written, since the
-        row can be arbitrarily stale by the time drain gets to it.
+        Stage 3 (shorts): ``pending_protection_restores`` NOW carries a
+        persisted ``side`` column (see ``insert_pending_protection_restore``
+        / ``_write_ahead_protection_restore``) written at the moment the
+        row is created, by whoever is closing the position and therefore
+        already knows which side it is. This function is no longer the
+        primary source of truth — see ``_resolve_wal_row_side``, which
+        prefers the row's own persisted value and calls this ONLY as the
+        fallback for a row written before the migration (persisted
+        ``side IS NULL``). For those legacy rows this is still the only
+        signal available: reading the broker's CURRENT signed position for
+        the symbol, fresh (not trusted from whenever the row was written,
+        since it can be arbitrarily stale by the time drain gets to it).
 
         Returns 'sell' / 'buy' when the position is currently held one way
         or the other. Returns None both when the position can't be read
@@ -2302,6 +2336,30 @@ class TradingPipeline:
         if raw is None or raw == 0:
             return None
         return "buy" if raw < 0 else "sell"
+
+    def _resolve_wal_row_side(self, row: dict, symbol: str) -> dict:
+        """The ``side`` kwargs (``{}`` or ``{"side": "buy"}``) a drained
+        WAL row needs, preferring the row's OWN persisted value.
+
+        Stage 3 (shorts): every row written after the ``side`` column
+        migration carries the real answer, recorded at write time by
+        whoever created it — no broker lookup, no guessing. A row written
+        BEFORE the migration carries ``side IS NULL``; for those, and only
+        those, this degrades to the pre-migration behaviour — deriving the
+        side from the broker's live position via
+        ``_derive_close_side_for_drain`` — logged so the legacy fallback is
+        visible in operator logs rather than silent.
+        """
+        persisted = str(row.get("side") or "").strip().lower()
+        if persisted in ("buy", "sell"):
+            return {} if persisted == "sell" else {"side": "buy"}
+        logger.info(
+            "WAL drain: row for %s has no persisted side (written before "
+            "the Stage 3 side-column migration) — falling back to the "
+            "live-broker-derived side, same as pre-migration behaviour",
+            symbol,
+        )
+        return {"side": "buy"} if self._derive_close_side_for_drain(symbol) == "buy" else {}
 
     def _drain_pending_repegs(self) -> int:
         """Repoint trade rows the re-peg WAL says were left behind (see
@@ -2465,19 +2523,18 @@ class TradingPipeline:
                     except Exception:
                         pass
                     continue
-                # This WAL row predates shorts and carries no side column
-                # (see _derive_close_side_for_drain). When the live broker
-                # position is readable and shows a short, use it — that's
-                # the fix for the actual bug (a readable short silently
-                # treated as a long). When it isn't readable, degrade to
-                # the pre-existing 'sell' default rather than stalling the
-                # row indefinitely: the compound case of an unreadable
-                # broker AND an orphaned short's row cannot happen yet
-                # (shorts still cannot be opened through this system), and
-                # closing it for real needs a persisted side column.
-                side_kwargs = {}
-                if wal_specs and self._derive_close_side_for_drain(symbol) == "buy":
-                    side_kwargs = {"side": "buy"}
+                # Stage 3 (shorts): the row now carries its own `side` —
+                # written at creation time by whoever closed the position,
+                # so this is no longer a guess reconstructed from live
+                # broker state. `_resolve_wal_row_side` prefers that
+                # persisted value and only falls back to the live-broker
+                # derivation (`_derive_close_side_for_drain`, defaulting to
+                # 'sell' when unreadable) for a row written BEFORE this
+                # column existed (`side IS NULL`) — logged when that
+                # fallback fires. The premise this comment used to state —
+                # "shorts cannot be opened through this system, so the gap
+                # is moot" — is no longer true now that they can be.
+                side_kwargs = self._resolve_wal_row_side(row, symbol) if wal_specs else {}
                 try:
                     ok, retry = self._restore_after_unconfirmed_sell(
                         symbol,
@@ -2543,12 +2600,11 @@ class TradingPipeline:
                 except Exception:
                     pass
                 continue
-            # Same live-position side lookup as the sentinel branch above,
-            # same degrade-to-'sell'-when-unreadable tradeoff — this row's
-            # schema carries no side column either.
-            finalize_side_kwargs = {}
-            if cancelled_specs and self._derive_close_side_for_drain(symbol) == "buy":
-                finalize_side_kwargs = {"side": "buy"}
+            # Same persisted-side-first resolution as the sentinel branch
+            # above (see `_resolve_wal_row_side`): a row written after the
+            # Stage 3 migration carries its own real side; only a legacy
+            # `side IS NULL` row falls back to the live-broker derivation.
+            finalize_side_kwargs = self._resolve_wal_row_side(row, symbol) if cancelled_specs else {}
             # Order is terminal; replay finalize from persisted specs.
             # finalize itself reads fill_info again — same broker call,
             # cheap. ``from_drain=True`` so finalize doesn't re-persist

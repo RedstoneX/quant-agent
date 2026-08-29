@@ -1027,16 +1027,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # Risk-based targets (spec §2.1) state risk, not weight, so the
             # weight comparison below cannot classify them — the position's
             # current risk depends on its stop, which this validator does not
-            # have. Any non-zero risk allocation is therefore treated as a
-            # BUY. That is the safe direction: the buy branch applies the
-            # STRICTER checks (universe membership, an actual technical
-            # analysis backing the name), so a misclassified trim is
-            # over-validated rather than waved through.
+            # have. Any non-zero risk allocation is therefore treated as an
+            # INCREASE — a BUY when `direction=="long"`, a SHORT when
+            # `direction=="short"` (Stage 3). That is the safe classification
+            # either way: the increase branch below applies the STRICTER
+            # checks (universe membership, an actual technical analysis
+            # backing the name) to BOTH, so a misclassified trim is
+            # over-validated rather than waved through, and a short is held
+            # to exactly the same grounding contract as a long — it is
+            # neither exempted nor made impossible.
+            is_short_target = target.direction == "short"
             if target.risk_allocation_pct is not None:
-                intent = "sell" if target.is_close else "buy"
+                if target.is_close:
+                    intent = "sell"
+                else:
+                    intent = "short" if is_short_target else "buy"
             else:
                 intent = "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
-            if intent == "buy":
+            if intent in ("buy", "short"):
                 if allowed_buy_symbols is not None and symbol not in {
                     str(item).strip().upper() for item in allowed_buy_symbols
                 }:
@@ -1075,9 +1083,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     # A risk-off macro view supports owning an inverse ETF;
                     # the technical rating still describes the ETF itself.
                     stance_is_bullish, stance_is_bearish = stance_is_bearish, stance_is_bullish
+                # Stage 3: "short" (opening/adding a short, direction=="short")
+                # needs the same bearish-polarity evidence a "sell" (trimming
+                # a long) does — both are bearish-direction actions on the
+                # symbol. Only "buy" (opening/adding a long) needs bullish
+                # evidence.
                 polarity_supports = (
                     (intent == "buy" and stance_is_bullish)
-                    or (intent == "sell" and stance_is_bearish)
+                    or (intent in ("sell", "short") and stance_is_bearish)
                 )
                 if claim.relationship == "supports":
                     if source == "smart_money" and not smart_money_eligible.get(symbol, False):
@@ -1190,8 +1203,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _canonical_targets(targets) -> list[tuple] | None:
         """Full TargetPosition decision payload (symbol, target_weight_pct,
-        conviction, thesis, thesis_invalid_if, suggested_stop_price,
-        catalyst), order-insensitive. Built by re-validating each entry
+        risk_allocation_pct, direction, conviction, thesis,
+        thesis_invalid_if, suggested_stop_price, catalyst),
+        order-insensitive. Built by re-validating each entry
         through the `TargetPosition` model itself — its own field
         normalization (symbol case, conviction case, numeric coercion)
         is the single source of truth for what "the same value" means,
@@ -1218,7 +1232,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             (
                 (
                     m.symbol, m.target_weight_pct, m.risk_allocation_pct,
-                    m.conviction, m.thesis,
+                    m.direction, m.conviction, m.thesis,
                     m.thesis_invalid_if, m.suggested_stop_price, m.catalyst,
                 )
                 for m in models

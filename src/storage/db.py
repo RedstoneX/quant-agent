@@ -405,6 +405,14 @@ class Database:
         _ensure_column("agent_logs", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "realized_pnl", "realized_pnl REAL")
+        # Stage 3 (shorts): which side the protective stop being restored
+        # belongs to. NULL for every row written before this migration —
+        # `_derive_close_side_for_drain` / `_drain_pending_protection_restores`
+        # (src/pipeline.py) treat NULL exactly as the old code always did
+        # (the documented long-assuming "sell" fallback), so an existing
+        # in-flight row is unaffected; only NEWLY WRITTEN rows carry a real
+        # value. See `insert_pending_protection_restore`.
+        _ensure_column("pending_protection_restores", "side", "side TEXT")
         # codex r7 P1 #3: pending_protection_restores table for older DBs
         # that pre-date the orphaned-stop-restore queue. Idempotent.
         try:
@@ -1004,7 +1012,7 @@ class Database:
     def insert_pending_protection_restore(
         self, *, symbol: str, sell_order_id: str,
         position_qty_before_sell: float, specs_json: str,
-        run_id: str | None = None,
+        run_id: str | None = None, side: str | None = None,
     ) -> int:
         """Persist an orphaned protection-restore intent.
 
@@ -1014,13 +1022,24 @@ class Database:
         at session start: the pending row's sell_order_id is re-queried
         for terminal status, and if now terminal, the persisted specs
         drive a fresh finalize attempt.
+
+        `side` (Stage 3, shorts): "buy" for a long position (its
+        protective stop is a SELL, restored below entry) or "sell" for a
+        short (its protective stop is a BUY, restored above entry) — the
+        REAL side of the position this row protects, known at write time
+        by whoever is closing it. NULL only for a row written before this
+        column existed; the drain path treats NULL exactly as the
+        long-assuming fallback it always used (see
+        `TradingPipeline._derive_close_side_for_drain`).
         """
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO pending_protection_restores "
-                "(symbol, sell_order_id, position_qty_before_sell, specs_json, run_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (symbol, sell_order_id, position_qty_before_sell, specs_json, run_id),
+                "(symbol, sell_order_id, position_qty_before_sell, specs_json, "
+                "run_id, side) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (symbol, sell_order_id, position_qty_before_sell, specs_json,
+                 run_id, side),
             )
             self.conn.commit()
             return cur.lastrowid or 0
@@ -1031,7 +1050,7 @@ class Database:
         with self._lock:
             rows = self.conn.execute(
                 "SELECT id, symbol, sell_order_id, position_qty_before_sell, "
-                "specs_json, created_at, run_id FROM pending_protection_restores "
+                "specs_json, created_at, run_id, side FROM pending_protection_restores "
                 "ORDER BY created_at ASC"
             ).fetchall()
         return [dict(r) for r in rows]
@@ -1052,6 +1071,7 @@ class Database:
         sell_order_id: str | None = None,
         position_qty_before_sell: float | None = None,
         specs_json: str | None = None,
+        side: str | None = None,
     ) -> int:
         """Partial-update a recovery row (only the provided fields).
 
@@ -1060,6 +1080,10 @@ class Database:
         it to the real broker order id once the SELL is accepted, and
         finalize-on-bail uses it to UPDATE the existing row (instead of
         INSERTing a duplicate alongside the write-ahead row).
+
+        ``side`` (Stage 3, shorts): re-affirms which side this row
+        protects — normally already set at the initial write-ahead
+        INSERT, this lets a caller correct/set it on UPDATE too.
         """
         sets: list[str] = []
         params: list = []
@@ -1072,6 +1096,9 @@ class Database:
         if specs_json is not None:
             sets.append("specs_json = ?")
             params.append(specs_json)
+        if side is not None:
+            sets.append("side = ?")
+            params.append(side)
         if not sets:
             return 0
         params.append(row_id)
@@ -1754,37 +1781,64 @@ class Database:
         return [dict(r) for r in rows]
 
     def compute_trade_calibration(self, lookback_days: int = 45) -> dict:
-        """Win rate + avg realized return on BUYs that closed in the window.
+        """Win rate + avg realized return on round-trips that closed in the
+        window — BOTH long (BUY→sell-family) and short (SHORT→cover-family).
 
         Matches each BUY to the next SELL-family action (SELL, PARTIAL_SELL%,
         EMERGENCY_SELL, FORCE_DELEVER, REDUCE, TAKE_PROFIT, STOP_OUT, and a
         FILLED TRAIL_STOP) for the same symbol, FIFO. Open positions are
         excluded because their outcome isn't known yet.
 
+        Stage 3 (shorts): a SHORT opens no BUY lot, so before this fix a
+        COVER closed nothing — every short round-trip was invisible to win
+        rate, avg return, and avg hold days, which reach the Portfolio
+        Manager as settled fact (Quantitative Facts / L2 Trade Calibration).
+        That was harmless while shorts could not be opened; Stage 3 makes
+        them openable, turning the gap into a live accounting hole. Mirrors
+        the BUY-lot machinery with a SEPARATE FIFO queue: SHORT opens a
+        short lot, matched to the next COVER-family action (COVER,
+        PARTIAL_COVER%, EMERGENCY_COVER) for the same symbol. A short's
+        `return_pct` is signed the OPPOSITE way a long's is — closing BELOW
+        the entry is the win, closing ABOVE it is the loss — mirroring the
+        same sign convention already established for `unrealized_pnl` /
+        `market_value` (negative qty) and for `position_reviewer`'s P&L%.
+
         Bucketed by allocation size (proxy for conviction): a larger dollar
         commitment implies higher conviction when PM sized it. Lets PM see
         "my high-conviction bets have been winning / losing" without an
-        explicit conviction column in trades.
+        explicit conviction column in trades. Also bucketed by side
+        (`by_side.long` / `by_side.short`) so a mixed book's long and short
+        edges can be read separately as well as combined.
 
         Returns:
             {"n": int, "win_rate_pct": float, "avg_return_pct": float,
-             "avg_hold_days": float,
+             "avg_hold_days": float, "expectancy_pct": float,
+             "avg_win_loss_ratio": float | None,
              "by_size": {
                 "large": {...},  # $ entry >= 10k
                 "medium": {...}, # 5-10k
                 "small": {...},  # <5k
+             },
+             "by_side": {
+                "long": {...},   # same shape as the top level, long round-trips only
+                "short": {...},  # same shape, short round-trips only
              }}
             or {} when there are too few closed trades to be meaningful.
+            For a book with no short round-trips, every top-level number
+            here is byte-identical to the pre-Stage-3 output — the new
+            `expectancy_pct` / `avg_win_loss_ratio` / `by_side` keys are pure
+            additions, not changes to the existing ones.
         """
         with self._lock:
             # Skip orders that never executed. Legacy rows with NULL fill_status
             # pre-date reconciliation and are treated as filled for backward
             # compatibility.
-            # BUY lots seed from FULL history; only the window bound on
-            # EXITS below decides what counts as a "recent closed trade"
-            # (audit round 2: windowing both sides made a SELL that closed a
+            # Lots seed from FULL history; only the window bound on EXITS
+            # below decides what counts as a "recent closed trade" (audit
+            # round 2: windowing both sides made a SELL that closed a
             # pre-window lot FIFO-match an unrelated newer in-window BUY —
-            # wrong entry price, wrong hold time, phantom remainder).
+            # wrong entry price, wrong hold time, phantom remainder). Same
+            # reasoning applies to the SHORT/COVER queue below.
             rows = self.conn.execute(
                 "SELECT symbol, action, qty, price, timestamp, fill_qty, "
                 "fill_price, fill_status "
@@ -1792,9 +1846,16 @@ class Database:
                 f"WHERE {self._executed_trade_predicate()} "
                 "ORDER BY timestamp",
             ).fetchall()
-        # FIFO queue of open BUY lots per symbol
         from collections import defaultdict
+        # FIFO queue of open BUY lots per symbol (long side).
         open_lots: dict[str, list[dict]] = defaultdict(list)
+        # FIFO queue of open SHORT lots per symbol (Stage 3, short side) —
+        # a SEPARATE queue: a SHORT and a BUY on the same symbol are
+        # different positions (D3's sign-crossing refusal keeps them from
+        # ever being open simultaneously in practice, but keeping the
+        # queues independent means this function makes no assumption about
+        # that and just matches each side to its own opens).
+        open_short_lots: dict[str, list[dict]] = defaultdict(list)
         closed: list[dict] = []
         for row in rows:
             sym = row["symbol"]
@@ -1807,6 +1868,8 @@ class Database:
                 continue
             if act == "BUY":
                 open_lots[sym].append({"qty": qty, "price": price, "ts": ts})
+            elif act == "SHORT":
+                open_short_lots[sym].append({"qty": qty, "price": price, "ts": ts})
             elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
                   or act in ("EMERGENCY_SELL", "FORCE_DELEVER",
                              "REDUCE", "TAKE_PROFIT", "STOP_OUT")
@@ -1859,6 +1922,54 @@ class Database:
                         continue
                     closed.append({
                         "symbol": sym,
+                        "side": "long",
+                        "return_pct": ret_pct,
+                        "hold_days": hold_days,
+                        "entry_usd": entry_usd,
+                    })
+                    lot["qty"] -= closed_qty
+                    if lot["qty"] <= 1e-9:
+                        lots.pop(0)
+                    remaining -= closed_qty
+            elif (act in ("COVER", "EMERGENCY_COVER")
+                  or act.startswith("PARTIAL_COVER")):
+                # Stage 3: the short-side twin of the SELL-family block
+                # above, against the SEPARATE short-lot queue. Only the
+                # return sign differs — a short profits when price FALLS,
+                # so closing BELOW the lot's entry price is the win.
+                remaining = qty
+                lots = open_short_lots[sym]
+                while remaining > 0 and lots:
+                    lot = lots[0]
+                    closed_qty = min(lot["qty"], remaining)
+                    try:
+                        short_dt = datetime.fromisoformat(lot["ts"].replace(" ", "T"))
+                        cover_dt = datetime.fromisoformat(ts.replace(" ", "T"))
+                        hold_days = max(0, (cover_dt - short_dt).days)
+                    except (ValueError, TypeError):
+                        hold_days = 0
+                    # Mirror of the long formula `(price / lot_price - 1) *
+                    # 100`: a short's profit is (entry - exit), so its
+                    # return is expressed relative to the entry the SAME
+                    # way, just with entry and exit swapped.
+                    ret_pct = (
+                        (lot["price"] - price) / lot["price"] * 100
+                        if lot["price"] > 0 else 0
+                    )
+                    entry_usd = closed_qty * lot["price"]
+                    try:
+                        cover_age_days = (datetime.utcnow() - cover_dt).days
+                    except (TypeError, ValueError, UnboundLocalError):
+                        cover_age_days = 0
+                    if cover_age_days > lookback_days:
+                        lot["qty"] -= closed_qty
+                        remaining -= closed_qty
+                        if lot["qty"] <= 1e-9:
+                            lots.pop(0)
+                        continue
+                    closed.append({
+                        "symbol": sym,
+                        "side": "short",
                         "return_pct": ret_pct,
                         "hold_days": hold_days,
                         "entry_usd": entry_usd,
@@ -1877,16 +1988,40 @@ class Database:
             wins = sum(1 for c in bucket if c["return_pct"] > 0)
             avg_ret = sum(c["return_pct"] for c in bucket) / n
             avg_hold = sum(c["hold_days"] for c in bucket) / n
+            # docs/QAMC_REMEDIATION_SPEC.md §7.3: "Surface win rate, average
+            # win ÷ average loss, expectancy per trade, and average hold
+            # duration." Win rate and avg hold duration already existed;
+            # these two did not.
+            #
+            # `expectancy_pct` is mathematically identical to `avg_return_pct`
+            # — sum(all trade returns) / n already equals win_rate x avg_win
+            # + loss_rate x avg_loss (breakeven trades, return_pct == 0,
+            # contribute 0 to both) — surfaced under its own named key
+            # because the spec calls for it by name rather than asking the
+            # reader to re-derive it from `avg_return_pct`.
+            win_returns = [c["return_pct"] for c in bucket if c["return_pct"] > 0]
+            loss_returns = [c["return_pct"] for c in bucket if c["return_pct"] < 0]
+            avg_win = sum(win_returns) / len(win_returns) if win_returns else None
+            avg_loss = sum(loss_returns) / len(loss_returns) if loss_returns else None
+            avg_win_loss_ratio = (
+                round(avg_win / abs(avg_loss), 2)
+                if avg_win is not None and avg_loss not in (None, 0)
+                else None
+            )
             return {
                 "n": n,
                 "win_rate_pct": round(wins / n * 100, 1),
                 "avg_return_pct": round(avg_ret, 2),
                 "avg_hold_days": round(avg_hold, 1),
+                "expectancy_pct": round(avg_ret, 2),
+                "avg_win_loss_ratio": avg_win_loss_ratio,
             }
 
         large = [c for c in closed if c["entry_usd"] >= 10_000]
         medium = [c for c in closed if 5_000 <= c["entry_usd"] < 10_000]
         small = [c for c in closed if c["entry_usd"] < 5_000]
+        long_closed = [c for c in closed if c["side"] == "long"]
+        short_closed = [c for c in closed if c["side"] == "short"]
 
         overall = _bucket_stats(closed)
         return {
@@ -1895,6 +2030,10 @@ class Database:
                 "large (≥$10k)": _bucket_stats(large),
                 "medium ($5-10k)": _bucket_stats(medium),
                 "small (<$5k)": _bucket_stats(small),
+            },
+            "by_side": {
+                "long": _bucket_stats(long_closed),
+                "short": _bucket_stats(short_closed),
             },
             "lookback_days": lookback_days,
         }

@@ -462,7 +462,10 @@ def test_idx29_37_prompt_matches_executor_enforcement():
     # almost every exit. The gate now covers every SELL and REDUCE, and the
     # prompt must no longer promise otherwise.
     assert "first exit of the day executes as-is" not in text
-    assert "EVERY SELL and REDUCE, first exit of the day included" in text
+    # SCOPE CHANGED AGAIN, Stage 3 (shorts, feat/shorts-stage3). COVER is the
+    # short-side twin of SELL/REDUCE and is subject to the exact same
+    # named-trigger gate — the prompt now says so explicitly.
+    assert "EVERY SELL, REDUCE and COVER, first exit of the day included" in text
     # TRAIL_STOP clamps are named where the exemption is claimed.
     assert "ratchet cooldown" in text
     assert "1.25×ATR" in text

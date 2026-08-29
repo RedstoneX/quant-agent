@@ -855,3 +855,65 @@ def test_executor_blocks_full_sell_on_already_trimmed_soft_reason():
 
     assert orders == []
     pipeline.broker.submit_order.assert_not_called()
+
+
+# ==========================================================================
+# Stage 3 (shorts) — the reviewer's payload must state which side a
+# position is. Before this fix the positions block rendered a bare `qty`
+# (negative for a held short, per Alpaca's own sign convention) with no
+# explicit LONG/SHORT label, and the P&L% helper divided by a SIGNED cost
+# basis — for a short that basis is negative, which flips the sign of
+# every short's P&L% and reads a WINNING short as a LOSS.
+# ==========================================================================
+
+def test_prompt_tags_a_short_position_and_signs_its_pnl_pct_correctly():
+    """A held SHORT that is WINNING (price fell below entry) must render a
+    POSITIVE P&L% and an explicit [SHORT] tag — not a negative percentage
+    that reads as a loss."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            session_type="midday",
+            # -40 sh short @ $250, now $240 — price FELL, so the short is
+            # WINNING: unrealized_pnl = qty * (price - entry)
+            #        = -40 * (240 - 250) = +400 (a gain).
+            positions=[Position(
+                symbol="TSLA", qty=-40, avg_entry=250.0, current_price=240.0,
+                market_value=-9600.0, unrealized_pnl=400.0, sector="Cyclical",
+            )],
+            macro_summary={"vix": {"current": 18.0}},
+            cash_balance=1_000.0,
+            total_value=100_000.0,
+        )
+
+    assert "[SHORT]" in msg
+    assert "P&L $400.00 (4.0%)" in msg, (
+        "a winning short (unrealized_pnl > 0) must render a POSITIVE P&L%, "
+        f"not the sign-flipped negative a signed cost-basis denominator "
+        f"would produce. Full positions line was in: {msg!r}"
+    )
+
+
+def test_prompt_tags_a_long_position_and_leaves_its_pnl_pct_unchanged():
+    """Long-only regression proof: a held LONG still renders [LONG] and the
+    same P&L% arithmetic as before this fix (a positive cost basis makes
+    the sign-flip bug a no-op for longs)."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            session_type="midday",
+            positions=[Position(
+                symbol="NVDA", qty=10, avg_entry=100.0, current_price=115.0,
+                market_value=1150.0, unrealized_pnl=150.0, sector="Tech",
+            )],
+            macro_summary={"vix": {"current": 18.0}},
+            cash_balance=1_000.0,
+            total_value=10_000.0,
+        )
+
+    assert "[LONG]" in msg
+    assert "P&L $150.00 (15.0%)" in msg

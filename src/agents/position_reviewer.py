@@ -177,15 +177,31 @@ class PositionReviewerAgent(BaseAgent):
 
         # Positions block — surfaces deterministic metrics alongside the raw numbers.
         def _pnl_pct(p: Position) -> str:
-            cost = p.avg_entry * p.qty
+            # Stage 3 (shorts): `p.qty` (and therefore `cost = avg_entry *
+            # qty`) is NEGATIVE for a held short — Alpaca's own sign
+            # convention, mirrored throughout this codebase (see
+            # tests/test_shorts_countable.py). `unrealized_pnl` is signed the
+            # same way, so `pnl / cost` — dividing by a NEGATIVE cost basis —
+            # flips the sign of every short's P&L%: a winning short
+            # (unrealized_pnl > 0, price fell) rendered as a NEGATIVE
+            # percentage, reading as a loss to the reviewer. The denominator
+            # must be the magnitude of capital at risk, not its sign; the
+            # sign the reviewer needs comes from `unrealized_pnl` alone.
+            cost = abs(p.avg_entry * p.qty)
             return f"{p.unrealized_pnl / cost * 100:.1f}%" if cost else "N/A"
 
         positions_lines = []
         for p in positions:
             pnl_pct = _pnl_pct(p)
+            # Stage 3 (shorts): state the side explicitly rather than
+            # leaving the reviewer to infer it from a negative `qty` —
+            # a reviewer that misses the sign reads a winning short as
+            # a loser (and vice versa) on every metric that follows.
+            side_tag = "SHORT" if p.qty < 0 else "LONG"
             header = (
-                f"- **{p.symbol}** ({p.sector}): {p.qty} sh @ ${p.avg_entry:.2f} | "
-                f"Now ${p.current_price:.2f} | P&L ${p.unrealized_pnl:.2f} ({pnl_pct})"
+                f"- **{p.symbol}** ({p.sector}) [{side_tag}]: {p.qty} sh @ "
+                f"${p.avg_entry:.2f} | Now ${p.current_price:.2f} | "
+                f"P&L ${p.unrealized_pnl:.2f} ({pnl_pct})"
             )
             lines = [header]
 
