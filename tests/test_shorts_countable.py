@@ -140,10 +140,15 @@ def test_current_weights_short_uses_the_same_gross_multiplier():
     assert short_w == -long_w
 
 
-def test_constructor_emits_no_order_against_a_held_short():
-    """Stage 1 is countability, not tradeability. Now that a short is visible
-    with a negative weight, the delta loop must decline to act rather than
-    route a cover into _build_buy or an add-to-short into _build_sell."""
+def test_constructor_now_covers_a_held_short_on_explicit_close():
+    """NEW boundary (Stage 3): this pinned Stage 1's guard — a held short
+    with an explicit close target produced zero orders. Stage 3 lifts that
+    guard: the same fixture now routes to `_build_cover` and produces a
+    full COVER, exactly the way an explicit-close long routes to
+    `_build_sell`. The borrow gate, the exposure caps, and the mandatory
+    protective stop live at the execution layer, not here — see
+    tests/test_shorts_stage3.py for the end-to-end proof that a short can
+    be opened only when it clears all three."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="TSLA", target_weight_pct=0.0,
@@ -152,7 +157,10 @@ def test_constructor_emits_no_order_against_a_held_short():
         analyses=[_analysis("TSLA", entry=250, stop=237, target=280)],
         total_value=100_000, price_map={"TSLA": 250.0},
     )
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].action == "COVER"
+    assert decisions[0].symbol == "TSLA"
+    assert decisions[0].allocation_pct == 100.0
 
 
 def test_constructor_long_only_behaviour_unchanged_beside_a_short():

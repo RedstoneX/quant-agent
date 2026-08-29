@@ -81,6 +81,19 @@ class ConstructorConfig:
     # and the session trades nothing. Keep in sync with
     # `risk.max_position_pct` — pipeline.py wires them from the same setting.
     max_position_pct: float = 20.0
+    # Stage 3 (shorts). Mirrors `max_position_pct` for a short's single-name
+    # ceiling — deliberately HALF of it (see src/config.py for why) — so
+    # `_build_short` sizes UNDER the risk engine's hard block instead of
+    # proposing an order the engine will drop outright. Keep in sync with
+    # `risk.max_single_short_pct` — pipeline.py wires them from the same
+    # setting, the same way it already does for `max_position_pct`.
+    max_single_short_pct: float = 10.0
+    # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
+    # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
+    # this before it is converted to a weight, so the same risk allocation
+    # opens a smaller short than an equivalent long. Keep in sync with
+    # `risk.short_gap_risk_multiple`.
+    short_gap_risk_multiple: float = 1.5
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
@@ -147,9 +160,10 @@ class PortfolioConstructor:
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
-        Orders are returned in a canonical order: SELLs (partials and exits)
-        first, then BUYs. Execution layer is free to re-order, but this
-        matches the existing pipeline assumption (sells free up cash first).
+        Orders are returned in a canonical order: exits (SELL/COVER, partials
+        and full closes) first, then entries (BUY/SHORT). Execution layer is
+        free to re-order, but this matches the existing pipeline assumption
+        (exits free up capacity first).
 
         `price_map`: optional {symbol: live_price} — required for BUYs so
         the constructor can sanity-check TA's entry. If absent for a BUY
@@ -192,68 +206,105 @@ class PortfolioConstructor:
         for target in targets:
             sym = target.symbol
             current_pct = current_weights.get(sym, 0.0)
+            is_short_target = target.direction == "short"
             if target.risk_allocation_pct is not None:
                 plan = risk_plan.get(sym)
                 if plan is None:
                     # No stop, no entry, or the budget refused it outright.
                     # _plan_risk_targets has already logged which.
                     continue
-                target_pct = plan.target_weight_pct
+                target_mag = plan.target_weight_pct  # unsigned magnitude
             else:
-                target_pct = target.target_weight_pct or 0.0
-            delta_pct = target_pct - current_pct
+                target_mag = target.target_weight_pct or 0.0
 
-            # Stage 1 of short selling: shorts are COUNTABLE, not tradeable.
-            # A negative current_pct means we already hold this name short.
-            # No order in this codebase may yet open or cover a short, so the
-            # constructor emits nothing for it rather than routing a cover
-            # into _build_buy or an add-to-short into _build_sell. Before this
-            # guard the short was simply absent from current_weights, which
-            # read as "not held" — strictly worse, because the delta loop then
-            # sized a fresh entry against a book that already had the exposure.
-            if current_pct < 0:
+            # D1 (Stage 3): signed target. `current_pct` is already signed
+            # (Stage 1) — negative means a held short. Everything below
+            # operates on SIGNED weights, so the sign of the delta IS the
+            # side of the order: positive is buy-side (BUY to open/add a
+            # long, or COVER to reduce a short); negative is sell-side
+            # (SELL to reduce a long, or SHORT to open/add a short).
+            signed_target = -target_mag if is_short_target else target_mag
+
+            # D3: sign-crossing is refused. A single order that flips a
+            # position from long to short (or back) is unprotected for the
+            # instant between legs, and the broker treats a sell LARGER
+            # than the held quantity differently again (it opens a short
+            # rather than just closing). Emit ONLY the closing leg this
+            # session — flatten to zero — and let the position open on the
+            # other side next session once the book is actually flat.
+            if (current_pct > 0 and signed_target < 0) or (current_pct < 0 and signed_target > 0):
                 logger.warning(
-                    "Constructor: %s held SHORT (current weight %.2f%%) — "
-                    "no action emitted; shorts are not tradeable yet",
-                    sym, current_pct,
+                    "Constructor: %s target flips side (held %.2f%%, signed "
+                    "target %.2f%%) — refusing the flip. Emitting only the "
+                    "flattening leg this session; the other side may open "
+                    "next session once the book is actually flat.",
+                    sym, current_pct, signed_target,
                 )
-                continue
+                signed_target = 0.0
 
-            # target_weight_pct == 0 is PM saying "CLOSE this position", not
-            # "rebalance toward ~0". The churn filter must not swallow it: a
-            # 0.4%-weight dreg with an explicit close target was silently
-            # converted into a HOLD, so a position PM had decided to exit sat
-            # in the book indefinitely (2026-07-16 audit). Anything held with
-            # target 0 goes to the SELL builder, which emits a full exit.
-            closing = (target_pct == 0 and current_pct > 0)
+            delta_pct = signed_target - current_pct
+
+            # signed_target == 0 is PM saying "CLOSE this position" (long or
+            # short), not "rebalance toward ~0". The churn filter must not
+            # swallow it: a 0.4%-weight dreg with an explicit close target
+            # was silently converted into a HOLD, so a position PM had
+            # decided to exit sat in the book indefinitely (2026-07-16
+            # audit). Anything held with target 0 goes to the SELL/COVER
+            # builder, which emits a full exit.
+            closing = (signed_target == 0 and current_pct != 0)
             if not closing and abs(delta_pct) < self.cfg.min_trade_weight_delta:
                 # No action — emit HOLD for audit continuity so PM's intent
                 # to keep this position at its current level is recorded.
+                # (A held short with no delta gets no HOLD row — HOLD's
+                # audit bookkeeping stays long-only for this stage.)
                 if current_pct > 0:
                     buys.append(self._hold_decision(target))
                 continue
 
             if delta_pct < 0:
-                # Trim or close
-                sell_decision = self._build_sell(
-                    target, positions_by_sym.get(sym), current_pct, target_pct,
-                )
-                if sell_decision is not None:
-                    sells.append(sell_decision)
+                if current_pct > 0:
+                    # Trim or close a LONG.
+                    sell_decision = self._build_sell(
+                        target, positions_by_sym.get(sym), current_pct, signed_target,
+                    )
+                    if sell_decision is not None:
+                        sells.append(sell_decision)
+                else:
+                    # Open or add to a SHORT (current_pct <= 0).
+                    short_decision = self._build_short(
+                        target,
+                        plan=risk_plan.get(sym),
+                        analysis=analyses_by_sym.get(sym),
+                        current_pct=current_pct,
+                        target_pct=signed_target,
+                        total_value=total_value,
+                        market_price=price_map.get(sym),
+                        regime=regime,
+                    )
+                    if short_decision is not None:
+                        sells.append(short_decision)
             else:
-                # Open or add
-                buy_decision = self._build_buy(
-                    target,
-                    plan=risk_plan.get(sym),
-                    analysis=analyses_by_sym.get(sym),
-                    current_pct=current_pct,
-                    target_pct=target_pct,
-                    total_value=total_value,
-                    market_price=price_map.get(sym),
-                    regime=regime,
-                )
-                if buy_decision is not None:
-                    buys.append(buy_decision)
+                if current_pct < 0:
+                    # Cover (reduce/close) a SHORT.
+                    cover_decision = self._build_cover(
+                        target, positions_by_sym.get(sym), current_pct, signed_target,
+                    )
+                    if cover_decision is not None:
+                        buys.append(cover_decision)
+                else:
+                    # Open or add a LONG.
+                    buy_decision = self._build_buy(
+                        target,
+                        plan=risk_plan.get(sym),
+                        analysis=analyses_by_sym.get(sym),
+                        current_pct=current_pct,
+                        target_pct=signed_target,
+                        total_value=total_value,
+                        market_price=price_map.get(sym),
+                        regime=regime,
+                    )
+                    if buy_decision is not None:
+                        buys.append(buy_decision)
 
         # Canonical ordering: SELLs first (free up cash), then BUYs.
         # Among SELLs: full closes before partials. Among BUYs: by target
@@ -291,6 +342,13 @@ class PortfolioConstructor:
         from src.risk.rules import _gross_multiplier
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
+        # Stage 3: direction is tracked alongside the priced entry/stop so
+        # the weight formula below can pick the right (unsigned) risk-per-
+        # share denominator and apply the short sizing haircut. The RESULT
+        # (`target_weight_pct`) stays an unsigned magnitude either way — the
+        # delta loop in `construct_orders` applies the sign from
+        # `target.direction`.
+        directions: dict[str, str] = {}
         requests: list[RiskRequest] = []
         closes: set[str] = set()
 
@@ -311,6 +369,7 @@ class PortfolioConstructor:
             if entry is None or stop is None:
                 continue  # already logged; no stop means no honest size
             priced[sym] = (entry, stop)
+            directions[sym] = target.direction
             requests.append(RiskRequest(
                 sym,
                 # The single-name ceiling binds before the portfolio one. A PM
@@ -356,8 +415,20 @@ class PortfolioConstructor:
             else:
                 granted = requested
 
-            # risk_pct x entry / (entry - stop): the §2.1 formula as a weight.
-            raw_weight = granted * entry / (entry - stop)
+            # risk_pct x entry / risk_per_share: the §2.1 formula as a
+            # weight. risk_per_share is UNSIGNED — `entry - stop` is
+            # negative for a short (whose stop sits ABOVE entry), so a bare
+            # `entry - stop` would corrupt the weight's sign; `abs()` keeps
+            # this an unsigned magnitude exactly like the long case (D4).
+            risk_per_share = abs(entry - stop)
+            if directions.get(sym) == "short":
+                # D8: gap-risk sizing haircut — SIZING ONLY, never applied
+                # to the stop placed above (already resolved). A short gaps
+                # through its stop with no bound, so the same nominal risk
+                # allocation must open a SMALLER short than an equivalent
+                # long at the same stop distance.
+                risk_per_share *= self.cfg.short_gap_risk_multiple
+            raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,
                 risk_pct=granted,
@@ -377,13 +448,20 @@ class PortfolioConstructor:
         market_price: float | None,
         regime: str | None = None,
     ) -> tuple[float | None, float | None]:
-        """Entry and a validated stop below it, or (None, None).
+        """Entry and a validated stop, or (None, None).
+
+        Direction-aware (D4, Stage 3): for a long the stop must sit strictly
+        BELOW entry (existing behaviour, unchanged); for a short it must sit
+        strictly ABOVE entry — a short's stop protects against the price
+        RISING, so `stop_loss <= entry_price` is rejected instead of
+        `stop_loss >= entry_price`.
 
         Extracted from `_build_buy` because risk-based sizing needs the stop
         distance one step earlier — the position's weight is not knowable until
-        the stop is. `_build_buy` calls this too, so there is exactly one
-        definition of what a tradeable entry/stop pair is.
+        the stop is. `_build_buy`/`_build_short` call this too, so there is
+        exactly one definition of what a tradeable entry/stop pair is.
         """
+        is_short = target.direction == "short"
         entry_price = 0.0
         if market_price and market_price > 0:
             entry_price = float(market_price)
@@ -395,8 +473,8 @@ class PortfolioConstructor:
             )
         if entry_price <= 0:
             logger.warning(
-                "Constructor: cannot construct BUY %s — no entry price available",
-                target.symbol,
+                "Constructor: cannot construct %s %s — no entry price available",
+                "SHORT" if is_short else "BUY", target.symbol,
             )
             return (None, None)
 
@@ -409,14 +487,20 @@ class PortfolioConstructor:
         stop_loss = self._resolve_stop(target, analysis, entry_price)
         stop_loss = self._widen_stop_past_noise(
             target.symbol, analysis, entry_price, stop_loss, regime=regime,
+            direction=target.direction,
         )
         if stop_loss is not None:
             stop_loss = round(stop_loss, 2)
-        if stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price:
+        if is_short:
+            invalid = stop_loss is None or stop_loss <= 0 or stop_loss <= entry_price
+        else:
+            invalid = stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price
+        if invalid:
             logger.warning(
-                "Constructor: BUY %s rejected — no valid stop below entry "
+                "Constructor: %s %s rejected — no valid stop %s entry "
                 "(entry=$%.2f, stop=%s)",
-                target.symbol, entry_price, stop_loss,
+                "SHORT" if is_short else "BUY", target.symbol,
+                "above" if is_short else "below", entry_price, stop_loss,
             )
             return (None, None)
         return (entry_price, stop_loss)
@@ -451,6 +535,7 @@ class PortfolioConstructor:
         entry_price: float,
         stop_loss: float | None,
         regime: str | None = None,
+        direction: str = "long",
     ) -> float | None:
         """Push a stop out to `min_stop_atr_multiple` ATRs when structure put
         it inside ordinary volatility.
@@ -461,6 +546,13 @@ class PortfolioConstructor:
         entry, which is a coin flip on a normal day's range rather than a
         thesis invalidation, and which then forced enormous positions to reach
         any meaningful risk.
+
+        D5 (Stage 3): direction-aware. A long's stop is pushed DOWN, away
+        from entry; a short's stop is pushed UP, away from entry, by the
+        same number of ATRs — mirrored, not reflected through a different
+        rule. `min_reward_risk_after_widening` applies identically to a
+        short: a widened short stop that drops reward:risk below the floor
+        rejects the trade exactly as it would for a long.
 
         Returns None when widening would leave a reward:risk the trade cannot
         justify. That is deliberate: a trade that only cleared the bar on a
@@ -477,40 +569,61 @@ class PortfolioConstructor:
             return stop_loss  # no volatility reading — leave structure alone
 
         multiple = self._stop_atr_multiple(analysis, regime)
-        floor = entry_price - multiple * atr
-        if floor <= 0 or stop_loss <= floor:
-            return stop_loss  # already outside the noise band
+        is_short = direction == "short"
+        if is_short:
+            band_edge = entry_price + multiple * atr
+            if stop_loss >= band_edge:
+                return stop_loss  # already outside the noise band
+        else:
+            band_edge = entry_price - multiple * atr
+            if band_edge <= 0 or stop_loss <= band_edge:
+                return stop_loss  # already outside the noise band
 
         target_price = getattr(analysis, "reference_target", None) if analysis else None
         try:
             target_price = float(target_price) if target_price else None
         except (TypeError, ValueError):
             target_price = None
-        if target_price and target_price > entry_price:
-            reward_risk = (target_price - entry_price) / (entry_price - floor)
-            if reward_risk < self.cfg.min_reward_risk_after_widening:
-                logger.info(
-                    "Constructor: %s rejected — a stop outside the noise band "
-                    "(%.2f x ATR = $%.2f) leaves reward:risk %.2f, under the "
-                    "%.2f minimum. The setup only qualified on a stop inside "
-                    "one ordinary day's range.",
-                    symbol, multiple, floor, reward_risk,
-                    self.cfg.min_reward_risk_after_widening,
-                )
-                return None
+        if is_short:
+            if target_price and target_price < entry_price:
+                risk = band_edge - entry_price
+                reward = entry_price - target_price
+                reward_risk = reward / risk if risk > 0 else 0.0
+                if risk <= 0 or reward_risk < self.cfg.min_reward_risk_after_widening:
+                    logger.info(
+                        "Constructor: SHORT %s rejected — a stop outside the "
+                        "noise band (%.2f x ATR = $%.2f) leaves reward:risk "
+                        "%.2f, under the %.2f minimum. The setup only "
+                        "qualified on a stop inside one ordinary day's range.",
+                        symbol, multiple, band_edge, reward_risk,
+                        self.cfg.min_reward_risk_after_widening,
+                    )
+                    return None
+        else:
+            if target_price and target_price > entry_price:
+                reward_risk = (target_price - entry_price) / (entry_price - band_edge)
+                if reward_risk < self.cfg.min_reward_risk_after_widening:
+                    logger.info(
+                        "Constructor: %s rejected — a stop outside the noise band "
+                        "(%.2f x ATR = $%.2f) leaves reward:risk %.2f, under the "
+                        "%.2f minimum. The setup only qualified on a stop inside "
+                        "one ordinary day's range.",
+                        symbol, multiple, band_edge, reward_risk,
+                        self.cfg.min_reward_risk_after_widening,
+                    )
+                    return None
 
         logger.info(
-            "Constructor: %s stop widened $%.2f → $%.2f (%.1f%% → %.1f%% below "
-            "entry) — structure placed it inside %.2f x ATR of $%.2f "
-            "(%s setup, %s tape)",
-            symbol, stop_loss, floor,
-            100 * (entry_price - stop_loss) / entry_price,
-            100 * (entry_price - floor) / entry_price,
+            "Constructor: %s stop widened $%.2f → $%.2f (%.1f%% %s entry) — "
+            "structure placed it inside %.2f x ATR of $%.2f (%s setup, %s tape)",
+            symbol, stop_loss, band_edge,
+            100 * abs(entry_price - band_edge) / entry_price,
+            "above" if is_short else "below",
             multiple, atr,
             getattr(analysis, "setup_type", None) or "unknown",
             regime or "unknown",
         )
-        return floor
+        return band_edge
 
     @staticmethod
     def _current_weights(
@@ -620,6 +733,53 @@ class PortfolioConstructor:
             reasoning=reasoning[:500],
         )
 
+    @staticmethod
+    def _build_cover(
+        target: TargetPosition,
+        position: Position | None,
+        current_pct: float,
+        target_pct: float,
+    ) -> TradeDecision | None:
+        """D1/D3 (Stage 3): the SELL-side twin, for reducing/closing a short.
+
+        `current_pct` and `target_pct` are both SIGNED and <= 0 here (the
+        `construct_orders` dispatch only reaches this builder when the
+        position is currently short and the signed target does not cross
+        zero to the long side). The fraction-to-cover formula is
+        algebraically identical to `_build_sell`'s — it falls out of the
+        same `(current - target) / current` shape on negative numbers.
+        """
+        if position is None or position.qty >= 0:
+            return None
+        import math as _math
+        if not _math.isfinite(current_pct) or current_pct >= 0:
+            logger.warning(
+                "Constructor: COVER %s skipped — current_pct=%s "
+                "(market_value=%s likely NaN/zero from broker glitch)",
+                target.symbol, current_pct, position.market_value,
+            )
+            return None
+        if target_pct == 0:
+            # Full cover
+            alloc = 100.0
+        else:
+            # Partial: buy back enough to land on target_pct.
+            fraction = (current_pct - target_pct) / current_pct
+            alloc = max(1.0, min(99.0, round(fraction * 100, 1)))
+        reasoning = target.thesis
+        if target.thesis_invalid_if:
+            reasoning += f" (thesis_invalid_if: {target.thesis_invalid_if})"
+        # COVERs don't need live entry/stop/target — execution uses market price
+        return TradeDecision(
+            action="COVER",
+            symbol=target.symbol,
+            allocation_pct=alloc,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            reasoning=reasoning[:500],
+        )
+
     def _build_buy(
         self,
         target: TargetPosition,
@@ -679,7 +839,10 @@ class PortfolioConstructor:
         # downstream) doesn't put more than risk_budget_pct of equity at risk.
         # NOTE: alloc_cap_by_risk below is computed in RAW notional terms, so
         # this conversion must happen BEFORE the comparison.
-        risk_per_share = entry_price - stop_loss
+        # D4: unsigned everywhere — a plain `entry - stop` is negative for a
+        # short (whose stop sits above entry), which would corrupt this cap
+        # instead of tightening it.
+        risk_per_share = abs(entry_price - stop_loss)
         risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         # qty_by_risk = risk_dollars_allowed / risk_per_share
         # position_$ = qty_by_risk * entry_price
@@ -767,6 +930,133 @@ class PortfolioConstructor:
             # rides alongside it for the same reason: a portfolio-level cut
             # the AI Risk Manager cannot see the arithmetic behind reads as
             # the PM contradicting itself.
+            reasoning=reasoning[:500] + cap_note + (
+                f" {plan.note}" if plan is not None and plan.note else ""
+            ),
+        )
+
+    def _build_short(
+        self,
+        target: TargetPosition,
+        analysis: TechAnalysisResult | None,
+        current_pct: float,
+        target_pct: float,
+        total_value: float,
+        market_price: float | None,
+        plan: RiskPlan | None = None,
+        regime: str | None = None,
+    ) -> TradeDecision | None:
+        """The BUY-side mirror (Stage 3, D1): open or add to a short.
+
+        `current_pct` and `target_pct` are both SIGNED and <= 0 (the
+        `construct_orders` dispatch only reaches this builder when the
+        position is flat-or-short and the signed target does not cross zero
+        to the long side).
+        """
+        if plan is not None and plan.entry_price is not None and plan.stop_price is not None:
+            entry_price, stop_loss = plan.entry_price, plan.stop_price
+        else:
+            entry_price, stop_loss = self._resolve_entry_and_stop(
+                target, analysis, market_price, regime=regime,
+            )
+            if entry_price is None or stop_loss is None:
+                return None
+
+        # Take-profit: the analyst's structural reference_target, BELOW
+        # entry for a short (price must FALL for a short to profit) — the
+        # mirror of _build_buy's `reference_target > entry_price` read.
+        if not (analysis and analysis.reference_target and analysis.reference_target < entry_price):
+            logger.warning(
+                "Constructor: SHORT %s rejected — no structural "
+                "reference_target below entry from the technical analyst "
+                "(entry=$%.2f). Targets are not synthesized.",
+                target.symbol, entry_price,
+            )
+            return None
+        take_profit = float(analysis.reference_target)
+
+        from src.risk.rules import _gross_multiplier
+        gross_mul = _gross_multiplier(target.symbol)
+        # Both current_pct and target_pct are signed and <= 0 here; moving
+        # FURTHER from zero (more negative) is what grows the short, so the
+        # raw notional delta is `current - target` (positive when growing).
+        allocation_pct = (current_pct - target_pct) / gross_mul
+
+        # D4: unsigned risk-per-share (stop sits ABOVE entry for a short).
+        risk_per_share = abs(entry_price - stop_loss)
+        # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
+        # (the stop above was already resolved before this line runs). A
+        # short gaps through its stop upward with no bound, so the same
+        # nominal risk allocation must open a SMALLER short than an
+        # equivalent long at the same stop distance. Paper trading fills
+        # unrealistically through a gap on IEX data with no borrow-cost
+        # model, so this haircut is what keeps the measured size honest
+        # relative to what live capital would actually risk.
+        risk_per_share *= self.cfg.short_gap_risk_multiple
+        risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
+        cap_note = ""
+        if risk_per_share > 0:
+            alloc_cap_by_risk = (
+                risk_dollars_allowed * entry_price / risk_per_share / total_value * 100
+            )
+            if allocation_pct > alloc_cap_by_risk:
+                logger.info(
+                    "Constructor: SHORT %s alloc capped by risk budget "
+                    "(delta %.2f%% → %.2f%% at %.1f%% risk budget, %.1fx "
+                    "gap-risk haircut)",
+                    target.symbol, allocation_pct, alloc_cap_by_risk,
+                    self.cfg.risk_budget_pct, self.cfg.short_gap_risk_multiple,
+                )
+                cap_note = (
+                    f" [constructor: PM target delta {allocation_pct:.2f}% "
+                    f"capped to {alloc_cap_by_risk:.2f}% by the "
+                    f"{self.cfg.risk_budget_pct:.1f}% risk budget (x"
+                    f"{self.cfg.short_gap_risk_multiple:.1f} gap-risk haircut) "
+                    f"— the size difference vs PM's stated weight is "
+                    f"deterministic, not PM inconsistency]"
+                )
+                allocation_pct = alloc_cap_by_risk
+
+        # D9: single-short ceiling — deliberately HALF of the long
+        # single-name ceiling (see ConstructorConfig.max_single_short_pct).
+        # Mirrors _build_buy's max_position_pct clamp so the constructor
+        # sizes UNDER the risk engine's hard block instead of proposing an
+        # order the engine will drop outright.
+        current_short_gross_pct = abs(current_pct)  # already gross-scaled, <= 0
+        name_headroom_pct = (self.cfg.max_single_short_pct - current_short_gross_pct) / gross_mul
+        if allocation_pct > name_headroom_pct:
+            logger.info(
+                "Constructor: SHORT %s alloc capped by the single-short "
+                "ceiling (delta %.2f%% → %.2f%%; %.1f%% max short, %.2f%% "
+                "already held)",
+                target.symbol, allocation_pct, max(0.0, name_headroom_pct),
+                self.cfg.max_single_short_pct, current_short_gross_pct,
+            )
+            cap_note += (
+                f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
+                f"by the {self.cfg.max_single_short_pct:.0f}% single-short "
+                f"ceiling — deliberately half the long single-name ceiling. "
+                f"Deterministic, not PM inconsistency]"
+            )
+            allocation_pct = name_headroom_pct
+
+        allocation_pct = max(0.0, round(allocation_pct, 2))
+        if allocation_pct <= 0:
+            return None
+
+        reasoning = target.thesis
+        if target.thesis_invalid_if:
+            reasoning += f" (invalid if: {target.thesis_invalid_if})"
+        if target.catalyst:
+            reasoning += f" (catalyst: {target.catalyst})"
+
+        return TradeDecision(
+            action="SHORT",
+            symbol=target.symbol,
+            allocation_pct=allocation_pct,
+            entry_price=entry_price,
+            stop_loss=stop_loss,   # already rounded + validated above
+            take_profit=take_profit,
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
             ),

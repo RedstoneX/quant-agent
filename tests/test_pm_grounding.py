@@ -365,3 +365,93 @@ def test_pm_rejects_historical_smart_money_as_support():
         smart_money_findings=[finding], total_value=100_000,
     )
     assert any("historical smart-money evidence cannot support" in error for error in errors)
+
+
+# ==========================================================================
+# Stage 3 (shorts) — a short target is grounded on the SAME contract as a
+# long, not exempted from it and not made impossible by it. Before this fix
+# `validate_grounding` classified every non-close risk-based target as a
+# BUY regardless of `direction`, so a short's correct BEARISH provenance
+# marked `supports` was scored as "does not support the proposed buy" and
+# unconditionally rejected — a short could never pass grounding no matter
+# how well-evidenced.
+# ==========================================================================
+
+def test_pm_short_target_with_bearish_provenance_survives_grounding():
+    target = {
+        "symbol": "TSLA", "direction": "short", "risk_allocation_pct": 2.0,
+        "conviction": "high",
+        "thesis": "Breaking down below multi-month base; Tech strong_sell confirms.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "strong_sell",
+            "relationship": "supports", "evidence": "confirmed breakdown, stop above prior support",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("TSLA", "strong_sell")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        total_value=100_000,
+    )
+    assert errors == []
+
+
+def test_pm_short_target_with_bullish_provenance_marked_supports_fails_grounding():
+    """The mirror-image failure: a short target claiming a BULLISH stance
+    'supports' it must be rejected — a short needs bearish confirmation,
+    not bullish, so this is not a case of the fix being too permissive."""
+    target = {
+        "symbol": "TSLA", "direction": "short", "risk_allocation_pct": 2.0,
+        "conviction": "high",
+        "thesis": "Shorting despite an uptrend because I feel like it.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "buy",
+            "relationship": "supports", "evidence": "misapplied bullish trend",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("TSLA", "buy")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        total_value=100_000,
+    )
+    assert any("does not support" in error for error in errors)
+
+
+def test_pm_short_target_without_current_technical_analysis_is_rejected():
+    """A short is held to the SAME evidence requirement a long is — it must
+    not be exempt from needing a current-run Technical analysis just
+    because it opens exposure on the other side."""
+    target = {
+        "symbol": "TSLA", "direction": "short", "risk_allocation_pct": 2.0,
+        "conviction": "high",
+        "thesis": "Shorting on a stale prior read with no current Tech coverage.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "strong_sell",
+            "relationship": "supports", "evidence": "no current-run analysis actually backs this",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[], positions=[],  # no current-run Tech at all
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        total_value=100_000,
+    )
+    assert any("lacks a current-run Technical analysis" in error for error in errors)
+
+
+def test_pm_short_target_outside_universe_is_rejected():
+    """A short opening exposure is subject to the same universe/allowlist
+    gate an opening BUY is — it is not a quieter way around it."""
+    target = {
+        "symbol": "ZZZZ", "direction": "short", "risk_allocation_pct": 2.0,
+        "conviction": "high",
+        "thesis": "Shorting a name outside the configured universe.",
+        "provenance": [{
+            "source": "technical", "observed_stance": "strong_sell",
+            "relationship": "supports", "evidence": "breakdown",
+        }],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("ZZZZ", "strong_sell")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        total_value=100_000, allowed_buy_symbols={"AAPL", "MSFT"},
+    )
+    assert any("outside the configured universe" in error for error in errors)

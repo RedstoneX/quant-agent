@@ -175,12 +175,19 @@ def test_guardrails_close_with_autonomy_boundary() -> None:
     ):
         text = (PROMPT_DIR / prompt_name).read_text()
         # The autonomy bullet is anchored on a bolded **Autonomy** /
-        # **Autonomy boundary** / **Sell-only** / **Final gate** /
-        # similar role-boundary heading inside the Guardrails section.
+        # **Autonomy boundary** / **Never open a new position** /
+        # **Final gate** / similar role-boundary heading inside the
+        # Guardrails section. position_reviewer.md used to anchor on
+        # "**Sell-only;" — Stage 3 (shorts) added COVER, which submits a
+        # BUY order at the broker to close a short, so "sell-only" no
+        # longer accurately describes the role; "never open a new
+        # position" is the framing that stays true for both SELL/REDUCE
+        # (long side) and COVER (short side).
         autonomy_anchors = (
             "**Autonomy.**",
             "**Autonomy boundary.**",
             "**Sell-only;",
+            "**Never open a new position.**",
             "**Final gate.**",
         )
         assert any(a in text for a in autonomy_anchors), (

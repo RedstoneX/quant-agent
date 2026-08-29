@@ -1057,12 +1057,21 @@ def _order_side(order: Any) -> str:
     if isinstance(side, str):
         return side.lower()
     action = str(order.get("action", "")).upper()
+    # Stage 3: COVER (and PARTIAL_COVER/EMERGENCY_COVER) checked FIRST — it
+    # is a buy-side broker order (buying back borrowed shares) even though
+    # it CLOSES risk rather than opening it, so it must not fall into the
+    # SELL-ish bucket below just because "COVER" reads like an exit.
+    if "COVER" in action:
+        return "buy"
     if any(s in action for s in (
         "SELL", "REDUCE", "TAKE_PROFIT", "EMERGENCY_SELL",
         "FORCE_DELEVER", "PARTIAL_SELL",
+        # SHORT is a sell-side broker order (selling borrowed shares) even
+        # though it OPENS risk rather than closing it.
+        "SHORT",
     )):
         return "sell"
-    if action in ("BUY", "EMERGENCY_COVER"):
+    if action == "BUY":
         return "buy"
     return ""
 

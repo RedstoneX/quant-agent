@@ -50,21 +50,27 @@ two independent halvings would quarter the position.
 def apply_drawdown_scale(
     decisions: list[TradeDecision], in_drawdown: bool,
 ) -> tuple[list[TradeDecision], list[str]]:
-    """Halve every BUY's allocation while the system is in drawdown.
+    """Halve every BUY's (and Stage-3 SHORT's) allocation while in drawdown.
 
-    Returns `(decisions, notes)`. Mutates each scaled BUY in place and appends
-    provenance to its `reasoning`: the AI Risk Manager audits CONSTRUCTED orders
-    against PM's prose, and an unexplained size difference reads to it as PM
-    contradicting itself — on 2026-08-20 exactly that mismatch drew a full-plan
-    veto over deterministic math (see `portfolio_constructor.py` `cap_note`).
+    Returns `(decisions, notes)`. Mutates each scaled decision in place and
+    appends provenance to its `reasoning`: the AI Risk Manager audits
+    CONSTRUCTED orders against PM's prose, and an unexplained size
+    difference reads to it as PM contradicting itself — on 2026-08-20
+    exactly that mismatch drew a full-plan veto over deterministic math
+    (see `portfolio_constructor.py` `cap_note`).
 
-    SELLs and HOLDs are untouched: de-risking during a drawdown is the point.
+    SELL, COVER and HOLD are untouched: de-risking (in either direction)
+    during a drawdown is the point.
     """
     if not in_drawdown:
         return decisions, []
     notes: list[str] = []
     for decision in decisions:
-        if decision.action != "BUY" or decision.allocation_pct <= 0:
+        # Stage 3: a SHORT opens new risk exactly as a BUY does, so the
+        # drawdown-halve applies to it too. SELL, COVER and HOLD stay
+        # untouched — de-risking (in either direction) during a drawdown is
+        # the point.
+        if decision.action not in ("BUY", "SHORT") or decision.allocation_pct <= 0:
             continue
         before = decision.allocation_pct
         after = round(before * DRAWDOWN_BUY_SCALE, 2)
@@ -112,8 +118,15 @@ class RiskRuleEngine:
               max_correlated_cluster_pct: float = 50.0,
               cash: float | None = None,
               pending_cash_outflow: float = 0.0,
-              in_drawdown: bool = False) -> list[RiskViolation]:
-        if decision.action == "SELL":
+              in_drawdown: bool = False,
+              pending_short_gross_investment: float = 0.0) -> list[RiskViolation]:
+        # D10 (Stage 3): a COVER can never be hard-blocked, mirroring the
+        # deliberate asymmetry already used for exits — entries fail
+        # closed, exits fail open, because being unable to close a
+        # position is strictly worse than being unable to open one. A
+        # COVER is mechanically a buy at the broker, so without this it
+        # would be caught by the cash_only rule below exactly like a BUY.
+        if decision.action in ("SELL", "COVER"):
             return []
         # total_value <= 0 (or NaN) means we can't compute risk percentages.
         # Pre-fix the early return was `[]` which has the same shape as
@@ -186,23 +199,101 @@ class RiskRuleEngine:
             )]
 
         violations = []
+        is_short = decision.action == "SHORT"
         signed_mul = _effective_multiplier(decision.symbol)  # net direction
         gross_mul = _gross_multiplier(decision.symbol)       # size magnitude
         new_investment = total_value * (decision.allocation_pct / 100)
-        signed_new = new_investment * signed_mul
+        # A SHORT moves net exposure the OPPOSITE way a BUY of the same
+        # symbol would (it adds negative, not positive, directional
+        # exposure) — flip the sign so rule 2 below stays correct instead
+        # of reading a growing short as growing long exposure.
+        signed_new = new_investment * signed_mul * (-1.0 if is_short else 1.0)
         gross_new = new_investment * gross_mul
 
         # 1. Single position size limit (gross — a 3x ETF consumes 3x regardless of direction)
-        current_symbol_raw = sum(p.market_value for p in positions if p.symbol == decision.symbol)
-        current_symbol_raw += (pending_symbol_investment or {}).get(decision.symbol, 0.0)
-        position_pct = (current_symbol_raw + new_investment) * gross_mul / total_value * 100
-        if position_pct > self.config.max_position_pct:
-            violations.append(RiskViolation(
-                rule="max_position_pct",
-                message=f"{decision.symbol} position would be {position_pct:.1f}% and exceed max {self.config.max_position_pct}%",
-                value=position_pct,
-                limit=self.config.max_position_pct,
-            ))
+        #
+        # SKIPPED for SHORT. This rule's arithmetic assumes `new_investment`
+        # (always a positive magnitude) moves the position FURTHER in the
+        # direction `current_symbol_raw` is already signed toward — true for
+        # a BUY adding to a long (both positive, they sum), but wrong for a
+        # SHORT adding to a short: `current_symbol_raw` is negative (a held
+        # short's market_value), so `current_symbol_raw + new_investment`
+        # OFFSETS toward zero instead of growing, understating a growing
+        # short as shrinking and never tripping the cap. D9's
+        # `max_single_short_pct` below is the correct, direction-aware
+        # replacement for a SHORT — deliberately a tighter ceiling, not the
+        # same one.
+        if not is_short:
+            current_symbol_raw = sum(p.market_value for p in positions if p.symbol == decision.symbol)
+            current_symbol_raw += (pending_symbol_investment or {}).get(decision.symbol, 0.0)
+            position_pct = (current_symbol_raw + new_investment) * gross_mul / total_value * 100
+            if position_pct > self.config.max_position_pct:
+                violations.append(RiskViolation(
+                    rule="max_position_pct",
+                    message=f"{decision.symbol} position would be {position_pct:.1f}% and exceed max {self.config.max_position_pct}%",
+                    value=position_pct,
+                    limit=self.config.max_position_pct,
+                ))
+
+        # D9 (Stage 3): the two short-specific exposure caps. HARD BLOCKS —
+        # in HARD_BLOCK_RULES (src/pipeline.py) — on opening/adding a short;
+        # never reached for a COVER (exempted at the top of this method) or
+        # a BUY (guarded by `is_short` here).
+        if is_short:
+            current_short_raw = sum(
+                p.market_value for p in positions
+                if p.symbol == decision.symbol and p.qty < 0
+            )
+            # `pending_symbol_investment` (like `new_investment`) is always
+            # an UNSIGNED dollar magnitude — see the accumulation in
+            # `TradingPipeline._filter_hard_risk_decisions`, the same
+            # convention a same-batch BUY already uses. `current_short_raw`
+            # is the only signed term here (a short's market_value is
+            # negative), so it alone needs `abs()`.
+            pending_same_symbol = (pending_symbol_investment or {}).get(decision.symbol, 0.0)
+            single_short_pct = (
+                (abs(current_short_raw) + pending_same_symbol + new_investment)
+                * gross_mul / total_value * 100
+            )
+            if single_short_pct > self.config.max_single_short_pct:
+                violations.append(RiskViolation(
+                    rule="max_single_short_pct",
+                    message=(
+                        f"{decision.symbol} short would be {single_short_pct:.1f}% "
+                        f"and exceed max {self.config.max_single_short_pct}% "
+                        f"(half the {self.config.max_position_pct:.0f}% long "
+                        f"single-name ceiling — a short's loss is unbounded)"
+                    ),
+                    value=single_short_pct,
+                    limit=self.config.max_single_short_pct,
+                ))
+
+            current_gross_short = sum(
+                abs(p.market_value) * _gross_multiplier(p.symbol)
+                for p in positions if p.qty < 0
+            )
+            # `pending_short_gross_investment` is the running total of OTHER
+            # new shorts already allowed earlier in this same batch (see
+            # `TradingPipeline._filter_hard_risk_decisions`) — without it,
+            # two different symbols shorted in the same run would each be
+            # checked against only the pre-existing book and never see each
+            # other, the same gap `pending_investment` closes for net
+            # exposure and `pending_sector_investment` closes for sector.
+            gross_short_pct = (
+                (current_gross_short + pending_short_gross_investment + gross_new)
+                / total_value * 100
+            )
+            if gross_short_pct > self.config.max_short_gross_pct:
+                violations.append(RiskViolation(
+                    rule="max_short_gross_pct",
+                    message=(
+                        f"Total gross short exposure would be "
+                        f"{gross_short_pct:.1f}% and exceed max "
+                        f"{self.config.max_short_gross_pct}%"
+                    ),
+                    value=gross_short_pct,
+                    limit=self.config.max_short_gross_pct,
+                ))
 
         # 1b. Drawdown gate (audit §1.1). `apply_drawdown_scale` above has
         # already halved every BUY on the normal path; this is the fail-closed
@@ -318,7 +409,13 @@ class RiskRuleEngine:
         # BUYs already allowed earlier in the same filter pass. Sector / leverage
         # multipliers don't apply here — cash is spent at gross dollar notional
         # regardless of whether the symbol is an inverse / leveraged ETF.
-        if not self.config.allow_margin and cash is not None:
+        #
+        # SHORT is exempt: opening a short does not spend the settled-cash
+        # pool this rule was written to protect — it sells borrowed shares,
+        # crediting cash (against a margin requirement this codebase does
+        # not model). D9's dedicated caps, not this rule, are the control
+        # surface for a short (D11).
+        if not self.config.allow_margin and cash is not None and not is_short:
             projected_cash = cash - pending_cash_outflow - new_investment
             if projected_cash < 0:
                 violations.append(RiskViolation(

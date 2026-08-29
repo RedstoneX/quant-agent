@@ -185,17 +185,25 @@ def veto_contradicted_exit(
     """Return a veto message when an exit contradicts its own numbers, else None.
 
     Vetoes only when ALL of these hold:
-      - the action actually reduces the position (SELL / REDUCE),
+      - the action actually reduces the position (SELL / REDUCE / COVER —
+        COVER is the short-side twin: it reduces/closes a SHORT exactly as
+        SELL/REDUCE reduce/close a LONG),
       - the stated reason is a deterioration claim about the position itself,
       - a prior snapshot exists to compare against,
       - and every metric that moved, moved in the position's favour.
 
-    Everything else passes through untouched. In particular a SELL citing news,
-    earnings, a regime shift or a triggered invalidation is never vetoed here
-    however good the numbers look — those are exits on new information, which
-    the reviewer keeps full authority to make (spec Phase 3.8).
+    Everything else passes through untouched. In particular a SELL/COVER
+    citing news, earnings, a regime shift or a triggered invalidation is
+    never vetoed here however good the numbers look — those are exits on
+    new information, which the reviewer keeps full authority to make (spec
+    Phase 3.8).
+
+    `deltas` is trusted to already be direction-corrected for a short (see
+    `TradingPipeline._build_position_facts` / `_pnl_pct` — every metric here
+    is "higher is better" regardless of which side is held), so COVER needs
+    no separate sign handling in this function.
     """
-    if str(action).upper() not in ("SELL", "REDUCE"):
+    if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
         return None
     if not is_deterioration_claim(reason):
         return None
@@ -271,8 +279,17 @@ def adverse_move_is_noise(
     atr: float | None,
     *,
     multiple: float = NOISE_BAND_ATR_MULTIPLE,
+    side: str = "sell",
 ) -> bool:
-    """True when the position is DOWN from entry by less than `multiple` ATRs.
+    """True when the position has moved ADVERSELY from entry by less than
+    `multiple` ATRs.
+
+    `side` is the CLOSING side, same convention as
+    `TradingPipeline._submit_protected_sell` / `_forced_close_side_and_qty`:
+    "sell" (default, unchanged for every pre-shorts caller) means a long,
+    where adverse is price falling (`entry - current`); "buy" means a
+    short's cover, where adverse is the mirror — price rising
+    (`current - entry`), since a short is hurt by the tape going up.
 
     Returns False — i.e. "not noise, let the caller proceed" — whenever the
     question cannot be answered: no ATR, non-finite inputs, or a position that
@@ -286,7 +303,7 @@ def adverse_move_is_noise(
     atr_f = _finite(atr) if atr is not None else None
     if ent is None or cur is None or atr_f is None or atr_f <= 0 or ent <= 0:
         return False
-    adverse = ent - cur
+    adverse = (cur - ent) if str(side).lower() == "buy" else (ent - cur)
     if adverse <= 0:
         return False   # flat or winning — not this guard's business
     return adverse < multiple * atr_f

@@ -107,19 +107,29 @@ def test_pm_contract_forbids_execution_detail() -> None:
         )
 
 
-def test_position_reviewer_contract_says_sell_only() -> None:
-    """position_reviewer.md must declare itself sell-only — code in
-    src/pipeline.py:_HARD_TRIGGER_KEYWORDS + the executor enforce it,
-    but the prompt must also teach it so the LLM doesn't waste tokens
-    proposing BUY actions that would be dropped at execution.
+def test_position_reviewer_contract_says_never_opens_a_new_position() -> None:
+    """position_reviewer.md must declare that it never opens a new
+    position — code in src/pipeline.py:_HARD_TRIGGER_KEYWORDS + the
+    executor enforce it, but the prompt must also teach it so the LLM
+    doesn't waste tokens proposing an action that would be dropped at
+    execution.
+
+    Pre-Stage-3 (shorts) this was expressed as "sell-only" — accurate
+    when the only actions were HOLD / TRAIL_STOP / REDUCE / SELL, all of
+    which either do nothing or reduce a long. Stage 3 added COVER, which
+    submits a BUY order at the broker (to close a short) — "sell-only" is
+    now a misnomer for that action even though it is still risk-reducing,
+    never opens exposure. "Never open a new position" is the framing that
+    stays true for both SELL/REDUCE (long side) and COVER (short side).
     """
     path = PROMPT_DIR / "position_reviewer.md"
     text = path.read_text().lower()
-    assert "sell-only" in text or "sell only" in text, (
-        "position_reviewer.md contract must say 'sell-only' (or 'sell "
-        "only') explicitly. The agent's PositionAction Literal allows "
-        "only HOLD / TRAIL_STOP / REDUCE / SELL — BUY is structurally "
-        "impossible — but the contract should still teach this."
+    assert "never open a new position" in text or "never opens a new position" in text, (
+        "position_reviewer.md contract must say it never opens a new "
+        "position, explicitly. The agent's PositionAction Literal allows "
+        "only HOLD / TRAIL_STOP / REDUCE / SELL / COVER — opening a long "
+        "(BUY) or a fresh SHORT is structurally impossible — but the "
+        "contract should still teach this."
     )
 
 
