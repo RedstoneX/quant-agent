@@ -15,6 +15,7 @@ export function OrdersPanel({
   status: orderStatus,
   onStatusChange,
   onInspect,
+  onSelectSymbol,
 }: {
   orders: OrderItem[];
   error: string | null;
@@ -22,6 +23,14 @@ export function OrdersPanel({
   status: string;
   onStatusChange: (status: "open" | "closed" | "all") => void;
   onInspect?: (order: OrderItem) => void;
+  /** Symbol-cell-specific click: charts the symbol in place, same as
+   * PositionsPanel's onSelectSymbol. Deliberately separate from onInspect
+   * above (which opens the order's Run/Candidate Detail modal on the rest
+   * of the row) — clicking just the SYMBOL must never open a modal, it
+   * must behave exactly like clicking a symbol in Positions. See
+   * DataTable's row-level onClick, which this cell's own stopPropagation
+   * has to defeat. */
+  onSelectSymbol?: (symbol: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -32,7 +41,21 @@ export function OrdersPanel({
     () => [
       columnHelper.accessor("symbol", {
         header: "Symbol",
-        cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span>,
+        cell: (info) =>
+          onSelectSymbol ? (
+            <button
+              type="button"
+              className="font-bold text-accent hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectSymbol(info.getValue());
+              }}
+            >
+              {info.getValue()}
+            </button>
+          ) : (
+            <span className="font-bold text-accent">{info.getValue()}</span>
+          ),
       }),
       columnHelper.accessor("side", { header: "Side", cell: (info) => (info.getValue() || "—").toUpperCase() }),
       columnHelper.accessor("order_type", { header: "Type", cell: (info) => (info.getValue() || "—").replace(/_/g, " ") }),
@@ -50,7 +73,7 @@ export function OrdersPanel({
       columnHelper.accessor("submitted_at", { header: "Submitted", cell: (info) => fmtTime(info.getValue()) }),
       columnHelper.accessor("filled_at", { header: "Filled", cell: (info) => fmtTime(info.getValue()) }),
     ] as LegacyColumnDef<OrderItem, unknown>[],
-    []
+    [onSelectSymbol]
   );
   const panelStatus = error ? "degraded" : loading ? "loading" : "ok";
 

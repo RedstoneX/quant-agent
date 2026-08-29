@@ -667,6 +667,7 @@ export default function App() {
                 health={health}
                 healthError={healthError}
                 onSelectSymbol={inspectSymbol}
+                onSelectPositionSymbol={chartPositionSymbol}
                 onInspectOrder={inspectOrder}
                 onInspectTrade={inspectTrade}
               />
