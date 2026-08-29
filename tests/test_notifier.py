@@ -189,7 +189,268 @@ def test_notifier_send_empty_text_returns_false(monkeypatch):
         mock_post.assert_not_called()
 
 
-# === format_session_result ===
+# === Readability + links (owner's phone complaint: a BUY CRM alert whose
+# rationale read "...strong heavy accumulation volume" just stopped there,
+# mid-sentence, with no way to read more or jump into the dashboard) ===
+
+def test_notifier_send_sets_html_parse_mode(monkeypatch):
+    """parse_mode must be set so the tap-through link (<a href>) renders
+    as a real link rather than literal angle-bracket text."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("hello")
+    assert mock_post.call_args.kwargs["json"]["parse_mode"] == "HTML"
+
+
+def test_notifier_send_escapes_html_special_characters(monkeypatch):
+    """HTML parse_mode requires '&','<','>' escaped in free text or
+    Telegram rejects the whole message ("can't parse entities") — the
+    single most likely way this feature breaks in production, per the
+    task. Underscores and asterisks (Markdown's landmines) need NO
+    escaping at all in HTML mode, which is exactly why HTML was chosen
+    over MarkdownV2 for a message full of tickers and bullet '*'s."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    rationale = (
+        "BUY CRM_STOCK — strong <accumulation> & R&D volume > 70% * high conviction"
+    )
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        ok = n.send(rationale)
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    # The raw characters that ARE special in HTML must be escaped...
+    assert "<accumulation>" not in sent
+    assert "&lt;accumulation&gt;" in sent
+    assert "R&amp;D" in sent
+    assert "&amp;" in sent
+    # ...while underscore and asterisk (meaningless in HTML) pass through
+    # untouched, unlike MarkdownV2 where either would corrupt the message.
+    assert "CRM_STOCK" in sent
+    assert "* high conviction" in sent
+
+
+def test_notifier_send_no_link_when_mission_control_url_unset(monkeypatch):
+    """Empty/unset base URL setting → no link at all, ever. Never a
+    broken link."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()  # mission_control_url defaults to None/""
+    assert n.mission_control_url == ""
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        ok = n.send("plain session result, no link configured")
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "<a href" not in sent
+    assert "http" not in sent
+
+
+def test_notifier_send_appends_configured_mission_control_link(monkeypatch):
+    """When the notifier was constructed with a mission_control_url
+    (mirrors main.py / TradingScheduler wiring from config), every send()
+    call appends it as a real anchor tag without the caller having to
+    pass anything extra."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        ok = n.send("session result")
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert '<a href="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/">' in sent
+    assert "Mission Control" in sent
+
+
+def test_notifier_send_link_url_param_overrides_and_can_disable(monkeypatch):
+    """Per-call link_url wins over the instance default; passing an
+    explicit empty string suppresses the link for that one call."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier(mission_control_url="http://default.example/cockpit")
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("a", link_url="http://override.example/cockpit")
+    assert "http://override.example/cockpit" in mock_post.call_args.kwargs["json"]["text"]
+    assert "default.example" not in mock_post.call_args.kwargs["json"]["text"]
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("b", link_url="")
+    assert "<a href" not in mock_post.call_args.kwargs["json"]["text"]
+
+
+def test_notifier_send_escapes_url_and_label_in_link(monkeypatch):
+    """The URL sits inside href="..." — a stray '"' or '&' in it must not
+    break out of the attribute."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send(
+            "x",
+            link_url="http://example/cockpit?run=1&symbol=CRM",
+            link_label='Open "Mission Control"',
+        )
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert 'href="http://example/cockpit?run=1&amp;symbol=CRM"' in sent
+    assert "&quot;Mission Control&quot;" in sent
+
+
+def test_notifier_send_truncation_reserves_room_for_the_link(monkeypatch):
+    """The global safety-net clip must still respect MAX_MESSAGE_CHARS
+    even when a link is appended afterward — the link must not push the
+    final payload over Telegram's cap."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
+    huge = "x" * 10000
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send(huge)
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert len(sent) <= TelegramNotifier.MAX_MESSAGE_CHARS
+    assert "[...truncated]" in sent
+    assert '<a href="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/">' in sent
+
+
+def test_notifier_failure_still_swallowed_with_link_and_escaping_active(monkeypatch):
+    """The core trading-safety guarantee must hold even with the new
+    escape/link/clip machinery in the send() path: a Telegram-side error
+    is logged and swallowed, never raised — a notifier failure must never
+    be able to propagate into a trading path."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = requests.HTTPError(
+            "400 Bad Request: can't parse entities"
+        )
+        try:
+            result = n.send("BUY CRM_STOCK <thesis> & 50% conviction * top pick")
+        except Exception as exc:  # noqa: BLE001
+            raise AssertionError(
+                f"send() must never raise into a trading path; raised {exc!r}"
+            )
+        assert result is False
+
+
+# === _clip_text (shared boundary-aware truncation) ===
+
+def test_clip_text_returns_text_unchanged_when_it_fits():
+    from src.notifier import _clip_text
+    assert _clip_text("short text", 100) == "short text"
+
+
+def test_clip_text_never_cuts_mid_word():
+    """The operator's literal complaint: 'strong heavy accumulation
+    volume' should never become 'strong heavy accumulat' with nothing to
+    show it was cut. Every clip must land on a real word boundary."""
+    from src.notifier import _clip_text
+    text = (
+        "CRM is showing strong heavy accumulation volume over the past "
+        "three sessions, with institutional buyers stepping in on every "
+        "dip below the 20-day moving average and options flow confirming "
+        "the bullish tilt heading into next week's earnings print."
+    )
+    for budget in (20, 40, 60, 90, 130, 200, 400):
+        clipped = _clip_text(text, budget)
+        assert len(clipped) <= budget
+        core = clipped[:-2] if clipped.endswith(" …") else clipped
+        # core is always an exact prefix of the source text (never
+        # rewritten), and the character right after it is either the
+        # end of the string or whitespace — proof the cut landed between
+        # words, not inside one.
+        assert text.startswith(core)
+        tail = text[len(core):len(core) + 1]
+        assert tail in ("", " ")
+
+
+def test_clip_text_says_so_with_an_ellipsis_when_it_clips():
+    from src.notifier import _clip_text
+    text = "word " * 100
+    clipped = _clip_text(text, 50)
+    assert len(clipped) < len(text)
+    assert "…" in clipped
+
+
+def test_clip_text_falls_back_to_hard_cut_only_when_no_boundary_exists():
+    """A single unbroken token (no spaces at all) has no boundary to cut
+    on — this is the one case a mid-token cut is unavoidable, and the
+    function must still degrade gracefully (bounded length, marker
+    present) rather than raise or return something unbounded."""
+    from src.notifier import _clip_text
+    huge_token = "x" * 500
+    clipped = _clip_text(huge_token, 50)
+    assert len(clipped) <= 50
+    assert "…" in clipped
+
+
+# === format_session_result — raised per-field clips ===
+
+def test_format_evening_suggested_action_survives_past_old_200_char_clip():
+    """This IS the reported defect: a per-symbol suggested action used to
+    be cut at 200 chars mid-sentence. A 350-char rationale (well past the
+    old limit, comfortably under the new one) must now come through
+    whole."""
+    long_action = (
+        "CRM is showing strong heavy accumulation volume across the past "
+        "three trading sessions, with block prints clustering just above "
+        "the 20-day moving average and options open interest skewing "
+        "meaningfully toward calls — treat pullbacks toward $260 as "
+        "adds rather than exits while that volume signature holds."
+    )
+    assert len(long_action) > 200
+    result = {
+        "status": "reflected",
+        "run_id": "run-crm",
+        "analysis": {
+            "risk_rating": "elevated",
+            "suggested_actions": [long_action],
+        },
+    }
+    msg = format_session_result("evening", result, 10.0)
+    assert long_action in msg  # intact, not cut mid-word at 200 chars
+
+
+def test_format_evening_outlook_survives_past_old_280_char_clip():
+    long_outlook = (
+        "Tomorrow opens with the CPI print at 8:30 and a heavy earnings "
+        "slate after the close, so expect elevated realized vol through "
+        "the morning session; the desk's base case stays constructive on "
+        "quality growth names but the plan is to trim into any print-day "
+        "gap rather than chase strength, keeping enough dry powder to add "
+        "if the tape gives back the open drawdown by midday."
+    )
+    assert len(long_outlook) > 280
+    result = {
+        "status": "reflected",
+        "run_id": "run-outlook",
+        "analysis": {"tomorrow_outlook": long_outlook},
+    }
+    msg = format_session_result("evening", result, 10.0)
+    assert long_outlook in msg
+
+
+# === format_session_result === (existing suite continues below)
 
 def test_format_morning_executed_shows_orders_and_status():
     result = {

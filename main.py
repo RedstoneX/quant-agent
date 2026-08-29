@@ -112,6 +112,14 @@ def main():
         config = load_config(config_path)
         logger.info("Config loaded. Universe: %s, Paper: %s", config.trading.universe, config.alpaca.paper)
 
+        # Point the already-constructed notifier at Mission Control now that
+        # config is available (the notifier itself is built BEFORE this line
+        # — see the comment at its construction — specifically so an early
+        # crash still gets a Telegram push; that push just won't carry a
+        # link). Empty string in settings.yaml → send() appends no link,
+        # ever — see NotificationsConfig in src/config.py.
+        notifier.mission_control_url = config.notifications.mission_control_url
+
         # Loud startup warning when running against the live Alpaca endpoint.
         # Operators flipping `alpaca.paper: false` in the YAML is the single
         # action that converts every subsequent BUY/SELL into a real-money

@@ -30,6 +30,22 @@ def test_scheduler_runs_on_trading_day(mock_pipeline_cls):
 
 
 @patch("src.scheduler.TradingPipeline")
+def test_scheduler_wires_mission_control_url_from_config(mock_pipeline_cls):
+    """--mode live must get the same tap-through link as the one-shot
+    modes — TradingScheduler has a fully-resolved AppConfig at
+    construction (unlike main.py, which builds the notifier before config
+    loads), so it can wire the link straight into TelegramNotifier()."""
+    from src.config import NotificationsConfig
+    cfg = MagicMock()
+    cfg.notifications = NotificationsConfig(mission_control_url="http://test.example/cockpit")
+    mock_pipeline_cls.return_value = MagicMock()
+
+    scheduler = TradingScheduler(cfg)
+
+    assert scheduler.notifier.mission_control_url == "http://test.example/cockpit"
+
+
+@patch("src.scheduler.TradingPipeline")
 def test_scheduler_setup_registers_all_six_sessions(mock_pipeline_cls):
     cfg = MagicMock()
     cfg.trading.schedule = SimpleNamespace(
