@@ -482,7 +482,7 @@ llm_cost_circuit:
   # free, entirely failed sessions in one mode in one day", which is
   # unambiguous breakage on any real trading day; 40 was never a real
   # ceiling, it was the old counter's false-positive rate.
-  max_paid_sessions_per_mode_per_day: 8
+  max_free_failure_sessions_per_mode: 8
   # Defect 4.1 (2026-08-29): the backstop above now cools off instead of
   # latching the mode for the rest of the ET day -- a free-failure loop is
   # almost always a transient provider outage, and killing a mode until

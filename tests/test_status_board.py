@@ -125,10 +125,10 @@ def test_setting_present_passes_when_the_key_exists_regardless_of_value():
     """`setting_present` makes no claim about the value, only that the key is
     there at all — the shape needed for a stopgap setting that is expected to
     be re-tuned over time without that re-tuning reading as rot."""
-    cfg = {"llm_cost_circuit": {"max_paid_sessions_per_mode_per_day": 40}}
+    cfg = {"llm_cost_circuit": {"max_free_failure_sessions_per_mode": 40}}
     r = sb.check_rule(
         {"kind": "setting_present",
-         "key": "llm_cost_circuit.max_paid_sessions_per_mode_per_day"}, cfg,
+         "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"}, cfg,
     )
     assert r.verdict == sb.PASS
 
@@ -136,7 +136,7 @@ def test_setting_present_passes_when_the_key_exists_regardless_of_value():
 def test_setting_present_fails_when_the_key_is_gone():
     r = sb.check_rule(
         {"kind": "setting_present",
-         "key": "llm_cost_circuit.max_paid_sessions_per_mode_per_day"}, {},
+         "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"}, {},
     )
     assert r.verdict == sb.FAIL
 

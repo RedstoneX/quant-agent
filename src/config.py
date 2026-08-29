@@ -601,9 +601,11 @@ class LLMCostCircuitConfig(BaseModel):
     daily_reserved_exposure_limit_usd: float = Field(
         default=1.90, gt=0, allow_inf_nan=False,
     )
-    # RUNAWAY BACKSTOP, not the working budget (Defect 4, 2026-08-28). Until
-    # the Defect 4 fix it was 2 and it WAS the binding constraint on every
-    # trading day: intra_check fires 14 times between 09:30 and 16:00 ET,
+    # Counts sessions in one mode that made a provider attempt and settled
+    # at zero cost -- a RUNAWAY BACKSTOP, not the working budget (Defect 4,
+    # 2026-08-28). Until the Defect 4 fix it was 2 and it WAS the binding
+    # constraint on every trading day: intra_check fires 14 times between
+    # 09:30 and 16:00 ET,
     # two of those could think and the other twelve suspended. Measured
     # 2026-08-25/26/27: 4, 7 and 6 suspensions per day while only $1.02 of a
     # $2.75 daily budget was spent -- the 2026-08-28 11:30 ET stop hit this
@@ -627,7 +629,7 @@ class LLMCostCircuitConfig(BaseModel):
     # sessions in one mode in one day", which is unambiguous breakage. 40
     # was never a real ceiling; it was the old counter's false-positive
     # rate.
-    max_paid_sessions_per_mode_per_day: int = Field(default=8, ge=1)
+    max_free_failure_sessions_per_mode: int = Field(default=8, ge=1)
     # Bounded cooling-off window for the backstop above (Defect 4.1,
     # 2026-08-29): a zero-cost failure loop is almost always a transient
     # provider outage, and latching a mode dark for the rest of the ET day
@@ -747,6 +749,26 @@ class LLMCostCircuitConfig(BaseModel):
     openrouter_pricing_stale_multiplier_max: float = Field(
         default=1.50, ge=1.0, le=5.0, allow_inf_nan=False,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_free_failure_key(cls, data):
+        # `max_paid_sessions_per_mode_per_day` was renamed to
+        # `max_free_failure_sessions_per_mode` (2026-08-29) once the
+        # counting query it gates stopped counting paid sessions at all --
+        # it now counts sessions that made a provider attempt and settled
+        # at zero cost. BaseModel's default `extra="ignore"` would let a
+        # settings.yaml still carrying the old key load silently, quietly
+        # dropping whatever value an operator set and falling back to the
+        # field default -- exactly the doc-versus-behaviour drift this
+        # rename exists to stop. Fail loudly instead.
+        if isinstance(data, dict) and "max_paid_sessions_per_mode_per_day" in data:
+            raise ValueError(
+                "llm_cost_circuit.max_paid_sessions_per_mode_per_day has been "
+                "renamed to llm_cost_circuit.max_free_failure_sessions_per_mode "
+                "-- update the settings file (no alias is provided)"
+            )
+        return data
 
     @model_validator(mode="after")
     def _daily_not_below_session(self):

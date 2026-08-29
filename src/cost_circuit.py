@@ -2366,7 +2366,7 @@ class LLMCostCircuitBreaker:
 
         Defect 4 (2026-08-28): `begin_call` used to gate a new session on a
         flat COUNT of paid sessions per mode per day
-        (`max_paid_sessions_per_mode_per_day`), which produced the 11:30 ET
+        (`max_free_failure_sessions_per_mode`), which produced the 11:30 ET
         stop at 17 cents of actual spend -- intra_check's 3rd session that
         day, nowhere near any dollar limit. A count can't fit every mode:
         an intra_check tick can cost a few cents, a morning
@@ -2571,7 +2571,7 @@ class LLMCostCircuitBreaker:
                 ).fetchone()
                 free_failure_sessions = int(free_failure_sessions_row["n"] or 0)
                 current_has_attempt = attempts > 0
-                max_sessions = int(self.config.max_paid_sessions_per_mode_per_day)
+                max_sessions = int(self.config.max_free_failure_sessions_per_mode)
                 max_session_retries = int(self.config.max_retry_attempts_per_session)
                 # Defect 4: dollar-based per-mode allowance, checked on every
                 # call (not just session admission) -- a session already
@@ -2622,7 +2622,7 @@ class LLMCostCircuitBreaker:
                         costs_exact=False,
                     )
                 elif not current_has_attempt and free_failure_sessions >= max_sessions:
-                    # Backstop only (see max_paid_sessions_per_mode_per_day's
+                    # Backstop only (see max_free_failure_sessions_per_mode's
                     # config docstring): catches an infinite retry/session
                     # loop that the dollar check below cannot, because after
                     # the Defect 2 fix a loop of provably-zero-cost failures

@@ -56,7 +56,7 @@ def _config(**overrides):
         # Backstop only as of Defect 4 (2026-08-28) -- matches
         # src/config.py's production default. Tests exercising the count
         # cap itself override it explicitly.
-        "max_paid_sessions_per_mode_per_day": 8,
+        "max_free_failure_sessions_per_mode": 8,
         "max_provider_attempts_per_call": 2,
         "max_retry_attempts_per_session": 2,
         "reservation_ttl_minutes": 30,
@@ -486,7 +486,7 @@ def test_unrecognized_failure_defaults_to_ambiguous_not_zero_cost(tmp_path):
 
 
 # ============================================================================
-# Defect 4 (2026-08-28): `max_paid_sessions_per_mode_per_day` (default 2)
+# Defect 4 (2026-08-28): `max_free_failure_sessions_per_mode` (default 2)
 # was the OPERATIVE per-mode limit, not a backstop -- intra_check fires 14
 # times between 09:30-16:00 ET, so its 3rd session of the day tripped at
 # 11:30 ET with only $0.1765 spent all day. Replaced with a dollar-based
@@ -518,7 +518,7 @@ def test_old_session_count_default_no_longer_blocks_paid_sessions(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_paid_sessions_per_mode_per_day=2), notifier,
+        path, _config(max_free_failure_sessions_per_mode=2), notifier,
     )
     _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.0588)
     _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.0588)
@@ -565,7 +565,7 @@ def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_paid_sessions_per_mode_per_day=3), notifier,
+        path, _config(max_free_failure_sessions_per_mode=3), notifier,
     )
     for i in range(3):
         _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
@@ -592,7 +592,7 @@ def test_mode_daily_spend_limit_trips_on_dollars_not_session_count(tmp_path):
             daily_reserved_exposure_limit_usd=1.0,
             daily_cost_limit_usd=1.0,
             max_mode_daily_exposure_pct=50.0,  # $0.50 ceiling for one mode
-            max_paid_sessions_per_mode_per_day=100,
+            max_free_failure_sessions_per_mode=100,
         ),
         notifier,
     )
@@ -621,7 +621,7 @@ def test_mode_daily_spend_limit_does_not_block_a_different_mode(tmp_path):
             daily_reserved_exposure_limit_usd=1.0,
             daily_cost_limit_usd=1.0,
             max_mode_daily_exposure_pct=50.0,
-            max_paid_sessions_per_mode_per_day=100,
+            max_free_failure_sessions_per_mode=100,
         ),
         notifier,
     )
@@ -658,7 +658,7 @@ def test_healthy_day_many_paid_sessions_never_trip_the_backstop(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_paid_sessions_per_mode_per_day=8), notifier,
+        path, _config(max_free_failure_sessions_per_mode=8), notifier,
     )
     for i in range(20):
         _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.01)
@@ -680,7 +680,7 @@ def test_genuine_free_failure_loop_trips_the_backstop_at_the_cap(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_paid_sessions_per_mode_per_day=8), notifier,
+        path, _config(max_free_failure_sessions_per_mode=8), notifier,
     )
     for i in range(8):
         _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
@@ -702,7 +702,7 @@ def test_mixed_day_only_free_failures_count_toward_the_backstop(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_paid_sessions_per_mode_per_day=8), notifier,
+        path, _config(max_free_failure_sessions_per_mode=8), notifier,
     )
     for i in range(8):
         _settle_cheap_session(circuit, path, f"paid-{i}", "intra_check", 0.02)
@@ -728,7 +728,7 @@ def test_backstop_cools_off_after_the_configured_window(tmp_path):
     circuit = LLMCostCircuitBreaker(
         path,
         _config(
-            max_paid_sessions_per_mode_per_day=3,
+            max_free_failure_sessions_per_mode=3,
             backstop_cooloff_minutes=10,
             daily_cost_limit_usd=10.0,
             daily_reserved_exposure_limit_usd=10.0,
@@ -807,7 +807,7 @@ def test_mode_daily_spend_limit_still_latches_for_the_day_unaffected_by_cooloff(
             daily_reserved_exposure_limit_usd=1.0,
             daily_cost_limit_usd=1.0,
             max_mode_daily_exposure_pct=50.0,
-            max_paid_sessions_per_mode_per_day=100,
+            max_free_failure_sessions_per_mode=100,
             backstop_cooloff_minutes=5,
         ),
         notifier,
@@ -1284,7 +1284,7 @@ def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
     cfg = _config(
         session_cost_limit_usd=0.0007,
         daily_cost_limit_usd=0.0007,
-        max_paid_sessions_per_mode_per_day=10,
+        max_free_failure_sessions_per_mode=10,
     )
     first = LLMCostCircuitBreaker(path, cfg, _Notifier())
     second = LLMCostCircuitBreaker(path, cfg, _Notifier())
@@ -1336,7 +1336,7 @@ def test_third_paid_session_in_same_mode_is_not_blocked_by_backstop(tmp_path):
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_paid_sessions_per_mode_per_day=2), notifier,
+        path, _config(max_free_failure_sessions_per_mode=2), notifier,
     )
     for run_id in ("run-one", "run-two"):
         circuit.activate_session(run_id, "morning")
