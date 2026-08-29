@@ -375,7 +375,11 @@ class TradingPipeline:
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
         )
-        self.news_provider = NewsDataProvider()
+        # sec_user_agent reuses config.smart_money.user_agent — the same
+        # contact-bearing UA this repo already sends to SEC EDGAR for Form 4
+        # — rather than inventing a second politeness convention for the
+        # "SEC Press Releases" feed added 2026-08-29 (src/data/news.py).
+        self.news_provider = NewsDataProvider(sec_user_agent=config.smart_money.user_agent)
         self.news_store = NewsStore()
         self.macro_store = MacroStore()
         self.tech_store = TechStore()
@@ -5885,7 +5889,9 @@ class TradingPipeline:
         try:
             research_universe = universe or self.config.trading.universe
             news_items, coverage = self.news_provider.fetch_news()
-            news_text = self.news_provider.format_for_prompt(news_items)
+            news_text = self.news_provider.format_for_prompt(
+                news_items, max_items=self.config.news.max_prompt_items,
+            )
             stock_mentions = self.news_provider.tag_symbol_mentions(
                 news_items, research_universe)
             previous_narrative = self.news_store.load_macro_narrative()
@@ -9321,6 +9327,21 @@ class TradingPipeline:
         if sweeper is not None:
             positions, _parked = sweeper.split_positions(positions)
 
+        # Phase 6 (§6.3b): today's P&L expressed against capital actually AT
+        # RISK, not just total equity — reuses the same audit §1.3 heat
+        # calculation (`_build_portfolio_heat` -> `src.risk.metrics.
+        # portfolio_heat`) the risk-manager prompt already trusts, rather
+        # than recomputing it. None (not 0.0) on a failed build, so the
+        # notifier can say "unknown" instead of a fabricated number.
+        try:
+            risk_heat = self._build_portfolio_heat(positions, total_value)
+            risk_capital_dollars = (
+                risk_heat.budget_risk_dollars if risk_heat is not None else None
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("evening: risk-capital heat build failed: %s", e)
+            risk_capital_dollars = None
+
         # Sweep submitted orders before building the evening prompt so
         # canceled/expired orders do not get narrated as real trades, and
         # partial terminal fills are reflected in the trade list.
@@ -9773,6 +9794,12 @@ class TradingPipeline:
             "equity_close": equity_close,
             "pnl_4pm": pnl_4pm,
             "pnl_4pm_pct": pnl_4pm_pct,
+            # Phase 6 (§6.3b) — capital actually at risk (sum of
+            # (entry-stop) x shares across open positions), for the
+            # notifier's "P&L vs risk capital" line. None on a failed heat
+            # build; 0.0 for a genuinely flat/fully-released book — the
+            # notifier tells those two apart.
+            "risk_capital_dollars": risk_capital_dollars,
         }
 
     def _expected_sessions_missing_today(self) -> list[str]:

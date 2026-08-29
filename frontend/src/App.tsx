@@ -625,7 +625,7 @@ export default function App() {
               onOrderStatusChange: setOrderStatus, openOrders, trades, tradesError,
               tradesLoading: !account, runs, runsError,
               runsLoading: runs.length === 0 && !runsError, health, healthError,
-              onSelectSymbol: inspectSymbol, onSelectPositionSymbol: chartPositionSymbol,
+              onSelectPositionSymbol: chartPositionSymbol,
               onInspectOrder: inspectOrder, onInspectTrade: inspectTrade,
             }}>
               <CockpitWorkspaceProvider value={{
@@ -666,7 +666,6 @@ export default function App() {
                 runsLoading={runs.length === 0 && !runsError}
                 health={health}
                 healthError={healthError}
-                onSelectSymbol={inspectSymbol}
                 onSelectPositionSymbol={chartPositionSymbol}
                 onInspectOrder={inspectOrder}
                 onInspectTrade={inspectTrade}

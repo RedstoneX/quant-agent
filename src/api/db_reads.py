@@ -302,6 +302,116 @@ def get_trades(
             conn.close()
 
 
+#: Mirrors `_POSITION_EXIT_ACTIONS` / `_POSITION_EXIT_PREFIXES` in
+#: src/storage/db.py exactly — see that module for why each entry is here
+#: (EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL; SWEEP_BUY/
+#: SWEEP_SELL are deliberately absent, the cash-sweep vehicle has no thesis
+#: to chain a position around). Duplicated rather than imported: this file
+#: must never import the write-capable `Database` class (see module
+#: docstring and tests/test_api_safety.py) — position_id ITSELF is read
+#: straight off the row (already persisted by the writer), this vocabulary
+#: is only needed here to work out whether a chain has gone flat yet.
+_POSITION_EXIT_ACTIONS = frozenset({
+    "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER", "REDUCE",
+    "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
+})
+_POSITION_EXIT_PREFIXES = ("SELL", "PARTIAL_SELL")
+
+
+def get_position_history(position_id: str) -> dict | None:
+    """Ordered chain of every trade sharing one `position_id`: the entry
+    (first row — a BUY, carrying the thesis reasoning and stop), each
+    interim review decision (everything between entry and exit — a
+    TRAIL_STOP adjustment, a partial REDUCE/TAKE_PROFIT trim, each with its
+    own `reasoning`), the exit (final row, only once the chain has actually
+    gone flat), realized P&L, and hold duration.
+
+    No new writes: every field here already lives on the `trades` rows this
+    reads (see `Database.insert_trade` / `_assign_position_ids` in
+    src/storage/db.py, which minted/inherited `position_id` and stamped
+    `realized_pnl` at write time) — this function only orders and sums them.
+
+    Returns None when no trade carries this position_id — the route turns
+    that into a 404 rather than a fabricated empty chain.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM trades WHERE position_id = ? ORDER BY timestamp, id",
+            (position_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        rows = [dict(r) for r in rows]
+        entry = rows[0]
+
+        # Same net-qty accounting `_assign_position_ids` uses to decide when
+        # a chain closes (BUY adds executed qty, a recognized exit-family
+        # action subtracts it; a TRAIL_STOP only counts once actually
+        # FILLED) — reused here only to answer "is this chain flat yet",
+        # not to re-derive any id.
+        net = 0.0
+        for r in rows:
+            if not is_executed_trade(r):
+                continue
+            action = (r.get("action") or "").upper()
+            qty = float(r.get("fill_qty") or r.get("qty") or 0)
+            if action == "BUY":
+                net += qty
+                continue
+            if action not in _POSITION_EXIT_ACTIONS and not action.startswith(_POSITION_EXIT_PREFIXES):
+                continue
+            if action == "TRAIL_STOP":
+                status = str(r.get("fill_status") or "").lower()
+                filled = status == "filled" or (
+                    status == "" and float(r.get("fill_qty") or 0) > 0
+                )
+                if not filled:
+                    continue
+            net -= qty
+        is_closed = net <= 1e-6
+
+        exit_row = rows[-1] if (is_closed and len(rows) > 1) else None
+        interim = rows[1:-1] if exit_row is not None else rows[1:]
+
+        exit_family_rows = [r for r in rows[1:] if (r.get("action") or "").upper() != "BUY"]
+        priced = [r for r in exit_family_rows if r.get("realized_pnl") is not None]
+        realized_total = sum(r["realized_pnl"] for r in priced) if priced else None
+        unpriced_executed = any(
+            r.get("realized_pnl") is None and is_executed_trade(r)
+            for r in exit_family_rows
+        )
+        realized_partial = bool(priced) and unpriced_executed
+
+        hold_days = None
+        try:
+            end_row = exit_row if exit_row is not None else rows[-1]
+            start = datetime.fromisoformat(str(entry["timestamp"]).replace(" ", "T"))
+            end = datetime.fromisoformat(str(end_row["timestamp"]).replace(" ", "T"))
+            hold_days = round((end - start).total_seconds() / 86400.0, 2)
+        except (TypeError, ValueError, KeyError):
+            hold_days = None
+
+        return {
+            "position_id": position_id,
+            "symbol": entry.get("symbol"),
+            "status": "closed" if exit_row is not None else "open",
+            "entry": entry,
+            "interim": interim,
+            "exit": exit_row,
+            "realized_pnl_total": realized_total,
+            "realized_pnl_partial": realized_partial,
+            "hold_days": hold_days,
+            "trade_count": len(rows),
+        }
+    except sqlite3.Error:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _cost_rows_to_total(rows) -> float | None:
     """Any-null-means-None convention, matching `Database.sum_session_cost`."""
     if not rows:
