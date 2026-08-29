@@ -379,7 +379,11 @@ class TradingPipeline:
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
         )
-        self.news_provider = NewsDataProvider()
+        # sec_user_agent reuses config.smart_money.user_agent — the same
+        # contact-bearing UA this repo already sends to SEC EDGAR for Form 4
+        # — rather than inventing a second politeness convention for the
+        # "SEC Press Releases" feed added 2026-08-29 (src/data/news.py).
+        self.news_provider = NewsDataProvider(sec_user_agent=config.smart_money.user_agent)
         self.news_store = NewsStore()
         self.macro_store = MacroStore()
         self.tech_store = TechStore()
@@ -5947,7 +5951,9 @@ class TradingPipeline:
         try:
             research_universe = universe or self.config.trading.universe
             news_items, coverage = self.news_provider.fetch_news()
-            news_text = self.news_provider.format_for_prompt(news_items)
+            news_text = self.news_provider.format_for_prompt(
+                news_items, max_items=self.config.news.max_prompt_items,
+            )
             stock_mentions = self.news_provider.tag_symbol_mentions(
                 news_items, research_universe)
             previous_narrative = self.news_store.load_macro_narrative()

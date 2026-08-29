@@ -125,10 +125,10 @@ def test_setting_present_passes_when_the_key_exists_regardless_of_value():
     """`setting_present` makes no claim about the value, only that the key is
     there at all — the shape needed for a stopgap setting that is expected to
     be re-tuned over time without that re-tuning reading as rot."""
-    cfg = {"llm_cost_circuit": {"max_paid_sessions_per_mode_per_day": 40}}
+    cfg = {"llm_cost_circuit": {"max_free_failure_sessions_per_mode": 40}}
     r = sb.check_rule(
         {"kind": "setting_present",
-         "key": "llm_cost_circuit.max_paid_sessions_per_mode_per_day"}, cfg,
+         "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"}, cfg,
     )
     assert r.verdict == sb.PASS
 
@@ -136,7 +136,7 @@ def test_setting_present_passes_when_the_key_exists_regardless_of_value():
 def test_setting_present_fails_when_the_key_is_gone():
     r = sb.check_rule(
         {"kind": "setting_present",
-         "key": "llm_cost_circuit.max_paid_sessions_per_mode_per_day"}, {},
+         "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"}, {},
     )
     assert r.verdict == sb.FAIL
 
@@ -219,20 +219,83 @@ def test_the_real_manifest_parses_and_every_rule_is_well_formed():
     assert not malformed, f"test_exists rules carrying prose instead of a test name: {malformed}"
 
 
+def _assert_mechanical_rule_unless_open(entry: dict) -> None:
+    """The shared check behind the mechanical-rule invariant.
+
+    A phase whose `status` is `OPEN` is exempt: that status marks a defects
+    log, not a completion claim — the whole point of `open_defects` is
+    "these bugs still exist," and a mechanical rule can only assert a bug's
+    continued existence by re-detecting it, which means the rule flips to
+    failing (and the board's CONTRADICTED alarm fires) at the exact moment
+    someone fixes the bug — punishing the fix, not the documentation. Every
+    other status describes work in progress or work claimed done —
+    `NOT STARTED`, `PARTIAL`, `DONE AND LIVE` — and must still carry at
+    least one machine-checkable rule; there is no excuse for those to rest
+    on `manual` alone.
+
+    Both `test_every_phase_has_at_least_one_mechanical_rule` (the real
+    manifest) and `test_the_open_exemption_does_not_silently_widen` (fake
+    entries pinning the boundary) call this one function, so the two checks
+    cannot drift apart.
+    """
+    if entry.get("status") == "OPEN":
+        return
+    rules = entry.get("evidence") or []
+    mechanical = [r for r in rules if r.get("kind") != "manual"]
+    assert mechanical, (
+        f"{entry.get('id')} has only manual evidence — it can never be verified"
+    )
+
+
 def test_every_phase_has_at_least_one_mechanical_rule():
     """A phase resting entirely on `manual` cannot be verified by the board, so
-    it must be visible as such rather than quietly trusted."""
+    it must be visible as such rather than quietly trusted.
+
+    One exemption: a phase whose `status` is `OPEN`. That status marks a
+    defects log, not a completion claim — the whole point of `open_defects`
+    is "these bugs still exist," and a mechanical rule can only assert a
+    bug's continued existence by re-detecting it, which means the rule flips
+    to failing (and the board's CONTRADICTED alarm fires) at the exact
+    moment someone fixes the bug — punishing the fix, not the documentation.
+    This invariant exists to stop a phase claiming DONE on no proof; an OPEN
+    log makes no such claim, so it is exempt. NOT STARTED and PARTIAL carry
+    no such excuse and stay covered — both have real mechanical rules today.
+    """
     import yaml
 
     manifest = Path(__file__).resolve().parents[1] / "docs" / "phases.yaml"
     raw = yaml.safe_load(manifest.read_text())
     phases = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
     for entry in phases:
-        rules = entry.get("evidence") or []
-        mechanical = [r for r in rules if r.get("kind") != "manual"]
-        assert mechanical, (
-            f"{entry['id']} has only manual evidence — it can never be verified"
-        )
+        _assert_mechanical_rule_unless_open(entry)
+
+
+def test_the_open_exemption_does_not_silently_widen():
+    """Pins `_assert_mechanical_rule_unless_open` to exactly the `OPEN`
+    status, using fake in-memory entries rather than the real manifest, so
+    the boundary stays covered even if docs/phases.yaml changes shape or
+    every entry there happens to carry a mechanical rule already.
+
+    Without this test, someone could widen the exemption in
+    `_assert_mechanical_rule_unless_open` (say, to also cover `PARTIAL` or
+    `NOT STARTED`) and nothing would fail until a real phase quietly shipped
+    on manual-only evidence.
+    """
+    manual_only = [{"kind": "manual", "note": "someone check the box"}]
+
+    open_entry = {"id": "fake_open", "status": "OPEN", "evidence": manual_only}
+    partial_entry = {"id": "fake_partial", "status": "PARTIAL", "evidence": manual_only}
+    not_started_entry = {
+        "id": "fake_not_started", "status": "NOT STARTED", "evidence": manual_only,
+    }
+
+    _assert_mechanical_rule_unless_open(open_entry)  # must not raise
+
+    with pytest.raises(AssertionError):
+        _assert_mechanical_rule_unless_open(partial_entry)
+
+    with pytest.raises(AssertionError):
+        _assert_mechanical_rule_unless_open(not_started_entry)
 
 
 def test_the_template_carries_every_placeholder_the_renderer_fills():
