@@ -269,6 +269,15 @@ smart_money:
   insider_min_material_sell_fraction: 0.05
   insider_history_retention_days: 1830
 
+news:
+  # Max items placed in the news analyst's prompt after dedup (see
+  # src/data/news.py RSS_FEEDS and NewsDataProvider.format_for_prompt).
+  # Widened from 8 to 11 free RSS sources on 2026-08-29 (audit comment
+  # block in src/data/news.py); this cap intentionally did NOT move with
+  # it, so prompt size stays bounded no matter how many wires are
+  # configured. 50 is the pre-existing behavior (the old hardcoded default).
+  max_prompt_items: 50
+
 trading:
   universe:
     # Index ETF

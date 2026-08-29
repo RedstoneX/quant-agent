@@ -33,13 +33,15 @@ export interface SupportWorkspaceState {
   runsLoading: boolean;
   health: HealthResponse | null;
   healthError: string | null;
-  onSelectSymbol?: (symbol: string) => void;
-  /** Position-panel-specific symbol click: charts the symbol and updates
-   * the Decision Room/detail pane in place. Deliberately distinct from
-   * `onSelectSymbol` above (which also opens the candidate-detail modal
-   * for panels like Missed Opportunities, where drilling into a specific
-   * run's evidence is exactly what a click should do) — clicking a
-   * POSITION must never open a modal (cockpit trader rework, item 2). */
+  /** Charts the symbol in place — nothing else. Every symbol-click
+   * affordance in this workspace (Positions, Orders/Trades symbol cell,
+   * Missed Opportunities, Search's symbol column) is wired to this same
+   * modal-free callback; see App.tsx's chartPositionSymbol for the
+   * owner's no-popup-on-a-symbol-click rule this exists to satisfy. A
+   * field named `onSelectSymbol` used to sit here too, wired to a
+   * variant that conditionally opened the candidate-detail modal — that
+   * was the cause of Missed Opportunities' unpredictable click, and it
+   * was removed rather than fixed in place once nothing needed it. */
   onSelectPositionSymbol?: (symbol: string) => void;
   onInspectOrder?: (order: OrderItem) => void;
   onInspectTrade?: (trade: TradeItem) => void;
