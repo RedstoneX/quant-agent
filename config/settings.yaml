@@ -472,19 +472,32 @@ llm_cost_circuit:
   # below cannot, because a loop of provably-zero-cost failures (Defect 2)
   # spends nothing and so would never reach a dollar ceiling.
   #
-  # It MUST sit far above legitimate operation, and twice now it has not.
+  # It MUST sit far above legitimate operation, and twice it did not --
+  # but both times the real defect was the COUNTING query, not the number.
   # At 2 it stopped intra_check on its 3rd session (measured 2026-08-25/26/
   # 27: 4, 7, 6 such stops/day against ~$1.02 of a $2.75 budget). Raised to
-  # 8 as a stopgap -- still too low, and it fired again at 20:00 UTC on
-  # 2026-08-28, benching intra_check on its 9th session having spent $0.68
-  # of $2.75. intra_check is scheduled every 30 minutes from 09:30 to 16:00
-  # ET: 14 ticks is a NORMAL day, so any backstop at or below 14 is not a
-  # backstop, it is a daily outage.
+  # 8, still fired again at 20:00 UTC on 2026-08-28 benching intra_check on
+  # its 9th session having spent $0.68 of $2.75, then raised again to 40 as
+  # a stopgap. Every one of those sessions was successful and paid for
+  # itself; the query counted them anyway (`logical_calls>0 OR
+  # provider_attempts>0` -- true for any session that ever did anything,
+  # not just a free-failure loop), so a normal trading day burned this
+  # backstop down on its own no matter how high the number went.
   #
-  # 40 is ~3x the maximum scheduled count for the busiest mode. A mode that
-  # opens 40 paid sessions in one ET day is looping, not trading. The
-  # per-mode dollar allowance below is what actually governs spend.
-  max_paid_sessions_per_mode_per_day: 40
+  # Defect 4.1 (2026-08-29): `LLMCostCircuitBreaker.begin_call` now counts
+  # only sessions that made a provider attempt and settled at zero cost --
+  # a session that spent money is the per-mode dollar allowance's problem,
+  # not this guard's. Under that corrected count, 8 means "eight entirely
+  # free, entirely failed sessions in one mode in one day", which is
+  # unambiguous breakage on any real trading day; 40 was never a real
+  # ceiling, it was the old counter's false-positive rate.
+  max_free_failure_sessions_per_mode: 8
+  # Defect 4.1 (2026-08-29): the backstop above now cools off instead of
+  # latching the mode for the rest of the ET day -- a free-failure loop is
+  # almost always a transient provider outage, and killing a mode until
+  # rollover on a transient is exactly the 2026-08-28 failure. Minutes;
+  # 5..720 (5 minutes .. 12 hours).
+  backstop_cooloff_minutes: 60
   # Defect 4 operative limit: fraction of daily_reserved_exposure_limit_usd
   # any ONE mode may reserve/spend per ET day.
   max_mode_daily_exposure_pct: 60.0
