@@ -282,13 +282,13 @@ phases:
         symbol: "One bounded retry per series"
         note: "§4.2 FRED retry/backoff — already existed before the spec was written; not new work, but satisfies the requirement"
       - kind: manual
-        note: "§4.2 news-feed repair is NOT done: src/data/news.py's Reuters and AP URLs are unchanged, and docs/WORK.md (PR #118, open, unmerged) records both confirmed dead again on 2026-08-28 (Reuters 404, AP 403) with no fix landed and no owner decision yet on a paid alternative. Re-check by grepping src/data/news.py for the same two URLs and hitting them directly."
+        note: "Correction 2026-08-29: this note previously said the Reuters and AP URLs in src/data/news.py are unchanged and still dead. Verified false against origin/main. RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block at lines 34-73, headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type (news.py:100-114) also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
       - kind: manual
         note: "Separate from the dead Reuters/AP feeds above: the owner has asked for an audit of what the news seat actually reads and a widening of its sources, using free sources only. Still untouched. See the 'News sources review' task in session notes / docs/WORK.md."
 
   - id: phase_5
     title: "Phase 5 — Short selling"
-    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assume every position is a long. It is being built in three stages. Stage 1, making a short position count correctly in the risk math, is finished but not yet deployed. Stages 2 and 3 — actually being able to open and safely manage a short — have not been built."
+    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assume every position is a long. It is being built in three stages. Correction 2026-08-29: this summary previously said stages 2 and 3 had not been built; verified false for stage 2 against origin/main. Stage 1, making a short position count correctly in the risk math, is finished. Stage 2, making a short position safe to hold — correct protective-stop geometry and a trailing stop that moves the right direction for a short instead of the long-only direction — is also finished and merged (commit 10e0f10, 'Stage 2 of short selling: make shorts safe', confirmed an ancestor of origin/main; tests/test_shorts_safe.py, 623 lines, 28 tests). What remains is stage 3 only: the order-placement path that would actually let the system open a short. That is genuinely not built yet, and the constructor still deliberately refuses to act on a held short — see the two rules below that pin exactly that."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -307,6 +307,13 @@ phases:
       - kind: test_exists
         path: "tests/test_shorts_countable.py"
         test: "test_current_weights_long_only_unchanged"
+      - kind: commit_in_main
+        sha: "10e0f10ad5ab6cd3d30b0538f08fae97324f2440"
+        note: "Stage 2 shorts: make shorts safe — merged to origin/main"
+      - kind: test_exists
+        path: "tests/test_shorts_safe.py"
+        test: "test_trailing_short_ratchets_down_only"
+        note: "Stage 2 proof: the trailing stop is direction-aware and ratchets down (not up) for a short position — src/risk/trailing.py:156-260."
       - kind: symbol_in_file
         path: "src/portfolio_constructor.py"
         symbol: "no action emitted; shorts are not tradeable yet"
@@ -390,6 +397,30 @@ phases:
       - kind: manual
         note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is now DONE AND LIVE (see phase_2), so Phase 9 is unblocked and is the next unclaimed item in docs/WORK.md's ordered backlog — but nothing has picked it up yet."
 
+  - id: rehearsal_rig
+    title: "Rehearsal rig — a full session, offline, in under a minute"
+    plain_summary: "The trading desk can now be run through an entire session end to end with no live broker connection, no real market data feed, and no paid AI model calls — it replays a saved copy of a real production day instead. A full run takes well under a minute and costs nothing. It exists so a change to the trading logic can be exercised and checked before it is ever allowed near real positions or real spending, which matters because the market itself is only open a small fraction of the week and waiting for it to test something is not realistic. Its acceptance test specifically replays the afternoon of 2026-08-28, the day the desk stopped trading entirely after tripping a spending limit on only seventeen cents of actual cost, so that exact failure can be reproduced on demand and checked against going forward instead of being argued about from memory."
+    status: "DONE AND LIVE"
+    confidence: "high"
+    evidence:
+      - kind: file_exists
+        path: "ops/rehearsal/run.py"
+        note: "the rig's entry point"
+      - kind: file_exists
+        path: "ops/rehearsal/replay.py"
+        note: "serves recorded model responses so a rehearsal makes no paid calls"
+      - kind: file_exists
+        path: "ops/rehearsal/broker.py"
+        note: "the offline broker — a rehearsal cannot reach Alpaca"
+      - kind: test_exists
+        path: "tests/test_rehearsal_reproduces_cost_ceiling.py"
+        test: "test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure"
+      - kind: test_exists
+        path: "tests/test_rehearsal_reproduces_cost_ceiling.py"
+        test: "test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block"
+      - kind: manual
+        note: "Passing tests here prove the rig runs end to end and that it can still force-reproduce the 2026-08-28 cost-ceiling failure on demand — they do not prove the recorded model responses and market snapshot it replays against are still a faithful stand-in for a real trading day. That snapshot is fixed at the moment it was taken; as the strategy, the traded universe, and the market itself move on, a person needs to periodically judge whether it is still representative or needs refreshing, since no test can check that on its own. Re-check by looking at the snapshot's date and asking whether anything material has changed since."
+
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary: "Five problems that turned up as a side effect of other engineering work and are not fixed yet. The standing rule here is that finding something broken while doing unrelated work is not a license to go fix it on the spot — it gets written down and handed back so a person can decide, which is what this entry is. None of these five belong to any of the numbered phases above; without this entry they would only exist in session notes and could quietly fall out of view. Each one below carries a plain command anyone can run to check whether it is still true. (A sixth item, 'company profiles were built and never wired in,' was removed on 2026-08-29 after verification against origin/main showed src/data/company.py's CompanyProfileStore is in fact imported and used by both src/notifier.py and src/pipeline.py — the claim was false when it was written to this file.)"
@@ -403,25 +434,9 @@ phases:
       - kind: manual
         note: "Win rate and average return cannot see a short trade. compute_trade_calibration in src/storage/db.py FIFO-matches BUY lots against sell-family exits; a covered short opens no BUY lot, so covering one closes nothing in this accounting and the trade stays invisible to win rate, average return and hold days — numbers that reach the Portfolio Manager as settled fact. Dormant only because shorts cannot be opened yet; becomes a live accounting hole the day they can. The function's own comments record the size of this kind of gap: omitting filled TRAIL_STOP exits once moved win_rate from 22.2% to 30.0% and avg_return from -2.79% to -2.18% on the real ledger. Re-check: `grep -n \"open_lots\" src/storage/db.py` and look for a short-side queue alongside it."
       - kind: manual
-        note: "Crash-recovery cannot tell a long from a short. The write-ahead rows used to restore protective stops after a crash carry no side column, so draining one for an orphaned position whose broker state can't be read falls back to assuming it's a long. Unreachable today because shorts cannot be opened; reachable the moment they can, and needs a schema migration — the current long-assuming fallback is deliberately pinned by tests in the meantime, not an oversight. Re-check: `grep -n \"_derive_close_side_for_drain\" src/pipeline.py`."
+        note: "Correction 2026-08-29: this note previously said the write-ahead rows themselves cause the long-assuming fallback. Verified against origin/main and that mechanism is wrong, though the outcome it described is real. `_derive_close_side_for_drain` (src/pipeline.py:2211-2238) does NOT guess a side — it reads the broker's live signed position and returns 'sell'/'buy' when the position is readable, and returns None both when the broker read fails and when the position is already flat; its own docstring says the caller must NOT default to 'sell' in the unreadable case, because that is exactly the guess the design review forbids. The long-assuming fallback actually happens one level up, in `_drain_pending_protection_restores` (src/pipeline.py:2240): at line 2294 (sentinel-SELL branch) and line 2365 (terminal-SELL branch) it only passes `side=\"buy\"` when the helper returned exactly 'buy'; when the helper returns None it passes no side kwarg at all, so the two functions it calls, `_restore_after_unconfirmed_sell` (src/pipeline.py:1638) and `_finalize_protection_after_sell` (src/pipeline.py:2064), fall through to their own `side: str = \"sell\"` defaults. A comment at src/pipeline.py:2286-2292 confirms this is a deliberate, acknowledged tradeoff, not an oversight. The schema half of the original claim is correct as written: `pending_protection_restores` (src/storage/db.py:230-238, and the idempotent re-creation at :392-400) has columns id, symbol, sell_order_id, position_qty_before_sell, specs_json, created_at, run_id — no side column, and no ALTER TABLE anywhere in db.py adds one. Unreachable today because shorts cannot be opened; reachable, and wrong, the day they can. Re-check: `grep -n \"_drain_pending_protection_restores\\|_derive_close_side_for_drain\" src/pipeline.py` and `grep -n 'side: str = \"sell\"' src/pipeline.py`."
       - kind: manual
         note: "One board rule still pins a number expected to move: the Phase 6 evidence rule for llm_cost_circuit.daily_cost_limit_usd (currently 2.75) uses setting_equals, the same shape that made the session-count-cap rule false-alarm as CONTRADICTED the last time a stopgap number was legitimately re-tuned. When this value next gets re-tuned, convert that rule to setting_present so a deliberate change doesn't read as rot. Re-check: search this manifest for `daily_cost_limit_usd`."
-
-  - id: rehearsal_rig
-    title: "The rehearsal rig — find bugs without waiting for the market"
-    plain_summary: "A tool that runs a whole trading session offline, against a copy of real production data and yesterday's real AI answers, so bugs, shutdowns and errors turn up before Monday's market open instead of during it. It costs nothing, takes under a minute, cannot reach the internet or touch real money, and proves afterward that it left the real trading database untouched. Owner instruction, 2026-08-29: this is now the normal thing to run before touching anything that decides trades or spends money — not a nice-to-have — because a full trading day (2026-08-28) was already lost to a bug this rig would have caught. Correction to an earlier draft of this entry: that draft said the rig's own proof-it-works test still failed. It doesn't — a same-day fix (commit ee6f671, merged to origin/main) landed hours after that claim was written, and re-running the test today confirms it passes."
-    status: "PARTIAL"
-    confidence: "high"
-    evidence:
-      - kind: file_exists
-        path: "ops/rehearsal/run.py"
-      - kind: file_exists
-        path: "ops/rehearsal/runner.py"
-      - kind: test_exists
-        path: "tests/test_rehearsal_reproduces_cost_ceiling.py"
-        test: "test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure"
-      - kind: manual
-        note: "Correction 2026-08-29: an earlier draft of this entry (and of an older docs/WORK.md note) claimed the rig's own acceptance test did not pass — that replay ran out of recorded responses on the Technical Analyst's chunked calls before a rehearsal could ever reach the 2026-08-28 portfolio_manager cost-ceiling incident it exists to reproduce. That was true only through commit ee6f671 (2026-08-28 18:31 UTC, 'fix(rehearsal): un-merge chunked agent rows so replay stops running dry'), already merged to origin/main. Verified directly today, not taken on faith: `/home/ubuntu/projects/quant-agent/.venv/bin/python -m pytest tests/test_rehearsal_reproduces_cost_ceiling.py -v` passes both of its tests — one proving the live cost-circuit fix holds (portfolio_manager is now reached, not blocked), the other forcing the pre-fix estimator via config_overrides to prove the rig can still reproduce the original block on demand when asked to. Status stays PARTIAL not because the rig is broken but because 2026-08-29 is the first day it is written down as the routine pre-deploy practice the owner asked for — it has no track record yet as a standing gate. Re-check: the pytest command above (requires `sudo -n -u qamc` read access to /home/qamc/quant-agent/data; skips cleanly without it)."
 
   - id: invariants
     title: "Invariants (must hold at all times)"

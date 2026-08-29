@@ -916,10 +916,15 @@ Two facts worth acting on:
       (`tests/test_shorts_countable.py`), 21 of which failed pre-merge on
       `main` without this fix; the rest are a no-op wall proving long
       arithmetic is unperturbed.
-   2. **Make shorts safe (not yet started).** Risk-engine routing so a SELL
-      on an unheld symbol doesn't skip the deterministic gate via the early
-      `return []`; stop direction (above entry) and trailing direction
-      inverted for shorts; unbounded-loss margin accounting.
+   2. **Make shorts safe — landed 2026-08-28 (commit `10e0f10`, "Stage 2 of
+      short selling: make shorts safe"; `tests/test_shorts_safe.py`, 28
+      tests), merged to `main`.** Correction 2026-08-29: this line
+      previously read "(not yet started)" — that was wrong as of today's
+      check against origin/main; stage 2 is done, stage 3 below is what
+      remains. Risk-engine routing so a SELL on an unheld symbol doesn't
+      skip the deterministic gate via the early `return []`; stop direction
+      (above entry) and trailing direction inverted for shorts; unbounded-loss
+      margin accounting.
    3. **Turn it on (not yet started).** Order placement in the broker layer,
       then retire the inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`) as the
       bearish-expression mechanism.
