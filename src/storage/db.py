@@ -237,6 +237,26 @@ class Database:
                 run_id TEXT
             );
 
+            -- Bounded entry re-peg write-ahead queue. An Alpaca order
+            -- replacement MINTS A NEW ORDER ID: the moment the PATCH is
+            -- accepted, `trades.broker_order_id` is stale and points at a
+            -- dead order. A crash in that window would leave the broker
+            -- holding a working order nothing in this system knows about.
+            -- So the intent is written HERE first, with new_order_id set to
+            -- the _WAL_PENDING_ sentinel, and drained at session start:
+            -- the drain re-reads the OLD id, follows Alpaca's `replaced_by`
+            -- link to whatever the replacement became, and repoints the
+            -- trades row. Same shape as pending_protection_restores above.
+            CREATE TABLE IF NOT EXISTS pending_repegs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_row_id INTEGER,
+                symbol TEXT NOT NULL,
+                old_order_id TEXT NOT NULL,
+                new_order_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                run_id TEXT
+            );
+
             -- Explicit intraday evaluation ledger. A candidate is recorded
             -- before paid analysis, so HOLD/RM-reject/parse-failure outcomes
             -- still enforce cooldown even though no trades row exists.
@@ -403,6 +423,24 @@ class Database:
         except Exception as e:
             _log.error("Schema migration failed for pending_protection_restores: %s", e)
 
+        # Bounded entry re-peg queue for older DBs. Idempotent, mirrors the
+        # pending_protection_restores migration above.
+        try:
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS pending_repegs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trade_row_id INTEGER,
+                    symbol TEXT NOT NULL,
+                    old_order_id TEXT NOT NULL,
+                    new_order_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    run_id TEXT
+                )
+            """)
+            self.conn.commit()
+        except Exception as e:
+            _log.error("Schema migration failed for pending_repegs: %s", e)
+
         # Stage 4 (QAMC): specialist_evidence table for older DBs that
         # pre-date it. Idempotent, mirrors the pending_protection_restores
         # pattern above.
@@ -435,6 +473,7 @@ class Database:
             ("trades", "timestamp"),
             ("agent_logs", "timestamp"),
             ("pending_protection_restores", "created_at"),
+            ("pending_repegs", "created_at"),
             ("specialist_evidence", "run_id"),
             ("specialist_evidence", "symbol"),
             ("specialist_evidence", "decision_id"),
@@ -608,6 +647,33 @@ class Database:
             )
             self.conn.commit()
             return cur.rowcount
+
+    def repoint_trade_broker_order_id(
+        self, row_id: int, *, old_order_id: str, new_order_id: str,
+    ) -> int:
+        """Repoint a trade row at the order id an Alpaca replacement minted.
+
+        A re-peg PATCHes a working entry limit; Alpaca answers by cancelling
+        the old order and creating a NEW one with a NEW id. The old id is no
+        longer authoritative — `_reconcile_fills` matches on
+        `broker_order_id`, so leaving it stale makes reconciliation follow a
+        dead order that will forever report status 'replaced' (a status the
+        terminal sets do not cover) and conclude nothing ever happened.
+
+        Guarded by `old_order_id` in the WHERE clause on purpose: this is
+        called from a crash-recovery drain that may run twice on the same
+        WAL row. Applying it a second time matches zero rows (the row now
+        holds `new_order_id`) and returns 0 instead of clobbering a
+        subsequent, newer re-peg's id. Idempotent by construction.
+        """
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE trades SET broker_order_id = ? "
+                "WHERE id = ? AND broker_order_id = ?",
+                (new_order_id, row_id, old_order_id),
+            )
+            self.conn.commit()
+            return cur.rowcount or 0
 
     def mark_trade_submit_failed(self, row_id: int) -> int:
         """Flag a pending_submit row as submit_failed.
@@ -1036,6 +1102,94 @@ class Database:
             )
             self.conn.commit()
             return cur.rowcount or 0
+
+    # ---- bounded entry re-peg write-ahead queue -------------------------
+    #
+    # Written BEFORE the replace PATCH, resolved after. See the
+    # `pending_repegs` DDL for why the window needs a durable record at all.
+
+    def insert_pending_repeg(
+        self, *, trade_row_id: int | None, symbol: str, old_order_id: str,
+        new_order_id: str, run_id: str | None = None,
+    ) -> int:
+        """Persist the intent to replace `old_order_id`.
+
+        `new_order_id` is the caller's sentinel until the broker answers.
+        """
+        def _do():
+            cur = self.conn.execute(
+                "INSERT INTO pending_repegs "
+                "(trade_row_id, symbol, old_order_id, new_order_id, run_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (trade_row_id, symbol, old_order_id, new_order_id, run_id),
+            )
+            self.conn.commit()
+            return cur.lastrowid or 0
+        return self._locked_write(_do, label="insert_pending_repeg")
+
+    def get_pending_repegs(self) -> list[dict]:
+        """All currently-pending re-peg rows, oldest first."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, trade_row_id, symbol, old_order_id, new_order_id, "
+                "created_at, run_id FROM pending_repegs ORDER BY created_at ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_pending_repeg(self, row_id: int, new_order_id: str) -> int:
+        """Record the id the broker actually minted for a pending re-peg."""
+        def _do():
+            cur = self.conn.execute(
+                "UPDATE pending_repegs SET new_order_id = ? WHERE id = ?",
+                (new_order_id, row_id),
+            )
+            self.conn.commit()
+            return cur.rowcount or 0
+        return self._locked_write(_do, label="resolve_pending_repeg")
+
+    def delete_pending_repeg(self, row_id: int) -> int:
+        """Remove a re-peg WAL row once the trades row is authoritative."""
+        def _do():
+            cur = self.conn.execute(
+                "DELETE FROM pending_repegs WHERE id = ?", (row_id,),
+            )
+            self.conn.commit()
+            return cur.rowcount or 0
+        return self._locked_write(_do, label="delete_pending_repeg")
+
+    def prune_pending_repegs(self, keep_days: int = 30) -> int:
+        """Delete pending_repegs rows older than keep_days.
+
+        Same reasoning as `prune_pending_protection_restores`: the drain
+        re-attempts every session, so a row that survives 30 days is one the
+        broker can no longer resolve (order id aged out of history). Refuses
+        keep_days <= 0 rather than wiping a recovery queue.
+        """
+        if keep_days <= 0:
+            raise ValueError(
+                f"prune_pending_repegs: keep_days must be > 0, got {keep_days}"
+            )
+        with self._lock:
+            stale = self.conn.execute(
+                "SELECT id, symbol, old_order_id, created_at FROM pending_repegs "
+                "WHERE created_at < datetime('now', ?)",
+                (f"-{keep_days} days",),
+            ).fetchall()
+            if not stale:
+                return 0
+            for row in stale:
+                logger.info(
+                    "Pruning stale pending_repeg row %d: symbol=%s "
+                    "old_order_id=%s created_at=%s (>%dd old)",
+                    row["id"], row["symbol"], row["old_order_id"],
+                    row["created_at"], keep_days,
+                )
+            cursor = self.conn.execute(
+                "DELETE FROM pending_repegs WHERE created_at < datetime('now', ?)",
+                (f"-{keep_days} days",),
+            )
+            self.conn.commit()
+            return cursor.rowcount or 0
 
     @staticmethod
     def _executed_trade_predicate() -> str:

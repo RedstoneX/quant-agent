@@ -137,6 +137,15 @@ llm:
 # offer, and the order could never fill.
 execution:
   max_entry_slippage_bps: 40
+  # Bounded re-peg: when a working entry limit sits below the slippage
+  # ceiling and the market has moved away, walk the limit UP toward the
+  # market — never past `max_entry_slippage_bps`, and never more than
+  # `repeg_max_attempts` times. OFF by default: an Alpaca replacement mints
+  # a NEW order id, and getting that wrong is how you end up with an
+  # untracked working order or a double position. Enable deliberately.
+  repeg_enabled: false
+  repeg_max_attempts: 2
+  repeg_poll_seconds: 5
 
 risk:
   max_position_pct: 20
