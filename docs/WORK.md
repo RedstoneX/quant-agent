@@ -107,6 +107,39 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
+**Run the rehearsal rig before you touch anything that trades — owner
+instruction, 2026-08-29, not an agent decision.** His words: it exists so we
+do not wait for Monday's market open to find bugs, shutdowns and errors, he
+wants it used properly and routinely, and he wants that written where he
+looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
+
+- What it is: `ops/rehearsal/` runs a full trading session offline against a
+  snapshot of production, replaying recorded model responses. Free,
+  deterministic, about 50 seconds. Blocks outbound network at the process
+  level, then proves the production database is byte-identical afterward.
+  Suppresses operator alerts via `QAMC_REHEARSAL=1` so a rehearsal never
+  pages anyone.
+- When to run it: this is the default way to find a bug, not a formality —
+  run it before deploying anything touching the session pipeline, and after
+  any change to the agents, the risk engine, the cost circuit or execution.
+- Why this is not optional: a full trading day, 2026-08-28, was already lost
+  to a defect a rehearsal would have caught before the market opened.
+- State plainly rather than round up: a draft of this note claimed the
+  rig's own acceptance test did not pass — that replay ran out of recorded
+  responses on the Technical Analyst's chunked calls and could not
+  reproduce the 2026-08-28 cost-ceiling failure on demand, and a rig that
+  cannot reproduce the failure it was built for is not trustworthy. Checked
+  against `origin/main` before writing this rather than repeated on faith:
+  that was true only through commit `ee6f671` (2026-08-28 18:31 UTC,
+  "fix(rehearsal): un-merge chunked agent rows so replay stops running
+  dry"), already merged. Re-run today, 2026-08-29:
+  `tests/test_rehearsal_reproduces_cost_ceiling.py` passes both of its
+  tests — the fix holds (`portfolio_manager` is now reached, not blocked)
+  and the rig can still force-reproduce the original block on demand via
+  `config_overrides` when asked to. It is trustworthy for the one incident
+  it has been tested against. What it does not yet have is a track record
+  as a standing pre-deploy gate — that starts with this entry.
+
 **Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
 matches the production box byte for byte. Until this change the box carried
 five hand-edited values that existed nowhere in git, so any deploy that lost
@@ -157,6 +190,12 @@ work (2026-08-28).**
 - State plainly that this is the likely explanation for the operator
   repeatedly seeing old cockpit code after deploys that had in fact landed
   correctly.
+
+**A `git checkout` on the box is not a deploy.** The API holds the
+cockpit bundle, so `/cockpit` keeps serving the old one until
+`quant-agent-api.service` is restarted. Always restart it and then
+confirm the hashed bundle filename the server returns matches the one on
+disk under `src/api/static_cockpit/assets/`.
 
 Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
 git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
@@ -292,6 +331,61 @@ evidence that a ratified decision was wrong. See `Owner decisions` below.
   overstated in one day ("rotted months ago" — it broke the same day;
   "unexamined for months" — it was inherited with the fork), both in the
   direction of making findings sound worse than they were.
+
+**Owner decisions, 2026-08-29 (ratified in conversation, not inferred).** The
+owner reviewed a brief written for an autonomous overnight session
+(`docs/SESSION_BRIEF_OVERNIGHT.md`, since folded into this file and deleted —
+creating it was itself a document-authority mistake this file's own rule
+exists to prevent) and corrected it on the spot:
+
+- **Short selling ships finished and enabled, not behind a flag.** An earlier
+  draft proposed shipping Phase 5 stages 2-3 disabled by default. The owner
+  rejected that: this is a paper account that resets, markets are closed,
+  there are no users and no real money, and a disabled feature is unvalidated
+  code — the point of reaching the finish line is to surface the next layer
+  of bugs. The gate is completeness and verification, not a switch.
+- **The next session runs autonomously overnight and must not ask him
+  anything.** It reports decisions afterward, in plain language, for him to
+  overrule.
+- **The desk board (`docs/phases.yaml`, rendered at `/board`) is a source of
+  truth.** Defects found during engineering belong on it, not only in
+  session notes.
+
+**Operating model for an autonomous session.** It is an orchestrator and
+implements nothing inline. Dispatch subagents matched to complexity: Haiku
+for documentation, inventory and mechanical edits from a supplied spec;
+Sonnet for bounded implementation with real judgement; the strongest
+available reasoning reserved for architecture, trading/risk logic and
+anything that can lose money. Delegate aggressively to protect the
+orchestrator's own context — read diffs and summaries, not whole source
+files. Never run two writing agents in the same worktree; read-only
+reporters may overlap freely.
+
+**Do not trust a subagent's claim on its word — verify the single
+load-bearing assertion, cheaply and adversarially.** Overnight 2026-08-28/29
+an agent confidently reported a root cause that was wrong: the documented
+diagnosis blamed a data table when the real cause was a header element. It
+was caught only because the orchestrator reproduced the claim itself against
+live data. If an agent says "tests pass", check the count. If it says "the
+fix works", reproduce the fix's effect. If it says "X is the cause", check
+that X actually produces the symptom.
+
+**Operational facts that will cost hours if missed:**
+
+- **Never bare `git stash`.** It is a repo-global ref shared across every
+  worktree in this checkout, not scoped to one; two agents collided on it
+  overnight 2026-08-29. Use `git stash push -m "<name>"` and pop by explicit
+  index, or measure baselines in a throwaway worktree instead.
+- **Branch protection requires branches to be up to date**, so a merge queue
+  must be serialized: merge `main` in, wait for CI, merge, repeat. Never use
+  `--admin`.
+- **`gh pr edit` fails on this repo** (a deprecated Projects-classic GraphQL
+  field). Confirmed 2026-08-29 that it is not edit-specific — `gh pr view`
+  trips the same field. Use
+  `gh api repos/RedstoneX/quant-agent/pulls/N -X PATCH` instead.
+- **Subagents stall on polling loops** and will burn enormous token counts
+  waiting on CI. Give every agent an explicit polling budget, or poll
+  yourself.
 
 ### Ordered backlog — RESUME POINT
 
@@ -839,10 +933,15 @@ Two facts worth acting on:
       (`tests/test_shorts_countable.py`), 21 of which failed pre-merge on
       `main` without this fix; the rest are a no-op wall proving long
       arithmetic is unperturbed.
-   2. **Make shorts safe (not yet started).** Risk-engine routing so a SELL
-      on an unheld symbol doesn't skip the deterministic gate via the early
-      `return []`; stop direction (above entry) and trailing direction
-      inverted for shorts; unbounded-loss margin accounting.
+   2. **Make shorts safe — landed 2026-08-28 (commit `10e0f10`, "Stage 2 of
+      short selling: make shorts safe"; `tests/test_shorts_safe.py`, 28
+      tests), merged to `main`.** Correction 2026-08-29: this line
+      previously read "(not yet started)" — that was wrong as of today's
+      check against origin/main; stage 2 is done, stage 3 below is what
+      remains. Risk-engine routing so a SELL on an unheld symbol doesn't
+      skip the deterministic gate via the early `return []`; stop direction
+      (above entry) and trailing direction inverted for shorts; unbounded-loss
+      margin accounting.
    3. **Turn it on (not yet started).** Order placement in the broker layer,
       then retire the inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`) as the
       bearish-expression mechanism.
@@ -853,6 +952,24 @@ Two facts worth acting on:
    $9,871.87) — no owner action is outstanding. (`docs/QAMC_REMEDIATION_SPEC.md`
    Phase 5 previously recorded an owner action to switch the account to
    margin; that is stale and has been corrected there.)
+
+   **Owner ratified 2026-08-29: ship stages 2 and 3 complete and enabled, not
+   behind a flag** — a disabled feature is unvalidated code; see "Owner
+   decisions, 2026-08-29" under "Session start" above.
+
+   **Known residual, needs a schema migration.** `pending_protection_restores`
+   WAL rows predate shorts and carry no side column, so a row for a short's
+   cancelled BUY stops looks byte-identical to one for a long's cancelled
+   SELL stops. `_derive_close_side_for_drain` (`src/pipeline.py`) reads the
+   broker's live signed position to tell them apart, but when that read
+   itself fails, `_drain_pending_protection_restores` deliberately degrades
+   to the pre-existing `sell` default rather than stalling the row —
+   verified in the code and comments as of 2026-08-29. Unreachable today
+   because shorts cannot yet be opened; becomes reachable, and wrong, the
+   day they can. Close it as part of stage 3, not after. Current behaviour
+   is pinned by `tests/test_shorts_emergency_close.py`'s crash-recovery
+   drain-path coverage (added `e9851ea`, flagged by PR #135's own coverage
+   audit as the one corner with zero tests) — read it before changing it.
 8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
@@ -956,9 +1073,9 @@ Also on 2026-08-28: the circuit was reset, two quota holds released, and the
 day's `costs_exact` flag settled without refunding any charge. DB backed up
 first.
 
-#### THE REHEARSAL HARNESS — built, acceptance test not passing
-Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
-**Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
+#### THE REHEARSAL HARNESS — built, merged, acceptance test now passing
+Landed via PR #122 (branch `feat/session-rehearsal`) and now lives at `ops/rehearsal/` on `origin/main`, not on a standalone branch/worktree. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
+**Correction 2026-08-29:** this entry previously said the replay ran out of recorded responses on the Technical Analyst's chunked calls and could not yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand — that was its acceptance test and it did not pass. Commit `ee6f671` (2026-08-28 18:31 UTC, already merged) fixed exactly that by un-merging chunked `agent_logs` rows before replay matches against them. `tests/test_rehearsal_reproduces_cost_ceiling.py` passes both of its tests as of today's re-run: the live cost-circuit fix holds, and the harness can still force-reproduce the original block on demand. See "Session start" above for the owner's 2026-08-29 instruction to run this routinely.
 
 #### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
 Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
@@ -1113,26 +1230,133 @@ paid) if it's wanted.
 - OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
 - OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
 
-#### OPEN PRs, none deployed
-- #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
-- #116 shorts countable — proven a no-op on a long-only book.
-- #117 doc sync.
-- #132 news feeds + coverage — dead-feed-vanishes-silently fix (`NewsCoverage`, `data_status["news"]`), Reuters/AP removed (neither fixable for free, live-verified 2026-08-28), Yahoo Finance News added, `feat/news-dedup` folded in. Branch `fix/news-feeds-and-coverage`.
-- #133 insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above.
-- #144 bounded re-peg (`feat/bounded-repeg`) — built, tested (56/56), ships with `execution.repeg_enabled: false` so behaviour is unchanged today. See item 2 under "Next, in order" above for the caveat that matters: since PR #111 a BUY limit already goes out at the slippage ceiling whenever a quote is available, so enabling this flag would currently do approximately nothing until the entry-pricing policy changes.
+#### OPEN PRs — none, as of 2026-08-29
+
+No open pull requests. Landed on 2026-08-28/29:
+
+- #144 — bounded entry re-peg; ships with the behaviour switched off,
+  so nothing changes until it is deliberately enabled
+- #145 — repaired the dashboard visual-acceptance harness and
+  regenerated its reference screenshots
+- #142 — this document, the board manifest and the defects log
+  reconciled against what the code actually does today
+
+- #138 — mobile horizontal overflow at phone width; the cause was
+  the header status row, not the Trades table
+- #139 — corrected the Mission Control URL and recorded the stale
+  preview server
+- #140 — cockpit default layout: full-width chart over a two-column
+  Positions | Orders row; dockview key bumped to v6
+- #141 — clicking a symbol in Orders/Trades now selects it on the
+  chart instead of opening a modal
+- #136 — Telegram alerts stop clipping mid-word; tap-through link to
+  Mission Control
+- #127 — status board resolves merged-PR evidence from git, adds a
+  `setting_present` rule kind, retires the stale Phase 6 session-cap
+  rule
+- #133 — insider Form 4 routine/opportunistic filter
+- #135 — emergency force-close for short positions (buy-to-cover),
+  plus the position-reviewer and crash-recovery gaps closed
 
 #### BRANCHES READY, NO PR YET
-`fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
-`feat/news-dedup` was never actually a separate branch to land — its content
-was folded into PR #132 verbatim (confirmed by merge-base diff, byte-identical
-on both sides); the branch itself carried no unmerged content and was deleted
-2026-08-28. `feat/bounded-repeg` moved to "OPEN PRs" above (2026-08-29) once
-its merge conflicts with the shorts work were resolved.
 
-`feat/insider-signal-filter` moved to "OPEN PRs" above (2026-08-28): finished
-(thresholds moved to config, per-code and fail-closed tests added) and PR
-opened against `main` — 57.3% of 2,742 real Form 4 rows measured routine,
-consistent with the earlier 56.2%-of-2,188 figure.
+- `feat/insider-signal-filter` — merged as PR #133, no longer pending
+- `fix/news-feeds-and-coverage` — merged as PR #132
+- `fix/dollar-based-session-cap` — its first commit, `766a35d`, added
+  `afternoon_reserve_pct` (40) and `afternoon_reserve_release_et_hour` (12)
+  plus a `_morning_spend_ceiling()` helper that was defined and never
+  called. **Correction, 2026-08-29: superseded, not still open.**
+  `_morning_spend_ceiling()` is called from `begin_call` in current `main`
+  (`src/cost_circuit.py`), with dedicated passing tests
+  (`tests/test_cost_circuit.py::test_morning_spend_ceiling_pure_computation`,
+  `test_afternoon_reserve_blocks_morning_spend_above_the_ceiling`,
+  `test_afternoon_reserve_recovers_the_same_day_without_a_rollover`) —
+  landed via PR #126 (`fix/cost-circuit-four`) and PR #131
+  (`fix/pricing-staleness`), both already merged. See "STILL OPEN —
+  2026-08-29" item 5 below.
+- `feat/news-dedup` — still unmerged; disposition being decided separately.
+- `feat/bounded-repeg` — PR #144 opened 2026-08-29. Agent decision: merge it
+  rather than leave it to rot, shipping the re-peg disabled by default. Check
+  `gh pr list` for current status before treating this as landed.
+
+#### STILL OPEN — 2026-08-29
+
+1. **Missed Opportunities panel opens a modal unpredictably.** Clicking
+   a symbol there opens a Candidate Detail modal only when that symbol
+   happens to appear in whichever session is currently selected in the
+   Sessions strip — same click, different outcome, with nothing on screen
+   to explain which case you are in. Cause: it is wired to
+   `inspectSymbol` in `App.tsx`, which conditionally opens a modal,
+   instead of the modal-free `chartPositionSymbol` that Positions uses.
+   The owner has seen and reported this.
+2. **Diagnostics → Search opens a Run Detail modal on any row click**,
+   including plain unstyled cells. PR #141 added the clickable styling
+   but deliberately did not change the row behaviour, because the
+   agent-call-hit table has no symbol column and splitting
+   cell-versus-row there needs a design decision.
+3. **`compute_trade_calibration` (`src/storage/db.py`) has no concept of
+   a short lot.** It FIFO-matches BUY lots to sell-family exits, so a
+   covered short creates no lot and closes nothing and is invisible to
+   win rate, average return and hold days — figures that reach the
+   Portfolio Manager as facts. Dormant while shorts cannot be opened; a
+   live accounting hole the day they can. Note the precedent already
+   recorded in that function's comments: omitting filled TRAIL_STOP
+   exits once moved win_rate 22.2% → 30.0% and avg_return −2.79% →
+   −2.18% on the real ledger.
+4. **`docs/phases.yaml`'s `daily_cost_limit_usd: 2.75` evidence rule**
+   pins a value that is expected to be re-tuned, the same latent flaw
+   that made the Phase 6 session-cap rule false-alarm. Convert it to
+   `setting_present` when it next fires.
+5. **Phase 6.1 afternoon reserve — re-verify; this note looks stale.** It
+   previously read "unfinished — see Edit 2" (a dangling cross-reference;
+   no "Edit 2" exists in this file). This pass found `_morning_spend_ceiling`
+   defined **and called** from `begin_call` (`src/cost_circuit.py`),
+   `afternoon_reserve_pct`/`afternoon_reserve_release_et_hour` already at
+   their intended 40/12 in `config/settings.yaml`, and passing dedicated
+   tests in `tests/test_cost_circuit.py` — all via PR #126 and PR #131,
+   both already merged into `main`. See the corrected
+   `fix/dollar-based-session-cap` note under "BRANCHES READY" above, which
+   described only that branch's superseded first commit. Not fixed further
+   here — a session should confirm this against a live run before closing
+   the item outright.
+6. **The news-sources audit** the owner asked for — widen what the news
+   seat reads, free sources only — is still untouched.
+
+#### EXECUTION ORDER FOR THE NEXT SESSION — 2026-08-29 (agent decision, not owner instruction)
+Recorded because AGENTS.md's ratification rule requires it: this sequence and
+its reasoning are the outgoing session's call, not something the owner
+specified. Overrule it if a fresh read of the board disagrees.
+
+1. The quick user-visible defects in "STILL OPEN — 2026-08-29" above (items
+   1, 2 and 4).
+2. Phase 6 spending controls. Reasoning: while the desk benches itself on
+   session *counts* rather than dollars, every downstream number is measured
+   on a crippled sample. **Check item 5 above first** — this pass found
+   evidence the dollar-based cap and afternoon reserve are already merged and
+   tested, which would make this step a re-verification, not new
+   implementation.
+3. Phase 7 measurement. Reasoning: `compute_trade_calibration` is
+   structurally short-blind (item 3 above), so shorts could not be judged on
+   real numbers even once built.
+4. Phase 5 shorts, stages 2-3. Ship complete and enabled, not behind a flag —
+   see "Owner decisions, 2026-08-29" under "Session start" above.
+5. Phase 9 — the research desk deliberates. Land a coherent first slice
+   (seats able to originate) rather than a half-wired everything if time runs
+   short.
+6. The Phase 4 remainder (item 6 above) and Phase 8 documentation.
+
+**Two decisions the outgoing session made, not the owner:** merge
+`feat/bounded-repeg` rather than leave it to rot as an abandoned branch — PR
+#144, opened 2026-08-29, ships the re-peg disabled by default (see
+"BRANCHES READY" above). Separately, rescue the VPS security-hardening PLAN
+document so `docs/FUTURE_SECURITY_OBSERVATORY.md`'s reference resolves — PR
+#143, opened 2026-08-29, acting on the rescue note in "Set aside — small,
+easily forgotten" below — while deliberately leaving its executable
+`harden.sh` unmerged and unapplied. The plan was spot-checked against the
+live box rather than imported on trust: finding 1 was already partly stale
+(`ufw`/`fail2ban` active where the 2026-08-12 audit found neither). Check
+`gh pr list` for current merge status on both before treating either as
+landed.
 
 #### DECISIONS RATIFIED 2026-08-28
 - Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
