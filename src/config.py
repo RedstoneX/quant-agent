@@ -483,6 +483,77 @@ class SmartMoneyConfig(BaseModel):
     min_external_avg_dollar_volume_usd: float = Field(default=10_000_000, ge=1_000_000)
     min_external_history_days: int = Field(default=20, ge=10, le=120)
 
+    # --- Routine-versus-opportunistic Form 4 classification ---------------
+    # `src/data/insider_signal.py::classify_transaction`. Evidence basis is
+    # Cohen, Malloy & Pomorski, *Decoding Inside Information* (JF 2012), via
+    # `docs/RESEARCH_FINDINGS.md` section 1. These were module-level
+    # constants during initial development; moved here 2026-08-28 per the
+    # standing rule that a threshold able to change classification output is
+    # an operator-tunable setting, not a fixed number buried in code.
+    #
+    # A routine insider trades the same issuer in the same calendar month in
+    # each of this many consecutive preceding years. This is Cohen/Malloy/
+    # Pomorski's own definition, so 3 is the literature's number, not a
+    # guess — but it is still exposed here rather than hardcoded, since a
+    # future re-derivation against QAMC's own filing history may want a
+    # different value.
+    insider_calendar_routine_years: int = Field(default=3, ge=1, le=10)
+    # Fallback cadence test for insiders who lack the full calendar-year
+    # history above (the common case on a fresh cache — see the 2026-08-28
+    # measurement note in `docs/WORK.md`, where zero of 2,188 filings matched
+    # the calendar rule because the history index was brand new). Needs at
+    # least this many prior same-direction trades before the gap statistics
+    # are trusted.
+    insider_min_cadence_trades: int = Field(default=3, ge=2, le=20)
+    # Mean gap between trades, in days, that reads as a scheduled programme
+    # rather than a one-off. 20-120 days admits a monthly-to-quarterly
+    # cadence; narrower or wider than that is either noise (too frequent to
+    # be a real event) or too sparse to call a pattern.
+    insider_cadence_min_mean_gap_days: float = Field(default=20.0, gt=0)
+    insider_cadence_max_mean_gap_days: float = Field(default=120.0, gt=0)
+    # Coefficient of variation (population stdev / mean) of the trade gaps.
+    # 0.25 admits a monthly or quarterly programme that drifts by a few days;
+    # it rejects lumpy, irregularly-spaced discretionary trading.
+    insider_cadence_max_gap_dispersion: float = Field(default=0.25, gt=0, le=2.0)
+    # A disposition smaller than this share of the insider's pre-transaction
+    # holding is diversification/liquidity noise rather than a directional
+    # view — RESEARCH_FINDINGS.md: "only sales that are also large relative
+    # to the insider's total position predict negative returns." Deliberately
+    # NOT combined with the 10b5-1 flag on its own: a large planned sale is
+    # never demoted to routine by this filter, only a proportionally small
+    # one may additionally cite the plan (see `insider_signal.py` module
+    # docstring, departure #1).
+    insider_min_material_sell_fraction: float = Field(default=0.05, ge=0.0, le=1.0)
+    # How long `data/smart_money/insider_history.json` retains a trade date
+    # before it is pruned. Must comfortably exceed the calendar-routine
+    # lookback (`insider_calendar_routine_years` years) with slack for late
+    # and amended filings — `observations.json` itself is pruned to
+    # `lookback_days`, far too short for the calendar test, which is the
+    # entire reason a separate long-horizon index exists. Default is 5
+    # years (5 * 366 days, leap-safe).
+    insider_history_retention_days: int = Field(default=5 * 366, ge=366, le=20 * 366)
+
+    @model_validator(mode="after")
+    def _insider_cadence_window_is_well_formed(self):
+        if self.insider_cadence_min_mean_gap_days >= self.insider_cadence_max_mean_gap_days:
+            raise ValueError(
+                "smart_money.insider_cadence_min_mean_gap_days must be less "
+                "than insider_cadence_max_mean_gap_days; got "
+                f"{self.insider_cadence_min_mean_gap_days} >= "
+                f"{self.insider_cadence_max_mean_gap_days}"
+            )
+        required_days = self.insider_calendar_routine_years * 366
+        if self.insider_history_retention_days < required_days:
+            raise ValueError(
+                "smart_money.insider_history_retention_days "
+                f"({self.insider_history_retention_days}) is shorter than "
+                f"insider_calendar_routine_years ({self.insider_calendar_routine_years}) "
+                f"requires (>= {required_days} days) — the calendar-routine "
+                "test would silently lose its own history before it could "
+                "ever match."
+            )
+        return self
+
 
 class ScheduleConfig(BaseModel):
     earnings_preprocess: str = "08:00"
@@ -530,7 +601,40 @@ class LLMCostCircuitConfig(BaseModel):
     daily_reserved_exposure_limit_usd: float = Field(
         default=1.90, gt=0, allow_inf_nan=False,
     )
-    max_paid_sessions_per_mode_per_day: int = Field(default=2, ge=1)
+    # RUNAWAY BACKSTOP, not the working budget (Defect 4, 2026-08-28). Until
+    # this fix it was 2 and it WAS the binding constraint on every trading
+    # day: intra_check fires 14 times between 09:30 and 16:00 ET, two of
+    # those could think and the other twelve suspended. Measured 2026-08-25/
+    # 26/27: 4, 7 and 6 suspensions per day while only $1.02 of a $2.75 daily
+    # budget was spent -- the 2026-08-28 11:30 ET stop hit this at 17 cents
+    # of actual spend. max_mode_daily_exposure_pct below is the real,
+    # dollar-based per-mode limit now; this exists only to stop a retry loop
+    # spinning forever within one mode without ever spending real money (a
+    # provably-zero-cost failure loop, now possible after the Defect 2 fix,
+    # would never trip a dollar-based check at all) -- an infinite-loop
+    # backstop, not a budget.
+    max_paid_sessions_per_mode_per_day: int = Field(default=8, ge=1)
+    # Defect 4 operative per-mode limit: the fraction of
+    # daily_reserved_exposure_limit_usd any ONE mode may reserve/spend in a
+    # single ET day. A fraction of the existing day-wide exposure ceiling
+    # (not an independent dollar figure) so it stays proportionate if that
+    # ceiling is ever retuned, and because a mode's own call cost varies too
+    # much for a flat count to fit every mode (an intra_check tick can be a
+    # few cents; a morning portfolio_manager call can be tens of cents).
+    # 100 disables the per-mode ceiling (falls back to the day-wide one).
+    max_mode_daily_exposure_pct: float = Field(default=60.0, gt=0.0, le=100.0)
+    # Phase 6.1 afternoon reserve: the fraction of daily_reserved_exposure_
+    # limit_usd that is NOT spendable by any session before
+    # afternoon_reserve_release_et_hour, regardless of mode. The morning is
+    # where the cheap, plentiful setups look most attractive and where a
+    # retry storm is most likely; the afternoon is where every exit decision
+    # lives (position_reviewer, risk_manager, the close pass). A day that
+    # spends itself out by noon has funded entries and defunded exits, which
+    # is exactly backwards for capital preservation. 0 disables the reserve.
+    afternoon_reserve_pct: float = Field(default=40.0, ge=0.0, le=90.0)
+    # ET hour (0-23, local wall clock) at which the reserve above releases
+    # and the full daily_reserved_exposure_limit_usd becomes spendable again.
+    afternoon_reserve_release_et_hour: int = Field(default=12, ge=0, le=23)
     # Includes the initial request.  Two means one transient retry at most;
     # a provider failover would be attempt three and is blocked/latches.
     max_provider_attempts_per_call: int = Field(default=2, ge=1)
@@ -539,6 +643,85 @@ class LLMCostCircuitConfig(BaseModel):
     reservation_ttl_minutes: int = Field(default=30, ge=5, le=180)
     reservation_multiplier: float = Field(
         default=1.05, ge=1.0, le=2.0, allow_inf_nan=False,
+    )
+    # Defect 1 (2026-08-28): the pre-fix reservation treated one UTF-8 byte
+    # of the prompt as one token and always reserved the full
+    # max_output_tokens ceiling. On the production 09:32 ET portfolio_manager
+    # call that reserved $1.8657 against a call that actually cost ~$0.11 --
+    # ~3.2x the worst real portfolio_manager call ever recorded (measured
+    # $0.5783) and ~11x the average ($0.1718). Below this, the reservation
+    # is instead derived from that agent+model's own recent history in
+    # agent_logs (see LLMCostCircuitBreaker._measure_reservation_tokens).
+    # Below the minimum sample count, or on any unknown model/agent or
+    # error reading history, the ORIGINAL byte=token / max_output_tokens
+    # formula is still the fallback -- conservative, unchanged, and now
+    # exercised only as a fail-closed floor rather than every call.
+    #
+    # Minimum number of (agent, model) rows in agent_logs required before
+    # trusting measured history at all. Below this, guessing from a
+    # handful of calls is worse than the conservative fallback.
+    reservation_min_history_samples: int = Field(default=20, ge=10, le=1000)
+    # Percentile of the observed prompt-bytes-per-token ratio used to
+    # convert this call's prompt size into a token estimate. A LOW ratio
+    # means MORE tokens per byte -- denser text, therefore a HIGHER cost --
+    # so the low percentile is the conservative end; bounded well below the
+    # median (lt=0.5) so a misconfiguration can't quietly pick the cheap
+    # end of the distribution.
+    reservation_conservative_percentile: float = Field(
+        default=0.10, gt=0.0, lt=0.5, allow_inf_nan=False,
+    )
+    # Safety margin applied to the maximum output tokens observed for this
+    # agent+model's history; the result is still capped at that call's own
+    # max_output_tokens, so this can only ever narrow the old
+    # always-reserve-the-ceiling behaviour, never widen past it.
+    reservation_output_margin: float = Field(
+        default=1.20, ge=1.0, le=3.0, allow_inf_nan=False,
+    )
+
+    # === OpenRouter pricing staleness grace window (SPOF fix, 2026-08-28) ===
+    # Before this fix, `cost_table.refresh_openrouter_pricing()` accepted a
+    # cached rate ONLY while under 24h old. Past that boundary it had to
+    # reach openrouter.ai/api/v1/models or return False, and both
+    # `TradingPipeline.__init__` and `activate_paid_call_session()` respond
+    # to False with `breaker.mark_unavailable(...)` -- the durable,
+    # cross-process emergency latch that `LLMCostCircuitBreaker.reset()`
+    # (operator-only, reason mandatory) is the sole way to clear. Because the
+    # cache file is only rewritten when a fetch actually happens, and a fetch
+    # only happens once the cache is ALREADY stale, this meant one
+    # openrouter.ai outage overlapping the first session after the 24h mark
+    # -- verified reproducible 2026-08-28 via
+    # test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_is_down
+    # -- could stop every future session, including the next day's, until a
+    # human ran `reset()` by hand. The desk runs unattended specifically
+    # because the owner cannot be relied on to intervene quickly, so a
+    # guardrail whose failure mode is "wait for a human" defeats the reason
+    # it exists.
+    #
+    # A price that turned stale five minutes ago is a different fact from a
+    # price nobody has ever fetched: OpenRouter's routed rates change on the
+    # order of once a quarter, not hour to hour, and the figure only ever
+    # BOUNDS a reservation that already carries `reservation_multiplier` on
+    # top. So: within this many hours PAST the 24h freshness boundary, a
+    # cache that can't be refreshed live is used rather than latched --
+    # widened per `openrouter_pricing_stale_multiplier_max` below and logged
+    # loudly on every call -- and only a cache older than 24h + this grace,
+    # or no cache at all, or a cache missing a rate for a model actually
+    # configured, still fails closed exactly as before. 0 restores the
+    # pre-fix behaviour (fail the instant the cache turns stale) for anyone
+    # who wants it back.
+    openrouter_pricing_grace_period_hours: float = Field(
+        default=24.0, ge=0.0, le=168.0, allow_inf_nan=False,
+    )
+    # Reservation multiplier applied at the FAR edge of the grace window
+    # above (`cost_table.openrouter_pricing_reservation_multiplier` scales
+    # linearly from `reservation_multiplier` itself -- i.e. no widening at
+    # all -- the instant the cache turns stale, up to this value once the
+    # cache is about to age out of grace entirely). Deliberately allowed
+    # above `reservation_multiplier`'s own 2.0 ceiling: the entire point is
+    # a WIDER margin than an in-hours call gets, proportional to how old the
+    # bound actually is, never a narrower one.
+    openrouter_pricing_stale_multiplier_max: float = Field(
+        default=1.50, ge=1.0, le=5.0, allow_inf_nan=False,
     )
 
     @model_validator(mode="after")
@@ -567,6 +750,12 @@ class LLMCostCircuitConfig(BaseModel):
             raise ValueError(
                 "daily_reserved_exposure_limit_usd must be >= "
                 "session_reserved_exposure_limit_usd"
+            )
+        if self.openrouter_pricing_stale_multiplier_max < self.reservation_multiplier:
+            raise ValueError(
+                "openrouter_pricing_stale_multiplier_max must be >= reservation_multiplier "
+                "-- a reservation built on stale pricing must never be LESS conservative "
+                "than one built on fresh pricing"
             )
         return self
 
@@ -653,6 +842,68 @@ class EvolutionConfig(BaseModel):
     the second belt at the editor layer."""
 
 
+class NotificationsConfig(BaseModel):
+    """Where Telegram alerts point the operator back into Mission Control.
+
+    The operator reads these on his phone. He got a BUY CRM alert whose
+    rationale read "...strong heavy accumulation volume" and just stopped
+    there mid-sentence, with no way to see the rest or jump into the
+    dashboard for the full picture. `mission_control_url` is the tap-through
+    target `TelegramNotifier.send()` appends as an HTML link to relevant
+    alerts (see src/notifier.py, src/trader_feed.py). An empty string
+    disables the link entirely — never emit a broken one instead.
+
+    Defaults to the tailnet address Tailscale Serve exposes for the qamc
+    API (`ovh-vps.wallaby-bowfin.ts.net`, proxying tailnet-only port 443 to
+    the API on 127.0.0.1:8800), which mounts the cockpit
+    (`app.mount("/cockpit", ...)` in src/api/server.py). Unreachable from
+    the public internet, matching Mission Control's "private, read-only,
+    non-critical to trading" posture.
+    """
+
+    mission_control_url: str = "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
+    """Base URL Telegram alerts link to. Empty string = no link. Must be
+    http(s) when non-empty — the value lands inside an href="..." attribute,
+    and rejecting other schemes here (e.g. an accidental "javascript:") is
+    cheaper than relying on Telegram's client-side handling of it."""
+
+    @field_validator("mission_control_url")
+    @classmethod
+    def _validate_scheme(cls, v: str) -> str:
+        v = v.strip()
+        if v and not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError(
+                "notifications.mission_control_url must be http:// or "
+                "https:// (or empty, to disable the link) — got: " + v
+            )
+        return v
+
+
+class ReconciliationConfig(BaseModel):
+    """Broker-truth reconciliation of the `trades` ledger against Alpaca.
+
+    2026-08-28 ONDS/CCJ incident: both positions were closed by their
+    broker-resident protective stop (a GTC stop-limit order placed by
+    `AlpacaBroker.place_entry_protection` / `_repair_stop_coverage` /
+    `shift_stops_down`, none of which ever wrote a `trades` row for the
+    stop order itself). The stop fired, the position vanished from the
+    broker, and the ledger never heard about it — the BUY rows sat forever
+    at `realized_pnl IS NULL` and the `positions` table (synced directly
+    from broker truth) quietly diverged from the story `trades` told.
+    `_reconcile_stop_out_fills` (src/pipeline.py) closes that gap by
+    diffing the ledger's own implied share count against the broker's
+    actual position and pulling any untracked filled SELL order it finds.
+    """
+
+    stop_out_lookback_days: int = Field(default=7, ge=1, le=60)
+    """How far back to ask the broker for filled SELL orders when the
+    ledger believes a symbol is still (partly) held but the broker shows
+    less. Wide enough to survive a multi-day outage of the reconciler
+    itself (weekends + a stuck timer) without being so wide it makes the
+    per-session broker query expensive. Alpaca's own order-history
+    retention is the real outer bound this can't exceed."""
+
+
 class AppConfig(BaseModel):
     api_keys: ApiKeysConfig
     alpaca: AlpacaConfig
@@ -671,6 +922,13 @@ class AppConfig(BaseModel):
     # unchanged unless explicitly opted in.
     intraday_scan: IntradayScanConfig = Field(default_factory=IntradayScanConfig)
     smart_money: SmartMoneyConfig = Field(default_factory=SmartMoneyConfig)
+    # Optional section — a settings.yaml without it gets the documented
+    # default lookback (7 days), so older configs keep working unchanged.
+    reconciliation: ReconciliationConfig = Field(default_factory=ReconciliationConfig)
+    # Optional section — a settings.yaml without it gets the tailnet cockpit
+    # default (see NotificationsConfig docstring), so older configs keep
+    # alerting exactly as before, just with a link added.
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
 
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):

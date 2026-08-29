@@ -22,7 +22,13 @@ class TradingScheduler:
         # one-shot modes in its finally block; the blocking scheduler
         # returns before that, so _run_safe owns notification here.
         # TelegramNotifier() is a silent no-op without env creds.
-        self.notifier = TelegramNotifier()
+        # `config` is fully validated by this point (TradingScheduler is
+        # only ever constructed with an already-loaded AppConfig), so the
+        # tap-through link can be wired at construction rather than
+        # patched in later like main.py has to.
+        self.notifier = TelegramNotifier(
+            mission_control_url=config.notifications.mission_control_url,
+        )
         # Schedule times in settings.yaml are interpreted as ET (US equity
         # market local time), matching the morning/midday/evening labels.
         # ET is imported from src.trading_calendar (the project's single

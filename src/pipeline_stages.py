@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
     from src.data.market import MarketDataProvider
-    from src.data.news import NewsDataProvider
+    from src.data.news import NewsCoverage, NewsDataProvider
     from src.data.news_store import NewsStore
     from src.data.tech_store import TechStore
     from src.models import TradeDecision
@@ -1048,25 +1048,71 @@ class MorningResearchStage:
             data_status["macro"] = "failed"
 
         # News
+        #
+        # 2026-08-28 fix: before this, `data_status["news"]` was "ok" purely
+        # on whether the LLM call parsed — a run where Reuters 404'd and AP
+        # 403'd still said "ok" as long as the analyst produced valid JSON
+        # from whatever the surviving feeds returned (or from nothing at
+        # all). `news_coverage` (src.data.news.NewsCoverage) is the
+        # deterministic half of the fix: it reflects how many of the
+        # configured wire feeds actually returned data, independent of
+        # whether the LLM call on top of them succeeded. Coverage failure
+        # dominates parse success below — a cleanly parsed report built on
+        # zero real headlines is not "ok" by any honest reading of the word.
         news_intel: NewsIntelligenceReport | None = None
+        news_coverage: "NewsCoverage | None" = None
         try:
-            news_intel = news_future.result()
+            news_intel, news_coverage = news_future.result()
+            if news_coverage is not None:
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="news_provider",
+                    kind="coverage", scope="run",
+                    evidence_json=__import__("json").dumps({
+                        "configured": news_coverage.configured,
+                        "succeeded": news_coverage.succeeded,
+                        "failed": [
+                            {"name": f.name, "reason": f.reason}
+                            for f in news_coverage.failed
+                        ],
+                        "status": news_coverage.status,
+                    }, sort_keys=True),
+                )
             if news_intel:
                 logger.info("News briefing: %s", news_intel.pm_briefing[:200])
-                data_status["news"] = "ok"
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="news_analyst",
                     kind="analysis", scope="run",
                     evidence_json=news_intel.model_dump_json(),
                 )
-            else:
+            # Coverage is authoritative over parse success: total feed
+            # failure means "failed" even if the model still emitted a
+            # technically-valid report on empty input. A coverage-less
+            # result (news_coverage is None — a caller/test that hasn't
+            # been updated to report it) falls back to the pre-fix
+            # ok/parse_error split rather than crashing on a missing value.
+            if news_coverage is None:
+                data_status["news"] = "ok" if news_intel else "parse_error"
+            elif news_coverage.status == "failed":
+                data_status["news"] = "failed"
+                logger.error(
+                    "News coverage FAILED this run: %s", news_coverage.describe(),
+                )
+            elif not news_intel:
                 data_status["news"] = "parse_error"
+            elif news_coverage.status == "partial":
+                data_status["news"] = "partial"
+                logger.warning(
+                    "News coverage PARTIAL this run: %s", news_coverage.describe(),
+                )
+            else:
+                data_status["news"] = "ok"
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
             logger.error("News analyst failed: %s. Continuing without news.", e)
             data_status["news"] = "failed"
         ctx.news_intel = news_intel
+        ctx.news_coverage = news_coverage
 
         # Tech
         analyses: list[TechAnalysisResult] = []

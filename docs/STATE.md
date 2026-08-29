@@ -62,7 +62,7 @@ This file records what is accepted and true **now**. Git history preserves imple
   (`src/data/market.py`, new) can supply an approximate trading-session count to a
   symbol's next scheduled earnings — but **nothing in the pipeline calls it or
   passes `days_to_earnings` today**; it is available but unwired.
-- **Phase 2a of the remediation spec is committed, not yet merged** — `c89e957`
+- **Phase 2a of the remediation spec is merged and deployed** — `c89e957`
   on branch `feat/risk-metrics-and-pm-correlation`. It folds in four
   `AGENT_ROLE_AUDIT.md` audit findings that preceded Phase 2's own sizing work:
   the drawdown-halve is now deterministic (`src/risk/rules.py::apply_drawdown_scale`
@@ -75,8 +75,8 @@ This file records what is accepted and true **now**. Git history preserves imple
   point — no gate consumed it yet. Phase 2's own items (§2.1 risk-based
   sizing, §2.2 correlation-aware budget ceiling, §2.4 retiring the fixed
   position count) landed afterward as Phase 2b — see below.
-- **Phase 3.1 and 3.2 of the remediation spec are committed, not yet
-  merged** — `aea82ee` on branch `feat/exit-rework-pace-and-memory`. §3.1: the
+- **Phase 3.1 and 3.2 of the remediation spec are merged and deployed**
+  — `aea82ee` on branch `feat/exit-rework-pace-and-memory`. §3.1: the
   `pace` metric no longer feeds back on the desk's own realized-trade
   calibration — `expected_horizon_sessions` and `setup_type` are pinned to the
   `trades` row at BUY time and never recomputed, the calibration query is
@@ -90,13 +90,15 @@ This file records what is accepted and true **now**. Git history preserves imple
   whose stated reason is a deterioration claim when every metric that moved
   since the prior review improved. Exits on new information (news, earnings,
   regime shift, correlation breach, a triggered `thesis_invalid_if`) are never
-  vetoed. §3.3 is committed separately — see below. §3.4–§3.7 (routing exits
+  vetoed. §3.3 is merged separately — see below. §3.4–§3.7 (routing exits
   through AI Risk, upgrading the reviewer's model off `gemini-2.5-flash-lite`,
-  ATR noise band, broker-resident trailing stops) and Phases 4–8
-  (evidence/feed repair, short selling, cost/transparency, measurement,
-  further documentation correction) remain pending — see
-  `docs/QAMC_REMEDIATION_SPEC.md`.
-- **Phase 3.3 of the remediation spec is committed, not yet merged** —
+  ATR noise band, broker-resident trailing stops) are also merged and
+  deployed — see "Phase 3 ... COMPLETE" below (§3.5 was resolved as an owner
+  decision rather than implemented). Phases 4–8 (evidence/feed repair, short
+  selling, cost/transparency, measurement, further documentation correction)
+  remain pending in whole or part — see `docs/QAMC_REMEDIATION_SPEC.md` and
+  `docs/WORK.md`'s ordered backlog for current status.
+- **Phase 3.3 of the remediation spec is merged and deployed** —
   `2f177e33` on branch `feat/exit-gate-and-risk-routing`. The hard-trigger
   phrase gate on exits previously applied only to a symbol already trimmed
   that day, so a position's first sale of the day executed on soft reasoning
@@ -123,9 +125,8 @@ This file records what is accepted and true **now**. Git history preserves imple
   upward only. §3.5 was resolved as an owner decision rather than
   implemented: the "weakest model" premise is contradicted by committed
   benchmark data (see `docs/WORK.md`). §3.8 unchanged.
-- **Phase 2b (risk-based sizing) is committed, not yet merged or deployed** —
-  `75c0233` on branch `feat/pm-flex-routing`. Production is still bounded by
-  the constructor's `risk_budget_pct = 0.5` default until this merges. The
+- **Phase 2b (risk-based sizing) merged and deployed** — `75c0233` on branch
+  `feat/pm-flex-routing`, merged as PR #113. The
   branch replaces `target_weight_pct` with `risk_allocation_pct` as the live
   sizing field and turns `max_portfolio_risk_pct` from a reported figure into
   an enforced gate. **Owner-ratified risk envelope, per `config/settings.yaml`
@@ -147,7 +148,7 @@ This file records what is accepted and true **now**. Git history preserves imple
   `src/data/company.py`) that predates and duplicates `75c0233`. It was not
   touched by this documentation pass; reconcile or discard it before doing
   further Phase 2b work so two implementations don't collide.
-  **Two follow-on fixes landed the same day, same branch, also not merged or
+  **Two follow-on fixes landed the same day, same branch, also merged and
   deployed:** `b712f4c` clamps the constructor to the 20% single-name ceiling
   the risk engine actually enforces (`max_position_pct` is a HARD BLOCK, not
   a trim — without this, the sizing above computed orders the engine would
@@ -160,10 +161,9 @@ This file records what is accepted and true **now**. Git history preserves imple
   noise and forced the 20% clamp above to bind at nearly every conviction
   level. `config/prompts/portfolio_manager.md`'s conviction bands and
   `config/prompts/tech_analyst.md`'s stop guidance were recalibrated to match.
-  2487 tests pass. Production still runs the pre-clamp, pre-widening
-  constructor — true from `058273f1` / `e6ada88` and still true at current
-  production HEAD `32c174b` (PR #114 added only the deploy-drift alarm, not
-  this fix; see "Production position" below).
+  2487 tests pass. **This section does not track a live deploy pointer** —
+  see "Production position" below for how to check what production is
+  actually running.
 - **The Portfolio Manager now routes through OpenRouter's `openai/flex`
   endpoint** (`16f6535`, same branch) — the identical `openai/gpt-5.5-20260423`
   weights at half price ($2.50/$15 vs $5/$30 per M tokens), an endpoint choice
@@ -202,25 +202,41 @@ The prior three-account daily workflow created excessive friction. During stabil
 
 The retained isolation boundary is `ubuntu` engineering/operator vs `qamc` runtime. Codex must not run as `qamc`.
 
-## Production position — current pointer and history
+## Production position — how to check it, and history
 
-**Current production HEAD is `32c174b`** (merge of PR #114, the deploy-drift
-alarm — see below), deployed 2026-08-27 evening ET. It descends from `e6ada88`
-(PR #112) and `058273f1` (Phase 3, PR #109/#110), so everything recorded
-against those SHAs elsewhere in this file still holds. It does **not**
-include Phase 2b risk-based sizing (`75c0233`) or the OpenRouter flex-routing
-change (`16f6535`) — both are on `feat/pm-flex-routing` (PR #113), still open
-and unmerged. See `docs/WORK.md` "Session start" for the full not-deployed
-list.
+**This file does not record a live production pointer — check it directly:**
+
+`sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`
+
+Compare that SHA against `git log origin/main` and `docs/WORK.md`'s ordered
+backlog to see what production has and what is still pending. Every commit
+SHA and rollback SHA recorded anywhere in this file (including below) is a
+historical point-in-time record, not a live pointer — it was true when it
+was written and goes stale at the next deploy. This section alone recorded
+five different "current" production SHAs in two days; that was the bug, not
+something to keep repeating.
+
+**Historical: the 2026-08-27 evening deploy.** As of that evening,
+production was deployed at `46b2029` (merge of PR #113,
+`feat/pm-flex-routing`), superseding `32c174b` (PR #114, the deploy-drift
+alarm), which PR #113 carries inside its own merge history. It descended
+from `e6ada88` (PR #112) and `058273f1` (Phase 3, PR #109/#110), and
+included Phase 2b risk-based sizing (`75c0233`), the stop-width fix
+(`3dff940`) and the OpenRouter flex-routing change (`16f6535`). As of that
+same evening, PR #115 (earnings extraction fix) and PR #116 (shorts Stage 1,
+countable) were open and undeployed. **None of this paragraph describes
+current state** — use the command above, and see `docs/WORK.md`'s ordered
+backlog for what is currently pending.
 
 The `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7` / PR #93 SHA recorded below is
-**historical** — it was production on 2026-08-26 and has since been
-superseded twice over (PR #109/#110, then PR #111/#112, then PR #114). It is
-kept only because the forensic narrative under it (the recovery/retry-limit
-defect, the Smart Money/earnings data-shaping fixes) is not duplicated
-elsewhere. Its recorded rollback SHA was `7fe6e4babbf3cf0209d8f93536f8150de70fea37`;
-that rollback target is likewise stale and must not be used against current
-production without re-verifying the gap it would reopen.
+similarly historical — it was production on 2026-08-26 and has since been
+superseded multiple times over. It is kept only because the forensic
+narrative under it (the recovery/retry-limit defect, the Smart Money/earnings
+data-shaping fixes) is not duplicated elsewhere. Its recorded rollback SHA,
+`7fe6e4babbf3cf0209d8f93536f8150de70fea37`, is likewise a historical artifact
+of that one incident — never a usable rollback target — and must not be used
+against current production without first checking what production actually
+is and what gap it would reopen.
 
 Production verification on 2026-08-26 established (historical, PR #93 state):
 
@@ -274,6 +290,31 @@ and known-sector checks. The run cap is three. Admission bypasses only permanent
 universe membership and the Technical prefilter; current Technical analysis,
 PM grounding, AI Risk, deterministic risk/funding, broker protection and
 Alpaca Paper remain mandatory. The configured 101-stock universe is unchanged.
+
+**Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+merged or deployed** — `f3aeba4` + `866e423` plus a 2026-08-28 finishing
+pass on branch `feat/insider-signal-filter`. `src/data/insider_signal.py`
+classifies every parsed Form 4 P/S row as `routine`, `opportunistic` or
+`indeterminate` (Cohen/Malloy/Pomorski calendar test, a recurring-cadence
+fallback, and proportional-size rules on sells; a 10b5-1 flag alone never
+marks a large sale routine). A routine purchase can no longer make a symbol
+`admission_eligible`, narrowing the lane described above; no other admission
+check changed. Every threshold (sell-materiality fraction, calendar years,
+cadence window, history retention) is a `SmartMoneyConfig` field in
+`src/config.py` (prefixed `insider_`), not a hardcoded constant. Re-measured
+on the live cache 2026-08-28: 57.3% of open-market P/S rows routine (2,742
+rows) — consistent with the original 56.2%-of-2,188 figure a day earlier —
+but zero of those matched the calendar test in either measurement, since the
+required multi-year history index still does not exist in production.
+End-to-end on `SECForm4Provider.fetch()` with the real cache: admission-
+eligible symbols are unchanged today (43 before and after — the one buy-side
+row the classifier demotes was already below the materiality floor), but
+ranking is materially affected — 94 symbols in the fetch() output have their
+entire visible dollar volume down-weighted to $0, including one ($IHT) whose
+raw $2.04B total was entirely two routine sales. See `docs/WORK.md`
+"Landed" for the full measurement, the config fields, and the caveat.
+Recorded here as branch/PR work, not as deployed behavior; production
+admission logic is unchanged until this merges and deploys.
 
 The production checkout retains exactly one intended tracked local configuration delta:
 
@@ -441,12 +482,13 @@ bearish expression is not actually wired up.
   `qwen/qwen3-235b-a22b-2507` for Risk Manager, and
   `google/gemini-2.5-flash-lite` for the remaining seats, according to the
   measured per-seat policy. Production remains on its separately promoted config.
-- **Committed, not yet merged or deployed** (`16f6535`, branch
-  `feat/pm-flex-routing`): the Portfolio Manager's `openai/gpt-5.5` calls now
+- **Merged and deployed** (`16f6535`, branch `feat/pm-flex-routing`, PR #113):
+  the Portfolio Manager's `openai/gpt-5.5` calls now
   prefer OpenRouter's `openai/flex` endpoint over `openai`/`azure` — the same
   model weights at half the per-token price. This is an endpoint preference
   (`llm.<agent>_provider_order`), not a routing change, and it is rejected at
   config load on any seat not on OpenRouter. See `docs/architecture/MODEL_ROUTING_POLICY.md`.
+  See "Production position" above for how to check current deploy status.
 
 ## Market-data feed finding — resolved, not an active defect
 
@@ -465,7 +507,9 @@ Phase 4.2, which also adds a feed-health signal to the alerts and dashboard.
 ## Not authorized
 
 - Live-broker order submission or live-capital activation.
-- Direct stock shorting, options/theta strategies, or margin.
+- Options/theta strategies. (Direct stock shorting and margin were authorized
+  2026-08-27, see "Intraday opportunity discovery" above — pending
+  implementation, not yet in production; see `docs/WORK.md` Phase 5.)
 - New timers, daemons, databases, proxies, credential systems or durable infrastructure without explicit architectural approval.
 - Deterministic risk/execution semantic redesign outside accepted work.
 - Paper-specific trading shortcuts that would create a second trading architecture.

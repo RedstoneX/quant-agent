@@ -162,7 +162,7 @@ def _wire_happy_path(mocks, tmp_path, cfg):
     ), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 

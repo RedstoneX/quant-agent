@@ -1,14 +1,19 @@
 # QAMC Current Work
 
-Status: **STALE — see "Session start" below for current production state.**
+Status: **STALE — this file does not track a live production pointer. Check
+reality: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.**
 
 ## Current integration truth — historical (2026-08-26, PR #93), superseded
 
 The block below was accurate for the SHA it names but that SHA is no longer
 production. Production has since moved through PR #109/#110 (Phase 3,
-`058273f1`), PR #111/#112 (execution fix, `e6ada88`), and PR #114 (deploy-drift
-alarm, `32c174b` — current). For what is actually deployed now, read
-"Session start" under "Active finish line" below; this section is kept only
+`058273f1`), PR #111/#112 (execution fix, `e6ada88`), PR #114 (deploy-drift
+alarm, `32c174b`), and PR #113 (Phase 2b sizing + stop-width fix, `46b2029`).
+That chain is itself now historical, not current — this section has recorded
+five different "current" production SHAs in two days, which was the actual
+bug. For what production has and what is still pending, read
+"Session start" under "Active finish line" below, and use the command above
+rather than trusting any SHA written in this file; this section is kept only
 because the PR #92/#93 forensic narrative isn't duplicated elsewhere.
 
 - Production was deployed and verified at
@@ -102,28 +107,115 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
-**Live production state (2026-08-27 evening ET, deployed this session):**
-deployed at `32c174b` on the paper account — PR #114, the deploy-drift alarm,
-merged on top of `e6ada88`. (Earlier same-day notes claimed `18dd4bc`, then
-`e6ada88`; `18dd4bc` was never actually on the box, and `e6ada88` was
-superseded by this deploy within the session — corrected here.) Phase 3 (exit
-rework), the execution limit fix, and the deploy-drift alarm are LIVE. Seven
-positions open, all with broker-resident stops. `paper: true`. Daily LLM
-budget raised to $2.75.
+**Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
+matches the production box byte for byte. Until this change the box carried
+five hand-edited values that existed nowhere in git, so any deploy that lost
+the stash/pop step would have silently reverted them — including the two that
+were raised specifically to end the 2026-08-28 outage. Reconciled:
 
-**New this deploy — deploy-drift alarm (PR #114, `9eef617` + `38a985c`):**
-`scripts/check_deploy_drift.py` plus `quant-agent-drift-check.timer`
-(Mon-Fri 08:45 ET) alerts over Telegram when the box's deployed HEAD falls
-behind `origin/main`. Built because PR #111 sat merged-but-undeployed for
-eight hours with nothing catching it (see the correction above). Verified
+| setting | was in git | now (and live) |
+| --- | --- | --- |
+| `intraday_scan.enabled` | `false` | `true` |
+| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
+| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
+| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
+| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
+
+**The Mission Control URL — and a stale preview that was masking a week of
+work (2026-08-28).**
+
+- The correct, production Mission Control address is
+  `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. Tailscale Serve proxies
+  tailnet-only port 443 to the qamc API on `127.0.0.1:8800`.
+- The qamc API binds loopback-only by design (`QUANT_AGENT_API_HOST=127.0.0.1`
+  in `quant-agent-api.service`). Tailscale Serve, not the bind address, is what
+  makes it reachable. Do not "fix" reachability by rebinding the service.
+- `http://100.111.170.97:8810/cockpit` is NOT Mission Control. It was
+  `ops/preview/branch_preview.py`, the ephemeral branch-preview server,
+  running as the parked `dev` account out of
+  `/home/dev/projects/quant-agent-dashboard`. Its own module docstring states
+  it has no systemd unit and no auto-start and is meant to be killed after a
+  review session.
+- It was started 2026-08-21 16:16 ET and was still running on 2026-08-28,
+  seven days later. It served a bundle built 2026-08-21 09:43 containing no
+  dockview layout key at all — predating PR #120 entirely. None of the cockpit
+  trader-view work (PR #120, pass 2 via PR #130, pass 3 via PR #137) was
+  visible at that address.
+- The orphaned process (PID 2267757) was killed on 2026-08-28. Port 8810 is
+  now closed. The production URL was re-checked immediately afterward and
+  returned HTTP 200.
+- **Diagnostic worth keeping:** to tell the two apart in one step, compare the
+  hashed bundle filename returned by `curl -sk
+  https://ovh-vps.wallaby-bowfin.ts.net/cockpit/` against whatever else claims
+  to be the cockpit. Different filenames mean something other than production
+  is being served.
+- **Consequence for `feat/telegram-links` (PR #136):** it defaults
+  `notifications.mission_control_url` to the stale
+  `http://100.111.170.97:8810/cockpit` in both `config/settings.yaml` and
+  `src/config.py`. That is being corrected to the HTTPS tailnet host before
+  merge; note it here so the reason is on record.
+- State plainly that this is the likely explanation for the operator
+  repeatedly seeing old cockpit code after deploys that had in fact landed
+  correctly.
+
+Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
+git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
+(`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
+was also a git delta — the box had been running `2.75` against a committed
+`1.50`.
+
+**These are not the final values.** `max_paid_sessions_per_mode_per_day: 8` and
+`daily_reserved_exposure_limit_usd: 5.50` are stopgaps that the four
+cost-circuit fixes are expected to supersede — the session cap should become
+dollar-based, and the reservation ceiling should fall once the estimator
+reserves from measured history instead of the theoretical maximum. Committing
+them is deliberate: git must describe the running system even while the
+running system is wrong.
+
+There are now **no uncommitted config deltas on the box.** Verify with
+`sudo -n -u qamc git -C /home/qamc/quant-agent status --porcelain`.
+
+**This section does not record a live production pointer — check it
+directly:** `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.
+This file has documented five different "current" production SHAs in two
+days; that was a documentation bug, not something worth repeating. Compare
+the SHA you get against `git log origin/main` and the ordered backlog below
+to see what production has and what is still pending.
+
+**Historical — the 2026-08-27 evening deploy.** As of that evening,
+production was deployed at `46b2029` (merge of PR #113,
+`feat/pm-flex-routing`), superseding `32c174b` (PR #114, the deploy-drift
+alarm, merged on top of `e6ada88` — PR #113 carries `32c174b` in its own
+merge history). Phase 3 (exit rework), the execution limit fix, the
+deploy-drift alarm, Phase 2b risk-based sizing, the stop-width fix, the
+OpenRouter flex-routing change and the intraday un-blindfolding were all live
+as of that deploy: seven positions open, all with broker-resident stops,
+`paper: true`, daily LLM budget raised to $2.75. (Earlier same-day notes had
+claimed `18dd4bc`, then `e6ada88`, as the deploy SHA; `18dd4bc` was never
+actually on the box, and `e6ada88` was superseded within the same session —
+recorded here only for the forensic trail, not because it matters now.)
+**None of this paragraph describes current state** — use the command above.
+
+**Historical — 2026-08-27 night, nothing further deployed, deliberately.**
+The sizing and stop-width change (`3dff940`, part of the deploy above) had
+its first live session 2026-08-28 09:30 ET, and the operator chose not to
+confound that read with another deploy that night. PR #115 (earnings fix)
+and PR #116 (shorts Stage 1) were both open, reviewed, and intentionally left
+undeployed that night. **Whether they are deployed now is a different
+question — check reality, above, and see the ordered backlog below.**
+
+**Historical — deploy-drift alarm (PR #114, `9eef617` + `38a985c`), landed in
+the 2026-08-27 deploy.** `scripts/check_deploy_drift.py` plus
+`quant-agent-drift-check.timer` (Mon-Fri 08:45 ET) alerts over Telegram when
+the box's deployed HEAD falls behind `origin/main`. Built because PR #111 sat
+merged-but-undeployed for eight hours with nothing catching it. Verified
 firing.
 
-**Not deployed:** everything merged after `32c174b`, plus the whole of
-**PR #113** (`feat/pm-flex-routing`), which is open, CI-green and unmerged.
-None of it is on production. It carries, in review order:
+**Historical — also in the 2026-08-27 deploy, PR #113 (`feat/pm-flex-routing`,
+merged as `46b2029`):**
 
 - `75c0233` Phase 2b risk-based sizing + the correlation-aware risk budget
-  gate — **the highest-consequence change here; review first.** It decides how
+  gate — **the highest-consequence change in this deploy.** It decides how
   much money each trade may lose. `b712f4c` and `3dff940` land on top of it,
   same branch: the constructor now clamps to the risk engine's 20%
   single-name ceiling instead of proposing orders it hard-blocks, and entry
@@ -132,8 +224,8 @@ None of it is on production. It carries, in review order:
   widened stop that drops reward:risk below 1.5 rejects the trade outright.
   Measured against the real book: MSFT's stop went 2.4% → 7.0%, VLO 4.5% →
   9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% conviction now produces
-  7.1/14.2/20.0% positions instead of clamping all three to 20%. None of
-  this is deployed — PR #113 is still open.
+  7.1/14.2/20.0% positions instead of clamping all three to 20%. First live
+  session under this change is 2026-08-28 09:30 ET.
 - `fb88e08` the intraday PM un-blindfolding.
 - `16f6535` the PM's OpenRouter `openai/flex` endpoint routing.
 - `6b7af86` the Mission Control `input_message` surface, `cdb387b` the
@@ -223,7 +315,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   invented stops and targets deleted. PRs #103, #104 and #105 followed
   (audit + research docs, then the document-authority tiers).
 - **Phase 2a** — committed as `c89e957` on branch
-  `feat/risk-metrics-and-pm-correlation` (not yet merged). Folds in the four
+  `feat/risk-metrics-and-pm-correlation`, merged and deployed. Folds in the four
   audit findings that were blocking real Phase 2 sizing work: the drawdown-halve
   is now deterministic code (§1.1, `src/risk/rules.py::apply_drawdown_scale` +
   `drawdown_buy_cap`), the Portfolio Manager sees the correlation matrix before
@@ -232,7 +324,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   Reviewer (§1.4). New `risk.max_portfolio_risk_pct` (25%) is **reporting-only**
   — it does not gate anything yet.
 - **Phase 3.1 + 3.2** — committed as `aea82ee` on branch
-  `feat/exit-rework-pace-and-memory` (not yet merged). §3.1: the `pace` feedback
+  `feat/exit-rework-pace-and-memory`, merged and deployed. §3.1: the `pace` feedback
   loop is broken — `expected_horizon_sessions` and `setup_type` are pinned on
   the `trades` row at BUY time and never recomputed, the rolling-calibration
   `avg_hold_days` query is deleted from the review path, and `pace_status`
@@ -244,7 +336,7 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   a deterioration claim when every metric that moved actually improved. Exits
   on new information are never vetoed. 2323 tests pass (2283 on main, +40).
 - **Phase 3.3** — committed as `2f177e33` on branch
-  `feat/exit-gate-and-risk-routing` (not yet merged). The hard-trigger phrase
+  `feat/exit-gate-and-risk-routing`, merged and deployed. The hard-trigger phrase
   gate previously applied only to a symbol already trimmed that day, so a
   position's *first* sale executed on soft reasoning unchecked — almost
   every sale. Two of 2026-08-26's evening-graded `premature` exits (EPD,
@@ -291,10 +383,11 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   blocks, and the `trades` migration (`expected_horizon_sessions`,
   `setup_type`) plus the reviewer-memory reader were pre-run so the 09:30
   session would not hit a cold migration. **Phase 2b was NOT deployed at this
-  point — see below, it has since been committed.**
+  point — see below; it has since been merged and deployed too (same evening,
+  as part of PR #113).**
 
 - **GPT-5.5 Flex for the Portfolio Manager — done.** `16f6535` on branch
-  `feat/pm-flex-routing` (committed, not merged/deployed). OpenRouter serves
+  `feat/pm-flex-routing`, merged and deployed as part of PR #113. OpenRouter serves
   the PM's exact model (`openai/gpt-5.5-20260423`) from `openai/flex` at half
   price ($2.50/$15 vs $5/$30 per M tokens) — an endpoint choice, not a model
   choice, so no benchmark was needed. New `llm.<agent>_provider_order`
@@ -327,8 +420,8 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   uncommitted attempt at this same phase still sits in the `phase2b`
   worktree and needs reconciling.
 
-  **Two follow-on fixes landed on top, same branch, both PR #113, neither
-  deployed.** `b712f4c`: `max_position_pct` (20%) is a HARD BLOCK rule in the
+  **Two follow-on fixes landed on top, same branch, both PR #113, both merged
+  and deployed 2026-08-27 evening.** `b712f4c`: `max_position_pct` (20%) is a HARD BLOCK rule in the
   risk engine, not a trim, and nothing connected it to §2.1's sizing — the
   constructor was free to build orders the engine existed to refuse. Measured
   against the book: the 17 most recent BUYs carried stops a median 4.3% below
@@ -353,8 +446,9 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   now produces 7.1/14.2/20.0% positions instead of clamping all three to 20%
   — conviction changes size again. `config/prompts/portfolio_manager.md`'s
   conviction bands and `tech_analyst.md`'s stop guidance were recalibrated to
-  match (2026-08-27 doc-sync pass). 2487 tests pass. **None of this is
-  deployed** — PR #113 is open, CI-green, unmerged.
+  match (2026-08-27 doc-sync pass). 2487 tests pass. **This bullet does not
+  track live deploy status** — see "Session start" above for how to check
+  what production is actually running.
 - **`intra_check` un-blindfolded — done.** `fb88e08`, same branch. It cost
   $0.222/run vs morning's $0.221 while the PM received a technical-only
   evidence registry. The morning's macro/news are now carried forward
@@ -400,6 +494,129 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   covered the moment it lands. Import is deliberately shallow — it proves a
   tool still agrees with the schemas it's built on, not that the tool works.
   2470 tests pass.
+- **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+  merged or deployed.** `f3aeba4` + `866e423` (original implementation) plus
+  a 2026-08-28 finishing pass on branch `feat/insider-signal-filter`
+  (worktree `insider-filter`). `src/data/insider_signal.py::classify_transaction`
+  implements the Cohen/Malloy/Pomorski (JF 2012) routine-versus-opportunistic
+  test in pure Python, first-match-wins: non-open-market codes, incomplete
+  amounts and zero-price rows are handled first (mostly contract guards —
+  `SECForm4Provider` already drops everything but non-derivative P/S), then
+  the calendar-month test (same insider, same issuer, same calendar month,
+  same direction, in each of the 3 preceding years), then a recurring-cadence
+  fallback (>=3 prior same-direction trades, mean gap 20-120 days, coefficient
+  of variation <=0.25) for when 3 years of history is not yet available, then
+  proportional-size rules on sells (routine under 5% of the pre-transaction
+  holding) and all buys opportunistic. `SmartMoneyObservation` gains
+  `signal_class`/`signal_class_reason`/`signal_class_detail`/`signal_weight`;
+  a routine purchase can no longer make a symbol `admission_eligible` (narrows
+  the existing gate only — broker/price/liquidity/history/sector gates in
+  `pipeline.py` are untouched); `smart_money_analyst.md` and the analyst's
+  compact payload now carry the verdict and weight dollar totals by class. New
+  `data/smart_money/insider_history.json`, pruned at `insider_history_retention_days`
+  (default 5 years), because `observations.json` is pruned to the lookback
+  window and the calendar test needs years of retained history.
+  **Deliberate departure from the folk version of this filter:** a 10b5-1
+  checkbox alone never marks a sale routine — `RESEARCH_FINDINGS.md` §1
+  states plainly that planned and discretionary high-value sales show
+  similar opportunism, so the flag only ever supports a routine label for a
+  sale that is already proportionally small; a large planned sale stays
+  `material_stake_sale` and its reason text records that the flag was seen
+  and not acted on. Two tests pin this.
+
+  **2026-08-28 finishing pass** (this PR) closed two gaps found on review of
+  the original commits:
+  1. **Every classification threshold was a module-level constant** —
+     `MIN_MATERIAL_SELL_FRACTION`, `CALENDAR_ROUTINE_YEARS`,
+     `MIN_CADENCE_TRADES`, the cadence gap/dispersion bounds, and
+     `HISTORY_RETENTION_DAYS` — which violates the standing rule that a
+     number able to change classification output is an operator setting,
+     not a hardcoded one. Moved to seven new fields on `SmartMoneyConfig`
+     (`src/config.py`, all prefixed `insider_`, defaults unchanged from the
+     old constants so unconfigured behavior is identical), threaded through
+     a new `InsiderSignalThresholds` dataclass into `classify_transaction`/
+     `classify_observations`, and wired end-to-end through
+     `SECForm4Provider.__init__` → `src/pipeline.py`'s construction of it →
+     `config/settings.yaml`. A config-load validator rejects a cadence
+     window with `min >= max` and a history retention shorter than the
+     calendar-routine lookback requires.
+  2. **Test gaps required by the finishing task:** every reachable
+     transaction-code path pinned with hard literals (P, S, and the `""`
+     contract-guard path directly; `SmartMoneyObservation.transaction_code`
+     is `Literal["", "P", "S"]`, so A/M/F/G/D/X cannot reach the classifier
+     at all — those six are instead pinned at the parser boundary in
+     `tests/test_smart_money.py::test_every_non_open_market_code_is_dropped_before_the_classifier`,
+     proving they never arrive); an indeterminate (unclassifiable) filing
+     confirmed KEPT through the full `fetch()` pipeline, not just at
+     `classify_transaction`; three tests proving the thresholds are
+     genuinely configurable (same input, different threshold, different
+     verdict — something a hardcoded constant could not do); and a revert
+     cross-check (`src/` reverted to `origin/main` with these tests left in
+     place) that failed 4 tests directly plus a whole-module collection
+     error on `tests/test_insider_signal.py` (36 tests that never got to
+     run) — i.e. the tests actually depend on this implementation existing.
+     `tests/test_smart_money.py` (pre-existing, untouched by the original
+     commits) continues to pass unchanged, pinning that non-routine Smart
+     Money behavior — admission, materiality, clustering — is unaffected.
+
+  **Measured against the real production cache**
+  (`/home/qamc/quant-agent/data/smart_money/observations.json`, read-only,
+  2026-08-28): **2,742 stream=insider rows within the 7-day lookback, 1,224
+  filings, 2026-08-21 to 2026-08-28 — 57.3% routine (1,572), 42.6%
+  opportunistic (1,167), 0.1% indeterminate (3).** This re-confirms the
+  original 56.2%-of-2,188 figure (measured a day earlier, 2026-08-21 to
+  2026-08-27) rather than replacing it — same order of magnitude, same
+  caveat: **zero rows matched the calendar-month or cadence rules** in
+  either measurement, because `insider_history.json` still does not exist
+  in production (this PR is not deployed). The 57.3% is still driven
+  entirely by the proportional-sell rules (`planned_small_disposition` +
+  `immaterial_stake_sale` = 1,568 of 1,572 routine rows; the remaining 4 are
+  `zero_price_transaction`) plus, this time, one previously-unmeasured
+  finding: **only 1 of the 413 buy-side (code `P`) rows was routine at all**
+  (a single `$0`-price transaction) — the routine label is concentrated
+  almost entirely on the sell side, which the admission gate never reads.
+
+  **Before/after on `SECForm4Provider.fetch()`, same real cache, same
+  `config/settings.yaml`, uncapped `max_observations` (measuring the gate,
+  not the 40-row display limit), classifier vs. a stub that force-labels
+  every row `opportunistic` (byte-for-byte what `fetch()` did before this
+  branch — the only change is the added `and verdict.label != "routine"`
+  clause):**
+  - **Admission-eligible symbols: unchanged, 43 both before and after** —
+    the sole buy-side row the classifier demotes (the `$0` transaction
+    above) was already excluded by the pre-existing materiality floor
+    regardless of its label, so on today's snapshot the narrower admission
+    gate has not yet flipped any symbol's eligibility. This will not stay
+    true forever — it holds only because no *material* buy in the current
+    7-day window happens to be routine yet, and because the calendar test
+    has no history to draw on.
+  - **Ranking impact is real and large even though admission isn't**: of
+    the 1,842 rows that clear `fetch()`'s materiality/cluster gates, 1,113
+    (60.4%) are routine and now sort last / contribute `$0` to the
+    dollar-weighted ranking sum `smart_money_analyst.py::_symbol_rank`
+    uses. **94 symbols in the fetch() output have their entire visible
+    dollar volume down-weighted to `$0`** — including one (`IHT`) whose raw
+    total was **$2.04 billion**, entirely two routine sales, that would
+    previously have dominated the ranked list ahead of every genuine
+    opportunistic signal in the universe.
+
+  **Pre-existing gap found, not fixed (out of this task's scope, flagged
+  per the stop-on-pre-existing-rot rule):** a row with
+  `transaction_value_usd is None` (e.g. `incomplete_amounts`) can never
+  survive `fetch()`'s survivors loop at all — both the individual-
+  materiality and cluster-window branches require
+  `transaction_value_usd is not None` before a row is even added to the
+  candidate set, dropping it regardless of `signal_class`. This predates
+  the classifier (`b1944cd`, "add SEC smart-money transient admissions")
+  and is a materiality-gate limitation, not a routine/opportunistic
+  classification defect — the classifier itself still returns
+  `indeterminate`, never `routine`, for this case
+  (`tests/test_insider_signal.py::test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine`
+  pins that). Worth a separate look if unpriced Form 4 rows turn out to be
+  common enough to matter.
+
+  Full suite: 2,713 tests pass (2,696 after merging current `main`, +17 net
+  new in this finishing pass). Nothing here is deployed; PR only.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -471,13 +688,13 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   confirmed 5% is the ratified envelope and that the 0.5% figure was a
   constructor default nobody chose. Floor stays 0.5%; total stays 25%,
   correlation-adjusted. **This envelope has since been implemented** as Phase
-  2b (`75c0233`, `feat/pm-flex-routing`, not yet merged/deployed) — see the
+  2b (`75c0233`, `feat/pm-flex-routing`, merged and deployed) — see the
   landed section above.
 
 **Measured LLM spend (10 days to 2026-08-27) — read before proposing any budget change**
 
 **These figures predate the flex-routing and intra_check fixes below** (both
-committed on `feat/pm-flex-routing`, not yet merged/deployed) — they are the
+merged and deployed as part of `feat/pm-flex-routing` / PR #113) — they are the
 baseline those changes were made against, not current production numbers.
 
 $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
@@ -533,11 +750,12 @@ Two facts worth acting on:
    `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depended on Phase 2b — now
    committed (`75c0233`, `feat/pm-flex-routing`) — because "agreement earns
    size" is meaningless until size is expressed as risk.
-2. **Execution: bounded re-peg — BUILT, SHIPPED DARK, AND MOSTLY INERT.**
-   `feat/bounded-repeg` implements it: `execution.repeg_enabled` (default
-   **false**), `repeg_max_attempts` (default 2, schema-capped at 5), the
-   `pending_repegs` write-ahead queue and its session-start drain,
-   `broker.replace_entry_limit` / `resolve_replacement_chain`, and
+2. **Execution: bounded re-peg — BUILT, SHIPPED DARK, AND MOSTLY INERT, merged
+   from `feat/bounded-repeg` (PR opened against `main`, 2026-08-29).**
+   `execution.repeg_enabled` (default **false**), `repeg_max_attempts`
+   (default 2, schema-capped at 5), the `pending_repegs` write-ahead queue and
+   its session-start drain, `broker.replace_entry_limit` /
+   `resolve_replacement_chain`, and
    `place_entry_protection(superseded_filled_qty=...)` so a fill that landed
    under a superseded order id still gets a stop. A partially filled order is
    NEVER replaced (that is how one idea gets bought twice), a rejected
@@ -554,47 +772,401 @@ Two facts worth acting on:
    should peg tighter than the ceiling (and then be walked up) is a policy
    question that reverses part of #111's reasoning and was deliberately NOT
    taken here.
-3. **Earnings filing extraction is broken.** `EarningsProvider._extract_text`
-   (`src/data/earnings.py`) takes the first 30,000 characters of a filing. For
-   a 10-K that is the cover page, auditor's report and table of contents — the
-   financial statements are hundreds of pages further in. MSFT's own analysis
-   says so: *"Filing text is heavily truncated, consisting mainly of auditor's
-   report and table of contents."* The earnings seat has never seen MSFT's
-   numbers. Cheap fix (locate MD&A / financial statements rather than slicing
-   from the top) and it restores an entire evidence source.
-4. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
-   ratio in the system — over half of Form 4 trades carry zero predictive power.
+3. **Earnings filing extraction fix — PR #115 (`009ab78`, branch
+   `feat/shorts-visible`, misnamed — it carries the earnings fix, not
+   shorting), merged into `main`.** Deploy status is not tracked here — check
+   `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` against
+   `git log origin/main` to see whether it has shipped yet. Corrects the diagnosis
+   previously recorded here, which was wrong: the class is
+   `EarningsDataProvider` (`src/data/earnings.py`), not `EarningsProvider`,
+   and it was never doing a naive first-30,000-characters slice — structured
+   section extraction and a density-seeking fallback both already existed.
+   The real defect: `_extract_key_sections` matches the phrase "financial
+   statements", which also appears verbatim inside the auditor's opinion
+   letter ("...the related notes (collectively referred to as the financial
+   statements)"). The acceptance test measured only LENGTH (≥3,000 chars), so
+   that prose comfortably cleared the bar and suppressed the density-seeking
+   fallback that would have found the real tables. Measured over the 68
+   filings cached on the production box: 17 reached the earnings analyst
+   starved (<40 financial figures), 12 of those with ZERO — MSFT, AAPL,
+   GOOGL, BAC, CVX, NFLX among them. Fix: require ≥40 financial figures
+   (dollar amounts, comma-grouped thousands, parenthesized negatives — the
+   same pattern `_find_financial_dense_region` already scored by, now a
+   shared module constant) in addition to length; failing the content check
+   falls through to the fallback instead of returning. Re-measured across all
+   68: 17 improved, 51 unchanged, 0 regressed, 0 starved.
+4. **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+   merged/deployed.** See the "Landed" entry above (`feat/insider-signal-filter`)
+   for what it does and the measured routine split with its caveat.
 5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-6. **Phase 4.2 — repair the data feeds.** Fix Reuters/AP/FRED; surface degraded
-   coverage to the operator. (4.1, un-blindfolding the intraday buy path, is
-   done — `fb88e08`, `feat/pm-flex-routing`, see the landed section above.)
-7. **Phase 5 — short selling.** Discovery ALREADY WORKS — `TechAnalysisResult.rating`
-   emits `sell` / `strong_sell`, so bearish candidates are identified today.
-   What is missing is everything downstream: `PortfolioConstructor._build_sell`
-   returns `None` when the symbol is not already held, so a bearish view on a
-   name you do not own dies silently in one line; `TradeDecision.action` has no
-   open-short value; and sizing, stops (inverted — above entry) and margin
-   accounting all assume long. Bounded and additive, roughly a day, NOT a
-   rewrite. **Inverse ETFs are explicitly NOT the answer** — the owner has
-   rejected that workaround; he wants real short selling. Alpaca is ready:
-   `shorting_enabled:
-   true`, `no_shorting: false`, `max_margin_multiplier: 4`, equity above the
-   $2,000 floor, assets `shortable` with `borrow_status: easy_to_borrow`. This is
-   entirely a code change; no account work is outstanding.
+6. **Phase 4.2 — repair the data feeds.** News-feed half **DONE** (branch
+   `fix/news-feeds-and-coverage`, 2026-08-28): Reuters/AP investigated live —
+   neither is fixable for free (Reuters retired public RSS in 2020; AP's own
+   feed requires a paid OAuth2 API, and the free third-party proxy is
+   Cloudflare-walled) — both removed from `RSS_FEEDS`, Yahoo Finance News
+   added as a partial free substitute, and `NewsCoverage` (`src/data/news.py`)
+   now makes a dead feed impossible to miss: it's in the analyst's own prompt
+   and in `data_status["news"]` (`ok`/`partial`/`failed`), which is what
+   `trader_feed.py`/`notifier.py` already render as the operator-facing
+   `⚠️ Data degraded` banner. **FRED still open** — separate provider
+   (`src/data/macro.py`), unrelated to the RSS pipeline, not touched here.
+   (4.1, un-blindfolding the intraday buy path, is done — `fb88e08`,
+   `feat/pm-flex-routing`, see the landed section above.)
+7. **Phase 5 — short selling, now a three-stage plan.** The prior estimate
+   recorded here — "bounded and additive, roughly a day, NOT a rewrite" — was
+   **wrong**. A survey for Stage 1 found roughly 50 long-only assumptions
+   across the money path, several failing silently: the constructor would
+   re-open a held short every session (a short's weight was absent from
+   `_current_weights`, so `.get(sym, 0.0)` read an already-held short as
+   unheld); short orders bypass the risk engine entirely via an early
+   `return []` on SELL; and shorts counted as zero portfolio risk in
+   `portfolio_heat` (`qty <= 0` was excluded). Discovery still ALREADY WORKS —
+   `TechAnalysisResult.rating` emits `sell` / `strong_sell` today. **Inverse
+   ETFs are explicitly NOT the answer** — the owner rejected that workaround;
+   he wants real short selling. Split into:
+   1. **Make shorts countable — PR #116 (`feat/shorts-countable`, two commits
+      `71325b1` + `a81bfde`), merged into `main`.** Deploy status is not
+      tracked here — check `sudo -n -u qamc git -C /home/qamc/quant-agent log
+      --oneline -1` against `git log origin/main`. Signed weights
+      in `_current_weights`, side-aware `r_multiple`/`position_risk`/
+      `portfolio_heat` in `src/risk/metrics.py`, and `qty != 0` (not `qty >
+      0`) in every reporting filter (`src/storage/db.py`,
+      `src/notifier.py`, `src/trader_feed.py`, `src/pipeline.py`). No order
+      path is touched — the constructor emits nothing for a held short
+      (`current_pct < 0`) rather than routing a cover or an add-to-short
+      through paths that don't yet handle direction. 40 tests added
+      (`tests/test_shorts_countable.py`), 21 of which failed pre-merge on
+      `main` without this fix; the rest are a no-op wall proving long
+      arithmetic is unperturbed.
+   2. **Make shorts safe (not yet started).** Risk-engine routing so a SELL
+      on an unheld symbol doesn't skip the deterministic gate via the early
+      `return []`; stop direction (above entry) and trailing direction
+      inverted for shorts; unbounded-loss margin accounting.
+   3. **Turn it on (not yet started).** Order placement in the broker layer,
+      then retire the inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`) as the
+      bearish-expression mechanism.
+   Alpaca is ready: `shorting_enabled: true`, `no_shorting: false`,
+   `max_margin_multiplier: 4`, assets `shortable` with `borrow_status:
+   easy_to_borrow`. The Alpaca paper account was verified on 2026-08-28 as
+   already margin-enabled (`shorting_enabled: True`, `multiplier: 4`, equity
+   $9,871.87) — no owner action is outstanding. (`docs/QAMC_REMEDIATION_SPEC.md`
+   Phase 5 previously recorded an owner action to switch the account to
+   margin; that is stale and has been corrected there.)
 8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
 9. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-10. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
-   on the residual); deterministic macro regime with the model confined to FOMC
-   text; earnings multi-quarter trends. Several need new data sources and an
-   owner decision first.
+10. **Analyst upgrades.** News cascade — **stage 1 (dedup) is DONE**
+   (`src/data/news_dedup.py`); stage 2 (novelty scoring against a rolling
+   48–72h per-ticker buffer) and stage 3 (a model on the residual only) remain,
+   and the seam for them is `NewsCluster.novelty`. Also: deterministic macro
+   regime with the model confined to FOMC text; earnings multi-quarter trends.
+   Several need new data sources and an owner decision first.
+
+   Note for whoever picks up stage 2: the measured duplication rate is small.
+   Across 589 archived articles the old stage removed 4.2% and the new one
+   removes a further 1.2% — so dedup is a correctness fix (it stops one story
+   reading as N confirmations), **not** a cost saving. Two of nine feeds
+   (Reuters, AP) are dead, which suppresses exactly the wire-syndication case
+   dedup targets; the true rate is unknown until those are fixed.
+
+**Identified 2026-08-28, not yet fixed**
+
+#### THE FOUR COST-CIRCUIT DEFECTS
+A full trading day (2026-08-28) was lost to these. Fix them together and prove them with the rehearsal harness before deploying.
+
+**Corrected 2026-08-28 against `llm_circuit_events` on the live box.** The
+earlier version of this section blamed defect 2 for the outage. The ledger
+says defect 1 did, an hour and a half earlier. What actually happened:
+
+| ET time | what tripped | agent | spend at that moment |
+|---|---|---|---|
+| 09:32 | defect 1 — projected session cost | portfolio_manager | session $0.0461 / day $0.0476 |
+| 11:15 | operator reset by hand | — | — |
+| 11:30 | defect 4 — paid-session count cap | tech_analyst | day $0.1765 |
+
+1. **The estimator predicts nothing — and it is what stopped the desk.** It
+   bounds a prompt by treating every UTF-8 byte as a token and reserves the
+   full `max_output_tokens` at list price. At 09:32 ET it reserved **$1.8657**
+   for one Portfolio Manager call and refused to proceed, on a day that had
+   spent 4.6 cents. Decomposed exactly: **$0.504 of that is the output half**
+   (`1.05 x 16,000 tokens x $30/1M`, the same regardless of prompt) and
+   **$1.3617 is the input half**. Measured over 37 recorded PM calls: average
+   actual cost **$0.1718**, worst ever **$0.5783**, output never above 11,034
+   of the 16,000 tokens reserved, and roughly **3.6 UTF-8 bytes per input
+   token** on the large prompts. So the reservation runs ~3.2x the worst call
+   ever recorded and ~11x the average.
+   **The fix previously proposed here targeted only the output half — 27% of
+   the error.** Input is the other 73% and must be fixed too. Reserve from
+   measured per-(agent, model) history in `agent_logs`: divide prompt bytes by
+   a measured bytes-per-token ratio at a conservative low percentile, and
+   reserve observed maximum output times a safety margin, capped at
+   `max_output_tokens`. Fall back to today's worst-case bound whenever history
+   is thin. Percentile, margin and minimum sample count are settings — no
+   hardcoded numbers.
+2. **A failed request is charged as if it ran.** A provider 429 returns
+   nothing and bills nothing, but is recorded as unknown cost, which makes the
+   day unreconcilable and hard-stops the desk. Real, and it contributed to the
+   11:15 ET manual reset — but it is the second cause, not the first. Fix:
+   classify the failure. Known-zero-cost rejections (429, 400, 401, 403, 404,
+   pre-send transport failures) release the reservation and charge nothing;
+   genuinely ambiguous failures (timeout after send, 5xx, truncated stream)
+   keep today's conservative behaviour. Fail closed — anything unclassified is
+   ambiguous.
+3. **The operator reset tool is blocked by the emergency it exists to reset.**
+   `scripts/cost_circuit.py` calls `activate_session()` unconditionally before
+   dispatching the command; that runs `_seed_today` ->
+   `_validate_accounting_invariants`, which raises on exactly the fault being
+   cleared, so `reset` is never reached. (The earlier note said `status()` was
+   the blocker — same effect, wrong function.) Had to be worked around by hand.
+4. **A separate cap of 2 paid sessions per mode per day** — unrelated to the
+   estimator. It stopped the desk again at **11:30 ET** on 17 cents of actual
+   spend, under trigger `session_retry_limit`. Raised to 8 on the live box as a
+   stopgap and now committed. Proper fix is dollar-based with an afternoon
+   reserve so a runaway morning cannot consume the day, keeping a deliberately
+   high count only as an infinite-loop backstop. Partial prior work on branch
+   `fix/dollar-based-session-cap`.
+
+#### LIVE-BOX CONFIG DRIFT — RECONCILED (PR #119, live `224722e`)
+Closed 2026-08-28. It was **five** settings, not three, and two of the recorded
+baselines were wrong. `config/settings.yaml` in git is now byte-identical to the
+production box and the box's working tree is clean.
+
+| setting | was in git | now (and live) |
+| --- | --- | --- |
+| `intraday_scan.enabled` | `false` | `true` |
+| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
+| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
+| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
+| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
+
+Corrections to the original note: the git baseline for
+`daily_reserved_exposure_limit_usd` was `1.90`, not `3.20` (`3.20` was itself an
+earlier uncommitted box value), and `daily_cost_limit_usd` was also a git delta
+— the box had been running `2.75` against a committed `1.50` — and was not on
+the list at all. Hard spend caps unchanged at $0.90/session and $2.75/day.
+
+The 8-session cap and the 5.50 ceiling are STOPGAPS the four fixes above should
+supersede. They were committed anyway so git describes the running system.
+
+Also on 2026-08-28: the circuit was reset, two quota holds released, and the
+day's `costs_exact` flag settled without refunding any charge. DB backed up
+first.
+
+#### THE REHEARSAL HARNESS — built, acceptance test not passing
+Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
+**Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
+
+#### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
+Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
+using the cockpit live:
+
+1. **Price-axis rescale bug (priority).** Clicking a symbol after manually
+   dragging the chart's price axis left the axis pinned to the old symbol's
+   range — lightweight-charts permanently disables its own `autoScale` the
+   moment the operator drags the price axis by hand, and nothing in this repo
+   ever re-enabled it. Fixed in `PriceChartPanel.tsx` by re-asserting
+   `priceScale().applyOptions({ autoScale: true })` in the effect keyed on
+   `[symbol, timeframe]`, so a symbol or timeframe switch always starts from a
+   clean fit while a manual zoom on the *same* symbol/timeframe still survives
+   the 20s quote poll. Demonstrated live against the running paper-trading
+   backend (MSFT ~$513 -> CMCSA ~$27 and back, plus a timeframe switch),
+   not just read from the code.
+2. **Two-row default workspace.** `DesktopCockpitWorkspace.tsx`'s default
+   layout changed from one row of three columns (Positions | Chart | Orders)
+   to a full-width Chart row on top and a Positions / free workspace slot /
+   Orders three-column row underneath — a real second grid row via dockview's
+   own `direction: "below"`, so it gets a genuine independent resize handle,
+   not more tabs folded into an existing group. The workspace container is now
+   deliberately taller than one viewport (chart row keeps its old full-height
+   budget, the new row adds ~480px on top) so the page scrolls vertically
+   instead of every panel fighting for room inside one fixed-height box. Every
+   panel remains exactly as movable/dockable as before — this only changes the
+   starting point. Layout key bumped `qamc.dockview.cockpit.v4` ->
+   `.v5` so a stale saved layout never hides the new default.
+3. **Directional Bias panel re-engineered onto Tremor primitives.** The old
+   panel was five bordered sections of hand-drawn ratio bars and paragraphs —
+   "instrument signal direction, effective market exposure" as dense text.
+   Replaced with a Tremor `BadgeDelta` "net lean" chip plus one Tremor
+   `DonutChart` (long/short/neutral share of exposure-corrected candidate
+   direction, the number the panel's own logic says actually answers "is QAMC
+   structurally long-only" — see `exposureDirection()`), a one-line hedge
+   footnote, and a compact PM-proposals summary. **Dropped, not reformatted:**
+   the inverse-ETF stat-card grid and the AI Risk Manager verdict section (3
+   of 25 runs and 4 of 25 runs respectively on live data — too thin a sample
+   for an at-a-glance panel) and the decision-state outcome histogram (not a
+   directional read at all, and it duplicates the sibling Runs tab one click
+   away in the same workspace group).
+
+99 frontend tests pass (up from 84 at PR #120's baseline via #130's pass-2
+additions), `tsc -b` clean, `npm run build` clean, rebuilt bundle committed
+alongside source (see PR #120's discovery below — still true: production
+serves `src/api/static_cockpit/` from disk and never runs `npm run build`).
+
+**Found and left alone, pre-existing:** at phone width (~390px) the mobile
+`SupportTabs` Trades table overflows the page horizontally — a wide Tremor
+`<table>` with no containing horizontal scroll at that breakpoint. Reproduced
+with this branch's changes backed out too, so it predates this pass and is
+unrelated to any of the three items above; not fixed here per the standing
+rule to report pre-existing breakage rather than self-authorize an unrelated
+fix.
+
+**Update (branch `fix/mobile-table-overflow`) — fixed, and the diagnosis above
+was wrong.** The Trades `<table>` was never the leak: `Panel`'s `Card` already
+has `overflow-hidden`, `DataTable.tsx`'s wrapper already has `overflow-x-auto`,
+and Tailwind's `grid-cols-1` already keeps the Orders/Trades grid track at
+viewport width — all three DataTable consumers on the mobile path (Positions,
+Orders, Trades, plus Runs/Missed-Opportunities in the other SupportTabs tabs)
+measured fully contained at 390px, before any fix. Proof: with a Playwright
+repro on the exact mocked dataset the project's own
+`scripts/dashboard-visual-acceptance.mjs` uses, hiding only the page's
+`<header>` took `document.documentElement.scrollWidth` from 468px to exactly
+390px (`clientWidth`) — across every SupportTabs tab and every data scenario
+(populated/error/empty) tested, at 320/371/390px. The real, sole cause was
+`TopStrip.tsx`'s status row (`ml-auto flex items-center gap-3 flex-shrink-0`):
+rigid, non-shrinking, non-wrapping content ("all systems reachable" + "updated
+HH:MM:SS" + "legacy view") that doesn't fit the header's own `flex-wrap` line
+at phone width. Fixed by dropping `flex-shrink-0` and adding `flex-wrap` to
+that one row, matching every other status row in this codebase (`HeroBand`,
+`LiquidityPanel`, `PositionHoldingStrip`, `DirectionalBiasPanel` already use
+`flex flex-wrap`). Left as-is above rather than rewritten, since the original
+misdiagnosis is itself a useful record.
+
+**Second verification, against live production data — and why two repros disagreed.**
+The fix was re-verified independently against the running production cockpit with
+real account data, not the mocked dataset: viewports 320px, 371px and 390px, across
+all five mobile SupportTabs tabs (Orders & Trades, Runs, Directional Bias, Missed
+Opportunities, Diagnostics).
+
+In every one of those 15 combinations the only element leaking at page level was the
+`TopStrip` status row and its `legacy view` link. No table leaked at page level in
+any tab at any width — `DataTable`'s wrapper carries `max-w-full overflow-x-auto`,
+`Panel`'s `Card` carries `overflow-hidden` and `.panel-body` carries
+`overflow-x-auto`, so a wide table is contained by construction, independent of how
+wide its data is.
+
+**The overflow is state-dependent, which is why the original report and the mocked
+repro disagreed on the numbers.** The header's health label is variable-length. With
+the healthy label "all systems reachable" there is no overflow at 390px at all. With
+the longest label the code can emit — "scoped paid-analysis quota hold — other
+sessions eligible" from `healthColor()` — the same page measures `scrollWidth` 571px
+against a 390px viewport. That is within 9px of the 562px originally recorded, and
+the original observation was made while paid analysis was degraded. So both repros
+were the same defect seen in two different system states, and neither measurement was
+wrong.
+
+Measured effect of the fix: 571px to 390px at a 390px viewport under the
+worst-case label, and 45px of overflow to zero at 320px under today's healthy label.
+Desktop is unaffected.
+
+Note explicitly that a phone-width check of this page is only meaningful when the
+status text is at its longest, since the healthy state hides the defect.
+
+PR #138 merged and deployed to production on 2026-08-28, and the fix was
+confirmed live at the production URL.
+
+#### COCKPIT — DELIVERED (PR #120)
+All five owner requests are implemented, built and tested on branch
+`feat/cockpit-trader-view`: chart vertical space, a holdings + P&L strip visible
+on arrival, the average-entry line drawn on the chart with live P&L, PREV CLOSE
+dropped on the 1D view only, and Positions/Liquidity split into two dockable
+panels. The Dockview layout key is bumped to `qamc.dockview.cockpit.v2` so a
+stale saved layout cannot break on load. 84 frontend tests pass, up from 71.
+
+**Discovered while shipping it:** this repo commits its built frontend bundle to
+`src/api/static_cockpit/` and the API serves that directory from disk —
+production never runs `npm run build`. A frontend source change therefore does
+not reach the screen until the rebuilt bundle is committed. The refreshed bundle
+is included in PR #120. Anyone changing frontend source must do the same.
+
+Mission Control is read-only, so this ships without affecting trading.
+
+#### NEWS FEEDS — RESOLVED (branch `fix/news-feeds-and-coverage`, 2026-08-28)
+The coverage-honesty half — the part that "must land regardless" — is done:
+`NewsCoverage` (`src/data/news.py`) tracks configured/succeeded/failed feeds
+on every fetch and threads it into both the analyst's own prompt ("News
+Coverage" section) and `data_status["news"]` (`ok`/`partial`/`failed`), which
+`trader_feed.py`/`notifier.py` already render to the operator. A dead feed can
+no longer vanish behind a log line.
+
+The UA hypothesis was tested and was WRONG for both feeds: Reuters killed
+public RSS in June 2020 (`reutersagency.com` now 200s but is a HubSpot
+marketing page for paid Reuters Connect licensing, no feed link left);
+`reuters.com` itself 401s behind a DataDome JS/CAPTCHA wall. AP's own feed
+(`apnews.com/index.rss`, found via `<link rel="alternate">` autodiscovery)
+answers 401 "Invalid client credentials" — gated behind AP's paid
+Content/Breaking News API (OAuth2) — and the free third-party proxy previously
+used is now behind a Cloudflare managed JS challenge no User-Agent can pass.
+Neither is fixable for free. Per the standing no-paid-dependency rule, both
+were removed from `RSS_FEEDS` rather than left permanently red, and Yahoo
+Finance News (verified live, free, publisher-hosted, ~49 same-day items) was
+added as a partial substitute — net 8 feeds, down from 9. Dedicated Reuters/AP
+wire access is an owner decision (Reuters Connect or the AP Content API, both
+paid) if it's wanted.
+
+#### SMALLER, RECORDED
+- `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
+- After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
+- OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
+- OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
+
+#### OPEN PRs, none deployed
+- #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
+- #116 shorts countable — proven a no-op on a long-only book.
+- #117 doc sync.
+- #132 news feeds + coverage — dead-feed-vanishes-silently fix (`NewsCoverage`, `data_status["news"]`), Reuters/AP removed (neither fixable for free, live-verified 2026-08-28), Yahoo Finance News added, `feat/news-dedup` folded in. Branch `fix/news-feeds-and-coverage`.
+- #133 insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above.
+- #PENDING bounded re-peg (`feat/bounded-repeg`) — built, tested (54/54), ships with `execution.repeg_enabled: false` so behaviour is unchanged today. See item 2 under "Next, in order" above for the caveat that matters: since PR #111 a BUY limit already goes out at the slippage ceiling whenever a quote is available, so enabling this flag would currently do approximately nothing until the entry-pricing policy changes.
+
+#### BRANCHES READY, NO PR YET
+`fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
+`feat/news-dedup` was never actually a separate branch to land — its content
+was folded into PR #132 verbatim (confirmed by merge-base diff, byte-identical
+on both sides); the branch itself carried no unmerged content and was deleted
+2026-08-28. `feat/bounded-repeg` moved to "OPEN PRs" above (2026-08-29) once
+its merge conflicts with the shorts work were resolved.
+
+`feat/insider-signal-filter` moved to "OPEN PRs" above (2026-08-28): finished
+(thresholds moved to config, per-code and fail-closed tests added) and PR
+opened against `main` — 57.3% of 2,742 real Form 4 rows measured routine,
+consistent with the earlier 56.2%-of-2,188 figure.
+
+#### DECISIONS RATIFIED 2026-08-28
+- Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
+- Real short selling, not inverse ETFs. Three stages: countable, safe, live.
+- No dev/prod mirror. Production is paper and resets, so the case for enterprise staging collapses. Build the rehearsal harness instead.
+- The system already sends marketable limit orders, which is a market order with a bounded worst case. No change needed.
+- Documentation is the source of truth. Wrong documentation is corrected on sight without asking.
+- Rehearsal alerts are suppressed rather than routed to a second Telegram bot.
+
+#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — measure before changing
+On 2026-08-28, the reward:risk floor added the previous day rejected four candidates outright. Recorded reward:risk after the stop was widened past the noise band: CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30, against a 1.50 minimum.
+
+Three of the four offered **less reward than risk** — those are correctly refused. NVDA at 1.30 is the borderline case.
+
+This is the rule working as designed, but it is also a signal worth measuring rather than reacting to: with honest stop distances, the technical analyst's targets are frequently too close to clear a 1.5 payoff. Either the targets are too conservative or the widened stops are too wide. Do not adjust the 1.50 floor on impression — gather a week of these rejections first, then decide which of the two numbers is wrong.
+
+Note this means 2026-08-28's zero trades had **two independent causes**, not one: the cost circuit blocked the morning before the Portfolio Manager ran, and separately these four were refused on payoff.
+
+#### RECURSION FAULT IN THE BAR FETCH
+`broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.
+
+#### DELISTED WARRANTS REACHING THE DATA LAYER
+Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW, LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at all — this is universe/admission hygiene, and it is also what triggers the recursion fault above.
+
+#### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
+Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
 
 **Set aside — small, easily forgotten**
 
+- `db_reads.get_recent_agent_logs` uses `SELECT *`, and `GET /agents/{agent_name}`
+  returns 20 rows as `recent_calls`. PM prompts run 13KB-190KB, so that response
+  could reach several MB. Harmless today because nothing in `frontend/src/`
+  calls the route — fix before anything does, by trimming the large columns
+  from the LIST query and keeping them on the detail route.
 - `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
   the Tech Analyst accepts a `days_to_earnings` kwarg that nothing supplies.
 - Nothing tells the Portfolio Manager that `SH`, `SDS`, `PSQ` and `SQQQ` are
@@ -772,7 +1344,10 @@ Do not interrupt natural validation for these unless current evidence shows they
 ## Hard boundaries
 
 - **Current execution authorization is Alpaca Paper only.**
-- No margin, options or direct stock shorting; bearish expression remains through approved inverse ETFs.
+- Options/theta strategies remain outside accepted architecture. Direct stock
+  shorting and margin were authorized 2026-08-27 (`docs/STATE.md`) and are
+  pending implementation, not yet in production — see the Phase 5 backlog
+  entry above for status.
 - Deterministic Python/broker protections remain final safety authority.
 - Do not force/manufacture trades or weaken safeguards to increase activity.
 - Do not create paper-only trading semantics.
@@ -784,8 +1359,9 @@ Do not interrupt natural validation for these unless current evidence shows they
 - No public exposure of QAMC or OneCLI.
 
 **Active work:** natural Alpaca Paper observation continues. *(The rest of this
-paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are stale;
-current production state is `32c174b`, see "Session start" above.)* The
+paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are
+stale; see "Session start" above for how to check current production
+state.)* The
 remaining acceptance item is a future eligible session traversing PM, AI Risk,
 deterministic gate and broker execution when warranted, followed by
 management/exit and measured outcome. No trade may be forced or manufactured;

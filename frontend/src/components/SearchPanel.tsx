@@ -18,13 +18,18 @@ export function SearchPanel() {
   const { openRunDetail } = useModalActions();
   const tradeColumns = useMemo(() => [
     tradeColumn.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
-    tradeColumn.accessor("symbol", { header: "Symbol" }),
+    // Bold/accent-colored, same idiom Positions/Orders/Trades use to mark
+    // the identifying cell of a clickable row — this whole row opens Run
+    // Detail (see onRowClick below), so it needs the same visual hint
+    // those other tables give before this fix's Symbol-specific click
+    // split was even a consideration here.
+    tradeColumn.accessor("symbol", { header: "Symbol", cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span> }),
     tradeColumn.accessor("action", { header: "Action", cell: (info) => <Pill text={info.getValue()} /> }),
     tradeColumn.accessor("reasoning", { header: "Reasoning", cell: (info) => <span className="block max-w-[36rem] whitespace-normal font-sans">{info.getValue() || "—"}</span> }),
   ] as LegacyColumnDef<SearchTradeHit, unknown>[], []);
   const agentColumns = useMemo(() => [
     agentColumn.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
-    agentColumn.accessor("agent_name", { header: "Agent" }),
+    agentColumn.accessor("agent_name", { header: "Agent", cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span> }),
     agentColumn.accessor("model", { header: "Model", cell: (info) => info.getValue() || "—" }),
     agentColumn.accessor("output_summary", { header: "Summary", cell: (info) => <span className="block max-w-[36rem] whitespace-normal font-sans">{info.getValue() || "—"}</span> }),
   ] as LegacyColumnDef<SearchAgentLogHit, unknown>[], []);

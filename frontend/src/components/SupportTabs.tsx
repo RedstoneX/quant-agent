@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { AccountResponse, HealthResponse, OrderItem, PositionItem, RunSummary, TradeItem } from "../api/client";
-import { LiquidityPanel } from "./LiquidityPanel";
-import { PositionsPanel } from "./PositionsPanel";
+import { HealthResponse, OrderItem, RunSummary, TradeItem } from "../api/client";
 import { OrdersPanel } from "./OrdersPanel";
 import { TradesPanel } from "./TradesPanel";
 import { RunsPanel } from "./RunsPanel";
@@ -10,22 +8,19 @@ import { MissedOpportunitiesPanel } from "./MissedOpportunitiesPanel";
 import { SearchPanel } from "./SearchPanel";
 import { HealthPanel } from "./HealthPanel";
 
-/* The cockpit's lower support area. This used to be nine full-width
- * panels stacked one after another (positions, orders, trades, runs,
- * directional bias, missed opportunities, search, health) — the exact
- * "long telemetry page" shape this redesign is meant to eliminate. Same
- * panels, same data, but only one group renders at a time; the rest stay
- * a click away instead of permanently occupying scroll real estate. */
+/* The cockpit's lower support area — the iPad/phone fallback for
+ * everything that isn't Positions/Chart/Decision (those three now have
+ * their own primary panes; see App.tsx's PaneNav). Positions and Liquidity
+ * used to live here too, as two of what the owner counted as eight tabs;
+ * both moved out (Positions is now a primary landing pane — item 1 of the
+ * cockpit trader rework; Liquidity is now a single compact row in the
+ * header — item 9). What's left is genuinely secondary, and System/Search
+ * — the two tabs the owner named as "not trading" — are now folded into
+ * one Diagnostics tab instead of standing on their own (item 13). */
 
-type TabId = "positions" | "orders" | "runs" | "bias" | "missed" | "search" | "system";
+type TabId = "orders" | "runs" | "bias" | "missed" | "diagnostics";
 
 export function SupportTabs({
-  account,
-  accountError,
-  positions,
-  positionsError,
-  positionsLoading,
-  positionsUpdatedAt,
   orders,
   ordersError,
   ordersLoading,
@@ -40,15 +35,10 @@ export function SupportTabs({
   health,
   healthError,
   onSelectSymbol,
+  onSelectPositionSymbol,
   onInspectOrder,
   onInspectTrade,
 }: {
-  account: AccountResponse | null;
-  accountError?: string | null;
-  positions: PositionItem[];
-  positionsError: string | null;
-  positionsLoading: boolean;
-  positionsUpdatedAt?: Date | null;
   orders: OrderItem[];
   ordersError: string | null;
   ordersLoading: boolean;
@@ -63,19 +53,25 @@ export function SupportTabs({
   health: HealthResponse | null;
   healthError: string | null;
   onSelectSymbol?: (symbol: string) => void;
+  /** Symbol-cell-specific click for the Orders/Trades tables below —
+   * modal-free, same as PositionsPanel's onSelectSymbol. Deliberately
+   * distinct from onSelectSymbol above (which Missed Opportunities uses,
+   * and which may open a candidate-detail modal) — see
+   * SupportWorkspaceContext's onSelectPositionSymbol for the full
+   * rationale; this is that same callback threaded to the mobile/iPad
+   * fallback layout. */
+  onSelectPositionSymbol?: (symbol: string) => void;
   onInspectOrder?: (order: OrderItem) => void;
   onInspectTrade?: (trade: TradeItem) => void;
 }) {
-  const [tab, setTab] = useState<TabId>("positions");
+  const [tab, setTab] = useState<TabId>("orders");
 
   const tabs: { id: TabId; label: string; badge?: number }[] = [
-    { id: "positions", label: "Positions & Risk", badge: positions.length || undefined },
     { id: "orders", label: "Orders & Trades", badge: orders.length || undefined },
     { id: "runs", label: "Runs", badge: runs.length || undefined },
     { id: "bias", label: "Directional Bias" },
     { id: "missed", label: "Missed Opportunities" },
-    { id: "search", label: "Search" },
-    { id: "system", label: "System" },
+    { id: "diagnostics", label: "Diagnostics" },
   ];
 
   return (
@@ -96,13 +92,6 @@ export function SupportTabs({
         ))}
       </div>
 
-      {tab === "positions" && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          <LiquidityPanel account={account} accountError={accountError} positions={positions} />
-          <PositionsPanel positions={positions} error={positionsError} loading={positionsLoading} updatedAt={positionsUpdatedAt} onSelectSymbol={onSelectSymbol} />
-        </div>
-      )}
-
       {tab === "orders" && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           <OrdersPanel
@@ -112,16 +101,21 @@ export function SupportTabs({
             status={orderStatus}
             onStatusChange={onOrderStatusChange}
             onInspect={onInspectOrder}
+            onSelectSymbol={onSelectPositionSymbol}
           />
-          <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} onInspect={onInspectTrade} />
+          <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} onInspect={onInspectTrade} onSelectSymbol={onSelectPositionSymbol} />
         </div>
       )}
 
       {tab === "runs" && <RunsPanel runs={runs} error={runsError} loading={runsLoading} />}
       {tab === "bias" && <DirectionalBiasPanel />}
       {tab === "missed" && <MissedOpportunitiesPanel onSelectSymbol={onSelectSymbol} />}
-      {tab === "search" && <SearchPanel />}
-      {tab === "system" && <HealthPanel health={health} error={healthError} />}
+      {tab === "diagnostics" && (
+        <div className="flex flex-col gap-3">
+          <HealthPanel health={health} error={healthError} />
+          <SearchPanel />
+        </div>
+      )}
     </div>
   );
 }
