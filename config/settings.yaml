@@ -195,6 +195,18 @@ risk:
   # any BUY that would drive cash negative, and the PM + midday prompts get
   # a mandatory de-lever directive when cash is already negative.
   allow_margin: false
+  # --- Stage 3 (shorts) -------------------------------------------------
+  # Deliberately half of max_position_pct: a short's loss is unbounded
+  # while a long's is capped at -100%, so one short's concentration budget
+  # is tighter. Hard block on opening/adding a short; never blocks a COVER.
+  max_single_short_pct: 10
+  # Largest total gross short exposure across the book, as % of equity.
+  # Hard block on opening/adding a short; never blocks a COVER.
+  max_short_gross_pct: 20
+  # Sizing-only haircut (never stop placement) on a short's risk-per-share:
+  # a short can gap through its stop with unbounded loss, so equal nominal
+  # risk must not buy equal real risk. Range (1.0, 3.0].
+  short_gap_risk_multiple: 1.5
 
 # Idle-cash sweep — park cash above the reserve in a T-bill ETF, release it
 # automatically before BUYs. The vehicle is cash-equivalent everywhere:

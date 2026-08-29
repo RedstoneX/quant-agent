@@ -601,7 +601,7 @@ def _macro_target_invested_pct(macro_analysis) -> float | None:
 
 
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
-    """Apply RiskVerdict.scale_all_buys to BUY decisions.
+    """Apply RiskVerdict.scale_all_buys to BUY (and Stage-3 SHORT) decisions.
 
     `scale_all_buys` is documented in config/prompts/risk_manager.md as
     a portfolio-level sizing knob with a ge=0.0 le=1.0 range — 0.0 is
@@ -610,6 +610,10 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     0.0 is falsy in Python, disabling the veto. Treat None/missing as
     1.0 (no scaling), but pass 0.0 through so the scaling branch zeros
     every BUY allocation.
+
+    SHORT scales alongside BUY: both open new risk, and RM's portfolio-
+    level "cut everything new" knob should not have a blind spot for one
+    of the two ways to open it. SELL, COVER and HOLD are untouched.
 
     Returns ``(scaled_decisions, scale)`` so the caller can use the
     coerced scale for follow-up filters (re-running hard risk if the
@@ -622,7 +626,7 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
 
     scaled: list = []
     for d in decisions:
-        if d.action == "BUY":
+        if d.action in ("BUY", "SHORT"):
             new_alloc = max(0.0, min(100.0, d.allocation_pct * scale))
             if new_alloc <= 0:
                 logger.info(
@@ -1476,11 +1480,14 @@ class DecisionStage:
             regime=_macro_regime(macro_analysis),
         )
         logger.info(
-            "Constructor: %d targets → %d decisions (%d BUY, %d SELL, %d HOLD)",
+            "Constructor: %d targets → %d decisions "
+            "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",
             len(portfolio_decision.targets),
             len(portfolio_decision.decisions),
             sum(1 for d in portfolio_decision.decisions if d.action == "BUY"),
             sum(1 for d in portfolio_decision.decisions if d.action == "SELL"),
+            sum(1 for d in portfolio_decision.decisions if d.action == "SHORT"),
+            sum(1 for d in portfolio_decision.decisions if d.action == "COVER"),
             sum(1 for d in portfolio_decision.decisions if d.action == "HOLD"),
         )
         # "Proposed" evidence — the constructor's concrete order BEFORE the
@@ -1692,7 +1699,7 @@ class RiskStage:
             logger.warning("Morning data degradation: %s", data_status)
 
         has_book_to_check = len(rm_positions) >= 2 or any(
-            d.action == "BUY" for d in portfolio_decision.decisions
+            d.action in ("BUY", "SHORT") for d in portfolio_decision.decisions
         )
         if (not correlation_matrix) and has_book_to_check:
             from src.risk.rules import RiskViolation as _RV
@@ -1928,7 +1935,17 @@ class ExecutionStage:
 
         orders: list[dict] = []
         sell_decisions = [d for d in portfolio_decision.decisions if d.action == "SELL"]
-        buy_decisions = [d for d in portfolio_decision.decisions if d.action == "BUY"]
+        # Stage 3 (shorts): SHORT is the entry-side twin of BUY — both open
+        # or add to a position and both owe a mandatory protective stop, so
+        # they share the entry submission loop below (branching internally
+        # on `decision.action` for side / geometry / sizing). COVER is the
+        # exit-side twin of SELL and gets its OWN loop further down that
+        # reuses `_submit_protected_sell` with side="buy", exactly the
+        # plumbing PR #135 built for emergency covers.
+        buy_decisions = [
+            d for d in portfolio_decision.decisions if d.action in ("BUY", "SHORT")
+        ]
+        cover_decisions = [d for d in portfolio_decision.decisions if d.action == "COVER"]
         hold_decisions = [d for d in portfolio_decision.decisions if d.action == "HOLD"]
 
         for d in hold_decisions:
@@ -2045,7 +2062,102 @@ class ExecutionStage:
             pending_protections, context="ExecutionStage", wait=False,
         )
 
-        if sell_decisions:
+        # Stage 3 (shorts): COVER loop — the exit-side twin of the SELL loop
+        # just above. Reuses `_submit_protected_sell`'s side="buy" plumbing
+        # (PR #135 built this for emergency covers; this is the first
+        # decision-path caller). No protective stop is placed afterward —
+        # covering REDUCES risk, it doesn't open any.
+        cover_order_ids: list[str] = []
+        cover_pending_protections: list[dict] = []
+        for decision in cover_decisions:
+            try:
+                existing = [p for p in positions if p.symbol == decision.symbol]
+                if not existing or existing[0].qty >= 0:
+                    continue  # nothing short held — COVER on a long/flat is refused
+                held_qty = abs(existing[0].qty)
+                if decision.allocation_pct == 0:
+                    logger.warning(
+                        "Skipping COVER %s with allocation_pct=0 (ambiguous — use 100 for full exit)",
+                        decision.symbol,
+                    )
+                    continue
+                if 0 < decision.allocation_pct < 100:
+                    cover_fraction = decision.allocation_pct / 100
+                    qty = held_qty * cover_fraction
+                    if float(held_qty).is_integer():
+                        qty = max(1.0, float(int(qty)))
+                    if qty <= 0:
+                        continue
+                    if qty >= held_qty:
+                        qty = pipeline._full_sell_qty(held_qty)
+                        if qty is None:
+                            continue
+                        action_label = "COVER"
+                    else:
+                        action_label = f"PARTIAL_COVER({decision.allocation_pct:.0f}%)"
+                else:
+                    qty = pipeline._full_sell_qty(held_qty)
+                    if qty is None:
+                        continue
+                    action_label = "COVER"
+                cover_price = existing[0].current_price
+                # Buy-to-cover needs headroom ABOVE the reference to fill on
+                # the way up — the mirror of the SELL loop's limit sitting
+                # 0.5% BELOW (same reasoning as `_EMERGENCY_LIMIT_CUSHION_PCT`
+                # in pipeline.py, applied here to the ordinary decision path).
+                cover_limit = round(cover_price * 1.005, 2)
+                sale = pipeline._submit_protected_sell(
+                    symbol=decision.symbol, qty=qty, limit_price=cover_limit,
+                    reference_price=existing[0].current_price,
+                    position_qty_before_sell=held_qty, label=action_label,
+                    side="buy",
+                )
+                if sale is None:
+                    continue
+                order, prot = sale
+                cover_pending_protections.append(prot)
+                orders.append(order)
+                cover_order_ids.append(order["id"])
+                pipeline.db.insert_trade(
+                    symbol=decision.symbol, action=action_label, qty=qty,
+                    price=cover_price, reasoning=decision.reasoning, run_id=run_id,
+                    broker_order_id=order.get("id"),
+                    fill_status="submitted",
+                    decision_id=decision_id,
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "order", "submitted",
+                    "broker_accepted", broker_order_id=order.get("id"), qty=qty,
+                    limit_price=cover_limit, side="buy",
+                )
+                logger.info(
+                    "Executed: %s %s %s @ limit $%.2f",
+                    action_label.lower(), pipeline._format_qty(qty), decision.symbol, cover_limit,
+                )
+            except Exception as e:
+                logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
+
+        for order_id in cover_order_ids:
+            try:
+                status = pipeline.broker.wait_for_order_terminal(order_id)
+            except Exception as e:
+                logger.warning(
+                    "ExecutionStage: wait_for_order_terminal failed for %s: %s "
+                    "— treating as unknown status so finalize still runs",
+                    order_id, e,
+                )
+                status = None
+            if status != "filled":
+                logger.warning(
+                    "Cover order %s did not fill before buy phase (status=%s)",
+                    order_id, status or "unknown",
+                )
+
+        pipeline._finalize_pending_protections(
+            cover_pending_protections, context="ExecutionStage-Cover", wait=False,
+        )
+
+        if sell_decisions or cover_decisions:
             account, positions, price_map = pipeline._refresh_account_state()
             cash = account["cash"]
             total_value = account["portfolio_value"]
@@ -2160,7 +2272,16 @@ class ExecutionStage:
             preflight_survivors.append(decision)
         buy_decisions = preflight_survivors
 
-        # Cash-sweep funding: PM/RM/the hard gate size BUYs against
+        # Cash-sweep funding: a SHORT's notional is folded into
+        # `planned_notional` below alongside real BUYs even though opening a
+        # short does not actually need settled cash (it sells borrowed
+        # shares). That over-funds rather than under-funds a short-only
+        # session — SGOV may get released when it wasn't strictly needed —
+        # which is the safe direction to be wrong in and is not reworked
+        # here; see the sizing loop below for where a SHORT stops treating
+        # cash as a constraint.
+        #
+        # PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
         # session with meaningful BUYs this sale IS load-bearing — the raw
         # cash on hand is typically just the reserve. `fund_buys` sells
@@ -2223,9 +2344,47 @@ class ExecutionStage:
         available_cash = cash
         pending_entry_stops: list[dict] = []
         for decision in buy_decisions:
-            if decision.action != "BUY":
+            if decision.action not in ("BUY", "SHORT"):
                 continue
+            is_short = decision.action == "SHORT"
             try:
+                # D6 (Stage 3): the borrow gate. Refuse to open a short
+                # unless the broker reports it BOTH shortable AND easy to
+                # borrow — an API error or an unreadable/unknown symbol
+                # reports both False in `get_shortability` (fail closed), so
+                # a lookup failure refuses the short rather than guessing it
+                # open. This is paper trading against IEX data: a
+                # hard-to-borrow name fills unrealistically in paper and its
+                # borrow cost is not modeled anywhere in this system, so
+                # restricting to easy-to-borrow keeps measured results
+                # transferable to live capital.
+                if is_short:
+                    try:
+                        borrow = pipeline.broker.get_shortability(decision.symbol)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "SHORT %s: shortability lookup raised: %s",
+                            decision.symbol, e,
+                        )
+                        borrow = {
+                            "shortable": False, "easy_to_borrow": False,
+                            "reason": "asset_lookup_failed",
+                        }
+                    if not (isinstance(borrow, dict) and borrow.get("shortable")
+                            and borrow.get("easy_to_borrow")):
+                        reason = (
+                            borrow.get("reason", "not_shortable")
+                            if isinstance(borrow, dict) else "not_shortable"
+                        )
+                        logger.warning(
+                            "SHORT %s skipped: borrow gate refused (%s)",
+                            decision.symbol, reason,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "borrow_gate", reason,
+                        )
+                        continue
+
                 market_price = price_map.get(decision.symbol)
                 if not market_price or market_price <= 0:
                     live_price = pipeline.broker.get_latest_price(decision.symbol)
@@ -2260,10 +2419,10 @@ class ExecutionStage:
                             # that entry is also stale, and the whole R/R math
                             # is bogus. Better to wait for next session.
                             logger.warning(
-                                "BUY %s skipped: LLM entry_price $%.2f is %.1f%% "
+                                "%s %s skipped: LLM entry_price $%.2f is %.1f%% "
                                 "away from market $%.2f (threshold 5%%). Stop/R/R "
                                 "computed against stale entry would be unsafe.",
-                                decision.symbol, decision.entry_price,
+                                decision.action, decision.symbol, decision.entry_price,
                                 deviation * 100, market_price,
                             )
                             _record_execution_skip(
@@ -2273,23 +2432,38 @@ class ExecutionStage:
                                 f"${market_price:.2f} (threshold 5%)",
                             )
                             continue
-                        elif limit_price < market_price:
+                        elif not is_short and limit_price < market_price:
                             logger.info(
                                 "Adjusting limit price for %s: $%.2f → $%.2f (raised to market)",
                                 decision.symbol, limit_price, market_price,
                             )
                             limit_price = market_price
                             sizing_price = market_price
+                        elif is_short and limit_price > market_price:
+                            # Mirror: a resting SHORT limit sitting ABOVE
+                            # market is not marketable — you can't sell short
+                            # above the market and expect an immediate fill —
+                            # so pull it DOWN to market instead of UP.
+                            logger.info(
+                                "Adjusting limit price for SHORT %s: $%.2f → "
+                                "$%.2f (lowered to market)",
+                                decision.symbol, limit_price, market_price,
+                            )
+                            limit_price = market_price
+                            sizing_price = market_price
                         else:
-                            sizing_price = max(market_price, limit_price)
+                            sizing_price = (
+                                min(market_price, limit_price) if is_short
+                                else max(market_price, limit_price)
+                            )
                     else:
                         sizing_price = market_price
                 else:
                     logger.error(
-                        "BUY %s skipped: no verifiable price reference "
+                        "%s %s skipped: no verifiable price reference "
                         "(broker + bars both unavailable). "
                         "LLM proposed entry $%.2f but cannot be validated.",
-                        decision.symbol, decision.entry_price,
+                        decision.action, decision.symbol, decision.entry_price,
                     )
                     _record_execution_skip(
                         pipeline, ctx, decision.symbol, "no_price",
@@ -2305,13 +2479,24 @@ class ExecutionStage:
                 # and may expire after the bounded entry window instead of
                 # paying through an abnormal book. If quote data is degraded,
                 # retain the validated last/PM limit and the same bounded wait.
+                #
+                # Stage 3: this whole NBBO/ask marketable-limit refinement is
+                # BUY-only (`not is_short` below) — it is written
+                # asymmetrically for a BUY crossing the displayed OFFER with
+                # a bounded ceiling, and mirroring it precisely for a SHORT
+                # (crossing the BID, flooring instead of capping) is a
+                # self-contained execution-quality task, not one of this
+                # stage's architecture decisions. A SHORT still gets the
+                # same >5% stale-entry protection and the same direction-
+                # aware raise/lower-to-market adjustment just above — it
+                # only forgoes the tighter NBBO-aware ceiling a BUY gets.
                 try:
                     quote = pipeline.broker.get_latest_quote(decision.symbol)
                 except Exception as e:  # noqa: BLE001
                     logger.warning("BUY %s quote lookup failed: %s", decision.symbol, e)
                     quote = None
                 ask = quote.get("ask_price") if isinstance(quote, dict) else None
-                if isinstance(ask, (int, float)) and ask > 0:
+                if not is_short and isinstance(ask, (int, float)) and ask > 0:
                     # The protection cap and the offer are two different
                     # numbers, and when they disagree the ORDER CANNOT FILL.
                     #
@@ -2417,8 +2602,15 @@ class ExecutionStage:
                 # bars already fetched by research; qty_by_risk below sizes
                 # against the wider distance, so per-trade $ risk is
                 # unchanged. No bars → no floor (behavior identical).
+                #
+                # BUY-only (`not is_short`): the constructor's own
+                # `_widen_stop_past_noise` (D5) already applies a mirrored,
+                # direction-aware ATR floor to a SHORT's stop before this
+                # code ever sees it; this is a SECOND, execution-time-only
+                # belt that was never extended to shorts as part of this
+                # stage.
                 stop_price = decision.stop_loss
-                if stop_price > 0 and sizing_price > stop_price:
+                if not is_short and stop_price > 0 and sizing_price > stop_price:
                     try:
                         bars = ctx.symbols_bars.get(decision.symbol) or []
                         atr14 = None
@@ -2452,7 +2644,7 @@ class ExecutionStage:
                     stop_price != decision.stop_loss
                     or (decision.entry_price > 0 and sizing_price > decision.entry_price)
                 )
-                if (geometry_changed and decision.take_profit > 0
+                if (not is_short and geometry_changed and decision.take_profit > 0
                         and stop_price > 0 and sizing_price > stop_price):
                     reward = decision.take_profit - sizing_price
                     risk = sizing_price - stop_price
@@ -2477,8 +2669,31 @@ class ExecutionStage:
                 qty_by_alloc = int((total_value * decision.allocation_pct / 100) / sizing_price)
                 qty_by_risk = None
                 RISK_BUDGET_PCT = 0.5
-                if stop_price > 0 and sizing_price > stop_price:
-                    risk_per_share = sizing_price - stop_price
+                # D4: geometry validity is direction-aware — a long's stop
+                # must sit below its entry, a short's strictly above.
+                valid_geometry = (
+                    (not is_short and stop_price > 0 and sizing_price > stop_price)
+                    or (is_short and stop_price > 0 and stop_price > sizing_price)
+                )
+                if valid_geometry:
+                    # D4: unsigned everywhere.
+                    risk_per_share = abs(sizing_price - stop_price)
+                    if is_short:
+                        # D8: gap-risk sizing haircut — SIZING ONLY, never
+                        # stop placement (the stop above is untouched). A
+                        # short gaps through its stop with no bound, so this
+                        # execution-time vol-adjusted-sizing belt must be at
+                        # least as conservative for a short as the
+                        # constructor's own primary sizing already is.
+                        _cfg = getattr(
+                            getattr(pipeline.config, "risk", None),
+                            "short_gap_risk_multiple", None,
+                        )
+                        gap_multiple = (
+                            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
+                            else 1.5
+                        )
+                        risk_per_share *= gap_multiple
                     if risk_per_share > 0:
                         risk_dollars = total_value * RISK_BUDGET_PCT / 100
                         qty_by_risk = int(risk_dollars / risk_per_share)
@@ -2487,7 +2702,7 @@ class ExecutionStage:
                         "Vol-adjusted sizing for %s: qty_by_alloc=%d → qty_by_risk=%d "
                         "(risk %.2f/share, budget $%.0f = %.1f%% of equity)",
                         decision.symbol, qty_by_alloc, qty_by_risk,
-                        sizing_price - stop_price,
+                        abs(sizing_price - stop_price),
                         total_value * RISK_BUDGET_PCT / 100, RISK_BUDGET_PCT,
                     )
                     qty = qty_by_risk
@@ -2503,7 +2718,12 @@ class ExecutionStage:
                     continue
 
                 estimated_cost = qty * sizing_price
-                if estimated_cost > available_cash:
+                # D11: opening a short is not gated by the tracked
+                # `available_cash` pool — it does not spend settled cash the
+                # way a BUY does (it sells borrowed shares), and the caps
+                # (D9) plus the borrow gate (D6) are the sole control
+                # surface for a short, not a cash re-size here.
+                if not is_short and estimated_cost > available_cash:
                     affordable_qty = int(available_cash / sizing_price)
                     if affordable_qty <= 0:
                         logger.warning(
@@ -2555,8 +2775,9 @@ class ExecutionStage:
                     (a for a in (ctx.analyses or []) if a.symbol == decision.symbol),
                     None,
                 )
+                entry_side = "sell_short" if is_short else "buy"
                 pending_row_id = pipeline.db.insert_trade(
-                    symbol=decision.symbol, action="BUY", qty=qty,
+                    symbol=decision.symbol, action=decision.action, qty=qty,
                     price=executed_price, reasoning=decision.reasoning, run_id=run_id,
                     stop_loss=stop_price, take_profit=decision.take_profit,
                     broker_order_id=None,
@@ -2570,7 +2791,7 @@ class ExecutionStage:
 
                 try:
                     order = pipeline.broker.submit_order(
-                        symbol=decision.symbol, qty=qty, side="buy",
+                        symbol=decision.symbol, qty=qty, side=entry_side,
                         limit_price=limit_price,
                         stop_loss_price=stop_price if stop_price > 0 else None,
                         reference_price=market_price,
@@ -2594,7 +2815,7 @@ class ExecutionStage:
                     )
                     raise
 
-                if not pipeline._order_accepted(order, decision.symbol, "buy"):
+                if not pipeline._order_accepted(order, decision.symbol, entry_side):
                     # Broker explicitly rejected (status != accepted/filled).
                     # Mark the pending row failed so it doesn't poison
                     # calibration as a "submitted" trade we never tracked.
@@ -2607,7 +2828,7 @@ class ExecutionStage:
                     )
                     _record_execution_skip(
                         pipeline, ctx, decision.symbol, "broker_rejected",
-                        f"broker rejected buy {qty} @ "
+                        f"broker rejected {decision.action.lower()} {qty} @ "
                         f"{'limit $%.2f' % limit_price if limit_price else 'market'}",
                     )
                     continue
@@ -2623,13 +2844,16 @@ class ExecutionStage:
                     limit_price=executed_price,
                 )
                 if isinstance(order, dict):
-                    order.setdefault("action", "BUY")  # audit F5
+                    order.setdefault("action", decision.action)  # audit F5
                 orders.append(order)
-                available_cash -= estimated_cost
+                if not is_short:
+                    # D11: a SHORT does not spend `available_cash` — see the
+                    # matching skip on the affordability re-size above.
+                    available_cash -= estimated_cost
                 order_type = "limit" if limit_price is not None else "market"
                 logger.info(
-                    "Executed: buy %d %s @ %s $%.2f",
-                    qty, decision.symbol, order_type, executed_price,
+                    "Executed: %s %d %s @ %s $%.2f",
+                    decision.action.lower(), qty, decision.symbol, order_type, executed_price,
                 )
                 # The entry still owes a protective stop: it is placed as a
                 # separate GTC order AFTER the fill, because an OTO leg would
@@ -2640,6 +2864,7 @@ class ExecutionStage:
                 if isinstance(order, dict) and order.get("pending_stop_price"):
                     pending_entry_stops.append({
                         "symbol": decision.symbol,
+                        "side": entry_side,
                         "order_id": order.get("id"),
                         "stop_price": order["pending_stop_price"],
                         "qty": qty,
@@ -2682,10 +2907,12 @@ class ExecutionStage:
                         spec["order_id"],
                     )
                     entry_order_id, superseded_fill = spec["order_id"], 0.0
+                entry_side = spec.get("side", "buy")
                 protection = pipeline.broker.place_entry_protection(
                     symbol=spec["symbol"], order_id=entry_order_id,
                     stop_price=spec["stop_price"], requested_qty=spec["qty"],
                     superseded_filled_qty=superseded_fill,
+                    side=entry_side,
                 )
                 _record_pipeline_event(
                     pipeline, ctx, spec["symbol"], "protection",
@@ -2694,6 +2921,74 @@ class ExecutionStage:
                     entry_order_id=entry_order_id, stop_price=spec["stop_price"],
                     protective_order_id=(protection or {}).get("id") if isinstance(protection, dict) else None,
                 )
+                # D7 (Stage 3): MANDATORY escalation for a SHORT. A long's
+                # loss is bounded at -100%; a naked short's is not, so
+                # relying on the next session's coverage-reconcile belt (the
+                # long behaviour, unchanged above) is not an acceptable
+                # exposure window here. If the protective stop could not be
+                # placed after the entry actually filled shares, submit an
+                # IMMEDIATE market COVER for the filled quantity and log it
+                # loudly — this is not a normal exit, it is damage control.
+                if protection is None and entry_side == "sell_short":
+                    try:
+                        fill_info = pipeline.broker.get_order_fill_info(entry_order_id) or {}
+                        filled_qty = float(fill_info.get("filled_qty") or 0)
+                    except Exception as fill_exc:  # noqa: BLE001
+                        logger.critical(
+                            "SHORT %s: could not even determine the filled "
+                            "quantity after protection failed (%s) — treating "
+                            "as the full requested qty %.4f to force a cover "
+                            "attempt rather than leaving a possibly-naked "
+                            "short untouched",
+                            spec["symbol"], fill_exc, spec["qty"],
+                        )
+                        filled_qty = float(spec.get("qty") or 0)
+                    if filled_qty > 0:
+                        logger.critical(
+                            "SHORT %s: PROTECTIVE STOP FAILED after %.4f "
+                            "share(s) filled — a naked short has UNBOUNDED "
+                            "loss. Submitting an IMMEDIATE market COVER "
+                            "instead of waiting for the next reconcile pass.",
+                            spec["symbol"], filled_qty,
+                        )
+                        try:
+                            cover_order = pipeline.broker.submit_order(
+                                symbol=spec["symbol"], qty=filled_qty, side="buy",
+                            )
+                            cover_id = (
+                                cover_order.get("id")
+                                if isinstance(cover_order, dict) else None
+                            )
+                            pipeline.db.insert_trade(
+                                symbol=spec["symbol"], action="EMERGENCY_COVER",
+                                qty=filled_qty, price=0.0,
+                                reasoning=(
+                                    "protective stop failed to place after a "
+                                    "SHORT entry filled — immediate market "
+                                    "cover to bound an otherwise naked short"
+                                ),
+                                run_id=run_id, broker_order_id=cover_id,
+                                fill_status="submitted",
+                            )
+                            _record_pipeline_event(
+                                pipeline, ctx, spec["symbol"], "protection",
+                                "emergency_cover", "naked_short_protection_failed",
+                                qty=filled_qty, broker_order_id=cover_id,
+                            )
+                        except Exception as cover_exc:  # noqa: BLE001
+                            logger.critical(
+                                "SHORT %s: EMERGENCY COVER ALSO FAILED (%s) — "
+                                "%.4f share(s) are NAKED SHORT with NO "
+                                "protective stop and NO cover in flight. "
+                                "REQUIRES IMMEDIATE OPERATOR INTERVENTION.",
+                                spec["symbol"], cover_exc, filled_qty,
+                            )
+                            _record_pipeline_event(
+                                pipeline, ctx, spec["symbol"], "protection",
+                                "emergency_cover_failed",
+                                "naked_short_no_protection_no_cover",
+                                qty=filled_qty, detail=str(cover_exc),
+                            )
             except Exception as e:  # noqa: BLE001 — never abort the session here
                 logger.error(
                     "entry protection raised for %s: %s — position may be "

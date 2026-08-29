@@ -379,6 +379,22 @@ class RiskConfig(BaseModel):
     # conservative choice — margin leverage amplifies drawdowns and is not
     # the bot's intended mode unless explicitly opted in.
     allow_margin: bool = False
+    # --- Stage 3 (shorts) -----------------------------------------------
+    # The single-short ceiling is deliberately HALF of `max_position_pct`:
+    # a long's loss is bounded at -100% of the position, a short's is not,
+    # so the per-name concentration budget for one short is tighter than
+    # for one long. Both caps below are HARD BLOCKS in the deterministic
+    # risk engine (src/risk/rules.py) on opening/adding a short — never on
+    # a COVER, which mirrors the existing exits-fail-open asymmetry.
+    max_single_short_pct: float = Field(default=10.0, gt=0, le=100)
+    # The largest total gross short exposure across the whole book, as a
+    # percent of equity.
+    max_short_gross_pct: float = Field(default=20.0, gt=0, le=200)
+    # Sizing-only haircut (never applied to stop placement) on a short's
+    # risk-per-share. A short gaps through its stop upward with no bound —
+    # equal nominal risk is not equal real risk — so the same risk
+    # allocation opens a SMALLER short than an equivalent long.
+    short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
 
 
 class CashSweepConfig(BaseModel):

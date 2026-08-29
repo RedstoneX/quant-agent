@@ -90,6 +90,10 @@ HARD_BLOCK_RULES = {
     # It is a hard gate now. `apply_drawdown_scale` halves BUYs before this
     # filter runs, so a violation here means a BUY reached the engine unscaled.
     "drawdown_buy_cap",
+    # D9 (Stage 3, shorts). Hard blocks on opening/adding a short; a COVER
+    # is exempted before either rule can fire (src/risk/rules.py).
+    "max_single_short_pct",
+    "max_short_gross_pct",
 }
 
 
@@ -540,6 +544,11 @@ class TradingPipeline:
             # constructor sizes under the ceiling rather than proposing orders
             # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
             max_position_pct=_risk_setting("max_position_pct", 20.0),
+            # Stage 3 (shorts) — same "size under the hard block" pattern as
+            # max_position_pct just above, mirrored for the short-specific
+            # ceiling and its sizing haircut.
+            max_single_short_pct=_risk_setting("max_single_short_pct", 10.0),
+            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
             min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
@@ -759,6 +768,31 @@ class TradingPipeline:
                     f"{symbol} is not an existing holding and cannot be sold"
                 )
                 continue
+            # Stage 3 (shorts). SHORT is the sell-side entry twin of BUY —
+            # same universe/analyst-coverage bar, because it opens/adds new
+            # risk the same way a BUY does. Without this explicit branch a
+            # SHORT fell through to `allowed_decisions.append` unconditionally
+            # (fail OPEN — the one thing D2 forbids), since it matched
+            # neither the BUY nor the SELL condition above.
+            elif decision.action == "SHORT":
+                if symbol not in buy_allowlist:
+                    blocked_reasons.append(
+                        f"{symbol} is neither in the configured universe nor "
+                        "deterministically admitted for this run and cannot be shorted"
+                    )
+                    continue
+                if symbol not in analyzed_symbols:
+                    blocked_reasons.append(
+                        f"{symbol} has no supporting analyst output in this run and cannot be shorted"
+                    )
+                    continue
+            # COVER is the buy-side exit twin of SELL — same held-position
+            # bar. Same fail-OPEN gap as SHORT above without this branch.
+            elif decision.action == "COVER" and symbol not in held_symbols:
+                blocked_reasons.append(
+                    f"{symbol} is not an existing holding and cannot be covered"
+                )
+                continue
 
             allowed_decisions.append(decision)
 
@@ -906,6 +940,11 @@ class TradingPipeline:
         pending_sector_investment: dict[str, float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
+        # D9 (Stage 3): running total of gross short notional already
+        # allowed earlier in this batch, so `max_short_gross_pct` sees two
+        # different symbols shorted in the same run rather than checking
+        # each against only the pre-existing book.
+        pending_short_gross_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -982,7 +1021,13 @@ class TradingPipeline:
         effective_cash = None if cash is None else cash + sell_proceeds
 
         for decision in decisions:
-            if decision.action != "BUY":
+            # Stage 3: a SHORT opens/adds new risk exactly as a BUY does, so
+            # it must clear the same hard-block gate (D9's short caps live
+            # inside `risk_engine.check`). SELL and COVER bypass this gate
+            # entirely and fall straight through to `allowed_decisions` —
+            # for COVER that is deliberate (D10: a cover can never be
+            # blocked), for SELL it always has been.
+            if decision.action not in ("BUY", "SHORT"):
                 allowed_decisions.append(decision)
                 continue
 
@@ -999,12 +1044,13 @@ class TradingPipeline:
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
+                pending_short_gross_investment=pending_short_gross_investment,
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
                 messages = [v.message for v in hard_violations]
                 blocked_reasons.extend(messages)
-                logger.warning("Hard risk block for BUY %s: %s", decision.symbol, "; ".join(messages))
+                logger.warning("Hard risk block for %s %s: %s", decision.action, decision.symbol, "; ".join(messages))
                 continue
 
             remaining_violations.extend(violations)
@@ -1012,15 +1058,31 @@ class TradingPipeline:
 
             from src.risk.rules import _effective_multiplier, _gross_multiplier
             raw_investment = total_value * (decision.allocation_pct / 100)
-            # Total exposure accumulates SIGNED contribution (hedges net out).
+            is_short = decision.action == "SHORT"
+            # Total exposure accumulates SIGNED contribution (hedges net
+            # out). A SHORT moves it the OPPOSITE way a BUY of the same
+            # symbol would — the matching flip lives in
+            # RiskRuleEngine.check.
+            signed_investment = (
+                raw_investment * _effective_multiplier(decision.symbol)
+                * (-1.0 if is_short else 1.0)
+            )
             # Sector exposure accumulates GROSS (direction-agnostic magnitude).
-            signed_investment = raw_investment * _effective_multiplier(decision.symbol)
             gross_investment = raw_investment * _gross_multiplier(decision.symbol)
             pending_investment += signed_investment
-            # Cash outflow is raw $ notional — leverage/direction don't change
-            # the brokerage cash the BUY consumes. Inverse/leveraged ETFs still
-            # cost their sticker price in cash.
-            pending_cash_outflow += raw_investment
+            if is_short:
+                # A SHORT does not spend the settled-cash pool the
+                # cash_only rule protects (see RiskRuleEngine.check) — do
+                # not debit pending_cash_outflow for it. It DOES grow the
+                # running gross-short total D9's book-wide cap checks
+                # against, so a second short later in this same batch sees
+                # this one.
+                pending_short_gross_investment += gross_investment
+            else:
+                # Cash outflow is raw $ notional — leverage/direction don't
+                # change the brokerage cash the BUY consumes. Inverse/
+                # leveraged ETFs still cost their sticker price in cash.
+                pending_cash_outflow += raw_investment
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )

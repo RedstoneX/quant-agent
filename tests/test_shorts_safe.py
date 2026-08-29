@@ -552,22 +552,56 @@ def test_reconcile_stop_coverage_naked_short_is_flagged_not_repaired():
 # 6. The hard boundary, re-proved: shorts still cannot be opened or covered
 # ==========================================================================
 
-def test_shorts_still_cannot_be_opened_or_covered_by_the_constructor():
-    """Stage 2 changes protective machinery, never tradeability. The
-    Stage-1 guard in the portfolio-constructor delta loop must be
-    completely untouched: a held short still produces zero orders."""
-    from src.models import Position, TargetPosition
+def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
+    """NEW boundary (Stage 3). This test used to pin the Stage-1 guard —
+    the constructor produced zero orders against any short, opened or
+    held. That guard is gone: opening a fresh short now produces a SHORT
+    decision carrying the mirrored stop-above-entry / target-below-entry
+    geometry this file exists to test (the same geometry
+    `place_entry_protection` above protects with a BUY stop), and closing
+    a held short now produces a COVER. Borrow eligibility, the exposure
+    caps, and the mandatory protective-stop escalation are execution-layer
+    concerns proved end to end in tests/test_shorts_stage3.py — this only
+    re-proves the constructor's own half of the boundary.
+    """
+    from src.models import (
+        Position, TargetPosition, TechAnalysisResult, TechReasoningChain,
+    )
     from src.portfolio_constructor import PortfolioConstructor
 
     constructor = PortfolioConstructor()
-    decisions = constructor.construct_orders(
+    rc = TechReasoningChain(trend="x", momentum="x", volatility="x",
+                            volume="x", support_resistance="x")
+    analysis = TechAnalysisResult(
+        symbol="TSLA", rating="sell", entry_price=250.0, stop_loss=262.5,
+        reference_target=220.0, reasoning="test",
+        support_levels=[220.0], resistance_levels=[262.5],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning_chain=rc,
+    )
+
+    open_decisions = constructor.construct_orders(
+        targets=[TargetPosition(symbol="TSLA", direction="short",
+                                target_weight_pct=5.0, conviction="high",
+                                thesis="overvalued")],
+        positions=[], analyses=[analysis], total_value=100_000,
+        price_map={"TSLA": 250.0},
+    )
+    assert len(open_decisions) == 1
+    opened = open_decisions[0]
+    assert opened.action == "SHORT"
+    assert opened.stop_loss > opened.entry_price, "a short's stop must sit above entry"
+    assert opened.take_profit < opened.entry_price, "a short's target must sit below entry"
+
+    cover_decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="TSLA", target_weight_pct=0.0,
                                 conviction="high", thesis="close it")],
         positions=[Position(symbol="TSLA", qty=-40, avg_entry=250, current_price=250,
                             market_value=-10_000, unrealized_pnl=0, sector="Consumer Cyclical")],
         analyses=[], total_value=100_000, price_map={"TSLA": 250.0},
     )
-    assert decisions == []
+    assert len(cover_decisions) == 1
+    assert cover_decisions[0].action == "COVER"
 
 
 def test_full_sell_qty_refuses_a_short():

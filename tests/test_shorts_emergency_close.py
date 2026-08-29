@@ -498,11 +498,20 @@ def test_intra_check_force_closes_a_short_with_buy_to_cover(tmp_path):
 #    through the normal decision path
 # ==========================================================================
 
-def test_shorts_still_cannot_be_opened_or_covered_by_the_constructor():
-    """The Stage-1 guard in the portfolio-constructor delta loop is
-    untouched by this PR: a held short still produces zero orders through
-    the normal decision path. This PR only adds an EXIT that fires from
-    forced-close call sites, never from a PM/RM decision."""
+def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
+    """NEW boundary (Stage 3). This file's own copy of the boundary test —
+    the same fixture as tests/test_shorts_safe.py and
+    tests/test_shorts_countable.py, all three independently re-proving the
+    same Stage-1 guard — used to assert zero orders. Stage 3 lifts that
+    guard: the fixture now produces a full COVER, exactly the way an
+    explicit-close long produces a SELL. The forced-close EXIT this file
+    adds (`_forced_close_side_and_qty` / `_submit_protected_sell`'s `side`
+    param) is orthogonal to and unaffected by this change — it never went
+    through the constructor and still fires only from forced-close call
+    sites, never from a PM/RM decision. Full execution-path proof that a
+    short can be OPENED — the borrow gate, the exposure caps, and the
+    mandatory protective stop — lives in tests/test_shorts_stage3.py.
+    """
     from src.models import TargetPosition
     from src.portfolio_constructor import PortfolioConstructor
 
@@ -514,7 +523,9 @@ def test_shorts_still_cannot_be_opened_or_covered_by_the_constructor():
                             market_value=-10_000, unrealized_pnl=0, sector="Consumer Cyclical")],
         analyses=[], total_value=100_000, price_map={"TSLA": 250.0},
     )
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].action == "COVER"
+    assert decisions[0].allocation_pct == 100.0
 
 
 def test_execution_stage_sell_decision_loop_still_refuses_a_short(tmp_path):

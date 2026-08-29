@@ -74,9 +74,14 @@ class RiskManagerAgent(BaseAgent):
         # made the RM misread SELL fractions as portfolio weights and emit
         # allocation_pct mods that silently downgraded PM-sized exits.
         def _fmt_decision(d) -> str:  # d: TradeDecision
-            if d.action == "SELL":
+            # Stage 3: COVER carries the same %-OF-CURRENT-POSITION semantics
+            # as SELL (100 = full cover, 0 = skip) — it is not a portfolio
+            # weight either. Rendering it with the BUY/SHORT template would
+            # make the RM misread a cover fraction as a portfolio-sized bet.
+            if d.action in ("SELL", "COVER"):
+                verb = "sell" if d.action == "SELL" else "cover"
                 alloc = (
-                    f"sell {d.allocation_pct}% OF CURRENT POSITION "
+                    f"{verb} {d.allocation_pct}% OF CURRENT POSITION "
                     f"(100 = full close; NOT a portfolio weight — never set to 0, 0 = skip)"
                 )
             else:

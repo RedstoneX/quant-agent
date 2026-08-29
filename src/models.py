@@ -255,7 +255,11 @@ class TechAnalysisResult(BaseModel):
 class TradeDecision(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
-    action: Literal["BUY", "SELL", "HOLD"]
+    # Stage 3 (shorts): SHORT opens/adds a short (mirror of BUY); COVER
+    # reduces/closes one (mirror of SELL). SELL never means "open a short"
+    # — every existing consumer already reads SELL as "reduce or close a
+    # long", and overloading it would silently reinterpret them.
+    action: Literal["BUY", "SELL", "SHORT", "COVER", "HOLD"]
     symbol: str
     allocation_pct: float = Field(ge=0, le=100)
     entry_price: float
@@ -291,6 +295,26 @@ class TradeDecision(BaseModel):
                 raise ValueError(
                     "BUY decisions require take_profit to stay above entry_price"
                 )
+        elif self.action == "SHORT":
+            # Mirror of the BUY geometry: a short's stop protects ABOVE
+            # entry and its take-profit sits BELOW entry (price must fall
+            # for a short to profit).
+            if self.entry_price <= 0:
+                raise ValueError("SHORT decisions require entry_price > 0")
+            if self.stop_loss < 0:
+                raise ValueError("SHORT decisions require stop_loss >= 0")
+            if self.take_profit <= 0:
+                raise ValueError("SHORT decisions require take_profit > 0")
+            if self.stop_loss > 0 and self.stop_loss <= self.entry_price:
+                raise ValueError(
+                    "SHORT decisions require stop_loss to stay above entry_price"
+                )
+            if self.take_profit >= self.entry_price:
+                raise ValueError(
+                    "SHORT decisions require take_profit to stay below entry_price"
+                )
+        # SELL and COVER don't need live entry/stop/target — execution uses
+        # market price, exactly as SELL always has.
         return self
 
 
@@ -497,6 +521,19 @@ class TargetPosition(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     symbol: str
+    # Stage 3 (shorts). Default "long" so every stored decision — every
+    # historical agent_logs / specialist_evidence row parsed through this
+    # model, and every live target a PM prompt that doesn't yet know this
+    # field exists ever emits — replays with EXACTLY the behaviour it had
+    # before this field existed. The constructor turns this + the
+    # (unsigned) size field into a SIGNED target weight:
+    #     signed_target = -target_pct if direction == "short" else +target_pct
+    # `current_pct` (see `_current_weights`) is already signed — negative
+    # means a held short. Delta math then operates on signed weights: a
+    # positive delta is buy-side (BUY to open/add a long, or COVER to
+    # reduce a short); a negative delta is sell-side (SELL to reduce a
+    # long, or SHORT to open/add a short).
+    direction: Literal["long", "short"] = "long"
     # --- Sizing (Phase 2b, 2026-08-27) -------------------------------------
     # Conviction is expressed as RISK, not as notional weight.
     #
@@ -1027,7 +1064,14 @@ class EarningsAnalysis(BaseModel):
 
 
 class PositionAction(BaseModel):
-    action: Literal["SELL", "REDUCE", "TRAIL_STOP", "HOLD"]
+    # Stage 3 (shorts): COVER is the short-side twin of SELL/REDUCE for the
+    # intraday reviewer. Not yet reachable from a live decision — the
+    # reviewer's prompt (config/prompts/) doesn't ask for it — but the
+    # schema accepts it so a future prompt update is a prompt change, not a
+    # schema change. Any executor that doesn't yet implement it must skip
+    # it rather than silently treat it as SELL/REDUCE (see
+    # `TradingPipeline._midday_execute_llm_actions`'s `act not in (...)` gate).
+    action: Literal["SELL", "REDUCE", "TRAIL_STOP", "COVER", "HOLD"]
     symbol: str
     reason: str
     new_stop_price: float | None = None  # required when action == TRAIL_STOP
