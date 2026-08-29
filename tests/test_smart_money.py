@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from src.agents.base import AgentResult
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.smart_money import SECForm4Provider
@@ -137,6 +139,33 @@ def test_exact_non_derivative_purchase_parse_preserves_sec_facts(tmp_path):
     assert row.post_transaction_shares == 10_000
     assert row.ownership_nature == "direct"
     assert row.is_10b5_1 is False
+
+
+# Every SEC Form 4 Table I transaction code that is NOT an open-market P/S
+# trade, pinned individually. `SmartMoneyObservation.transaction_code` is
+# `Literal["", "P", "S"]` (src/models.py) specifically because none of these
+# six ever survive `_parse_submission` to be handed to the routine/
+# opportunistic classifier (`src/data/insider_signal.py`) — see that
+# module's docstring, "departure" notes, for why the classifier itself still
+# carries a `non_open_market_code` contract guard rather than assuming this
+# parser boundary always holds. `code="A"` (grant/award) is already covered
+# by `test_exact_non_derivative_purchase_parse_preserves_sec_facts` above,
+# which additionally checks that a genuine P row alongside it survives; this
+# test isolates the other five and confirms each drops on its own, with no
+# survivor to piggyback on.
+@pytest.mark.parametrize("code", ["A", "M", "F", "G", "D", "X"])
+def test_every_non_open_market_code_is_dropped_before_the_classifier(tmp_path, code):
+    # The transaction code filter (`if code not in {"P", "S"}: continue`) is
+    # the first check `_parse_submission` applies, ahead of the acquired/
+    # disposed consistency check — so ``acquired`` here is irrelevant to the
+    # outcome and left at the fixture's default.
+    provider = SECForm4Provider(data_dir=str(tmp_path))
+    rows = provider._parse_submission(
+        _submission(code=code),
+        source_url="https://www.sec.gov/x/0000000001-26-000001.txt",
+        listed={"1045810": {"NVDA": "Nasdaq"}},
+    )
+    assert rows == []
 
 
 def test_direction_inconsistent_sec_row_is_dropped(tmp_path):

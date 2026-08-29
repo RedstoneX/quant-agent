@@ -249,6 +249,16 @@ smart_money:
   min_external_price_usd: 5
   min_external_avg_dollar_volume_usd: 10000000
   min_external_history_days: 20
+  # Routine-versus-opportunistic Form 4 classification
+  # (src/data/insider_signal.py). See src/config.py::SmartMoneyConfig for
+  # the evidence basis behind each default.
+  insider_calendar_routine_years: 3
+  insider_min_cadence_trades: 3
+  insider_cadence_min_mean_gap_days: 20
+  insider_cadence_max_mean_gap_days: 120
+  insider_cadence_max_gap_dispersion: 0.25
+  insider_min_material_sell_fraction: 0.05
+  insider_history_retention_days: 1830
 
 trading:
   universe:
@@ -412,6 +422,16 @@ storage:
 reconciliation:
   stop_out_lookback_days: 7   # how far back to ask the broker for a filled
                                # SELL the ledger doesn't already know about
+
+# Tap-through link TelegramNotifier appends to session alerts so the
+# operator can jump from a phone notification straight into Mission
+# Control. Empty string disables the link — never emit a broken one.
+# Defaults to the tailnet address Tailscale Serve exposes for the qamc
+# API (ovh-vps.wallaby-bowfin.ts.net, proxying tailnet-only port 443 to
+# the API on 127.0.0.1:8800), which mounts /cockpit (src/api/server.py).
+# Tailscale-only — matches Mission Control's private, read-only posture.
+notifications:
+  mission_control_url: "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 # Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and
 # shared atomically across systemd processes.  Opening it suspends only model

@@ -17,9 +17,33 @@ Per-mode noise policy (see `format_session_result`):
     text is suppressed (the document IS the confirmation); "error"
     (with the reason) and "skipped" still notify
   - Any session that raised an exception: always notify
+
+Readability/links: the operator reads these on his phone. Per-field
+truncation used to clip PM/tech rationale, the evening outlook, and error
+text well below Telegram's real 4096-char message limit, with a raw
+`text[:N]` slice that could (and did — a BUY CRM alert reading "...strong
+heavy accumulation volume" just stopped there) cut mid-word with no
+indication anything had been dropped. `_clip_text` below is the shared,
+boundary-aware replacement: every field-level clip in this module and in
+src/trader_feed.py's `_clip` now goes through it, with limits raised to use
+the actual budget instead of an arbitrary small one.
+
+`TelegramNotifier.send()` now sets `parse_mode="HTML"` and escapes every
+outgoing message with `html.escape()` before transmission. HTML was chosen
+over MarkdownV2 specifically because PM/tech rationale is full of
+underscores (tickers, snake_case), asterisks, parentheses, and percent
+signs — MarkdownV2 requires escaping ~18 characters or Telegram rejects the
+whole message ("can't parse entities"); HTML requires exactly three
+('&','<','>'). `send()` also accepts an optional `link_url`/`link_label`
+(defaulting to the instance's `mission_control_url`, itself sourced from
+`config/settings.yaml: notifications.mission_control_url` — see
+src/config.py::NotificationsConfig) and appends it as a real `<a href>` tap-
+through link. An empty/unset URL means no link is appended, ever — never a
+broken one.
 """
 from __future__ import annotations
 
+import html
 import logging
 import os
 from pathlib import Path
@@ -53,6 +77,50 @@ _DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
 _SWEEP_SYMBOLS = frozenset({"SGOV", "BIL"})
 
 
+def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
+    """Shorten `text` to at most `max_chars`, cutting on a sentence or word
+    boundary and appending `marker` — never a hard mid-word chop.
+
+    The bug this replaces: `text[:N]` throughout this module (and
+    src/trader_feed.py's own `_clip`) sliced on a raw character count with
+    no regard for what was at that boundary. The operator's actual report
+    was a BUY CRM alert whose rationale read "...strong heavy accumulation
+    volume" and simply stopped — no ellipsis, no "see more", nothing to
+    indicate the sentence had been cut at all, well below Telegram's real
+    4096-char message limit.
+
+    Preference order: the last '. '/'! '/'? ' inside the budget (reads as a
+    complete thought); then the last whitespace (never split a word); a
+    hard cut only when the text has no boundary at all within the budget
+    (e.g. one unbroken token) — the single case this still can't avoid.
+    """
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= len(marker):
+        return text[:max_chars]
+    budget = max_chars - len(marker)
+    window = text[:budget]
+
+    best = -1
+    for punct in (". ", "! ", "? "):
+        idx = window.rfind(punct)
+        if idx > best:
+            best = idx
+    # Trust a sentence boundary only if it doesn't throw away most of the
+    # budget (an early ". " — an abbreviation, a list separator — would
+    # otherwise clip far more aggressively than max_chars intends).
+    if best >= budget * 0.4:
+        return window[: best + 1].rstrip() + marker
+
+    space = window.rfind(" ")
+    if space > 0:
+        return window[:space].rstrip() + marker
+
+    return window.rstrip() + marker
+
+
 class TelegramNotifier:
     """Best-effort Telegram Bot API notifier.
 
@@ -68,16 +136,27 @@ class TelegramNotifier:
     HTTP_TIMEOUT_S = 5.0
     # Telegram hard limit is 4096; leave room for a truncation marker.
     MAX_MESSAGE_CHARS = 4000
+    DEFAULT_LINK_LABEL = "🔗 Open Mission Control"
 
     def __init__(
         self,
         token: str | None = None,
         chat_id: str | None = None,
+        mission_control_url: str | None = None,
     ):
         self.token = (token if token is not None else os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
         self.chat_id = (chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")).strip()
         kill_switch = os.getenv("TELEGRAM_DISABLED", "").strip().lower() in ("1", "true", "yes")
         self.enabled = bool(self.token and self.chat_id) and not kill_switch
+        # Tap-through link target for send(). Unlike token/chat_id this is
+        # NOT read from the environment — src/config.py::NotificationsConfig
+        # (config/settings.yaml: notifications.mission_control_url) is the
+        # source of truth, so it arrives as a constructor arg from a caller
+        # holding a resolved AppConfig (main.py, TradingScheduler). An
+        # empty/unset value means send() appends no link — never a broken
+        # one. str(...) guards against a non-str default sneaking through
+        # (e.g. a test double); production always passes a validated str.
+        self.mission_control_url = str(mission_control_url or "").strip()
         if not self.enabled:
             if kill_switch:
                 logger.info("TelegramNotifier: disabled via TELEGRAM_DISABLED env var")
@@ -113,11 +192,23 @@ class TelegramNotifier:
         except Exception:  # noqa: BLE001
             return "<unprintable error>"
 
-    def send(self, text: str) -> bool:
+    def send(
+        self,
+        text: str,
+        link_url: str | None = None,
+        link_label: str | None = None,
+    ) -> bool:
         """Fire-and-forget send. Returns True on success.
 
         - No-op when not enabled (returns False).
-        - Auto-truncates messages over MAX_MESSAGE_CHARS.
+        - Escapes `text` and sends with `parse_mode="HTML"` — a stray
+          underscore/asterisk/`<`/`&` in a ticker or a rationale must not
+          corrupt the message or get the whole send rejected by Telegram.
+        - Appends a tap-through `<a href>` link when one is available:
+          `link_url` if given, else `self.mission_control_url` (from
+          config). Neither set → no link, ever — never a broken one.
+        - Auto-truncates messages over MAX_MESSAGE_CHARS on a sentence/word
+          boundary (see `_clip_text`) rather than mid-word.
         - Any HTTP / network / Telegram-side error is logged and
           swallowed: trading must never fail because a notifier is
           unreachable.
@@ -143,14 +234,45 @@ class TelegramNotifier:
                 len(text), text.splitlines()[0][:120] if text else "",
             )
             return False
-        if len(text) > self.MAX_MESSAGE_CHARS:
-            text = text[: self.MAX_MESSAGE_CHARS - 30] + "\n[...truncated]"
+
+        # HTML over MarkdownV2: PM/tech rationale is full of tickers with
+        # underscores, "*" bullets, parentheticals, and "%" — MarkdownV2
+        # demands escaping ~18 characters or Telegram rejects the entire
+        # message ("can't parse entities"); HTML needs exactly '&','<','>'.
+        # Escaping BEFORE the length check matters too: an unescaped '&'
+        # costs 5 chars once escaped ('&amp;'), so measuring the pre-escape
+        # length risks shipping something past Telegram's real 4096 cap.
+        escaped = html.escape(text)
+
+        resolved_url = link_url if link_url is not None else self.mission_control_url
+        link_html = ""
+        if resolved_url:
+            label = link_label if link_label is not None else self.DEFAULT_LINK_LABEL
+            # quote=True: this value sits inside href="...", not message
+            # body text — needs '"' escaped too, not just '&','<','>'.
+            safe_url = html.escape(resolved_url, quote=True)
+            safe_label = html.escape(label)
+            link_html = f'\n\n<a href="{safe_url}">{safe_label}</a>'
+
+        budget = max(0, self.MAX_MESSAGE_CHARS - len(link_html))
+        if len(escaped) > budget:
+            # `_clip_text` never splits an HTML entity: it only ever cuts on
+            # whitespace, and an entity like '&amp;' has none inside it — so
+            # the boundary search always lands on a word start/end, keeping
+            # any entity in the kept text whole. This is the last-resort
+            # safety net for the rare aggregate message still oversized
+            # after every field-level clip below already ran — not the
+            # primary fix, which is raising those per-field limits.
+            escaped = _clip_text(escaped, budget, marker="\n[...truncated]")
+        final_text = escaped + link_html
+
         try:
             response = requests.post(
                 self.API_URL.format(token=self.token),
                 json={
                     "chat_id": self.chat_id,
-                    "text": text,
+                    "text": final_text,
+                    "parse_mode": "HTML",
                     "disable_web_page_preview": True,
                 },
                 timeout=self.HTTP_TIMEOUT_S,
@@ -210,7 +332,11 @@ def format_session_result(
     if error is not None:
         # Errors always notify — operator wants to see crashes loudly.
         err_type = type(error).__name__
-        err_msg = str(error)[:500] or "(no message)"
+        # 1500 chars, not the old 500 — a Python traceback's exception
+        # message (chained cause, validation error detail) routinely runs
+        # long, and this is a single line in a 4000-char budget; see
+        # _clip_text for why it clips on a boundary instead of mid-word.
+        err_msg = _clip_text(str(error), 1500) or "(no message)"
         return (
             f"🔴 {mode} FAILED  ({timestamp})\n"
             f"error: {err_type}: {err_msg}\n"
@@ -377,7 +503,10 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         )
         err = result.get("error")
         if err:
-            lines.append(f"trigger: {str(err)[:300]}")
+            # 900, not 300 — this is the deterministic cost-circuit
+            # breaker's trigger detail, often a multi-clause sentence
+            # (which ceiling, current spend, provider) worth reading in full.
+            lines.append(f"trigger: {_clip_text(str(err), 900)}")
     elif status.startswith("pm_") or status == "analysis_error":
         lines.append(
             f"🔴 PM decision failed ({status}) — no decisions were made; "
@@ -385,24 +514,30 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         )
         err = result.get("error")
         if err:
-            lines.append(f"error: {str(err)[:300]}")
+            lines.append(f"error: {_clip_text(str(err), 900)}")
 
     # System-health first: a naked long is more urgent than the order list.
     _append_coverage_gap_banner(lines, result)
     orders = result.get("orders") or []
 
-    # FORCE_DELEVER / EMERGENCY_SELL banner — these actions mean the
-    # autonomous loop intervened automatically. force_delever fires when
-    # cash < -$1 (margin disabled) and biggest-loser-first sells until
-    # cash >= 0. emergency_sell fires from intra_check's flash-crash
-    # protection. Both look identical to a routine SELL on the wire
-    # otherwise — operator's most important "system intervened" signal
-    # would be invisible without this banner. Prepended before the
+    # FORCE_DELEVER / EMERGENCY_SELL / EMERGENCY_COVER banner — these
+    # actions mean the autonomous loop intervened automatically.
+    # force_delever fires when cash < -$1 (margin disabled) and
+    # biggest-loser-first sells until cash >= 0. emergency_sell fires from
+    # intra_check's / midday's flash-crash protection closing a long;
+    # emergency_cover is the same circuit breaker covering a SHORT (a
+    # distinct action name — not "emergency_sell" — because it's a BUY,
+    # and reusing the SELL name here would also have to be reused in
+    # db.py's realized-P&L FIFO lot matching, which assumes a "sell-family"
+    # action closes a long against open BUY lots; a short has no BUY lot to
+    # match against). All three look identical to a routine order on the
+    # wire otherwise — operator's most important "system intervened"
+    # signal would be invisible without this banner. Prepended before the
     # order list so it's the first thing read.
     forced = [
         o for o in orders
         if isinstance(o, dict) and str(o.get("action", "")).upper() in (
-            "FORCE_DELEVER", "EMERGENCY_SELL"
+            "FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER",
         )
     ]
     if forced:
@@ -433,7 +568,14 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
                 label = "  🚨EMER "
             lines.append(f"{label}{_order_summary(o)}")
         for o in buys[:10]:
-            lines.append(f"  BUY   {_order_summary(o)}")
+            # EMERGENCY_COVER is a forced BUY (covering a short) — tag it
+            # the same way the sells loop above tags a forced SELL, so the
+            # operator can spot it without cross-referencing the banner.
+            action = str(o.get("action", "")).upper() if isinstance(o, dict) else ""
+            label = "  BUY   "
+            if action == "EMERGENCY_COVER":
+                label = "  🚨EMER "
+            lines.append(f"{label}{_order_summary(o)}")
         omitted = max(0, len(buys) - 10) + max(0, len(sells) - 10)
         if omitted:
             lines.append(f"  (+{omitted} more — see audit log)")
@@ -569,7 +711,11 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
             for act in actions[:5]:
                 if not isinstance(act, str):
                     continue
-                lines.append(f"   • {act[:200]}")
+                # 500, not 200 — this is exactly the field the operator
+                # complained about: a per-symbol call like "CRM: strong
+                # heavy accumulation volume, add on any weakness..." was
+                # being cut off mid-sentence at 200 chars with no ellipsis.
+                lines.append(f"   • {_clip_text(act, 500)}")
 
     # Position snapshot: total invested + cash + top winners/losers.
     # Helper queries the live DB so this works regardless of how the
@@ -591,7 +737,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         lines.append("🔮 Tomorrow: " + "  ".join(bits))
     outlook = _attr_or_key(analysis, "tomorrow_outlook") or ""
     if outlook:
-        lines.append(f"   {outlook[:280]}")
+        lines.append(f"   {_clip_text(outlook, 1000)}")
 
     # Auto-meta piggyback (Round 2 enabled this; Round 6 adds the
     # dry-run staging hint). When today is the last trading day of a
@@ -623,7 +769,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         period = auto_meta.get("period", "?")
         status = auto_meta.get("status", "?")
         if status == "auto_meta_error":
-            err = auto_meta.get("error", "?")[:200]
+            err = _clip_text(str(auto_meta.get("error", "?")), 600)
             lines.append(f"🧪 meta {period}: ERROR — {err}")
         elif status == "digest_only":
             # LLM reflection step failed after the digest was written —
@@ -887,7 +1033,7 @@ def _order_side(order: Any) -> str:
         "FORCE_DELEVER", "PARTIAL_SELL",
     )):
         return "sell"
-    if action == "BUY":
+    if action in ("BUY", "EMERGENCY_COVER"):
         return "buy"
     return ""
 
