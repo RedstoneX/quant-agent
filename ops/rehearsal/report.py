@@ -77,6 +77,152 @@ STATUS_PLAIN = {
         "Trades were approved, but there was not enough settled cash to pay "
         "for any of them, so nothing was submitted."
     ),
+    # "reviewed" (run_position_review, shared by run_midday/run_close —
+    # src/pipeline.py:8218), "ok" (run_intra_check — src/pipeline.py:8471)
+    # and "analyzed" (run_evening — src/pipeline.py:9625) are real, directly
+    # confirmed top-level terminal statuses of a normal completion: each was
+    # read at its own return site, not assumed from a comment. Before this
+    # fix all three were reported as VERDICT: FAIL here purely because
+    # `_verdict`'s "healthy" set predated them — a plain midday/close
+    # position review or an uneventful intra_check read as a broken
+    # rehearsal even though nothing went wrong. Reproduced against real
+    # production history (2026-08-29): `midday`, `close` and `intra_check`
+    # rehearsals all completed cleanly and were all still marked FAIL before
+    # this fix.
+    "reviewed": (
+        "The session ran all the way through and reviewed the open "
+        "positions (or there were none to review)."
+    ),
+    "ok": (
+        "The session ran its check and found nothing that required action."
+    ),
+    "analyzed": (
+        "The session ran all the way through the evening review and "
+        "analysis."
+    ),
+    # "position_review_parse_error" (run_position_review, shared by
+    # run_midday/run_close — src/pipeline.py:8111,8219) is "reviewed"'s
+    # failure twin: there were open positions to look at, but the
+    # reviewer's reply could not be read, so nothing was decided about
+    # them. "evening_analysis_error" (src/pipeline.py:9410,9626) is the
+    # evening analyst call raising an exception outright (no reply at all,
+    # after retries); "evening_parse_error" (src/pipeline.py:9436,9627) is
+    # the call succeeding but the reply not parsing. All three were already
+    # asserted as genuine failures by
+    # test_genuine_failure_statuses_are_still_fail below, but — caught by
+    # this file's own new guard test — none of the three actually had a
+    # STATUS_PLAIN entry, so each would have printed the generic "ended
+    # with status 'X'" fallback instead of a real explanation.
+    "position_review_parse_error": (
+        "There were open positions to look at, but the reviewer's reply "
+        "could not be read, so nothing was decided about them."
+    ),
+    "evening_analysis_error": (
+        "The evening analyst could not be reached at all, so no daily "
+        "review was produced — only today's profit and loss was recorded."
+    ),
+    "evening_parse_error": (
+        "The evening analyst replied, but its answer could not be read, "
+        "so no daily review was produced — only today's profit and loss "
+        "was recorded."
+    ),
+    # "intraday_no_trades" / "intraday_executed" (src/pipeline.py:9127,9138)
+    # are genuinely healthy outcomes of run_intra_check's opportunity scan —
+    # but, verified against the actual data flow rather than assumed: they
+    # are NOT top-level terminal statuses of any session. They only ever
+    # appear nested at result["intraday_scan"]["status"] (set at
+    # src/pipeline.py:8497-8498; the top-level status in that branch stays
+    # "ok"). Production's own src/trader_feed.py reads that exact nesting —
+    # `nested = result.get("intraday_scan")` (line 54), then
+    # `_format_intraday` reads `nested["status"]`, not `result["status"]`
+    # (line 564) — so production treating them as healthy is not evidence
+    # that `result["status"]` (what `report.status` is built from, in
+    # `collect()` below) can ever equal these strings. This rig's
+    # `collect()` never reads result["intraday_scan"], so today these two
+    # entries can never actually be selected. Left here because they are
+    # correct in meaning and harmless, not because they are reachable yet;
+    # the rig having no visibility into the intraday scan's own outcome is a
+    # separate, real gap, reported (not fixed) alongside this change.
+    "intraday_no_trades": (
+        "The intra-session check ran its full analysis and decided to "
+        "propose no trades."
+    ),
+    "intraday_executed": (
+        "The intra-session check ran and submitted orders."
+    ),
+    # "early_close" (run_position_review, shared by run_midday/run_close —
+    # src/pipeline.py:7806): a deliberate skip when the regular session had
+    # already closed for the day by the time midday/close fired (half-day
+    # holidays) — the same shape as "market_holiday", not a failure.
+    # Production's own src/trader_feed.py (_BASE_ONLY_STATUSES, line 30) and
+    # src/notifier.py (_status_emoji, line 1005) both already group it with
+    # "market_holiday" as a non-alerting outcome.
+    "early_close": (
+        "The market closed early today and the regular session was "
+        "already over by the time this ran, so nothing was reviewed."
+    ),
+    # "pm_parse_error" / "pm_schema_error" / "pm_grounding_error" /
+    # "pm_repair_changed_decision" (src/agents/portfolio_manager.py, via
+    # `_semantic_failure` — lines 808, 823, 851, 869, 895, 912, 924, 941,
+    # 953, 958, 964; surfaced as run_morning's terminal status at
+    # src/pipeline.py:7322/7331): all four are the portfolio manager's plan
+    # being thrown out — no readable decision at all, a schema violation a
+    # repair could not or must not fix, evidence that does not match what
+    # the analysts actually reported, or a repair that changed the trades
+    # themselves instead of only completing the schema. None of these
+    # produced a plan; they are the same failure family as
+    # "pm_agent_failure" above, just more specific. Production's own
+    # src/notifier.py (line 510) and src/trader_feed.py (line 49) already
+    # match on `status.startswith("pm_")` as a PM-decision failure — this
+    # rig's vocabulary had not caught up, so an ordinary PM parse failure
+    # printed the generic "ended with status 'pm_parse_error'" fallback
+    # instead of a real explanation.
+    "pm_parse_error": (
+        "The portfolio manager's reply did not contain a readable decision "
+        "at all, so there was no plan to act on."
+    ),
+    "pm_schema_error": (
+        "The portfolio manager's reply was missing pieces a decision is "
+        "required to have, and a repair either was not safe to attempt or "
+        "did not fix it, so there was no usable plan."
+    ),
+    "pm_grounding_error": (
+        "The portfolio manager proposed trades that cited evidence the "
+        "analysts never actually reported, so the plan was thrown out "
+        "before the risk manager ever saw it."
+    ),
+    "pm_repair_changed_decision": (
+        "An attempt to repair the portfolio manager's malformed reply "
+        "ended up changing which trades it wanted, which a repair is "
+        "never allowed to do, so the plan was thrown out."
+    ),
+    # "fetch_error" / "nothing_new" / "analysis_error" / "preprocessed"
+    # (src/pipeline.py:8286, 8294, 8320, 8394 — run_earnings_preprocess):
+    # this rig cannot rehearse that session yet (it is not in
+    # ops/rehearsal/runner.py's SESSIONS map — a real, separate gap,
+    # reported not fixed), but these are real terminal statuses of a real,
+    # scheduled, LLM-calling session with the same shape as the five
+    # supported modes. Production's own src/notifier.py (lines 359-366, 999,
+    # 1004) and src/trader_feed.py (line 30) already classify them
+    # (fetch_error/analysis_error as failures, nothing_new/preprocessed as
+    # healthy) — added here now so the vocabulary is already correct on the
+    # day that gap closes.
+    "fetch_error": (
+        "The session could not check for new earnings filings and stopped "
+        "before analyzing anything."
+    ),
+    "nothing_new": (
+        "The session checked for new earnings filings and found none, "
+        "which is the normal outcome on most days."
+    ),
+    "analysis_error": (
+        "New earnings filings were found, but analyzing them failed, so "
+        "nothing was recorded for them."
+    ),
+    "preprocessed": (
+        "The session ran all the way through and analyzed the new "
+        "earnings filings it found."
+    ),
 }
 
 # Why an approved BUY died at the last moment, in the execution stage.
@@ -629,5 +775,20 @@ def _verdict(report: RehearsalReport) -> str:
         return "FAIL"
     if any(f["kind"] == "missing_recorded_response" for f in report.findings):
         return "FAIL"
-    healthy = {"executed", "no_orders", "no_trades", "market_holiday"}
+    # "reviewed" / "ok" / "analyzed" are the normal completions of
+    # run_midday/run_close, run_intra_check and run_evening. "early_close" is
+    # run_midday/run_close's deliberate skip, the same shape as
+    # "market_holiday". "nothing_new" / "preprocessed" are the normal
+    # completions of run_earnings_preprocess, a session this rig cannot
+    # invoke yet — added pre-emptively. "intraday_no_trades" /
+    # "intraday_executed" are healthy in meaning but currently unreachable
+    # as `report.status` (see the STATUS_PLAIN comment above for why). See
+    # the matching STATUS_PLAIN entries above for how each was confirmed
+    # against src/pipeline.py and against production's own trader_feed.py /
+    # notifier.py status groupings.
+    healthy = {
+        "executed", "no_orders", "no_trades", "market_holiday", "early_close",
+        "reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed",
+        "nothing_new", "preprocessed",
+    }
     return "PASS" if report.status in healthy else "FAIL"
