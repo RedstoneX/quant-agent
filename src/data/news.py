@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 from xml.etree import ElementTree
 
@@ -16,7 +17,8 @@ RSS_FEEDS = {
     "CNBC Top News": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
     "CNBC Economy": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
     "MarketWatch Top": "https://feeds.marketwatch.com/marketwatch/topstories/",
-    "MarketWatch Markets": "https://feeds.marketwatch.com/marketwatch/marketpulse/",
+    # "MarketWatch Markets" (marketpulse) removed 2026-08-29 — see the
+    # audit note below. It 200s but stopped publishing over a year ago.
     # Yahoo Finance republishes a large share of Reuters/AP/Bloomberg wire
     # copy alongside its own reporting, which is the closest free substitute
     # for the wire breadth "Reuters Business" and "AP Business" used to
@@ -24,11 +26,32 @@ RSS_FEEDS = {
     # https://finance.yahoo.com/news/rssindex returns HTTP 200, valid RSS
     # 2.0, ~49 items with same-day timestamps.
     "Yahoo Finance News": "https://finance.yahoo.com/news/rssindex",
+    # Seeking Alpha's editorial wire — company events (M&A, FDA approvals,
+    # contract wins, share actions), not just macro. Verified live
+    # 2026-08-29: HTTP 200, valid RSS, 7 items, newest ~minutes old.
+    "Seeking Alpha Market Currents": "https://seekingalpha.com/market_currents.xml",
+    # High-frequency general markets wire: macro, geopolitical, insider
+    # buy/sell headlines. Verified live 2026-08-29: HTTP 200, valid RSS,
+    # 10 items, newest ~9 minutes old (the freshest feed in this set).
+    "Investing.com News": "https://www.investing.com/rss/news.rss",
+    # Verified live 2026-08-29 via the exact fetch path this module uses
+    # (urlopen + this module's USER_AGENT, 10s timeout): HTTP 200 in ~3s,
+    # valid RSS, 15 items, newest ~minutes old. Despite the URL, content is
+    # general market/company news (commodities, FDA approvals, single-name
+    # comparisons), not just Nasdaq corporate announcements.
+    "Nasdaq News": "https://www.nasdaq.com/feed/rssoutbound?category=Press-Release",
     # Macro / Policy / Politics
     "BBC Business": "https://feeds.bbci.co.uk/news/business/rss.xml",
     "NPR Economy": "https://feeds.npr.org/1017/rss.xml",
     # Fed / Treasury
     "Fed Press Releases": "https://www.federalreserve.gov/feeds/press_all.xml",
+    # Regulatory / legal — fills a gap the original 8 feeds had no
+    # coverage for at all. Verified live 2026-08-29: HTTP 200, valid RSS,
+    # 25 items (rule proposals, enforcement themes, market-structure
+    # actions), newest ~10h old. Fetched with the SEC-compliant User-Agent
+    # (see SEC_USER_AGENT_HOSTS / _user_agent_for below) — same politeness
+    # convention config.smart_money.user_agent already uses for EDGAR.
+    "SEC Press Releases": "https://www.sec.gov/news/pressreleases.rss",
 }
 
 # ---------------------------------------------------------------------------
@@ -72,8 +95,111 @@ RSS_FEEDS = {
 # than silently worked around.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 2026-08-29 audit — every URL below was fetched live in this session,
+# through the SAME code path production uses (urlopen + this module's
+# USER_AGENT / SEC UA + FETCH_TIMEOUT), not just curled from a shell.
+#
+# REMOVED: "MarketWatch Markets" (feeds.marketwatch.com/marketwatch/
+# marketpulse/) — returns HTTP 200 and parses as valid RSS, but its newest
+# entry was dated 2025-07-03, i.e. it had been silently frozen for over a
+# year. A 200 with year-old content is dead in every way that matters to
+# this desk and NewsCoverage's "ok" would have hidden that fact, so it is
+# removed rather than left in place returning stale-but-technically-valid
+# data every run.
+#
+# ADDED (all verified live 2026-08-29, see the inline comment on each
+# entry above): Seeking Alpha Market Currents, Investing.com News, Nasdaq
+# News, SEC Press Releases.
+#
+# CHECKED AND REJECTED — fetched successfully but not added, or could not
+# be fetched at all:
+#   - SEC EDGAR "current events" filing feed (getcurrent&type=8-K, atom,
+#     https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K
+#     &company=&dateb=&owner=include&count=100&output=atom): live, 100
+#     items/fetch, but it is EVERY public filer's 8-K, not scoped to this
+#     desk's ~101-symbol universe, and items are keyed by company name/CIK
+#     rather than ticker so tag_symbol_mentions' word-boundary ticker match
+#     mostly misses them. Sorted newest-first into a capped prompt, 100
+#     mostly-irrelevant micro-cap filings would crowd out real wire
+#     headlines from the same window. Left out; a CIK->ticker filtered
+#     variant would be a reasonable follow-up but is a bigger change than
+#     "add a feed."
+#   - SEC Litigation Releases (https://www.sec.gov/enforcement-litigation/
+#     litigation-releases/rss): live, 25 items, but title AND summary are
+#     just the defendant's name (e.g. "Ichcoin Tech Corp.", "Stephen E.
+#     Buyer, et al.") with no case description in the feed itself — this
+#     pipeline reads headlines/summaries, not the linked page, so the feed
+#     carries no usable signal as configured.
+#   - Benzinga (https://www.benzinga.com/feed): live, 200, 10 items — but
+#     the content is crypto price-prediction SEO posts ("Toncoin (TON)
+#     Price Prediction 2025, 2026, 2027-2030") and affiliate content
+#     ("Credible Review"), not equities/macro news. Rejected on content
+#     quality, not reachability.
+#   - Yahoo Finance per-symbol RSS (https://finance.yahoo.com/rss/
+#     headline?s=AAPL) and Seeking Alpha per-symbol
+#     (https://seekingalpha.com/api/sa/combined/AAPL.xml): both verified
+#     live and working for a single symbol. NOT wired in: at the full
+#     101-symbol trading.universe this is 101-202 extra HTTP requests to a
+#     free public endpoint every run, with no documented rate-limit
+#     tolerance — real hammering risk. Capping to "the symbols the desk
+#     actually cares about this run" (positions + active candidates) would
+#     need portfolio state plumbed into NewsDataProvider, which doesn't
+#     have it today and doesn't construct it here — that is a scope/design
+#     decision for the owner, not something to bolt on silently. Tracked
+#     in docs/WORK.md rather than half-wired.
+#   - GlobeNewswire (https://www.globenewswire.com/rss/list and the atom/
+#     rss subject-code variants): every attempt (urlopen, curl, curl
+#     --http1.1) either hung until timeout or dropped the HTTP/2 stream —
+#     never got a parseable response in this session. Not added; not
+#     reachable from here, not a content judgment.
+#   - Business Wire (feed.businesswire.com/rss/home/?rss=...): HTTP 200
+#     but 0 entries — the public example feed URL is a dead stub, not a
+#     working general wire. Business Wire's real feeds are per-newsroom
+#     and account-gated.
+#   - U.S. Treasury press releases: every URL tried (home.treasury.gov/rss/
+#     press-releases, /news/press-releases/rss.xml) 404s, and the live
+#     press-releases HTML page has no RSS <link> autodiscovery tag either
+#     — Treasury's public RSS appears to have been discontinued (their own
+#     site carries a stale 2021 notice about the feed showing migrated old
+#     releases). No working free URL found.
+#   - BEA (bea.gov/rss.xml and variants): 404, no RSS discovered.
+#   - BLS (bls.gov/feed/bls_latest.rss): returned HTTP 200 once, but a
+#     repeat fetch in the same session got an "Access Denied" bot-block
+#     page instead of the feed — BLS's WAF appears to rate-limit
+#     automated fetches aggressively even at low volume. Combined with the
+#     feed itself carrying exactly one generic aggregate item ("Major
+#     Economic Indicators Latest Numbers", not real distinct headlines),
+#     this is both a reliability risk and low content value. Not added.
+#   - Nasdaq IR (ir.nasdaq.com/tools/rss-feeds) and NYSE: no reachable
+#     public RSS found (ir.nasdaq.com did not respond in this session;
+#     NYSE was not found to publish a public feed at all).
+#   - Financial Modeling Prep / Finnhub / Alpha Vantage: all require an API
+#     key for any endpoint beyond a bare ping/quota check. Per the
+#     no-paid-signup rule this was not tested further and nothing was
+#     signed up for — reported as needing a key, left out.
+# ---------------------------------------------------------------------------
+
 USER_AGENT = "Mozilla/5.0 (quant-agent/0.1)"
+# SEC.gov asks (does not strictly require for plain RSS, but this repo
+# already treats it as a hard requirement for EDGAR — see
+# config.smart_money.user_agent / src/data/earnings.py / src/data/
+# smart_money.py) that automated clients identify themselves with contact
+# info. Reused here verbatim rather than inventing a second convention;
+# Pipeline wires this from config.smart_money.user_agent at construction
+# time (see NewsDataProvider.__init__), this literal is only the fallback
+# for a NewsDataProvider built without a config (tests, scripts).
+SEC_USER_AGENT = "QAMC research-intelligence qamc-contact@proton.me"
 FETCH_TIMEOUT = 10
+
+
+def _is_sec_gov(url: str) -> bool:
+    """True for any *.sec.gov feed URL, so it gets SEC_USER_AGENT instead
+    of the generic USER_AGENT. Suffix-matched on the hostname (not a raw
+    substring check) so a URL like "notsec.gov.evil.example" can't spoof
+    this."""
+    host = (urlparse(url).hostname or "").lower()
+    return host == "sec.gov" or host.endswith(".sec.gov")
 
 
 @dataclass
@@ -184,9 +310,21 @@ class NewsItem:
 
 
 class NewsDataProvider:
-    def __init__(self, feeds: dict[str, str] | None = None, lookback_hours: int = 24):
+    def __init__(
+        self,
+        feeds: dict[str, str] | None = None,
+        lookback_hours: int = 24,
+        sec_user_agent: str = SEC_USER_AGENT,
+    ):
         self.feeds = feeds or RSS_FEEDS
         self.lookback_hours = lookback_hours
+        # SEC.gov feeds (e.g. "SEC Press Releases") get the contact-bearing
+        # UA the rest of this repo already uses for EDGAR
+        # (config.smart_money.user_agent) — see the module-level
+        # SEC_USER_AGENT comment. pipeline.py passes
+        # config.smart_money.user_agent explicitly at construction; this
+        # default only covers a NewsDataProvider built without a config.
+        self.sec_user_agent = sec_user_agent
 
     def fetch_news(
         self, lookback_hours_override: int | None = None,
@@ -281,7 +419,8 @@ class NewsDataProvider:
         (or zero entries newer than `cutoff`) is NOT a failure and still
         returns `[]` normally below — that is a real, healthy "nothing new".
         """
-        req = Request(url, headers={"User-Agent": USER_AGENT})
+        ua = self.sec_user_agent if _is_sec_gov(url) else USER_AGENT
+        req = Request(url, headers={"User-Agent": ua})
         with urlopen(req, timeout=FETCH_TIMEOUT) as resp:
             raw = resp.read()
 

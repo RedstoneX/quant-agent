@@ -904,6 +904,27 @@ class ReconciliationConfig(BaseModel):
     retention is the real outer bound this can't exceed."""
 
 
+class NewsConfig(BaseModel):
+    """Prompt-size control for the news seat (src/data/news.py).
+
+    Added 2026-08-29 when RSS_FEEDS was widened from 8 to 11 sources (see
+    the audit comment block at the top of src/data/news.py). More feeds
+    means more raw items per fetch; `max_prompt_items` is the one knob that
+    keeps what actually reaches the LLM bounded regardless of how many
+    wires are configured. Previously this was a hardcoded
+    `max_items=50` default on NewsDataProvider.format_for_prompt() — moved
+    here per the repo's standing rule that any cap/threshold lives in
+    config, not a module constant, so it can be tuned without a code
+    change and is visible next to the other cost-relevant knobs.
+    """
+
+    max_prompt_items: int = Field(default=50, ge=1, le=500)
+    """Max news items placed in the analyst's prompt after dedup. 50 is the
+    pre-existing behavior (the old hardcoded default) — widening the feed
+    set does not by itself raise this, so prompt size does not grow just
+    because more wires are configured."""
+
+
 class AppConfig(BaseModel):
     api_keys: ApiKeysConfig
     alpaca: AlpacaConfig
@@ -929,6 +950,10 @@ class AppConfig(BaseModel):
     # default (see NotificationsConfig docstring), so older configs keep
     # alerting exactly as before, just with a link added.
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    # Optional section — a settings.yaml without it gets the pre-existing
+    # 50-item prompt cap (see NewsConfig docstring), so older configs keep
+    # working unchanged.
+    news: NewsConfig = Field(default_factory=NewsConfig)
 
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):
