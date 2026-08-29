@@ -283,6 +283,8 @@ phases:
         note: "§4.2 FRED retry/backoff — already existed before the spec was written; not new work, but satisfies the requirement"
       - kind: manual
         note: "§4.2 news-feed repair is NOT done: src/data/news.py's Reuters and AP URLs are unchanged, and docs/WORK.md (PR #118, open, unmerged) records both confirmed dead again on 2026-08-28 (Reuters 404, AP 403) with no fix landed and no owner decision yet on a paid alternative. Re-check by grepping src/data/news.py for the same two URLs and hitting them directly."
+      - kind: manual
+        note: "Separate from the dead Reuters/AP feeds above: the owner has asked for an audit of what the news seat actually reads and a widening of its sources, using free sources only. Still untouched. See the 'News sources review' task in session notes / docs/WORK.md."
 
   - id: phase_5
     title: "Phase 5 — Short selling"
@@ -336,6 +338,8 @@ phases:
         note: "§6.2 (position_id linking a buy to its closing sell, GET /positions/{id}/history, reasoning rendered in the trades table): none of this exists. Mechanically re-checkable — grep src/storage/db.py for 'position_id' and grep frontend/src/components/TradesPanel.tsx for 'reasoning'; both currently return no matches."
       - kind: manual
         note: "§6.3 (true end-of-day P&L figure, expressed against risk capital as well as equity, in the Telegram alert): no dedicated function found in src/notifier.py. Re-check by grepping src/notifier.py for 'risk_capital' or an end-of-day summary function distinct from the existing position list."
+      - kind: manual
+        note: "branch fix/dollar-based-session-cap, commit 766a35d, now carries the afternoon-reserve config for §6.1 (afternoon_reserve_pct, afternoon_reserve_release_et_hour) and a _morning_spend_ceiling() helper — but that helper is defined and never called, and the commit's own message says as much: inert and untested, must not ship as-is. Re-check: `git show 766a35d --stat` and grep the branch for `_morning_spend_ceiling`."
 
   - id: phase_7
     title: "Phase 7 — Measurement"
@@ -385,6 +389,25 @@ phases:
         note: "No 'nominate' concept exists in code: grep -rn 'nominat' src/ config/prompts/ at audit time matched only the unrelated word 'denominator'. Re-run that grep (case-insensitive, whole word 'nominat') to check for movement — a real hit outside a 'denominator' context means work has started."
       - kind: manual
         note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is now DONE AND LIVE (see phase_2), so Phase 9 is unblocked and is the next unclaimed item in docs/WORK.md's ordered backlog — but nothing has picked it up yet."
+
+  - id: open_defects
+    title: "Known defects — found, recorded, not yet fixed"
+    plain_summary: "Six problems that turned up as a side effect of other engineering work and are not fixed yet. The standing rule here is that finding something broken while doing unrelated work is not a license to go fix it on the spot — it gets written down and handed back so a person can decide, which is what this entry is. None of these six belong to any of the numbered phases above; without this entry they would only exist in session notes and could quietly fall out of view. Each one below carries a plain command anyone can run to check whether it is still true."
+    status: "OPEN"
+    confidence: "high"
+    evidence:
+      - kind: manual
+        note: "Missed Opportunities pop-up is unpredictable: clicking a symbol there opens a Candidate Detail pop-up only when that symbol happens to also appear in whichever session is currently selected in the Sessions strip — the same click does different things depending on unrelated state, with nothing on screen explaining which case you're in. Cause: MissedPane wires its click handler to inspectSymbol in frontend/src/App.tsx, which conditionally opens the modal, instead of the modal-free chartPositionSymbol that the Positions panel uses. The owner has hit this and reported it. Re-check: `grep -n \"onSelectSymbol\" frontend/src/components/DesktopCockpitWorkspace.tsx` and see which callback MissedPane receives."
+      - kind: manual
+        note: "Diagnostics -> Search opens a Run Detail pop-up on any row click in its result tables, including plain unstyled cells that give no visual hint they're clickable — the agent-call-hit table has no symbol column at all, for instance. PR #141 added clickable styling to the cells that deserve it but deliberately left this row-level click behaviour alone, because deciding cell-click versus row-click needs a design call, not a quick patch. Re-check: `grep -n \"onRowClick\" frontend/src/components/SearchPanel.tsx`."
+      - kind: manual
+        note: "Win rate and average return cannot see a short trade. compute_trade_calibration in src/storage/db.py FIFO-matches BUY lots against sell-family exits; a covered short opens no BUY lot, so covering one closes nothing in this accounting and the trade stays invisible to win rate, average return and hold days — numbers that reach the Portfolio Manager as settled fact. Dormant only because shorts cannot be opened yet; becomes a live accounting hole the day they can. The function's own comments record the size of this kind of gap: omitting filled TRAIL_STOP exits once moved win_rate from 22.2% to 30.0% and avg_return from -2.79% to -2.18% on the real ledger. Re-check: `grep -n \"open_lots\" src/storage/db.py` and look for a short-side queue alongside it."
+      - kind: manual
+        note: "Company profiles were built and never wired in. Branch feat/company-profiles (commit c547b40) adds 221 lines describing who a ticker actually is — something the owner asked for — and nothing in the running code imports it. Re-check: `git log --oneline origin/main..feat/company-profiles` and `grep -rn \"data.company\" src/`."
+      - kind: manual
+        note: "Crash-recovery cannot tell a long from a short. The write-ahead rows used to restore protective stops after a crash carry no side column, so draining one for an orphaned position whose broker state can't be read falls back to assuming it's a long. Unreachable today because shorts cannot be opened; reachable the moment they can, and needs a schema migration — the current long-assuming fallback is deliberately pinned by tests in the meantime, not an oversight. Re-check: `grep -n \"_derive_close_side_for_drain\" src/pipeline.py`."
+      - kind: manual
+        note: "One board rule still pins a number expected to move: the Phase 6 evidence rule for llm_cost_circuit.daily_cost_limit_usd (currently 2.75) uses setting_equals, the same shape that made the session-count-cap rule false-alarm as CONTRADICTED the last time a stopgap number was legitimately re-tuned. When this value next gets re-tuned, convert that rule to setting_present so a deliberate change doesn't read as rot. Re-check: search this manifest for `daily_cost_limit_usd`."
 
   - id: invariants
     title: "Invariants (must hold at all times)"
