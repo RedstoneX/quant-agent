@@ -555,6 +555,27 @@ class SmartMoneyConfig(BaseModel):
         return self
 
 
+class NominationConfig(BaseModel):
+    """Phase 9 (`docs/QAMC_REMEDIATION_SPEC.md` §9.1/§9.2) — bounds on how
+    many candidates the News/Earnings/Macro seats may put in front of
+    Technical each run. Mirrors the SEC Form 4 smart-money admission cap
+    (`SmartMoneyConfig.max_external_candidates`), the working precedent
+    this generalises: a bounded, deterministic cap is what keeps an
+    on-demand responder call affordable, not a judgment call made per run.
+    """
+    # Applied FIRST, per seat, before cross-seat dedupe: a single seat
+    # cannot flood the responder pass. Same default (3) as
+    # smart_money.max_external_candidates by design — one seat's bounded
+    # nomination budget should look like the existing external-admission
+    # budget an operator already understands.
+    max_per_seat_per_run: int = Field(default=3, ge=1, le=10)
+    # Applied AFTER cross-seat dedupe: the hard ceiling on how many
+    # DISTINCT symbols may reach the on-demand Technical responder call in
+    # one run, regardless of how many seats nominated or how many raw
+    # nominations survived the per-seat cap.
+    max_total_per_run: int = Field(default=6, ge=1, le=20)
+
+
 class ScheduleConfig(BaseModel):
     earnings_preprocess: str = "08:00"
     morning: str
@@ -989,6 +1010,11 @@ class AppConfig(BaseModel):
     # unchanged unless explicitly opted in.
     intraday_scan: IntradayScanConfig = Field(default_factory=IntradayScanConfig)
     smart_money: SmartMoneyConfig = Field(default_factory=SmartMoneyConfig)
+    # Optional section — a settings.yaml without it gets the documented
+    # defaults (3 per seat / 6 total), so older configs keep working
+    # unchanged and Phase 9 stays off-by-default-bound rather than
+    # unbounded.
+    nominations: NominationConfig = Field(default_factory=NominationConfig)
     # Optional section — a settings.yaml without it gets the documented
     # default lookback (7 days), so older configs keep working unchanged.
     reconciliation: ReconciliationConfig = Field(default_factory=ReconciliationConfig)
