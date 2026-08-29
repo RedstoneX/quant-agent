@@ -20,13 +20,24 @@ import { HealthPanel } from "./HealthPanel";
 import { Pill } from "./ui/Pill";
 import { Panel, StateMessage } from "./ui/Panel";
 
-// Item 2 of cockpit pass 3: the middle column of the bottom row is
-// deliberately empty by default — "free for him to populate" in the
+// Item 2 of cockpit pass 3: the middle column of the bottom row used to
+// be deliberately empty by default — "free for him to populate" in the
 // owner's own words, not a panel we picked for him. Built from the same
 // approved Panel/StateMessage primitives every other pane in this
 // workspace uses (no bespoke graphic), reusing the existing ●/◐/■/○
 // glyph vocabulary (see ui/Panel.tsx's StateMessage) rather than
 // inventing a new icon for "nothing here yet."
+//
+// v6 update: the owner asked to get that column's width back for
+// Positions/Orders instead, so buildDefaultLayout no longer places this
+// panel — see the STORAGE_KEY comment below. The component stays defined
+// and registered in COMPONENTS regardless: a saved layout can still carry
+// a "workspaceSlot" entry (e.g. one written under this key by an earlier
+// build before the code caught up, or before a future default change),
+// and dockview's fromJSON throws on a panel id with no registered
+// component. Keeping this around is what makes loading such a layout safe
+// rather than a hard failure. It is retained purely for that
+// compatibility — it is not placed by default any more.
 function WorkspaceSlotPane() {
   return (
     <div className="h-full overflow-y-auto p-2">
@@ -152,6 +163,22 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   workspaceSlot: WorkspaceSlotPane,
 };
 
+// Bumped v5 -> v6 (owner request, direct): the bottom row's middle
+// "Workspace" slot — genuinely empty by default, see WorkspaceSlotPane
+// above — was eating roughly a third of the bottom row's width while
+// showing nothing. The owner asked for a plain two-column bottom row
+// instead (Positions | Orders, split evenly) so those two panels get that
+// width back; buildDefaultLayout no longer adds a workspaceSlot panel at
+// all. As with every previous bump, a v5 layout persisted from
+// localStorage is not being migrated or read under this key — it simply
+// stops being looked up, which is the point: without bumping the key,
+// every browser that already has a saved v5 layout (three columns, empty
+// middle) would keep opening to that shape and never see the new
+// two-column default. WorkspaceSlotPane's component registration is kept
+// regardless (see its comment above) purely so a layout blob that does
+// reference "workspaceSlot" can still be restored via fromJSON without
+// throwing on an unknown component id.
+//
 // Bumped v4 -> v5 (cockpit pass 3, item 2): the default workspace shape
 // changed from one row of three columns (Positions | Chart | Orders) to
 // two rows — a full-width Chart row on top, then a Positions/free/Orders
@@ -171,15 +198,20 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
 // active-by-default group; Liquidity left the workspace entirely for a
 // compact header row — item 9; System+Search merged into one Diagnostics
 // panel — item 13.)
-const STORAGE_KEY = "qamc.dockview.cockpit.v5";
+const STORAGE_KEY = "qamc.dockview.cockpit.v6";
 
-// Item 2 of cockpit pass 3 ("a better DEFAULT, not a lock" — every panel
-// below stays exactly as movable/dockable/resizable as it always was;
-// this only changes what a brand-new session (or "Reset layout") starts
-// from). The owner's own framing: chart alone across the top because
-// it's the first thing he looks at, then a three-column row underneath —
-// Positions left, Orders right, middle column genuinely empty for him to
-// fill rather than a panel we picked on his behalf.
+// Item 2 of cockpit pass 3, revised per direct owner request ("a better
+// DEFAULT, not a lock" — every panel below stays exactly as
+// movable/dockable/resizable as it always was; this only changes what a
+// brand-new session (or "Reset layout") starts from). Originally: chart
+// alone across the top, then a three-column row underneath with a
+// genuinely empty middle column for the owner to fill himself. He later
+// asked for that middle column back as width for Positions and Orders
+// instead — chart full width on top because it's the first thing he
+// looks at, then just two columns underneath, Positions left and Orders
+// right, split evenly so each gets real horizontal room. He can still
+// rearrange everything himself via the tabs; this only changes the
+// starting shape.
 function buildDefaultLayout(api: DockviewApi) {
   // Top row: the chart, full width — nothing else in this row.
   api.addPanel({ id: "chart", component: "chart", title: "Chart" });
@@ -191,21 +223,25 @@ function buildDefaultLayout(api: DockviewApi) {
     api.addPanel({ id, component: id, title, position: { referencePanel: "chart", direction: "within" }, inactive: true });
   }
 
-  // Bottom row: Positions (left) | free workspace slot (middle) | Orders
-  // (right) — a real second row (direction: "below"), not more tabs
-  // folded into the chart group, so it gets its own genuine height and
-  // its own independent resize handle against the chart row above it.
+  // Bottom row: Positions (left) | Orders (right) — a real second row
+  // (direction: "below"), not more tabs folded into the chart group, so
+  // it gets its own genuine height and its own independent resize handle
+  // against the chart row above it. Two columns only, no fixed pixel
+  // width on either side: leaving both without an initialWidth lets
+  // dockview split the row evenly between them, which is what actually
+  // produces a ~50/50 split at ordinary desktop widths — a fixed-width
+  // hint on one or both sides (the old 360px columns squeezed around the
+  // since-removed middle workspaceSlot) would instead peg one side's
+  // pixel width regardless of how wide the row actually is.
   api.addPanel({
     id: "positions",
     component: "positions",
     title: "Positions",
     position: { referencePanel: "chart", direction: "below" },
-    initialWidth: 360,
     initialHeight: 480,
   });
   api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "positions", direction: "within" }, inactive: true });
-  api.addPanel({ id: "workspaceSlot", component: "workspaceSlot", title: "Workspace", position: { referencePanel: "positions", direction: "right" } });
-  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "workspaceSlot", direction: "right" }, initialWidth: 360 });
+  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "positions", direction: "right" } });
   api.addPanel({ id: "trades", component: "trades", title: "Trades", position: { referencePanel: "orders", direction: "within" }, inactive: true });
 
   api.getPanel("positions")?.api.setActive();

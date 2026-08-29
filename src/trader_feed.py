@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from src.notifier import (
+    _clip_text,
     _DB_PATH as _NOTIFIER_DB_PATH,
     format_session_result as _base_format_session_result,
 )
@@ -76,10 +77,19 @@ def _fmt_elapsed(seconds: float) -> str:
 
 
 def _clip(value: Any, limit: int = 140) -> str:
+    """Collapse whitespace/newlines to one line, then clip via the shared,
+    boundary-aware `_clip_text` (src/notifier.py) instead of a raw
+    `text[:limit]` slice.
+
+    This used to hard-cut mid-word — the operator's actual complaint was a
+    BUY CRM alert whose PM rationale read "...strong heavy accumulation
+    volume" and just stopped there, an artifact of `_append_pm` calling
+    this with `limit=105` on LLM prose that routinely runs 300-500+ chars.
+    Callers below have also had their limits raised substantially (this
+    formatter renders several such bullets per message, well inside
+    Telegram's real 4096-char budget)."""
     text = " ".join(str(value or "").split())
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 1)].rstrip() + "…"
+    return _clip_text(text, limit, marker="…")
 
 
 def _number(value: Any) -> float | None:
@@ -287,7 +297,7 @@ def _append_signals(
         conviction = str(row.get("conviction", "?")).lower()
         rr = row.get("risk_reward")
         rr_text = f" · R/R {rr:g}" if isinstance(rr, (int, float)) else ""
-        reason = _clip(row.get("reasoning"), 105)
+        reason = _clip(row.get("reasoning"), 420)
         text = f"   • {sym}: {rating}/{conviction}{rr_text}"
         if reason:
             text += f" — {reason}"
@@ -311,14 +321,14 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
             symbol = str(row.get("symbol", "?")).upper()
             allocation = row.get("allocation_pct")
             alloc_text = f" {allocation:g}%" if isinstance(allocation, (int, float)) else ""
-            reason = _clip(row.get("reasoning"), 105)
+            reason = _clip(row.get("reasoning"), 420)
             text = f"   • {action} {symbol}{alloc_text}"
             if reason:
                 text += f" — {reason}"
             lines.append(text)
         for row in holds[:2]:
             symbol = str(row.get("symbol", "?")).upper()
-            reason = _clip(row.get("reasoning"), 105)
+            reason = _clip(row.get("reasoning"), 420)
             text = f"   • PASS {symbol}"
             if reason:
                 text += f" — {reason}"
@@ -328,9 +338,9 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
 
     portfolio_view = reasoning.get("portfolio_view") if isinstance(reasoning, dict) else None
     if portfolio_view:
-        lines.append(f"   View: {_clip(portfolio_view, 150)}")
+        lines.append(f"   View: {_clip(portfolio_view, 550)}")
     elif pm_summary and str(pm_summary).lower() != "no trades":
-        lines.append(f"   View: {_clip(pm_summary, 150)}")
+        lines.append(f"   View: {_clip(pm_summary, 550)}")
 
 
 def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
@@ -344,7 +354,7 @@ def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
     scale_text = f" · buy size {scale * 100:.0f}%" if isinstance(scale, (int, float)) else ""
     mods = snap.get("risk_mods") or []
     lines.append(f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s)")
-    reason = _clip(risk.get("reasoning"), 150)
+    reason = _clip(risk.get("reasoning"), 550)
     if reason:
         lines.append(f"   {reason}")
 
@@ -373,13 +383,13 @@ def _append_gate_and_execution(
         skips = [row for row in (snap.get("skips") or []) if isinstance(row, dict)]
 
     if status in {"hard_risk_block", "symbol_block"}:
-        lines.append(f"⚙️ Deterministic gate: BLOCKED — {_clip(result.get('reason'), 180)}")
+        lines.append(f"⚙️ Deterministic gate: BLOCKED — {_clip(result.get('reason'), 650)}")
     elif skips:
         lines.append(f"⚙️ Execution gate: {len(skips)} skip(s)")
         for row in skips[:3]:
             symbol = str(row.get("symbol", "?")).upper()
             reason = str(row.get("reason", "?"))
-            detail = _clip(row.get("detail"), 120)
+            detail = _clip(row.get("detail"), 420)
             text = f"   • {symbol}: {reason}"
             if detail:
                 text += f" — {detail}"
@@ -425,14 +435,14 @@ def _append_no_trade_reason(
     pm_summary = str((snap.get("agent_summaries") or {}).get("portfolio_manager") or "")
 
     if status == "rejected":
-        reason = _clip(result.get("reason"), 180)
+        reason = _clip(result.get("reason"), 650)
         lines.append(f"⏸️ NO TRADE — Risk vetoed the plan{': ' + reason if reason else ''}")
     elif status in {"hard_risk_block", "symbol_block"}:
         lines.append("⏸️ NO TRADE — deterministic eligibility blocked the proposed action(s)")
     elif status == "buys_unfunded" or skips:
         lines.append("⏸️ NO TRADE — decision(s) survived review but execution could not complete")
     elif isinstance(risk, dict) and risk.get("approved") is False:
-        lines.append(f"⏸️ NO TRADE — Risk rejected: {_clip(risk.get('reasoning'), 160)}")
+        lines.append(f"⏸️ NO TRADE — Risk rejected: {_clip(risk.get('reasoning'), 550)}")
     elif pm_orders and not actionable:
         lines.append("⏸️ NO TRADE — PM/constructor produced HOLD only")
     elif snap.get("pm_reasoning") or pm_summary:
@@ -506,7 +516,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     if bits:
         lines.append("📍 Review: " + " · ".join(bits))
 
-    overall = _clip(review.get("overall_assessment"), 170)
+    overall = _clip(review.get("overall_assessment"), 650)
     if overall:
         lines.append(f"🧠 Reviewer: {overall}")
 
@@ -520,14 +530,14 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
             symbol = str(row.get("symbol", "?")).upper()
             stop = _number(row.get("new_stop_price"))
             stop_text = f" → stop ${stop:,.2f}" if stop is not None else ""
-            reason = _clip(row.get("reason"), 120)
+            reason = _clip(row.get("reason"), 420)
             text = f"   • {action} {symbol}{stop_text}"
             if reason:
                 text += f" — {reason}"
             lines.append(text)
         for row in holds[:2]:
             symbol = str(row.get("symbol", "?")).upper()
-            reason = _clip(row.get("reason"), 105)
+            reason = _clip(row.get("reason"), 420)
             text = f"   • HOLD {symbol}"
             if reason:
                 text += f" — {reason}"
@@ -559,14 +569,14 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
             "the deterministic intraday loss check completed normally."
         )
         if nested.get("error"):
-            lines.append(f"Trigger: {_clip(nested.get('error'), 240)}")
+            lines.append(f"Trigger: {_clip(nested.get('error'), 900)}")
     elif status == "intraday_analysis_error":
         lines.append(
             f"🔴 PM analysis failed ({nested.get('failure_status') or 'unknown'}); "
             "this was not a deliberate no-trade decision."
         )
         if nested.get("error"):
-            lines.append(f"Error: {_clip(nested.get('error'), 240)}")
+            lines.append(f"Error: {_clip(nested.get('error'), 900)}")
 
     pnl = _number(outer.get("daily_pnl"))
     ret = _number(outer.get("daily_return_pct"))
