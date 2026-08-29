@@ -403,6 +403,7 @@ pytest tests/ -v    # 2470 tests
 - Daily P&L records
 - Evening insights (cross-session memory)
 - `pending_protection_restores` — orphaned protective-stop recovery queue, drained at every session entry and TTL-pruned after 30 days
+- `pending_repegs` — bounded entry re-peg write-ahead queue (an Alpaca replacement mints a NEW order id; this row is what lets a crash mid-replace be recovered), drained at every session entry and TTL-pruned after 30 days
 
 **File-based** (`data/news/`):
 - `macro_narrative.json` — persistent grand backdrop, evolves daily
