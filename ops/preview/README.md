@@ -40,6 +40,19 @@ Open from any other tailnet device:
 - `http://ovh-vps.wallaby-bowfin.ts.net:8810/cockpit/` — the new React cockpit
 - `http://ovh-vps.wallaby-bowfin.ts.net:8810/ui/` — the legacy dashboard (fallback, unchanged)
 
+> **This is NOT Mission Control, and leaving it running is not harmless.**
+> Production Mission Control is `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`
+> — no port — which Tailscale Serve proxies to the qamc API. This preview
+> serves whatever is committed in the `dev` checkout, which goes stale the
+> moment you stop using it.
+>
+> On 2026-08-21 an instance started with the `setsid nohup … & disown` recipe
+> above was left running for seven days. It kept answering on :8810 with a
+> bundle built that morning, so the operator's bookmarked address showed a
+> cockpit predating PR #120 while three merged, deployed passes of cockpit
+> work were invisible — read as "the deploy didn't work" rather than "the
+> URL is wrong". **Kill it when your review session ends. Every time.**
+
 ## Stop
 
 ```bash

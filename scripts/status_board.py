@@ -122,7 +122,7 @@ def _setting(cfg: dict, dotted: str) -> Any:
     return node
 
 
-def check_rule(rule: dict, cfg: dict) -> RuleResult:
+def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult:
     kind = str(rule.get("kind", "?"))
     note = str(rule.get("note", ""))
 
@@ -131,17 +131,45 @@ def check_rule(rule: dict, cfg: dict) -> RuleResult:
 
     if kind == "commit_in_main":
         sha = str(rule.get("sha", ""))
-        rc, _ = _run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], REPO_ROOT)
+        rc, _ = _run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], repo_root)
         ok = rc == 0
         return RuleResult(kind, PASS if ok else FAIL, note,
                           f"{sha[:9]} {'is' if ok else 'is NOT'} in main")
 
     if kind == "pr_merged":
         num = rule.get("number")
+        # Ask git before asking GitHub. A merged PR leaves its own merge
+        # commit in main's history ("Merge pull request #N from ..."), which
+        # is the same fact, checkable offline, with no credential.
+        #
+        # This matters where the board actually runs. `gh` is installed on the
+        # production box but the runtime account is not authenticated, and
+        # putting a GitHub token on the account that trades is a credential
+        # decision for the owner, not a convenience for this script. Without
+        # the git path, 13 of the manifest's rules would report `unknown` on
+        # the box for no better reason than that.
+        #
+        # `repo_root` defaults to this checkout but is injectable so tests can
+        # point it at a throwaway repo with known history — the production
+        # box's git history is not a fixture and a CI runner's shallow clone
+        # is not full history either.
+        rc, out = _run(
+            ["git", "log", "origin/main", "--merges", "--format=%s",
+             f"--grep=^Merge pull request #{num} from ", "-1"],
+            repo_root,
+        )
+        if rc == 0 and out.strip():
+            return RuleResult(kind, PASS, note, f"PR #{num} merge commit is in main")
+        # No merge commit found. That is not proof of absence — a squash or
+        # rebase merge leaves none — so fall through to GitHub rather than
+        # calling it a failure, and report unknown if that is unavailable too.
         rc, out = _run(["gh", "pr", "view", str(num), "--repo", "RedstoneX/quant-agent",
-                        "--json", "state", "-q", ".state"], REPO_ROOT)
+                        "--json", "state", "-q", ".state"], repo_root)
         if rc != 0:
-            return RuleResult(kind, UNKNOWN, note, "could not reach GitHub")
+            return RuleResult(
+                kind, UNKNOWN, note,
+                f"PR #{num}: no merge commit in main, and GitHub is unreachable "
+                "from here (the runtime account has no gh credential)")
         return RuleResult(kind, PASS if out.strip() == "MERGED" else FAIL, note,
                           f"PR #{num} is {out.strip()}")
 
@@ -190,6 +218,20 @@ def check_rule(rule: dict, cfg: dict) -> RuleResult:
         ok = str(got) == str(want)
         return RuleResult(kind, PASS if ok else FAIL, note,
                           f"{rule.get('key')} = {got!r} (expected {want!r})")
+
+    if kind == "setting_present":
+        # Unlike setting_equals, this rule makes no claim about the value —
+        # only that the key exists at all. That is the shape needed for a
+        # setting that is expected to keep changing (a stopgap re-tuned over
+        # time): pinning a specific value would make every legitimate re-tune
+        # look like rot, and the day the key is finally removed on purpose is
+        # exactly the moment a value-pinned rule would go quiet instead of
+        # flagging that the phase needs re-evaluating.
+        got = _setting(cfg, str(rule.get("key", "")))
+        present = got is not KeyError
+        return RuleResult(kind, PASS if present else FAIL, note,
+                          f"{rule.get('key')} {'is present' if present else 'is NOT present'} "
+                          "in settings")
 
     return RuleResult(kind, UNKNOWN, note, f"unrecognised rule kind {kind!r}")
 

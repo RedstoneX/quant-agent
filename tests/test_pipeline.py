@@ -244,7 +244,7 @@ def test_pipeline_morning_run_buy(
     ), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 
@@ -361,7 +361,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     ), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 
@@ -528,7 +528,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     ), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 
@@ -640,7 +640,7 @@ def test_pipeline_risk_rejected(
     ), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 
@@ -2550,7 +2550,7 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     pipeline.config.llm.position_reviewer_model = "test-model"
     pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
-    pipeline._run_news_update = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline.risk_engine = MagicMock()
@@ -2601,7 +2601,7 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
     pipeline.config.llm.position_reviewer_model = "test-model"
     pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
-    pipeline._run_news_update = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
@@ -2647,8 +2647,13 @@ def test_pipeline_midday_blocks_llm_sells_while_auto_take_profit_pending():
         market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
     )
     # First entry feeds the session-entry broker-truth coverage reconciler;
-    # the remaining entries feed the session's own position reads.
-    pipeline.broker.get_positions.side_effect = [[position], [position], [position]]
+    # the second feeds the stop-out reconciler (2026-08-28 ONDS/CCJ —
+    # _reconcile_stop_out_fills also reads broker.get_positions() to diff
+    # against the ledger); the remaining entries feed the session's own
+    # position reads (including the auto-TP refresh re-read).
+    pipeline.broker.get_positions.side_effect = [
+        [position], [position], [position], [position],
+    ]
     pipeline.broker.wait_for_order_terminal.return_value = "accepted"
     pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
@@ -2660,7 +2665,7 @@ def test_pipeline_midday_blocks_llm_sells_while_auto_take_profit_pending():
         {"id": "tp-1", "status": "accepted", "symbol": "SPY"}
     ])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
-    pipeline._run_news_update = MagicMock(return_value=None)
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
@@ -2818,7 +2823,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     ), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
-    mock_ndp.fetch_news.return_value = []
+    mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
     mock_ndp.format_for_prompt.return_value = "No news."
     mock_ndp_cls.return_value = mock_ndp
 

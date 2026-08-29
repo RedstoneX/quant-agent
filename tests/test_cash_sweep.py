@@ -426,7 +426,7 @@ def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
     p.config.llm.position_reviewer_model = "test-model"
     p._auto_take_profit = MagicMock(return_value=[])
     p._handle_ex_dividends = MagicMock(return_value=[])
-    p._run_news_update = MagicMock(return_value=None)
+    p._run_news_update = MagicMock(return_value=(None, None))
     p._load_earnings_analyses = MagicMock(return_value=(None, []))
     p._midday_execute_llm_actions = MagicMock(return_value=[])
     p._reconcile_stop_coverage = MagicMock(return_value=[])

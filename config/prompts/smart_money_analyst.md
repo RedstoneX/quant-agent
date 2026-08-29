@@ -28,8 +28,20 @@ Rules:
   establish that.
 - Count independent reporting-owner CIKs, not repeated filings or repeated
   names. Joint owners in one accession are one filing event.
+- `signal_class` is a deterministic Python verdict, already computed. It is
+  `opportunistic` (a discretionary decision), `routine` (a mechanical or
+  scheduled transaction) or `indeterminate`. Routine transactions carry **no
+  predictive power** — weigh a symbol on its opportunistic rows and treat
+  routine ones as background. `signal_class_reason` and `signal_class_detail`
+  give the exact rule that decided it; quote that reason when a trade is being
+  discounted, so the operator can see why. Do not re-derive or override the
+  class.
+- A symbol whose activity is entirely routine is quiet evidence, whatever the
+  dollar totals say.
 - Use 10b5-1, owner role, direct/indirect ownership, post-transaction holdings,
-  transaction size and clusters as context only when supplied.
+  transaction size and clusters as context only when supplied. A 10b5-1 flag
+  alone does not neutralise a large sale — the classifier has already decided
+  when it does.
 - Suppress filler and do not invent facts, motives, sources, timestamps,
   amounts, confidence or missing footnotes.
 - One finding per symbol. Quiet evidence should remain quiet.

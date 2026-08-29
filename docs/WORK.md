@@ -121,6 +121,43 @@ were raised specifically to end the 2026-08-28 outage. Reconciled:
 | `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
 | `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
 
+**The Mission Control URL — and a stale preview that was masking a week of
+work (2026-08-28).**
+
+- The correct, production Mission Control address is
+  `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. Tailscale Serve proxies
+  tailnet-only port 443 to the qamc API on `127.0.0.1:8800`.
+- The qamc API binds loopback-only by design (`QUANT_AGENT_API_HOST=127.0.0.1`
+  in `quant-agent-api.service`). Tailscale Serve, not the bind address, is what
+  makes it reachable. Do not "fix" reachability by rebinding the service.
+- `http://100.111.170.97:8810/cockpit` is NOT Mission Control. It was
+  `ops/preview/branch_preview.py`, the ephemeral branch-preview server,
+  running as the parked `dev` account out of
+  `/home/dev/projects/quant-agent-dashboard`. Its own module docstring states
+  it has no systemd unit and no auto-start and is meant to be killed after a
+  review session.
+- It was started 2026-08-21 16:16 ET and was still running on 2026-08-28,
+  seven days later. It served a bundle built 2026-08-21 09:43 containing no
+  dockview layout key at all — predating PR #120 entirely. None of the cockpit
+  trader-view work (PR #120, pass 2 via PR #130, pass 3 via PR #137) was
+  visible at that address.
+- The orphaned process (PID 2267757) was killed on 2026-08-28. Port 8810 is
+  now closed. The production URL was re-checked immediately afterward and
+  returned HTTP 200.
+- **Diagnostic worth keeping:** to tell the two apart in one step, compare the
+  hashed bundle filename returned by `curl -sk
+  https://ovh-vps.wallaby-bowfin.ts.net/cockpit/` against whatever else claims
+  to be the cockpit. Different filenames mean something other than production
+  is being served.
+- **Consequence for `feat/telegram-links` (PR #136):** it defaults
+  `notifications.mission_control_url` to the stale
+  `http://100.111.170.97:8810/cockpit` in both `config/settings.yaml` and
+  `src/config.py`. That is being corrected to the HTTPS tailnet host before
+  merge; note it here so the reason is on record.
+- State plainly that this is the likely explanation for the operator
+  repeatedly seeing old cockpit code after deploys that had in fact landed
+  correctly.
+
 Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
 git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
 (`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
@@ -457,6 +494,129 @@ for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
   covered the moment it lands. Import is deliberately shallow — it proves a
   tool still agrees with the schemas it's built on, not that the tool works.
   2470 tests pass.
+- **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+  merged or deployed.** `f3aeba4` + `866e423` (original implementation) plus
+  a 2026-08-28 finishing pass on branch `feat/insider-signal-filter`
+  (worktree `insider-filter`). `src/data/insider_signal.py::classify_transaction`
+  implements the Cohen/Malloy/Pomorski (JF 2012) routine-versus-opportunistic
+  test in pure Python, first-match-wins: non-open-market codes, incomplete
+  amounts and zero-price rows are handled first (mostly contract guards —
+  `SECForm4Provider` already drops everything but non-derivative P/S), then
+  the calendar-month test (same insider, same issuer, same calendar month,
+  same direction, in each of the 3 preceding years), then a recurring-cadence
+  fallback (>=3 prior same-direction trades, mean gap 20-120 days, coefficient
+  of variation <=0.25) for when 3 years of history is not yet available, then
+  proportional-size rules on sells (routine under 5% of the pre-transaction
+  holding) and all buys opportunistic. `SmartMoneyObservation` gains
+  `signal_class`/`signal_class_reason`/`signal_class_detail`/`signal_weight`;
+  a routine purchase can no longer make a symbol `admission_eligible` (narrows
+  the existing gate only — broker/price/liquidity/history/sector gates in
+  `pipeline.py` are untouched); `smart_money_analyst.md` and the analyst's
+  compact payload now carry the verdict and weight dollar totals by class. New
+  `data/smart_money/insider_history.json`, pruned at `insider_history_retention_days`
+  (default 5 years), because `observations.json` is pruned to the lookback
+  window and the calendar test needs years of retained history.
+  **Deliberate departure from the folk version of this filter:** a 10b5-1
+  checkbox alone never marks a sale routine — `RESEARCH_FINDINGS.md` §1
+  states plainly that planned and discretionary high-value sales show
+  similar opportunism, so the flag only ever supports a routine label for a
+  sale that is already proportionally small; a large planned sale stays
+  `material_stake_sale` and its reason text records that the flag was seen
+  and not acted on. Two tests pin this.
+
+  **2026-08-28 finishing pass** (this PR) closed two gaps found on review of
+  the original commits:
+  1. **Every classification threshold was a module-level constant** —
+     `MIN_MATERIAL_SELL_FRACTION`, `CALENDAR_ROUTINE_YEARS`,
+     `MIN_CADENCE_TRADES`, the cadence gap/dispersion bounds, and
+     `HISTORY_RETENTION_DAYS` — which violates the standing rule that a
+     number able to change classification output is an operator setting,
+     not a hardcoded one. Moved to seven new fields on `SmartMoneyConfig`
+     (`src/config.py`, all prefixed `insider_`, defaults unchanged from the
+     old constants so unconfigured behavior is identical), threaded through
+     a new `InsiderSignalThresholds` dataclass into `classify_transaction`/
+     `classify_observations`, and wired end-to-end through
+     `SECForm4Provider.__init__` → `src/pipeline.py`'s construction of it →
+     `config/settings.yaml`. A config-load validator rejects a cadence
+     window with `min >= max` and a history retention shorter than the
+     calendar-routine lookback requires.
+  2. **Test gaps required by the finishing task:** every reachable
+     transaction-code path pinned with hard literals (P, S, and the `""`
+     contract-guard path directly; `SmartMoneyObservation.transaction_code`
+     is `Literal["", "P", "S"]`, so A/M/F/G/D/X cannot reach the classifier
+     at all — those six are instead pinned at the parser boundary in
+     `tests/test_smart_money.py::test_every_non_open_market_code_is_dropped_before_the_classifier`,
+     proving they never arrive); an indeterminate (unclassifiable) filing
+     confirmed KEPT through the full `fetch()` pipeline, not just at
+     `classify_transaction`; three tests proving the thresholds are
+     genuinely configurable (same input, different threshold, different
+     verdict — something a hardcoded constant could not do); and a revert
+     cross-check (`src/` reverted to `origin/main` with these tests left in
+     place) that failed 4 tests directly plus a whole-module collection
+     error on `tests/test_insider_signal.py` (36 tests that never got to
+     run) — i.e. the tests actually depend on this implementation existing.
+     `tests/test_smart_money.py` (pre-existing, untouched by the original
+     commits) continues to pass unchanged, pinning that non-routine Smart
+     Money behavior — admission, materiality, clustering — is unaffected.
+
+  **Measured against the real production cache**
+  (`/home/qamc/quant-agent/data/smart_money/observations.json`, read-only,
+  2026-08-28): **2,742 stream=insider rows within the 7-day lookback, 1,224
+  filings, 2026-08-21 to 2026-08-28 — 57.3% routine (1,572), 42.6%
+  opportunistic (1,167), 0.1% indeterminate (3).** This re-confirms the
+  original 56.2%-of-2,188 figure (measured a day earlier, 2026-08-21 to
+  2026-08-27) rather than replacing it — same order of magnitude, same
+  caveat: **zero rows matched the calendar-month or cadence rules** in
+  either measurement, because `insider_history.json` still does not exist
+  in production (this PR is not deployed). The 57.3% is still driven
+  entirely by the proportional-sell rules (`planned_small_disposition` +
+  `immaterial_stake_sale` = 1,568 of 1,572 routine rows; the remaining 4 are
+  `zero_price_transaction`) plus, this time, one previously-unmeasured
+  finding: **only 1 of the 413 buy-side (code `P`) rows was routine at all**
+  (a single `$0`-price transaction) — the routine label is concentrated
+  almost entirely on the sell side, which the admission gate never reads.
+
+  **Before/after on `SECForm4Provider.fetch()`, same real cache, same
+  `config/settings.yaml`, uncapped `max_observations` (measuring the gate,
+  not the 40-row display limit), classifier vs. a stub that force-labels
+  every row `opportunistic` (byte-for-byte what `fetch()` did before this
+  branch — the only change is the added `and verdict.label != "routine"`
+  clause):**
+  - **Admission-eligible symbols: unchanged, 43 both before and after** —
+    the sole buy-side row the classifier demotes (the `$0` transaction
+    above) was already excluded by the pre-existing materiality floor
+    regardless of its label, so on today's snapshot the narrower admission
+    gate has not yet flipped any symbol's eligibility. This will not stay
+    true forever — it holds only because no *material* buy in the current
+    7-day window happens to be routine yet, and because the calendar test
+    has no history to draw on.
+  - **Ranking impact is real and large even though admission isn't**: of
+    the 1,842 rows that clear `fetch()`'s materiality/cluster gates, 1,113
+    (60.4%) are routine and now sort last / contribute `$0` to the
+    dollar-weighted ranking sum `smart_money_analyst.py::_symbol_rank`
+    uses. **94 symbols in the fetch() output have their entire visible
+    dollar volume down-weighted to `$0`** — including one (`IHT`) whose raw
+    total was **$2.04 billion**, entirely two routine sales, that would
+    previously have dominated the ranked list ahead of every genuine
+    opportunistic signal in the universe.
+
+  **Pre-existing gap found, not fixed (out of this task's scope, flagged
+  per the stop-on-pre-existing-rot rule):** a row with
+  `transaction_value_usd is None` (e.g. `incomplete_amounts`) can never
+  survive `fetch()`'s survivors loop at all — both the individual-
+  materiality and cluster-window branches require
+  `transaction_value_usd is not None` before a row is even added to the
+  candidate set, dropping it regardless of `signal_class`. This predates
+  the classifier (`b1944cd`, "add SEC smart-money transient admissions")
+  and is a materiality-gate limitation, not a routine/opportunistic
+  classification defect — the classifier itself still returns
+  `indeterminate`, never `routine`, for this case
+  (`tests/test_insider_signal.py::test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine`
+  pins that). Worth a separate look if unpriced Form 4 rows turn out to be
+  common enough to matter.
+
+  Full suite: 2,713 tests pass (2,696 after merging current `main`, +17 net
+  new in this finishing pass). Nothing here is deployed; PR only.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
@@ -618,13 +778,24 @@ Two facts worth acting on:
    shared module constant) in addition to length; failing the content check
    falls through to the fallback instead of returning. Re-measured across all
    68: 17 improved, 51 unchanged, 0 regressed, 0 starved.
-4. **Insider routine/opportunistic filter.** Cheap Python, best evidence-to-effort
-   ratio in the system — over half of Form 4 trades carry zero predictive power.
+4. **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+   merged/deployed.** See the "Landed" entry above (`feat/insider-signal-filter`)
+   for what it does and the measured routine split with its caveat.
 5. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
-6. **Phase 4.2 — repair the data feeds.** Fix Reuters/AP/FRED; surface degraded
-   coverage to the operator. (4.1, un-blindfolding the intraday buy path, is
-   done — `fb88e08`, `feat/pm-flex-routing`, see the landed section above.)
+6. **Phase 4.2 — repair the data feeds.** News-feed half **DONE** (branch
+   `fix/news-feeds-and-coverage`, 2026-08-28): Reuters/AP investigated live —
+   neither is fixable for free (Reuters retired public RSS in 2020; AP's own
+   feed requires a paid OAuth2 API, and the free third-party proxy is
+   Cloudflare-walled) — both removed from `RSS_FEEDS`, Yahoo Finance News
+   added as a partial free substitute, and `NewsCoverage` (`src/data/news.py`)
+   now makes a dead feed impossible to miss: it's in the analyst's own prompt
+   and in `data_status["news"]` (`ok`/`partial`/`failed`), which is what
+   `trader_feed.py`/`notifier.py` already render as the operator-facing
+   `⚠️ Data degraded` banner. **FRED still open** — separate provider
+   (`src/data/macro.py`), unrelated to the RSS pipeline, not touched here.
+   (4.1, un-blindfolding the intraday buy path, is done — `fb88e08`,
+   `feat/pm-flex-routing`, see the landed section above.)
 7. **Phase 5 — short selling, now a three-stage plan.** The prior estimate
    recorded here — "bounded and additive, roughly a day, NOT a rewrite" — was
    **wrong**. A survey for Stage 1 found roughly 50 long-only assumptions
@@ -671,10 +842,19 @@ Two facts worth acting on:
 9. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
    the dominant failure mode in this literature.
-10. **Analyst upgrades.** News cascade (dedup, then novelty scoring, then a model
-   on the residual); deterministic macro regime with the model confined to FOMC
-   text; earnings multi-quarter trends. Several need new data sources and an
-   owner decision first.
+10. **Analyst upgrades.** News cascade — **stage 1 (dedup) is DONE**
+   (`src/data/news_dedup.py`); stage 2 (novelty scoring against a rolling
+   48–72h per-ticker buffer) and stage 3 (a model on the residual only) remain,
+   and the seam for them is `NewsCluster.novelty`. Also: deterministic macro
+   regime with the model confined to FOMC text; earnings multi-quarter trends.
+   Several need new data sources and an owner decision first.
+
+   Note for whoever picks up stage 2: the measured duplication rate is small.
+   Across 589 archived articles the old stage removed 4.2% and the new one
+   removes a further 1.2% — so dedup is a correctness fix (it stops one story
+   reading as N confirmations), **not** a cost saving. Two of nine feeds
+   (Reuters, AP) are dead, which suppresses exactly the wire-syndication case
+   dedup targets; the true rate is unknown until those are fixed.
 
 **Identified 2026-08-28, not yet fixed**
 
@@ -763,6 +943,114 @@ first.
 Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
 **Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
 
+#### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
+Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
+using the cockpit live:
+
+1. **Price-axis rescale bug (priority).** Clicking a symbol after manually
+   dragging the chart's price axis left the axis pinned to the old symbol's
+   range — lightweight-charts permanently disables its own `autoScale` the
+   moment the operator drags the price axis by hand, and nothing in this repo
+   ever re-enabled it. Fixed in `PriceChartPanel.tsx` by re-asserting
+   `priceScale().applyOptions({ autoScale: true })` in the effect keyed on
+   `[symbol, timeframe]`, so a symbol or timeframe switch always starts from a
+   clean fit while a manual zoom on the *same* symbol/timeframe still survives
+   the 20s quote poll. Demonstrated live against the running paper-trading
+   backend (MSFT ~$513 -> CMCSA ~$27 and back, plus a timeframe switch),
+   not just read from the code.
+2. **Two-row default workspace.** `DesktopCockpitWorkspace.tsx`'s default
+   layout changed from one row of three columns (Positions | Chart | Orders)
+   to a full-width Chart row on top and a Positions / free workspace slot /
+   Orders three-column row underneath — a real second grid row via dockview's
+   own `direction: "below"`, so it gets a genuine independent resize handle,
+   not more tabs folded into an existing group. The workspace container is now
+   deliberately taller than one viewport (chart row keeps its old full-height
+   budget, the new row adds ~480px on top) so the page scrolls vertically
+   instead of every panel fighting for room inside one fixed-height box. Every
+   panel remains exactly as movable/dockable as before — this only changes the
+   starting point. Layout key bumped `qamc.dockview.cockpit.v4` ->
+   `.v5` so a stale saved layout never hides the new default.
+3. **Directional Bias panel re-engineered onto Tremor primitives.** The old
+   panel was five bordered sections of hand-drawn ratio bars and paragraphs —
+   "instrument signal direction, effective market exposure" as dense text.
+   Replaced with a Tremor `BadgeDelta` "net lean" chip plus one Tremor
+   `DonutChart` (long/short/neutral share of exposure-corrected candidate
+   direction, the number the panel's own logic says actually answers "is QAMC
+   structurally long-only" — see `exposureDirection()`), a one-line hedge
+   footnote, and a compact PM-proposals summary. **Dropped, not reformatted:**
+   the inverse-ETF stat-card grid and the AI Risk Manager verdict section (3
+   of 25 runs and 4 of 25 runs respectively on live data — too thin a sample
+   for an at-a-glance panel) and the decision-state outcome histogram (not a
+   directional read at all, and it duplicates the sibling Runs tab one click
+   away in the same workspace group).
+
+99 frontend tests pass (up from 84 at PR #120's baseline via #130's pass-2
+additions), `tsc -b` clean, `npm run build` clean, rebuilt bundle committed
+alongside source (see PR #120's discovery below — still true: production
+serves `src/api/static_cockpit/` from disk and never runs `npm run build`).
+
+**Found and left alone, pre-existing:** at phone width (~390px) the mobile
+`SupportTabs` Trades table overflows the page horizontally — a wide Tremor
+`<table>` with no containing horizontal scroll at that breakpoint. Reproduced
+with this branch's changes backed out too, so it predates this pass and is
+unrelated to any of the three items above; not fixed here per the standing
+rule to report pre-existing breakage rather than self-authorize an unrelated
+fix.
+
+**Update (branch `fix/mobile-table-overflow`) — fixed, and the diagnosis above
+was wrong.** The Trades `<table>` was never the leak: `Panel`'s `Card` already
+has `overflow-hidden`, `DataTable.tsx`'s wrapper already has `overflow-x-auto`,
+and Tailwind's `grid-cols-1` already keeps the Orders/Trades grid track at
+viewport width — all three DataTable consumers on the mobile path (Positions,
+Orders, Trades, plus Runs/Missed-Opportunities in the other SupportTabs tabs)
+measured fully contained at 390px, before any fix. Proof: with a Playwright
+repro on the exact mocked dataset the project's own
+`scripts/dashboard-visual-acceptance.mjs` uses, hiding only the page's
+`<header>` took `document.documentElement.scrollWidth` from 468px to exactly
+390px (`clientWidth`) — across every SupportTabs tab and every data scenario
+(populated/error/empty) tested, at 320/371/390px. The real, sole cause was
+`TopStrip.tsx`'s status row (`ml-auto flex items-center gap-3 flex-shrink-0`):
+rigid, non-shrinking, non-wrapping content ("all systems reachable" + "updated
+HH:MM:SS" + "legacy view") that doesn't fit the header's own `flex-wrap` line
+at phone width. Fixed by dropping `flex-shrink-0` and adding `flex-wrap` to
+that one row, matching every other status row in this codebase (`HeroBand`,
+`LiquidityPanel`, `PositionHoldingStrip`, `DirectionalBiasPanel` already use
+`flex flex-wrap`). Left as-is above rather than rewritten, since the original
+misdiagnosis is itself a useful record.
+
+**Second verification, against live production data — and why two repros disagreed.**
+The fix was re-verified independently against the running production cockpit with
+real account data, not the mocked dataset: viewports 320px, 371px and 390px, across
+all five mobile SupportTabs tabs (Orders & Trades, Runs, Directional Bias, Missed
+Opportunities, Diagnostics).
+
+In every one of those 15 combinations the only element leaking at page level was the
+`TopStrip` status row and its `legacy view` link. No table leaked at page level in
+any tab at any width — `DataTable`'s wrapper carries `max-w-full overflow-x-auto`,
+`Panel`'s `Card` carries `overflow-hidden` and `.panel-body` carries
+`overflow-x-auto`, so a wide table is contained by construction, independent of how
+wide its data is.
+
+**The overflow is state-dependent, which is why the original report and the mocked
+repro disagreed on the numbers.** The header's health label is variable-length. With
+the healthy label "all systems reachable" there is no overflow at 390px at all. With
+the longest label the code can emit — "scoped paid-analysis quota hold — other
+sessions eligible" from `healthColor()` — the same page measures `scrollWidth` 571px
+against a 390px viewport. That is within 9px of the 562px originally recorded, and
+the original observation was made while paid analysis was degraded. So both repros
+were the same defect seen in two different system states, and neither measurement was
+wrong.
+
+Measured effect of the fix: 571px to 390px at a 390px viewport under the
+worst-case label, and 45px of overflow to zero at 320px under today's healthy label.
+Desktop is unaffected.
+
+Note explicitly that a phone-width check of this page is only meaningful when the
+status text is at its longest, since the healthy state hides the defect.
+
+PR #138 merged and deployed to production on 2026-08-28, and the fix was
+confirmed live at the production URL.
+
 #### COCKPIT — DELIVERED (PR #120)
 All five owner requests are implemented, built and tested on branch
 `feat/cockpit-trader-view`: chart vertical space, a holdings + P&L strip visible
@@ -779,8 +1067,28 @@ is included in PR #120. Anyone changing frontend source must do the same.
 
 Mission Control is read-only, so this ships without affecting trading.
 
-#### NEWS FEEDS
-Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested hypothesis: a 403 is usually a blocked User-Agent rather than a dead feed. No paid dependency without the owner's approval. The part that must land regardless: a dead feed currently logs a warning and vanishes, so the system reports complete news coverage while missing two wire services.
+#### NEWS FEEDS — RESOLVED (branch `fix/news-feeds-and-coverage`, 2026-08-28)
+The coverage-honesty half — the part that "must land regardless" — is done:
+`NewsCoverage` (`src/data/news.py`) tracks configured/succeeded/failed feeds
+on every fetch and threads it into both the analyst's own prompt ("News
+Coverage" section) and `data_status["news"]` (`ok`/`partial`/`failed`), which
+`trader_feed.py`/`notifier.py` already render to the operator. A dead feed can
+no longer vanish behind a log line.
+
+The UA hypothesis was tested and was WRONG for both feeds: Reuters killed
+public RSS in June 2020 (`reutersagency.com` now 200s but is a HubSpot
+marketing page for paid Reuters Connect licensing, no feed link left);
+`reuters.com` itself 401s behind a DataDome JS/CAPTCHA wall. AP's own feed
+(`apnews.com/index.rss`, found via `<link rel="alternate">` autodiscovery)
+answers 401 "Invalid client credentials" — gated behind AP's paid
+Content/Breaking News API (OAuth2) — and the free third-party proxy previously
+used is now behind a Cloudflare managed JS challenge no User-Agent can pass.
+Neither is fixable for free. Per the standing no-paid-dependency rule, both
+were removed from `RSS_FEEDS` rather than left permanently red, and Yahoo
+Finance News (verified live, free, publisher-hosted, ~49 same-day items) was
+added as a partial substitute — net 8 feeds, down from 9. Dedicated Reuters/AP
+wire access is an owner decision (Reuters Connect or the AP Content API, both
+paid) if it's wanted.
 
 #### SMALLER, RECORDED
 - `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
@@ -792,9 +1100,16 @@ Reuters returns 404 and AP returns 403, confirmed live on 2026-08-28. Untested h
 - #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
 - #116 shorts countable — proven a no-op on a long-only book.
 - #117 doc sync.
+- #132 news feeds + coverage — dead-feed-vanishes-silently fix (`NewsCoverage`, `data_status["news"]`), Reuters/AP removed (neither fixable for free, live-verified 2026-08-28), Yahoo Finance News added, `feat/news-dedup` folded in. Branch `fix/news-feeds-and-coverage`.
+- #133 insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above.
 
 #### BRANCHES READY, NO PR YET
-`feat/insider-signal-filter` (56.2% of 2,188 real Form 4 rows measured routine), `feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
+`feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
+
+`feat/insider-signal-filter` moved to "OPEN PRs" above (2026-08-28): finished
+(thresholds moved to config, per-code and fail-closed tests added) and PR
+opened against `main` — 57.3% of 2,742 real Form 4 rows measured routine,
+consistent with the earlier 56.2%-of-2,188 figure.
 
 #### DECISIONS RATIFIED 2026-08-28
 - Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.

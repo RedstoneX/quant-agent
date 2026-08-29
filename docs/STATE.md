@@ -291,6 +291,31 @@ universe membership and the Technical prefilter; current Technical analysis,
 PM grounding, AI Risk, deterministic risk/funding, broker protection and
 Alpaca Paper remain mandatory. The configured 101-stock universe is unchanged.
 
+**Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+merged or deployed** — `f3aeba4` + `866e423` plus a 2026-08-28 finishing
+pass on branch `feat/insider-signal-filter`. `src/data/insider_signal.py`
+classifies every parsed Form 4 P/S row as `routine`, `opportunistic` or
+`indeterminate` (Cohen/Malloy/Pomorski calendar test, a recurring-cadence
+fallback, and proportional-size rules on sells; a 10b5-1 flag alone never
+marks a large sale routine). A routine purchase can no longer make a symbol
+`admission_eligible`, narrowing the lane described above; no other admission
+check changed. Every threshold (sell-materiality fraction, calendar years,
+cadence window, history retention) is a `SmartMoneyConfig` field in
+`src/config.py` (prefixed `insider_`), not a hardcoded constant. Re-measured
+on the live cache 2026-08-28: 57.3% of open-market P/S rows routine (2,742
+rows) — consistent with the original 56.2%-of-2,188 figure a day earlier —
+but zero of those matched the calendar test in either measurement, since the
+required multi-year history index still does not exist in production.
+End-to-end on `SECForm4Provider.fetch()` with the real cache: admission-
+eligible symbols are unchanged today (43 before and after — the one buy-side
+row the classifier demotes was already below the materiality floor), but
+ranking is materially affected — 94 symbols in the fetch() output have their
+entire visible dollar volume down-weighted to $0, including one ($IHT) whose
+raw $2.04B total was entirely two routine sales. See `docs/WORK.md`
+"Landed" for the full measurement, the config fields, and the caveat.
+Recorded here as branch/PR work, not as deployed behavior; production
+admission logic is unchanged until this merges and deploys.
+
 The production checkout retains exactly one intended tracked local configuration delta:
 
 - `config/settings.yaml`: `intraday_scan.enabled: true`

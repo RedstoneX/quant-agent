@@ -18,6 +18,9 @@ _MAX_SYNTHESIS_SYMBOLS = 8
 _MAX_REPRESENTATIVE_TRANSACTIONS = 3
 _MAX_FINDING_TEXT_WORDS = 24
 _MAX_CONTEXT_TEXT_CHARS = 96
+# The discount reason is the operator-facing "why". Bounded, but with more
+# room than an actor name so the sentence survives intact.
+_MAX_REASON_TEXT_CHARS = 220
 _MAX_ACTOR_ROLES = 8
 
 _ROLE_RANK = {
@@ -27,6 +30,12 @@ _ROLE_RANK = {
     "historical": 0,
 }
 _FRESHNESS_RANK = {"fresh": 2, "delayed": 1, "stale": 0}
+# Routine transactions carry no predictive power (docs/RESEARCH_FINDINGS.md
+# section 1). They are still presented — the operator must be able to see what
+# was discounted and why — but they lose every ranking contest.
+_SIGNAL_CLASS_RANK = {
+    "opportunistic": 2, "": 1, "indeterminate": 1, "routine": 0,
+}
 
 
 class SmartMoneyAnalystAgent(BaseAgent):
@@ -65,8 +74,12 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -int(any(row.transient_admission_eligible for row in observations)),
             -int(any(row.admission_eligible for row in observations)),
             -max(_ROLE_RANK[row.economic_role] for row in observations),
+            -max(_SIGNAL_CLASS_RANK[row.signal_class] for row in observations),
             -max(_FRESHNESS_RANK[row.freshness] for row in observations),
-            -sum(row.transaction_value_usd or 0 for row in observations),
+            # Value is weighted by class, so a symbol whose only large trades
+            # are routine cannot outrank a smaller genuinely opportunistic one.
+            -sum((row.transaction_value_usd or 0) * row.signal_weight
+                 for row in observations),
             -len({row.actor_cik or row.actor for row in observations}),
             min(row.disclosure_age_days for row in observations),
             symbol,
@@ -78,8 +91,9 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -int(observation.transient_admission_eligible),
             -int(observation.admission_eligible),
             -_ROLE_RANK[observation.economic_role],
+            -_SIGNAL_CLASS_RANK[observation.signal_class],
             -_FRESHNESS_RANK[observation.freshness],
-            -(observation.transaction_value_usd or 0),
+            -(observation.transaction_value_usd or 0) * observation.signal_weight,
             observation.disclosure_age_days,
             -observation.transaction_date.toordinal(),
             observation.actor_cik or observation.actor,
@@ -88,10 +102,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
         )
 
     @staticmethod
-    def _bounded_context(value: str) -> str:
-        if len(value) <= _MAX_CONTEXT_TEXT_CHARS:
+    def _bounded_context(value: str, limit: int = _MAX_CONTEXT_TEXT_CHARS) -> str:
+        if len(value) <= limit:
             return value
-        return value[:_MAX_CONTEXT_TEXT_CHARS - 3] + "..."
+        return value[:limit - 3] + "..."
 
     @classmethod
     def _representative_transactions(
@@ -175,6 +189,26 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 row.in_trading_universe for row in observations
             ),
             "transient_admitted": any(row.transient_admitted for row in observations),
+            # Routine/opportunistic split. Cohen/Malloy/Pomorski: routine
+            # trades carry zero predictive power, so the model is told which
+            # rows to discount and the deterministic reason for each.
+            "signal_class_counts": {
+                label: sum(row.signal_class == label for row in observations)
+                for label in ("opportunistic", "routine", "indeterminate", "")
+                if any(row.signal_class == label for row in observations)
+            },
+            "opportunistic_transaction_value_usd_by_direction": {
+                direction: round(sum(
+                    row.transaction_value_usd or 0
+                    for row in observations
+                    if row.direction == direction and row.signal_class == "opportunistic"
+                ), 2)
+                for direction in direction_counts
+            },
+            "routine_reasons": sorted({
+                row.signal_class_reason for row in observations
+                if row.signal_class == "routine" and row.signal_class_reason
+            }),
             "amendment_count": sum(row.amendment for row in observations),
             "late_filing_count": sum(row.late_filing for row in observations),
             "ten_b_five_one_counts": {
@@ -202,6 +236,9 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 "post_transaction_shares": row.post_transaction_shares,
                 "ownership_nature": row.ownership_nature,
                 "is_10b5_1": row.is_10b5_1,
+                "signal_class": row.signal_class,
+                "signal_class_reason": row.signal_class_reason,
+                "signal_class_detail": cls._bounded_context(row.signal_class_detail, _MAX_REASON_TEXT_CHARS),
                 "amendment": row.amendment,
                 "late_filing": row.late_filing,
                 "accession_number": row.accession_number,
@@ -280,6 +317,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
             "post_transaction_shares", "ownership_nature", "amendment",
             "late_filing", "is_10b5_1", "listed_exchange",
             "admission_eligible", "transient_admission_eligible",
+            # Deterministic from source facts, and it changes what the model
+            # is being asked to weigh — a reclassification must not replay a
+            # synthesis produced before the trade was known to be routine.
+            "signal_class", "signal_class_reason",
         )
         rows = []
         for observation in observations:

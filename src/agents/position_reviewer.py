@@ -151,16 +151,23 @@ class PositionReviewerAgent(BaseAgent):
         # Non-LLM system actions taken earlier in this session (force-delever
         # when margin drifted negative; emergency sell-all when daily loss
         # breached -3% on a long; emergency buy-to-cover under that same
-        # breach when the position being closed was a short instead). These
-        # bypass the reviewer — the closed positions are already gone from
-        # ctx.positions — but surfacing them prevents the reviewer from
-        # reasoning in a vacuum about why the book shrank. A circuit-breaker
-        # cover shrinks/flattens the book exactly as materially as a forced
-        # sell does, so it has to be in this list too, not just the sell side.
+        # breach when the position being closed was a short instead; a
+        # broker-resident protective stop firing and getting written back by
+        # the stop-out reconciler — 2026-08-28 ONDS/CCJ). These bypass the
+        # reviewer — the closed positions are already gone from ctx.positions
+        # — but surfacing them prevents the reviewer from reasoning in a
+        # vacuum about why the book shrank. A circuit-breaker cover
+        # shrinks/flattens the book exactly as materially as a forced sell
+        # does, so it has to be in this list too, not just the sell side.
+        # STOP_OUT rows are backdated to their ACTUAL fill time (see
+        # TradingPipeline._parse_broker_fill_timestamp), so this only fires
+        # for a stop that fired and was detected within THIS session — an
+        # older one simply isn't in `morning_trades` (today_only), which is
+        # correct: it isn't today's news.
         system_action_lines: list[str] = []
         for t in morning_trades:
             act = t.get("action")
-            if act not in ("FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER"):
+            if act not in ("FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER", "STOP_OUT"):
                 continue
             sym = t.get("symbol") or "?"
             qty = t.get("qty") or 0
@@ -540,9 +547,11 @@ class PositionReviewerAgent(BaseAgent):
             system_actions_section = (
                 "### Non-LLM System Actions Earlier Today\n"
                 "These sells were triggered by hard-rule safety nets (force de-lever "
-                "when cash < 0; emergency sell-all on −3% daily-loss breach) and "
-                "bypassed LLM review — the listed symbols are already closed out of "
-                "the book. Context-only; do not try to re-open, re-stop, or second-guess:\n"
+                "when cash < 0; emergency sell-all on −3% daily-loss breach) or by the "
+                "broker's own protective stop firing (STOP_OUT — the market closed the "
+                "position, not a decision anyone made) and bypassed LLM review — the "
+                "listed symbols are already closed out of the book. Context-only; do "
+                "not try to re-open, re-stop, or second-guess:\n"
                 + "\n".join(system_action_lines) + "\n"
             )
         else:

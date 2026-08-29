@@ -430,21 +430,94 @@ def _openrouter_cache_is_fresh() -> bool:
     return age < _CACHE_MAX_AGE_SECONDS
 
 
-def refresh_openrouter_pricing(force: bool = False) -> bool:
+def _openrouter_cache_age_hours() -> float | None:
+    """Hours since the OpenRouter pricing cache file was last written, or
+    ``None`` if it does not exist. Pure function of the file's current
+    mtime -- no state is cached in this module, so a call made mid-session
+    (e.g. from `openrouter_pricing_reservation_multiplier` below, once per
+    LLM call) always reflects the file as it is right now, including a
+    successful background refresh that landed since the session started."""
+    if not _OPENROUTER_CACHE_PATH.exists():
+        return None
+    return (time.time() - _OPENROUTER_CACHE_PATH.stat().st_mtime) / 3600.0
+
+
+# === Grace window for a stale-but-present OpenRouter cache (2026-08-28) ===
+#
+# The defect: `refresh_openrouter_pricing` accepted a cached rate ONLY under
+# 24h old (`_openrouter_cache_is_fresh`). Past that boundary it had to reach
+# openrouter.ai or return False, and both callers (`TradingPipeline.__init__`
+# in src/pipeline.py and `activate_paid_call_session` below in
+# src/cost_circuit.py) respond to False with `breaker.mark_unavailable(...)`
+# -- the durable, cross-process emergency latch that only
+# `LLMCostCircuitBreaker.reset()` (operator-only, reason mandatory) can
+# clear. Because the cache is rewritten only when a fetch happens, and a
+# fetch only happens once the cache is ALREADY stale, one openrouter.ai
+# outage overlapping the first session past the 24h mark could latch every
+# future session -- including the next day's -- until a human intervened.
+# Reproduced 2026-08-28 via
+# test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_is_down
+# (cache 60s past the 24h boundary + `_fetch_openrouter_pricing` stubbed to
+# fail => `refresh_openrouter_pricing()` returns False today).
+#
+# The fix distinguishes "just turned stale" from "genuinely unknown": model
+# routing rates move on the order of once a quarter, and the figure only
+# ever BOUNDS a reservation that already carries `reservation_multiplier` on
+# top. So a cache within `grace_period_hours` of the 24h freshness boundary
+# is used rather than latched -- with a widened multiplier (below) and a
+# loud warning -- and only a cache older than that, or missing entirely, or
+# lacking a rate for a model actually configured, still fails closed exactly
+# as before 2026-08-28.
+def refresh_openrouter_pricing(
+    force: bool = False,
+    *,
+    grace_period_hours: float = 0.0,
+    max_stale_multiplier: float = 1.0,
+) -> bool:
     """Load current official rates for every accepted OpenRouter model.
 
     Unlike general cost telemetry, these rates are an input to the mandatory
-    pre-call spending breaker.  A fresh (under 24h) official cache is valid;
-    otherwise the public catalog must be reachable.  Stale pins are never
-    reported as current.  On success ``PRICING`` is updated in place so both
-    reservations and post-call accounting use the same catalog snapshot.
+    pre-call spending breaker.  A fresh (under 24h) official cache is valid
+    outright.  Past that, the public catalog is tried live; if that fails,
+    a cache still within `grace_period_hours` of the freshness boundary is
+    accepted as a bounded (not unknown) rate -- see the module-level note
+    above this function for why, and `openrouter_pricing_reservation_multiplier`
+    for how the reservation is widened to compensate.  `grace_period_hours=0`
+    (the default when a caller passes nothing, e.g. an old script or a test
+    that predates 2026-08-28) reproduces the exact pre-fix behaviour: fail
+    closed the instant the cache turns stale.  Production wiring
+    (src/pipeline.py, src/cost_circuit.py's `activate_paid_call_session`)
+    always passes the configured `llm_cost_circuit.openrouter_pricing_*`
+    values explicitly.
+
+    Beyond the grace window, with no cache at all, or with a cache that
+    exists but lacks a valid rate for one of the accepted models, this
+    returns False exactly as it always has -- that is genuinely unbounded
+    cost, not merely stale, and the caller's fail-closed response
+    (`mark_unavailable`) is correct for it.
+
+    On success ``PRICING`` is updated in place so both reservations and
+    post-call accounting use the same catalog snapshot.
     """
 
     rates = None
+    stale_but_in_grace = False
     if not force and _openrouter_cache_is_fresh():
         rates = _read_openrouter_cache()
     if rates is None:
         rates = _fetch_openrouter_pricing()
+    if rates is None and grace_period_hours > 0:
+        # Live fetch failed (or was never attempted because a corrupt-but-
+        # fresh cache read above also returned None -- either way we have no
+        # confirmed-current rates). Fall back to whatever is on disk, but
+        # ONLY if it is within the configured grace window; `age_hours` is
+        # None when there is no cache file at all, which correctly skips
+        # this branch and falls through to the fail-closed return below.
+        age_hours = _openrouter_cache_age_hours()
+        fresh_hours = _CACHE_MAX_AGE_SECONDS / 3600.0
+        if age_hours is not None and age_hours <= fresh_hours + grace_period_hours:
+            rates = _read_openrouter_cache()
+            stale_but_in_grace = rates is not None
     if rates is None:
         logger.error(
             "OpenRouter pricing provenance unavailable; paid routed calls "
@@ -467,11 +540,71 @@ def refresh_openrouter_pricing(force: bool = False) -> bool:
             "input": float(live["input"]),
             "output": float(live["output"]),
         }
-    logger.info(
-        "Verified current OpenRouter pricing for %d accepted models",
-        len(_PRICING_OPENROUTER),
-    )
+    if stale_but_in_grace:
+        age_hours = _openrouter_cache_age_hours() or 0.0
+        logger.warning(
+            "OpenRouter catalog unreachable -- pricing %d accepted models from a "
+            "STALE cache (%.1fh old, grace window %.1fh past the %.0fh freshness "
+            "boundary). Reservations are widened toward %.2fx to compensate; "
+            "trading continues. This is NOT the pre-2026-08-28 latch behaviour "
+            "and is expected to self-clear on the next successful catalog fetch.",
+            len(_PRICING_OPENROUTER), age_hours, grace_period_hours,
+            _CACHE_MAX_AGE_SECONDS / 3600.0, max_stale_multiplier,
+        )
+    else:
+        logger.info(
+            "Verified current OpenRouter pricing for %d accepted models",
+            len(_PRICING_OPENROUTER),
+        )
     return True
+
+
+def openrouter_pricing_reservation_multiplier(
+    base_multiplier: float,
+    *,
+    grace_period_hours: float = 0.0,
+    max_stale_multiplier: float = 1.0,
+) -> float:
+    """Widen `base_multiplier` in proportion to how stale the OpenRouter
+    pricing cache currently is, within the configured grace window.
+
+    Called per-call from `LLMCostCircuitBreaker._attempt_reserve`
+    (src/cost_circuit.py) for any `vendor/model` id -- i.e. every
+    OpenRouter-routed reservation, which per config/settings.yaml is every
+    agent in production. Reads the cache file's mtime directly rather than
+    remembering "was the last refresh stale": the cache does not change
+    mid-session unless a later call's `refresh_openrouter_pricing` succeeds,
+    so this stays correct across an entire session without extra state, and
+    self-corrects the moment a fetch does succeed.
+
+    Returns exactly `base_multiplier` (no widening) when: grace is disabled
+    (`grace_period_hours <= 0`), there is no cache file, the cache is still
+    within its 24h freshness window, or `max_stale_multiplier` is not
+    actually above `base_multiplier` (config validation in src/config.py's
+    `LLMCostCircuitConfig` already forbids that combination in production,
+    but this function has no config object to trust and must not WIDEN
+    downward on a malformed override).
+
+    Otherwise scales LINEARLY from `base_multiplier` at the instant the
+    cache turns stale (age == the 24h freshness boundary, fraction 0 -- no
+    extra margin yet) up to `max_stale_multiplier` at the far edge of the
+    grace window (fraction 1), continuous at both ends so there is no
+    discontinuous jump the moment a cache crosses from fresh to stale. Any
+    age beyond the grace window is clamped to fraction 1 -- this function
+    only computes a multiplier; it does not decide whether stale-beyond-
+    grace pricing may be used at all (`refresh_openrouter_pricing` already
+    refused to load PRICING from it, so PRICING.get(model) is None by the
+    time a reservation would reach this far in that case).
+    """
+
+    if grace_period_hours <= 0 or max_stale_multiplier <= base_multiplier:
+        return base_multiplier
+    age_hours = _openrouter_cache_age_hours()
+    fresh_hours = _CACHE_MAX_AGE_SECONDS / 3600.0
+    if age_hours is None or age_hours <= fresh_hours:
+        return base_multiplier
+    fraction = min(1.0, (age_hours - fresh_hours) / grace_period_hours)
+    return base_multiplier + fraction * (max_stale_multiplier - base_multiplier)
 
 
 def _memoise(model: str, rates: dict, source: str) -> dict[str, float]:

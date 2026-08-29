@@ -80,6 +80,13 @@ describe("TodaySessionsStrip selected-session executions", () => {
       />
     );
 
+    // Collapsed to a one-line summary by default (item 8) — the
+    // per-session executions table is a click away, not gone.
+    expect(screen.getByText(/2 sessions/)).toBeTruthy();
+    expect(screen.queryByText("Morning executions")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /2 sessions/ }));
+
     expect(screen.getByText("Morning executions")).toBeTruthy();
     expect(screen.getByText("$101.25")).toBeTruthy();
     expect(screen.queryByText("AAPL")).toBeNull();
@@ -87,5 +94,37 @@ describe("TodaySessionsStrip selected-session executions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Chart MRVL BUY execution" }));
     expect(onSelectTrade).toHaveBeenCalledWith(mrvl);
+  });
+
+  it("summarizes session count, last session time, no-trade count and fill count in the collapsed line", () => {
+    const morning = run("run-1", "run", "2026-08-21T13:35:00Z");
+    const midday = run("midday-1", "midday", "2026-08-21T17:00:00Z");
+    const morningFunnel = funnel(morning.run_id);
+    const middayFunnel = { ...funnel(midday.run_id), decision_state: "no_proposal" as const };
+    const mrvl = trade(1, morning.run_id, "MRVL", "filled");
+
+    render(
+      <TodaySessionsStrip
+        runs={[morning, midday]}
+        funnels={{ [morning.run_id]: morningFunnel, [midday.run_id]: middayFunnel }}
+        trades={[mrvl]}
+        loading={false}
+        error={null}
+        selectedRunId={morning.run_id}
+        autoFollow
+        onSelect={vi.fn()}
+        onFollowLatest={vi.fn()}
+        onSelectTrade={vi.fn()}
+      />
+    );
+
+    // 2 sessions, 1 of them no-trade (midday's no_proposal), 1 real fill
+    // (MRVL) recorded across the day. The clock portion is left as a
+    // wildcard: it follows the runner's locale/timezone, same as every
+    // other toLocaleTimeString call in this codebase (lib/format.ts's
+    // fmtTime, the chart's quoteAsOf display) — pinning an exact "17:00"
+    // vs "05:00 PM" string here would make this test environment-specific
+    // for no reason relevant to what it verifies.
+    expect(screen.getByText(/^2 sessions · last .+ · 1 no-trade · 1 fill$/)).toBeTruthy();
   });
 });
