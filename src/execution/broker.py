@@ -1278,28 +1278,50 @@ class AlpacaBroker:
         return True, specs
 
     def cancel_open_entry_orders(self, symbol: str | None = None) -> int:
-        """Cancel open BUY/entry orders while preserving protective SELL legs.
+        """Cancel open entry orders on EITHER side — BUY-to-open-long and
+        SELL-to-open-short — while preserving protective stop legs on
+        either side.
 
-        `symbol` scopes the cancel to one name — used by the full-exit SELL
-        discipline (audit round 2: a fully-exited symbol could still carry the
-        same day's resting DAY entry BUY, which would silently re-open the
-        position — or, in the emergency-liquidation case, re-buy into the
-        crash the breaker just sold).
+        `symbol` scopes the cancel to one name — used by the full-exit
+        SELL/COVER discipline (audit round 2: a fully-exited symbol could
+        still carry the same day's resting DAY entry BUY, which would
+        silently re-open the position — or, in the emergency-liquidation
+        case, re-buy into the crash the breaker just sold). Stage 3 (shorts)
+        gap fix: an EMERGENCY_COVER used to leave a resting SELL-to-open
+        entry order untouched, which could fill and re-open the exact short
+        exposure the emergency close just cleared — the short-side mirror
+        of the BUY case above.
+
+        Pre-shorts this only ever needed to filter by SIDE: entries were
+        always BUY and protective legs were always SELL, so a bare
+        `side == "buy"` filter could never touch a stop. Now that BUY-side
+        protective covers (a short's stop) and SELL-side entries (a
+        short-open) both exist, side alone stopped being a safe proxy for
+        "is this an entry" — the discriminator has to be ORDER TYPE. Any
+        *stop* order (stop / stop_limit / trailing_stop — the same
+        `"stop" in order_type` test `_list_open_sell_stop_orders` /
+        `_list_open_stop_orders_by_side` already use to find a protective
+        leg) is left alone regardless of side; every other BUY or SELL
+        order is a plain entry and gets cancelled.
         """
         try:
             from alpaca.trading.requests import GetOrdersRequest
 
-            req_kwargs = dict(status=QueryOrderStatus.OPEN, side=OrderSide.BUY,
-                              nested=True)
+            req_kwargs = dict(status=QueryOrderStatus.OPEN, nested=True)
             if symbol:
                 req_kwargs["symbols"] = [_alpaca_symbol(symbol)]
             orders = self.client.get_orders(filter=GetOrdersRequest(**req_kwargs))
             count = 0
             for order in orders or []:
                 order_id = getattr(order, "id", None)
-                order_side = getattr(getattr(order, "side", None), "value", getattr(order, "side", ""))
-                if str(order_side).lower() != "buy" or not order_id:
+                order_side = str(getattr(getattr(order, "side", None), "value",
+                                        getattr(order, "side", ""))).lower()
+                order_type = str(getattr(getattr(order, "order_type", None), "value",
+                                        getattr(order, "order_type", ""))).lower()
+                if order_side not in ("buy", "sell") or not order_id:
                     continue
+                if "stop" in order_type:
+                    continue  # protective leg on either side — preserve it
                 self.client.cancel_order_by_id(order_id)
                 count += 1
             if count:

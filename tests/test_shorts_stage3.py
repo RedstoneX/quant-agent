@@ -22,6 +22,7 @@ from src.config import RiskConfig
 from src.models import (
     Position,
     PortfolioDecision,
+    PositionAction,
     ReasoningChain,
     TargetPosition,
     TechAnalysisResult,
@@ -609,3 +610,214 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
     assert engine.check(
         decision=clean, positions=[], total_value=100_000, daily_pnl=0.0,
     ) == []
+
+
+# ==========================================================================
+# 11. Gap fix — an emergency close cancels a resting entry order on EITHER
+#    side. Previously EMERGENCY_COVER (closing a short) left a resting
+#    SELL-to-open entry order untouched — a fill on it would re-open the
+#    exact short exposure the emergency close just cleared. The mechanism
+#    itself (order-type-based filtering in AlpacaBroker.cancel_open_entry_
+#    orders) is unit-tested in tests/test_broker.py; these two prove the
+#    pipeline actually invokes it identically on both sides.
+# ==========================================================================
+
+def test_emergency_cover_cancels_the_symbols_resting_short_entry_order():
+    """EMERGENCY_COVER must cancel that symbol's own resting entry order
+    exactly as EMERGENCY_SELL does for a long."""
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
+    p.db = MagicMock()
+
+    p._submit_protected_sell(
+        symbol="TSLA", qty=40, limit_price=252.5, reference_price=250.0,
+        position_qty_before_sell=40, label="EMERGENCY_COVER", side="buy",
+    )
+    p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="TSLA")
+
+
+def test_emergency_sell_still_cancels_the_symbols_resting_long_entry_order():
+    """Long-side regression proof — literal mirror of the test above. The
+    pre-existing EMERGENCY_SELL behaviour is unaffected by the short-side
+    fix (same assertion shape as tests/test_pipeline.py's
+    test_full_exit_sell_cancels_same_symbol_entry_orders)."""
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
+    p.db = MagicMock()
+
+    p._submit_protected_sell(
+        symbol="VST", qty=31, limit_price=150.0, reference_price=151.0,
+        position_qty_before_sell=31, label="EMERGENCY_SELL",
+    )
+    p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="VST")
+
+
+# ==========================================================================
+# 12. Gap fix — the midday/close reviewer can COVER a short
+# ==========================================================================
+
+def _mk_review_with_action(symbol: str, action: str, reason: str):
+    """Minimal review-shaped object _midday_execute_llm_actions accepts —
+    same helper shape as tests/test_position_reviewer.py's
+    _mk_review_with_action, kept local so this file stands alone."""
+    return MagicMock(actions=[PositionAction(
+        action=action, symbol=symbol, reason=reason,
+    )])
+
+
+def _midday_pipeline_with_short(symbol: str, qty: float, current_price: float):
+    """Pipeline scaffold sufficient to exercise _midday_execute_llm_actions
+    on a single SHORT position. Mirrors tests/test_position_reviewer.py's
+    _executor_pipeline_with_position, kept local for the same reason."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [])
+    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_protective_stops.return_value = (True, [])
+    pipeline.broker.submit_order.return_value = {
+        "id": "cover-order", "status": "accepted", "symbol": symbol,
+    }
+    pipeline.broker.get_latest_price.return_value = current_price
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    pipeline.broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": str(qty),
+        "filled_avg_price": str(current_price),
+    }
+    pipeline.db = MagicMock()
+    pipeline.db.has_pending_action_for_symbol.return_value = False
+    pipeline._order_accepted = MagicMock(return_value=True)
+    pipeline._reprotect_residual_after_partial_sell = MagicMock()
+    pipeline._format_qty = lambda q: str(q)
+    return pipeline
+
+
+def test_midday_reviewer_covers_a_short_end_to_end():
+    """A held SHORT with a COVER action naming a hard trigger executes as a
+    BUY-to-cover for the full absolute qty — the primary Gap 2 proof."""
+    position = _pos("TSLA", qty=-40, entry=250.0, price=240.0)
+    pipeline = _midday_pipeline_with_short("TSLA", 40.0, 240.0)
+    review = _mk_review_with_action(
+        "TSLA", "COVER",
+        "thesis_invalid_if condition satisfied — guidance cut reversed the "
+        "setup, bullish reversal confirmed above the defended level.",
+    )
+
+    orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
+
+    assert len(orders) == 1
+    pipeline.broker.submit_order.assert_called_once()
+    submit_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert submit_kwargs["side"] == "buy"
+    assert submit_kwargs["qty"] == 40.0
+    assert submit_kwargs["symbol"] == "TSLA"
+    # Buy-to-cover limit sits ABOVE the reference (mirror of SELL's below).
+    assert submit_kwargs["limit_price"] > 240.0
+
+
+def test_midday_cover_refused_without_named_trigger():
+    """A COVER whose reason names no recognised trigger is refused exactly
+    as a SELL would be — the phrase gate applies identically."""
+    position = _pos("TSLA", qty=-40, entry=250.0, price=240.0)
+    pipeline = _midday_pipeline_with_short("TSLA", 40.0, 240.0)
+    review = _mk_review_with_action(
+        "TSLA", "COVER", "price fell a lot, prudent to lock in the gain.",
+    )
+
+    orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
+
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()
+
+
+def test_midday_cover_not_blocked_by_negative_cash():
+    """D10 mirrored at the executor: _midday_execute_llm_actions carries no
+    cash or exposure gate on ANY exit action, COVER included — a closing
+    action must never be blockable by the cash rule (being unable to close
+    is strictly worse than being unable to open). Proven here by executing
+    a COVER successfully with the pipeline's account state showing negative
+    cash and margin disallowed; the executor doesn't even look at it."""
+    position = _pos("TSLA", qty=-40, entry=250.0, price=240.0)
+    pipeline = _midday_pipeline_with_short("TSLA", 40.0, 240.0)
+    pipeline.config = MagicMock()
+    pipeline.config.risk.allow_margin = False
+    pipeline.cash = -5_000.0  # not read anywhere on this path — that's the point
+    review = _mk_review_with_action(
+        "TSLA", "COVER",
+        "thesis_invalid_if condition satisfied — guidance cut reversed the setup.",
+    )
+
+    orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
+
+    assert len(orders) == 1
+    pipeline.broker.submit_order.assert_called_once()
+
+
+# ==========================================================================
+# 13. Gap fix — a short position reaching the reviewer carries its side
+# ==========================================================================
+
+def test_short_position_reaches_reviewer_payload_with_its_side():
+    """The reviewer payload must state a held short's side explicitly so it
+    cannot read a winning short as a loser. Confirms the fix already lives
+    in PositionReviewerAgent.build_user_message and actually reaches the
+    reviewer path this change touches (see also the fuller pnl-sign proof
+    in tests/test_position_reviewer.py)."""
+    from unittest.mock import patch as _patch
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with _patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            session_type="midday",
+            positions=[_pos("TSLA", qty=-40, entry=250.0, price=240.0)],
+            macro_summary={"vix": {"current": 18.0}},
+            cash_balance=1_000.0,
+            total_value=100_000.0,
+        )
+
+    assert "[SHORT]" in msg
+
+
+# ==========================================================================
+# 14. Long-only regression proof — both gap fixes leave a pure-long book
+#    behaving exactly as before
+# ==========================================================================
+
+def test_long_only_midday_actions_unchanged_with_no_shorts_anywhere():
+    """No COVER, no short position anywhere: SELL still executes exactly as
+    pre-Stage-3 (side='sell', full qty, limit 0.5% below reference)."""
+    position = _pos("VST", qty=31, entry=100.0, price=150.0)
+    pipeline = _midday_pipeline_with_short("VST", 31.0, 150.0)
+    review = _mk_review_with_action(
+        "VST", "SELL",
+        "thesis_invalid_if condition satisfied — thesis broken on filing.",
+    )
+
+    orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
+
+    assert len(orders) == 1
+    submit_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert submit_kwargs["side"] == "sell"
+    assert submit_kwargs["qty"] == 31.0
+    assert submit_kwargs["limit_price"] == 149.25  # 150 * 0.995
+
+
+def test_cancel_open_entry_orders_long_only_book_cancels_only_the_buy():
+    """Long-only regression proof for the broker-level fix: a book with no
+    short-side orders at all cancels exactly what it always did (see
+    tests/test_broker.py's fuller mixed-book proof for the mechanism)."""
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
+    p.db = MagicMock()
+
+    p._submit_protected_sell(
+        symbol="VST", qty=31, limit_price=150.0, reference_price=151.0,
+        position_qty_before_sell=31, label="SELL",
+    )
+    p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="VST")

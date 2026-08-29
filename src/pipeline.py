@@ -1583,14 +1583,13 @@ class TradingPipeline:
         # Best-effort + symbol-scoped; partial trims (REDUCE, PARTIAL_SELL,
         # TAKE_PROFIT, SWEEP_SELL) keep their entries — trimming isn't exiting.
         # EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL added
-        # here: it runs the same entry-order cancel a long exit does. NOTE
-        # (Stage 3 made shorts openable, so this is no longer moot): as
-        # written, `cancel_open_entry_orders` only ever cancels resting
-        # BUY orders (see `src/execution/broker.py`) — it does NOT cancel
-        # a resting entry SHORT order, so an EMERGENCY_COVER here does not
-        # actually stop a still-live SHORT entry from re-opening the
-        # position it just covered. Flagged, not fixed here — out of this
-        # change's scope.
+        # here: it runs the same entry-order cancel a long exit does.
+        # `cancel_open_entry_orders` (src/execution/broker.py) now cancels
+        # a resting entry order on EITHER side — BUY-to-open-long or
+        # SELL-to-open-short — so an EMERGENCY_COVER here also stops a
+        # still-live SHORT entry from re-opening the position it just
+        # covered (previously flagged, fixed alongside the review-path
+        # COVER gap).
         if label in ("SELL", "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER"):
             try:
                 self.broker.cancel_open_entry_orders(symbol=symbol)
@@ -6313,7 +6312,10 @@ class TradingPipeline:
         21 → 11 shares).
 
         Sell-side = REDUCE / SELL / TAKE_PROFIT / PARTIAL_SELL(...) /
-        EMERGENCY_SELL / FORCE_DELEVER. TRAIL_STOP and HOLD do NOT count
+        EMERGENCY_SELL / FORCE_DELEVER, and its short-side mirror COVER /
+        EMERGENCY_COVER / PARTIAL_COVER(...) (Stage 3 — a short trimmed at
+        midday must be exempt from a second same-flag COVER at close for
+        the exact reason a long is). TRAIL_STOP and HOLD do NOT count
         (TRAIL_STOP is stop adjustment, HOLD is no-op).
 
         Filters out canceled / rejected / expired orders that filled ZERO
@@ -6334,13 +6336,16 @@ class TradingPipeline:
         sell_actions = {
             "REDUCE", "SELL", "TAKE_PROFIT",
             "EMERGENCY_SELL", "FORCE_DELEVER",
+            "COVER", "EMERGENCY_COVER",
         }
         out: set[str] = set()
         for r in rows:
             action = (r.get("action") or "").upper()
-            # Normalise PARTIAL_SELL(15%) → PARTIAL_SELL.
+            # Normalise PARTIAL_SELL(15%) → PARTIAL_SELL, PARTIAL_COVER(50%)
+            # → PARTIAL_COVER.
             base_action = action.split("(", 1)[0].strip()
-            if base_action not in sell_actions and base_action != "PARTIAL_SELL":
+            if (base_action not in sell_actions
+                    and base_action not in ("PARTIAL_SELL", "PARTIAL_COVER")):
                 continue
             # A terminal-fail status that nevertheless moved shares IS a trim.
             # Filtering on fill_status alone (2026-07-16 audit) let a
@@ -6539,9 +6544,12 @@ class TradingPipeline:
             PortfolioDecision, ReasoningChain, TradeDecision,
         )
 
+        # COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
+        # fix): a short's exit must reach the AI Risk Manager exactly like a
+        # long's does, not skip it.
         exits = [
             a for a in (review.actions if review else [])
-            if a.action in ("SELL", "REDUCE")
+            if a.action in ("SELL", "REDUCE", "COVER")
         ]
         if not exits:
             return set(), None
@@ -6552,12 +6560,19 @@ class TradingPipeline:
             symbol = action.symbol.upper()
             if symbol not in held:
                 continue
+            # A COVER must be presented to the RM as a COVER, not relabeled
+            # SELL — TradeDecision has a real "COVER" literal (the PM/
+            # ExecutionStage decision path already uses it), and mislabeling
+            # a short's exit as a stock sale is exactly the "reads a winning
+            # short as a loser" failure this fix exists to close.
             decisions.append(TradeDecision(
-                action="SELL", symbol=symbol,
-                # 100 = full exit; REDUCE is a partial whose exact fraction the
+                action="SELL" if action.action in ("SELL", "REDUCE") else "COVER",
+                symbol=symbol,
+                # 100 = full exit (SELL and COVER are both full closes on
+                # this path); REDUCE is a partial whose exact fraction the
                 # executor derives. The RM is being asked to judge WHETHER the
                 # exit is sound, not to re-size it.
-                allocation_pct=100.0 if action.action == "SELL" else 50.0,
+                allocation_pct=100.0 if action.action in ("SELL", "COVER") else 50.0,
                 entry_price=0.0, stop_loss=0.0, take_profit=0.0,
                 reasoning=action.reason[:500],
             ))
@@ -6650,12 +6665,27 @@ class TradingPipeline:
         metric_deltas: dict | None = None,
         risk_vetoed_symbols: set[str] | None = None,
     ) -> list[dict]:
-        """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP actions to broker.
+        """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP / COVER actions
+        to broker.
 
-        Dedups same-symbol conflicting actions by priority (SELL > REDUCE >
-        TRAIL_STOP > HOLD) to avoid the broker seeing two orders fighting
-        each other on one position. `blocked_symbols` lets midday suppress
-        LLM exits for symbols that already have an in-flight system sell order.
+        Dedups same-symbol conflicting actions by priority (SELL/COVER >
+        REDUCE > TRAIL_STOP > HOLD) to avoid the broker seeing two orders
+        fighting each other on one position. `blocked_symbols` lets midday
+        suppress LLM exits for symbols that already have an in-flight system
+        sell order.
+
+        COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
+        fix): it is the ONLY lever the reviewer has on a held short (never
+        SELL — the executor requires the action to match the held side,
+        see the qty-sign gate below) and it routes through every protection
+        a SELL/REDUCE gets — the named-trigger phrase gate, the exit
+        guard's metric-contradiction veto, the noise band, the same-day-trim
+        discipline, and (further down `run_position_review`) the AI Risk
+        routing via `_risk_review_exits`. It always executes as a FULL
+        close (`_full_sell_qty`, mirroring SELL) — the schema
+        (`PositionAction`) carries no allocation fraction for it, unlike the
+        PM's `TradeDecision.allocation_pct`, so there is no partial-COVER
+        signal for this path to act on.
         """
         orders: list[dict] = []
         pending_protections: list[dict] = []
@@ -6664,7 +6694,7 @@ class TradingPipeline:
             for symbol in (blocked_symbols or set())
             if symbol and symbol.strip()
         }
-        _priority = {"SELL": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
+        _priority = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
         best_by_symbol: dict[str, dict] = {}
         actions_raw = review.actions if review else []
         actions_list = [a.model_dump() for a in actions_raw]
@@ -6679,7 +6709,7 @@ class TradingPipeline:
             dropped = len(actions_list) - len(best_by_symbol)
             logger.info(
                 "Midday: collapsed %d duplicate same-symbol actions "
-                "(priority SELL>REDUCE>TRAIL_STOP>HOLD)", dropped,
+                "(priority SELL/COVER>REDUCE>TRAIL_STOP>HOLD)", dropped,
             )
 
         if not best_by_symbol:
@@ -6692,7 +6722,7 @@ class TradingPipeline:
         }
         for action_item in best_by_symbol.values():
             act = action_item.get("action")
-            if act not in ("SELL", "REDUCE", "TRAIL_STOP"):
+            if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
                 continue
             symbol = action_item.get("symbol", "")
             if symbol in blocked:
@@ -6713,12 +6743,15 @@ class TradingPipeline:
             # double-application of one signal violates "good stocks are meant
             # to be held".
             # Phase 3.2 — a deterioration verdict may not contradict the
-            # reviewer's own recorded numbers. Vetoes ONLY a SELL/REDUCE whose
-            # stated reason claims the position is stalling while every metric
-            # that moved since the previous review improved. Exits on new
-            # information (news, earnings, regime, invalidation) are untouched,
-            # however good the numbers look — see src/risk/exit_guard.py.
-            if act in ("SELL", "REDUCE") and metric_deltas:
+            # reviewer's own recorded numbers. Vetoes ONLY a SELL/REDUCE/
+            # COVER whose stated reason claims the position is stalling
+            # while every metric that moved since the previous review
+            # improved. Exits on new information (news, earnings, regime,
+            # invalidation) are untouched, however good the numbers look —
+            # see src/risk/exit_guard.py. metric_deltas is already sign-
+            # corrected per symbol (see _build_position_facts), so COVER
+            # needs no extra handling here.
+            if act in ("SELL", "REDUCE", "COVER") and metric_deltas:
                 from src.risk.exit_guard import veto_contradicted_exit
                 deltas = metric_deltas.get(symbol)
                 if deltas is not None:
@@ -6754,7 +6787,7 @@ class TradingPipeline:
             # Phase 3.4 — the AI Risk Manager reviewed these exits and
             # rejected this one. Its authority over exits mirrors the veto it
             # has always had over entries.
-            if act in ("SELL", "REDUCE") and symbol in (risk_vetoed_symbols or set()):
+            if act in ("SELL", "REDUCE", "COVER") and symbol in (risk_vetoed_symbols or set()):
                 logger.warning(
                     "Position reviewer: skipping %s %s — vetoed by AI Risk",
                     act, symbol,
@@ -6771,26 +6804,36 @@ class TradingPipeline:
             # entirely. An earnings miss is an earnings miss whether the stock
             # has moved 0.2 ATR or 3 ATR, and waiting for price confirmation
             # before acting on information sells the bottom instead of the top.
-            if act in ("SELL", "REDUCE"):
+            if act in ("SELL", "REDUCE", "COVER"):
                 from src.risk.exit_guard import (
                     adverse_move_is_noise, cites_external_information,
                 )
                 held_now = next((p for p in positions if p.symbol == symbol), None)
                 reason_for_band = action_item.get("reason", "")
+                # COVER's adverse direction is the mirror of SELL/REDUCE's —
+                # a short is hurt by price RISING, not falling — so the
+                # noise band is measured against the CLOSING side, same
+                # convention as _submit_protected_sell's `side` param.
+                close_side = "buy" if act == "COVER" else "sell"
                 if held_now is not None and not cites_external_information(reason_for_band):
                     atr = self._atr_for_symbol(symbol)
                     if adverse_move_is_noise(
                         held_now.avg_entry, held_now.current_price, atr,
+                        side=close_side,
                     ):
+                        adverse_move = (
+                            held_now.current_price - held_now.avg_entry
+                            if close_side == "buy"
+                            else held_now.avg_entry - held_now.current_price
+                        )
                         logger.warning(
-                            "Position reviewer: blocking %s %s — down "
-                            "$%.2f from entry $%.2f, which is inside the "
+                            "Position reviewer: blocking %s %s — adverse "
+                            "$%.2f move from entry $%.2f, which is inside the "
                             "1.0xATR noise band (ATR14 $%.2f). A price-derived "
                             "failure this small has not distinguished itself "
                             "from one day's normal range. External-information "
                             "triggers bypass this. Reason: %r",
-                            act, symbol,
-                            held_now.avg_entry - held_now.current_price,
+                            act, symbol, adverse_move,
                             held_now.avg_entry, atr or 0.0,
                             reason_for_band[:160],
                         )
@@ -6805,7 +6848,7 @@ class TradingPipeline:
                         continue
 
             reason_text = action_item.get("reason", "")
-            if act in ("SELL", "REDUCE") and not _reason_cites_hard_trigger(reason_text):
+            if act in ("SELL", "REDUCE", "COVER") and not _reason_cites_hard_trigger(reason_text):
                 logger.warning(
                     "Position reviewer: blocking %s %s — the reason names no "
                     "recognised trigger. Exits require NEW INFORMATION "
@@ -6842,7 +6885,7 @@ class TradingPipeline:
             # for this symbol today?), which is a different mechanism from a
             # phrase gate and is not in Phase 3.3's scope. Surfaced rather than
             # silently expanded.
-            if act in ("SELL", "REDUCE") and symbol in already_trimmed:
+            if act in ("SELL", "REDUCE", "COVER") and symbol in already_trimmed:
                 logger.warning(
                     "Position reviewer: %s %s is a SECOND sell-side action "
                     "today, allowed because the reason names a trigger. Check "
@@ -6851,7 +6894,20 @@ class TradingPipeline:
                     act, symbol, (action_item.get("reason") or "")[:160],
                 )
             existing = [p for p in positions if p.symbol == symbol]
-            if not existing or existing[0].qty <= 0:
+            # COVER only matches a held SHORT (qty < 0); SELL / REDUCE /
+            # TRAIL_STOP only match a held LONG (qty > 0) — same "the order
+            # must match the held side" rule ExecutionStage's COVER loop
+            # enforces for the PM's decision path (mirrors it here, not a
+            # new rule). A COVER proposed against a long/flat position, or
+            # a SELL/REDUCE/TRAIL_STOP proposed against a short, is dropped.
+            if act == "COVER":
+                if not existing or existing[0].qty >= 0:
+                    logger.warning(
+                        "Midday: skipping COVER %s — no matching short "
+                        "position", symbol,
+                    )
+                    continue
+            elif not existing or existing[0].qty <= 0:
                 logger.warning("Midday: skipping %s %s — no matching position",
                                act, symbol)
                 continue
@@ -6934,19 +6990,39 @@ class TradingPipeline:
                         )
                     continue
 
-                if act == "REDUCE":
-                    qty = self._reduce_sell_qty(existing[0].qty)
+                if act == "COVER":
+                    # COVER is always a FULL close here — see the docstring
+                    # for why (no allocation fraction on this schema).
+                    # `existing[0].qty` is the NEGATIVE broker qty; every
+                    # downstream qty (WAL specs, fill_qty, insert_trade) is
+                    # an absolute magnitude, never the signed qty.
+                    qty = self._full_sell_qty(abs(existing[0].qty))
+                    if qty is None:
+                        continue
+                    # Buy-to-cover needs headroom ABOVE the reference to
+                    # fill on the way up — the mirror of the SELL limit
+                    # sitting 0.5% BELOW (same reasoning as
+                    # _EMERGENCY_LIMIT_CUSHION_PCT; matches ExecutionStage's
+                    # COVER loop in src/pipeline_stages.py).
+                    order_limit = round(existing[0].current_price * 1.005, 2)
+                    position_qty = abs(existing[0].qty)
+                    close_side = "buy"
                 else:
-                    qty = self._full_sell_qty(existing[0].qty)
-                if qty is None:
-                    continue
-                sell_limit = round(existing[0].current_price * 0.995, 2)
-                position_qty = existing[0].qty
+                    if act == "REDUCE":
+                        qty = self._reduce_sell_qty(existing[0].qty)
+                    else:
+                        qty = self._full_sell_qty(existing[0].qty)
+                    if qty is None:
+                        continue
+                    order_limit = round(existing[0].current_price * 0.995, 2)
+                    position_qty = existing[0].qty
+                    close_side = "sell"
                 # audit F1 review #1: snapshot -> persist WAL -> cancel.
                 sale = self._submit_protected_sell(
-                    symbol=symbol, qty=qty, limit_price=sell_limit,
+                    symbol=symbol, qty=qty, limit_price=order_limit,
                     reference_price=existing[0].current_price,
                     position_qty_before_sell=position_qty, label=act,
+                    side=close_side,
                 )
                 if sale is None:
                     continue

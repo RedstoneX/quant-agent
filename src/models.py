@@ -1065,12 +1065,12 @@ class EarningsAnalysis(BaseModel):
 
 class PositionAction(BaseModel):
     # Stage 3 (shorts): COVER is the short-side twin of SELL/REDUCE for the
-    # intraday reviewer. Not yet reachable from a live decision — the
-    # reviewer's prompt (config/prompts/) doesn't ask for it — but the
-    # schema accepts it so a future prompt update is a prompt change, not a
-    # schema change. Any executor that doesn't yet implement it must skip
-    # it rather than silently treat it as SELL/REDUCE (see
-    # `TradingPipeline._midday_execute_llm_actions`'s `act not in (...)` gate).
+    # intraday reviewer — closes/trims a held SHORT, never opens one. The
+    # reviewer's prompt (config/prompts/position_reviewer.md) asks for it,
+    # and `TradingPipeline._midday_execute_llm_actions` executes it: same
+    # named-trigger gate, exit-guard veto, noise band, same-day-trim
+    # discipline and AI Risk routing a SELL/REDUCE gets, always as a full
+    # close (this schema carries no allocation fraction for it).
     action: Literal["SELL", "REDUCE", "TRAIL_STOP", "COVER", "HOLD"]
     symbol: str
     reason: str

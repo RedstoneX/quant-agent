@@ -512,13 +512,26 @@ def test_get_top_movers_filters_warrants_units_and_rights(mock_tc_cls, mock_scre
 
 @patch("src.execution.broker.TradingClient")
 def test_cancel_open_entry_orders_preserves_sell_protection(mock_tc_cls):
+    """Long-only regression pin: a plain BUY entry is cancelled, a SELL
+    STOP order (the long's protective leg) is preserved.
+
+    Stage 3 (shorts) update: preservation is now keyed on ORDER TYPE
+    ("stop" in order_type), not bare side — side alone stopped being a
+    safe proxy once BUY-side protective covers (a short's stop) existed
+    too (see test_cancel_open_entry_orders_cancels_a_resting_short_entry_
+    order below). `stop_order` here now sets an explicit `order_type` of
+    "stop" so it still represents a genuine protective leg under the new
+    discriminator — before this fix, a bare MagicMock with no order_type
+    set would have been (wrongly) cancelled as a plain SELL entry."""
     buy_order = MagicMock()
     buy_order.id = "buy-1"
     buy_order.side = "buy"
+    buy_order.order_type = "limit"
 
     stop_order = MagicMock()
     stop_order.id = "sell-stop-1"
     stop_order.side = "sell"
+    stop_order.order_type = "stop"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [buy_order, stop_order]
@@ -529,6 +542,50 @@ def test_cancel_open_entry_orders_preserves_sell_protection(mock_tc_cls):
 
     assert cancelled == 1
     mock_client.cancel_order_by_id.assert_called_once_with("buy-1")
+
+
+@patch("src.execution.broker.TradingClient")
+def test_cancel_open_entry_orders_cancels_a_resting_short_entry_order(mock_tc_cls):
+    """Stage 3 shorts gap fix: a resting SELL-to-open (short entry) order
+    must be cancelled too, exactly like a BUY-to-open (long entry) — while
+    a BUY-side STOP (a short's own protective cover) is preserved, mirroring
+    how a SELL-side STOP already preserves a long's protection.
+
+    Four orders in one book: a plain BUY entry, a plain SELL entry (short
+    open), a SELL stop (protects a long), a BUY stop (protects a short).
+    Only the two plain entries are cancelled."""
+    buy_entry = MagicMock()
+    buy_entry.id = "buy-entry-1"
+    buy_entry.side = "buy"
+    buy_entry.order_type = "limit"
+
+    sell_entry = MagicMock()
+    sell_entry.id = "sell-entry-1"
+    sell_entry.side = "sell"
+    sell_entry.order_type = "limit"
+
+    sell_stop = MagicMock()
+    sell_stop.id = "sell-stop-1"
+    sell_stop.side = "sell"
+    sell_stop.order_type = "stop"
+
+    buy_stop = MagicMock()
+    buy_stop.id = "buy-stop-1"
+    buy_stop.side = "buy"
+    buy_stop.order_type = "stop_limit"
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [
+        buy_entry, sell_entry, sell_stop, buy_stop,
+    ]
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    cancelled = broker.cancel_open_entry_orders()
+
+    assert cancelled == 2
+    cancelled_ids = {c.args[0] for c in mock_client.cancel_order_by_id.call_args_list}
+    assert cancelled_ids == {"buy-entry-1", "sell-entry-1"}
 
 
 @patch("src.execution.broker.TradingClient")
