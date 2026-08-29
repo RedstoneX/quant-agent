@@ -163,71 +163,152 @@ async function installRoutes(page, scenario = "populated") {
   });
 }
 
-const browser = await chromium.launch({ headless: true });
-const browserErrors = [];
+// Date-stability fix: the mock fixtures above are all pinned to
+// 2026-08-25 (run timestamps, trade fills, the /research/daily/ scenario
+// keyed on `research.date`, etc). Several components — ResearchDesk.tsx's
+// `useState(todayEtDate())` chief among them — ask "what day is it right
+// now" via the real wall clock rather than being told the date by a
+// caller. Every day that passes after 2026-08-25, that real clock and the
+// fixtures' fixed date diverge a little more: the app requests
+// `/research/daily/<today>`, the mock doesn't have that date, and (per its
+// own fallback branch above) serves back the sparse prior-day fixture
+// mislabeled as if it were the requested date. That produced silently
+// wrong Research Desk screenshots (steps 9/10 "passed" only because their
+// assertions were too loose to notice) — a bug that reappears on its own
+// with the passage of time rather than from any code change, so fixing it
+// by editing the fixture date would only reset the same timer.
+// `page.clock.setFixedTime` pins what `Date.now()`/`new Date()` return
+// inside the page to a fixed instant that falls on 2026-08-25 in
+// US/Eastern (the timezone `todayEtDate()` computes in), while leaving
+// real timers (this app's polling `setInterval`s) running normally — the
+// least invasive fix available, and one that makes the whole harness
+// immune to which day it happens to run on rather than merely postponing
+// the next break.
+const FIXED_NOW = "2026-08-25T20:00:00Z"; // 4:00 PM ET on the fixtures' date.
 
-async function shot(name, viewport, scenario = "populated", interact) {
-  const context = await browser.newContext({ viewport, colorScheme: "dark" });
-  const page = await context.newPage();
-  page.on("console", (message) => { if (message.type() === "error") { const text = `${name}: console: ${message.text()}`; browserErrors.push(text); console.error(text); } });
-  page.on("pageerror", (error) => { const text = `${name}: pageerror: ${error.message}`; browserErrors.push(text); console.error(text); });
-  await installRoutes(page, scenario);
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await page.getByText("QAMC Mission Control", { exact: false }).first().waitFor();
-  if (interact) await interact(page);
-  await page.waitForTimeout(400);
-  const overflow = await page.evaluate(() => {
-    if (document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1) return null;
-    const offenders = [...document.querySelectorAll("body *")]
-      .filter((element) => element.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
-      .slice(0, 5)
-      .map((element) => `${element.tagName.toLowerCase()}.${element.className}`);
-    return offenders.join(" | ");
-  });
-  if (overflow) browserErrors.push(`${name}: document has horizontal overflow (${overflow})`);
-  await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
-  await context.close();
+const browser = await chromium.launch({ headless: true });
+
+// Item 13 (cockpit trader rework — see SupportTabs.tsx/DesktopCockpitWorkspace.tsx):
+// System and Search used to be their own top-level affordance named
+// "System"; both are now folded into one "Diagnostics" tab. Desktop
+// renders it as a dockview tab (role="tab"); the iPad/mobile SupportTabs
+// strip renders it as a plain button. Try the dockview tab first so this
+// keeps working regardless of which layout the current viewport uses.
+async function openDiagnostics(page) {
+  const tab = page.getByRole("tab", { name: "Diagnostics" });
+  if (await tab.count()) {
+    await tab.click();
+    return;
+  }
+  await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
 }
 
-await shot("01-desktop-cockpit-populated", { width: 1600, height: 1000 });
-await shot("02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
-  await page.getByText("Positions & Liquidity", { exact: true }).click();
-});
-await shot("03-desktop-candidate-lifecycle", { width: 1600, height: 1000 }, "populated", async (page) => {
-  await page.getByRole("button", { name: /Lifecycle/ }).click();
-  const lifecycle = page.getByText("Persisted lifecycle", { exact: false });
-  await lifecycle.waitFor();
-  await lifecycle.scrollIntoViewIfNeeded();
-});
-await shot("04-ipad-landscape-chart", { width: 1180, height: 820 }, "populated", async (page) => {
-  await page.getByRole("button", { name: "Chart", exact: true }).click();
-});
-await shot("05-ipad-portrait-candidates", { width: 820, height: 1180 });
-await shot("06-desktop-no-session-empty", { width: 1600, height: 1000 }, "empty");
-await shot("07-ipad-portrait-read-errors", { width: 820, height: 1180 }, "error");
-await shot("08-desktop-research-desk", { width: 1600, height: 1000 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); await page.getByText(/Technical moved neutral → bullish/).first().waitFor(); await page.getByText("Breadth deteriorated after the earlier read.").first().waitFor(); await page.getByText("The disagreement survived. So did an order.").waitFor(); });
-await shot("09-ipad-portrait-research-brief", { width: 820, height: 1180 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); });
-await shot("10-ipad-landscape-research-decision", { width: 1180, height: 820 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "decision", exact: true }).click(); });
-await shot("11-desktop-research-partial", { width: 1600, height: 1000 }, "error", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Missing source: smart_money").waitFor(); });
-await shot("12-desktop-research-smart-money", { width: 1600, height: 1000 }, "populated", async (page) => {
-  await page.getByRole("button", { name: "Research Desk" }).click();
-  await page.getByText("Smart Money", { exact: true }).last().click();
-  await page.getByText("admitted this run", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Maximize active panel" }).click();
-  await page.getByRole("button", { name: "Restore workspace" }).waitFor();
-  await page.reload({ waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Research Desk" }).click();
-  await page.getByRole("button", { name: "Restore workspace" }).waitFor();
-  await page.getByText("SEC Form 4", { exact: false }).first().waitFor();
-});
-await shot("13-ipad-portrait-research-signals", { width: 820, height: 1180 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "signals", exact: true }).click(); await page.getByText("admitted this run", { exact: true }).waitFor(); });
-await shot("14-ipad-landscape-research-review", { width: 1180, height: 820 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "review", exact: true }).click(); await page.getByText("Mean-reversion prompts need an explicit trend veto.").waitFor(); });
-await shot("15-ipad-portrait-research-empty", { width: 820, height: 1180 }, "empty", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Quiet is a valid read.").waitFor(); });
-await shot("16-desktop-research-stale", { width: 1600, height: 1000 }, "stale", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Last-known research is shown below.", { exact: false }).waitFor(); });
-await shot("17-desktop-system-rearmed", { width: 1600, height: 1000 }, "populated", async (page) => { await page.getByText("System", { exact: true }).click(); await page.getByText("rearmed · checks passed", { exact: true }).waitFor(); });
-await shot("18-ipad-system-hard-stop", { width: 820, height: 1180 }, "error", async (page) => { await page.getByText("System", { exact: true }).click(); await page.getByText("hard stop · operator reset", { exact: true }).waitFor(); });
-await shot("19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await page.getByText("System", { exact: true }).click(); await page.getByText("unavailable", { exact: true }).last().waitFor(); });
+async function shot(name, viewport, scenario = "populated", interact) {
+  const stepErrors = [];
+  let context;
+  try {
+    context = await browser.newContext({ viewport, colorScheme: "dark" });
+    const page = await context.newPage();
+    page.on("console", (message) => { if (message.type() === "error") { const text = `${name}: console: ${message.text()}`; stepErrors.push(text); console.error(text); } });
+    page.on("pageerror", (error) => { const text = `${name}: pageerror: ${error.message}`; stepErrors.push(text); console.error(text); });
+    await page.clock.setFixedTime(FIXED_NOW);
+    await installRoutes(page, scenario);
+    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await page.getByText("QAMC Mission Control", { exact: false }).first().waitFor();
+    if (interact) await interact(page);
+    await page.waitForTimeout(400);
+    const overflow = await page.evaluate(() => {
+      if (document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1) return null;
+      const offenders = [...document.querySelectorAll("body *")]
+        .filter((element) => element.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
+        .slice(0, 5)
+        .map((element) => `${element.tagName.toLowerCase()}.${element.className}`);
+      return offenders.join(" | ");
+    });
+    if (overflow) stepErrors.push(`${name}: document has horizontal overflow (${overflow})`);
+    await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
+  } catch (err) {
+    stepErrors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    if (context) await context.close().catch(() => {});
+  }
+  return { name, ok: stepErrors.length === 0, errors: stepErrors };
+}
+
+// Fail informatively: a single bad step (a stale selector, a timeout) used
+// to throw straight out of a top-level `await shot(...)`, aborting every
+// step after it — which is exactly how one stale selector at step 2 hid
+// eight other unrelated failures further down this list. Every step now
+// runs regardless of earlier failures, each in its own fresh
+// browser.newContext(), and results are collected for a summary at the
+// end; the process still exits non-zero if anything failed.
+const steps = [
+  ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }],
+  ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
+    // Positions & Liquidity moved: Positions is now the primary
+    // leftmost/active-by-default dockview pane (item 1 of the cockpit
+    // trader rework) and Liquidity is a compact row that's always visible
+    // in the header, not a tab either of them ever needs to be clicked
+    // into. Explicitly activating the Positions tab keeps this step
+    // meaningful (proves the tab is reachable and renders) rather than
+    // deleting the interaction outright.
+    await page.getByRole("tab", { name: "Positions" }).click();
+  }],
+  ["03-desktop-candidate-lifecycle", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("button", { name: /Lifecycle/ }).click();
+    const lifecycle = page.getByText("Persisted lifecycle", { exact: false });
+    await lifecycle.waitFor();
+    await lifecycle.scrollIntoViewIfNeeded();
+  }],
+  ["04-ipad-landscape-chart", { width: 1180, height: 820 }, "populated", async (page) => {
+    await page.getByRole("button", { name: "Chart", exact: true }).click();
+  }],
+  ["05-ipad-portrait-candidates", { width: 820, height: 1180 }],
+  ["06-desktop-no-session-empty", { width: 1600, height: 1000 }, "empty"],
+  ["07-ipad-portrait-read-errors", { width: 820, height: 1180 }, "error"],
+  ["08-desktop-research-desk", { width: 1600, height: 1000 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); await page.getByText(/Technical moved neutral → bullish/).first().waitFor(); await page.getByText("Breadth deteriorated after the earlier read.").first().waitFor(); await page.getByText("The disagreement survived. So did an order.").waitFor(); }],
+  ["09-ipad-portrait-research-brief", { width: 820, height: 1180 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); }],
+  ["10-ipad-landscape-research-decision", { width: 1180, height: 820 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "decision", exact: true }).click(); }],
+  ["11-desktop-research-partial", { width: 1600, height: 1000 }, "error", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Missing source: smart_money").waitFor(); }],
+  ["12-desktop-research-smart-money", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("button", { name: "Research Desk" }).click();
+    await page.getByText("Smart Money", { exact: true }).last().click();
+    await page.getByText("admitted this run", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Maximize active panel" }).click();
+    await page.getByRole("button", { name: "Restore workspace" }).waitFor();
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Research Desk" }).click();
+    await page.getByRole("button", { name: "Restore workspace" }).waitFor();
+    await page.getByText("SEC Form 4", { exact: false }).first().waitFor();
+  }],
+  ["13-ipad-portrait-research-signals", { width: 820, height: 1180 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "signals", exact: true }).click(); await page.getByText("admitted this run", { exact: true }).waitFor(); }],
+  ["14-ipad-landscape-research-review", { width: 1180, height: 820 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByRole("button", { name: "review", exact: true }).click(); await page.getByText("Mean-reversion prompts need an explicit trend veto.").waitFor(); }],
+  ["15-ipad-portrait-research-empty", { width: 820, height: 1180 }, "empty", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Quiet is a valid read.").waitFor(); }],
+  ["16-desktop-research-stale", { width: 1600, height: 1000 }, "stale", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Last-known research is shown below.", { exact: false }).waitFor(); }],
+  ["17-desktop-system-rearmed", { width: 1600, height: 1000 }, "populated", async (page) => { await openDiagnostics(page); await page.getByText("rearmed · checks passed", { exact: true }).waitFor(); }],
+  ["18-ipad-system-hard-stop", { width: 820, height: 1180 }, "error", async (page) => { await openDiagnostics(page); await page.getByText("hard stop · operator reset", { exact: true }).waitFor(); }],
+  ["19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await openDiagnostics(page); await page.getByText("unavailable", { exact: true }).last().waitFor(); }],
+];
+
+const results = [];
+for (const [name, viewport, scenario, interact] of steps) {
+  const result = await shot(name, viewport, scenario, interact);
+  results.push(result);
+  console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+}
 
 await browser.close();
-if (browserErrors.length) throw new Error(browserErrors.join("\n"));
-console.log(`visual acceptance passed; screenshots: ${output}`);
+
+const failed = results.filter((r) => !r.ok);
+console.log("");
+console.log(`visual acceptance summary: ${results.length - failed.length}/${results.length} passed`);
+if (failed.length) {
+  console.log(`${failed.length} step(s) failed:`);
+  for (const r of failed) {
+    console.log(`  - ${r.name}`);
+    for (const e of r.errors) console.log(`      ${e}`);
+  }
+  process.exitCode = 1;
+} else {
+  console.log(`screenshots: ${output}`);
+}
