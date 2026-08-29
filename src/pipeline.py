@@ -658,6 +658,50 @@ class TradingPipeline:
             return max(1.0, float(int(position_qty) // 2))
         return float(position_qty) / 2
 
+    # Cushion used by BOTH sides of a forced/emergency close so they can
+    # never drift apart: a long's exit is a SELL, whose limit needs to sit
+    # BELOW the reference price to have room to fill on the way down; a
+    # short's exit is a BUY-to-cover, whose limit needs to sit ABOVE the
+    # reference price to have room to fill on the way up (same reasoning
+    # broker.py's STOP_LIMIT_BUFFER_PCT already documents for stop legs —
+    # "beyond", not "below", because a short's protective/exit order works
+    # the opposite side of the trigger). One constant, applied with the
+    # correct sign per side, rather than two independently hand-picked
+    # numbers for the two directions.
+    _EMERGENCY_LIMIT_CUSHION_PCT = 0.01
+
+    @staticmethod
+    def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
+        """Direction-aware sizing for a FORCED close — circuit breaker,
+        risk-breach liquidation, operator kill. NOT the normal decision
+        path: SELL/REDUCE decisions and the portfolio constructor keep
+        refusing a negative qty exactly as before (see _full_sell_qty /
+        _reduce_sell_qty and the Stage 1 guard in portfolio_constructor.py
+        — shorts still cannot be opened or covered through that path).
+
+        Returns ``(side, qty)`` where ``side`` is ``'sell'`` to flatten a
+        long or ``'buy'`` to cover a short, and ``qty`` is the ABSOLUTE
+        number of shares — always positive, never the signed broker qty.
+
+        Returns ``None`` when direction can't be determined (qty is zero,
+        NaN, or otherwise not a finite nonzero number). This is the one
+        design rule the reviewer called non-negotiable: a forced close is
+        only safe when the side is certain, because guessing wrong on a
+        short doesn't fail safe — a SELL aimed at a position that's
+        actually already short would ADD to the short (sell more of a
+        symbol you don't hold long), doubling the very exposure the
+        circuit breaker exists to shed. Refusing and logging loudly beats
+        guessing every time; the caller is responsible for the loud log,
+        this just refuses to hand back an answer to guess with.
+        """
+        if not isinstance(position_qty, (int, float)) or not math.isfinite(position_qty):
+            return None
+        if position_qty == 0:
+            return None
+        if position_qty > 0:
+            return "sell", float(position_qty)
+        return "buy", float(-position_qty)
+
     @staticmethod
     def _trade_executed_or_pending(trade: dict) -> bool:
         """True when a trade either executed or is still an open live attempt.
@@ -1426,10 +1470,11 @@ class TradingPipeline:
         reference_price: float,
         position_qty_before_sell: float,
         label: str,
+        side: str = "sell",
     ) -> tuple[dict, dict] | None:
-        """Head half of the SELL discipline: clear protective stops
-        (write-ahead) → submit the SELL → guarantee stops are restored if the
-        order never reaches the broker.
+        """Head half of the SELL/COVER discipline: clear protective stops
+        (write-ahead) → submit the order → guarantee stops are restored if
+        the order never reaches the broker.
 
         Returns ``(order, pending_protection)`` on broker acceptance, or
         ``None`` when the symbol must be skipped — stop-clear failed, the
@@ -1446,7 +1491,21 @@ class TradingPipeline:
 
         ``position_qty_before_sell`` is the FULL held qty (drives the WAL +
         finalize residual math); ``qty`` is the order quantity (may be a
-        partial / reduce / trim).
+        partial / reduce / trim). Both are always non-negative magnitudes —
+        never the broker's signed position qty — so every comparison and
+        every arithmetic step downstream (WAL specs, fill_qty, residual math)
+        stays identical in shape whether this is closing a long or covering
+        a short.
+
+        ``side`` (forced-close support, added alongside the emergency-
+        liquidation short-close gap fix): the CLOSING order's side —
+        ``'sell'`` (default, unchanged for every pre-existing caller — none
+        of them pass this) flattens a long; ``'buy'`` covers a short. It
+        doubles as the STOP order's own side to cancel/restore, because a
+        long's protective stop and its closing order are BOTH 'sell', and a
+        short's protective stop and its closing order (a BUY-to-cover) are
+        BOTH 'buy' — one parameter, not two, so there's no way for the
+        closing side and the stop-clearing side to disagree.
         """
         # audit F1 review #1: snapshot → persist WAL → cancel, so the recovery
         # row is durable BEFORE any broker mutation.
@@ -1457,24 +1516,31 @@ class TradingPipeline:
         # close — and can trip Alpaca's wash-trade rejection of this SELL.
         # Best-effort + symbol-scoped; partial trims (REDUCE, PARTIAL_SELL,
         # TAKE_PROFIT, SWEEP_SELL) keep their entries — trimming isn't exiting.
-        if label in ("SELL", "EMERGENCY_SELL", "FORCE_DELEVER"):
+        # EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL added
+        # here: covering a short in a circuit-breaker event should cancel a
+        # resting entry BUY on the same symbol for the same reason a long
+        # exit does (though today it's a no-op either way — shorts can't be
+        # opened yet, so a short symbol never carries a resting entry order;
+        # this just keeps the two paths symmetric for when stage 3 lands).
+        if label in ("SELL", "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER"):
             try:
                 self.broker.cancel_open_entry_orders(symbol=symbol)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("%s: entry-order cancel failed for %s: %s",
                                label, symbol, exc)
+        stop_side_kwargs = {} if side == "sell" else {"side": side}
         ok, stop_specs, wal_row_id = self._cancel_stops_with_write_ahead(
-            symbol, position_qty_before_sell,
+            symbol, position_qty_before_sell, **stop_side_kwargs,
         )
         if not ok:
             logger.warning(
                 "%s: skipping %s — protective-stop clear failed (broker would "
-                "reject the SELL on held_for_orders)", label, symbol,
+                "reject the %s on held_for_orders)", label, symbol, side.upper(),
             )
             return None
         try:
             order = self.broker.submit_order(
-                symbol=symbol, qty=qty, side="sell",
+                symbol=symbol, qty=qty, side=side,
                 limit_price=limit_price, reference_price=reference_price,
             )
         except Exception as exc:  # noqa: BLE001
@@ -1485,14 +1551,14 @@ class TradingPipeline:
             logger.error("%s: submit failed for %s: %s", label, symbol, exc)
             if stop_specs:
                 self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False,
+                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
                 )
             return None
-        if not self._order_accepted(order, symbol, "sell"):
+        if not self._order_accepted(order, symbol, side):
             # Broker rejected — restore the stops we just cancelled.
             if stop_specs:
                 self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False,
+                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
                 )
             return None
         # audit F5: tag the order dict so the notifier's intervention banner +
@@ -1505,7 +1571,7 @@ class TradingPipeline:
         prot = {
             "order_id": order["id"], "symbol": symbol,
             "position_qty_before_sell": position_qty_before_sell,
-            "specs": stop_specs, "wal_row_id": wal_row_id,
+            "specs": stop_specs, "wal_row_id": wal_row_id, "side": side,
         }
         return order, prot
 
@@ -1545,10 +1611,12 @@ class TradingPipeline:
                         "use whatever fill_info reads now",
                         context, prot["symbol"], prot["order_id"], exc,
                     )
+            finalize_side = prot.get("side")
+            side_kwargs = {} if not finalize_side or finalize_side == "sell" else {"side": finalize_side}
             ok, _retry_specs = self._finalize_protection_after_sell(
                 prot["order_id"], prot["symbol"],
                 prot["position_qty_before_sell"], prot["specs"],
-                wal_row_id=prot.get("wal_row_id"),
+                wal_row_id=prot.get("wal_row_id"), **side_kwargs,
             )
             if not ok:
                 logger.warning(
@@ -1567,6 +1635,7 @@ class TradingPipeline:
         *,
         from_drain: bool = False,
         wal_row_id: int | None = None,
+        side: str = "sell",
     ) -> tuple[bool, list[dict]]:
         """Thin wrapper over the finalize core (audit F1 WAL lifecycle).
 
@@ -1578,10 +1647,14 @@ class TradingPipeline:
         ``from_drain`` rows manage their own lifecycle, so the wrapper
         never deletes for them. Backward compatible: callers/tests that
         omit wal_row_id get exactly the pre-F1 behaviour.
+
+        ``side`` — see ``_submit_protected_sell``: 'sell' (default) for a
+        long, 'buy' for a short's cover. Passed straight through to the
+        core.
         """
         ok, retry_specs = self._finalize_protection_after_sell_core(
             order_id, symbol, position_qty_before_sell, cancelled_specs,
-            from_drain=from_drain, wal_row_id=wal_row_id,
+            from_drain=from_drain, wal_row_id=wal_row_id, side=side,
         )
         if ok and wal_row_id is not None and not from_drain:
             try:
@@ -1603,9 +1676,19 @@ class TradingPipeline:
         *,
         from_drain: bool = False,
         wal_row_id: int | None = None,
+        side: str = "sell",
     ) -> tuple[bool, list[dict]]:
         """Decide stop coverage based on the actual SELL fill outcome,
         not on submit acceptance.
+
+        ``side`` — 'sell' (default, unchanged) for a long being sold; 'buy'
+        for a short being covered. ``position_qty_before_sell`` and every
+        qty this function reads back from the broker
+        (``_current_position_qty_for_finalize``) are ALWAYS treated as
+        non-negative magnitudes here (the broker's own signed qty is
+        abs()'d on read) — a short's -73 shares and a long's 73 shares
+        drive identical arithmetic; only ``side`` decides which stop side
+        gets cancelled/restored/re-placed.
 
         Submit-acceptance is too early — Alpaca can accept a LIMIT and
         then have it expire / cancel / get rejected later in the session
@@ -1655,6 +1738,12 @@ class TradingPipeline:
         if not cancelled_specs:
             return True, []
 
+        # Built once, reused at every broker call below that's keyed on the
+        # STOP side — omitted entirely for the (default, pre-existing) long
+        # case so every downstream call is byte-identical to before shorts.
+        side_kwargs = {} if side == "sell" else {"side": side}
+        order_word = "BUY" if side == "buy" else "SELL"
+
         fill_info = self.broker.get_order_fill_info(order_id) or {}
         status = (fill_info.get("status") or "").lower()
 
@@ -1664,9 +1753,9 @@ class TradingPipeline:
             # races with the broker. Cancel the lingering SELL so
             # status converges to terminal.
             logger.warning(
-                "SELL on %s did not reach terminal in wait window "
+                "%s on %s did not reach terminal in wait window "
                 "(status=%s) — cancelling so protection state can settle",
-                symbol, status or "?",
+                order_word, symbol, status or "?",
             )
             try:
                 self.broker.client.cancel_order_by_id(order_id)
@@ -1674,9 +1763,9 @@ class TradingPipeline:
                 self.broker.wait_for_order_terminal(order_id, timeout_seconds=5.0)
             except Exception as exc:
                 logger.warning(
-                    "Failed to cancel lingering SELL on %s (order %s): %s "
+                    "Failed to cancel lingering %s on %s (order %s): %s "
                     "— persisting orphaned restore intent for next session.",
-                    symbol, order_id, exc,
+                    order_word, symbol, order_id, exc,
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
@@ -1689,9 +1778,9 @@ class TradingPipeline:
             fill_info = self.broker.get_order_fill_info(order_id) or {}
             status = (fill_info.get("status") or "").lower()
             logger.info(
-                "Cancelled lingering SELL on %s — post-cancel status=%s, "
+                "Cancelled lingering %s on %s — post-cancel status=%s, "
                 "filled_qty=%s",
-                symbol, status, fill_info.get("filled_qty"),
+                order_word, symbol, status, fill_info.get("filled_qty"),
             )
             # Cancel propagation can take longer than the 5s wait window,
             # especially during halts or illiquid conditions. If status
@@ -1702,10 +1791,10 @@ class TradingPipeline:
             # _reconcile_fills only updates fill columns. Codex r7 #3.
             if status not in self._TERMINAL_ORDER_STATUSES:
                 logger.warning(
-                    "Cancel of lingering SELL on %s did not converge to "
+                    "Cancel of lingering %s on %s did not converge to "
                     "terminal within 5s (post-cancel status=%s) — "
                     "persisting orphaned restore intent for next session.",
-                    symbol, status or "?",
+                    order_word, symbol, status or "?",
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
@@ -1728,12 +1817,16 @@ class TradingPipeline:
             # broker rejects → finalize bails → drain replays same math →
             # row stuck forever. Re-read position and skip / clip
             # accordingly.
-            current_qty = self._current_position_qty_for_finalize(symbol)
+            current_qty_raw = self._current_position_qty_for_finalize(symbol)
+            # Broker reports the SIGNED position (negative for a short);
+            # every comparison below is magnitude-only, so normalize once
+            # here rather than abs()-ing at each use.
+            current_qty = current_qty_raw if current_qty_raw is None else abs(current_qty_raw)
             if current_qty == 0:
                 logger.info(
-                    "SELL on %s had no fill, but broker reports position=0 "
+                    "%s on %s had no fill, but broker reports position=0 "
                     "— concurrent path fully exited; skipping restore",
-                    symbol,
+                    order_word, symbol,
                 )
                 return True, []
             if current_qty is not None:
@@ -1744,13 +1837,13 @@ class TradingPipeline:
                     # → broker rejects. Collapse to a single reprotect at
                     # the most-protective stop_price for the actual qty.
                     logger.warning(
-                        "SELL on %s had no fill, but broker position=%.4f "
+                        "%s on %s had no fill, but broker position=%.4f "
                         "< original spec qty=%.4f — concurrent path reduced "
                         "position; collapsing restore to single reprotect",
-                        symbol, current_qty, total_spec_qty,
+                        order_word, symbol, current_qty, total_spec_qty,
                     )
                     if not self._reprotect_residual_after_partial_sell(
-                        symbol, current_qty, cancelled_specs,
+                        symbol, current_qty, cancelled_specs, **side_kwargs,
                     ):
                         if not from_drain:
                             self._persist_orphaned_protection_restore(
@@ -1765,18 +1858,18 @@ class TradingPipeline:
                 # re-submit dupes that broke down on held_for_orders
                 # before the audit fix.
                 restored, failed_specs = self.broker._restore_stop_orders(
-                    symbol, cancelled_specs, check_idempotency=from_drain,
+                    symbol, cancelled_specs, check_idempotency=from_drain, **side_kwargs,
                 )
                 logger.info(
-                    "SELL on %s terminated with no fill (status=%s) — "
+                    "%s on %s terminated with no fill (status=%s) — "
                     "restored %d/%d original protective stop(s)",
-                    symbol, status or "?", restored, len(cancelled_specs),
+                    order_word, symbol, status or "?", restored, len(cancelled_specs),
                 )
             except Exception as exc:
                 logger.warning(
-                    "Failed to restore stops for %s after no-fill SELL: %s — "
+                    "Failed to restore stops for %s after no-fill %s: %s — "
                     "persisting recovery intent",
-                    symbol, exc,
+                    symbol, order_word, exc,
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
@@ -1808,8 +1901,10 @@ class TradingPipeline:
         # Concurrent-SELL guard: same reasoning as the fill_qty<=0 branch.
         # cached `position_qty_before_sell - fill_qty` can over-state
         # residual if intra_check liquidated some shares while this SELL
-        # was in flight. Clip to actual broker position.
-        current_qty = self._current_position_qty_for_finalize(symbol)
+        # was in flight. Clip to actual broker position. Magnitude-only,
+        # same normalization as the fill_qty<=0 branch above.
+        current_qty_raw = self._current_position_qty_for_finalize(symbol)
+        current_qty = current_qty_raw if current_qty_raw is None else abs(current_qty_raw)
         if current_qty == 0:
             logger.info(
                 "Finalize for %s: cached residual=%.4f but broker shows "
@@ -1830,7 +1925,7 @@ class TradingPipeline:
             return True, []  # full exit — no residual to re-protect
 
         if not self._reprotect_residual_after_partial_sell(
-            symbol, actual_residual, cancelled_specs,
+            symbol, actual_residual, cancelled_specs, **side_kwargs,
         ):
             # Reprotect submit raised. Persist so a later session can retry.
             # Codex r9 #1: previously this just returned False without
@@ -1906,6 +2001,7 @@ class TradingPipeline:
 
     def _cancel_stops_with_write_ahead(
         self, symbol: str, position_qty_before_sell: float,
+        *, side: str = "sell",
     ) -> tuple[bool, list[dict], int | None]:
         """Snapshot protective stops -> persist WAL recovery intent ->
         THEN cancel the stops. audit F1 review #1: true write-ahead.
@@ -1920,13 +2016,20 @@ class TradingPipeline:
         idempotent restore is a no-op). A kill during/after the cancel
         is recoverable from the row.
 
+        ``side`` is the STOP order's own side — 'sell' (default, byte-
+        identical to every call site before shorts existed) snapshots the
+        SELL stops protecting a long; 'buy' snapshots the BUY stops
+        protecting a short. Passed through unchanged to
+        ``snapshot_protective_stops``.
+
         Returns ``(ok, specs, wal_row_id)``. ``ok=False`` ⇒ skip the
         SELL: either the snapshot failed, or the cancel failed and was
         rolled back (position still protected, SELL would be rejected on
         held_for_orders anyway). When there were no stops to begin with,
         returns ``(True, [], None)`` — nothing to protect, SELL proceeds.
         """
-        ok, specs = self.broker.snapshot_protective_stops(symbol)
+        snapshot_kwargs = {} if side == "sell" else {"side": side}
+        ok, specs = self.broker.snapshot_protective_stops(symbol, **snapshot_kwargs)
         if not ok:
             return False, [], None
         if not specs:
@@ -1957,6 +2060,8 @@ class TradingPipeline:
         symbol: str,
         position_qty_before_sell: float,
         cancelled_specs: list[dict],
+        *,
+        side: str = "sell",
     ) -> tuple[bool, list[dict]]:
         """drain handler for a write-ahead row whose SELL was never
         confirmed (sentinel sell_order_id) — a crash between
@@ -1975,10 +2080,21 @@ class TradingPipeline:
             (a prior inline reject-restore or partial drain may have
             already replaced some).
         Returns (ok, retry_specs) like the finalize core.
+
+        ``side`` — 'sell' (default) for a long, 'buy' for a short's cover;
+        see ``_submit_protected_sell``. The caller (the drain loop) derives
+        this from LIVE broker position sign — this row's WAL schema
+        predates shorts and carries no side column, so broker truth is the
+        only source available.
         """
         if not cancelled_specs:
             return True, []
-        current = self._current_position_qty_for_finalize(symbol)
+        side_kwargs = {} if side == "sell" else {"side": side}
+        current_raw = self._current_position_qty_for_finalize(symbol)
+        # Magnitude-only from here — broker reports the SIGNED qty
+        # (negative for a short); `side` (not the sign) drives which stop
+        # side gets touched.
+        current = current_raw if current_raw is None else abs(current_raw)
         if current == 0:
             logger.info(
                 "WAL drain: %s now flat — SELL must have filled / position "
@@ -2001,13 +2117,13 @@ class TradingPipeline:
                 "single most-protective stop", symbol, current, total_spec_qty,
             )
             if not self._reprotect_residual_after_partial_sell(
-                symbol, current, cancelled_specs,
+                symbol, current, cancelled_specs, **side_kwargs,
             ):
                 return False, list(cancelled_specs)
             return True, []
         try:
             restored, failed = self.broker._restore_stop_orders(
-                symbol, cancelled_specs, check_idempotency=True,
+                symbol, cancelled_specs, check_idempotency=True, **side_kwargs,
             )
         except Exception as exc:
             logger.warning(
@@ -2092,6 +2208,35 @@ class TradingPipeline:
                 symbol, exc,
             )
 
+    def _derive_close_side_for_drain(self, symbol: str) -> str | None:
+        """Which stop side an orphaned WAL row needs, from LIVE broker
+        truth — not the row itself.
+
+        ``pending_protection_restores`` predates shorts and carries no
+        side column (see ``_submit_protected_sell`` / the WAL insert
+        helpers): a row written for a short's cancelled BUY stops looks
+        byte-identical to one written for a long's cancelled SELL stops.
+        Reading the broker's CURRENT signed position for the symbol is the
+        only trustworthy source of the answer, and it's read fresh here
+        rather than trusted from whenever the row was written, since the
+        row can be arbitrarily stale by the time drain gets to it.
+
+        Returns 'sell' / 'buy' when the position is currently held one way
+        or the other. Returns None both when the position can't be read
+        (broker error — the caller must NOT default to 'sell': that's
+        exactly the "guess a side" the design review forbids, and for a
+        short's row it would try to restore a SELL stop on a position that
+        has no shares to back it) and when the position is already flat
+        (0) — the caller's downstream restore/reprotect call independently
+        re-checks flatness before ever touching a side-dependent broker
+        call, so which side an already-flat symbol "would have" used is
+        moot, and returning a value here would look like a real answer.
+        """
+        raw = self._current_position_qty_for_finalize(symbol)
+        if raw is None or raw == 0:
+            return None
+        return "buy" if raw < 0 else "sell"
+
     def _drain_pending_protection_restores(self) -> int:
         """Re-attempt orphaned protection restores from previous sessions.
 
@@ -2135,11 +2280,25 @@ class TradingPipeline:
                     except Exception:
                         pass
                     continue
+                # This WAL row predates shorts and carries no side column
+                # (see _derive_close_side_for_drain). When the live broker
+                # position is readable and shows a short, use it — that's
+                # the fix for the actual bug (a readable short silently
+                # treated as a long). When it isn't readable, degrade to
+                # the pre-existing 'sell' default rather than stalling the
+                # row indefinitely: the compound case of an unreadable
+                # broker AND an orphaned short's row cannot happen yet
+                # (shorts still cannot be opened through this system), and
+                # closing it for real needs a persisted side column.
+                side_kwargs = {}
+                if wal_specs and self._derive_close_side_for_drain(symbol) == "buy":
+                    side_kwargs = {"side": "buy"}
                 try:
                     ok, retry = self._restore_after_unconfirmed_sell(
                         symbol,
                         float(row["position_qty_before_sell"]),
                         wal_specs,
+                        **side_kwargs,
                     )
                 except Exception as exc:
                     logger.error(
@@ -2199,6 +2358,12 @@ class TradingPipeline:
                 except Exception:
                     pass
                 continue
+            # Same live-position side lookup as the sentinel branch above,
+            # same degrade-to-'sell'-when-unreadable tradeoff — this row's
+            # schema carries no side column either.
+            finalize_side_kwargs = {}
+            if cancelled_specs and self._derive_close_side_for_drain(symbol) == "buy":
+                finalize_side_kwargs = {"side": "buy"}
             # Order is terminal; replay finalize from persisted specs.
             # finalize itself reads fill_info again — same broker call,
             # cheap. ``from_drain=True`` so finalize doesn't re-persist
@@ -2213,6 +2378,7 @@ class TradingPipeline:
                     position_qty_before_sell=float(row["position_qty_before_sell"]),
                     cancelled_specs=cancelled_specs,
                     from_drain=True,
+                    **finalize_side_kwargs,
                 )
                 if not ok:
                     # Narrow the row to retry_specs if a partial restore
@@ -2259,6 +2425,7 @@ class TradingPipeline:
 
     def _reprotect_residual_after_partial_sell(
         self, symbol: str, residual_qty: float, cancelled_specs: list[dict],
+        *, side: str = "sell",
     ) -> bool:
         """After a partial exit (TAKE_PROFIT / REDUCE / PARTIAL_SELL), place a
         fresh stop on the residual qty using the most-protective price among
@@ -2271,6 +2438,15 @@ class TradingPipeline:
         multiple stops onto the highest stop_price), but it preserves at
         least the most-protective coverage that was in place pre-SELL.
 
+        ``side`` — 'sell' (default) re-places a SELL stop below price for a
+        long; 'buy' re-places a BUY stop above price for a short. This also
+        flips which extreme counts as "most protective": for a long's SELL
+        stop, tighter/sooner-to-trigger is the HIGHEST stop_price (closest
+        to price from below); for a short's BUY stop it's the OPPOSITE —
+        the LOWEST stop_price (closest to price from above). Picking the
+        long-side extreme for a short would silently place the loosest,
+        least-protective stop of the set instead of the tightest one.
+
         Returns True iff a fresh stop was successfully submitted (or there
         was nothing to do). Returns False if the submit raised — drain
         callers use this to keep the persisted recovery intent alive.
@@ -2280,10 +2456,8 @@ class TradingPipeline:
         """
         if residual_qty <= 0 or not cancelled_specs:
             return True
-        best_stop = max(
-            (s.get("stop_price", 0) for s in cancelled_specs),
-            default=0,
-        )
+        stop_prices = [s.get("stop_price", 0) for s in cancelled_specs]
+        best_stop = min(stop_prices, default=0) if side == "buy" else max(stop_prices, default=0)
         if best_stop <= 0:
             return True
 
@@ -2297,7 +2471,10 @@ class TradingPipeline:
         # already enforces via its `check_idempotency` flag for the
         # restore-originals branch.
         try:
-            existing = self.broker._list_open_sell_stop_orders(symbol)
+            if side == "buy":
+                existing = self.broker._list_open_protective_stop_orders(symbol, side="buy")
+            else:
+                existing = self.broker._list_open_sell_stop_orders(symbol)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Reprotect idempotency check failed for %s: %s — "
@@ -2319,9 +2496,10 @@ class TradingPipeline:
                 )
                 return True
 
+        side_kwargs = {} if side == "sell" else {"side": side}
         try:
             self.broker._submit_stop_limit_order(
-                symbol=symbol, qty=residual_qty, stop_price=best_stop,
+                symbol=symbol, qty=residual_qty, stop_price=best_stop, **side_kwargs,
             )
             logger.info(
                 "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
@@ -5780,12 +5958,25 @@ class TradingPipeline:
     def _midday_emergency_liquidate(
         self, positions, loss_violation, run_id: str,
     ) -> list[dict]:
-        """Force-close every position when daily loss breaches the cap.
+        """Force-close every position when daily loss breaches the cap —
+        a long is SOLD, a short is BOUGHT-TO-COVER.
 
         Isolated from run_midday so the midday execution flow stays
         readable. Uses a 1% slippage cushion on the limit (vs the 0.5%
         used for ordinary sells) because the tape is usually ugly when
-        this fires.
+        this fires — mirrored above/below the reference price by side (see
+        ``_EMERGENCY_LIMIT_CUSHION_PCT``).
+
+        Before this fix, a short position could ONLY ever be closed by its
+        own stop order — this loop's gate (`_full_sell_qty`) refused any
+        negative qty outright, so a held short was silently skipped on
+        every breach, with no log line and no operator signal. If that
+        short's stop had been cancelled, rejected, or the position needed
+        closing for a reason other than price, there was no mechanism at
+        all to get out of it. `_forced_close_side_and_qty` closes that gap
+        by reading the position's OWN sign to pick a side rather than
+        assuming SELL; see its docstring for why an indeterminate qty
+        refuses outright rather than guessing.
         """
         logger.warning(
             "MIDDAY RISK ALERT: %s — force-closing all positions",
@@ -5811,22 +6002,36 @@ class TradingPipeline:
         pending_protections: list[dict] = []
         for p in positions:
             try:
-                qty = self._full_sell_qty(p.qty)
-                if qty is None:
-                    continue
-                if self.db.has_pending_action_for_symbol(p.symbol, "EMERGENCY_SELL"):
-                    logger.info(
-                        "Midday emergency sell: skipping %s — prior "
-                        "EMERGENCY_SELL submission still pending at broker",
-                        p.symbol,
+                closing = self._forced_close_side_and_qty(p.qty)
+                if closing is None:
+                    logger.error(
+                        "Midday emergency liquidate: %s has an "
+                        "indeterminate position qty (%r) — refusing to "
+                        "guess SELL vs BUY-to-cover. A wrong guess here "
+                        "would ADD to the exposure instead of closing it. "
+                        "Left untouched; needs operator attention.",
+                        p.symbol, p.qty,
                     )
                     continue
-                emergency_limit = round(p.current_price * 0.99, 2)
+                side, qty = closing
+                action = "EMERGENCY_SELL" if side == "sell" else "EMERGENCY_COVER"
+                if self.db.has_pending_action_for_symbol(p.symbol, action):
+                    logger.info(
+                        "Midday emergency %s: skipping %s — prior "
+                        "%s submission still pending at broker",
+                        side, p.symbol, action,
+                    )
+                    continue
+                cushion = self._EMERGENCY_LIMIT_CUSHION_PCT
+                emergency_limit = round(
+                    p.current_price * ((1 + cushion) if side == "buy" else (1 - cushion)),
+                    2,
+                )
                 # audit F1 review #1: snapshot -> persist WAL -> cancel.
                 sale = self._submit_protected_sell(
                     symbol=p.symbol, qty=qty, limit_price=emergency_limit,
-                    reference_price=p.current_price, position_qty_before_sell=p.qty,
-                    label="EMERGENCY_SELL",
+                    reference_price=p.current_price, position_qty_before_sell=qty,
+                    label=action, side=side,
                 )
                 if sale is None:
                     continue
@@ -5834,7 +6039,7 @@ class TradingPipeline:
                 pending_protections.append(prot)
                 orders.append(order)
                 self.db.insert_trade(
-                    symbol=p.symbol, action="EMERGENCY_SELL", qty=qty,
+                    symbol=p.symbol, action=action, qty=qty,
                     price=emergency_limit,
                     reasoning=f"Daily loss limit breached: {loss_violation.message}",
                     run_id=run_id,
@@ -5842,11 +6047,12 @@ class TradingPipeline:
                     fill_status="submitted",
                 )
                 logger.info(
-                    "Emergency sell: %s %s @ limit $%.2f",
+                    "Emergency %s: %s %s @ limit $%.2f",
+                    "sell" if side == "sell" else "buy-to-cover",
                     self._format_qty(qty), p.symbol, emergency_limit,
                 )
             except Exception as e:
-                logger.error("Emergency sell failed for %s: %s", p.symbol, e)
+                logger.error("Emergency liquidate failed for %s: %s", p.symbol, e)
         # Wait + finalize: if any limit didn't fill, restore the original
         # stops so the position doesn't ride the rest of the session naked.
         self._finalize_pending_protections(
@@ -8315,22 +8521,41 @@ class TradingPipeline:
         pending_protections: list[dict] = []
         for p in positions:
             try:
-                qty = self._full_sell_qty(p.qty)
-                if qty is None:
-                    continue
-                if self.db.has_pending_action_for_symbol(p.symbol, "EMERGENCY_SELL"):
-                    logger.info(
-                        "Intra emergency sell: skipping %s — prior "
-                        "EMERGENCY_SELL submission still pending at broker",
-                        p.symbol,
+                # Direction-aware forced close (long → SELL, short → BUY-
+                # to-cover); see _midday_emergency_liquidate and
+                # _forced_close_side_and_qty for the full rationale — this
+                # loop used to be the near-verbatim twin of that one and
+                # inherits the same gap fix.
+                closing = self._forced_close_side_and_qty(p.qty)
+                if closing is None:
+                    logger.error(
+                        "Intra emergency liquidate: %s has an "
+                        "indeterminate position qty (%r) — refusing to "
+                        "guess SELL vs BUY-to-cover. A wrong guess here "
+                        "would ADD to the exposure instead of closing it. "
+                        "Left untouched; needs operator attention.",
+                        p.symbol, p.qty,
                     )
                     continue
-                emergency_limit = round(p.current_price * 0.99, 2)
+                side, qty = closing
+                action = "EMERGENCY_SELL" if side == "sell" else "EMERGENCY_COVER"
+                if self.db.has_pending_action_for_symbol(p.symbol, action):
+                    logger.info(
+                        "Intra emergency %s: skipping %s — prior "
+                        "%s submission still pending at broker",
+                        side, p.symbol, action,
+                    )
+                    continue
+                cushion = self._EMERGENCY_LIMIT_CUSHION_PCT
+                emergency_limit = round(
+                    p.current_price * ((1 + cushion) if side == "buy" else (1 - cushion)),
+                    2,
+                )
                 # audit F1 review #1: snapshot -> persist WAL -> cancel.
                 sale = self._submit_protected_sell(
                     symbol=p.symbol, qty=qty, limit_price=emergency_limit,
-                    reference_price=p.current_price, position_qty_before_sell=p.qty,
-                    label="EMERGENCY_SELL",
+                    reference_price=p.current_price, position_qty_before_sell=qty,
+                    label=action, side=side,
                 )
                 if sale is None:
                     continue
@@ -8338,7 +8563,7 @@ class TradingPipeline:
                 pending_protections.append(prot)
                 orders.append(order)
                 self.db.insert_trade(
-                    symbol=p.symbol, action="EMERGENCY_SELL", qty=qty,
+                    symbol=p.symbol, action=action, qty=qty,
                     price=emergency_limit,
                     reasoning=(
                         f"Intra-session daily-loss breach: {loss_violation.message}"
@@ -8348,11 +8573,12 @@ class TradingPipeline:
                     fill_status="submitted",
                 )
                 logger.info(
-                    "Intra emergency sell: %s %s @ limit $%.2f",
+                    "Intra emergency %s: %s %s @ limit $%.2f",
+                    "sell" if side == "sell" else "buy-to-cover",
                     self._format_qty(qty), p.symbol, emergency_limit,
                 )
             except Exception as e:
-                logger.error("Intra emergency sell failed for %s: %s", p.symbol, e)
+                logger.error("Intra emergency liquidate failed for %s: %s", p.symbol, e)
 
         # Wait + finalize: restore originals on any no-fill terminal.
         self._finalize_pending_protections(
