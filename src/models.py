@@ -45,6 +45,88 @@ def _normalize_enum_case_fields(
     return values
 
 
+class Nomination(BaseModel):
+    """A research seat's request that Technical examine a candidate.
+
+    Phase 9 (`docs/QAMC_REMEDIATION_SPEC.md` §9.1/§9.2): before this,
+    Technical was the ONLY seat that could originate a trade idea — every
+    other seat could only rate a symbol Technical had already picked. A
+    nomination inverts that: any seat can ask the desk to look at a
+    symbol, and an on-demand Technical call decides whether there is an
+    actual tradeable setup.
+
+    This is deliberately NOT a trade recommendation. It carries the
+    minimum a responder pass needs to act on it: which symbol, how
+    strongly the nominating seat feels, and the concrete observation
+    behind the ask — a nomination with no stated reason is not a
+    nomination, hence `observation` is required non-empty.
+
+    `seat` is stamped by the pipeline when a report's nominations are
+    collected (`src/pipeline_stages.py::_collect_seat_nominations`), not
+    emitted by the LLM — a seat's own prompt never has to know its own
+    internal name, only that it may nominate. It defaults to "" so a
+    directly-constructed Nomination (e.g. in a test) doesn't require it.
+    """
+    symbol: str
+    seat: str = ""
+    conviction: Literal["low", "medium", "high"]
+    observation: str
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+    @field_validator("observation")
+    @classmethod
+    def require_observation(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("nomination observation cannot be empty")
+        return text
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_enum_case(cls, values):
+        return _normalize_enum_case_fields(values, lower_fields=("conviction",))
+
+
+def _sanitize_nominations_field(values):
+    """Drop malformed nomination entries rather than fail the whole report.
+
+    Mirrors `MacroAnalysis._sanitize_sector_guidance`: one bad nomination
+    (empty observation, bad conviction, empty symbol) must not cost the
+    seat its entire structured output for the run — the rest of the
+    analysis is real and valuable even when the model's nomination
+    attempt was malformed. Applied as a `mode="before"` validator on each
+    nominating seat's report model.
+    """
+    if not isinstance(values, dict):
+        return values
+    raw = values.get("nominations")
+    if not isinstance(raw, list):
+        return values
+    cleaned = []
+    for item in raw:
+        # Already a validated Nomination — the direct-construction path
+        # (`MacroAnalysis(..., nominations=[Nomination(...)])`, used by
+        # tests and any programmatic caller) hands this validator real
+        # model instances, not dicts. Pass those straight through; only
+        # dict items (the LLM-JSON path) need re-validation.
+        if isinstance(item, Nomination):
+            cleaned.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        try:
+            Nomination.model_validate(item)
+        except Exception:
+            continue
+        cleaned.append(item)
+    values["nominations"] = cleaned
+    return values
+
+
 class OHLCV(BaseModel):
     date: date
     open: float
@@ -759,6 +841,12 @@ class MacroAnalysis(BaseModel):
     bear_triggers: list[str] = []
     alignment_with_news: str = ""
     summary: str
+    # Phase 9 (§9.1): sector leaders Macro wants Technical to look at when
+    # a regime turns. Default [] so a MacroAnalysis persisted before this
+    # field existed (macro_store snapshots, replayed decisions) still
+    # parses unchanged. Bounded and deduped by the pipeline, not here —
+    # see src/nominations.py.
+    nominations: list[Nomination] = []
 
     @model_validator(mode="before")
     @classmethod
@@ -769,6 +857,11 @@ class MacroAnalysis(BaseModel):
             values,
             lower_fields=("regime", "confidence", "equity_outlook"),
         )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sanitize_nominations(cls, values):
+        return _sanitize_nominations_field(values)
 
     @model_validator(mode="before")
     @classmethod
@@ -890,6 +983,10 @@ class NewsIntelligenceReport(BaseModel):
     pm_briefing: str
     market_sentiment: Literal["bullish", "bearish", "neutral"]
     confidence: Literal["high", "medium", "low"]
+    # Phase 9 (§9.1): a genuine catalyst News wants Technical to look at,
+    # even when the symbol never tripped the tech prefilter. Default []
+    # so an old persisted/replayed report parses unchanged.
+    nominations: list[Nomination] = []
 
     @model_validator(mode="before")
     @classmethod
@@ -897,6 +994,11 @@ class NewsIntelligenceReport(BaseModel):
         return _normalize_enum_case_fields(
             values, lower_fields=("market_sentiment", "confidence"),
         )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sanitize_nominations(cls, values):
+        return _sanitize_nominations_field(values)
 
 
 class Position(BaseModel):
@@ -1005,6 +1107,20 @@ class EarningsAnalysis(BaseModel):
     strategy_consistency: str = "No prior filing available for comparison"
     investment_implications: EarningsInvestmentImplications
     data_quality: str
+    # Phase 9 (§9.1): a filing that materially changes the picture — most
+    # often for the symbol this very filing is about, since a blowout beat
+    # on a name Technical never rated is exactly the gap Phase 9 closes.
+    # Default [] so an analysis saved to disk before this field existed
+    # still loads unchanged (EarningsAnalystAgent._load_analysis).
+    #
+    # This is the per-FILING output model, not a per-run container — no
+    # per-run earnings container exists in this codebase (`earnings_results`
+    # on RunContext is a plain `list[dict]` the pipeline assembles, not a
+    # Pydantic model). A session that analyzes multiple new filings makes
+    # one LLM call per filing, so nominations are aggregated across every
+    # filing's analysis this run (`_collect_seat_nominations`), the same
+    # way `earnings_results` itself already aggregates per-filing output.
+    nominations: list[Nomination] = []
 
     @field_validator("symbol")
     @classmethod
@@ -1024,6 +1140,11 @@ class EarningsAnalysis(BaseModel):
         if not text:
             raise ValueError("field cannot be empty")
         return text
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sanitize_nominations(cls, values):
+        return _sanitize_nominations_field(values)
 
 
 class PositionAction(BaseModel):

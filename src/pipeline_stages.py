@@ -42,7 +42,8 @@ from typing import TYPE_CHECKING
 from src.agents.base import agent_log_kwargs
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.technical import compute_indicators
-from src.models import NewsIntelligenceReport, TechAnalysisResult, TechnicalIndicators
+from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
+from src.nominations import select_nominations
 from src.pipeline_context import RunContext
 
 if TYPE_CHECKING:
@@ -563,6 +564,50 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     )
 
 
+def _collect_seat_nominations(
+    news_intel, macro_analysis, earnings_results,
+) -> dict[str, list[Nomination]]:
+    """Gather each seat's raw (not yet capped/deduped) nominations this run.
+
+    Phase 9 §9.1. News and Macro nominations come straight off the live
+    Pydantic report each seat produces once per morning session. Earnings
+    is different: `EarningsAnalystAgent` runs one LLM call PER NEW FILING
+    (`analyze_reports` / `_analyze_one`), so a session that reads several
+    filings makes several `EarningsAnalysis` objects, not one. Its
+    nominations are therefore the union across every filing analyzed this
+    run, re-validated from the stored dict shape
+    (`earnings_results[i]["analysis"]`, already `validated_model.model_dump()`
+    — see `EarningsAnalystAgent._analyze_new`/`_load_analysis`) via
+    `Nomination.model_validate` rather than trusted as already-typed.
+
+    Always returns all three seat keys, even when a seat produced nothing
+    this run, so `select_nominations` never has to special-case a missing
+    seat.
+    """
+    seats: dict[str, list[Nomination]] = {
+        "news_analyst": [], "macro_analyst": [], "earnings_analyst": [],
+    }
+    if news_intel is not None:
+        seats["news_analyst"] = list(getattr(news_intel, "nominations", None) or [])
+    # macro_analysis can be a plain carried-forward dict in other stages
+    # (see _macro_analysis_as_dict), but never inside MorningResearchStage
+    # — it is always either a fresh MacroAnalysis or None here. Guard
+    # anyway so a future caller passing the carried-forward shape degrades
+    # to "no macro nominations" instead of an AttributeError.
+    if macro_analysis is not None and not isinstance(macro_analysis, dict):
+        seats["macro_analyst"] = list(getattr(macro_analysis, "nominations", None) or [])
+    for item in earnings_results or []:
+        analysis = item.get("analysis") if isinstance(item, dict) else None
+        if not analysis:
+            continue
+        for raw in analysis.get("nominations") or []:
+            try:
+                seats["earnings_analyst"].append(Nomination.model_validate(raw))
+            except Exception as e:
+                logger.warning("Dropping malformed earnings nomination: %s", e)
+    return seats
+
+
 def _macro_analysis_as_dict(macro_analysis) -> dict | None:
     """Dual-shape read: macro_analysis may be a Pydantic MacroAnalysis (a
     fresh macro run this tick) OR a plain dict carried forward from
@@ -680,6 +725,7 @@ class MorningResearchStage:
         smart_money_provider: "SmartMoneySource | None" = None,
         smart_money_analyst: "SmartMoneyAnalystAgent | None" = None,
         admit_smart_money_candidates_fn=None,
+        admit_nominated_candidates_fn=None,
     ):
         self.config = config
         self.db = db
@@ -697,6 +743,15 @@ class MorningResearchStage:
         self.smart_money_provider = smart_money_provider
         self.smart_money_analyst = smart_money_analyst
         self._admit_smart_money_candidates = admit_smart_money_candidates_fn
+        # Phase 9 — same shape as admit_smart_money_candidates_fn:
+        # (list[str] symbols) -> (admitted: set[str], details: dict[str,dict]).
+        # Shares the same deterministic gate under the hood
+        # (TradingPipeline._evaluate_external_admission_gates); this is a
+        # SEPARATE injected callable (not reused directly) because the two
+        # callers decide WHICH symbols are worth gating differently — one
+        # groups/ranks SEC Form 4 rows, the other consumes an
+        # already-capped nomination candidate list.
+        self._admit_nominated_candidates = admit_nominated_candidates_fn
         # Injected callables so we don't duplicate pre-filter / news / earnings
         # orchestration logic. Those still live on TradingPipeline for now
         # because they touch shared state we haven't finished extracting.
@@ -1211,6 +1266,18 @@ class MorningResearchStage:
             data_status["earnings"] = "failed"
         ctx.earnings_results = earnings_results
 
+        # Phase 9 (§9.1/§9.2) — the nomination responder pass. Deliberately
+        # sequenced HERE, after every parallel-wave future has been
+        # resolved and ctx.news_intel / ctx.macro_analysis /
+        # ctx.earnings_results / ctx.analyses are all populated: News,
+        # Earnings and Macro run CONCURRENTLY with Technical (the
+        # ThreadPoolExecutor above), so a nomination they produce cannot
+        # be known before Technical's first batch call starts. This is a
+        # deliberate second, on-demand Technical call for just the
+        # nominated symbols — NOT a second parallel wave; everything above
+        # this line is unchanged from before Phase 9.
+        self._run_nomination_responder_pass(ctx, prior_macro_state)
+
         ctx.data_status = data_status
         # Single grep-able summary line. Each agent's failure already logs
         # at ERROR individually, but a downstream operator scanning the
@@ -1225,6 +1292,253 @@ class MorningResearchStage:
                 ",".join(sorted(degraded)), data_status,
             )
         return ctx
+
+    def _run_nomination_responder_pass(self, ctx: RunContext, prior_macro_state: dict) -> None:
+        """Phase 9 (§9.1/§9.2) — Technical as RESPONDER, not gatekeeper.
+
+        Collects every seat's nominations, applies the per-seat cap, dedupes
+        across seats (a symbol nominated by two seats records both), applies
+        the global cap, gates any out-of-universe survivor through the same
+        deterministic admission gate the smart-money lane uses, then runs a
+        SECOND on-demand Technical call for whatever is left that the first
+        batch didn't already cover. Results are merged directly into
+        `ctx.analyses` — the exact list `validate_grounding`'s hard gate
+        reads — so a responded nomination is indistinguishable from an
+        organically-prefiltered symbol by the time PM sees it.
+
+        No nominations -> no second call, full stop: every early-return path
+        below exits before `self.tech_analyst.analyze_batch` is ever called.
+        """
+        import json as _json
+
+        nominations_by_seat = _collect_seat_nominations(
+            ctx.news_intel, ctx.macro_analysis, ctx.earnings_results,
+        )
+        total_raw = sum(len(v) for v in nominations_by_seat.values())
+        for seat, noms in nominations_by_seat.items():
+            for nomination in noms:
+                _record_pipeline_event(
+                    self, ctx, nomination.symbol, "opportunity", "nominated",
+                    "research_seat_nomination", seat=seat,
+                    conviction=nomination.conviction,
+                    observation=nomination.observation,
+                )
+
+        nom_cfg = getattr(self.config, "nominations", None)
+        max_per_seat = getattr(nom_cfg, "max_per_seat_per_run", 3) if nom_cfg else 3
+        max_total = getattr(nom_cfg, "max_total_per_run", 6) if nom_cfg else 6
+        candidates = select_nominations(
+            nominations_by_seat, max_per_seat=max_per_seat, max_total=max_total,
+        )
+
+        if not candidates:
+            logger.info(
+                "Nomination responder: %d raw nomination(s), 0 candidates "
+                "after caps — no second Technical call.", total_raw,
+            )
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="pipeline",
+                kind="nomination_summary", scope="run",
+                evidence_json=_json.dumps({
+                    "raw_nominations": total_raw,
+                    "raw_by_seat": {k: len(v) for k, v in nominations_by_seat.items()},
+                    "candidates_selected": 0,
+                    "responder_call_made": False,
+                }, sort_keys=True),
+            )
+            return
+
+        configured = {
+            str(s).strip().upper() for s in self.config.trading.universe if str(s).strip()
+        }
+
+        # Out-of-universe candidates must clear the SAME deterministic gate
+        # the SEC Form 4 smart-money lane applies — an already-admitted or
+        # in-universe symbol needs no gate at all (D3).
+        to_gate = [
+            c for c in candidates
+            if c.symbol not in configured and c.symbol not in ctx.admitted_symbols
+        ]
+        newly_admitted: set[str] = set()
+        admission_details: dict[str, dict] = {}
+        if to_gate and self._admit_nominated_candidates:
+            try:
+                newly_admitted, admission_details = self._admit_nominated_candidates(
+                    [c.symbol for c in to_gate],
+                )
+            except Exception as exc:
+                # Admission uncertainty fails closed, same posture as the
+                # smart-money admission try/except above.
+                logger.warning("Nomination external admission failed closed: %s", exc)
+                newly_admitted, admission_details = set(), {}
+
+        eligible_candidates = []
+        for c in candidates:
+            if c.symbol in configured or c.symbol in ctx.admitted_symbols or c.symbol in newly_admitted:
+                eligible_candidates.append(c)
+            else:
+                _record_pipeline_event(
+                    self, ctx, c.symbol, "opportunity", "rejected",
+                    "nomination_failed_external_admission_gate",
+                    seats=c.seats, conviction=c.conviction,
+                )
+
+        for symbol, admission in admission_details.items():
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="pipeline",
+                kind="admission", scope="symbol", symbol=symbol,
+                evidence_json=_json.dumps(admission, sort_keys=True),
+            )
+            admission_reason = {k: v for k, v in admission.items() if k != "reason"}
+            _record_pipeline_event(
+                self, ctx, symbol, "opportunity", "admitted",
+                "nomination_external_admission", **admission_reason,
+            )
+
+        # Widen run-scoped BUY eligibility the SAME way smart-money transient
+        # admission does — ctx.admitted_symbols feeds allowed_buy_symbols at
+        # the PM call (DecisionStage) and the symbol guard (RiskStage), both
+        # of which run strictly after this stage.
+        ctx.admitted_symbols = set(ctx.admitted_symbols) | newly_admitted
+
+        already_analyzed = {a.symbol.strip().upper() for a in ctx.analyses}
+        for c in eligible_candidates:
+            if c.symbol in already_analyzed:
+                _record_pipeline_event(
+                    self, ctx, c.symbol, "opportunity", "already_covered",
+                    "nomination_matched_existing_technical_analysis",
+                    seats=c.seats, conviction=c.conviction,
+                )
+        needing_responder = [c for c in eligible_candidates if c.symbol not in already_analyzed]
+
+        if not needing_responder:
+            logger.info(
+                "Nomination responder: %d raw nomination(s) -> %d candidate(s) "
+                "selected, all already covered by the first Technical batch — "
+                "no second call.", total_raw, len(eligible_candidates),
+            )
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="pipeline",
+                kind="nomination_summary", scope="run",
+                evidence_json=_json.dumps({
+                    "raw_nominations": total_raw,
+                    "raw_by_seat": {k: len(v) for k, v in nominations_by_seat.items()},
+                    "candidates_selected": sorted(c.symbol for c in eligible_candidates),
+                    "responder_call_made": False,
+                }, sort_keys=True),
+            )
+            return
+
+        symbols_data: list[dict] = []
+        for c in needing_responder:
+            bars = self.market.get_ohlcv(c.symbol, self.config.trading.lookback_days)
+            if not bars:
+                logger.warning("Nomination responder: no bars for %s, skipping", c.symbol)
+                continue
+            indicators = compute_indicators(c.symbol, bars)
+            symbols_data.append({"symbol": c.symbol, "bars": bars, "indicators": indicators})
+            ctx.symbols_bars[c.symbol] = bars
+
+        if not symbols_data:
+            logger.info(
+                "Nomination responder: %d candidate(s) needed a call but none "
+                "had market data — no second Technical call.",
+                len(needing_responder),
+            )
+            return
+
+        prior_ratings = self.tech_store.load()
+        valuations = dict(ctx.valuations)
+        for s in symbols_data:
+            sym = s["symbol"]
+            try:
+                valuations[sym] = self.market.get_valuation_metrics(sym)
+            except Exception as e:
+                logger.warning("Nomination responder valuation fetch failed for %s: %s", sym, e)
+        ctx.valuations = valuations
+
+        analyses_map, ta_result = self.tech_analyst.analyze_batch(
+            symbols_data,
+            prior_ratings=prior_ratings,
+            valuations=valuations,
+            prior_macro_regime=prior_macro_state.get("regime"),
+            prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+        )
+        resolved = [a for a in analyses_map.values() if a is not None]
+        if resolved:
+            try:
+                self.tech_store.update(resolved)
+            except Exception as e:
+                logger.warning("TechStore.update failed (nomination responder): %s", e)
+            ages = self.tech_store.compute_ages([a.symbol for a in resolved])
+            for a in resolved:
+                if a.symbol in ages:
+                    a.signal_age_days = ages[a.symbol]
+
+        existing_symbols = {a.symbol.strip().upper() for a in ctx.analyses}
+        for a in resolved:
+            if a.symbol.strip().upper() not in existing_symbols:
+                ctx.analyses.append(a)
+                existing_symbols.add(a.symbol.strip().upper())
+
+        if ta_result:
+            self.db.insert_agent_log(
+                agent_name="tech_analyst", run_id=ctx.run_id,
+                input_summary=(
+                    f"Nomination responder batch: {len(resolved)}/{len(analyses_map)} symbols"
+                ),
+                input_message=ta_result.user_message,
+                output_summary=", ".join(f"{a.symbol}:{a.rating}" for a in resolved),
+                full_response=ta_result.raw_text,
+                model=ta_result.model,
+                tokens_used=ta_result.tokens_used,
+                input_tokens=ta_result.input_tokens,
+                output_tokens=ta_result.output_tokens,
+                cost_usd=ta_result.cost_usd,
+                **agent_log_kwargs(ta_result),
+            )
+        for a in resolved:
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="tech_analyst",
+                kind="analysis", scope="symbol", symbol=a.symbol,
+                evidence_json=a.model_dump_json(),
+            )
+            _record_pipeline_event(
+                self, ctx, a.symbol, "specialist", "evaluated",
+                "technical_analysis_validated", specialist="tech_analyst",
+                rating=a.rating, origin="nomination_responder",
+            )
+        for symbol, a in analyses_map.items():
+            if a is None:
+                _record_pipeline_event(
+                    self, ctx, symbol, "specialist", "failed",
+                    "technical_analysis_unresolved_after_retry",
+                    specialist="tech_analyst", origin="nomination_responder",
+                )
+
+        responder_cost = ta_result.cost_usd if ta_result else None
+        logger.info(
+            "Nomination responder: %d raw nomination(s) from %d seat(s) -> "
+            "%d candidate(s) selected -> %d needed a responder Technical "
+            "call (%d resolved) -> cost=%s",
+            total_raw,
+            len([seat for seat, noms in nominations_by_seat.items() if noms]),
+            len(eligible_candidates), len(symbols_data), len(resolved),
+            f"${responder_cost:.4f}" if responder_cost is not None else "unknown",
+        )
+        _persist_evidence(
+            self.db, run_id=ctx.run_id, agent_name="pipeline",
+            kind="nomination_summary", scope="run",
+            evidence_json=_json.dumps({
+                "raw_nominations": total_raw,
+                "raw_by_seat": {k: len(v) for k, v in nominations_by_seat.items()},
+                "candidates_selected": sorted(c.symbol for c in eligible_candidates),
+                "responder_symbols": sorted(s["symbol"] for s in symbols_data),
+                "responder_call_made": True,
+                "responder_resolved": sorted(a.symbol for a in resolved),
+                "responder_cost_usd": responder_cost,
+            }, sort_keys=True),
+        )
 
 
 class DecisionStage:
