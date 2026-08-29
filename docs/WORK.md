@@ -389,6 +389,33 @@ that X actually produces the symptom.
 
 ### Ordered backlog — RESUME POINT
 
+**Landed (2026-08-29) — read this first, supersedes most of what follows**
+
+- Short selling is complete and live: the desk can now open a short and cover
+  it, not merely hold one safely, on the same careful caps and gates a long
+  trade gets.
+- A tool to test a strategy change against real history now exists, though it
+  can only check the mechanical trading rules, not what the AI agents
+  themselves would have decided — that was never recorded, so it cannot be
+  replayed.
+- Any research seat, not only the chart analyst, can now bring a candidate to
+  the desk's attention. Still missing: the desk formally arguing out a
+  disagreement between seats, and sizing a trade bigger when more seats
+  independently agree.
+- The cost-circuit outage from two days ago is fully fixed, not just
+  patched, and its safety backstop now recovers on its own instead of
+  shutting a trading mode down for the rest of the day.
+- Both defects logged below that were specific to short trades — blind
+  performance stats and confused crash recovery — are verified fixed.
+- The news desk's free source list was widened, and a feed that had quietly
+  stopped publishing while still reporting success was found and removed.
+  Real wire-service coverage still needs a paid subscription and an owner
+  decision.
+- All of the above is merged and confirmed deployed to production as of
+  today. Most of "STILL OPEN — 2026-08-29" and "EXECUTION ORDER FOR THE NEXT
+  SESSION" below is now done; see their own superseded-notices rather than
+  reading them as current.
+
 Single ordered list of outstanding work. A session resuming cold should start
 here. Items are ordered by dependency first, then by value per unit of effort.
 Rationale for the trading items is in `docs/QAMC_REMEDIATION_SPEC.md`; evidence
@@ -944,7 +971,11 @@ Two facts worth acting on:
       margin accounting.
    3. **Turn it on (not yet started).** Order placement in the broker layer,
       then retire the inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`) as the
-      bearish-expression mechanism.
+      bearish-expression mechanism. **Correction 2026-08-29: the first half
+      is done — stage 3 (PR #150) landed and is merged and deployed, so
+      shorts can be opened and covered.** The inverse-ETF retirement is
+      still outstanding: `SH`/`SDS`/`PSQ`/`SQQQ` remain in the trading
+      universe, now redundant rather than necessary.
    Alpaca is ready: `shorting_enabled: true`, `no_shorting: false`,
    `max_margin_multiplier: 4`, assets `shortable` with `borrow_status:
    easy_to_borrow`. The Alpaca paper account was verified on 2026-08-28 as
@@ -970,12 +1001,21 @@ Two facts worth acting on:
    is pinned by `tests/test_shorts_emergency_close.py`'s crash-recovery
    drain-path coverage (added `e9851ea`, flagged by PR #135's own coverage
    audit as the one corner with zero tests) — read it before changing it.
+   **Correction 2026-08-29: closed as part of stage 3, as planned.**
+   `pending_protection_restores` now persists a `side` column, written at
+   row-creation time by whoever is closing the position; the drain path
+   prefers that persisted value and only falls back to the live-broker
+   derivation (never a blind `sell` default) for a legacy row written before
+   the migration. See `tests/test_wal_protection_side.py`.
 8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
-   surface the reasoning already stored but never displayed.
+   surface the reasoning already stored but never displayed. **Correction
+   2026-08-29: done** — see "Landed (2026-08-29)" at the top of this backlog.
 9. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
    post-training-cutoff evaluation windows for any LLM signal — contamination is
-   the dominant failure mode in this literature.
+   the dominant failure mode in this literature. **Correction 2026-08-29: the
+   backtester landed; conviction calibration (whether the AI's stated
+   conviction predicts outcome) did not** — see "Landed (2026-08-29)" above.
 10. **Analyst upgrades.** News cascade — **stage 1 (dedup) is DONE**
    (`src/data/news_dedup.py`); stage 2 (novelty scoring against a rolling
    48–72h per-ticker buffer) and stage 3 (a model on the residual only) remain,
@@ -1315,6 +1355,16 @@ No open pull requests. Landed on 2026-08-28/29:
 
 #### STILL OPEN — 2026-08-29
 
+**Correction 2026-08-29 (later the same day): mostly superseded — see
+"Landed (2026-08-29)" at the top of this backlog.** Items 1 and 2 (the two
+cockpit click affordances) were fixed on `fix/cockpit-click-consistency`.
+Item 3 (short-blind trade calibration) was fixed in Stage 3. Item 4 (the
+pinned dollar-ceiling board rule) was converted to a presence-only check.
+Item 6 (the news-sources audit) was done via `feat/news-sources-widen`. Item
+5 needed no further action — it already correctly said the afternoon
+reserve was merged. Left as-is below for the forensic trail; do not treat
+these six as open.
+
 1. **Missed Opportunities panel opens a modal unpredictably.** Clicking
    a symbol there opens a Candidate Detail modal only when that symbol
    happens to appear in whichever session is currently selected in the
@@ -1357,6 +1407,13 @@ No open pull requests. Landed on 2026-08-28/29:
    seat reads, free sources only — is still untouched.
 
 #### EXECUTION ORDER FOR THE NEXT SESSION — 2026-08-29 (agent decision, not owner instruction)
+**Correction 2026-08-29 (later the same day): executed — see "Landed
+(2026-08-29)" at the top of this backlog.** Steps 2 through 6 below all
+landed (spending controls, measurement, shorts stages 2-3, Phase 9
+nominations, and the Phase 4 news-source remainder). Step 1's items 1/2/4
+also landed via the STILL OPEN correction above. Left as-is below for the
+forensic trail.
+
 Recorded because AGENTS.md's ratification rule requires it: this sequence and
 its reasoning are the outgoing session's call, not something the owner
 specified. Overrule it if a fresh read of the board disagrees.

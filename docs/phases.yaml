@@ -17,21 +17,25 @@
 #     mechanical rules that prove the work is real and merged, and the one
 #     manual rule that says how to check whether it has shipped since.
 #
-# Verified at generation time (2026-08-28):
-#   origin/main HEAD:        1801ce95ade9113065e204e6b894b25592759cdd  (PR #120)
-#   production HEAD:         224722e0b09c2f8b24b86c73fe1f6319b06ceb01  (PR #119)
+# Verified at generation time (2026-08-29):
+#   origin/main HEAD:        511d5a48e78ba23fb0a4fb4f143015222a960a07  (PR #150)
+#   production HEAD:         511d5a48e78ba23fb0a4fb4f143015222a960a07  (PR #150)
 #   production verified via: sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1
-#   production is 12 commits / 3 merged PRs behind origin/main: #115 (earnings
-#   extraction), #116 (shorts countable, Stage 1), #120 (cockpit trader view).
+#   production is IN SYNC with origin/main — no undeployed merges. Since the
+#   prior audit (2026-08-28, production 12 commits behind), production caught
+#   up and origin/main gained six more merged PRs: #148 (news sources widened),
+#   #149 (cost-circuit backstop fixed and renamed), #150 (shorts Stage 3 —
+#   open/cover), #151 (position-chain transparency), #152 (deterministic
+#   backtester), #153 (Phase 9 nominations).
 #
 # Status values: DONE AND LIVE | DONE, NOT DEPLOYED | PARTIAL | NOT STARTED | OVERTAKEN
 
-generated_at: "2026-08-28"
+generated_at: "2026-08-29"
 spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
 repo: "RedstoneX/quant-agent"
 verified_against:
-  origin_main_sha: "1801ce95ade9113065e204e6b894b25592759cdd"
-  production_head_sha_at_audit: "224722e0b09c2f8b24b86c73fe1f6319b06ceb01"
+  origin_main_sha: "511d5a48e78ba23fb0a4fb4f143015222a960a07"
+  production_head_sha_at_audit: "511d5a48e78ba23fb0a4fb4f143015222a960a07"
   production_check_command: "sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1"
   production_drift_alarm: "scripts/check_deploy_drift.py, quant-agent-drift-check.timer (Mon-Fri 08:45 ET) — catches this automatically, once a day"
 
@@ -257,7 +261,7 @@ phases:
 
   - id: phase_4
     title: "Phase 4 — Evidence symmetry and feed repair"
-    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries (partly fixed: FRED retries already existed, but the Reuters and AP news feeds are still dead as of today)."
+    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries. FRED retries already existed. Reuters and AP are gone for good (Reuters killed public RSS in 2020, AP's free proxy is bot-walled) and were removed on purpose rather than left silently dead. Correction 2026-08-29: the news-source audit the owner asked for is no longer open work — the RSS set was widened from 8 to 11 free feeds (Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases added) and one feed that kept returning HTTP 200 while having stopped publishing over a year ago (MarketWatch Markets/marketpulse) was found and removed. The one genuine remaining gap is full wire-service breadth: restoring Reuters/AP-grade coverage needs a paid subscription and an owner decision, not more free-feed hunting."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -282,19 +286,39 @@ phases:
         symbol: "One bounded retry per series"
         note: "§4.2 FRED retry/backoff — already existed before the spec was written; not new work, but satisfies the requirement"
       - kind: manual
-        note: "Correction 2026-08-29: this note previously said the Reuters and AP URLs in src/data/news.py are unchanged and still dead. Verified false against origin/main. RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block at lines 34-73, headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type (news.py:100-114) also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
+        note: "Correction 2026-08-29: this note previously said the Reuters and AP URLs in src/data/news.py are unchanged and still dead. Verified false against origin/main. RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
       - kind: manual
-        note: "Separate from the dead Reuters/AP feeds above: the owner has asked for an audit of what the news seat actually reads and a widening of its sources, using free sources only. Still untouched. See the 'News sources review' task in session notes / docs/WORK.md."
+        note: "Correction 2026-08-29: this note previously said the owner's ask for an audit of what the news seat reads and a widening of its free sources was 'still untouched'. Verified false against origin/main: PR #148 (commit 0418afd, 'feat(news): widen the free source set and cap what reaches the analyst') did exactly this — RSS_FEEDS grew from 8 to 11 entries (Seeking Alpha Market Currents, Investing.com News, Nasdaq News and SEC Press Releases added on top of the earlier Yahoo Finance addition) and one feed that 200s but has been dead for over a year (MarketWatch Markets) was found and removed the same day. See the mechanical rules below for the specific feed names and tests. Re-check: `python3 -c \"import src.data.news as n; print(len(n.RSS_FEEDS))\"` should print 11, and re-run the removed-feed comment search if this needs re-verifying later."
+      - kind: pr_merged
+        number: 148
+        note: "feat/news-sources-widen — widened the free RSS set, capped what reaches the analyst's prompt so the wider set doesn't blow up prompt size"
+      - kind: commit_in_main
+        sha: "0418afd2de54c0c739cfe72386b4941ceaecd528"
+        note: "feat(news): widen the free source set and cap what reaches the analyst"
+      - kind: symbol_in_file
+        path: "src/data/news.py"
+        symbol: "Seeking Alpha Market Currents"
+        note: "one of the new free sources added 2026-08-29"
+      - kind: symbol_in_file
+        path: "src/data/news.py"
+        symbol: "SEC Press Releases"
+        note: "another of the new free sources added 2026-08-29 — also fills a regulatory/legal coverage gap the original 8 feeds had none of"
+      - kind: test_exists
+        path: "tests/test_news.py"
+        test: "test_rss_feeds_urls_are_well_formed_and_unique"
+      - kind: test_exists
+        path: "tests/test_news.py"
+        test: "test_new_feed_going_dead_marks_coverage_degraded_not_ok"
 
   - id: phase_5
     title: "Phase 5 — Short selling"
-    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assume every position is a long. It is being built in three stages. Correction 2026-08-29: this summary previously said stages 2 and 3 had not been built; verified false for stage 2 against origin/main. Stage 1, making a short position count correctly in the risk math, is finished. Stage 2, making a short position safe to hold — correct protective-stop geometry and a trailing stop that moves the right direction for a short instead of the long-only direction — is also finished and merged (commit 10e0f10, 'Stage 2 of short selling: make shorts safe', confirmed an ancestor of origin/main; tests/test_shorts_safe.py, 623 lines, 28 tests). What remains is stage 3 only: the order-placement path that would actually let the system open a short. That is genuinely not built yet, and the constructor still deliberately refuses to act on a held short — see the two rules below that pin exactly that."
-    status: "PARTIAL"
+    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assumed every position is a long. It was built in three stages: Stage 1 (a held short counts correctly in the risk math), Stage 2 (protective-stop geometry and trailing-stop direction are short-aware), and Stage 3 (the order-placement path that actually opens and covers a short, gated on the broker confirming the name is both shortable and easy to borrow, and capped by a tighter single-name limit, a book-wide gross-short limit, and a sizing haircut for a short's unbounded gap risk). Correction 2026-08-29: all three stages are now merged (PR #150) AND deployed — production's HEAD matches origin/main (confirmed via `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`). The two rules that used to pin 'shorts are not tradeable yet' were false the moment Stage 3 landed and have been replaced below with rules pinning what is true now. One loose end outside this phase's own scope: the four inverse-ETF tickers (SH/SDS/PSQ/SQQQ) that stood in for a bearish view are still in the trading universe and have not yet been retired now that a real short is available — noted, not fixed here."
+    status: "DONE AND LIVE"
     confidence: "high"
     evidence:
       - kind: pr_merged
         number: 116
-        note: "Stage 1 — make a short position countable in current_weights / risk metrics. Merged to main, NOT yet on production (production HEAD 224722e0 predates it)."
+        note: "Stage 1 — make a short position countable in current_weights / risk metrics."
       - kind: commit_in_main
         sha: "71325b1dc59f3eb3f73f701e44f536ac69fb06a3"
         note: "Stage 1 shorts: make a short position countable"
@@ -313,34 +337,104 @@ phases:
       - kind: test_exists
         path: "tests/test_shorts_safe.py"
         test: "test_trailing_short_ratchets_down_only"
-        note: "Stage 2 proof: the trailing stop is direction-aware and ratchets down (not up) for a short position — src/risk/trailing.py:156-260."
-      - kind: symbol_in_file
-        path: "src/portfolio_constructor.py"
-        symbol: "no action emitted; shorts are not tradeable yet"
-        note: "the constructor still explicitly refuses to act on a held short — proves Stage 2/3 (actual short trading) do not exist yet. If this string disappears, re-check whether short trading has been implemented."
+        note: "Stage 2 proof: the trailing stop is direction-aware and ratchets down (not up) for a short position."
+      - kind: pr_merged
+        number: 150
+        note: "Stage 3 — open and cover shorts, borrow-gated and capped."
+      - kind: commit_in_main
+        sha: "964e1be4164ceb64459c772af8a23733369401eb"
+        note: "feat(shorts): stage 3 — open and cover shorts, borrow-gated and capped"
+      - kind: commit_in_main
+        sha: "defcd9c8c501c3bb44e340e41a85a2bc012b7bce"
+        note: "feat(shorts): let the desk propose a short, and let the ledger see one"
+      - kind: commit_in_main
+        sha: "0e9aa1b4ec23a9d64a13e603d830ae66b25627ea"
+        note: "fix(shorts): close a short from the review path, and cancel its resting entry"
       - kind: symbol_in_file
         path: "src/models.py"
-        symbol: "action: Literal[\"BUY\", \"SELL\", \"HOLD\"]"
-        note: "TradeDecision still has no open-short or cover action. If this literal ever includes a short-side value, Stage 2/3 has landed and this phase's status must be re-evaluated."
+        symbol: "action: Literal[\"BUY\", \"SELL\", \"SHORT\", \"COVER\", \"HOLD\"]"
+        note: "TradeDecision now carries SHORT (open) and COVER (close) action literals. If this literal ever loses either value, Stage 3 has regressed and this phase must be re-evaluated."
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "action: Literal[\"SELL\", \"REDUCE\", \"TRAIL_STOP\", \"COVER\", \"HOLD\"]"
+        note: "PositionAction (the reviewer's exit vocabulary) now carries COVER alongside SELL/REDUCE/TRAIL_STOP."
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "direction: Literal[\"long\", \"short\"] = \"long\""
+        note: "TargetPosition now carries a direction field distinguishing a long target from a short one."
+      - kind: symbol_in_file
+        path: "src/execution/broker.py"
+        symbol: "def get_shortability"
+        note: "the borrow gate: refuses a short unless the broker reports the symbol BOTH shortable and easy to borrow, fail-closed on any read failure."
+      - kind: symbol_in_file
+        path: "src/pipeline_stages.py"
+        symbol: "borrow_gate"
+        note: "the borrow gate is wired into the execution path — a refused short is logged and recorded as an execution skip with reason borrow_gate."
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_single_short_pct"
+        value: 10
+        note: "single-name short cap — deliberately half of max_position_pct, since a short's loss is unbounded where a long's floors at -100%."
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.max_short_gross_pct"
+        value: 20
+        note: "book-wide gross-short cap."
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "risk.short_gap_risk_multiple"
+        value: 1.5
+        note: "sizing-only haircut on a short's risk-per-share, for its unbounded gap risk."
+      - kind: test_exists
+        path: "tests/test_shorts_stage3.py"
+        test: "test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entry"
+      - kind: test_exists
+        path: "tests/test_shorts_stage3.py"
+        test: "test_borrow_gate_refuses_when_flags_are_unreadable"
+      - kind: test_exists
+        path: "tests/test_trade_calibration_shorts.py"
+        test: "test_mixed_long_and_short_ledger_produces_correct_separate_and_combined_figures"
+      - kind: test_exists
+        path: "tests/test_wal_protection_side.py"
+        test: "test_insert_and_get_pending_protection_restore_round_trips_side"
+        note: "the pending_protection_restores WAL table now persists a side column, closing the crash-recovery long/short ambiguity — see the open_defects entry, which used to carry this as an open item."
+      - kind: symbol_in_file
+        path: "config/prompts/portfolio_manager.md"
+        symbol: "a COVER if held short"
+        note: "the PM prompt now teaches the SHORT/COVER vocabulary."
+      - kind: symbol_in_file
+        path: "config/prompts/position_reviewer.md"
+        symbol: "COVER closes/trims a SHORT"
+        note: "the reviewer prompt now teaches SELL/REDUCE close a long, COVER closes a short."
+      - kind: symbol_in_file
+        path: "config/prompts/risk_manager.md"
+        symbol: "Short discipline"
+        note: "the risk manager prompt now has a dedicated section auditing short-specific risk: unbounded loss, gap-risk haircut, the two caps, and the borrow gate."
       - kind: manual
-        note: "Owner-side account facts (shorting_enabled, 4x margin, equity above the $2,000 floor) were verified against the live Alpaca account on 2026-08-28 and are not expected to change; re-verifying them is not the blocker — the blocker is entirely code, in src/execution/broker.py and src/portfolio_constructor.py."
+        note: "Residual, outside this phase's proof: the four inverse-ETF tickers (SH, SDS, PSQ, SQQQ) that were the bearish-expression workaround before real shorting existed are still listed in config/settings.yaml's trading universe and have not been retired now that Stage 3 makes them redundant. Not a functional defect — nothing requires the desk to trade them — but worth a deliberate decision rather than leaving them in silently. Re-check: `grep -n 'Inverse / Short ETF' -A4 config/settings.yaml`."
 
   - id: phase_6
     title: "Phase 6 — Cost circuit and transparency"
-    plain_summary: "None of the three planned fixes (spend capped in dollars with an afternoon reserve, a dashboard that explains why a trade happened, an accurate end-of-day P&L in the alert) are built. Worse than the spec anticipated: on 2026-08-28 the existing cost-circuit's over-cautious spend estimate and an unrelated session-count cap together stopped the desk from trading almost the entire day, on 17 cents of actual spend. Four distinct defects were diagnosed in detail; a stopgap was applied (raising the count cap); none of the four is actually fixed yet."
-    status: "PARTIAL"
-    confidence: "medium"
+    plain_summary: "All three of the planned fixes are now built and confirmed live, though the first was fixed in two steps on two different days and the docs here did not catch up on the first step until now. §6.1 (spend capped in dollars, with an afternoon reserve): the operative per-mode limit has been a percentage of the daily dollar budget, not a session count, since PR #126 landed on 2026-08-28 — the session-count check that caused that day's outage was demoted to a backstop against an infinite retry loop only. As of PR #149 (2026-08-29) that backstop also counts only genuinely free-failed sessions (not every session that merely attempted a call) and cools off after a window instead of latching the whole mode for the rest of the ET day, and its setting was renamed to match what it now counts. An afternoon reserve walls off a slice of the daily budget from every mode until midday, so a quiet morning can't spend the afternoon's exit decisions out of budget. §6.2 (a dashboard that explains why a trade happened): every trade in a position's chain now carries a shared id linking a buy to the sell that closed it, a history endpoint reconstructs the full entry/interim/exit chain with realized P&L, exits carry a classified reason category, and the stored reasoning now renders in the trades table. The one sub-item not built is a deliberate owner reversal, not a gap: a position click charts the symbol in place rather than opening a modal. §6.3 (an accurate end-of-day P&L): the alert carries the true close-to-close figure and now also expresses it against risk capital, not just total equity. Separately, the four cost-circuit defects that caused the 2026-08-28 outage (an over-cautious spend estimate, a failed request billed as if it ran, an operator reset tool blocked by the fault it exists to clear, and the session-count cap) are all genuinely fixed now, not just stopgapped."
+    status: "DONE AND LIVE"
+    confidence: "high"
     evidence:
       - kind: setting_present
         path: "config/settings.yaml"
         key: "llm_cost_circuit.max_free_failure_sessions_per_mode"
-        note: "the key's PRESENCE, not its value, is the evidence: while this session-count stopgap exists at all, the cap is still session-based rather than dollar-based, so §6.1 is not done. Its value is deliberately not asserted here — it is a stopgap expected to be re-tuned (raised from 8 to 40 by commit 76646af on 2026-08-28 to stop it benching intra_check mid-day on normal spend), and a specific number would make every legitimate re-tune read as false rot. If this key is ever removed in favor of a pure-dollar gate, that means §6.1 has landed and this phase must be re-evaluated."
+        note: "Correction 2026-08-29: this rule's note previously said this setting being merely present proved §6.1 was NOT done because the cap was 'still session-based rather than dollar-based'. That was already false the day it was written — see the max_mode_daily_exposure_pct rule below, live since PR #126 (2026-08-28). What IS still true and worth asserting here: this setting is now explicitly a backstop-only guard against an infinite free-failure loop, not the operative limit, and PR #149 (2026-08-29, commits 254a664 + c523da4) fixed it to count only sessions that made a provider attempt and settled at zero cost, renamed it from max_paid_sessions_per_mode_per_day to describe that, and made it cool off after backstop_cooloff_minutes instead of latching the mode for the rest of the ET day."
       - kind: setting_present
         path: "config/settings.yaml"
         key: "llm_cost_circuit.daily_cost_limit_usd"
-        note: "the key's PRESENCE, not its value, is the evidence: this rule deliberately asserts that the daily dollar ceiling exists rather than pinning its current figure. daily_cost_limit_usd is a deliberately-tuned value expected to be re-tuned as real trading experience accumulates, and a setting_equals rule pins whatever number happened to be current at write time — the same shape that already made the session-count-cap rule above false-alarm as CONTRADICTED the last time a stopgap number was legitimately re-tuned. Asserting presence instead means a legitimate re-tune no longer reads as documentation rot."
-      - kind: manual
-        note: "§6.1 (dollar-based cap with afternoon reserve): branch fix/dollar-based-session-cap exists but is explicitly recorded as unfinished in docs/WORK.md. No PR open for it at audit time — check `gh pr list --repo RedstoneX/quant-agent --state open` for a PR off that branch."
+        note: "the key's PRESENCE, not its value, is the evidence: daily_cost_limit_usd is a deliberately-tuned value expected to be re-tuned as real trading experience accumulates, and pinning a specific number would make every legitimate re-tune read as false rot."
+      - kind: setting_present
+        path: "config/settings.yaml"
+        key: "llm_cost_circuit.max_mode_daily_exposure_pct"
+        note: "§6.1's actual operative per-mode limit: a fraction of the daily dollar budget, not a session count. Landed 2026-08-28 (commit b796dce, PR #126, 'fix(cost-circuit): dollar-based per-mode daily cap, plus an afternoon reserve') — this key's presence at all is what proves the dollar-based cap the spec asked for actually exists; its value is a tuned stopgap, deliberately not pinned here for the same reason as daily_cost_limit_usd above."
+      - kind: setting_present
+        path: "config/settings.yaml"
+        key: "llm_cost_circuit.afternoon_reserve_pct"
+        note: "§6.1's afternoon reserve: a fraction of the daily budget walled off from every mode until afternoon_reserve_release_et_hour. Same commit as above (b796dce, 2026-08-28); src/cost_circuit.py's _morning_spend_ceiling is where begin_call enforces it."
       - kind: manual
         note: "Correction 2026-08-29: this note previously claimed none of §6.2 (position_id linking a buy to its closing sell, GET /positions/{id}/history, reasoning rendered in the trades table) existed. That is no longer true: position_id now links every trade in a position's chain (a BUY from flat mints one; SELL/REDUCE/TRAIL_STOP/etc inherit it until flat — see `_assign_position_ids` in src/storage/db.py), a one-time `scripts/backfill_position_ids.py` fills it in for pre-existing history, `GET /positions/{position_id}/history` (src/api/routes_history.py) reconstructs the entry/interim/exit chain with realized P&L and hold duration, and `reasoning` is now a column in frontend/src/components/TradesPanel.tsx (truncated with a reveal-on-click, same idiom AgentPromptViewer.tsx uses). §6.2(e) (exit_reason_category) also landed — see the mechanical rules below. §6.2(d) is separately closed as WON'T DO, not done — see the next note. Re-check with the mechanical rules below rather than re-reading this prose."
       - kind: manual
@@ -357,18 +451,90 @@ phases:
         note: "Correction 2026-08-29: this note previously claimed §6.3 (true end-of-day P&L figure, expressed against risk capital as well as equity, in the Telegram alert) had no dedicated function. §6.3(a) (the true 4pm-to-4pm close-to-close P&L) was already built before this correction — see `_append_evening_body` in src/notifier.py. §6.3(b) (P&L against risk capital) has now also landed: `TradingPipeline.run_evening` reuses (does not recompute) `src.risk.metrics.portfolio_heat`'s `budget_risk_dollars` — audit §1.3's capital-at-risk figure — threads it through the evening result dict as `risk_capital_dollars`, and `_append_evening_body` renders a 'vs risk capital' line alongside the existing equity-based P&L line, with an explicit labelled-absence line (not a fabricated 0%) on a flat book. Re-check: `grep -n \"risk_capital\" src/notifier.py src/pipeline.py`."
       - kind: manual
         note: "Correction 2026-08-29: this note previously claimed the afternoon-reserve helper from branch fix/dollar-based-session-cap (commit 766a35d) was defined and never called — that was true of the commit at the time but is no longer true of origin/main. On main today, src/cost_circuit.py defines _morning_spend_ceiling() (~line 2370) and begin_call actually calls it (~line 2538) inside a live enforcement branch (elif morning_ceiling is not None and ...), and src/config.py carries afternoon_reserve_pct (~line 618, default 40.0) and afternoon_reserve_release_et_hour (~line 621, default 12) for real. §6.1's afternoon reserve is implemented and live, not inert. Re-check: `grep -n \"_morning_spend_ceiling\" src/cost_circuit.py` and confirm both a `def` and a call site."
+      - kind: pr_merged
+        number: 149
+        note: "feat/phase6-spend-controls — fixed the runaway backstop's counting and naming, added the cooloff."
+      - kind: commit_in_main
+        sha: "254a664af5ea41d14297bede25fe2146fa3f845a"
+        note: "fix(cost): make the runaway backstop count loops, not trading days"
+      - kind: commit_in_main
+        sha: "c523da49dd0ec4d032ae5bcdc6ca84b7441ec77d"
+        note: "refactor(cost): name the backstop setting after what it now counts"
+      - kind: pr_merged
+        number: 151
+        note: "feat/phase6-transparency — position_id chain linking, the position-history endpoint, exit_reason_category, and P&L against risk capital."
+      - kind: commit_in_main
+        sha: "34c7255f61a82f6c932f3de1cc7bfccd7824b73e"
+        note: "feat(transparency): link every trade to its position and report P&L against risk"
+      - kind: test_exists
+        path: "tests/test_cost_circuit.py"
+        test: "test_backstop_cools_off_after_the_configured_window"
+      - kind: test_exists
+        path: "tests/test_cost_circuit.py"
+        test: "test_healthy_day_many_paid_sessions_never_trip_the_backstop"
+      - kind: test_exists
+        path: "tests/test_api_contract.py"
+        test: "test_position_history_closed_chain_reconstructs_entry_interim_exit"
+      - kind: test_exists
+        path: "tests/test_notifier.py"
+        test: "test_format_evening_shows_pnl_vs_risk_capital"
+      - kind: test_exists
+        path: "tests/test_db.py"
+        test: "test_position_id_minted_on_buy_from_flat"
+      - kind: manual
+        note: "The four 2026-08-28 cost-circuit defects (over-cautious spend estimate; a failed request billed as if it ran; the operator reset tool blocked by the fault it exists to clear; the session-count cap) are all fixed, not merely stopgapped, verified against origin/main on 2026-08-29: the estimator now reserves from measured per-(agent, model) history at a conservative percentile (src/cost_circuit.py, comment 'Defect 1: reserve from this agent+model's own measured history', ~line 2453) instead of a worst-case byte-count; `_is_known_zero_cost_failure` (src/cost_circuit.py) classifies 400/401/403/404/429 and pre-send transport failures as zero-cost so they release their reservation instead of charging as unknown cost; and `scripts/cost_circuit.py`'s `reset` command now calls `set_session_context` instead of the validating `activate_session`, so it can no longer be blocked by the exact ledger fault it exists to clear. Re-check: `grep -n \"_is_known_zero_cost_failure\\|Defect 1: reserve\" src/cost_circuit.py` and `grep -n \"set_session_context\" scripts/cost_circuit.py`."
 
   - id: phase_7
     title: "Phase 7 — Measurement"
-    plain_summary: "There is still no way to test a strategy change against history before risking real (paper) money on it, no measurement of whether stated conviction actually predicts outcomes, and no dashboard of the core trading-edge numbers (win rate, average win vs. average loss, expectancy). None of this has been started."
-    status: "NOT STARTED"
+    plain_summary: "Correction 2026-08-29: this phase previously said none of this had been started; that is now false. §7.1 (build a backtester) is done: a deterministic-layer backtester (src/backtest/) with a CLI (scripts/backtest.py) measures structural stop placement, noise-band widening, risk-based position sizing, the portfolio risk budget/cluster caps, and trailing-stop rules against real history, entering on the NEXT day's open (no look-ahead) and producing deterministic, reproducible results. Its own scope statement is explicit about what it is NOT: it does not replay the LLM agents' judgment at all — their historical outputs were never captured to replay, so it measures only the deterministic layer underneath them. §7.3 (surface the core edge numbers) is also done, on live trading history rather than backtest output: win rate, average win-to-average-loss ratio, expectancy per trade and average hold duration are all now computed (including, separately, the short side). What is genuinely NOT built: §7.2, calibrating whether the desk's STATED conviction predicts outcomes — there is a pre-existing dollar-size-based bucketing in the live-trade calibration (a proxy for conviction, since PM's allocation size implies how strongly it believed the trade), but nothing grades an LLM's own stated conviction level against realized results, in the backtester or anywhere else."
+    status: "PARTIAL"
     confidence: "high"
     evidence:
       - kind: file_exists
         path: "src/replay.py"
-        note: "exists but is decision replay for debugging, not a strategy backtester — the spec's own §7.1 text makes this distinction explicitly"
+        note: "exists but is decision replay for debugging, not a strategy backtester — the spec's own §7.1 text makes this distinction explicitly, and src/backtest/engine.py's own module docstring repeats it"
+      - kind: file_exists
+        path: "src/backtest/engine.py"
+        note: "§7.1: the backtest engine — day-by-day simulation against real history, entry on next day's open."
+      - kind: file_exists
+        path: "src/backtest/metrics.py"
+        note: "§7.1/§7.3: win rate, average win/loss, expectancy computed from a backtest run."
+      - kind: file_exists
+        path: "src/backtest/data.py"
+        note: "§7.1: reads prices through MarketDataProvider.get_ohlcv, the same source every live agent uses."
+      - kind: file_exists
+        path: "scripts/backtest.py"
+        note: "§7.1's CLI entry point — single-run and A/B modes."
+      - kind: pr_merged
+        number: 152
+        note: "feat/phase7-backtest"
+      - kind: commit_in_main
+        sha: "e8b4efee724ce3fc1c3444cfa1e8e908a1cd2cc5"
+        note: "feat(backtest): measure the deterministic layer against history"
+      - kind: test_exists
+        path: "tests/test_backtest.py"
+        test: "test_hand_computed_long_trade"
+      - kind: test_exists
+        path: "tests/test_backtest.py"
+        test: "test_no_look_ahead_entry_is_next_days_open_not_signal_days_own_move"
+      - kind: test_exists
+        path: "tests/test_backtest.py"
+        test: "test_determinism_same_inputs_same_output"
+      - kind: test_exists
+        path: "tests/test_backtest.py"
+        test: "test_ab_two_configs_one_parameter_produce_different_labelled_results"
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "expectancy_pct"
+        note: "§7.3: compute_trade_calibration now reports expectancy per trade, on top of the win rate and average return it already tracked."
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "avg_win_loss_ratio"
+        note: "§7.3: average win ÷ average loss, the other edge number the spec asked for."
       - kind: manual
-        note: "No backtest module exists anywhere in the repo (confirmed via `find . -iname '*backtest*'` returning nothing at audit time) and no branch or open PR addresses §7.1/7.2/7.3. Re-run that find to check for movement."
+        note: "This engine does NOT replay the LLM agents (src/backtest/engine.py's own module docstring: 'This engine does NOT replay the LLM agents. Their outputs are not [captured]...') and measures only the deterministic layer beneath them — structural stops, noise-band widening, risk-based sizing, the portfolio risk budget/cluster caps, and trailing-stop rules. Do not read a backtest result as a claim about what the LLM agents' judgment would have done historically; it is a claim about the deterministic scaffolding only."
+      - kind: manual
+        note: "§7.2 (calibrate conviction — log each trade's allocated risk against its realized outcome, and check whether stated conviction predicts results) is NOT built. `compute_trade_calibration` (src/storage/db.py) buckets by entry dollar size as a proxy for conviction ('a larger dollar commitment implies higher conviction when PM sized it') on LIVE trade history, which predates this phase and is not what §7.2 asked for — it is not a calibration of the LLM's own stated conviction level, and it does not run against backtest output. Re-check: `grep -rn \"conviction\" src/backtest/*.py` should return nothing, since the backtester carries no notion of an LLM's stated conviction to grade at all."
 
   - id: phase_8
     title: "Phase 8 — Documentation correction"
@@ -395,17 +561,55 @@ phases:
 
   - id: phase_9
     title: "Phase 9 — The research desk actually deliberates"
-    plain_summary: "The owner's actual ask — that all the research seats (news, earnings, macro, insider-trading signals) get to propose trade ideas and argue about them, instead of the technical-chart analyst being the only seat allowed to originate a candidate — is fully designed on paper but has no code yet."
-    status: "NOT STARTED"
+    plain_summary: "Correction 2026-08-29: this phase previously said the owner's ask — that every research seat gets to propose trade ideas instead of only the technical-chart analyst originating them — had no code yet. That is now false for §9.1/§9.2. Any research seat (News, Earnings, Macro) can now nominate a symbol Technical did not already cover, bounded per seat and per run (mirroring the existing SEC Form 4 admission-lane pattern), deduped across seats and ranked by conviction; Technical is then invoked ON DEMAND to answer whether there is a tradeable setup for each nominated symbol — the inversion the spec called 'the whole architectural change'. What is still NOT built from the design: §9.3 (a recorded seat-conflict with no adjudication should fail grounding — today a conflict is still just recorded in provenance and the trade proceeds unchanged, exactly as before), §9.4 (sizing by the number of independent seats that agree — a name confirmed by three seats still sizes the same as a name only Technical likes), and §9.5 (a conviction ledger per candidate)."
+    status: "PARTIAL"
     confidence: "high"
     evidence:
       - kind: commit_in_main
         sha: "5ca9dce9ca3c85177fd1df7758c6eea8c82f1564"
         note: "docs: record today's decisions and design Phase 9 (the desk deliberates) — design only"
+      - kind: pr_merged
+        number: 153
+        note: "feat/phase9-nominations — §9.1/§9.2, the nomination + on-demand-responder mechanism."
+      - kind: commit_in_main
+        sha: "57f099306a75687664b0f538c95a63e24aa567ee"
+        note: "feat(desk): let any research seat nominate a candidate"
+      - kind: file_exists
+        path: "src/nominations.py"
+        note: "§9.1/§9.2: pure-logic cap/dedupe/ranking module — no I/O, no LLM calls, unit-testable independent of the pipeline."
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "class Nomination"
+        note: "the nomination shape: symbol, conviction, and the observation behind it."
+      - kind: symbol_in_file
+        path: "src/pipeline_stages.py"
+        symbol: "_run_nomination_responder_pass"
+        note: "§9.2: the on-demand Technical responder pass triggered by a nomination."
+      - kind: symbol_in_file
+        path: "src/pipeline_stages.py"
+        symbol: "_collect_seat_nominations"
+        note: "§9.1: gathers each seat's raw nominations before the per-seat cap and cross-seat dedupe apply."
+      - kind: setting_present
+        path: "config/settings.yaml"
+        key: "nominations.max_per_seat_per_run"
+        note: "§9.1: 'Cap nominations per seat per run' — the bound that keeps this affordable."
+      - kind: setting_present
+        path: "config/settings.yaml"
+        key: "nominations.max_total_per_run"
+        note: "§9.1: the hard ceiling on distinct symbols reaching the on-demand Technical responder in one run."
+      - kind: test_exists
+        path: "tests/test_nominations.py"
+        test: "test_per_seat_cap_keeps_highest_conviction_then_alphabetical"
+      - kind: test_exists
+        path: "tests/test_nominations.py"
+        test: "test_cross_seat_dedupe_records_both_nominators_as_one_candidate"
+      - kind: test_exists
+        path: "tests/test_nominations.py"
+        test: "test_global_cap_ranks_by_conviction_then_seat_count_then_symbol"
       - kind: manual
-        note: "No 'nominate' concept exists in code: grep -rn 'nominat' src/ config/prompts/ at audit time matched only the unrelated word 'denominator'. Re-run that grep (case-insensitive, whole word 'nominat') to check for movement — a real hit outside a 'denominator' context means work has started."
+        note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing."
       - kind: manual
-        note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is now DONE AND LIVE (see phase_2), so Phase 9 is unblocked and is the next unclaimed item in docs/WORK.md's ordered backlog — but nothing has picked it up yet."
+        note: "§9.3 (disagreement must be adjudicated) is NOT built: `signal_conflicts` on RiskDecision (src/models.py) is a pre-existing required free-text field the RM fills in, not a check that a `conflicts` provenance entry got a corresponding adjudication — nothing in the grounding logic fails a target that carries an unadjudicated conflict. §9.4 (conviction is agreement, sizing by number of independent sources) is also NOT built: no code in src/risk/ or src/portfolio_constructor.py sizes a target by how many seats independently confirmed it. §9.5 (a conviction ledger per candidate) is NOT built either. Re-check: `grep -rn \"signal_conflicts\\|agreement\" src/agents/risk_manager.py src/risk/*.py src/portfolio_constructor.py` — a hit describing sizing-by-agreement-count would mean §9.4 has started."
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
@@ -433,14 +637,10 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Two problems that turned up as a side effect of other engineering work and are not fixed yet. The standing rule here is that finding something broken while doing unrelated work is not a license to go fix it on the spot — it gets written down and handed back so a person can decide, which is what this entry is. None of these two belong to any of the numbered phases above; without this entry they would only exist in session notes and could quietly fall out of view. Each one below carries a plain command anyone can run to check whether it is still true. (A sixth item, 'company profiles were built and never wired in,' was removed on 2026-08-29 after verification against origin/main showed src/data/company.py's CompanyProfileStore is in fact imported and used by both src/notifier.py and src/pipeline.py — the claim was false when it was written to this file. Two more — the Missed Opportunities pop-up and the Diagnostics -> Search row-click affordance — were removed the same day after being fixed on branch fix/cockpit-click-consistency. A further one, the board rule that pinned the exact daily dollar ceiling, was removed the same day: that rule now asserts the setting exists rather than pinning its figure, so a deliberate re-tune no longer reads as rot.)"
+    plain_summary: "None open as of 2026-08-29. The standing rule here is that finding something broken while doing unrelated work is not a license to go fix it on the spot — it gets written down and handed back so a person can decide, which is what this entry is for; it stays here, empty, as the standing place the next defect gets written down. The two items previously listed here — win rate/average return being blind to a short trade, and crash recovery being unable to tell a long position from a short during a WAL drain — were both verified FIXED against origin/main on 2026-08-29 (Stage 3 shorts, PR #150) and are removed below: compute_trade_calibration now runs a separate short-side FIFO queue matched to COVER-family exits, and pending_protection_restores now persists a side column written at row-creation time by whoever closes the position, so the drain path no longer has to guess. (A sixth item, 'company profiles were built and never wired in,' was removed on 2026-08-29 after verification against origin/main showed src/data/company.py's CompanyProfileStore is in fact imported and used by both src/notifier.py and src/pipeline.py — the claim was false when it was written to this file. Two more — the Missed Opportunities pop-up and the Diagnostics -> Search row-click affordance — were removed the same day after being fixed on branch fix/cockpit-click-consistency. A further one, the board rule that pinned the exact daily dollar ceiling, was removed the same day: that rule now asserts the setting exists rather than pinning its figure, so a deliberate re-tune no longer reads as rot.)"
     status: "OPEN"
     confidence: "high"
-    evidence:
-      - kind: manual
-        note: "Win rate and average return cannot see a short trade. compute_trade_calibration in src/storage/db.py FIFO-matches BUY lots against sell-family exits; a covered short opens no BUY lot, so covering one closes nothing in this accounting and the trade stays invisible to win rate, average return and hold days — numbers that reach the Portfolio Manager as settled fact. Dormant only because shorts cannot be opened yet; becomes a live accounting hole the day they can. The function's own comments record the size of this kind of gap: omitting filled TRAIL_STOP exits once moved win_rate from 22.2% to 30.0% and avg_return from -2.79% to -2.18% on the real ledger. Re-check: `grep -n \"open_lots\" src/storage/db.py` and look for a short-side queue alongside it."
-      - kind: manual
-        note: "Correction 2026-08-29: this note previously said the write-ahead rows themselves cause the long-assuming fallback. Verified against origin/main and that mechanism is wrong, though the outcome it described is real. `_derive_close_side_for_drain` (src/pipeline.py:2211-2238) does NOT guess a side — it reads the broker's live signed position and returns 'sell'/'buy' when the position is readable, and returns None both when the broker read fails and when the position is already flat; its own docstring says the caller must NOT default to 'sell' in the unreadable case, because that is exactly the guess the design review forbids. The long-assuming fallback actually happens one level up, in `_drain_pending_protection_restores` (src/pipeline.py:2240): at line 2294 (sentinel-SELL branch) and line 2365 (terminal-SELL branch) it only passes `side=\"buy\"` when the helper returned exactly 'buy'; when the helper returns None it passes no side kwarg at all, so the two functions it calls, `_restore_after_unconfirmed_sell` (src/pipeline.py:1638) and `_finalize_protection_after_sell` (src/pipeline.py:2064), fall through to their own `side: str = \"sell\"` defaults. A comment at src/pipeline.py:2286-2292 confirms this is a deliberate, acknowledged tradeoff, not an oversight. The schema half of the original claim is correct as written: `pending_protection_restores` (src/storage/db.py:230-238, and the idempotent re-creation at :392-400) has columns id, symbol, sell_order_id, position_qty_before_sell, specs_json, created_at, run_id — no side column, and no ALTER TABLE anywhere in db.py adds one. Unreachable today because shorts cannot be opened; reachable, and wrong, the day they can. Re-check: `grep -n \"_drain_pending_protection_restores\\|_derive_close_side_for_drain\" src/pipeline.py` and `grep -n 'side: str = \"sell\"' src/pipeline.py`."
+    evidence: []
 
   - id: invariants
     title: "Invariants (must hold at all times)"
