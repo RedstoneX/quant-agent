@@ -403,9 +403,30 @@ class ResponseLibrary:
                 )
 
             live_words = frozenset(_WORD.findall(user_message or ""))
-            scored = [(_jaccard(live_words, c.words), -c.row_id, c) for c in candidates]
-            scored.sort(reverse=True)
-            score, _, chosen = scored[0]
+            # Rank by index, never by the RecordedCall itself: `_unmerge_chunked_call`
+            # gives every part of one merged row the SAME row_id, so two un-merged
+            # parts of one chunked row can tie exactly on (score, -row_id) whenever
+            # they also tie on Jaccard score against the live prompt (trivially true
+            # when neither shares a word with it — both score 0.0). A plain
+            # `sorted([(score, -row_id, call) ...], reverse=True)` would then need to
+            # compare the `RecordedCall` dataclasses themselves to break the tie, and
+            # they define no ordering, raising `TypeError: '<' not supported between
+            # instances of 'RecordedCall' and 'RecordedCall'`. That crash was
+            # reproduced against live production history during a plain unpinned
+            # `morning` rehearsal (2026-08-29): it took down the rest of the session
+            # by exhausting tech_analyst's retry/failover budget and tripping the
+            # cost circuit's provider-attempt limit. Comparing indices instead of
+            # objects keeps the same documented tie-break ("lowest agent_logs row
+            # id"), extended deterministically to prefer the earliest part when two
+            # candidates share a row_id, without ever needing the objects to be
+            # orderable.
+            keys = [
+                (_jaccard(live_words, c.words), -c.row_id, -i)
+                for i, c in enumerate(candidates)
+            ]
+            best_index = max(range(len(candidates)), key=lambda i: keys[i])
+            chosen = candidates[best_index]
+            score = keys[best_index][0]
             chosen.consumed = True
 
             self.matches.append({

@@ -77,6 +77,40 @@ STATUS_PLAIN = {
         "Trades were approved, but there was not enough settled cash to pay "
         "for any of them, so nothing was submitted."
     ),
+    # The five statuses below are real terminal outcomes of run_midday /
+    # run_close / run_intra_check / run_evening — confirmed both by reading
+    # src/pipeline.py (run_position_review's "reviewed", run_evening's
+    # "analyzed", run_intra_check's "ok") and by production's OWN
+    # notifier/feed code already treating them as healthy completions, not
+    # failures: `src/trader_feed.py` groups "reviewed", "intraday_no_trades",
+    # "no_trades" and "ok" together, and `src/notifier.py` groups "executed",
+    # "analyzed", "reviewed", "preprocessed" and "reflected" together as the
+    # statuses that get a normal notification. Before this fix, every one of
+    # them was reported as VERDICT: FAIL here (via `_verdict`'s "healthy" set
+    # below) purely because report.py's status vocabulary hadn't kept up with
+    # `src/pipeline.py`'s — a plain midday/close position review or an
+    # uneventful intra_check reads as a broken rehearsal even though nothing
+    # went wrong. Reproduced against real production history (2026-08-29):
+    # `midday`, `close` and `intra_check` rehearsals all completed cleanly and
+    # were all still marked FAIL before this fix.
+    "reviewed": (
+        "The session ran all the way through and reviewed the open "
+        "positions (or there were none to review)."
+    ),
+    "ok": (
+        "The session ran its check and found nothing that required action."
+    ),
+    "analyzed": (
+        "The session ran all the way through the evening review and "
+        "analysis."
+    ),
+    "intraday_no_trades": (
+        "The intra-session check ran its full analysis and decided to "
+        "propose no trades."
+    ),
+    "intraday_executed": (
+        "The intra-session check ran and submitted orders."
+    ),
 }
 
 # Why an approved BUY died at the last moment, in the execution stage.
@@ -629,5 +663,13 @@ def _verdict(report: RehearsalReport) -> str:
         return "FAIL"
     if any(f["kind"] == "missing_recorded_response" for f in report.findings):
         return "FAIL"
-    healthy = {"executed", "no_orders", "no_trades", "market_holiday"}
+    # "reviewed" / "ok" / "analyzed" / "intraday_no_trades" / "intraday_executed"
+    # are the normal completions of run_midday, run_close, run_intra_check and
+    # run_evening — see the matching STATUS_PLAIN entries above for how this was
+    # confirmed against src/pipeline.py and against production's own
+    # trader_feed.py / notifier.py status groupings.
+    healthy = {
+        "executed", "no_orders", "no_trades", "market_holiday",
+        "reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed",
+    }
     return "PASS" if report.status in healthy else "FAIL"
