@@ -514,7 +514,21 @@ class LLMCostCircuitConfig(BaseModel):
     daily_reserved_exposure_limit_usd: float = Field(
         default=1.90, gt=0, allow_inf_nan=False,
     )
-    max_paid_sessions_per_mode_per_day: int = Field(default=2, ge=1)
+    # RUNAWAY BACKSTOP, not the working budget. Until 2026-08-28 this was 2
+    # and it was the binding constraint on every trading day: intra_check
+    # fires 14 times between 09:30 and 16:00 ET, two of those could think, and
+    # the other twelve suspended. Measured 2026-08-25/26/27 — 4, 7 and 6
+    # suspensions per day while only $1.02 of a $2.75 daily budget was spent.
+    # The dollar caps below are the real limit and they are hard; this exists
+    # only to stop a retry loop burning the day's budget in one mode, which
+    # has happened before (see the pre-2026-08-27 spend contamination).
+    max_paid_sessions_per_mode_per_day: int = Field(default=8, ge=1)
+    # Spec Phase 6.1. Fraction of the daily budget held back until
+    # `afternoon_reserve_release_et_hour`, so a busy morning cannot starve the
+    # midday/close/evening sessions — those carry every exit decision, which
+    # is the half of the book that protects capital rather than deploying it.
+    afternoon_reserve_pct: float = Field(default=40.0, ge=0.0, le=90.0)
+    afternoon_reserve_release_et_hour: int = Field(default=12, ge=0, le=23)
     # Includes the initial request.  Two means one transient retry at most;
     # a provider failover would be attempt three and is blocked/latches.
     max_provider_attempts_per_call: int = Field(default=2, ge=1)

@@ -2085,6 +2085,28 @@ class LLMCostCircuitBreaker:
             self.config.daily_cost_limit_usd,
         ))
 
+    def _morning_spend_ceiling(self, now: datetime | None = None) -> float | None:
+        """How much of the day's budget may be spent before the afternoon.
+
+        Spec Phase 6.1. Returns None once the reserve is released, or when the
+        reserve is configured to zero.
+
+        The morning is where the cheap, plentiful opportunities look most
+        attractive and where a retry storm is most likely; the afternoon is
+        where every exit decision lives. A day that spends itself out by noon
+        has funded entries and defunded exits, which is exactly backwards for
+        capital preservation. So a fraction of the day is not spendable until
+        the afternoon, no matter how interesting the morning looks.
+        """
+        pct = float(getattr(self.config, "afternoon_reserve_pct", 0.0) or 0.0)
+        if pct <= 0:
+            return None
+        hour = int(getattr(self.config, "afternoon_reserve_release_et_hour", 12))
+        local = (now or datetime.now(timezone.utc)).astimezone(_ET)
+        if local.hour >= hour:
+            return None
+        return self._daily_exposure_limit() * (1.0 - pct / 100.0)
+
     def begin_call(
         self,
         *,
