@@ -506,10 +506,15 @@ def _settle_cheap_session(circuit, path, run_id, mode, cost):
     circuit.complete_call(reservation, cost, actual_model=reservation.model)
 
 
-def test_old_session_count_default_would_have_blocked_the_2026_08_28_scenario(tmp_path):
-    """Confirms the failure was real: with the OLD default (2), a 3rd
-    same-day intra_check session is blocked regardless of how little money
-    has actually been spent -- exactly the 11:30 ET stop at $0.1765/day."""
+def test_old_session_count_default_no_longer_blocks_paid_sessions(tmp_path):
+    """Historically (Defect 4, pre-4.1): with the OLD default (2), a 3rd
+    same-day intra_check session was blocked regardless of how little money
+    had actually been spent -- exactly the 11:30 ET stop at $0.1765/day.
+    That was a COUNTING bug (`logical_calls>0 OR provider_attempts>0` counts
+    every session that did anything, paid or not), not a config bug -- so
+    fixing the query, not just raising the number, must mean even this
+    dangerously-low old default (2) does not block a 3rd PAID session
+    (Defect 4.1, 2026-08-29)."""
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
@@ -519,14 +524,14 @@ def test_old_session_count_default_would_have_blocked_the_2026_08_28_scenario(tm
     _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.0588)
 
     circuit.activate_session("intra_check-2", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id
     state = circuit.status()
-    assert state["trigger_code"] == "session_retry_limit"
-    assert state["current_daily_cost_usd"] < 0.20
+    assert state["suspended"] is False
+    assert notifier.messages == []
 
 
 def test_fixed_default_no_longer_blocks_the_2026_08_28_scenario(tmp_path):
@@ -550,7 +555,13 @@ def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
     """The count cap must still exist as a backstop: a loop of sessions
     that spend essentially nothing (e.g. every attempt is a Defect-2
     known-zero-cost rejection) would never trip a dollar-based check, so
-    something must still stop it."""
+    something must still stop it.
+
+    Post-4.1 the trip is a bounded cooling-off window rather than a sticky
+    mode-day latch (see the cooling-off tests below), so unlike the old
+    behaviour `circuit.status()` right after is NOT expected to still show
+    it -- the raised exception's own state is the thing to check, exactly
+    like the afternoon reserve's non-sticky checks elsewhere in this file."""
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
@@ -560,13 +571,12 @@ def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
         _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
 
     circuit.activate_session("intra_check-3", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended):
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
             agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
-    state = circuit.status()
-    assert state["trigger_code"] == "session_retry_limit"
+    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
 
 
 def test_mode_daily_spend_limit_trips_on_dollars_not_session_count(tmp_path):
@@ -623,6 +633,217 @@ def test_mode_daily_spend_limit_does_not_block_a_different_mode(tmp_path):
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id
+
+
+# ============================================================================
+# Defect 4.1 (2026-08-29): the backstop's counting query counted every
+# session that did ANY work (`logical_calls>0 OR provider_attempts>0`), not
+# just a free-failure loop -- `logical_calls` is set the instant a
+# reservation is admitted, before any provider attempt, and is never
+# cleared on failure, so it is >0 for every session that ever placed a
+# reservation, paid or not. A normal trading day burned the backstop down
+# on its own, and raising the number (2 -> 8 -> 40) only masked that. Fixed
+# to count only sessions with a provider attempt that settled at zero cost,
+# and changed from a mode-day latch to a bounded, self-healing cooling-off
+# window (see the module-level NOTE on "session_retry_limit" in
+# src/cost_circuit.py).
+# ============================================================================
+
+def test_healthy_day_many_paid_sessions_never_trip_the_backstop(tmp_path):
+    """A normal trading day: successful, money-spending sessions must never
+    consume backstop budget, no matter how many of them there are. N=20 is
+    well above the cap of 8 -- under the OLD counting rule this would
+    definitely have latched the mode for the rest of the day, exactly like
+    2026-08-28."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_paid_sessions_per_mode_per_day=8), notifier,
+    )
+    for i in range(20):
+        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.01)
+
+    circuit.activate_session("intra_check-20", "intra_check")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id
+    assert circuit.status()["suspended"] is False
+    assert notifier.messages == []
+
+
+def test_genuine_free_failure_loop_trips_the_backstop_at_the_cap(tmp_path):
+    """The counterpart to the healthy-day test above: sessions that made a
+    provider attempt and settled at exactly zero cost DO count, and the 9th
+    such session in one mode/day is blocked with `session_retry_limit`."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_paid_sessions_per_mode_per_day=8), notifier,
+    )
+    for i in range(8):
+        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
+
+    circuit.activate_session("intra_check-8", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
+
+
+def test_mixed_day_only_free_failures_count_toward_the_backstop(tmp_path):
+    """Free failures interleaved with paid successes in the same mode/day:
+    only the free-failure sessions count. 8 paid successes contribute
+    nothing; the 8 free failures interleaved with them still trip the cap
+    of 8 on the 9th free failure."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_paid_sessions_per_mode_per_day=8), notifier,
+    )
+    for i in range(8):
+        _settle_cheap_session(circuit, path, f"paid-{i}", "intra_check", 0.02)
+        _settle_cheap_session(circuit, path, f"free-{i}", "intra_check", 0.0)
+
+    circuit.activate_session("intra_check-next", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
+    assert excinfo.value.state["daily_cost_usd"] == pytest.approx(0.16)
+
+
+def test_backstop_cools_off_after_the_configured_window(tmp_path):
+    """After a backstop trip, a call inside the cooling-off window is still
+    blocked; a call after `backstop_cooloff_minutes` have elapsed is
+    admitted again -- and the dollar ceilings, untouched by this change,
+    still fire normally afterward."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            max_paid_sessions_per_mode_per_day=3,
+            backstop_cooloff_minutes=10,
+            daily_cost_limit_usd=10.0,
+            daily_reserved_exposure_limit_usd=10.0,
+            session_cost_limit_usd=10.0,
+            session_reserved_exposure_limit_usd=10.0,
+        ),
+        notifier,
+    )
+    for i in range(3):
+        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
+
+    circuit.activate_session("intra_check-3", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
+
+    # Still inside the 10-minute window (no time has passed): still blocked.
+    circuit.activate_session("intra_check-4", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
+
+    # Simulate the window elapsing: backdate the free-failure sessions'
+    # last activity past backstop_cooloff_minutes, the same technique
+    # _seed_agent_log_history above uses to backdate agent_logs rows.
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=11)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_sessions SET updated_at=? WHERE mode='intra_check' "
+            "AND run_id IN ('intra_check-0', 'intra_check-1', 'intra_check-2')",
+            (stale,),
+        )
+        conn.commit()
+
+    circuit.activate_session("intra_check-5", "intra_check")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, 0.0, actual_model=reservation.model)
+
+    # Dollar ceilings are untouched by any of this: settle real spend right
+    # up to daily_cost_limit_usd and confirm the next call still trips a
+    # genuine dollar-based limit, exactly as before this change.
+    _settle_cheap_session(circuit, path, "intra_check-6", "intra_check", 10.0)
+    circuit.activate_session("intra_check-7", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "daily_cost_limit"
+
+
+def test_mode_daily_spend_limit_still_latches_for_the_day_unaffected_by_cooloff(tmp_path):
+    """Proof the cooling-off change is scoped to session_retry_limit only:
+    a genuine dollar trip (mode_daily_spend_limit here) still latches
+    mode-day exactly as before, and does NOT recover just because time
+    passes the way the backstop now deliberately does -- only an ET-day
+    rollover clears it."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path,
+        _config(
+            daily_reserved_exposure_limit_usd=1.0,
+            daily_cost_limit_usd=1.0,
+            max_mode_daily_exposure_pct=50.0,
+            max_paid_sessions_per_mode_per_day=100,
+            backstop_cooloff_minutes=5,
+        ),
+        notifier,
+    )
+    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.30)
+    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.25)
+
+    circuit.activate_session("intra_check-2", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "mode_daily_spend_limit"
+    assert circuit.status()["hold_scope"] == "mode_day"
+
+    # Fast-forward well past even a short backstop cooloff -- a persisted
+    # mode_day hold must not release on a clock, only on day rollover.
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_quota_holds SET created_at=? WHERE active=1",
+            (
+                (datetime.now(timezone.utc) - timedelta(hours=6)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+            ),
+        )
+        conn.commit()
+
+    circuit.activate_session("intra_check-3", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "mode_daily_spend_limit"
 
 
 def test_morning_spend_ceiling_pure_computation():
@@ -1105,7 +1326,13 @@ def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
     assert first.status()["suspended"] is True
 
 
-def test_third_paid_session_in_same_mode_is_blocked(tmp_path):
+def test_third_paid_session_in_same_mode_is_not_blocked_by_backstop(tmp_path):
+    """Pre-4.1 this blocked the 3rd session purely on count, even though
+    every session so far had settled real, positive cost -- the exact
+    counting defect Defect 4.1 fixes. A session that spent money is the
+    per-mode dollar allowance's problem (see the mode_daily_spend_limit
+    tests above), never this backstop's, no matter how low the count cap
+    is configured."""
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
@@ -1122,27 +1349,22 @@ def test_third_paid_session_in_same_mode_is_blocked(tmp_path):
         circuit.complete_call(reservation, 0.001, actual_model=reservation.model)
 
     circuit.activate_session("run-three", "morning")
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.begin_call(
-            agent_name="tech_analyst",
-            model="google/gemini-2.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert circuit.status()["trigger_code"] == "session_retry_limit"
-    assert "paid session attempt 3" in notifier.messages[0]
-    assert circuit.status()["hold_scope"] == "mode_day"
-
-    circuit.activate_session("run-other-mode", "midday")
     reservation = circuit.begin_call(
         agent_name="tech_analyst",
         model="google/gemini-2.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
-    assert reservation.reservation_id != "disabled"
-
-    circuit.activate_session("run-four", "morning")
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.require_paid_analysis("same_mode_again")
+    assert reservation.reservation_id
+    assert circuit.status()["suspended"] is False
+    assert notifier.messages == []
+    # No mode-scoping or require_paid_analysis assertions here any more:
+    # pre-4.1 this test also proved the trip was visible cross-call via
+    # `require_paid_analysis`/`status()` because it was a persisted
+    # mode_day quota hold. Post-4.1 the backstop is deliberately as
+    # non-sticky as the afternoon reserve (see the module-level NOTE on
+    # "session_retry_limit"): it only ever fires inside `begin_call` itself,
+    # never via `status()`/`require_paid_analysis()` -- see the cooling-off
+    # tests below for the trigger's real (bounded, self-healing) lifetime.
 
 
 def test_quota_hold_cannot_authorize_an_old_reservation_above_settled_cap(tmp_path):
@@ -1545,7 +1767,11 @@ def test_production_pm_sized_prompt_fits_reserved_exposure_cap(tmp_path):
         ("projected_daily_cost_limit", "day"),
         ("provider_projected_daily_cost_limit", "day"),
         ("outstanding_projected_daily_cost_limit", "day"),
-        ("session_retry_limit", "mode_day"),
+        # "session_retry_limit" is deliberately absent here (Defect 4.1,
+        # 2026-08-29): like "morning_spend_ceiling", it is never passed to
+        # _trip_locked any more -- see the module-level NOTE on
+        # "session_retry_limit" by `_MODE_DAY_QUOTA_TRIGGERS` in
+        # src/cost_circuit.py.
         ("mode_daily_spend_limit", "mode_day"),
         ("session_cost_limit", "session"),
         ("projected_session_cost_limit", "session"),

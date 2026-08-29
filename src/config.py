@@ -602,18 +602,42 @@ class LLMCostCircuitConfig(BaseModel):
         default=1.90, gt=0, allow_inf_nan=False,
     )
     # RUNAWAY BACKSTOP, not the working budget (Defect 4, 2026-08-28). Until
-    # this fix it was 2 and it WAS the binding constraint on every trading
-    # day: intra_check fires 14 times between 09:30 and 16:00 ET, two of
-    # those could think and the other twelve suspended. Measured 2026-08-25/
-    # 26/27: 4, 7 and 6 suspensions per day while only $1.02 of a $2.75 daily
-    # budget was spent -- the 2026-08-28 11:30 ET stop hit this at 17 cents
-    # of actual spend. max_mode_daily_exposure_pct below is the real,
-    # dollar-based per-mode limit now; this exists only to stop a retry loop
-    # spinning forever within one mode without ever spending real money (a
-    # provably-zero-cost failure loop, now possible after the Defect 2 fix,
-    # would never trip a dollar-based check at all) -- an infinite-loop
+    # the Defect 4 fix it was 2 and it WAS the binding constraint on every
+    # trading day: intra_check fires 14 times between 09:30 and 16:00 ET,
+    # two of those could think and the other twelve suspended. Measured
+    # 2026-08-25/26/27: 4, 7 and 6 suspensions per day while only $1.02 of a
+    # $2.75 daily budget was spent -- the 2026-08-28 11:30 ET stop hit this
+    # at 17 cents of actual spend. max_mode_daily_exposure_pct below is the
+    # real, dollar-based per-mode limit; this exists only to stop a retry
+    # loop spinning forever within one mode without ever spending real money
+    # (a provably-zero-cost failure loop, now possible after the Defect 2
+    # fix, would never trip a dollar-based check at all) -- an infinite-loop
     # backstop, not a budget.
+    #
+    # Defect 4.1 (2026-08-29): raising this number was never the fix,
+    # because the counting query itself was wrong -- it counted every
+    # session that did ANY work (`logical_calls>0 OR provider_attempts>0`),
+    # including successful, money-spending ones, so a normal trading day
+    # burned the backstop down on its own. Operators kept raising it (2 ->
+    # 8 -> 40 in config/settings.yaml) to keep the desk running, which
+    # disabled the guard instead of fixing it. `LLMCostCircuitBreaker.
+    # begin_call` now counts only sessions that made provider attempts and
+    # settled at zero cost (see its comment at the check site) -- under
+    # that corrected count, 8 means "eight entirely free, entirely failed
+    # sessions in one mode in one day", which is unambiguous breakage. 40
+    # was never a real ceiling; it was the old counter's false-positive
+    # rate.
     max_paid_sessions_per_mode_per_day: int = Field(default=8, ge=1)
+    # Bounded cooling-off window for the backstop above (Defect 4.1,
+    # 2026-08-29): a zero-cost failure loop is almost always a transient
+    # provider outage, and latching a mode dark for the rest of the ET day
+    # on a transient is exactly the 2026-08-28 failure this remediation
+    # exists to stop. The dollar ceilings above are what actually protect
+    # money; this guard only needs to stop a spin for a while, then get out
+    # of the way -- see LLMCostCircuitBreaker.begin_call. 5..720 minutes
+    # (5 minutes .. 12 hours) keeps it from being tuned into either a no-op
+    # or a de-facto day-long latch again.
+    backstop_cooloff_minutes: int = Field(default=60, ge=5, le=720)
     # Defect 4 operative per-mode limit: the fraction of
     # daily_reserved_exposure_limit_usd any ONE mode may reserve/spend in a
     # single ET day. A fraction of the existing day-wide exposure ceiling
