@@ -311,6 +311,22 @@ class ExecutionConfig(BaseModel):
     with reason `slippage_gated` rather than submitted as an unfillable
     order."""
 
+    repeg_enabled: bool = False
+    """Master switch for bounded entry re-pegging. OFF by default so the
+    feature can be deployed dark: with it off, `_repeg_entry_order` returns
+    the original order id untouched and not a single broker call is made."""
+
+    repeg_max_attempts: int = Field(default=2, ge=1, le=5)
+    """Hard cap on replacements per entry order. A replacement mints a new
+    order id at Alpaca, so an unbounded loop is an unbounded chain of
+    untracked ids; low single digits is the whole point."""
+
+    repeg_poll_seconds: float = Field(default=5.0, gt=0, le=30)
+    """How long to let the working order rest before each re-peg attempt.
+    Total added latency per entry is bounded by
+    `repeg_max_attempts * repeg_poll_seconds`, and lands BEFORE
+    `place_entry_protection`'s own fill wait."""
+
 
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)

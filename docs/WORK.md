@@ -844,11 +844,28 @@ Two facts worth acting on:
    `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depended on Phase 2b — now
    committed (`75c0233`, `feat/pm-flex-routing`) — because "agreement earns
    size" is meaningless until size is expressed as risk.
-2. **Execution: bounded re-peg.** PR #111 fixed the limit-as-ceiling bug and
-   the unfillable-order submission. Still open: replace a working order toward
-   the moving NBBO up to the slippage ceiling. Note the footgun — an Alpaca
-   replacement mints a NEW order id, so the state machine must track it and
-   handle partial fills rather than blind-looping PATCHes.
+2. **Execution: bounded re-peg — BUILT, SHIPPED DARK, AND MOSTLY INERT, merged
+   from `feat/bounded-repeg` (PR #144 opened against `main`, 2026-08-29).**
+   `execution.repeg_enabled` (default **false**), `repeg_max_attempts`
+   (default 2, schema-capped at 5), the `pending_repegs` write-ahead queue and
+   its session-start drain, `broker.replace_entry_limit` /
+   `resolve_replacement_chain`, and
+   `place_entry_protection(superseded_filled_qty=...)` so a fill that landed
+   under a superseded order id still gets a stop. A partially filled order is
+   NEVER replaced (that is how one idea gets bought twice), a rejected
+   replacement means the order filled and the chase stops, and every
+   ambiguous branch leaves the order working.
+
+   **Read this before enabling it.** Since PR #111 a BUY limit is submitted
+   AT the slippage ceiling whenever a quote is available, so there is nothing
+   to walk toward and the re-peg is a no-op by construction for those
+   entries. It only has room where the limit was set BELOW the ceiling —
+   today that means the quote was unavailable at submission and the analyst's
+   entry price was used. Turning the flag on will therefore do approximately
+   nothing until the entry pricing policy changes. Deciding whether entries
+   should peg tighter than the ceiling (and then be walked up) is a policy
+   question that reverses part of #111's reasoning and was deliberately NOT
+   taken here.
 3. **Earnings filing extraction fix — PR #115 (`009ab78`, branch
    `feat/shorts-visible`, misnamed — it carries the earnings fix, not
    shorting), merged into `main`.** Deploy status is not tracked here — check
@@ -1215,8 +1232,14 @@ paid) if it's wanted.
 
 #### OPEN PRs — none, as of 2026-08-29
 
-No open pull requests. Production is deployed at `dcbb4d6`. Landed
-on 2026-08-28/29:
+No open pull requests. Landed on 2026-08-28/29:
+
+- #144 — bounded entry re-peg; ships with the behaviour switched off,
+  so nothing changes until it is deliberately enabled
+- #145 — repaired the dashboard visual-acceptance harness and
+  regenerated its reference screenshots
+- #142 — this document, the board manifest and the defects log
+  reconciled against what the code actually does today
 
 - #138 — mobile horizontal overflow at phone width; the cause was
   the header status row, not the Trades table
