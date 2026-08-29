@@ -161,11 +161,26 @@ export interface TradeItem {
   timestamp: string | null;
   stop_loss: number | null;
   take_profit: number | null;
+  position_id?: string | null;
+  exit_reason_category?: string | null;
 }
 
 export interface TradesResponse {
   trades: TradeItem[];
   count: number;
+}
+
+export interface PositionHistoryResponse {
+  position_id: string;
+  symbol: string;
+  status: "open" | "closed";
+  entry: TradeItem;
+  interim: TradeItem[];
+  exit: TradeItem | null;
+  realized_pnl_total: number | null;
+  realized_pnl_partial: boolean;
+  hold_days: number | null;
+  trade_count: number;
 }
 
 export interface PriceBar {
@@ -737,6 +752,8 @@ export const api = {
   orders: (status: "open" | "closed" | "all" = "open") =>
     getJSON<OrdersResponse>(`/orders?status=${status}`),
   trades: (limit = 30) => getJSON<TradesResponse>(`/trades?limit=${limit}`),
+  positionHistory: (positionId: string) =>
+    getJSON<PositionHistoryResponse>(`/positions/${encodeURIComponent(positionId)}/history`),
   prices: (symbol: string, lookbackDays = 120, timeframe: ChartTimeframe = "1d") =>
     getJSON<PriceBarsResponse>(
       `/prices/${encodeURIComponent(symbol)}?lookback_days=${lookbackDays}&timeframe=${timeframe}`

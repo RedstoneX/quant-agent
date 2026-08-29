@@ -573,6 +573,7 @@ class TradingPipeline:
             smart_money_provider=self.smart_money_provider,
             smart_money_analyst=self.smart_money_analyst,
             admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
+            admit_nominated_candidates_fn=self._admit_nominated_external_symbols,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
             run_news_update_fn=self._run_news_update,
             load_earnings_analyses_fn=self._load_earnings_analyses,
@@ -802,6 +803,126 @@ class TradingPipeline:
 
         return allowed_decisions, blocked_reasons
 
+    def _evaluate_external_admission_gates(
+        self,
+        symbol: str,
+        *,
+        context: str = "external",
+    ) -> tuple[bool, str | None, dict]:
+        """Deterministic broker + market-quality gates for admitting a
+        symbol OUTSIDE the configured universe.
+
+        Shared by two callers that each decide WHICH symbols are worth
+        gating (a different question) but must apply IDENTICAL gates once
+        a symbol is a candidate: the SEC Form 4 smart-money transient-
+        admission lane (`_admit_transient_smart_money_symbols`) and the
+        Phase 9 nomination responder lane
+        (`_admit_nominated_external_symbols`). The source of the candidate
+        differs — a material Form 4 purchase vs. a research seat's
+        nomination — but the trading-surface facts a candidate must clear
+        before it can be bought (broker eligibility, price, liquidity,
+        history, resolved sector) are exactly the same facts, so both
+        callers share this one gate rather than each maintaining its own
+        copy that could quietly drift apart.
+
+        Returns ``(eligible, rejection_reason, details)``. ``details`` is
+        populated only when eligible: ``last_price``,
+        ``avg_dollar_volume_20d_usd``, ``sector``, ``broker``.
+        ``rejection_reason`` is one of: ``broker_ineligible`` (or the
+        broker's own reason string), ``market_data_error``,
+        ``insufficient_history``, ``invalid_market_data``,
+        ``price_below_minimum``, ``dollar_volume_below_minimum``,
+        ``unresolved_sector``.
+        """
+        cfg = self.config.smart_money
+        broker_fact = self.broker.get_transient_equity_eligibility(symbol)
+        if not broker_fact.get("eligible"):
+            reason = broker_fact.get("reason", "broker_ineligible")
+            logger.info("%s admission rejected %s: %s", context, symbol, reason)
+            return False, reason, {}
+        try:
+            bars = self.market.get_ohlcv(
+                symbol,
+                max(self.config.trading.lookback_days, cfg.min_external_history_days + 5),
+            ) or []
+        except Exception as exc:
+            logger.warning("%s admission bars failed for %s: %s", context, symbol, exc)
+            return False, "market_data_error", {}
+        if len(bars) < cfg.min_external_history_days:
+            logger.info("%s admission rejected %s: insufficient_history", context, symbol)
+            return False, "insufficient_history", {}
+        recent = bars[-20:]
+        try:
+            last_price = float(recent[-1].close)
+            avg_dollar_volume = sum(
+                float(bar.close) * float(bar.volume) for bar in recent
+            ) / len(recent)
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            logger.info("%s admission rejected %s: invalid_market_data", context, symbol)
+            return False, "invalid_market_data", {}
+        if last_price < cfg.min_external_price_usd:
+            logger.info(
+                "%s admission rejected %s: price %.2f < %.2f",
+                context, symbol, last_price, cfg.min_external_price_usd,
+            )
+            return False, "price_below_minimum", {}
+        if avg_dollar_volume < cfg.min_external_avg_dollar_volume_usd:
+            logger.info(
+                "%s admission rejected %s: avg dollar volume %.0f < %.0f",
+                context, symbol, avg_dollar_volume,
+                cfg.min_external_avg_dollar_volume_usd,
+            )
+            return False, "dollar_volume_below_minimum", {}
+        sector = _get_sector(symbol) or "Unknown"
+        if sector == "Unknown":
+            logger.info("%s admission rejected %s: unresolved_sector", context, symbol)
+            return False, "unresolved_sector", {}
+        return True, None, {
+            "last_price": round(last_price, 4),
+            "avg_dollar_volume_20d_usd": round(avg_dollar_volume, 2),
+            "sector": sector,
+            "broker": broker_fact,
+        }
+
+    def _admit_nominated_external_symbols(
+        self,
+        symbols: list,
+    ) -> tuple[set[str], dict[str, dict]]:
+        """Phase 9 (§9.1/§9.2) — admit nominated symbols OUTSIDE the
+        configured universe.
+
+        No LLM output (a nomination) can grant BUY eligibility on its
+        own — only the deterministic gates in
+        `_evaluate_external_admission_gates` can, the SAME gates the
+        SEC Form 4 smart-money lane already applies. A symbol already
+        inside the configured universe never reaches this function; the
+        caller (`MorningResearchStage._run_nomination_responder_pass`)
+        filters those out first since they need no gate at all.
+
+        Unlike `_admit_transient_smart_money_symbols`, there is no cap
+        applied HERE — the caller has already applied the per-seat and
+        global nomination caps (`src.nominations.select_nominations`)
+        before a symbol ever reaches this gate, so every symbol passed in
+        is already a bounded, ranked candidate.
+        """
+        admitted: set[str] = set()
+        details: dict[str, dict] = {}
+        for symbol in sorted({
+            str(s).strip().upper() for s in symbols if str(s).strip()
+        }):
+            eligible, _reason, gate_details = self._evaluate_external_admission_gates(
+                symbol, context="nomination",
+            )
+            if not eligible:
+                continue
+            details[symbol] = {
+                "temporary": True,
+                "reason": "nomination_external_admission",
+                **gate_details,
+            }
+            admitted.add(symbol)
+        return admitted, details
+
     def _admit_transient_smart_money_symbols(
         self,
         observations: list,
@@ -811,7 +932,10 @@ class TradingPipeline:
         The source provider owns filing provenance, P/S parsing, recency,
         materiality and independent-owner clustering. This second gate owns
         the trading-surface facts the SEC cannot know: Alpaca eligibility,
-        price, history and liquidity. The output lives only on RunContext.
+        price, history and liquidity — via `_evaluate_external_admission_gates`,
+        shared with the Phase 9 nomination responder lane
+        (`_admit_nominated_external_symbols`). The output lives only on
+        RunContext.
         """
         cfg = self.config.smart_money
         configured = {
@@ -841,52 +965,10 @@ class TradingPipeline:
         for symbol, rows in sorted(grouped.items(), key=_rank):
             if len(admitted) >= cfg.max_external_candidates:
                 break
-            broker_fact = self.broker.get_transient_equity_eligibility(symbol)
-            if not broker_fact.get("eligible"):
-                logger.info(
-                    "SEC transient admission rejected %s: %s",
-                    symbol, broker_fact.get("reason", "broker_ineligible"),
-                )
-                continue
-            try:
-                bars = self.market.get_ohlcv(
-                    symbol,
-                    max(self.config.trading.lookback_days, cfg.min_external_history_days + 5),
-                ) or []
-            except Exception as exc:
-                logger.warning("SEC transient admission bars failed for %s: %s", symbol, exc)
-                continue
-            if len(bars) < cfg.min_external_history_days:
-                logger.info("SEC transient admission rejected %s: insufficient_history", symbol)
-                continue
-            recent = bars[-20:]
-            try:
-                last_price = float(recent[-1].close)
-                avg_dollar_volume = sum(
-                    float(bar.close) * float(bar.volume) for bar in recent
-                ) / len(recent)
-            except (AttributeError, TypeError, ValueError, ZeroDivisionError):
-                logger.info("SEC transient admission rejected %s: invalid_market_data", symbol)
-                continue
-            if last_price < cfg.min_external_price_usd:
-                logger.info(
-                    "SEC transient admission rejected %s: price %.2f < %.2f",
-                    symbol, last_price, cfg.min_external_price_usd,
-                )
-                continue
-            if avg_dollar_volume < cfg.min_external_avg_dollar_volume_usd:
-                logger.info(
-                    "SEC transient admission rejected %s: avg dollar volume %.0f < %.0f",
-                    symbol, avg_dollar_volume,
-                    cfg.min_external_avg_dollar_volume_usd,
-                )
-                continue
-            sector = _get_sector(symbol) or "Unknown"
-            if sector == "Unknown":
-                logger.info(
-                    "SEC transient admission rejected %s: unresolved_sector",
-                    symbol,
-                )
+            eligible, _reason, gate_details = self._evaluate_external_admission_gates(
+                symbol, context="SEC transient",
+            )
+            if not eligible:
                 continue
             accessions = sorted({
                 str(getattr(row, "accession_number", "") or "") for row in rows
@@ -917,10 +999,7 @@ class TradingPipeline:
                 "accessions": accessions,
                 "owners": owners,
                 "transaction_value_usd": total_value,
-                "last_price": round(last_price, 4),
-                "avg_dollar_volume_20d_usd": round(avg_dollar_volume, 2),
-                "sector": sector,
-                "broker": broker_fact,
+                **gate_details,
             }
             admitted.add(symbol)
         return admitted, details
@@ -9521,6 +9600,21 @@ class TradingPipeline:
         if sweeper is not None:
             positions, _parked = sweeper.split_positions(positions)
 
+        # Phase 6 (§6.3b): today's P&L expressed against capital actually AT
+        # RISK, not just total equity — reuses the same audit §1.3 heat
+        # calculation (`_build_portfolio_heat` -> `src.risk.metrics.
+        # portfolio_heat`) the risk-manager prompt already trusts, rather
+        # than recomputing it. None (not 0.0) on a failed build, so the
+        # notifier can say "unknown" instead of a fabricated number.
+        try:
+            risk_heat = self._build_portfolio_heat(positions, total_value)
+            risk_capital_dollars = (
+                risk_heat.budget_risk_dollars if risk_heat is not None else None
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("evening: risk-capital heat build failed: %s", e)
+            risk_capital_dollars = None
+
         # Sweep submitted orders before building the evening prompt so
         # canceled/expired orders do not get narrated as real trades, and
         # partial terminal fills are reflected in the trade list.
@@ -9973,6 +10067,12 @@ class TradingPipeline:
             "equity_close": equity_close,
             "pnl_4pm": pnl_4pm,
             "pnl_4pm_pct": pnl_4pm_pct,
+            # Phase 6 (§6.3b) — capital actually at risk (sum of
+            # (entry-stop) x shares across open positions), for the
+            # notifier's "P&L vs risk capital" line. None on a failed heat
+            # build; 0.0 for a genuinely flat/fully-released book — the
+            # notifier tells those two apart.
+            "risk_capital_dollars": risk_capital_dollars,
         }
 
     def _expected_sessions_missing_today(self) -> list[str]:

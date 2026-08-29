@@ -672,6 +672,33 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     def _fmt_pnl(v: float) -> str:
         return f"+${v:,.2f}" if v >= 0 else f"-${abs(v):,.2f}"
 
+    # Phase 6 (§6.3b) — the SAME day's P&L expressed against capital
+    # actually at risk, not just against total equity. "Risk capital" here
+    # is `sum((entry - stop) x shares)` across open positions — audit §1.3's
+    # `budget_risk_dollars` from `src.risk.metrics.portfolio_heat`, reused
+    # (not recomputed) via `TradingPipeline._build_portfolio_heat` and
+    # threaded through evening's result dict as `risk_capital_dollars`.
+    # Equity tells you how the whole book did; this tells you how the
+    # capital that was actually exposed today did — a much bigger number on
+    # a day the book was mostly in cash or mostly stopped-out to breakeven.
+    risk_capital = result.get("risk_capital_dollars")
+
+    def _append_risk_capital_line(pnl: float | None) -> None:
+        if risk_capital is None:
+            return  # heat build failed or wasn't available — say nothing, not a guess
+        if risk_capital <= 0:
+            # A flat book (or a book where every stop has trailed past
+            # entry, releasing all risk) — not a divide-by-zero, and NOT a
+            # fabricated 0%: there was no capital at risk to measure P&L
+            # against today.
+            lines.append("   vs risk capital: n/a — no capital currently at risk (flat book)")
+            return
+        if pnl is None:
+            return
+        risk_pct = pnl / risk_capital * 100
+        risk_str = f"+{risk_pct:.2f}%" if pnl >= 0 else f"{risk_pct:.2f}%"
+        lines.append(f"   vs risk capital: {risk_str}  (${risk_capital:,.2f} at risk)")
+
     if pnl_4pm is not None and equity_close is not None:
         # baseline = prior official close = equity_close - pnl_4pm.
         baseline = equity_close - pnl_4pm
@@ -682,6 +709,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
             ret_str = "n/a"
         lines.append(f"💰 Daily P&L: {_fmt_pnl(pnl_4pm)} ({ret_str})  ·  4pm close")
         lines.append(f"   Equity: ${equity_close:,.2f}")
+        _append_risk_capital_line(pnl_4pm)
     elif daily_pnl is not None and total_value is not None:
         # Fallback: real-time diff (prior close → 8pm, includes after-hours).
         # Return is P&L over PRIOR-day equity (= total_value − daily_pnl); using
@@ -695,6 +723,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
             ret_str = "n/a"
         lines.append(f"💰 Daily P&L: {_fmt_pnl(daily_pnl)} ({ret_str})")
         lines.append(f"   Equity: ${total_value:,.2f}")
+        _append_risk_capital_line(daily_pnl)
 
     # Suggested actions — surfaced HIGH in the message (right after the
     # headline P&L) so the tail-clip truncation in send() can never eat

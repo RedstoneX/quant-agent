@@ -281,6 +281,13 @@ smart_money:
   insider_min_material_sell_fraction: 0.05
   insider_history_retention_days: 1830
 
+nominations:
+  # Phase 9 — bounds on how many candidates News/Earnings/Macro may put in
+  # front of the Technical responder pass each run. See
+  # src/config.py::NominationConfig and docs/QAMC_REMEDIATION_SPEC.md §9.1.
+  max_per_seat_per_run: 3
+  max_total_per_run: 6
+
 news:
   # Max items placed in the news analyst's prompt after dedup (see
   # src/data/news.py RSS_FEEDS and NewsDataProvider.format_for_prompt).

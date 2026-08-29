@@ -236,11 +236,45 @@ class TradeItem(BaseModel):
     timestamp: str | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    # Phase 6 (§6.2a/e): links this trade to the position it belongs to, and
+    # (for an exit-family row only) the deterministic category its exit was
+    # classified into. Both None on rows written before this existed and
+    # not yet covered by scripts/backfill_position_ids.py, or on a row this
+    # system can't confidently attach to a chain — never fabricated.
+    position_id: str | None = None
+    exit_reason_category: str | None = None
 
 
 class TradesResponse(BaseModel):
     trades: list[TradeItem] = []
     count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# /positions/{position_id}/history
+# ---------------------------------------------------------------------------
+
+class PositionHistoryResponse(BaseModel):
+    position_id: str
+    symbol: str
+    status: str  # "open" | "closed" — closed once the chain's net qty is flat
+    entry: TradeItem
+    # Everything between entry and exit — TRAIL_STOP adjustments, partial
+    # REDUCE/TAKE_PROFIT trims, anything else that inherited this chain —
+    # each carrying its own `reasoning`, i.e. the review decision itself.
+    interim: list[TradeItem] = []
+    exit: TradeItem | None = None  # None while the position is still open
+    # Sum of `realized_pnl` across this chain's exit rows, or None when no
+    # exit has realized anything yet (still open, nothing sold).
+    realized_pnl_total: float | None = None
+    # True when at least one exit-family row in this chain realized a
+    # number but at least one other couldn't be priced (unknown cost
+    # basis) — realized_pnl_total is a PARTIAL sum in that case, not the
+    # whole story, and callers should say so rather than presenting it as
+    # complete.
+    realized_pnl_partial: bool = False
+    hold_days: float | None = None
+    trade_count: int = 0
 
 
 # ---------------------------------------------------------------------------
