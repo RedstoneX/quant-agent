@@ -46,7 +46,7 @@ _DAY_QUOTA_TRIGGERS = frozenset({
     "provider_projected_daily_cost_limit",
     "outstanding_projected_daily_cost_limit",
 })
-_MODE_DAY_QUOTA_TRIGGERS = frozenset({"session_retry_limit", "mode_daily_spend_limit"})
+_MODE_DAY_QUOTA_TRIGGERS = frozenset({"mode_daily_spend_limit"})
 _SESSION_QUOTA_TRIGGERS = frozenset({
     "session_cost_limit",
     "projected_session_cost_limit",
@@ -67,6 +67,20 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
 # overspend and then incorrectly keep blocking the very afternoon sessions
 # it exists to protect. It is instead re-evaluated fresh, from current
 # wall-clock time, on every `begin_call`; see `_morning_spend_ceiling`.
+
+# NOTE on "session_retry_limit" (Defect 4.1, 2026-08-29): also deliberately
+# absent from every set above, for the same reason as morning_spend_ceiling
+# just above. It used to live in _MODE_DAY_QUOTA_TRIGGERS and latch mode-day
+# until the next ET-day rollover -- correct for a limit whose spend only
+# grows within a day, wrong for a runaway-loop backstop, whose entire job is
+# to catch a TRANSIENT provider outage and get out of the way once it is
+# over. Killing a mode for the rest of the trading day on a transient is
+# precisely the 2026-08-28 failure this remediation exists to stop. It now
+# cools off on its own instead: the count `begin_call` compares against the
+# backstop is windowed to `backstop_cooloff_minutes` (see the check site in
+# `begin_call`), so once that many minutes pass without a fresh free-failure
+# session the count itself falls back under the cap -- no hold to persist,
+# no rollover to wait for.
 
 
 def _trigger_scope(code: Any) -> str:
@@ -2352,7 +2366,7 @@ class LLMCostCircuitBreaker:
 
         Defect 4 (2026-08-28): `begin_call` used to gate a new session on a
         flat COUNT of paid sessions per mode per day
-        (`max_paid_sessions_per_mode_per_day`), which produced the 11:30 ET
+        (`max_free_failure_sessions_per_mode`), which produced the 11:30 ET
         stop at 17 cents of actual spend -- intra_check's 3rd session that
         day, nowhere near any dollar limit. A count can't fit every mode:
         an intra_check tick can cost a few cents, a morning
@@ -2506,15 +2520,58 @@ class LLMCostCircuitBreaker:
                     (run_id,),
                 ).fetchone()
                 active_session_reserve = float(active_session_reserve_row["cost"] or 0)
-                paid_sessions_row = conn.execute(
+                backstop_cooloff_minutes = int(
+                    getattr(self.config, "backstop_cooloff_minutes", 60)
+                )
+                # Defect 4.1 (2026-08-29) fix to the runaway backstop's
+                # counting query. The guard exists for a loop that spends
+                # nothing; a session that spent money is the dollar
+                # ceilings' problem, and counting it here is what turned a
+                # runaway guard into a second, worse budget.
+                #
+                # The old predicate was `logical_calls>0 OR
+                # provider_attempts>0`. `logical_calls` does NOT mean
+                # "completed calls" -- it is incremented at the end of THIS
+                # method, the instant a reservation is admitted and BEFORE
+                # any provider attempt, and is never decremented on failure
+                # (see the `logical_calls=COUNT(reservation_id)` invariant
+                # enforced in `_validate_accounting_invariants`, and the sole
+                # write site below). So logical_calls>0 for every session
+                # that ever reserved a call at all, successful or not --
+                # meaning the old test counted every healthy, money-spending
+                # session too, and a normal trading day burned this backstop
+                # down on its own (raised 2 -> 8 -> 40 in
+                # config/settings.yaml chasing that false-positive rate,
+                # which didn't fix the guard, it disabled it).
+                #
+                # The correct, unambiguous signal is settled cost: a session
+                # that made a provider attempt and never settled any cost
+                # (`actual_cost_usd<=0`) never got a billable response --
+                # complete_call only adds a positive amount for a real
+                # response (or the conservative reserve for an "unknown"
+                # one), so `actual_cost_usd` stays exactly 0 only when every
+                # attempt ended through fail_call's known-zero-cost path (a
+                # 429/400/401/403/404 or pre-send transport failure -- see
+                # `_is_known_zero_cost_failure`). That is what "completed no
+                # logical call" actually cashes out to given how these
+                # columns are really written, so `logical_calls` drops out
+                # of the predicate entirely.
+                #
+                # Also windowed to `backstop_cooloff_minutes` rather than the
+                # whole ET day (Defect 4.1's second half -- see the elif
+                # below and the module NOTE on "session_retry_limit"): once
+                # that many minutes pass without a fresh free-failure
+                # session, this count falls back under the cap by itself.
+                free_failure_sessions_row = conn.execute(
                     "SELECT COUNT(*) AS n FROM llm_budget_sessions "
-                    "WHERE day=? AND mode=? AND run_id<>? AND "
-                    "(logical_calls>0 OR provider_attempts>0)",
-                    (day, mode, run_id),
+                    "WHERE day=? AND mode=? AND run_id<>? AND provider_attempts>0 "
+                    "AND COALESCE(actual_cost_usd, 0)<=0 "
+                    "AND updated_at >= datetime('now', ?)",
+                    (day, mode, run_id, f"-{backstop_cooloff_minutes} minutes"),
                 ).fetchone()
-                paid_sessions = int(paid_sessions_row["n"] or 0)
+                free_failure_sessions = int(free_failure_sessions_row["n"] or 0)
                 current_has_attempt = attempts > 0
-                max_sessions = int(self.config.max_paid_sessions_per_mode_per_day)
+                max_sessions = int(self.config.max_free_failure_sessions_per_mode)
                 max_session_retries = int(self.config.max_retry_attempts_per_session)
                 # Defect 4: dollar-based per-mode allowance, checked on every
                 # call (not just session admission) -- a session already
@@ -2564,26 +2621,74 @@ class LLMCostCircuitBreaker:
                         attempts=attempts, session_cost=session, daily_cost=daily,
                         costs_exact=False,
                     )
-                elif not current_has_attempt and paid_sessions >= max_sessions:
-                    # Backstop only (see max_paid_sessions_per_mode_per_day's
+                elif not current_has_attempt and free_failure_sessions >= max_sessions:
+                    # Backstop only (see max_free_failure_sessions_per_mode's
                     # config docstring): catches an infinite retry/session
                     # loop that the dollar check below cannot, because after
                     # the Defect 2 fix a loop of provably-zero-cost failures
                     # spends nothing and would never trip a dollar ceiling.
-                    self._trip_locked(
-                        conn, code="session_retry_limit",
-                        detail=(f"{mode} paid session attempt {paid_sessions + 1} exceeds "
-                                f"daily safe backstop {max_sessions}"),
-                        run_id=run_id, mode=mode, agent_name=agent_name, attempts=attempts,
-                        session_cost=session, daily_cost=daily,
-                        costs_exact=False,
+                    #
+                    # Defect 4.1 (2026-08-29): a bounded cooling-off window,
+                    # not a mode-day latch. A zero-cost failure loop is
+                    # almost always a transient provider outage; keeping the
+                    # mode dark for the rest of the trading day on a
+                    # transient is exactly the 2026-08-28 failure. The dollar
+                    # ceilings below are what actually protect money -- this
+                    # only needs to stop a spin. Deliberately NOT routed
+                    # through _trip_locked/_hold_quota_locked, same
+                    # reasoning as the afternoon reserve below (see the
+                    # module-level NOTE on "session_retry_limit" by
+                    # `_MODE_DAY_QUOTA_TRIGGERS`): a persisted mode_day hold
+                    # here would keep blocking this mode long after the loop
+                    # that caused it had already stopped. Still audited (a
+                    # `quota_held` event is recorded) and still raises
+                    # PaidAnalysisSuspended for this call; it just never
+                    # becomes a sticky state another call inherits --
+                    # `free_failure_sessions` above is already windowed to
+                    # `backstop_cooloff_minutes`, so it self-heals.
+                    detail = (
+                        f"{mode} had {free_failure_sessions} session(s) in the last "
+                        f"{backstop_cooloff_minutes} minute(s) with provider attempts "
+                        "but zero settled cost -- exceeds the free-failure-loop "
+                        f"backstop of {max_sessions}"
+                    )
+                    conn.execute(
+                        "INSERT INTO llm_circuit_events "
+                        "(event_type, trigger_code, detail, run_id, mode, agent_name, "
+                        "attempts, session_cost_usd, daily_cost_usd) VALUES "
+                        "('quota_held', ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            "session_retry_limit", detail, run_id, mode, agent_name,
+                            attempts, session + active_session_reserve,
+                            daily + reserved_day,
+                        ),
+                    )
+                    conn.commit()
+                    raise PaidAnalysisSuspended(
+                        detail,
+                        {
+                            "enabled": True,
+                            "suspended": True,
+                            "suspension_class": "quota",
+                            "auto_rearm": True,
+                            "requires_operator_reset": False,
+                            "trigger_code": "session_retry_limit",
+                            "trigger_detail": detail,
+                            "run_id": run_id,
+                            "mode": mode,
+                            "agent_name": agent_name,
+                            "session_attempts": attempts,
+                            "costs_exact": False,
+                            "session_cost_usd": session + active_session_reserve,
+                            "daily_cost_usd": daily + reserved_day,
+                        },
                     )
                 elif mode_settled + mode_reserved + reserve > self._mode_daily_exposure_limit():
                     # Defect 4's operative per-mode limit -- dollars, not a
-                    # session count. Mode-day scoped: like session_retry_limit,
-                    # this stays blocked until the next ET day (spend only
-                    # grows within a day, so rollover-only recovery is
-                    # correct here, unlike the afternoon reserve below).
+                    # session count. Mode-day scoped: this stays blocked
+                    # until the next ET day (spend only grows within a day,
+                    # so rollover-only recovery is correct here, unlike the
+                    # afternoon reserve below and the backstop above).
                     projected_mode = mode_settled + mode_reserved + reserve
                     self._trip_locked(
                         conn, code="mode_daily_spend_limit",

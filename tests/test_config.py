@@ -1037,3 +1037,53 @@ def test_shipped_settings_yaml_notifications_url_matches_default():
         (_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
     )
     assert raw["notifications"]["mission_control_url"] == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
+
+
+def test_load_config_rejects_renamed_free_failure_key(tmp_path):
+    # `llm_cost_circuit.max_paid_sessions_per_mode_per_day` was renamed to
+    # `max_free_failure_sessions_per_mode` (2026-08-29) once the counting
+    # query it gates stopped counting paid sessions at all. There is no
+    # backwards-compat alias: a settings file that still carries the old
+    # key must fail loudly at load time, naming the new key, rather than
+    # having pydantic's default `extra="ignore"` silently drop it and fall
+    # back to the field default.
+    yaml_content = """
+api_keys:
+  anthropic: "test-key"
+  fred: "fred-key"
+  alpaca_key: "alpaca-key"
+  alpaca_secret: "alpaca-secret"
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  paper: true
+llm:
+  tech_analyst_model: "claude-sonnet-4-6"
+  max_tokens: 4096
+risk:
+  max_position_pct: 20
+  max_total_position_pct: 90
+  max_daily_loss_pct: 3
+  max_sector_pct: 40
+  require_stop_loss: true
+trading:
+  universe: ["SPY", "QQQ"]
+  lookback_days: 120
+  schedule:
+    morning: "06:00"
+    midday: "12:00"
+    evening: "16:30"
+storage:
+  db_path: "data/quant_agent.db"
+llm_cost_circuit:
+  max_paid_sessions_per_mode_per_day: 8
+"""
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+
+    from pydantic import ValidationError
+    from src.config import load_config
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_config(config_file)
+
+    assert "max_free_failure_sessions_per_mode" in str(exc_info.value)

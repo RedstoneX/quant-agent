@@ -34,7 +34,6 @@ export function SupportTabs({
   runsLoading,
   health,
   healthError,
-  onSelectSymbol,
   onSelectPositionSymbol,
   onInspectOrder,
   onInspectTrade,
@@ -52,14 +51,11 @@ export function SupportTabs({
   runsLoading: boolean;
   health: HealthResponse | null;
   healthError: string | null;
-  onSelectSymbol?: (symbol: string) => void;
-  /** Symbol-cell-specific click for the Orders/Trades tables below —
-   * modal-free, same as PositionsPanel's onSelectSymbol. Deliberately
-   * distinct from onSelectSymbol above (which Missed Opportunities uses,
-   * and which may open a candidate-detail modal) — see
-   * SupportWorkspaceContext's onSelectPositionSymbol for the full
-   * rationale; this is that same callback threaded to the mobile/iPad
-   * fallback layout. */
+  /** Modal-free symbol click, threaded to every symbol-click affordance
+   * in this fallback layout — Orders/Trades symbol cell, Missed
+   * Opportunities, Search's symbol column — same callback and same rule
+   * as SupportWorkspaceContext's onSelectPositionSymbol (see there for
+   * the full rationale): chart the symbol, open nothing. */
   onSelectPositionSymbol?: (symbol: string) => void;
   onInspectOrder?: (order: OrderItem) => void;
   onInspectTrade?: (trade: TradeItem) => void;
@@ -109,11 +105,11 @@ export function SupportTabs({
 
       {tab === "runs" && <RunsPanel runs={runs} error={runsError} loading={runsLoading} />}
       {tab === "bias" && <DirectionalBiasPanel />}
-      {tab === "missed" && <MissedOpportunitiesPanel onSelectSymbol={onSelectSymbol} />}
+      {tab === "missed" && <MissedOpportunitiesPanel onSelectSymbol={onSelectPositionSymbol} />}
       {tab === "diagnostics" && (
         <div className="flex flex-col gap-3">
           <HealthPanel health={health} error={healthError} />
-          <SearchPanel />
+          <SearchPanel onSelectSymbol={onSelectPositionSymbol} />
         </div>
       )}
     </div>

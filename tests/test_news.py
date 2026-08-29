@@ -638,3 +638,177 @@ def test_news_store_prune_removes_old_dated_artifacts(tmp_path, monkeypatch):
     assert (base / "macro_narrative_2026-05-25.json").exists()
     assert (base / "macro_narrative.json").exists()
     assert (base / "not_a_date_dir").exists()
+
+
+# ===========================================================================
+# 2026-08-29 source-widening audit: RSS_FEEDS shape + the item cap moving
+# from a hardcoded default to config.news.max_prompt_items. No network in
+# this file — see the PR description / commit body for the live-check
+# evidence gathered for each feed.
+# ===========================================================================
+
+def test_rss_feeds_urls_are_well_formed_and_unique():
+    """Every configured feed must be a plausible https(s) URL, and no two
+    names may point at the same URL (a copy-paste duplicate would silently
+    double-count one wire's items as if it were two independent sources)."""
+    from urllib.parse import urlparse
+    from src.data.news import RSS_FEEDS
+
+    assert len(RSS_FEEDS) >= 8, "widening should not have shrunk the set"
+
+    seen_urls = set()
+    for name, url in RSS_FEEDS.items():
+        assert name and name.strip() == name, f"blank/whitespace-padded name: {name!r}"
+        parsed = urlparse(url)
+        assert parsed.scheme == "https", f"{name}: expected https, got {parsed.scheme!r} ({url})"
+        assert parsed.netloc, f"{name}: no host in {url!r}"
+        assert url not in seen_urls, f"{name}: URL duplicated across feeds: {url}"
+        seen_urls.add(url)
+
+
+def test_rss_feeds_sec_gov_urls_use_the_sec_user_agent():
+    """Any *.sec.gov feed must be routed through NewsDataProvider's SEC UA
+    (config.smart_money.user_agent's convention), not the generic browser
+    UA — SEC asks automated clients to identify themselves with contact
+    info, and this repo already treats that as a hard requirement for
+    EDGAR elsewhere (src/data/smart_money.py, src/data/earnings.py)."""
+    from src.data.news import RSS_FEEDS, USER_AGENT, SEC_USER_AGENT, NewsDataProvider
+
+    sec_feeds = {n: u for n, u in RSS_FEEDS.items() if "sec.gov" in u}
+    assert sec_feeds, "expected at least one sec.gov feed after the 2026-08-29 widening"
+
+    captured_uas = {}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return (b'<?xml version="1.0"?><rss version="2.0"><channel>'
+                    b'<title>t</title></channel></rss>')
+
+    def fake_urlopen(req, timeout=None):
+        captured_uas[req.full_url] = req.get_header("User-agent")
+        return _FakeResponse()
+
+    provider = NewsDataProvider(feeds=sec_feeds, sec_user_agent=SEC_USER_AGENT)
+    from unittest.mock import patch as _p
+    with _p("src.data.news.urlopen", fake_urlopen):
+        provider.fetch_news()
+
+    for name, url in sec_feeds.items():
+        assert captured_uas.get(url) == SEC_USER_AGENT, (
+            f"{name} ({url}) fetched with UA {captured_uas.get(url)!r}, "
+            f"expected SEC_USER_AGENT"
+        )
+    assert SEC_USER_AGENT != USER_AGENT, "SEC UA must actually differ from the generic one"
+
+
+def test_new_feed_going_dead_marks_coverage_degraded_not_ok():
+    """A dead feed among the ones added in the 2026-08-29 widening (not
+    one of the original 8) must still surface as a coverage gap — the
+    honesty mechanism the 2026-08-28 fix built must cover new sources too,
+    not just the original set."""
+    from src.data.news import RSS_FEEDS, NewsDataProvider
+    from unittest.mock import MagicMock
+
+    assert "SEC Press Releases" in RSS_FEEDS, "expected this 2026-08-29 addition to still be configured"
+
+    provider = NewsDataProvider(feeds=dict(RSS_FEEDS))
+
+    def fake_fetch(name, url, cutoff):
+        if name == "SEC Press Releases":
+            raise Exception("HTTP Error 500: Internal Server Error")
+        return []
+
+    provider._fetch_feed = MagicMock(side_effect=fake_fetch)
+    items, coverage = provider.fetch_news()
+
+    assert coverage.status != "ok"
+    assert coverage.status == "partial"
+    assert coverage.failed_count == 1
+    assert coverage.failed[0].name == "SEC Press Releases"
+    assert "500" in coverage.failed[0].reason
+
+
+def test_prompt_item_cap_is_read_from_config_not_hardcoded():
+    """Same items, different config.news.max_prompt_items value -> different
+    number of items in the rendered prompt text. Locks the cap to
+    NewsConfig rather than a module-level constant."""
+    from src.config import NewsConfig
+    from src.data.news import NewsDataProvider, NewsItem
+
+    provider = NewsDataProvider()
+    items = [
+        NewsItem(title=f"Headline {i}", summary="", source="Test",
+                 published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="")
+        for i in range(20)
+    ]
+
+    small_cfg = NewsConfig(max_prompt_items=3)
+    large_cfg = NewsConfig(max_prompt_items=15)
+
+    small_text = provider.format_for_prompt(items, max_items=small_cfg.max_prompt_items)
+    large_text = provider.format_for_prompt(items, max_items=large_cfg.max_prompt_items)
+
+    small_count = sum(1 for line in small_text.splitlines() if line.startswith("[Test]"))
+    large_count = sum(1 for line in large_text.splitlines() if line.startswith("[Test]"))
+
+    assert small_count == 3
+    assert large_count == 15
+    assert small_count != large_count
+
+
+def test_news_config_default_matches_pre_widening_behavior():
+    """The default must equal the old hardcoded max_items=50 so widening
+    the feed set does not silently change prompt size for anyone who
+    hasn't set news.max_prompt_items in settings.yaml."""
+    from src.config import NewsConfig
+    assert NewsConfig().max_prompt_items == 50
+
+
+def test_news_config_loads_custom_value_from_yaml(tmp_path):
+    """End-to-end: a settings.yaml with news.max_prompt_items set produces
+    an AppConfig whose value differs from the default — proves the wiring
+    from YAML to NewsConfig actually works, not just the dataclass default."""
+    yaml_content = """
+api_keys:
+  anthropic: "test-key"
+  fred: "fred-key"
+  alpaca_key: "alpaca-key"
+  alpaca_secret: "alpaca-secret"
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  paper: true
+llm:
+  tech_analyst_model: "claude-sonnet-4-6"
+  max_tokens: 4096
+risk:
+  max_position_pct: 20
+  max_total_position_pct: 90
+  max_daily_loss_pct: 3
+  max_sector_pct: 40
+  require_stop_loss: true
+trading:
+  universe: ["SPY", "QQQ"]
+  lookback_days: 120
+  schedule:
+    morning: "06:00"
+    midday: "12:00"
+    evening: "16:30"
+storage:
+  db_path: "data/quant_agent.db"
+news:
+  max_prompt_items: 12
+"""
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+
+    from src.config import load_config, NewsConfig
+    cfg = load_config(config_file)
+
+    assert cfg.news.max_prompt_items == 12
+    assert cfg.news.max_prompt_items != NewsConfig().max_prompt_items
