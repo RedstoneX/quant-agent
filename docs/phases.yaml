@@ -407,6 +407,22 @@ phases:
       - kind: manual
         note: "One board rule still pins a number expected to move: the Phase 6 evidence rule for llm_cost_circuit.daily_cost_limit_usd (currently 2.75) uses setting_equals, the same shape that made the session-count-cap rule false-alarm as CONTRADICTED the last time a stopgap number was legitimately re-tuned. When this value next gets re-tuned, convert that rule to setting_present so a deliberate change doesn't read as rot. Re-check: search this manifest for `daily_cost_limit_usd`."
 
+  - id: rehearsal_rig
+    title: "The rehearsal rig — find bugs without waiting for the market"
+    plain_summary: "A tool that runs a whole trading session offline, against a copy of real production data and yesterday's real AI answers, so bugs, shutdowns and errors turn up before Monday's market open instead of during it. It costs nothing, takes under a minute, cannot reach the internet or touch real money, and proves afterward that it left the real trading database untouched. Owner instruction, 2026-08-29: this is now the normal thing to run before touching anything that decides trades or spends money — not a nice-to-have — because a full trading day (2026-08-28) was already lost to a bug this rig would have caught. Correction to an earlier draft of this entry: that draft said the rig's own proof-it-works test still failed. It doesn't — a same-day fix (commit ee6f671, merged to origin/main) landed hours after that claim was written, and re-running the test today confirms it passes."
+    status: "PARTIAL"
+    confidence: "high"
+    evidence:
+      - kind: file_exists
+        path: "ops/rehearsal/run.py"
+      - kind: file_exists
+        path: "ops/rehearsal/runner.py"
+      - kind: test_exists
+        path: "tests/test_rehearsal_reproduces_cost_ceiling.py"
+        test: "test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure"
+      - kind: manual
+        note: "Correction 2026-08-29: an earlier draft of this entry (and of an older docs/WORK.md note) claimed the rig's own acceptance test did not pass — that replay ran out of recorded responses on the Technical Analyst's chunked calls before a rehearsal could ever reach the 2026-08-28 portfolio_manager cost-ceiling incident it exists to reproduce. That was true only through commit ee6f671 (2026-08-28 18:31 UTC, 'fix(rehearsal): un-merge chunked agent rows so replay stops running dry'), already merged to origin/main. Verified directly today, not taken on faith: `/home/ubuntu/projects/quant-agent/.venv/bin/python -m pytest tests/test_rehearsal_reproduces_cost_ceiling.py -v` passes both of its tests — one proving the live cost-circuit fix holds (portfolio_manager is now reached, not blocked), the other forcing the pre-fix estimator via config_overrides to prove the rig can still reproduce the original block on demand when asked to. Status stays PARTIAL not because the rig is broken but because 2026-08-29 is the first day it is written down as the routine pre-deploy practice the owner asked for — it has no track record yet as a standing gate. Re-check: the pytest command above (requires `sudo -n -u qamc` read access to /home/qamc/quant-agent/data; skips cleanly without it)."
+
   - id: invariants
     title: "Invariants (must hold at all times)"
     plain_summary: "Eight rules that are supposed to never be violated — paper trading only, every position always has a hard stop, no single trade can lose more than 5% of the account, deterministic safety code has the final say over any AI decision, and only the owner can change the rulebook. All are currently true in the running code; none has an automated proof that runs continuously."

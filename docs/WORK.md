@@ -107,6 +107,39 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ### Session start — read this first
 
+**Run the rehearsal rig before you touch anything that trades — owner
+instruction, 2026-08-29, not an agent decision.** His words: it exists so we
+do not wait for Monday's market open to find bugs, shutdowns and errors, he
+wants it used properly and routinely, and he wants that written where he
+looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
+
+- What it is: `ops/rehearsal/` runs a full trading session offline against a
+  snapshot of production, replaying recorded model responses. Free,
+  deterministic, about 50 seconds. Blocks outbound network at the process
+  level, then proves the production database is byte-identical afterward.
+  Suppresses operator alerts via `QAMC_REHEARSAL=1` so a rehearsal never
+  pages anyone.
+- When to run it: this is the default way to find a bug, not a formality —
+  run it before deploying anything touching the session pipeline, and after
+  any change to the agents, the risk engine, the cost circuit or execution.
+- Why this is not optional: a full trading day, 2026-08-28, was already lost
+  to a defect a rehearsal would have caught before the market opened.
+- State plainly rather than round up: a draft of this note claimed the
+  rig's own acceptance test did not pass — that replay ran out of recorded
+  responses on the Technical Analyst's chunked calls and could not
+  reproduce the 2026-08-28 cost-ceiling failure on demand, and a rig that
+  cannot reproduce the failure it was built for is not trustworthy. Checked
+  against `origin/main` before writing this rather than repeated on faith:
+  that was true only through commit `ee6f671` (2026-08-28 18:31 UTC,
+  "fix(rehearsal): un-merge chunked agent rows so replay stops running
+  dry"), already merged. Re-run today, 2026-08-29:
+  `tests/test_rehearsal_reproduces_cost_ceiling.py` passes both of its
+  tests — the fix holds (`portfolio_manager` is now reached, not blocked)
+  and the rig can still force-reproduce the original block on demand via
+  `config_overrides` when asked to. It is trustworthy for the one incident
+  it has been tested against. What it does not yet have is a track record
+  as a standing pre-deploy gate — that starts with this entry.
+
 **Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
 matches the production box byte for byte. Until this change the box carried
 five hand-edited values that existed nowhere in git, so any deploy that lost
@@ -1018,9 +1051,9 @@ Also on 2026-08-28: the circuit was reset, two quota holds released, and the
 day's `costs_exact` flag settled without refunding any charge. DB backed up
 first.
 
-#### THE REHEARSAL HARNESS — built, acceptance test not passing
-Branch `feat/session-rehearsal`, worktree `/home/ubuntu/projects/quant-agent-worktrees/rehearsal`. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
-**Outstanding:** the replay runs out of recorded responses on the Technical Analyst's chunked calls, so it cannot yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand. That is its acceptance test and it does not pass yet.
+#### THE REHEARSAL HARNESS — built, merged, acceptance test now passing
+Landed via PR #122 (branch `feat/session-rehearsal`) and now lives at `ops/rehearsal/` on `origin/main`, not on a standalone branch/worktree. Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
+**Correction 2026-08-29:** this entry previously said the replay ran out of recorded responses on the Technical Analyst's chunked calls and could not yet reproduce the 2026-08-28 Portfolio Manager ceiling failure on demand — that was its acceptance test and it did not pass. Commit `ee6f671` (2026-08-28 18:31 UTC, already merged) fixed exactly that by un-merging chunked `agent_logs` rows before replay matches against them. `tests/test_rehearsal_reproduces_cost_ceiling.py` passes both of its tests as of today's re-run: the live cost-circuit fix holds, and the harness can still force-reproduce the original block on demand. See "Session start" above for the owner's 2026-08-29 instruction to run this routinely.
 
 #### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
 Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
