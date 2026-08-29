@@ -158,6 +158,12 @@ work (2026-08-28).**
   repeatedly seeing old cockpit code after deploys that had in fact landed
   correctly.
 
+**A `git checkout` on the box is not a deploy.** The API holds the
+cockpit bundle, so `/cockpit` keeps serving the old one until
+`quant-agent-api.service` is restarted. Always restart it and then
+confirm the hashed bundle filename the server returns matches the one on
+disk under `src/api/static_cockpit/assets/`.
+
 Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
 git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
 (`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
@@ -1096,20 +1102,73 @@ paid) if it's wanted.
 - OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
 - OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
 
-#### OPEN PRs, none deployed
-- #115 earnings extraction — the analyst was reading the auditor's letter, not the numbers. 17 of 68 cached filings starved, 12 with zero figures.
-- #116 shorts countable — proven a no-op on a long-only book.
-- #117 doc sync.
-- #132 news feeds + coverage — dead-feed-vanishes-silently fix (`NewsCoverage`, `data_status["news"]`), Reuters/AP removed (neither fixable for free, live-verified 2026-08-28), Yahoo Finance News added, `feat/news-dedup` folded in. Branch `fix/news-feeds-and-coverage`.
-- #133 insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above.
+#### OPEN PRs — none, as of 2026-08-29
+
+No open pull requests. Production is deployed at `dcbb4d6`. Landed
+on 2026-08-28/29:
+
+- #138 — mobile horizontal overflow at phone width; the cause was
+  the header status row, not the Trades table
+- #139 — corrected the Mission Control URL and recorded the stale
+  preview server
+- #140 — cockpit default layout: full-width chart over a two-column
+  Positions | Orders row; dockview key bumped to v6
+- #141 — clicking a symbol in Orders/Trades now selects it on the
+  chart instead of opening a modal
+- #136 — Telegram alerts stop clipping mid-word; tap-through link to
+  Mission Control
+- #127 — status board resolves merged-PR evidence from git, adds a
+  `setting_present` rule kind, retires the stale Phase 6 session-cap
+  rule
+- #133 — insider Form 4 routine/opportunistic filter
+- #135 — emergency force-close for short positions (buy-to-cover),
+  plus the position-reviewer and crash-recovery gaps closed
 
 #### BRANCHES READY, NO PR YET
-`feat/news-dedup` (real duplication only about 5%), `feat/bounded-repeg` (inert by design, ships off), `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
 
-`feat/insider-signal-filter` moved to "OPEN PRs" above (2026-08-28): finished
-(thresholds moved to config, per-code and fail-closed tests added) and PR
-opened against `main` — 57.3% of 2,742 real Form 4 rows measured routine,
-consistent with the earlier 56.2%-of-2,188 figure.
+- `feat/insider-signal-filter` — merged as PR #133, no longer pending
+- `fix/news-feeds-and-coverage` — merged as PR #132
+- `fix/dollar-based-session-cap` — still unfinished, and now committed
+  rather than living only in a worktree. Commit `766a35d` adds
+  `afternoon_reserve_pct` (40) and `afternoon_reserve_release_et_hour`
+  (12) plus a `_morning_spend_ceiling()` helper that **is defined and
+  never called** — the reserve is inert, there are no tests, and it must
+  not be deployed as-is. Its own commit message is the authoritative
+  statement of what is missing.
+- `feat/news-dedup` and `feat/bounded-repeg` — still unmerged; their
+  disposition is being decided separately.
+
+#### STILL OPEN — 2026-08-29
+
+1. **Missed Opportunities panel opens a modal unpredictably.** Clicking
+   a symbol there opens a Candidate Detail modal only when that symbol
+   happens to appear in whichever session is currently selected in the
+   Sessions strip — same click, different outcome, with nothing on screen
+   to explain which case you are in. Cause: it is wired to
+   `inspectSymbol` in `App.tsx`, which conditionally opens a modal,
+   instead of the modal-free `chartPositionSymbol` that Positions uses.
+   The owner has seen and reported this.
+2. **Diagnostics → Search opens a Run Detail modal on any row click**,
+   including plain unstyled cells. PR #141 added the clickable styling
+   but deliberately did not change the row behaviour, because the
+   agent-call-hit table has no symbol column and splitting
+   cell-versus-row there needs a design decision.
+3. **`compute_trade_calibration` (`src/storage/db.py`) has no concept of
+   a short lot.** It FIFO-matches BUY lots to sell-family exits, so a
+   covered short creates no lot and closes nothing and is invisible to
+   win rate, average return and hold days — figures that reach the
+   Portfolio Manager as facts. Dormant while shorts cannot be opened; a
+   live accounting hole the day they can. Note the precedent already
+   recorded in that function's comments: omitting filled TRAIL_STOP
+   exits once moved win_rate 22.2% → 30.0% and avg_return −2.79% →
+   −2.18% on the real ledger.
+4. **`docs/phases.yaml`'s `daily_cost_limit_usd: 2.75` evidence rule**
+   pins a value that is expected to be re-tuned, the same latent flaw
+   that made the Phase 6 session-cap rule false-alarm. Convert it to
+   `setting_present` when it next fires.
+5. **Phase 6.1 afternoon reserve is unfinished** — see Edit 2.
+6. **The news-sources audit** the owner asked for — widen what the news
+   seat reads, free sources only — is still untouched.
 
 #### DECISIONS RATIFIED 2026-08-28
 - Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
