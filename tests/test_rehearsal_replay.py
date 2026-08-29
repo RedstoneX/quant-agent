@@ -233,3 +233,40 @@ def test_response_library_still_matches_by_similarity_within_chunks():
     assert chosen.full_response == "resp-2"
     chosen2 = library.match("tech_analyst", "alpha beta gamma delta epsilon")
     assert chosen2.full_response == "resp-1"
+
+
+def test_match_does_not_crash_when_two_unmerged_parts_of_one_row_tie():
+    """Regression: reproduced live against production history (2026-08-29) on
+    a plain unpinned `morning` rehearsal, no incident pinning involved.
+
+    `_unmerge_chunked_call` gives every part of one merged row the SAME
+    row_id, so when a live prompt shares no words with either of two parts
+    from the same original chunked call, both score 0.0 and (score, -row_id)
+    ties completely between them. The old code put the `RecordedCall` itself
+    in the sort tuple as a final tiebreaker
+    (`sorted([(score, -row_id, call) ...], reverse=True)`), and `RecordedCall`
+    defines no ordering, so Python raised
+    `TypeError: '<' not supported between instances of 'RecordedCall' and
+    'RecordedCall'` trying to break the tie. In production this cascaded:
+    tech_analyst's retry logic caught it as a call failure, exhausted its
+    primary-model attempts, failed over to a second provider, hit the exact
+    same crash on the same tied candidates, burned through the cost circuit's
+    provider-attempt limit, and suspended paid analysis for the rest of the
+    session — a rig-only bug masquerading as a production incident.
+    """
+    call = _merged_call(
+        parts=[
+            ("chunk 1/2", "AAPL MSFT bars rsi macd", "resp-1"),
+            ("chunk 2/2", "GOOG AMZN bars rsi macd", "resp-2"),
+        ],
+        input_tokens=200, output_tokens=20, cost_usd=0.001,
+    )
+    library = ResponseLibrary([call])
+    # Shares zero words with either chunk -> both score 0.0 -> exact tie on
+    # (score, -row_id) since both parts carry the same row_id.
+    chosen = library.match("tech_analyst", "totally unrelated live prompt text")
+    assert chosen.full_response in ("resp-1", "resp-2")
+    # Deterministic: rerunning the identical scenario picks the same part.
+    library2 = ResponseLibrary([call])
+    chosen2 = library2.match("tech_analyst", "totally unrelated live prompt text")
+    assert chosen2.full_response == chosen.full_response
