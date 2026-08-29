@@ -751,7 +751,7 @@ Two facts worth acting on:
    committed (`75c0233`, `feat/pm-flex-routing`) — because "agreement earns
    size" is meaningless until size is expressed as risk.
 2. **Execution: bounded re-peg — BUILT, SHIPPED DARK, AND MOSTLY INERT, merged
-   from `feat/bounded-repeg` (PR opened against `main`, 2026-08-29).**
+   from `feat/bounded-repeg` (PR #144 opened against `main`, 2026-08-29).**
    `execution.repeg_enabled` (default **false**), `repeg_max_attempts`
    (default 2, schema-capped at 5), the `pending_repegs` write-ahead queue and
    its session-start drain, `broker.replace_entry_limit` /
@@ -1119,7 +1119,7 @@ paid) if it's wanted.
 - #117 doc sync.
 - #132 news feeds + coverage — dead-feed-vanishes-silently fix (`NewsCoverage`, `data_status["news"]`), Reuters/AP removed (neither fixable for free, live-verified 2026-08-28), Yahoo Finance News added, `feat/news-dedup` folded in. Branch `fix/news-feeds-and-coverage`.
 - #133 insider routine/opportunistic filter (`feat/insider-signal-filter`) — see "Landed" above.
-- #PENDING bounded re-peg (`feat/bounded-repeg`) — built, tested (54/54), ships with `execution.repeg_enabled: false` so behaviour is unchanged today. See item 2 under "Next, in order" above for the caveat that matters: since PR #111 a BUY limit already goes out at the slippage ceiling whenever a quote is available, so enabling this flag would currently do approximately nothing until the entry-pricing policy changes.
+- #144 bounded re-peg (`feat/bounded-repeg`) — built, tested (56/56), ships with `execution.repeg_enabled: false` so behaviour is unchanged today. See item 2 under "Next, in order" above for the caveat that matters: since PR #111 a BUY limit already goes out at the slippage ceiling whenever a quote is available, so enabling this flag would currently do approximately nothing until the entry-pricing policy changes.
 
 #### BRANCHES READY, NO PR YET
 `fix/dollar-based-session-cap` (unfinished), `feat/session-rehearsal`.
