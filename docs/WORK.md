@@ -299,6 +299,61 @@ evidence that a ratified decision was wrong. See `Owner decisions` below.
   "unexamined for months" — it was inherited with the fork), both in the
   direction of making findings sound worse than they were.
 
+**Owner decisions, 2026-08-29 (ratified in conversation, not inferred).** The
+owner reviewed a brief written for an autonomous overnight session
+(`docs/SESSION_BRIEF_OVERNIGHT.md`, since folded into this file and deleted —
+creating it was itself a document-authority mistake this file's own rule
+exists to prevent) and corrected it on the spot:
+
+- **Short selling ships finished and enabled, not behind a flag.** An earlier
+  draft proposed shipping Phase 5 stages 2-3 disabled by default. The owner
+  rejected that: this is a paper account that resets, markets are closed,
+  there are no users and no real money, and a disabled feature is unvalidated
+  code — the point of reaching the finish line is to surface the next layer
+  of bugs. The gate is completeness and verification, not a switch.
+- **The next session runs autonomously overnight and must not ask him
+  anything.** It reports decisions afterward, in plain language, for him to
+  overrule.
+- **The desk board (`docs/phases.yaml`, rendered at `/board`) is a source of
+  truth.** Defects found during engineering belong on it, not only in
+  session notes.
+
+**Operating model for an autonomous session.** It is an orchestrator and
+implements nothing inline. Dispatch subagents matched to complexity: Haiku
+for documentation, inventory and mechanical edits from a supplied spec;
+Sonnet for bounded implementation with real judgement; the strongest
+available reasoning reserved for architecture, trading/risk logic and
+anything that can lose money. Delegate aggressively to protect the
+orchestrator's own context — read diffs and summaries, not whole source
+files. Never run two writing agents in the same worktree; read-only
+reporters may overlap freely.
+
+**Do not trust a subagent's claim on its word — verify the single
+load-bearing assertion, cheaply and adversarially.** Overnight 2026-08-28/29
+an agent confidently reported a root cause that was wrong: the documented
+diagnosis blamed a data table when the real cause was a header element. It
+was caught only because the orchestrator reproduced the claim itself against
+live data. If an agent says "tests pass", check the count. If it says "the
+fix works", reproduce the fix's effect. If it says "X is the cause", check
+that X actually produces the symptom.
+
+**Operational facts that will cost hours if missed:**
+
+- **Never bare `git stash`.** It is a repo-global ref shared across every
+  worktree in this checkout, not scoped to one; two agents collided on it
+  overnight 2026-08-29. Use `git stash push -m "<name>"` and pop by explicit
+  index, or measure baselines in a throwaway worktree instead.
+- **Branch protection requires branches to be up to date**, so a merge queue
+  must be serialized: merge `main` in, wait for CI, merge, repeat. Never use
+  `--admin`.
+- **`gh pr edit` fails on this repo** (a deprecated Projects-classic GraphQL
+  field). Confirmed 2026-08-29 that it is not edit-specific — `gh pr view`
+  trips the same field. Use
+  `gh api repos/RedstoneX/quant-agent/pulls/N -X PATCH` instead.
+- **Subagents stall on polling loops** and will burn enormous token counts
+  waiting on CI. Give every agent an explicit polling budget, or poll
+  yourself.
+
 ### Ordered backlog — RESUME POINT
 
 Single ordered list of outstanding work. A session resuming cold should start
@@ -842,6 +897,24 @@ Two facts worth acting on:
    $9,871.87) — no owner action is outstanding. (`docs/QAMC_REMEDIATION_SPEC.md`
    Phase 5 previously recorded an owner action to switch the account to
    margin; that is stale and has been corrected there.)
+
+   **Owner ratified 2026-08-29: ship stages 2 and 3 complete and enabled, not
+   behind a flag** — a disabled feature is unvalidated code; see "Owner
+   decisions, 2026-08-29" under "Session start" above.
+
+   **Known residual, needs a schema migration.** `pending_protection_restores`
+   WAL rows predate shorts and carry no side column, so a row for a short's
+   cancelled BUY stops looks byte-identical to one for a long's cancelled
+   SELL stops. `_derive_close_side_for_drain` (`src/pipeline.py`) reads the
+   broker's live signed position to tell them apart, but when that read
+   itself fails, `_drain_pending_protection_restores` deliberately degrades
+   to the pre-existing `sell` default rather than stalling the row —
+   verified in the code and comments as of 2026-08-29. Unreachable today
+   because shorts cannot yet be opened; becomes reachable, and wrong, the
+   day they can. Close it as part of stage 3, not after. Current behaviour
+   is pinned by `tests/test_shorts_emergency_close.py`'s crash-recovery
+   drain-path coverage (added `e9851ea`, flagged by PR #135's own coverage
+   audit as the one corner with zero tests) — read it before changing it.
 8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
    afternoon reserve; `position_id` linking a buy to the sell that closed it;
    surface the reasoning already stored but never displayed.
@@ -1128,15 +1201,22 @@ on 2026-08-28/29:
 
 - `feat/insider-signal-filter` — merged as PR #133, no longer pending
 - `fix/news-feeds-and-coverage` — merged as PR #132
-- `fix/dollar-based-session-cap` — still unfinished, and now committed
-  rather than living only in a worktree. Commit `766a35d` adds
-  `afternoon_reserve_pct` (40) and `afternoon_reserve_release_et_hour`
-  (12) plus a `_morning_spend_ceiling()` helper that **is defined and
-  never called** — the reserve is inert, there are no tests, and it must
-  not be deployed as-is. Its own commit message is the authoritative
-  statement of what is missing.
-- `feat/news-dedup` and `feat/bounded-repeg` — still unmerged; their
-  disposition is being decided separately.
+- `fix/dollar-based-session-cap` — its first commit, `766a35d`, added
+  `afternoon_reserve_pct` (40) and `afternoon_reserve_release_et_hour` (12)
+  plus a `_morning_spend_ceiling()` helper that was defined and never
+  called. **Correction, 2026-08-29: superseded, not still open.**
+  `_morning_spend_ceiling()` is called from `begin_call` in current `main`
+  (`src/cost_circuit.py`), with dedicated passing tests
+  (`tests/test_cost_circuit.py::test_morning_spend_ceiling_pure_computation`,
+  `test_afternoon_reserve_blocks_morning_spend_above_the_ceiling`,
+  `test_afternoon_reserve_recovers_the_same_day_without_a_rollover`) —
+  landed via PR #126 (`fix/cost-circuit-four`) and PR #131
+  (`fix/pricing-staleness`), both already merged. See "STILL OPEN —
+  2026-08-29" item 5 below.
+- `feat/news-dedup` — still unmerged; disposition being decided separately.
+- `feat/bounded-repeg` — PR #144 opened 2026-08-29. Agent decision: merge it
+  rather than leave it to rot, shipping the re-peg disabled by default. Check
+  `gh pr list` for current status before treating this as landed.
 
 #### STILL OPEN — 2026-08-29
 
@@ -1166,9 +1246,56 @@ on 2026-08-28/29:
    pins a value that is expected to be re-tuned, the same latent flaw
    that made the Phase 6 session-cap rule false-alarm. Convert it to
    `setting_present` when it next fires.
-5. **Phase 6.1 afternoon reserve is unfinished** — see Edit 2.
+5. **Phase 6.1 afternoon reserve — re-verify; this note looks stale.** It
+   previously read "unfinished — see Edit 2" (a dangling cross-reference;
+   no "Edit 2" exists in this file). This pass found `_morning_spend_ceiling`
+   defined **and called** from `begin_call` (`src/cost_circuit.py`),
+   `afternoon_reserve_pct`/`afternoon_reserve_release_et_hour` already at
+   their intended 40/12 in `config/settings.yaml`, and passing dedicated
+   tests in `tests/test_cost_circuit.py` — all via PR #126 and PR #131,
+   both already merged into `main`. See the corrected
+   `fix/dollar-based-session-cap` note under "BRANCHES READY" above, which
+   described only that branch's superseded first commit. Not fixed further
+   here — a session should confirm this against a live run before closing
+   the item outright.
 6. **The news-sources audit** the owner asked for — widen what the news
    seat reads, free sources only — is still untouched.
+
+#### EXECUTION ORDER FOR THE NEXT SESSION — 2026-08-29 (agent decision, not owner instruction)
+Recorded because AGENTS.md's ratification rule requires it: this sequence and
+its reasoning are the outgoing session's call, not something the owner
+specified. Overrule it if a fresh read of the board disagrees.
+
+1. The quick user-visible defects in "STILL OPEN — 2026-08-29" above (items
+   1, 2 and 4).
+2. Phase 6 spending controls. Reasoning: while the desk benches itself on
+   session *counts* rather than dollars, every downstream number is measured
+   on a crippled sample. **Check item 5 above first** — this pass found
+   evidence the dollar-based cap and afternoon reserve are already merged and
+   tested, which would make this step a re-verification, not new
+   implementation.
+3. Phase 7 measurement. Reasoning: `compute_trade_calibration` is
+   structurally short-blind (item 3 above), so shorts could not be judged on
+   real numbers even once built.
+4. Phase 5 shorts, stages 2-3. Ship complete and enabled, not behind a flag —
+   see "Owner decisions, 2026-08-29" under "Session start" above.
+5. Phase 9 — the research desk deliberates. Land a coherent first slice
+   (seats able to originate) rather than a half-wired everything if time runs
+   short.
+6. The Phase 4 remainder (item 6 above) and Phase 8 documentation.
+
+**Two decisions the outgoing session made, not the owner:** merge
+`feat/bounded-repeg` rather than leave it to rot as an abandoned branch — PR
+#144, opened 2026-08-29, ships the re-peg disabled by default (see
+"BRANCHES READY" above). Separately, rescue the VPS security-hardening PLAN
+document so `docs/FUTURE_SECURITY_OBSERVATORY.md`'s reference resolves — PR
+#143, opened 2026-08-29, acting on the rescue note in "Set aside — small,
+easily forgotten" below — while deliberately leaving its executable
+`harden.sh` unmerged and unapplied. The plan was spot-checked against the
+live box rather than imported on trust: finding 1 was already partly stale
+(`ufw`/`fail2ban` active where the 2026-08-12 audit found neither). Check
+`gh pr list` for current merge status on both before treating either as
+landed.
 
 #### DECISIONS RATIFIED 2026-08-28
 - Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
