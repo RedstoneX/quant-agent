@@ -10,9 +10,16 @@ the end.
 ## 1. What QAMC is for
 
 **It exists to make money.** Not to be a research toy, not to demonstrate an
-agent architecture. Some older documents in this repo describe a different,
-softer mandate; those documents are wrong and you have standing authority to
-correct them on sight.
+agent architecture. This is already recorded correctly — `docs/OUTCOME.md`
+states it plainly, and `AGENTS.md` records why it once did not: coding agents
+wrote their own scope decisions into the governance documents, later agents
+read them as owner instructions, and the system was built long-only against a
+mandate that never excluded shorting. That was corrected on 2026-08-27 and the
+ratification rule now exists to stop it recurring.
+
+You have standing authority to correct wrong documentation on sight, but
+**verify before you "correct"** — the mandate documents are already right, and
+an earlier session's note claiming otherwise was itself stale.
 
 **It must be fully autonomous.** The owner has health conditions that at times
 affect his capacity. He cannot watch markets and must never be a required
@@ -152,12 +159,20 @@ Around 50 places in the code assume every position is a long. Stage 1
 force-close path is done and merged. Stages 2 and 3 — safely managing and
 actually opening shorts — are not built.
 
-**Decision already made for you, and you must honour it: ship stage 3
-DISABLED.** Build it, test it, deploy it, but leave the setting that permits
-opening a short OFF, and report the single setting the owner must flip. He is
-asleep; the system must not begin taking a genuinely new class of market risk
-while nobody is watching. This is not timidity — it is the same fail-closed
-principle the whole desk is built on.
+**Ship it ENABLED. Finish the feature.** This is a paper account that resets,
+markets are closed until Monday 09:30 ET so nothing trades while you work, and
+the owner has all of Sunday to review before a single order could be placed.
+There are no users, no customers and no real money.
+
+An earlier draft of this brief said to ship it behind an off switch. The owner
+rejected that, correctly: **a disabled feature is unvalidated code**, and the
+entire point of reaching the finish line is to surface the next layer of bugs.
+You cannot find bugs in something that never runs.
+
+The gate is therefore **completeness, not a flag**. Do not ship a half-built
+stage 3 with a setting as a fig leaf. It is done when the code actually opens
+and manages a short correctly, the tests cover it, and you have verified the
+behaviour against the real broker where the paper account allows.
 
 **Known residual, needs a schema migration:** crash-recovery WAL rows carry no
 side column, so an orphaned short with an unreadable broker falls back to
@@ -243,7 +258,8 @@ For each thing you did:
 Then, separately and briefly:
 - what you deliberately did NOT do, and why,
 - anything that hit a hard boundary and needs his decision,
-- the one setting he must flip to permit short selling, if you got that far.
+- what will actually change in the desk's behaviour when markets open Monday,
+  so he can review it on Sunday rather than discover it in a fill.
 
 He wants to be able to say "no, change that" about any decision — so make the
 decisions legible, not buried. Lead with the conclusion. Keep it scannable.
