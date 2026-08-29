@@ -133,7 +133,14 @@ function TradesPane() {
 
 function RunsPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><RunsPanel runs={state.runs} error={state.runsError} loading={state.runsLoading} /></div>; }
 function BiasPane() { return <div className="h-full overflow-y-auto p-2"><DirectionalBiasPanel /></div>; }
-function MissedPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><MissedOpportunitiesPanel onSelectSymbol={state.onSelectSymbol} /></div>; }
+// Was wired to a callback that conditionally opened the candidate-detail
+// modal depending on which session happened to be selected in the
+// Sessions strip — unrelated to the missed-opportunity row being clicked
+// — so the identical click did two different things with no on-screen
+// explanation. Routed to the same modal-free callback PositionsPane uses
+// above: chart the symbol, open nothing (governing principle, App.tsx's
+// chartPositionSymbol).
+function MissedPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><MissedOpportunitiesPanel onSelectSymbol={state.onSelectPositionSymbol} /></div>; }
 
 // Item 13 (cockpit trader rework): System and Search — named by the owner
 // as "not trading" — used to each be their own top-level tab in this
@@ -145,7 +152,7 @@ function DiagnosticsPane() {
   return (
     <div className="h-full overflow-y-auto p-2 flex flex-col gap-3">
       <HealthPanel health={state.health} error={state.healthError} />
-      <SearchPanel />
+      <SearchPanel onSelectSymbol={state.onSelectPositionSymbol} />
     </div>
   );
 }

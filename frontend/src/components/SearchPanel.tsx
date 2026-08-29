@@ -10,7 +10,20 @@ import { DataTable } from "./ui/DataTable";
 const tradeColumn = createColumnHelper<SearchTradeHit>();
 const agentColumn = createColumnHelper<SearchAgentLogHit>();
 
-export function SearchPanel() {
+// Trailing, always-on (not hover-only) hint that a row opens Run Detail —
+// added for both hit tables below alongside DataTable's existing
+// cursor-pointer/hover-bg row styling (already applied automatically to
+// any onRowClick table; see PositionsPanel/OrdersPanel/RunsPanel), because
+// that styling alone only shows up on hover, and plain cells like
+// Reasoning/Summary gave no hint at rest that the row underneath them was
+// clickable. Reuses this file's own "uppercase tracking-wide text-dim"
+// label idiom (see the "Trade hits (n)"/"Agent-call hits (n)" headers
+// below) rather than inventing new styling.
+function OpensRunHint() {
+  return <span className="text-[0.75rem] uppercase tracking-wide text-dim whitespace-nowrap">Run &rarr;</span>;
+}
+
+export function SearchPanel({ onSelectSymbol }: { onSelectSymbol?: (symbol: string) => void }) {
   const [q, setQ] = useState("");
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -18,20 +31,48 @@ export function SearchPanel() {
   const { openRunDetail } = useModalActions();
   const tradeColumns = useMemo(() => [
     tradeColumn.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
-    // Bold/accent-colored, same idiom Positions/Orders/Trades use to mark
-    // the identifying cell of a clickable row — this whole row opens Run
-    // Detail (see onRowClick below), so it needs the same visual hint
-    // those other tables give before this fix's Symbol-specific click
-    // split was even a consideration here.
-    tradeColumn.accessor("symbol", { header: "Symbol", cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span> }),
+    // Symbol-cell-specific click: charts the symbol in place, modal-free,
+    // same as PositionsPanel's/OrdersPanel's/TradesPanel's onSelectSymbol
+    // — deliberately separate from the row's onRowClick below (which
+    // opens this hit's Run Detail). A hit's symbol answers "what is
+    // this?"; the rest of the row answers "what run produced it?" — two
+    // different questions, so a click on the symbol must not fire the
+    // row's modal too (see the stopPropagation below, same idiom as
+    // OrdersPanel/TradesPanel's symbol cell).
+    tradeColumn.accessor("symbol", {
+      header: "Symbol",
+      cell: (info) =>
+        onSelectSymbol ? (
+          <button
+            type="button"
+            className="font-bold text-accent hover:underline"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectSymbol(info.getValue());
+            }}
+          >
+            {info.getValue()}
+          </button>
+        ) : (
+          <span className="font-bold text-accent">{info.getValue()}</span>
+        ),
+    }),
     tradeColumn.accessor("action", { header: "Action", cell: (info) => <Pill text={info.getValue()} /> }),
     tradeColumn.accessor("reasoning", { header: "Reasoning", cell: (info) => <span className="block max-w-[36rem] whitespace-normal font-sans">{info.getValue() || "—"}</span> }),
-  ] as LegacyColumnDef<SearchTradeHit, unknown>[], []);
+    tradeColumn.display({ id: "opensRun", header: "", cell: () => <OpensRunHint /> }),
+  ] as LegacyColumnDef<SearchTradeHit, unknown>[], [onSelectSymbol]);
   const agentColumns = useMemo(() => [
     agentColumn.accessor("timestamp", { header: "Time", cell: (info) => fmtTime(info.getValue()) }),
+    // No symbol column exists on this table — an agent-call hit's only
+    // meaningful target is the run it belongs to, so (unlike the trade
+    // hits above) the whole row keeps a single, undivided click straight
+    // to Run Detail. Bold/accent-colored, same idiom Positions/Orders/
+    // Trades/RunsPanel use to mark the identifying cell of a clickable
+    // row.
     agentColumn.accessor("agent_name", { header: "Agent", cell: (info) => <span className="font-bold text-accent">{info.getValue()}</span> }),
     agentColumn.accessor("model", { header: "Model", cell: (info) => info.getValue() || "—" }),
     agentColumn.accessor("output_summary", { header: "Summary", cell: (info) => <span className="block max-w-[36rem] whitespace-normal font-sans">{info.getValue() || "—"}</span> }),
+    agentColumn.display({ id: "opensRun", header: "", cell: () => <OpensRunHint /> }),
   ] as LegacyColumnDef<SearchAgentLogHit, unknown>[], []);
 
   async function runSearch() {
