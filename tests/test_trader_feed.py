@@ -355,6 +355,77 @@ def test_early_close_uses_established_formatter_not_trader_review(tmp_path, monk
     assert "CLOSE REVIEW" not in msg
 
 
+def test_morning_pm_rationale_survives_past_old_105_char_clip(tmp_path, monkeypatch):
+    """This is the reported defect, reproduced through the real formatter:
+    a BUY CRM alert whose PM rationale read "...strong heavy accumulation
+    volume" and just stopped there. `_append_pm` used to clip per-symbol
+    reasoning at 105 chars with a raw slice (no ellipsis, could — and did
+    — land mid-word). A rationale well past the old limit must now render
+    intact rather than being chopped mid-sentence."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-crm-rationale"
+    long_reasoning = (
+        "CRM is showing strong heavy accumulation volume over the past "
+        "three sessions, with block prints clustering just above the "
+        "20-day moving average and options open interest skewing "
+        "meaningfully toward calls into next week's print."
+    )
+    assert len(long_reasoning) > 105
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CRM", "allocation_pct": 6,
+         "reasoning": long_reasoning},
+        symbol="CRM",
+    )
+
+    msg = trader_feed.format_session_result(
+        "morning",
+        {"status": "executed", "run_id": run, "orders": [{"symbol": "CRM"}]},
+        20.0,
+    )
+
+    assert long_reasoning in msg
+
+
+def test_morning_pm_rationale_past_new_limit_clips_on_word_boundary(tmp_path, monkeypatch):
+    """Even past the new (much larger) 420-char ceiling, a clip must still
+    land on a word boundary with a visible ellipsis — never a bare
+    mid-word chop like the original defect."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-crm-overlong"
+    very_long_reasoning = "accumulation volume confirms the breakout thesis. " * 15
+    assert len(very_long_reasoning) > 420
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CRM", "allocation_pct": 6,
+         "reasoning": very_long_reasoning},
+        symbol="CRM",
+    )
+
+    msg = trader_feed.format_session_result(
+        "morning",
+        {"status": "executed", "run_id": run, "orders": [{"symbol": "CRM"}]},
+        20.0,
+    )
+
+    assert very_long_reasoning not in msg  # it DID need clipping this time
+    assert "…" in msg  # and says so
+    # `_clip` collapses whitespace before clipping (see its docstring) —
+    # compare against that collapsed form, not the raw repeated string.
+    collapsed = " ".join(very_long_reasoning.split())
+    line = next(line for line in msg.splitlines() if "BUY CRM" in line)
+    reasoning_part = line.split(" — ", 1)[1]
+    core = reasoning_part[: -len("…")].rstrip() if reasoning_part.endswith("…") else reasoning_part
+    assert collapsed.startswith(core)
+    # A prefix check ALONE is trivially true for any left-truncation,
+    # including the old buggy hard character cut — it proves nothing about
+    # boundary-awareness. The real test: the character immediately after
+    # `core` in the source must be whitespace or end-of-string, never a
+    # letter, which is what a mid-word chop would leave behind.
+    tail = collapsed[len(core):len(core) + 1]
+    assert tail in ("", " ")
+
+
 def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-ro"

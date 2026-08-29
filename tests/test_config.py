@@ -898,3 +898,78 @@ def test_provider_order_absent_loads_exactly_as_before():
     from src.config import AGENT_NAMES, LLMConfig
     cfg = LLMConfig(max_tokens=4096)
     assert all(cfg.get_provider_order(name) is None for name in AGENT_NAMES)
+
+
+# === NotificationsConfig — Telegram alert tap-through link ===
+
+def test_notifications_config_defaults_to_tailnet_cockpit_url():
+    """Default target matches the tailnet address Tailscale Serve exposes
+    for the qamc API (proxying tailnet-only port 443 to 127.0.0.1:8800),
+    which mounts /cockpit (src/api/server.py app.mount("/cockpit", ...))."""
+    from src.config import NotificationsConfig
+    cfg = NotificationsConfig()
+    assert cfg.mission_control_url == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
+
+
+def test_notifications_config_allows_empty_url_to_disable_the_link():
+    from src.config import NotificationsConfig
+    cfg = NotificationsConfig(mission_control_url="")
+    assert cfg.mission_control_url == ""
+
+
+def test_notifications_config_rejects_non_http_scheme():
+    """The value lands inside an href="..." attribute — reject anything
+    that isn't http(s) (or empty) rather than trust it blindly."""
+    import pytest
+    from src.config import NotificationsConfig
+    with pytest.raises(ValueError, match="http"):
+        NotificationsConfig(mission_control_url="javascript:alert(1)")
+
+
+def test_app_config_notifications_section_is_optional(tmp_path):
+    """A settings.yaml without a `notifications:` section must still load,
+    with the documented default URL — additive-only, like reconciliation
+    and cash_sweep above."""
+    yaml_content = """
+api_keys:
+  anthropic: "test-key"
+  fred: "fred-key"
+  alpaca_key: "alpaca-key"
+  alpaca_secret: "alpaca-secret"
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  paper: true
+llm:
+  tech_analyst_model: "claude-sonnet-4-6"
+  max_tokens: 4096
+risk:
+  max_position_pct: 20
+  max_total_position_pct: 90
+  max_daily_loss_pct: 3
+  max_sector_pct: 40
+  require_stop_loss: true
+trading:
+  universe: ["SPY", "QQQ"]
+  lookback_days: 120
+  schedule:
+    morning: "06:00"
+    midday: "12:00"
+    evening: "16:30"
+storage:
+  db_path: "data/quant_agent.db"
+"""
+    config_file = tmp_path / "settings.yaml"
+    config_file.write_text(yaml_content)
+
+    from src.config import load_config
+    cfg = load_config(config_file)
+    assert cfg.notifications.mission_control_url == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
+
+
+def test_shipped_settings_yaml_notifications_url_matches_default():
+    from pathlib import Path as _Path
+    import yaml as _yaml
+    raw = _yaml.safe_load(
+        (_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
+    )
+    assert raw["notifications"]["mission_control_url"] == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
