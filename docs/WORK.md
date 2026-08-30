@@ -416,6 +416,46 @@ that X actually produces the symptom.
   SESSION" below is now done; see their own superseded-notices rather than
   reading them as current.
 
+**Next, in order (set 2026-08-30) — start here**
+
+Two owner decisions ratified 2026-08-30, recorded as ratified, not inferred:
+
+- **The inverse exchange-traded funds stay in the tradeable list**, not
+  retired. Rex: *"they have their uses they can still be useful for some
+  situations."*
+- **Paid news sources are refused, permanently.** Rex: *"not worth paying for.
+  There has to be other sources available."* Free sources only — closes the
+  open question the previous session left.
+
+Five items, ordered by dependency then value:
+
+1. Make the inverse funds coherent with real short selling. Since they stay, a
+   long position in one is bearish exposure the short-side ceiling cannot
+   currently see — the desk could hold the largest short position the rules
+   allow AND a full inverse-fund position at once, ending up twice as bearish
+   as either limit intends. That exposure must count against the same ceiling,
+   and the Portfolio Manager must be told these are bearish instruments; the
+   plan asked for this under short selling and it was never built.
+2. Widen the free news sources further. The genuine remaining gap is
+   per-company coverage. Free per-company feeds were verified working last
+   session but deferred, since covering the whole tradeable list would mean
+   roughly a hundred requests every run — so scope them to the names the desk
+   actually holds or is watching that day.
+3. The unbuilt half of the research-desk work: seats formally arguing out a
+   disagreement, and a name more independent seats agree on earning a larger
+   share of the risk budget. Design caution: a grounding failure currently
+   throws away the entire session's decision, so an unadjudicated conflict
+   must drop just that one candidate instead — the punishment has to fit the
+   offence. Sizing by agreement belongs in the deterministic risk code, not in
+   an instruction to a model.
+4. Log every trade's allocated risk against how it actually turned out, so
+   conviction can be judged from data. Without this, item 3's "agreement earns
+   size" cannot be tested.
+5. One known defect remains open: an intra-session scan result that never
+   reaches the session report. Two other items filed the same day are already
+   fixed and should not be picked up again — the cancelling of a resting short
+   entry order, and the midday reviewer being unable to close a short.
+
 Single ordered list of outstanding work. A session resuming cold should start
 here. Items are ordered by dependency first, then by value per unit of effort.
 Rationale for the trading items is in `docs/QAMC_REMEDIATION_SPEC.md`; evidence
