@@ -300,6 +300,15 @@ news:
   # it, so prompt size stays bounded no matter how many wires are
   # configured. 50 is the pre-existing behavior (the old hardcoded default).
   max_prompt_items: 50
+  # Per-symbol Yahoo Finance RSS (2026-08-30 owner decision — see the
+  # "CHECKED AND REJECTED" audit note in src/data/news.py). Scoped every run
+  # to held positions + admitted candidates, never the full ~101-symbol
+  # universe. See src/config.py::NewsConfig for the evidence behind each
+  # default below.
+  per_symbol_enabled: true
+  per_symbol_max_symbols: 15
+  per_symbol_max_prompt_items: 15
+  per_symbol_requests_per_second: 2.0
 
 trading:
   universe:

@@ -388,7 +388,16 @@ class TradingPipeline:
         # contact-bearing UA this repo already sends to SEC EDGAR for Form 4
         # — rather than inventing a second politeness convention for the
         # "SEC Press Releases" feed added 2026-08-29 (src/data/news.py).
-        self.news_provider = NewsDataProvider(sec_user_agent=config.smart_money.user_agent)
+        # per_symbol_* (2026-08-30 owner decision — src/data/news.py audit
+        # block): every cap an operator can tune lives in config.news, never
+        # a module constant, same rule already applied to max_prompt_items.
+        self.news_provider = NewsDataProvider(
+            sec_user_agent=config.smart_money.user_agent,
+            per_symbol_enabled=config.news.per_symbol_enabled,
+            per_symbol_max_symbols=config.news.per_symbol_max_symbols,
+            per_symbol_max_prompt_items=config.news.per_symbol_max_prompt_items,
+            per_symbol_requests_per_second=config.news.per_symbol_requests_per_second,
+        )
         self.news_store = NewsStore()
         self.macro_store = MacroStore()
         self.tech_store = TechStore()
@@ -6078,6 +6087,8 @@ class TradingPipeline:
     def _run_news_update(
         self, run_id: str, session: str = "morning",
         universe: list[str] | None = None,
+        held_symbols: list[str] | None = None,
+        candidate_symbols: list[str] | None = None,
     ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
         """Fetch news, run intelligence analysis, save report. Session-aware.
 
@@ -6087,6 +6098,17 @@ class TradingPipeline:
 
         Session-tagged reports persist alongside the latest full_report.json so
         each session's output is individually recoverable for audit / debug.
+
+        `held_symbols` / `candidate_symbols` (2026-08-30 owner decision) are
+        the caller's ALREADY-ORDERED lists of symbols to also fetch
+        individually via Yahoo Finance's per-symbol RSS — see
+        NewsDataProvider.fetch_news. The deterministic selection rule lives
+        HERE, not in the provider: held positions first, then the run's
+        admitted candidates, each list in the caller's own stable order
+        (never raw set iteration — see the callers of this method), deduped
+        while preserving that order. NewsDataProvider itself enforces the
+        symbol-count cap (config.news.per_symbol_max_symbols); this method
+        only decides ordering and priority.
 
         Returns `(intel_report, coverage)`. `coverage` (src.data.news.
         NewsCoverage) is the 2026-08-28 fix for a dead feed vanishing
@@ -6100,7 +6122,11 @@ class TradingPipeline:
         coverage = None
         try:
             research_universe = universe or self.config.trading.universe
-            news_items, coverage = self.news_provider.fetch_news()
+            per_symbol_symbols = list(dict.fromkeys(
+                [str(s).strip().upper() for s in (held_symbols or []) if str(s).strip()]
+                + [str(s).strip().upper() for s in (candidate_symbols or []) if str(s).strip()]
+            ))
+            news_items, coverage = self.news_provider.fetch_news(symbols=per_symbol_symbols)
             news_text = self.news_provider.format_for_prompt(
                 news_items, max_items=self.config.news.max_prompt_items,
             )
@@ -6136,10 +6162,14 @@ class TradingPipeline:
                 # collapsed_count / source_count are persisted so the dedup
                 # stage stays auditable after the fact — you can re-measure
                 # the duplication rate from the archive without re-fetching.
+                # per_symbol (2026-08-30) is persisted for the same reason:
+                # measuring the per-symbol duplicate rate after the fact
+                # shouldn't require re-fetching either.
                 self.news_store.save_raw_headlines(
                     [{"title": i.title, "source": i.source, "summary": i.summary,
                       "collapsed_count": getattr(i, "collapsed_count", 1),
-                      "source_count": getattr(i, "source_count", 1)}
+                      "source_count": getattr(i, "source_count", 1),
+                      "per_symbol": getattr(i, "per_symbol", False)}
                      for i in news_items])
                 n_changes = len(intel_report.state_changes)
                 n_stocks = len(intel_report.stock_news)
@@ -8346,8 +8376,21 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture developments since morning.
         try:
+            # held_symbols: current book, in broker snapshot order (stable
+            # within this run — see _run_news_update's ordering contract).
+            # No separate "candidate_symbols" concept exists at this point
+            # in the midday/close path (unlike MorningResearchStage, which
+            # has ctx.admitted_symbols computed before news fetches) — a
+            # deliberate scope limit, not an oversight; see the PR
+            # description.
+            held_symbols = [
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in positions if getattr(p, "qty", 0)
+            ]
             session_news, session_news_coverage = self._run_news_update(
-                run_id, session=session_type)
+                run_id, session=session_type,
+                held_symbols=[s for s in held_symbols if s],
+            )
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
@@ -9677,8 +9720,17 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture end-of-day developments
         try:
+            # Same held-symbols-only scope as run_position_review — see the
+            # comment there. No separate candidate list exists pre-fetch in
+            # this path.
+            held_symbols = [
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in positions if getattr(p, "qty", 0)
+            ]
             evening_news, evening_news_coverage = self._run_news_update(
-                run_id, session="evening")
+                run_id, session="evening",
+                held_symbols=[s for s in held_symbols if s],
+            )
         except PaidAnalysisSuspended as exc:
             self.db.insert_daily_pnl(
                 date=today_str, total_value=total_value,
