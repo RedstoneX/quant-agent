@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -148,6 +150,24 @@ RSS_FEEDS = {
 #     have it today and doesn't construct it here — that is a scope/design
 #     decision for the owner, not something to bolt on silently. Tracked
 #     in docs/WORK.md rather than half-wired.
+#
+#     2026-08-30 UPDATE — the owner made that scope decision: free sources
+#     only, scoped every run to held positions + this run's admitted
+#     candidates (never the full universe), with a hard symbol cap so this
+#     can never regress toward 101-202 requests. Re-verified live the same
+#     day (through this exact module's fetch path, urlopen + USER_AGENT):
+#     https://finance.yahoo.com/rss/headline?s=<TICKER> still 301-redirects
+#     to feeds.finance.yahoo.com and returns HTTP 200 with valid RSS 2.0
+#     (13-20 items/symbol across the 6 symbols in the live book that day —
+#     see the PR description for the full per-symbol measurement). Wired in
+#     below as `YAHOO_PER_SYMBOL_URL_TEMPLATE` /
+#     `NewsDataProvider.fetch_news(symbols=...)`; caller-side selection and
+#     all caps live in `config.news.per_symbol_*`
+#     (src/config.py::NewsConfig). Seeking Alpha per-symbol remains
+#     verified-available but is deliberately NOT enabled alongside it — one
+#     request per symbol, not two, keeps the added request count halved.
+#     This is a scope choice, not a disabled feature; flip it on only with
+#     a matching second look at Seeking Alpha's own rate tolerance.
 #   - GlobeNewswire (https://www.globenewswire.com/rss/list and the atom/
 #     rss subject-code variants): every attempt (urlopen, curl, curl
 #     --http1.1) either hung until timeout or dropped the HTTP/2 stream —
@@ -191,6 +211,22 @@ USER_AGENT = "Mozilla/5.0 (quant-agent/0.1)"
 # for a NewsDataProvider built without a config (tests, scripts).
 SEC_USER_AGENT = "QAMC research-intelligence qamc-contact@proton.me"
 FETCH_TIMEOUT = 10
+
+# Per-symbol Yahoo Finance RSS — see the 2026-08-30 UPDATE note in the audit
+# block above. `{symbol}` is formatted with the bare ticker (e.g. "AAPL"); the
+# endpoint 301-redirects to feeds.finance.yahoo.com, which urlopen follows
+# automatically. One request per symbol — Seeking Alpha's per-symbol
+# endpoint is deliberately not also called, to keep the added request count
+# halved (see the audit note).
+YAHOO_PER_SYMBOL_URL_TEMPLATE = "https://finance.yahoo.com/rss/headline?s={symbol}"
+
+# Shared across every NewsDataProvider instance in the process, same pattern
+# as src/data/smart_money.py's module-level `_RATE_LOCK` / `_LAST_REQUEST_AT`
+# — politeness to a given host is a property of the process talking to it,
+# not of any one provider object. Kept separate from smart_money's globals
+# (different host, different tolerance) rather than sharing them.
+_PER_SYMBOL_RATE_LOCK = threading.Lock()
+_PER_SYMBOL_LAST_REQUEST_AT = 0.0
 
 
 def _is_sec_gov(url: str) -> bool:
@@ -307,6 +343,13 @@ class NewsItem:
     # trade one distortion for another.
     collapsed_count: int = 1
     source_count: int = 1
+    # True when this item (or, after dedup, its cluster's representative)
+    # came from a per-symbol fetch (see NewsDataProvider.fetch_news) rather
+    # than a general wire feed. Drives the per_symbol_max_prompt_items cap —
+    # see _cap_per_symbol_items — so a flood of single-name headlines cannot
+    # crowd out general wire coverage. Defaults False so every pre-existing
+    # NewsItem (and every general-feed item today) is unaffected.
+    per_symbol: bool = False
 
 
 class NewsDataProvider:
@@ -315,6 +358,11 @@ class NewsDataProvider:
         feeds: dict[str, str] | None = None,
         lookback_hours: int = 24,
         sec_user_agent: str = SEC_USER_AGENT,
+        per_symbol_enabled: bool = True,
+        per_symbol_feed_template: str = YAHOO_PER_SYMBOL_URL_TEMPLATE,
+        per_symbol_max_symbols: int = 15,
+        per_symbol_max_prompt_items: int = 15,
+        per_symbol_requests_per_second: float = 2.0,
     ):
         self.feeds = feeds or RSS_FEEDS
         self.lookback_hours = lookback_hours
@@ -325,11 +373,29 @@ class NewsDataProvider:
         # config.smart_money.user_agent explicitly at construction; this
         # default only covers a NewsDataProvider built without a config.
         self.sec_user_agent = sec_user_agent
+        # Per-symbol news (2026-08-30 owner decision — see the audit block
+        # above `USER_AGENT`). pipeline.py passes every one of these
+        # explicitly from config.news.per_symbol_* at construction time;
+        # these defaults only cover a NewsDataProvider built without a
+        # config (tests, scripts) and mirror NewsConfig's own defaults
+        # (src/config.py) so the two never silently drift apart.
+        self.per_symbol_enabled = bool(per_symbol_enabled)
+        self.per_symbol_feed_template = per_symbol_feed_template
+        # Clamped defensively (not just relying on NewsConfig's Field
+        # bounds) so a NewsDataProvider built directly — bypassing config
+        # validation entirely — still cannot be pointed at a negative or
+        # absurdly large per-symbol fetch count.
+        self.per_symbol_max_symbols = max(0, int(per_symbol_max_symbols))
+        self.per_symbol_max_prompt_items = max(0, int(per_symbol_max_prompt_items))
+        per_symbol_rps = min(10.0, max(0.1, float(per_symbol_requests_per_second)))
+        self.per_symbol_request_interval_s = 1.0 / per_symbol_rps
 
     def fetch_news(
         self, lookback_hours_override: int | None = None,
+        symbols: list[str] | None = None,
     ) -> tuple[list[NewsItem], NewsCoverage]:
-        """Fetch recent news from all RSS feeds.
+        """Fetch recent news from all RSS feeds, plus an optional per-symbol
+        pass.
 
         Default lookback is 24h, fine for Tue-Fri morning runs. On Monday
         morning the previous trading day was Friday, so a 24h window
@@ -339,6 +405,21 @@ class NewsDataProvider:
         lookback to cover the gap. The caller can also override via
         `lookback_hours_override` for hand-tuning / replay scenarios.
 
+        `symbols`, when given, is an already-ordered list of tickers to also
+        fetch individually from Yahoo Finance's per-symbol RSS (2026-08-30
+        owner decision — see the audit block above `USER_AGENT`). This
+        provider is deliberately kept portfolio-agnostic: the caller (the
+        pipeline, which knows held positions and the run's admitted
+        candidates) decides WHICH symbols and in what order — positions
+        before candidates is the documented convention, see
+        TradingPipeline._run_news_update — and this method only decides HOW
+        MANY, via `self.per_symbol_max_symbols`. That cap is enforced here
+        regardless of how long `symbols` is, so a caller bug can never turn
+        into a live request storm. Pass `None` or `[]` (or set
+        `per_symbol_enabled=False`) for zero added requests and byte-identical
+        behavior to a NewsDataProvider that has never heard of per-symbol
+        fetching.
+
         Returns `(items, coverage)`. Before 2026-08-28 this returned only
         `items`, and a feed that failed simply contributed zero of them —
         indistinguishable from a feed that fetched fine and had nothing new
@@ -346,7 +427,10 @@ class NewsDataProvider:
         accounting of how many feeds were configured, how many actually
         returned data, and which ones failed and why, so "the wires were
         read" and "two wires returned nothing" can never again look the
-        same downstream.
+        same downstream. Per-symbol feeds are folded into this SAME
+        `NewsCoverage` (each symbol is just another named feed) rather than
+        a parallel reporting path, so a per-symbol feed that starts failing
+        shows up exactly the same way a dead general wire does.
         """
         if lookback_hours_override is not None:
             effective_lookback = lookback_hours_override
@@ -390,22 +474,110 @@ class NewsDataProvider:
                     name=source_name, reason=reason[:_FAILURE_REASON_MAX_LEN],
                 ))
 
+        # Per-symbol pass (2026-08-30). `capped_symbols` is the hard safety
+        # net described in the docstring: even if `symbols` somehow arrived
+        # with the whole ~101-symbol universe in it, this provider physically
+        # cannot issue more than `per_symbol_max_symbols` requests for it.
+        # dict.fromkeys dedupes while preserving the caller's order (never a
+        # bare set — the whole point is a reproducible, not incidental,
+        # selection).
+        per_symbol_configured = 0
+        if self.per_symbol_enabled and symbols:
+            capped_symbols = list(dict.fromkeys(
+                str(s).strip().upper() for s in symbols if str(s).strip()
+            ))[: self.per_symbol_max_symbols]
+            for symbol in capped_symbols:
+                source_name = f"Yahoo Finance ({symbol})"
+                url = self.per_symbol_feed_template.format(symbol=symbol)
+                per_symbol_configured += 1
+                try:
+                    self._throttle_per_symbol()
+                    items = self._fetch_feed(source_name, url, cutoff)
+                    for item in items:
+                        item.per_symbol = True
+                    all_items.extend(items)
+                    succeeded += 1
+                except Exception as e:
+                    # Same visibility contract as the general-feed loop
+                    # above — this is NOT a separate reporting path, it
+                    # feeds the exact same `failures` list and therefore the
+                    # exact same NewsCoverage the operator-facing "Data
+                    # degraded" banner reads (see data_status["news"] in
+                    # pipeline_stages.py).
+                    logger.warning(
+                        "Failed to fetch per-symbol feed %s: %s", source_name, e,
+                    )
+                    reason = str(e) or type(e).__name__
+                    failures.append(FeedFailure(
+                        name=source_name, reason=reason[:_FAILURE_REASON_MAX_LEN],
+                    ))
+
         coverage = NewsCoverage(
-            configured=len(self.feeds), succeeded=succeeded, failed=failures,
+            configured=len(self.feeds) + per_symbol_configured,
+            succeeded=succeeded, failed=failures,
         )
 
-        # Deduplicate by title similarity and sort by time (newest first)
+        # Deduplicate by title similarity and sort by time (newest first).
+        # Per-symbol items flow through the SAME dedup as everything else —
+        # a per-symbol story that a general wire already carried collapses
+        # into one cluster like any other syndicated copy, rather than
+        # reading as independent confirmation. See src/data/news_dedup.py.
         deduped = self._deduplicate(all_items)
         deduped.sort(key=lambda x: x.published or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        deduped = self._cap_per_symbol_items(deduped, self.per_symbol_max_prompt_items)
 
         logger.info(
-            "Fetched %d news items from %d/%d sources (after dedup from %d); "
-            "coverage=%s%s",
-            len(deduped), succeeded, len(self.feeds), len(all_items),
-            coverage.status,
+            "Fetched %d news items from %d/%d sources (%d per-symbol; after "
+            "dedup from %d); coverage=%s%s",
+            len(deduped), succeeded, len(self.feeds) + per_symbol_configured,
+            per_symbol_configured, len(all_items), coverage.status,
             f" failed={sorted(f.name for f in failures)}" if failures else "",
         )
         return deduped, coverage
+
+    def _throttle_per_symbol(self) -> None:
+        """Politeness gate before each per-symbol request — same
+        request-interval-from-rate convention as
+        SECForm4Provider._get / _RATE_LOCK in src/data/smart_money.py,
+        applied to the per-symbol Yahoo endpoint's own (much lower, since
+        undocumented) tolerance rather than SEC's. Shared module-level state
+        so it throttles across every NewsDataProvider instance in the
+        process, not just calls on the same instance."""
+        global _PER_SYMBOL_LAST_REQUEST_AT
+        with _PER_SYMBOL_RATE_LOCK:
+            wait = self.per_symbol_request_interval_s - (
+                time.monotonic() - _PER_SYMBOL_LAST_REQUEST_AT
+            )
+            if wait > 0:
+                time.sleep(wait)
+            _PER_SYMBOL_LAST_REQUEST_AT = time.monotonic()
+
+    @staticmethod
+    def _cap_per_symbol_items(items: list[NewsItem], cap: int) -> list[NewsItem]:
+        """Keep every general-wire item; keep at most `cap` per-symbol items.
+
+        `items` is already sorted newest-first, so "the first `cap`
+        per-symbol items encountered" means the most recent ones — the rest
+        are dropped, not the general-wire items around them. This is what
+        keeps a flood of single-name headlines from crowding out the
+        general wire feeds in the analyst's prompt (see
+        NewsConfig.per_symbol_max_prompt_items).
+
+        A no-op whenever nothing here is per-symbol-sourced — including
+        every call where `fetch_news(symbols=...)` was never used — so
+        today's behavior is unperturbed by this cap's existence.
+        """
+        if cap < 0:
+            return items
+        kept: list[NewsItem] = []
+        per_symbol_kept = 0
+        for item in items:
+            if getattr(item, "per_symbol", False):
+                if per_symbol_kept >= cap:
+                    continue
+                per_symbol_kept += 1
+            kept.append(item)
+        return kept
 
     def _fetch_feed(self, source_name: str, url: str, cutoff: datetime) -> list[NewsItem]:
         """Fetch and parse a single RSS feed.
