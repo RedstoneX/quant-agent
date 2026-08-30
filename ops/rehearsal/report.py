@@ -126,23 +126,14 @@ STATUS_PLAIN = {
         "so no daily review was produced — only today's profit and loss "
         "was recorded."
     ),
-    # "intraday_no_trades" / "intraday_executed" (src/pipeline.py:9127,9138)
-    # are genuinely healthy outcomes of run_intra_check's opportunity scan —
-    # but, verified against the actual data flow rather than assumed: they
-    # are NOT top-level terminal statuses of any session. They only ever
-    # appear nested at result["intraday_scan"]["status"] (set at
-    # src/pipeline.py:8497-8498; the top-level status in that branch stays
-    # "ok"). Production's own src/trader_feed.py reads that exact nesting —
-    # `nested = result.get("intraday_scan")` (line 54), then
-    # `_format_intraday` reads `nested["status"]`, not `result["status"]`
-    # (line 564) — so production treating them as healthy is not evidence
-    # that `result["status"]` (what `report.status` is built from, in
-    # `collect()` below) can ever equal these strings. This rig's
-    # `collect()` never reads result["intraday_scan"], so today these two
-    # entries can never actually be selected. Left here because they are
-    # correct in meaning and harmless, not because they are reachable yet;
-    # the rig having no visibility into the intraday scan's own outcome is a
-    # separate, real gap, reported (not fixed) alongside this change.
+    # "intraday_no_trades" / "intraday_executed" (src/pipeline.py:9529,9540)
+    # are healthy outcomes of run_intra_check's opportunity scan. They are
+    # nested at result["intraday_scan"]["status"], not at the top level (the
+    # top-level status in that branch stays "ok"). Production's own
+    # src/trader_feed.py reads this exact nesting — `nested = result.get("intraday_scan")`
+    # (line 54), then `_format_intraday` reads `nested["status"]`, not
+    # `result["status"]` (line 564). collect() now mirrors that behavior,
+    # extracting the nested status for intra_check sessions.
     "intraday_no_trades": (
         "The intra-session check ran its full analysis and decided to "
         "propose no trades."
@@ -592,6 +583,15 @@ def collect(
     the report does not claim it.
     """
     status = str(result.get("status", "unknown")) if result else "did_not_finish"
+
+    # For intra_check sessions, the intraday scan's own status is nested at
+    # result["intraday_scan"]["status"], not at the top level. Production's
+    # src/trader_feed.py reads this nesting explicitly. Mirror that behavior.
+    if session == "intra_check" and result and isinstance(result.get("intraday_scan"), dict):
+        nested_status = result["intraday_scan"].get("status")
+        if nested_status is not None:
+            status = str(nested_status)
+
     report = RehearsalReport(
         session=session,
         rehearsed_date=rehearsed_date,
