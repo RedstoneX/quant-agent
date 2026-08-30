@@ -126,23 +126,19 @@ STATUS_PLAIN = {
         "so no daily review was produced — only today's profit and loss "
         "was recorded."
     ),
-    # "intraday_no_trades" / "intraday_executed" (src/pipeline.py:9127,9138)
-    # are genuinely healthy outcomes of run_intra_check's opportunity scan —
-    # but, verified against the actual data flow rather than assumed: they
-    # are NOT top-level terminal statuses of any session. They only ever
-    # appear nested at result["intraday_scan"]["status"] (set at
-    # src/pipeline.py:8497-8498; the top-level status in that branch stays
-    # "ok"). Production's own src/trader_feed.py reads that exact nesting —
-    # `nested = result.get("intraday_scan")` (line 54), then
-    # `_format_intraday` reads `nested["status"]`, not `result["status"]`
-    # (line 564) — so production treating them as healthy is not evidence
-    # that `result["status"]` (what `report.status` is built from, in
-    # `collect()` below) can ever equal these strings. This rig's
-    # `collect()` never reads result["intraday_scan"], so today these two
-    # entries can never actually be selected. Left here because they are
-    # correct in meaning and harmless, not because they are reachable yet;
-    # the rig having no visibility into the intraday scan's own outcome is a
-    # separate, real gap, reported (not fixed) alongside this change.
+    # "intraday_no_trades" / "intraday_executed" (src/pipeline.py:9529,9540)
+    # are healthy outcomes of run_intra_check's opportunity scan. They are
+    # nested at result["intraday_scan"]["status"], not at the top level (the
+    # top-level status in that branch stays "ok"). Production's own
+    # src/trader_feed.py reads this exact nesting — `nested = result.get("intraday_scan")`
+    # (line 54), then `_format_intraday` reads `nested["status"]`, not
+    # `result["status"]` (line 564). collect() now mirrors that behavior,
+    # extracting the nested status for intra_check sessions. Verified by
+    # integration tests that drive collect() through realistic result shapes
+    # (tests/test_rehearsal_report_verdict.py); no current production replay
+    # contains an intraday_scan key, so the path is unit-tested but not
+    # exercised by real historical data. The extraction logic is ready for when
+    # a replay does produce one.
     "intraday_no_trades": (
         "The intra-session check ran its full analysis and decided to "
         "propose no trades."
@@ -592,6 +588,15 @@ def collect(
     the report does not claim it.
     """
     status = str(result.get("status", "unknown")) if result else "did_not_finish"
+
+    # For intra_check sessions, the intraday scan's own status is nested at
+    # result["intraday_scan"]["status"], not at the top level. Production's
+    # src/trader_feed.py reads this nesting explicitly. Mirror that behavior.
+    if session == "intra_check" and result and isinstance(result.get("intraday_scan"), dict):
+        nested_status = result["intraday_scan"].get("status")
+        if nested_status is not None:
+            status = str(nested_status)
+
     report = RehearsalReport(
         session=session,
         rehearsed_date=rehearsed_date,
@@ -630,6 +635,33 @@ def collect(
         and "stop" not in (o.get("type") or "")
     ])
     report.findings = list(getattr(library, "findings", []))
+
+    # For intra_check sessions, flag when the intraday_scan outcome is not visible.
+    # An absent key could mean the scan never attempted (config disabled, process locked,
+    # outside time window) — normal and healthy — or it crashed (exception caught at
+    # src/pipeline.py:8895-8898, scan_result set to None) — an error condition. The rig
+    # cannot distinguish these cases from outside because both leave no key and top-level
+    # status "ok". This is also a production honesty gap: the operator's feed would show
+    # the session as fine even if the scan crashed (line 8873's top-level status is "ok"
+    # for both cases). Without production exposing a marker in the result, the rig can only
+    # flag the limitation, not resolve it.
+    if session == "intra_check" and result and not isinstance(result.get("intraday_scan"), dict):
+        report.findings.append({
+            "kind": "intraday_scan_visibility_gap",
+            "agent": "rig",
+            "detail": (
+                "The intraday opportunity scan outcome is not visible in the result. "
+                "This could be normal (scan not attempted due to config, process lock, "
+                "or time window) or could indicate the scan crashed. The rig cannot "
+                "distinguish these cases — the rig's own findings would be identical "
+                "whether the scan ran and decided there were no trades, or crashed "
+                "while running. Production's own status is also 'ok' for both cases, "
+                "so the operator's feed has the same visibility gap. To resolve this, "
+                "production would need to return a dict with an error status on crash, "
+                "rather than setting scan_result to None."
+            ),
+        })
+
     report.verdict = _verdict(report)
     return report
 
@@ -781,8 +813,10 @@ def _verdict(report: RehearsalReport) -> str:
     # "market_holiday". "nothing_new" / "preprocessed" are the normal
     # completions of run_earnings_preprocess, a session this rig cannot
     # invoke yet — added pre-emptively. "intraday_no_trades" /
-    # "intraday_executed" are healthy in meaning but currently unreachable
-    # as `report.status` (see the STATUS_PLAIN comment above for why). See
+    # "intraday_executed" are healthy completions of run_intra_check's
+    # opportunity scan, now reachable in `report.status` via nested extraction
+    # from result["intraday_scan"]["status"] in collect() — see the
+    # STATUS_PLAIN comment and the nested extraction logic for details. See
     # the matching STATUS_PLAIN entries above for how each was confirmed
     # against src/pipeline.py and against production's own trader_feed.py /
     # notifier.py status groupings.
