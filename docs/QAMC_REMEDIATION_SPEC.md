@@ -261,11 +261,12 @@ Trailing is arithmetic and belongs in deterministic code, not in an LLM's discre
 - **Nothing is re-fetched.** The research stack still does not rerun this tick, which is the saving this scan exists to preserve; only what was already on disk is now shown to the PM.
 - Fixed a latent crash this carry-forward surfaced: `sector_guidance` has two shapes — the live macro agent emits `[{sector, stance, reason}, ...]`, `MacroStore` persists the normalized `{sector: direction}` form — and the registry iterated the dict shape as a list, so `row.get` raised `AttributeError`. Carrying stored macro forward is what first put that shape in front of the registry; without the fix, every intraday tick would have degraded to no scan at all. Both shapes now resolve; the vocabulary asymmetry they expose (`overweight` vs `bullish` for one macro view) is pinned as a known property, not fixed here.
 
-**4.2 — Repair the data feeds.**
+**4.2 — Repair the data feeds. DONE (2026-08-30, commit `92689e6`, branch `fix/fred-feed-repair`, merged and deployed as PR #162 — news half done earlier via PR #148/#157).**
 Production logs show Reuters Business 404, AP Business 403, repeated FRED timeouts, 28 incomplete tech batches, and 11 `Portfolio decision failed deterministic grounding` errors (the PM inventing holdings).
-- Replace or re-point the dead news feeds.
-- Add retry/backoff for FRED.
-- **Add a feed-health gate:** if macro or news coverage is unavailable, the desk must know it is operating degraded, and that fact must appear in the Telegram alert and the dashboard.
+- Replace or re-point the dead news feeds. **Done** — see `docs/AGENT_ROLE_AUDIT.md` §2.2 and `docs/phases.yaml`'s `phase_4` entry.
+- Add retry/backoff for FRED. **Done, and rebuilt from what the spec's own text assumed already existed.** The single-retry/flat-2s-backoff policy live at the time this line was written was not enough — it let a three-minute outage on 2026-08-26 fail all nine series in one run. It is now config-driven retries, exponential backoff with jitter, per-request timeouts, and a real wall-clock ceiling (`total_fetch_deadline_s`, 90s default) the old policy never had.
+- **Add a feed-health gate:** if macro or news coverage is unavailable, the desk must know it is operating degraded, and that fact must appear in the Telegram alert and the dashboard. **Done for both.** News coverage was wired into `data_status["news"]` earlier; macro coverage now feeds `data_status["macro"]` through the same ok/partial/failed path, and the macro analyst is shown its own coverage directly.
+- **Not part of this item's original text, but a real gap surfaced by this work:** there is no macro event calendar (Fed decision / inflation release dates) — the desk still answers "is one coming up" from the model's own memory. Deliberately out of scope for this PR, not authorised here. See `docs/phases.yaml`'s `open_defects` entry.
 
 ---
 

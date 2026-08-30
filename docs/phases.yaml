@@ -261,7 +261,7 @@ phases:
 
   - id: phase_4
     title: "Phase 4 — Evidence symmetry and feed repair"
-    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries. FRED retries already existed. Reuters and AP are gone for good (Reuters killed public RSS in 2020, AP's free proxy is bot-walled) and were removed on purpose rather than left silently dead. Correction 2026-08-29: the news-source audit the owner asked for is no longer open work — the RSS set was widened from 8 to 11 free feeds (Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases added) and one feed that kept returning HTTP 200 while having stopped publishing over a year ago (MarketWatch Markets/marketpulse) was found and removed. Correction 2026-08-30: per-company news also landed (PR #157): free per-symbol RSS is now available for Yahoo Finance but is scoped to held positions and admitted candidates (not the full universe), hard-capped to avoid cost explosion. The one genuine remaining gap is full wire-service breadth: restoring Reuters/AP-grade coverage needs a paid subscription and an owner decision, not more free-feed hunting."
+    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries. Correction 2026-08-29: the news-source audit the owner asked for is no longer open work — the RSS set was widened from 8 to 11 free feeds (Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases added) and one feed that kept returning HTTP 200 while having stopped publishing over a year ago (MarketWatch Markets/marketpulse) was found and removed. Correction 2026-08-30 (per-company news): also landed (PR #157): free per-symbol RSS is now available for Yahoo Finance but is scoped to held positions and admitted candidates (not the full universe), hard-capped to avoid cost explosion. Correction 2026-08-30 (FRED repair, PR #162): the earlier note here calling FRED retries pre-existing and adequate was wrong — production evidence (2026-08-26, all nine series failing in one three-minute window under a single-retry/flat-backoff policy with no wall-clock ceiling) showed otherwise. That policy is now config-driven retries, exponential backoff with jitter, per-request timeouts, and a real hard ceiling (`total_fetch_deadline_s`, 90s default) the old design never had; six new free series were added and verified live; and macro coverage now feeds the same operator-facing degraded-data path news coverage already used, with the macro analyst shown its own coverage. This phase stays PARTIAL, not DONE: two genuine gaps remain, neither touched by this repair. (1) Full wire-service breadth (Reuters/AP) still needs a paid subscription and an owner decision, not more free-feed hunting. (2) This work surfaced a second gap outside this phase's own written scope: there is no macro EVENT CALENDAR (Fed decision / inflation release dates) — `event_risk` is still answered from the model's own memory, not from fetched data. Deliberately not built here — see the `open_defects` entry for both."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -281,10 +281,57 @@ phases:
       - kind: pr_merged
         number: 113
         note: "§4.1 shipped as part of feat/pm-flex-routing, deployed (46b2029 is an ancestor of production HEAD)"
+      - kind: pr_merged
+        number: 162
+        note: "fix/fred-feed-repair — §4.2's FRED half: config-driven retries, exponential backoff with jitter, per-request timeouts, a real total_fetch_deadline_s wall-clock ceiling, macro coverage visibility, and six new free FRED series"
+      - kind: commit_in_main
+        sha: "92689e6f3363ec8ed676f415cdb7337ec99644fd"
+        note: "fix(macro): resilient FRED fetch with coverage visibility and six new series"
       - kind: symbol_in_file
         path: "src/data/macro.py"
-        symbol: "One bounded retry per series"
-        note: "§4.2 FRED retry/backoff — already existed before the spec was written; not new work, but satisfies the requirement"
+        symbol: "total_fetch_deadline_s: float = 90.0"
+        note: "the hard wall-clock ceiling the old single-retry/flat-backoff policy never had — clips every request timeout and backoff sleep, and skips not-yet-started series once the budget is exhausted"
+      - kind: symbol_in_file
+        path: "src/data/macro.py"
+        symbol: "class MacroCoverage"
+        note: "macro-side counterpart to src.data.news.NewsCoverage — configured/succeeded/failed series accounting"
+      - kind: symbol_in_file
+        path: "src/pipeline_stages.py"
+        symbol: "macro_coverage = self.macro.last_coverage"
+        note: "macro coverage now drives data_status[\"macro\"] through the same ok/partial/failed path news coverage already used"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "macro.total_fetch_deadline_s"
+        value: 90.0
+        note: "the operator-facing hard ceiling, deployed"
+      - kind: setting_equals
+        path: "config/settings.yaml"
+        key: "macro.max_retries"
+        value: 2
+        note: "raised from the old hardcoded 1"
+      - kind: test_exists
+        path: "tests/test_macro_feed_resilience.py"
+        test: "test_backoff_and_deadline_bound_worst_case_wall_clock"
+      - kind: test_exists
+        path: "tests/test_macro_feed_resilience.py"
+        test: "test_deadline_already_expired_skips_remaining_series_without_attempting"
+      - kind: test_exists
+        path: "tests/test_macro_feed_resilience.py"
+        test: "test_morning_research_stage_macro_total_failure_marks_status_failed_even_when_analysis_parses"
+      - kind: symbol_in_file
+        path: "src/data/macro.py"
+        symbol: "def get_real_yield_and_breakeven"
+        note: "one of six new free FRED series (DFII10 real 10y yield, T10YIE 10y breakeven) added and verified live"
+      - kind: symbol_in_file
+        path: "src/data/macro.py"
+        symbol: "def get_jobless_claims"
+        note: "ICSA weekly initial jobless claims — the sixth new series"
+      - kind: symbol_in_file
+        path: "config/prompts/macro_analyst.md"
+        symbol: "DFII10, T10YIE"
+        note: "the macro analyst prompt explains the new series"
+      - kind: manual
+        note: "Correction 2026-08-30: this phase stays PARTIAL, not DONE — see the plain_summary. Two genuine gaps remain, neither closed by PR #162: wire-service breadth (Reuters/AP, needs a paid subscription and owner decision) and a macro event calendar (Fed decision / inflation release dates) — event_risk is still answered from the model's memory, not data. See open_defects."
       - kind: manual
         note: "Correction 2026-08-29: this note previously said the Reuters and AP URLs in src/data/news.py are unchanged and still dead. Verified false against origin/main. RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
       - kind: manual
@@ -705,26 +752,35 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Two defects recorded: (1) When an intraday_scan raises an exception, it sets scan_result=None with no error marker. The rehearsal harness cannot distinguish 'never attempted' (normal, config disabled) from 'crashed' (error), since both produce no intraday_scan key in the report. Production's own status is also 'ok' for a crashed scan, so the operator sees no signal. Resolution would require returning a dict with an error status on crash instead of None. Documented in PR #156. (2) FRED data fetch has failed in production under operational conditions (2026-08-26 17:01-17:03 UTC: all nine series failed together; 2026-08-22: two series failed). The macro seat's fetch includes one bounded retry with 2-second backoff. When macro fails, the desk proceeds on missing data — the system is fail-safe (does not crash) but decision-making is blind. No alert fires for widespread series failure."
+    plain_summary: "Correction 2026-08-30: the two defects previously recorded here are both fixed — see the manual note below for the evidence trail. (1) A crashed intraday scan used to set scan_result=None with no error marker, indistinguishable from a healthy never-ran tick; PR #163 attaches an explicit crashed status that reports as a failure. (2) FRED's fetch used one bounded retry with a flat 2-second backoff and no wall-clock ceiling; PR #162 replaced it with config-driven retries, exponential backoff, and a real deadline — see the phase_4 entry for the full detail. Two different defects are recorded here in their place, found in the course of that same work and still genuinely open. (a) The desk has no macro EVENT CALENDAR: when the risk manager is asked whether a Fed decision or inflation print is coming in the next few days, it answers from the model's own memory, not from any fetched data — a real calendar was deliberately out of scope for PR #162, not authorised. (b) The OpenRouter price list the spending circuit depends on to safely estimate cost is a single point of failure: it only ever refreshes when a paid trading session actually starts, and nothing refreshes it on a schedule. Verified live 2026-08-30: the cache was last refreshed by a real session on 2026-08-28 (~13:30 UTC, per quant_agent.log's own cache-age readings), and by 2026-08-30 — a weekend, with no trading session running to notice — it had gone stale past the 48-hour point (24h fresh plus a 24h grace period) at which the circuit fails closed and hard-suspends every paid call for the rest of the day. No suspension event or operator reset is recorded in the live circuit log, and both pricing cache files carry a 2026-08-30 21:24 UTC timestamp, so someone refreshed it by hand before any session tried and failed. Had Monday's first session run before that manual refresh, the desk would have opened and traded nothing that day."
     status: "OPEN"
     confidence: "high"
     evidence:
-      - kind: pr_merged
-        number: 156
-        note: "fix(rehearsal): surface nested intraday_scan status, and document the crash-invisibility gap"
-      - kind: commit_in_main
-        sha: "75cf21755d4e037249da54284d8c175d866b071b"
-        note: "A crashed intraday scan (exception) leaves no marker, so session status remains 'ok' — production honesty gap, not fixed"
-      - kind: symbol_in_file
-        path: "ops/rehearsal/report.py"
-        symbol: "intraday_scan outcome is not visible"
-        note: "the defect is named and documented in the rehearsal report module"
-      - kind: symbol_in_file
-        path: "src/data/macro.py"
-        symbol: "_FRED_MAX_RETRIES = 1"
-        note: "FRED retry strategy: one bounded retry per series with 2-second backoff (line 28-29). Production has seen widespread simultaneous failures (2026-08-26 and 2026-08-22). Cause not audited; no fix deployed."
       - kind: manual
-        note: "FRED timeouts have occurred in production: 2026-08-26 17:01:29–17:03:49 UTC (all nine series: VIXCLS, DGS2, DGS10, DFF, CPIAUCSL, CPILFESL, PCEPI, UNRATE, BAMLH0A0HYM2), and earlier 2026-08-22 (VIXCLS and DGS10 only). When macro seat data fails, the system records None and proceeds — fail-safe but blind. The macro_analyst's risk stance is therefore sometimes derived from missing data. No alert fires."
+        note: "Correction 2026-08-30: this entry previously named two defects that are now fixed. (1) A crashed intraday scan used to set scan_result=None with no error marker. PR #163 (commit 7b040f1e8d1a96bc5bf71ff504dc046dac992d0e) attaches an explicit 'intraday_scan_crashed' status on a crash, flowing through the same nested result[\"intraday_scan\"][\"status\"] shape the healthy statuses already use, present in ops/rehearsal/report.py's STATUS_PLAIN vocabulary, and deliberately excluded from _verdict's healthy set — see tests/test_intraday_scan_crash_visibility.py. (2) FRED's fetch used one bounded retry with a flat 2-second backoff and no wall-clock ceiling. PR #162 (commit 92689e6f3363ec8ed676f415cdb7337ec99644fd) replaced it with config-driven retries, exponential backoff with jitter, and a real total_fetch_deadline_s ceiling (90s default) that clips every timeout/backoff sleep and skips not-yet-attempted series once exhausted — see tests/test_macro_feed_resilience.py. Both PRs are merged AND deployed (production HEAD confirmed via `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` at audit time). Re-verify with: `grep -n intraday_scan_crashed ops/rehearsal/report.py` and `grep -n total_fetch_deadline_s src/data/macro.py config/settings.yaml`."
+      - kind: pr_merged
+        number: 163
+        note: "fix/intraday-scan-crash-visible — a crashed scan now attaches an explicit failing status instead of looking identical to a healthy no-op"
+      - kind: test_exists
+        path: "tests/test_intraday_scan_crash_visibility.py"
+        test: "test_scan_crash_attaches_error_status_and_tick_completes"
+      - kind: test_exists
+        path: "tests/test_intraday_scan_crash_visibility.py"
+        test: "test_crashed_status_is_not_in_the_verdicts_healthy_set"
+      - kind: pr_merged
+        number: 162
+        note: "fix/fred-feed-repair — config-driven FRED retries, exponential backoff with jitter, a real wall-clock ceiling, and coverage visibility"
+      - kind: test_exists
+        path: "tests/test_macro_feed_resilience.py"
+        test: "test_backoff_and_deadline_bound_worst_case_wall_clock"
+      - kind: symbol_in_file
+        path: "src/models.py"
+        symbol: "event_risk: str = Field(min_length=1)"
+        note: "still-open gap: event_risk is a required narrative field the risk manager fills from its own reasoning — nothing here is fetched from a real economic/earnings calendar"
+      - kind: manual
+        note: "Still open: there is no macro event calendar. `grep -n event_risk config/prompts/risk_manager.md config/prompts/macro_analyst.md` shows the model is instructed to reason about upcoming Fed/earnings/macro events from its own knowledge; no module under src/data/ fetches a calendar of scheduled macro releases. Re-check by searching src/data/ for a FOMC/CPI/NFP release-date fetcher — if one exists, this item is closed."
+      - kind: manual
+        note: "Still open: the OpenRouter price list is a single point of failure. src/cost_table.py's refresh_openrouter_pricing() is only invoked from TradingPipeline.__init__ and activate_paid_call_session — i.e. only when a paid session actually starts — and no systemd timer or cron job refreshes data/openrouter_pricing_cache.json on its own schedule (checked live: `systemctl list-timers --all` on the production host has no quant-agent entry at all). config/settings.yaml's llm_cost_circuit.openrouter_pricing_grace_period_hours (24.0, on top of the 24h freshness window) is the full tolerance before the circuit fails closed. Verified live 2026-08-30 against the production database (llm_circuit_state, llm_circuit_events) and quant_agent.log — see the plain_summary above for the specific timestamps. Re-check by re-reading those same live sources, and by checking whether a scheduled refresh has since been added."
 
   - id: invariants
     title: "Invariants (must hold at all times)"
