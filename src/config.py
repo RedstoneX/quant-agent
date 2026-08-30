@@ -387,14 +387,43 @@ class RiskConfig(BaseModel):
     # risk engine (src/risk/rules.py) on opening/adding a short — never on
     # a COVER, which mirrors the existing exits-fail-open asymmetry.
     max_single_short_pct: float = Field(default=10.0, gt=0, le=100)
-    # The largest total gross short exposure across the whole book, as a
-    # percent of equity.
-    max_short_gross_pct: float = Field(default=20.0, gt=0, le=200)
+    # The largest total gross BEARISH exposure across the whole book, as a
+    # percent of equity — true shorts (qty < 0) plus LONG positions in an
+    # inverse/leveraged ETF (SH, SDS, PSQ, SQQQ; see `_ETF_LEVERAGE` in
+    # `src/risk/rules.py`), since holding one of those long is bearish
+    # exposure too. Renamed from `max_short_gross_pct` (2026-08-30): the old
+    # name summed only true shorts, leaving an inverse-ETF long invisible to
+    # it — the desk could sit at the full short ceiling AND hold a full
+    # inverse-ETF position at once and be materially more bearish than
+    # either limit intended. The rename reflects what the ceiling actually
+    # measures now, not just what enforces it.
+    max_gross_bearish_pct: float = Field(default=20.0, gt=0, le=200)
     # Sizing-only haircut (never applied to stop placement) on a short's
     # risk-per-share. A short gaps through its stop upward with no bound —
     # equal nominal risk is not equal real risk — so the same risk
     # allocation opens a SMALLER short than an equivalent long.
     short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_short_gross_key(cls, data):
+        # `max_short_gross_pct` was renamed to `max_gross_bearish_pct`
+        # (2026-08-30) when the ceiling was widened to also count LONG
+        # inverse-ETF positions, not just true shorts — the meaning of the
+        # setting genuinely changed, so a name that still said "short" would
+        # be a lie. BaseModel's default `extra="ignore"` would let a
+        # settings.yaml still carrying the old key load silently, quietly
+        # dropping whatever value an operator set and falling back to the
+        # 20.0 default — exactly the doc-versus-behaviour drift this rename
+        # exists to stop. Fail loudly instead (same pattern as
+        # `LLMCostCircuitConfig._reject_renamed_free_failure_key`).
+        if isinstance(data, dict) and "max_short_gross_pct" in data:
+            raise ValueError(
+                "risk.max_short_gross_pct has been renamed to "
+                "risk.max_gross_bearish_pct -- update the settings file "
+                "(no alias is provided)"
+            )
+        return data
 
 
 class CashSweepConfig(BaseModel):

@@ -486,7 +486,7 @@ def test_single_short_cap_hard_blocks_opening_too_large_a_short():
 
 
 def test_gross_short_cap_hard_blocks_a_second_short_pushing_the_book_over():
-    engine = RiskRuleEngine(_cfg(max_short_gross_pct=20.0, max_single_short_pct=10.0))
+    engine = RiskRuleEngine(_cfg(max_gross_bearish_pct=20.0, max_single_short_pct=10.0))
     positions = [
         _pos("AAA", qty=-90, entry=100, price=100),   # -$9,000 = 9%
         _pos("BBB", qty=-95, entry=100, price=100),   # -$9,500 = 9.5%
@@ -499,7 +499,7 @@ def test_gross_short_cap_hard_blocks_a_second_short_pushing_the_book_over():
         decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
     )
     rules = {v.rule for v in violations}
-    assert "max_short_gross_pct" in rules
+    assert "max_gross_bearish_pct" in rules
     assert "max_single_short_pct" not in rules, (
         "this decision alone (3%) must not trip the single-short cap — only "
         "the book-wide gross cap should fire"
@@ -509,7 +509,7 @@ def test_gross_short_cap_hard_blocks_a_second_short_pushing_the_book_over():
 def test_neither_short_cap_blocks_a_cover():
     """D9 explicitly: neither cap may ever block a COVER, even reducing a
     position that is ALREADY over both ceilings."""
-    engine = RiskRuleEngine(_cfg(max_single_short_pct=10.0, max_short_gross_pct=20.0))
+    engine = RiskRuleEngine(_cfg(max_single_short_pct=10.0, max_gross_bearish_pct=20.0))
     positions = [_pos("XYZ", qty=-250, entry=100, price=100)]  # -$25,000 = 25%
     decision = TradeDecision(
         action="COVER", symbol="XYZ", allocation_pct=50.0,

@@ -119,7 +119,7 @@ class RiskRuleEngine:
               cash: float | None = None,
               pending_cash_outflow: float = 0.0,
               in_drawdown: bool = False,
-              pending_short_gross_investment: float = 0.0) -> list[RiskViolation]:
+              pending_gross_bearish_investment: float = 0.0) -> list[RiskViolation]:
         # D10 (Stage 3): a COVER can never be hard-blocked, mirroring the
         # deliberate asymmetry already used for exits — entries fail
         # closed, exits fail open, because being unable to close a
@@ -202,6 +202,12 @@ class RiskRuleEngine:
         is_short = decision.action == "SHORT"
         signed_mul = _effective_multiplier(decision.symbol)  # net direction
         gross_mul = _gross_multiplier(decision.symbol)       # size magnitude
+        # A BUY of an inverse ETF (SH/SDS/PSQ/SQQQ — signed_mul < 0) is
+        # bearish exposure exactly like a SHORT is, just held long at the
+        # broker. It must clear the gross bearish ceiling below even though
+        # it is not a SHORT and never touches `max_single_short_pct` (see
+        # the comment at that rule for why that asymmetry is deliberate).
+        is_bearish_buy = decision.action == "BUY" and signed_mul < 0
         new_investment = total_value * (decision.allocation_pct / 100)
         # A SHORT moves net exposure the OPPOSITE way a BUY of the same
         # symbol would (it adds negative, not positive, directional
@@ -235,10 +241,12 @@ class RiskRuleEngine:
                     limit=self.config.max_position_pct,
                 ))
 
-        # D9 (Stage 3): the two short-specific exposure caps. HARD BLOCKS —
-        # in HARD_BLOCK_RULES (src/pipeline.py) — on opening/adding a short;
+        # D9 (Stage 3): the single-short notional cap. HARD BLOCK — in
+        # HARD_BLOCK_RULES (src/pipeline.py) — on opening/adding a short;
         # never reached for a COVER (exempted at the top of this method) or
-        # a BUY (guarded by `is_short` here).
+        # a BUY (guarded by `is_short` here — see the note below for why
+        # this one, unlike the gross ceiling just after it, stays
+        # short-only).
         if is_short:
             current_short_raw = sum(
                 p.market_value for p in positions
@@ -267,32 +275,66 @@ class RiskRuleEngine:
                     value=single_short_pct,
                     limit=self.config.max_single_short_pct,
                 ))
+            # Deliberately NOT extended to a BUY of an inverse ETF, even
+            # though such a BUY is bearish exposure and IS gated by the
+            # gross ceiling just below. `max_single_short_pct` sits at half
+            # of `max_position_pct` specifically because a SHORT's loss is
+            # unbounded — a squeeze has no floor the way a long's does at
+            # -100%. An inverse-ETF LONG's loss is bounded at the position's
+            # notional exactly like any other long, so it does not earn
+            # that extra-tight treatment; it stays governed by the ordinary
+            # `max_position_pct` (rule 1 above), which already charges it at
+            # its full gross leverage multiple.
 
-            current_gross_short = sum(
+        # Gross BEARISH exposure ceiling. HARD BLOCK — in HARD_BLOCK_RULES
+        # (src/pipeline.py). Renamed from the old `max_short_gross_pct`
+        # (2026-08-30): that cap summed only true shorts (qty < 0), which
+        # made a LONG position in an inverse ETF (SH, SDS, PSQ, SQQQ — see
+        # `_ETF_LEVERAGE`) invisible to it, even though holding one long is
+        # bearish exposure. Pre-fix the desk could sit at the full 20%
+        # short ceiling AND hold a full inverse-ETF position at once and be
+        # materially more bearish than either limit intends — worse at
+        # leverage, since a modest SQQQ notional is a large -3x bearish
+        # bet. So this now checks on a SHORT of any symbol, OR a BUY whose
+        # `_effective_multiplier` is negative (`is_bearish_buy` above) — an
+        # ordinary long BUY never reaches it, and SELL/COVER are exempted
+        # at the top of this method. The test is the SIGNED multiplier
+        # being negative, not a hardcoded ticker list, so a fund added to
+        # `_ETF_LEVERAGE` later is picked up automatically.
+        if is_short or is_bearish_buy:
+            current_gross_bearish = sum(
                 abs(p.market_value) * _gross_multiplier(p.symbol)
                 for p in positions if p.qty < 0
+            ) + sum(
+                abs(p.market_value) * abs(_effective_multiplier(p.symbol))
+                for p in positions
+                if p.qty > 0 and _effective_multiplier(p.symbol) < 0
             )
-            # `pending_short_gross_investment` is the running total of OTHER
-            # new shorts already allowed earlier in this same batch (see
+            # `pending_gross_bearish_investment` is the running total of
+            # OTHER bearish orders — shorts OR inverse-ETF BUYs — already
+            # allowed earlier in this same batch (see
             # `TradingPipeline._filter_hard_risk_decisions`) — without it,
-            # two different symbols shorted in the same run would each be
-            # checked against only the pre-existing book and never see each
-            # other, the same gap `pending_investment` closes for net
-            # exposure and `pending_sector_investment` closes for sector.
-            gross_short_pct = (
-                (current_gross_short + pending_short_gross_investment + gross_new)
+            # two bearish orders in the same run would each be checked
+            # against only the pre-existing book and never see each other,
+            # the same gap `pending_investment` closes for net exposure and
+            # `pending_sector_investment` closes for sector. `gross_new` is
+            # already the right unsigned figure for either a SHORT or a
+            # bearish BUY: `new_investment * gross_mul`, and `gross_mul` for
+            # an inverse ETF is `abs(_effective_multiplier(...))`.
+            gross_bearish_pct = (
+                (current_gross_bearish + pending_gross_bearish_investment + gross_new)
                 / total_value * 100
             )
-            if gross_short_pct > self.config.max_short_gross_pct:
+            if gross_bearish_pct > self.config.max_gross_bearish_pct:
                 violations.append(RiskViolation(
-                    rule="max_short_gross_pct",
+                    rule="max_gross_bearish_pct",
                     message=(
-                        f"Total gross short exposure would be "
-                        f"{gross_short_pct:.1f}% and exceed max "
-                        f"{self.config.max_short_gross_pct}%"
+                        f"Total gross bearish exposure (shorts + inverse-ETF "
+                        f"longs) would be {gross_bearish_pct:.1f}% and exceed "
+                        f"max {self.config.max_gross_bearish_pct}%"
                     ),
-                    value=gross_short_pct,
-                    limit=self.config.max_short_gross_pct,
+                    value=gross_bearish_pct,
+                    limit=self.config.max_gross_bearish_pct,
                 ))
 
         # 1b. Drawdown gate (audit §1.1). `apply_drawdown_scale` above has

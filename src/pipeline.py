@@ -93,7 +93,10 @@ HARD_BLOCK_RULES = {
     # D9 (Stage 3, shorts). Hard blocks on opening/adding a short; a COVER
     # is exempted before either rule can fire (src/risk/rules.py).
     "max_single_short_pct",
-    "max_short_gross_pct",
+    # Renamed from max_short_gross_pct (2026-08-30) — now also hard blocks a
+    # BUY of an inverse ETF (SH/SDS/PSQ/SQQQ), not only opening/adding a
+    # short (src/risk/rules.py).
+    "max_gross_bearish_pct",
 }
 
 
@@ -1023,11 +1026,13 @@ class TradingPipeline:
         pending_sector_investment: dict[str, float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
-        # D9 (Stage 3): running total of gross short notional already
-        # allowed earlier in this batch, so `max_short_gross_pct` sees two
-        # different symbols shorted in the same run rather than checking
-        # each against only the pre-existing book.
-        pending_short_gross_investment = 0.0
+        # D9 (Stage 3): running total of gross BEARISH notional (true
+        # shorts OR inverse-ETF BUYs) already allowed earlier in this
+        # batch, so `max_gross_bearish_pct` sees two bearish orders in the
+        # same run rather than checking each against only the pre-existing
+        # book. Renamed from pending_short_gross_investment (2026-08-30)
+        # alongside the ceiling itself.
+        pending_gross_bearish_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -1127,7 +1132,7 @@ class TradingPipeline:
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
-                pending_short_gross_investment=pending_short_gross_investment,
+                pending_gross_bearish_investment=pending_gross_bearish_investment,
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
@@ -1142,6 +1147,13 @@ class TradingPipeline:
             from src.risk.rules import _effective_multiplier, _gross_multiplier
             raw_investment = total_value * (decision.allocation_pct / 100)
             is_short = decision.action == "SHORT"
+            # A BUY of an inverse ETF (SH/SDS/PSQ/SQQQ) is bearish exposure
+            # exactly like a SHORT is — see the matching `is_bearish_buy`
+            # in RiskRuleEngine.check. It must also grow the running
+            # gross-bearish accumulator below, in ADDITION to spending real
+            # cash like any other BUY (D11: it is never reclassified as a
+            # SHORT anywhere).
+            is_bearish_buy = not is_short and _effective_multiplier(decision.symbol) < 0
             # Total exposure accumulates SIGNED contribution (hedges net
             # out). A SHORT moves it the OPPOSITE way a BUY of the same
             # symbol would — the matching flip lives in
@@ -1157,15 +1169,23 @@ class TradingPipeline:
                 # A SHORT does not spend the settled-cash pool the
                 # cash_only rule protects (see RiskRuleEngine.check) — do
                 # not debit pending_cash_outflow for it. It DOES grow the
-                # running gross-short total D9's book-wide cap checks
-                # against, so a second short later in this same batch sees
-                # this one.
-                pending_short_gross_investment += gross_investment
+                # running gross-bearish total D9's book-wide cap checks
+                # against, so a second bearish order later in this same
+                # batch sees this one.
+                pending_gross_bearish_investment += gross_investment
             else:
                 # Cash outflow is raw $ notional — leverage/direction don't
                 # change the brokerage cash the BUY consumes. Inverse/
                 # leveraged ETFs still cost their sticker price in cash.
                 pending_cash_outflow += raw_investment
+                if is_bearish_buy:
+                    # This BUY is ALSO bearish exposure (inverse ETF) — it
+                    # must grow the same gross-bearish accumulator a SHORT
+                    # does, so a second bearish order later in this batch
+                    # (short or inverse-ETF BUY) sees this one and the two
+                    # don't each get checked against a book blind to the
+                    # other.
+                    pending_gross_bearish_investment += gross_investment
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )

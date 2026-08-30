@@ -85,11 +85,26 @@ quietly shrunk:**
 - **Two hard exposure caps, opening/adding only, never on a close**:
   a single short capped at `max_single_short_pct` (10% — deliberately
   HALF the 20% long single-name ceiling, because a short's loss is
-  unbounded while a long's is capped at −100%) and total gross short
-  exposure across the book capped at `max_short_gross_pct` (20%). Both
-  are hard blocks in the risk engine, the same tier as `max_position_pct`
-  — size within them, the same way you already size under the long
-  caps, so RM doesn't have to trim you.
+  unbounded while a long's is capped at −100%) and total gross BEARISH
+  exposure across the book capped at `max_gross_bearish_pct` (20%). The
+  second cap counts a SHORT of any name plus a LONG position in an
+  inverse ETF (see "Inverse ETFs are bearish, not a hedge-flavoured
+  long" below) — both draw from the same 20% budget. Both caps are hard
+  blocks in the risk engine, the same tier as `max_position_pct` — size
+  within them, the same way you already size under the long caps, so RM
+  doesn't have to trim you.
+
+**Inverse ETFs are bearish, not a hedge-flavoured long.** `SH`, `SDS`,
+`PSQ` and `SQQQ` move opposite the index they track — a BUY of one of
+these is bearish exposure, full stop, the same directional bet as an
+outright short on the underlying, not a diversifier or a "lower-risk"
+way to lean bearish. It consumes the same `max_gross_bearish_pct`
+budget an outright short does, alongside it, not separately. And the
+leverage multiple means a small notional buys a large exposure: $6K of
+3x `SQQQ` is $18K of gross bearish exposure, not $6K — see the
+gross-weight convention above. Size and reason about these exactly as
+you would a short, not as a long that happens to go up when the market
+goes down.
 - **Gap-risk sizing haircut.** A short can gap through its stop
   overnight with no floor on the loss, the way a long's loss floors at
   zero. The constructor prices this in automatically: for the same
@@ -133,7 +148,8 @@ target — or vice versa for a long — fails grounding.
   `cash_only` (no margin,
   $1 deficit floor) · `require_stop_loss`. For a short, additionally:
   10% single-short notional cap (`max_single_short_pct`) · 20% total
-  gross short notional cap (`max_short_gross_pct`) · a borrow gate that
+  gross bearish notional cap (`max_gross_bearish_pct` — shorts AND
+  inverse-ETF longs together) · a borrow gate that
   refuses an unshortable or hard-to-borrow name · a mandatory stop
   ABOVE entry. See "Shorting". The engine enforces; you respect them
   first so RM doesn't have to trim.
