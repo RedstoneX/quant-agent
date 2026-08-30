@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "portfolio_manager.md"
 
+# §9.3 — greppable status key for a target dropped over an unadjudicated
+# seat conflict, matching the naming convention of Phase 3.3's
+# `exit_blocked_no_named_trigger` (src/pipeline.py). Logs and tests key on
+# this exact string.
+CONFLICT_UNADJUDICATED_STATUS = "pm_conflict_unadjudicated"
+
 
 class PortfolioManagerAgent(BaseAgent):
     @property
@@ -851,6 +857,15 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     result, "pm_schema_error",
                     f"all {parsed_target_count} emitted targets were invalid",
                 )
+            # §9.3 — drop any target that OPENS/INCREASES exposure while
+            # carrying an unadjudicated seat conflict, before grounding is
+            # even checked. This is a per-target prune, not an error: it
+            # must never join `validate_grounding`'s list (see that
+            # method's non-empty-error contract — it fails the ENTIRE
+            # session, not one target).
+            decision = self._drop_unadjudicated_conflicts(
+                decision, positions=positions, total_value=total_value,
+            )
             errors = self.validate_grounding(
                 decision, analyses=analyses, positions=positions,
                 news_intel=news_intel,
@@ -924,6 +939,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                             repaired, "pm_schema_error",
                             f"all {repaired_target_count} repaired targets were invalid",
                         )
+                    # §9.3 — same per-target conflict prune as the
+                    # first-attempt path, applied before grounding here too.
+                    decision = self._drop_unadjudicated_conflicts(
+                        decision, positions=positions, total_value=total_value,
+                    )
                     errors = self.validate_grounding(
                         decision, analyses=analyses, positions=positions,
                         news_intel=news_intel,
@@ -962,6 +982,39 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         except Exception as e:
             logger.error("Failed to parse portfolio decision: %s", e)
             return self._semantic_failure(result, "pm_schema_error", e)
+
+    @staticmethod
+    def _target_intent(
+        target: TargetPosition, held: dict[str, Position], total_value: float,
+    ) -> str:
+        """"buy" / "short" (opens or increases exposure) vs "sell" (exits or
+        reduces it).
+
+        The single definition both `validate_grounding` (does this claim's
+        polarity support the action?) and §9.3's
+        `_drop_unadjudicated_conflicts` (is this target even in scope for
+        conflict adjudication?) classify a target by — factored out so the
+        two can never disagree about what counts as an increase.
+
+        Risk-based targets (spec §2.1) state risk, not weight, so a weight
+        comparison cannot classify them — the position's current risk
+        depends on its stop, which isn't available here. Any non-zero risk
+        allocation is therefore treated as an INCREASE regardless of
+        whether it might actually be a partial trim: the safe
+        classification either way, since the increase branch in both
+        callers applies the STRICTER treatment. `is_close` (zero risk, or
+        a legacy zero weight) is always a full exit.
+        """
+        symbol = target.symbol.upper()
+        pos = held.get(symbol)
+        current_weight = 0.0
+        if pos is not None and total_value > 0:
+            current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
+        if target.risk_allocation_pct is not None:
+            if target.is_close:
+                return "sell"
+            return "short" if target.direction == "short" else "buy"
+        return "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
 
     @classmethod
     def validate_grounding(
@@ -1021,29 +1074,22 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 errors.append(f"{symbol}: target has no structured specialist provenance")
                 continue
 
-            current_weight = 0.0
-            if pos is not None and total_value > 0:
-                current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
-            # Risk-based targets (spec §2.1) state risk, not weight, so the
-            # weight comparison below cannot classify them — the position's
+            # Risk-based targets (spec §2.1) state risk, not weight, so a
+            # weight comparison cannot classify them — the position's
             # current risk depends on its stop, which this validator does not
-            # have. Any non-zero risk allocation is therefore treated as an
-            # INCREASE — a BUY when `direction=="long"`, a SHORT when
-            # `direction=="short"` (Stage 3). That is the safe classification
-            # either way: the increase branch below applies the STRICTER
-            # checks (universe membership, an actual technical analysis
-            # backing the name) to BOTH, so a misclassified trim is
+            # have. `_target_intent` therefore treats any non-zero risk
+            # allocation as an INCREASE — a BUY when `direction=="long"`, a
+            # SHORT when `direction=="short"` (Stage 3). That is the safe
+            # classification either way: the increase branch below applies
+            # the STRICTER checks (universe membership, an actual technical
+            # analysis backing the name) to BOTH, so a misclassified trim is
             # over-validated rather than waved through, and a short is held
             # to exactly the same grounding contract as a long — it is
-            # neither exempted nor made impossible.
-            is_short_target = target.direction == "short"
-            if target.risk_allocation_pct is not None:
-                if target.is_close:
-                    intent = "sell"
-                else:
-                    intent = "short" if is_short_target else "buy"
-            else:
-                intent = "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
+            # neither exempted nor made impossible. §9.3's conflict
+            # adjudication (`_drop_unadjudicated_conflicts`) reuses this same
+            # classification for its own "opens or increases" scope, so the
+            # two never disagree about what counts as an increase.
+            intent = cls._target_intent(target, held, total_value)
             if intent in ("buy", "short"):
                 if allowed_buy_symbols is not None and symbol not in {
                     str(item).strip().upper() for item in allowed_buy_symbols
@@ -1156,6 +1202,106 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                             f"{len(supporting_alignment_sources)}/{stated_available}"
                         )
         return errors
+
+    # §9.3 "disagreement must be adjudicated" ------------------------------
+    #
+    # `source` values that need a plainer English alias to be recognised in
+    # free-form prose. The four other sources (technical/news/earnings/
+    # macro) are themselves ordinary words; `smart_money` is normally
+    # written "smart money" by a model composing a sentence, so it is
+    # aliased explicitly rather than guessed at by a second rule.
+    _CONFLICT_SOURCE_ALIASES = {
+        "smart_money": ("smart_money", "smart money", "smart-money"),
+    }
+
+    @classmethod
+    def _conflict_is_named(cls, signal_conflicts: str, symbol: str, source: str) -> bool:
+        """Whether `signal_conflicts` names BOTH `symbol` and `source`.
+
+        SPECIFICITY OF REFERENCE ONLY — this is what `_drop_unadjudicated_
+        conflicts` below checks for, and it proves the PM's text names the
+        symbol and the source, NOT that its reasoning about the conflict is
+        any good. A bland-but-specific sentence ("NVDA: macro is bearish
+        but we are buying on the earnings beat") satisfies it. That is a
+        strictly lower bar than "the desk resolved the disagreement," and
+        it must never be described as more than that — this is still
+        stronger than today, where a recorded conflict can go entirely
+        unmentioned and the trade proceeds unchanged.
+
+        Word-boundary, case-insensitive match on the symbol so a substring
+        can't accidentally satisfy it (e.g. "V" inside "INVALID", or "DE"
+        inside "TRADE"). `source` matches case-insensitively by substring
+        against its alias list.
+        """
+        text = signal_conflicts or ""
+        if not re.search(rf"\b{re.escape(symbol)}\b", text, flags=re.IGNORECASE):
+            return False
+        text_lower = text.lower()
+        aliases = cls._CONFLICT_SOURCE_ALIASES.get(source, (source,))
+        return any(alias in text_lower for alias in aliases)
+
+    @classmethod
+    def _drop_unadjudicated_conflicts(
+        cls, decision: PortfolioDecision, *, positions: list[Position], total_value: float,
+    ) -> PortfolioDecision:
+        """An unresolved seat conflict on a target that OPENS or INCREASES
+        exposure drops THAT ONE TARGET; it never fails the whole session.
+
+        This is deliberately NOT implemented by appending to
+        `validate_grounding`'s error list: `decide()` treats ANY non-empty
+        error list as total session failure via `_semantic_failure`,
+        discarding every target and the whole book. That is the right
+        penalty for a decision that fabricates evidence, but the wrong one
+        for a single candidate carrying one unaddressed disagreement — the
+        punishment has to fit the offence. This mirrors two existing
+        precedents instead: per-target isolation
+        (`_drop_invalid_targets`/PR #73-#74) and Phase 3.3's exit gate,
+        which drops one exit and logs `exit_blocked_no_named_trigger`
+        rather than failing the run (see `src/pipeline.py`,
+        `_reason_cites_hard_trigger`).
+
+        HONESTY NOTE — read `_conflict_is_named`'s docstring before
+        touching this. It enforces SPECIFICITY OF REFERENCE, not QUALITY
+        OF REASONING. Do not describe this method's effect as "the desk
+        resolves its disagreements" anywhere it is discussed.
+
+        Scope, deliberately asymmetric (mirrors §3.4's exit-side
+        asymmetry): only targets classified `_target_intent in ("buy",
+        "short")` — opening or increasing — are subject to this. Exits
+        and reductions are exempt; this desk must never find it harder to
+        cut risk than to add it.
+        """
+        held = {p.symbol.upper(): p for p in positions}
+        signal_conflicts = decision.reasoning_chain.signal_conflicts
+        kept: list[TargetPosition] = []
+        for target in decision.targets:
+            intent = cls._target_intent(target, held, total_value)
+            if intent not in ("buy", "short"):
+                kept.append(target)  # exits/reductions are exempt on purpose
+                continue
+            conflicting_sources = sorted({
+                claim.source for claim in target.provenance
+                if claim.relationship == "conflicts"
+            })
+            unaddressed = [
+                source for source in conflicting_sources
+                if not cls._conflict_is_named(signal_conflicts, target.symbol, source)
+            ]
+            if unaddressed:
+                logger.warning(
+                    "%s: dropping %s (%s) — signal_conflicts does not name "
+                    "both the symbol and %s. A recorded conflict on a name "
+                    "being opened/increased must be individually addressed "
+                    "in signal_conflicts (symbol + source) or the target is "
+                    "dropped, not traded; the rest of this session's "
+                    "decision is unaffected. signal_conflicts was: %r",
+                    CONFLICT_UNADJUDICATED_STATUS, target.symbol, intent,
+                    unaddressed, signal_conflicts[:300],
+                )
+                continue
+            kept.append(target)
+        decision.targets = kept
+        return decision
 
     @staticmethod
     def _drop_invalid_targets(parsed: dict) -> dict:

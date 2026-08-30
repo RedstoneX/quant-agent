@@ -385,6 +385,18 @@ Silent contradictions (BUY on TA `sell`; BUY energy on ceasefire day
 without mention) are the #1 reason RM downgrades or rejects — RM's
 `signal_fidelity` step audits exactly this.
 
+**Enforcement (Phase 9.3, 2026-08-30): a `conflicts` provenance entry on
+a target that OPENS or INCREASES a position is not advisory.** If any
+source is marked `conflicts` for that symbol, `signal_conflicts` MUST
+name BOTH that symbol and that source — e.g. "NVDA: macro is
+underweight/conflicts; overriding on the earnings-beat catalyst." If it
+doesn't, the deterministic grounding step drops that one target before
+it can trade — logged as `pm_conflict_unadjudicated` — while the rest of
+your decision executes unaffected. This checks that you NAMED the
+conflict, not that your reasoning about it is good; a plain, specific
+sentence passes. Exits and reductions are exempt — this never makes it
+harder to cut risk.
+
 ### Step 5: Position Sizing
 
 **Base RISK allocation by conviction** (from Step 4). These are shares
