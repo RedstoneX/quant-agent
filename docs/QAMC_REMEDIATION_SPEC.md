@@ -312,11 +312,13 @@ The reasoning is already persisted; it is simply never shown.
 
 ## Phase 7 — Measurement
 
-**7.1 — Build a backtester.** `src/replay.py` replays past decisions; it is not a strategy backtest. Without one, every change is a guess evaluated against one noisy live day, and a bad change is indistinguishable from a bad week. 419 commits in 17 days were merged into that blindness.
+**Status note (2026-08-30):** §7.1 (backtester) and §7.3 (edge numbers) are DONE. §7.2 has two distinct halves: (a) the **logging** half (pin each trade's allocated risk, conviction, model at entry; label exit decision_id status) is DONE as of PR #159, and (b) the **analysis** half (grade whether stated conviction predicts outcomes) is NOT DONE and is data-constrained, not code-constrained — only 8 closed round trips exist in all live history, far too few for statistical claims.
 
-**7.2 — Calibrate conviction.** Log each trade's allocated risk against its realized outcome. If the desk's conviction predicts results, conviction-weighted sizing amplifies the edge. If it does not, flat sizing is superior — and that must be discovered from data, not assumed.
+**7.1 — Build a backtester.** `src/replay.py` replays past decisions; it is not a strategy backtest. Without one, every change is a guess evaluated against one noisy live day, and a bad change is indistinguishable from a bad week. 419 commits in 17 days were merged into that blindness. **DONE** — `src/backtest/engine.py` simulates the deterministic layer against real history, entering on next day's open, producing deterministic reproducible results.
 
-**7.3 — Track the edge directly.** Surface win rate, average win ÷ average loss, expectancy per trade, and average hold duration. The edge claim in §0 is a hypothesis until these numbers confirm it.
+**7.2 — Calibrate conviction.** Log each trade's allocated risk against its realized outcome. If the desk's conviction predicts results, conviction-weighted sizing amplifies the edge. If it does not, flat sizing is superior — and that must be discovered from data, not assumed. **Logging half DONE (PR #159)** — each trade carries conviction, requested_risk_pct, allocated_risk_pct, decision_model at entry; exits label whether they link to an originating decision. **Analysis half NOT DONE** — only 8 closed round trips exist in production history, insufficient for statistical work.
+
+**7.3 — Track the edge directly.** Surface win rate, average win ÷ average loss, expectancy per trade, and average hold duration. The edge claim in §0 is a hypothesis until these numbers confirm it. **DONE** — `compute_trade_calibration` surfaces win rate, avg_win_loss_ratio, expectancy_pct, avg_hold_days for both long and short sides separately.
 
 ---
 
@@ -330,6 +332,8 @@ The reasoning is already persisted; it is simply never shown.
 ---
 
 ## Phase 9 — The research desk actually deliberates
+
+**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is deliberately not built.
 
 **Owner-directed, 2026-08-27.** Rex, verbatim: *"We have agents doing research
 and analysis. If something has high conviction or strong candidacy it should

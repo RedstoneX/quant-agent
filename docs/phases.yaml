@@ -30,12 +30,12 @@
 #
 # Status values: DONE AND LIVE | DONE, NOT DEPLOYED | PARTIAL | NOT STARTED | OVERTAKEN
 
-generated_at: "2026-08-29"
+generated_at: "2026-08-30"
 spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
 repo: "RedstoneX/quant-agent"
 verified_against:
-  origin_main_sha: "511d5a48e78ba23fb0a4fb4f143015222a960a07"
-  production_head_sha_at_audit: "511d5a48e78ba23fb0a4fb4f143015222a960a07"
+  origin_main_sha: "e5d47c6219b68c265a1adaa48ed7b8e4e0c6ff72"
+  production_head_sha_at_audit: "e5d47c62"
   production_check_command: "sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1"
   production_drift_alarm: "scripts/check_deploy_drift.py, quant-agent-drift-check.timer (Mon-Fri 08:45 ET) — catches this automatically, once a day"
 
@@ -261,7 +261,7 @@ phases:
 
   - id: phase_4
     title: "Phase 4 — Evidence symmetry and feed repair"
-    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries. FRED retries already existed. Reuters and AP are gone for good (Reuters killed public RSS in 2020, AP's free proxy is bot-walled) and were removed on purpose rather than left silently dead. Correction 2026-08-29: the news-source audit the owner asked for is no longer open work — the RSS set was widened from 8 to 11 free feeds (Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases added) and one feed that kept returning HTTP 200 while having stopped publishing over a year ago (MarketWatch Markets/marketpulse) was found and removed. The one genuine remaining gap is full wire-service breadth: restoring Reuters/AP-grade coverage needs a paid subscription and an owner decision, not more free-feed hunting."
+    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries. FRED retries already existed. Reuters and AP are gone for good (Reuters killed public RSS in 2020, AP's free proxy is bot-walled) and were removed on purpose rather than left silently dead. Correction 2026-08-29: the news-source audit the owner asked for is no longer open work — the RSS set was widened from 8 to 11 free feeds (Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases added) and one feed that kept returning HTTP 200 while having stopped publishing over a year ago (MarketWatch Markets/marketpulse) was found and removed. Correction 2026-08-30: per-company news also landed (PR #157): free per-symbol RSS is now available for Yahoo Finance but is scoped to held positions and admitted candidates (not the full universe), hard-capped to avoid cost explosion. The one genuine remaining gap is full wire-service breadth: restoring Reuters/AP-grade coverage needs a paid subscription and an owner decision, not more free-feed hunting."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -309,6 +309,20 @@ phases:
       - kind: test_exists
         path: "tests/test_news.py"
         test: "test_new_feed_going_dead_marks_coverage_degraded_not_ok"
+      - kind: pr_merged
+        number: 157
+        note: "feat/per-symbol-news — per-company RSS scoped to held positions and admitted candidates, with hard cap"
+      - kind: commit_in_main
+        sha: "0b6fc18cf7751ed00c9c4db5498f167a7ee38e31"
+        note: "feat: scope Yahoo per-symbol news to held positions + admitted candidates"
+      - kind: symbol_in_file
+        path: "src/config.py"
+        symbol: "per_symbol_max_symbols"
+        note: "per-company news config: maximum number of symbols to fetch per run"
+      - kind: symbol_in_file
+        path: "src/data/news.py"
+        symbol: "def fetch_news"
+        note: "per-company news: NewsDataProvider.fetch_news now accepts optional symbols argument for scoping"
 
   - id: phase_5
     title: "Phase 5 — Short selling"
@@ -486,7 +500,7 @@ phases:
 
   - id: phase_7
     title: "Phase 7 — Measurement"
-    plain_summary: "Correction 2026-08-29: this phase previously said none of this had been started; that is now false. §7.1 (build a backtester) is done: a deterministic-layer backtester (src/backtest/) with a CLI (scripts/backtest.py) measures structural stop placement, noise-band widening, risk-based position sizing, the portfolio risk budget/cluster caps, and trailing-stop rules against real history, entering on the NEXT day's open (no look-ahead) and producing deterministic, reproducible results. Its own scope statement is explicit about what it is NOT: it does not replay the LLM agents' judgment at all — their historical outputs were never captured to replay, so it measures only the deterministic layer underneath them. §7.3 (surface the core edge numbers) is also done, on live trading history rather than backtest output: win rate, average win-to-average-loss ratio, expectancy per trade and average hold duration are all now computed (including, separately, the short side). What is genuinely NOT built: §7.2, calibrating whether the desk's STATED conviction predicts outcomes — there is a pre-existing dollar-size-based bucketing in the live-trade calibration (a proxy for conviction, since PM's allocation size implies how strongly it believed the trade), but nothing grades an LLM's own stated conviction level against realized results, in the backtester or anywhere else."
+    plain_summary: "Correction 2026-08-29: this phase previously said none of this had been started; that is now false. §7.1 (build a backtester) is done: a deterministic-layer backtester (src/backtest/) with a CLI (scripts/backtest.py) measures structural stop placement, noise-band widening, risk-based position sizing, the portfolio risk budget/cluster caps, and trailing-stop rules against real history, entering on the NEXT day's open (no look-ahead) and producing deterministic, reproducible results. Its own scope statement is explicit about what it is NOT: it does not replay the LLM agents' judgment at all — their historical outputs were never captured to replay, so it measures only the deterministic layer underneath them. §7.3 (surface the core edge numbers) is also done, on live trading history rather than backtest output: win rate, average win-to-average-loss ratio, expectancy per trade and average hold duration are all now computed (including, separately, the short side). Correction 2026-08-30: §7.2's logging half (pin each trade's allocated risk, conviction, and model at entry; label exit decision_id status) is now built (PR #159), but the analysis half (grading whether stated conviction predicts outcomes) cannot be done: only 8 closed round trips exist in live history, far too few for statistical claim. What is genuinely NOT built: the analysis half of §7.2 on both live history and backtest output."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -531,10 +545,28 @@ phases:
         path: "src/storage/db.py"
         symbol: "avg_win_loss_ratio"
         note: "§7.3: average win ÷ average loss, the other edge number the spec asked for."
+      - kind: pr_merged
+        number: 159
+        note: "feat/phase7-logging — §7.2's logging half (pin allocation, conviction, model at entry; label exit decision status)"
+      - kind: commit_in_main
+        sha: "9924292d25f23b09d20c3f2838ad00b5a6cf4833"
+        note: "feat(storage): log allocated risk, conviction, and model id against outcome"
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "conviction"
+        note: "§7.2 logging: trades row now carries conviction, requested_risk_pct, allocated_risk_pct, decision_model at entry"
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "decision_id_status"
+        note: "§7.2 logging: exits label whether they link to an originating decision ('linked' vs 'no_originating_decision')"
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "by_conviction"
+        note: "§7.2: grouping by conviction exists but is gated (20-per-bucket floor, kept out of agent prompts below threshold)"
       - kind: manual
         note: "This engine does NOT replay the LLM agents (src/backtest/engine.py's own module docstring: 'This engine does NOT replay the LLM agents. Their outputs are not [captured]...') and measures only the deterministic layer beneath them — structural stops, noise-band widening, risk-based sizing, the portfolio risk budget/cluster caps, and trailing-stop rules. Do not read a backtest result as a claim about what the LLM agents' judgment would have done historically; it is a claim about the deterministic scaffolding only."
       - kind: manual
-        note: "§7.2 (calibrate conviction — log each trade's allocated risk against its realized outcome, and check whether stated conviction predicts results) is NOT built. `compute_trade_calibration` (src/storage/db.py) buckets by entry dollar size as a proxy for conviction ('a larger dollar commitment implies higher conviction when PM sized it') on LIVE trade history, which predates this phase and is not what §7.2 asked for — it is not a calibration of the LLM's own stated conviction level, and it does not run against backtest output. Re-check: `grep -rn \"conviction\" src/backtest/*.py` should return nothing, since the backtester carries no notion of an LLM's stated conviction to grade at all."
+        note: "Correction 2026-08-30: §7.2's logging half is now built (PR #159) — allocation, conviction, model, and exit decision_id_status are all logged. The analysis half (grading whether stated conviction predicts outcomes) cannot be done yet: only 8 closed round trips exist in all live history (far too few for statistical work), and historical conviction was never recorded so backtest replay cannot retroactively grade it either. This is not a code gap — it is a data gap. Re-check: `grep -n \"closed_count =\" src/storage/db.py` to see the 8-trade floor that makes this impossible at scale."
 
   - id: phase_8
     title: "Phase 8 — Documentation correction"
@@ -561,7 +593,7 @@ phases:
 
   - id: phase_9
     title: "Phase 9 — The research desk actually deliberates"
-    plain_summary: "Correction 2026-08-29: this phase previously said the owner's ask — that every research seat gets to propose trade ideas instead of only the technical-chart analyst originating them — had no code yet. That is now false for §9.1/§9.2. Any research seat (News, Earnings, Macro) can now nominate a symbol Technical did not already cover, bounded per seat and per run (mirroring the existing SEC Form 4 admission-lane pattern), deduped across seats and ranked by conviction; Technical is then invoked ON DEMAND to answer whether there is a tradeable setup for each nominated symbol — the inversion the spec called 'the whole architectural change'. What is still NOT built from the design: §9.3 (a recorded seat-conflict with no adjudication should fail grounding — today a conflict is still just recorded in provenance and the trade proceeds unchanged, exactly as before), §9.4 (sizing by the number of independent seats that agree — a name confirmed by three seats still sizes the same as a name only Technical likes), and §9.5 (a conviction ledger per candidate)."
+    plain_summary: "Correction 2026-08-29: this phase previously said the owner's ask — that every research seat gets to propose trade ideas instead of only the technical-chart analyst originating them — had no code yet. That is now false for §9.1/§9.2. Any research seat (News, Earnings, Macro) can now nominate a symbol Technical did not already cover, bounded per seat and per run (mirroring the existing SEC Form 4 admission-lane pattern), deduped across seats and ranked by conviction; Technical is then invoked ON DEMAND to answer whether there is a tradeable setup for each nominated symbol — the inversion the spec called 'the whole architectural change'. Correction 2026-08-30: §9.1/§9.2 are DONE and deployed. §9.3 and §9.4 are also NOW DONE as of PR #160 (merged during this audit): a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence — single-target drop, not session-wide), and sizing by agreement count is now deterministic code in the risk path (indexed ceiling on risk_allocation_pct by independent source alignment). §9.5 (conviction ledger per candidate) is deliberately not built."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -606,10 +638,46 @@ phases:
       - kind: test_exists
         path: "tests/test_nominations.py"
         test: "test_global_cap_ranks_by_conviction_then_seat_count_then_symbol"
+      - kind: symbol_in_file
+        path: "src/agents/portfolio_manager.py"
+        symbol: "def _drop_unadjudicated_conflicts"
+        note: "§9.3: targets carrying unadjudicated conflicts are dropped before grounding (deterministic filter, punishment fits offence)"
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "def agreement_ceiling_for_count"
+        note: "§9.4: indexed ceiling on risk_allocation_pct by independent source alignment count"
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "def count_aligned_sources"
+        note: "§9.4: counts how many independent seats are directionally aligned on a symbol"
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "def stance_is_aligned"
+        note: "§9.4: helper to check whether a source's stance aligns with the desired direction"
+      - kind: setting_present
+        path: "config/settings.yaml"
+        key: "risk.agreement_ceiling_pct"
+        note: "§9.4: indexed ceiling schedule applied by agreement count (default [3.0, 4.0, 5.0, 5.0, 5.0]%, not pinned — expected to be re-tuned as agreement rises)"
+      - kind: test_exists
+        path: "tests/test_conflict_adjudication.py"
+        test: "test_unadjudicated_conflict_drops_only_its_own_target"
+        note: "§9.3: conflict without adjudication drops the target, does not fail the session"
+      - kind: test_exists
+        path: "tests/test_conflict_adjudication.py"
+        test: "test_adjudicated_conflict_naming_symbol_and_source_passes"
+        note: "§9.3: conflict with specific symbol+source adjudication is allowed"
+      - kind: test_exists
+        path: "tests/test_agreement_sizing.py"
+        test: "test_count_aligned_sources_one_aligned_long"
+        note: "§9.4: agreement count is measurable from the evidence registry"
+      - kind: test_exists
+        path: "tests/test_agreement_sizing.py"
+        test: "test_count_aligned_sources_three_or_more_aligned"
+        note: "§9.4: three-source agreement test case for the ceiling"
       - kind: manual
-        note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing."
+        note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing, and in turn §9.3/§9.4."
       - kind: manual
-        note: "§9.3 (disagreement must be adjudicated) is NOT built: `signal_conflicts` on RiskDecision (src/models.py) is a pre-existing required free-text field the RM fills in, not a check that a `conflicts` provenance entry got a corresponding adjudication — nothing in the grounding logic fails a target that carries an unadjudicated conflict. §9.4 (conviction is agreement, sizing by number of independent sources) is also NOT built: no code in src/risk/ or src/portfolio_constructor.py sizes a target by how many seats independently confirmed it. §9.5 (a conviction ledger per candidate) is NOT built either. Re-check: `grep -rn \"signal_conflicts\\|agreement\" src/agents/risk_manager.py src/risk/*.py src/portfolio_constructor.py` — a hit describing sizing-by-agreement-count would mean §9.4 has started."
+        note: "§9.5 (conviction ledger per candidate — who nominated, who confirmed, who dissented) is deliberately NOT built. Only §9.1, §9.2, §9.3, §9.4 are in PR #160."
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
@@ -637,10 +705,26 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "None open as of 2026-08-29. The standing rule here is that finding something broken while doing unrelated work is not a license to go fix it on the spot — it gets written down and handed back so a person can decide, which is what this entry is for; it stays here, empty, as the standing place the next defect gets written down. The two items previously listed here — win rate/average return being blind to a short trade, and crash recovery being unable to tell a long position from a short during a WAL drain — were both verified FIXED against origin/main on 2026-08-29 (Stage 3 shorts, PR #150) and are removed below: compute_trade_calibration now runs a separate short-side FIFO queue matched to COVER-family exits, and pending_protection_restores now persists a side column written at row-creation time by whoever closes the position, so the drain path no longer has to guess. (A sixth item, 'company profiles were built and never wired in,' was removed on 2026-08-29 after verification against origin/main showed src/data/company.py's CompanyProfileStore is in fact imported and used by both src/notifier.py and src/pipeline.py — the claim was false when it was written to this file. Two more — the Missed Opportunities pop-up and the Diagnostics -> Search row-click affordance — were removed the same day after being fixed on branch fix/cockpit-click-consistency. A further one, the board rule that pinned the exact daily dollar ceiling, was removed the same day: that rule now asserts the setting exists rather than pinning its figure, so a deliberate re-tune no longer reads as rot.)"
+    plain_summary: "Two defects recorded: (1) When an intraday_scan raises an exception, it sets scan_result=None with no error marker. The rehearsal harness cannot distinguish 'never attempted' (normal, config disabled) from 'crashed' (error), since both produce no intraday_scan key in the report. Production's own status is also 'ok' for a crashed scan, so the operator sees no signal. Resolution would require returning a dict with an error status on crash instead of None. Documented in PR #156. (2) FRED data fetch has failed in production under operational conditions (2026-08-26 17:01-17:03 UTC: all nine series failed together; 2026-08-22: two series failed). The macro seat's fetch includes one bounded retry with 2-second backoff. When macro fails, the desk proceeds on missing data — the system is fail-safe (does not crash) but decision-making is blind. No alert fires for widespread series failure."
     status: "OPEN"
     confidence: "high"
-    evidence: []
+    evidence:
+      - kind: pr_merged
+        number: 156
+        note: "fix(rehearsal): surface nested intraday_scan status, and document the crash-invisibility gap"
+      - kind: commit_in_main
+        sha: "75cf21755d4e037249da54284d8c175d866b071b"
+        note: "A crashed intraday scan (exception) leaves no marker, so session status remains 'ok' — production honesty gap, not fixed"
+      - kind: symbol_in_file
+        path: "ops/rehearsal/report.py"
+        symbol: "intraday_scan outcome is not visible"
+        note: "the defect is named and documented in the rehearsal report module"
+      - kind: symbol_in_file
+        path: "src/data/macro.py"
+        symbol: "_FRED_MAX_RETRIES = 1"
+        note: "FRED retry strategy: one bounded retry per series with 2-second backoff (line 28-29). Production has seen widespread simultaneous failures (2026-08-26 and 2026-08-22). Cause not audited; no fix deployed."
+      - kind: manual
+        note: "FRED timeouts have occurred in production: 2026-08-26 17:01:29–17:03:49 UTC (all nine series: VIXCLS, DGS2, DGS10, DFF, CPIAUCSL, CPILFESL, PCEPI, UNRATE, BAMLH0A0HYM2), and earlier 2026-08-22 (VIXCLS and DGS10 only). When macro seat data fails, the system records None and proceeds — fail-safe but blind. The macro_analyst's risk stance is therefore sometimes derived from missing data. No alert fires."
 
   - id: invariants
     title: "Invariants (must hold at all times)"
