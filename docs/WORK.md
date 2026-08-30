@@ -389,9 +389,16 @@ that X actually produces the symptom.
 
 ### Ordered backlog — RESUME POINT
 
+**Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
+
+- The macro data feed's retry policy has been rebuilt. The old one gave a failing economic-data series one quick second try and then gave up; that is exactly what let one bad three-minute stretch (2026-08-26) lose all nine numbers the macro seat reads, silently. It now tries harder, with a real time limit on the whole job — a minute and a half, not per series — so a slow patch can be ridden out without ever risking a session running long. Six new free indicators were added on top of what was already tracked — a real (inflation-adjusted) 10-year yield, the market's inflation expectation, a 3-month Treasury rate, the dollar's strength against other currencies, investment-grade borrowing costs, and weekly unemployment claims — each checked against the real data source before being wired in. And if any of these numbers fail to come back, the desk is now told so directly, the same way it is already told when the news feed is degraded, instead of quietly reasoning from nothing (PR #162).
+- A second, smaller repair: if the mid-day opportunity scan crashed partway through, it used to look exactly like a normal quiet check that found nothing — no error, no signal, nothing for anyone to see. It now says plainly that it crashed, and the rehearsal report counts that as a failure instead of a pass (PR #163).
+- A close call, caught in time, not yet fixed: the price list the spending safeguard uses to know what each AI call costs is supposed to refresh itself, but only when a real trading session actually starts one — nothing refreshes it on a clock. Over the weekend it sat unrefreshed long enough to cross the point where the safeguard would have refused to run any paid analysis at all come Monday morning, meaning the desk would have opened and done nothing. It was noticed and refreshed by hand before that happened. Nothing has been put in place yet to stop this from happening again — that is still open work.
+- Still missing on the macro side: there is no calendar of upcoming Fed decisions or inflation reports. Asked whether one is coming up, the desk still answers from what the model remembers, not from a real schedule.
+
 **Landed (2026-08-30 through ~15:00 UTC 2026-08-31) — all five items now deployed to production**
 
-- All five ordered items from the 2026-08-29 backlog have shipped. (1) Inverse-ETF longs now count against the bearish exposure ceiling, with a second commit fixing a sign error: shorting an inverse ETF is bullish, not bearish (PR #158). (2) Free per-symbol news feeds are scoped to held positions and candidates instead of universally requested (PR #157). (3) Every trade carries its allocation, conviction, and deciding model pinned at entry; exits label whether they link to an originating decision (PR #159). (4) The rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status — two limitations worth knowing: the nested-outcome path is unit-tested but no current production replay contains an intraday scan (none in live history yet), and a crashed scan produces no marker, so the session status remains 'ok' even on crash (production honesty gap, documented but not fixed by design) (PR #156). (5) The desk can now formally argue out disagreements and size trade risk by the number of independent seats that agree: a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence, single-target drop not session-wide), and risk_allocation_pct is ceilinged by agreement count in the deterministic risk code (PR #160, merged during this audit window).
+- All five ordered items from the 2026-08-29 backlog have shipped. (1) Inverse-ETF longs now count against the bearish exposure ceiling, with a second commit fixing a sign error: shorting an inverse ETF is bullish, not bearish (PR #158). (2) Free per-symbol news feeds are scoped to held positions and candidates instead of universally requested (PR #157). (3) Every trade carries its allocation, conviction, and deciding model pinned at entry; exits label whether they link to an originating decision (PR #159). (4) The rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status — at the time, one limitation was left in place on purpose: a crashed scan produced no marker, so the session status stayed 'ok' even on crash (production honesty gap, documented but not fixed by design) (PR #156). That gap is now closed too — see "Landed (2026-08-30, later)" above (PR #163): a crash now attaches its own status and reports as a failure. The other limitation from PR #156 still holds: the nested-outcome path is unit-tested but no production replay has actually contained an intraday scan yet (none in live history so far). (5) The desk can now formally argue out disagreements and size trade risk by the number of independent seats that agree: a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence, single-target drop not session-wide), and risk_allocation_pct is ceilinged by agreement count in the deterministic risk code (PR #160, merged during this audit window).
 - To check the live state: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` should show PR #160 merged.
 
 **Landed (2026-08-29) — read this first, supersedes most of what follows**
@@ -461,13 +468,15 @@ Five items, ordered by dependency then value:
    label whether they link to an originating decision or have none. The grouping
    of outcome-by-conviction exists but is gated: below 20 per bucket it reaches
    the human operator only and is kept out of every agent prompt.
-5. **DONE (PR #156, with documented gaps)** — The intra-session scan result that never
+5. **DONE (PR #156, with one gap since closed)** — The intra-session scan result that never
    reaches the session report. The rehearsal harness can now read the intraday
    scan's nested outcome from its own report instead of only the top-level status.
-   Two limitations are recorded and not fixed by design: the path is unit-tested
-   but no current production replay actually contains an intraday_scan key (none exist
-   in live history), and a crashed scan produces no marker — the session still
-   reports healthy and the operator cannot see the crash.
+   At the time, two limitations were recorded and not fixed by design: the path is
+   unit-tested but no current production replay actually contains an intraday_scan
+   key (still true — none exist in live history), and a crashed scan produced no
+   marker — the session read healthy and the operator could not see the crash.
+   **Correction 2026-08-30 (PR #163): the crash gap is now closed** — a crashed
+   scan attaches its own status and the session reports it as a failure.
 
 Single ordered list of outstanding work. A session resuming cold should start
 here. Items are ordered by dependency first, then by value per unit of effort.
@@ -983,8 +992,9 @@ Two facts worth acting on:
    now makes a dead feed impossible to miss: it's in the analyst's own prompt
    and in `data_status["news"]` (`ok`/`partial`/`failed`), which is what
    `trader_feed.py`/`notifier.py` already render as the operator-facing
-   `⚠️ Data degraded` banner. **FRED still open** — separate provider
-   (`src/data/macro.py`), unrelated to the RSS pipeline, not touched here.
+   `⚠️ Data degraded` banner. **FRED half also DONE (2026-08-30, PR #162)** —
+   see the "Landed (2026-08-30, later)" entry above; this line was left
+   "still open" for two days after that stopped being true.
    (4.1, un-blindfolding the intraday buy path, is done — `fb88e08`,
    `feat/pm-flex-routing`, see the landed section above.)
 7. **Phase 5 — short selling, now a three-stage plan.** The prior estimate

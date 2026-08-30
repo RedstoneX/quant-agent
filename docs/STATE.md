@@ -494,13 +494,19 @@ bearish expression is not actually wired up.
 
 The previously flagged concern that `src/execution/broker.py::get_latest_price` omits an explicit Alpaca feed is **not an established defect**. Alpaca's current latest-trade/latest-quote behavior defaults to the best feed available to the subscription; for this account that is IEX. Independent probes confirmed current IEX latest trade/quote data succeeds while explicitly requesting SIP is rejected as unsubscribed, which is expected.
 
-**ACTIVE DEFECT — research feeds are degraded (observed 2026-08-26).** Production
-logs show the Reuters Business feed returning HTTP 404 and AP Business returning
-HTTP 403 (16 occurrences each), repeated FRED macro API timeouts (13), 28 incomplete
-Tech batches, and 11 `Portfolio decision failed deterministic grounding` errors. The
-news and macro seats are therefore frequently operating with no data, and nothing
-surfaces that fact to the operator. Repair is `docs/QAMC_REMEDIATION_SPEC.md`
-Phase 4.2, which also adds a feed-health signal to the alerts and dashboard.
+**DEFECT, observed 2026-08-26 — FIXED 2026-08-30 (news half earlier).** Production
+logs at the time showed the Reuters Business feed returning HTTP 404 and AP Business
+returning HTTP 403 (16 occurrences each), repeated FRED macro API timeouts (13), 28
+incomplete Tech batches, and 11 `Portfolio decision failed deterministic grounding`
+errors. Reuters/AP were dead feeds removed on purpose (both required a paid
+subscription to restore, not a code fix) with free substitutes added in their place;
+FRED's retry policy has since been rebuilt (config-driven retries, exponential
+backoff with jitter, a real wall-clock ceiling) and its coverage now surfaces to the
+operator the same way news coverage already did. Repair is `docs/QAMC_REMEDIATION_SPEC.md`
+Phase 4.2 — see `docs/phases.yaml`'s `phase_4` entry for current mechanical evidence.
+Genuinely still open: full wire-service breadth needs a paid subscription and an
+owner decision, and there is no macro event calendar (see `docs/phases.yaml`'s
+`open_defects` entry).
 
 `get_latest_price` returning `None` on a genuine market-data exception is an intentional fail-closed/degradation contract and is covered by existing tests. Do not change this trading-critical method merely because `feed` is omitted. Reopen it only on concrete production evidence of incorrect behavior.
 

@@ -84,9 +84,11 @@ Largely addressed by Phase 1 / 1b. Before that work it received twenty daily bar
 
 Every value is presented as a bare current level with, at best, a 30-day delta. There is no historical percentile context anywhere — "VIX 19.5" rather than "19.5, the 40th percentile of the last two years".
 
-**Missing series, all free on FRED:** real yields (`DFII10`), inflation breakevens (`T10YIE`), the 3M/10Y curve (`DGS3MO`), the dollar index (`DTWEXBGS`), investment-grade spreads (`BAMLC0A0CM`).
+~~**Missing series, all free on FRED:** real yields (`DFII10`), inflation breakevens (`T10YIE`), the 3M/10Y curve (`DGS3MO`), the dollar index (`DTWEXBGS`), investment-grade spreads (`BAMLC0A0CM`).~~ **FIXED (2026-08-30, PR #162, commit `92689e6`).** All five are now fetched and rendered to the macro analyst, plus a sixth (`ICSA`, weekly initial jobless claims) added for the same reason. All six were verified live against FRED before being wired in. See `config/prompts/macro_analyst.md` for how the analyst is taught to read them.
 
-**Also:** FRED calls time out repeatedly in production, so the agent frequently runs on `None`.
+~~**Also:** FRED calls time out repeatedly in production, so the agent frequently runs on `None`.~~ **FIXED (2026-08-30, PR #162).** The single-retry/flat-backoff policy that let a three-minute outage on 2026-08-26 fail all nine series at once has been replaced with config-driven retries, exponential backoff with jitter, and a real wall-clock ceiling (`total_fetch_deadline_s`, 90s default) the old policy never had. When series still fail, coverage is no longer silent: it now feeds `data_status["macro"]` through the same ok/partial/failed path the news feed already used, and the macro analyst is shown its own coverage directly.
+
+**Still true, unrelated to this fix:** no historical percentile context exists for any of these series (the paragraph above), and there is still no macro event calendar — `event_risk` is answered from the model's own memory, not from fetched data. See `docs/phases.yaml`'s `open_defects` entry.
 
 ### 2.4 Earnings Analyst
 
@@ -140,4 +142,4 @@ The uncomfortable part: its most safety-critical contribution is **covering for 
 | **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple — **landed as Phase 2a, commit `c89e957`** |
 | **Phase 3** (exits) | §1.5 reviewer memory — **landed, commit `aea82ee` on branch `feat/exit-rework-pace-and-memory` (not yet merged)** |
 | **Right after Phase 2** | §2.5 routine/opportunistic filter — **finished, PR #133 opened against `main`, commit `f3aeba4`/`866e423` + 2026-08-28 finishing pass on branch `feat/insider-signal-filter` (not yet merged)** |
-| **Separate pass, needs owner decisions** | §2.2 news cascade · §2.3 macro series · §2.4 earnings trends — several need new data sources |
+| **Separate pass, needs owner decisions** | §2.2 news cascade · ~~§2.3 macro series~~ (fixed 2026-08-30, PR #162 — six series added, FRED resilience rebuilt; percentile context and a macro event calendar remain unbuilt) · §2.4 earnings trends — several need new data sources |
