@@ -93,7 +93,12 @@ HARD_BLOCK_RULES = {
     # D9 (Stage 3, shorts). Hard blocks on opening/adding a short; a COVER
     # is exempted before either rule can fire (src/risk/rules.py).
     "max_single_short_pct",
-    "max_short_gross_pct",
+    # Renamed from max_short_gross_pct (2026-08-30) — now hard blocks any
+    # BEARISH order (a SHORT of an ordinary name, or a BUY of an inverse
+    # ETF SH/SDS/PSQ/SQQQ), not only `action == "SHORT"`. A SHORT of an
+    # inverse ETF is a BULLISH bet and is correctly excluded
+    # (src/risk/rules.py).
+    "max_gross_bearish_pct",
 }
 
 
@@ -383,7 +388,16 @@ class TradingPipeline:
         # contact-bearing UA this repo already sends to SEC EDGAR for Form 4
         # — rather than inventing a second politeness convention for the
         # "SEC Press Releases" feed added 2026-08-29 (src/data/news.py).
-        self.news_provider = NewsDataProvider(sec_user_agent=config.smart_money.user_agent)
+        # per_symbol_* (2026-08-30 owner decision — src/data/news.py audit
+        # block): every cap an operator can tune lives in config.news, never
+        # a module constant, same rule already applied to max_prompt_items.
+        self.news_provider = NewsDataProvider(
+            sec_user_agent=config.smart_money.user_agent,
+            per_symbol_enabled=config.news.per_symbol_enabled,
+            per_symbol_max_symbols=config.news.per_symbol_max_symbols,
+            per_symbol_max_prompt_items=config.news.per_symbol_max_prompt_items,
+            per_symbol_requests_per_second=config.news.per_symbol_requests_per_second,
+        )
         self.news_store = NewsStore()
         self.macro_store = MacroStore()
         self.tech_store = TechStore()
@@ -1046,11 +1060,15 @@ class TradingPipeline:
         pending_sector_investment: dict[str, float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
-        # D9 (Stage 3): running total of gross short notional already
-        # allowed earlier in this batch, so `max_short_gross_pct` sees two
-        # different symbols shorted in the same run rather than checking
-        # each against only the pre-existing book.
-        pending_short_gross_investment = 0.0
+        # D9 (Stage 3): running total of gross BEARISH notional already
+        # allowed earlier in this batch — a SHORT of an ordinary name, or a
+        # BUY of an inverse ETF, but NOT a SHORT of an inverse ETF (that is
+        # a bullish bet, not a bearish one; see the signed accumulation
+        # below) — so `max_gross_bearish_pct` sees two bearish orders in
+        # the same run rather than checking each against only the
+        # pre-existing book. Renamed from pending_short_gross_investment
+        # (2026-08-30) alongside the ceiling itself.
+        pending_gross_bearish_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -1150,7 +1168,7 @@ class TradingPipeline:
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
-                pending_short_gross_investment=pending_short_gross_investment,
+                pending_gross_bearish_investment=pending_gross_bearish_investment,
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
@@ -1176,19 +1194,26 @@ class TradingPipeline:
             # Sector exposure accumulates GROSS (direction-agnostic magnitude).
             gross_investment = raw_investment * _gross_multiplier(decision.symbol)
             pending_investment += signed_investment
-            if is_short:
-                # A SHORT does not spend the settled-cash pool the
-                # cash_only rule protects (see RiskRuleEngine.check) — do
-                # not debit pending_cash_outflow for it. It DOES grow the
-                # running gross-short total D9's book-wide cap checks
-                # against, so a second short later in this same batch sees
-                # this one.
-                pending_short_gross_investment += gross_investment
-            else:
+            if not is_short:
                 # Cash outflow is raw $ notional — leverage/direction don't
                 # change the brokerage cash the BUY consumes. Inverse/
                 # leveraged ETFs still cost their sticker price in cash.
+                # Unlike the gross-bearish accumulator just below, this is
+                # unconditional on direction — a SHORT of any symbol never
+                # spends this settled-cash pool (RiskRuleEngine.check), a
+                # BUY of any symbol always does.
                 pending_cash_outflow += raw_investment
+            # Gross BEARISH accumulator: keyed off the SIGN of
+            # `signed_investment`, not off `decision.action` or `is_short`.
+            # Shorting an ordinary name and buying an inverse ETF both push
+            # `signed_investment` negative and both count. The quadrant
+            # this mirrors: SHORTING an inverse ETF (e.g. SHORT SQQQ) is a
+            # BULLISH bet (SQQQ falls when the index it inverts rises), so
+            # it pushes `signed_investment` POSITIVE and must NOT count,
+            # even though it is mechanically a SHORT — matches the signed
+            # gate in RiskRuleEngine.check.
+            if signed_investment < 0:
+                pending_gross_bearish_investment += abs(signed_investment)
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )
@@ -5998,6 +6023,47 @@ class TradingPipeline:
 
         return f
 
+    @staticmethod
+    def _log_conviction_outcome_for_operator(stats: dict) -> None:
+        """Log the FULL by_conviction / by_allocated_risk breakdown for a
+        human operator reading logs — including every bucket below
+        `_CONVICTION_OUTCOME_MIN_N`, which `_build_calibration_note` never
+        puts in front of an agent (see the "MOST IMPORTANT CONSTRAINT" note
+        at its call site). This is the ONLY place that count is surfaced at
+        all: recorded, not silently dropped, per spec §7.2 — "that must be
+        discovered from data, not assumed" cuts both ways: assumed-absent
+        is as wrong as assumed-present.
+        """
+        try:
+            parts = []
+            for grouping_key in ("by_conviction", "by_allocated_risk"):
+                grouping = stats.get(grouping_key) or {}
+                bucket_strs = []
+                for label, s in grouping.items():
+                    if not s:
+                        continue
+                    if s.get("insufficient_data"):
+                        bucket_strs.append(f"{label}: n={s.get('n', 0)} (below floor)")
+                    else:
+                        bucket_strs.append(
+                            f"{label}: n={s.get('n')} win={s.get('win_rate_pct')}% "
+                            f"avg={s.get('avg_return_pct')}%"
+                        )
+                if bucket_strs:
+                    parts.append(f"{grouping_key}=[{'; '.join(bucket_strs)}]")
+            if not parts:
+                return
+            logger.info(
+                "Conviction/risk-outcome calibration (OPERATOR-ONLY — never "
+                "sent to any agent prompt below the sample floor): %s | "
+                "conviction_unknown_n=%s allocated_risk_unknown_n=%s",
+                " ".join(parts),
+                stats.get("conviction_unknown_n"),
+                stats.get("allocated_risk_unknown_n"),
+            )
+        except Exception as e:  # noqa: BLE001 — logging must never break calibration
+            logger.warning("conviction_outcome operator log failed: %s", e)
+
     def _build_calibration_note(self, lookback_days: int = 45) -> str:
         """Render PM's own hit rate + avg return on closed BUYs in the window.
 
@@ -6012,6 +6078,13 @@ class TradingPipeline:
             return ""
         if not isinstance(stats, dict) or not stats:
             return ""
+        # Conviction ledger (spec §7.2) — operator-only surface. Logged on
+        # EVERY call regardless of the floor below, deliberately separate
+        # from the prompt text being built: this is how a human operator
+        # sees "n=8, split 4/3/1, too few to conclude anything" WITHOUT it
+        # ever reaching an agent. Never gate this log on the floor — the
+        # whole point is that the operator sees the sub-floor count too.
+        self._log_conviction_outcome_for_operator(stats)
         try:
             if stats.get("n", 0) < 3:
                 return ""
@@ -6030,6 +6103,35 @@ class TradingPipeline:
                 f"  - {label}: {s['n']} trades, win {s['win_rate_pct']:.0f}%, "
                 f"avg {s['avg_return_pct']:+.2f}%, hold {s['avg_hold_days']:.1f}d"
             )
+        # Conviction ledger (spec §7.2) — THE MOST IMPORTANT CONSTRAINT on
+        # this whole feature: a bucket below `_CONVICTION_OUTCOME_MIN_N`
+        # (db.py) is `_gated_bucket_stats`-shaped ({"n", "insufficient_data":
+        # True, "message"}) and is skipped here ENTIRELY — no header, no
+        # line, nothing appended to `lines` — never a "too few trades" line
+        # either, because even that much would put the bucket's existence
+        # and its raw direction in front of the model. Only a bucket that
+        # has cleared the floor (`insufficient_data` False) ever reaches
+        # this prompt text. With production at n=8 total (2026-08-30),
+        # EVERY bucket in both groupings is below floor, so today this
+        # appends nothing at all — that is the correct, intended behaviour,
+        # not a bug to "fix" by lowering the floor.
+        for grouping_key, section_label in (
+            ("by_conviction", "By conviction"),
+            ("by_allocated_risk", "By allocated risk"),
+        ):
+            grouping = stats.get(grouping_key) or {}
+            qualifying = [
+                (label, s) for label, s in grouping.items()
+                if s and not s.get("insufficient_data", True) and s.get("n", 0) > 0
+            ]
+            if not qualifying:
+                continue
+            lines.append(f"  {section_label} (established sample):")
+            for label, s in qualifying:
+                lines.append(
+                    f"    - {label}: {s['n']} trades, win {s['win_rate_pct']:.0f}%, "
+                    f"avg {s['avg_return_pct']:+.2f}%, hold {s['avg_hold_days']:.1f}d"
+                )
         return "\n".join(lines)
 
     def _compute_recent_performance(self, current_equity: float) -> dict:
@@ -6085,6 +6187,8 @@ class TradingPipeline:
     def _run_news_update(
         self, run_id: str, session: str = "morning",
         universe: list[str] | None = None,
+        held_symbols: list[str] | None = None,
+        candidate_symbols: list[str] | None = None,
     ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
         """Fetch news, run intelligence analysis, save report. Session-aware.
 
@@ -6094,6 +6198,17 @@ class TradingPipeline:
 
         Session-tagged reports persist alongside the latest full_report.json so
         each session's output is individually recoverable for audit / debug.
+
+        `held_symbols` / `candidate_symbols` (2026-08-30 owner decision) are
+        the caller's ALREADY-ORDERED lists of symbols to also fetch
+        individually via Yahoo Finance's per-symbol RSS — see
+        NewsDataProvider.fetch_news. The deterministic selection rule lives
+        HERE, not in the provider: held positions first, then the run's
+        admitted candidates, each list in the caller's own stable order
+        (never raw set iteration — see the callers of this method), deduped
+        while preserving that order. NewsDataProvider itself enforces the
+        symbol-count cap (config.news.per_symbol_max_symbols); this method
+        only decides ordering and priority.
 
         Returns `(intel_report, coverage)`. `coverage` (src.data.news.
         NewsCoverage) is the 2026-08-28 fix for a dead feed vanishing
@@ -6107,7 +6222,11 @@ class TradingPipeline:
         coverage = None
         try:
             research_universe = universe or self.config.trading.universe
-            news_items, coverage = self.news_provider.fetch_news()
+            per_symbol_symbols = list(dict.fromkeys(
+                [str(s).strip().upper() for s in (held_symbols or []) if str(s).strip()]
+                + [str(s).strip().upper() for s in (candidate_symbols or []) if str(s).strip()]
+            ))
+            news_items, coverage = self.news_provider.fetch_news(symbols=per_symbol_symbols)
             news_text = self.news_provider.format_for_prompt(
                 news_items, max_items=self.config.news.max_prompt_items,
             )
@@ -6143,10 +6262,14 @@ class TradingPipeline:
                 # collapsed_count / source_count are persisted so the dedup
                 # stage stays auditable after the fact — you can re-measure
                 # the duplication rate from the archive without re-fetching.
+                # per_symbol (2026-08-30) is persisted for the same reason:
+                # measuring the per-symbol duplicate rate after the fact
+                # shouldn't require re-fetching either.
                 self.news_store.save_raw_headlines(
                     [{"title": i.title, "source": i.source, "summary": i.summary,
                       "collapsed_count": getattr(i, "collapsed_count", 1),
-                      "source_count": getattr(i, "source_count", 1)}
+                      "source_count": getattr(i, "source_count", 1),
+                      "per_symbol": getattr(i, "per_symbol", False)}
                      for i in news_items])
                 n_changes = len(intel_report.state_changes)
                 n_stocks = len(intel_report.stock_news)
@@ -8353,8 +8476,21 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture developments since morning.
         try:
+            # held_symbols: current book, in broker snapshot order (stable
+            # within this run — see _run_news_update's ordering contract).
+            # No separate "candidate_symbols" concept exists at this point
+            # in the midday/close path (unlike MorningResearchStage, which
+            # has ctx.admitted_symbols computed before news fetches) — a
+            # deliberate scope limit, not an oversight; see the PR
+            # description.
+            held_symbols = [
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in positions if getattr(p, "qty", 0)
+            ]
             session_news, session_news_coverage = self._run_news_update(
-                run_id, session=session_type)
+                run_id, session=session_type,
+                held_symbols=[s for s in held_symbols if s],
+            )
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
@@ -9684,8 +9820,17 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture end-of-day developments
         try:
+            # Same held-symbols-only scope as run_position_review — see the
+            # comment there. No separate candidate list exists pre-fetch in
+            # this path.
+            held_symbols = [
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in positions if getattr(p, "qty", 0)
+            ]
             evening_news, evening_news_coverage = self._run_news_update(
-                run_id, session="evening")
+                run_id, session="evening",
+                held_symbols=[s for s in held_symbols if s],
+            )
         except PaidAnalysisSuspended as exc:
             self.db.insert_daily_pnl(
                 date=today_str, total_value=total_value,

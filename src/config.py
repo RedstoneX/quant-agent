@@ -387,9 +387,17 @@ class RiskConfig(BaseModel):
     # risk engine (src/risk/rules.py) on opening/adding a short — never on
     # a COVER, which mirrors the existing exits-fail-open asymmetry.
     max_single_short_pct: float = Field(default=10.0, gt=0, le=100)
-    # The largest total gross short exposure across the whole book, as a
-    # percent of equity.
-    max_short_gross_pct: float = Field(default=20.0, gt=0, le=200)
+    # The largest total gross BEARISH exposure across the whole book, as a
+    # percent of equity — true shorts (qty < 0) plus LONG positions in an
+    # inverse/leveraged ETF (SH, SDS, PSQ, SQQQ; see `_ETF_LEVERAGE` in
+    # `src/risk/rules.py`), since holding one of those long is bearish
+    # exposure too. Renamed from `max_short_gross_pct` (2026-08-30): the old
+    # name summed only true shorts, leaving an inverse-ETF long invisible to
+    # it — the desk could sit at the full short ceiling AND hold a full
+    # inverse-ETF position at once and be materially more bearish than
+    # either limit intended. The rename reflects what the ceiling actually
+    # measures now, not just what enforces it.
+    max_gross_bearish_pct: float = Field(default=20.0, gt=0, le=200)
     # Sizing-only haircut (never applied to stop placement) on a short's
     # risk-per-share. A short gaps through its stop upward with no bound —
     # equal nominal risk is not equal real risk — so the same risk
@@ -449,6 +457,27 @@ class RiskConfig(BaseModel):
                 "independent agreement can never earn a SMALLER ceiling"
             )
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_short_gross_key(cls, data):
+        # `max_short_gross_pct` was renamed to `max_gross_bearish_pct`
+        # (2026-08-30) when the ceiling was widened to also count LONG
+        # inverse-ETF positions, not just true shorts — the meaning of the
+        # setting genuinely changed, so a name that still said "short" would
+        # be a lie. BaseModel's default `extra="ignore"` would let a
+        # settings.yaml still carrying the old key load silently, quietly
+        # dropping whatever value an operator set and falling back to the
+        # 20.0 default — exactly the doc-versus-behaviour drift this rename
+        # exists to stop. Fail loudly instead (same pattern as
+        # `LLMCostCircuitConfig._reject_renamed_free_failure_key`).
+        if isinstance(data, dict) and "max_short_gross_pct" in data:
+            raise ValueError(
+                "risk.max_short_gross_pct has been renamed to "
+                "risk.max_gross_bearish_pct -- update the settings file "
+                "(no alias is provided)"
+            )
+        return data
 
 
 class CashSweepConfig(BaseModel):
@@ -1060,6 +1089,55 @@ class NewsConfig(BaseModel):
     pre-existing behavior (the old hardcoded default) — widening the feed
     set does not by itself raise this, so prompt size does not grow just
     because more wires are configured."""
+
+    # --- Per-symbol news (2026-08-30 owner decision) -----------------------
+    # The 2026-08-29 audit (src/data/news.py comment block) verified Yahoo
+    # Finance's per-symbol RSS live and working, but deliberately left it
+    # unwired: at the full ~101-symbol trading.universe it would be
+    # 101-202 extra requests/run to a free endpoint with no documented
+    # rate-limit tolerance — a real hammering risk — and scoping it to
+    # "only the symbols this run actually cares about" needed portfolio
+    # state threaded into the fetch call, which was a scope decision for the
+    # owner rather than something to bolt on silently. The owner has now
+    # made that call: free sources only, scoped to held positions + this
+    # run's admitted candidates. These four settings are the caps that make
+    # that safe — see `src/data/news.py::NewsDataProvider.fetch_news`.
+    per_symbol_enabled: bool = True
+    """Master switch. False disables per-symbol fetching entirely (zero
+    added requests) regardless of the caps below — an operator emergency-off
+    that doesn't require also zeroing out per_symbol_max_symbols."""
+
+    per_symbol_max_symbols: int = Field(default=15, ge=0, le=30)
+    """Hard cap on how many symbols get an individual per-symbol RSS fetch in
+    one run. This is the one knob standing between this feature and the
+    101-request hammering risk the 2026-08-29 audit flagged and refused to
+    ship without — and it is enforced a second time inside
+    NewsDataProvider itself (not only by the caller's symbol selection), so
+    a future caller bug that passes the whole ~101-symbol universe still
+    cannot regress to anywhere near 101 requests. Default 15: the live book
+    measured 2026-08-30 held 6 positions, and the run's candidate budgets
+    (smart_money.max_external_candidates=3,
+    nominations.max_total_per_run=6) bound how many more can be admitted in
+    one run — 15 covers that combined worst case with headroom for the book
+    to grow, at one request per symbol per run. The ge=0/le=30 bounds keep an
+    operator typo from silently reopening the 101-request risk (le=30 is
+    already generous — it is under a third of the ~101-symbol universe)."""
+
+    per_symbol_max_prompt_items: int = Field(default=15, ge=0, le=100)
+    """Of the items that make it into the analyst's prompt (bounded overall
+    by `max_prompt_items`), at most this many may be per-symbol-sourced.
+    Keeps a flood of single-name headlines (e.g. every held position
+    publishing something the same morning) from crowding out the general
+    wire feeds that the rest of `max_prompt_items` exists to carry."""
+
+    per_symbol_requests_per_second: float = Field(default=2.0, ge=0.2, le=10.0)
+    """Politeness throttle for per-symbol Yahoo Finance requests, same
+    request-interval-from-rate convention as
+    `smart_money.requests_per_second` (see `SECForm4Provider`'s
+    `request_interval_s` / `_RATE_LOCK` in src/data/smart_money.py, mirrored
+    for this feed in src/data/news.py). Yahoo's per-symbol RSS endpoint has
+    no documented rate-limit tolerance (2026-08-29 audit), so this defaults
+    far below smart_money's SEC-sanctioned 8 req/s."""
 
 
 class AppConfig(BaseModel):

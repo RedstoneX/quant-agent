@@ -1010,6 +1010,13 @@ class PortfolioConstructor:
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
             ),
+            # Conviction ledger (spec §7.2) — pinned at entry, never
+            # recomputed. `plan` is None for a legacy notional target, so
+            # `allocated_risk_pct` stays None rather than a fabricated
+            # figure the budget never actually granted.
+            conviction=target.conviction,
+            requested_risk_pct=target.risk_allocation_pct,
+            allocated_risk_pct=plan.risk_pct if plan is not None else None,
         )
 
     def _build_short(
@@ -1137,6 +1144,11 @@ class PortfolioConstructor:
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
             ),
+            # Conviction ledger (spec §7.2) — mirrors _build_buy's entry
+            # pinning; see its comment for what each field means.
+            conviction=target.conviction,
+            requested_risk_pct=target.risk_allocation_pct,
+            allocated_risk_pct=plan.risk_pct if plan is not None else None,
         )
 
     def _resolve_stop(

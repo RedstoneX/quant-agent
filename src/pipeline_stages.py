@@ -875,12 +875,36 @@ class MorningResearchStage:
             return macro_summary, analysis, result
 
         def _run_news():
+            # Per-symbol news selection (2026-08-30 owner decision): held
+            # positions first, then this run's admitted candidates — the
+            # only run-scoped "active candidate" concept available BEFORE
+            # news fetches (tech/nomination candidates don't exist yet; news
+            # and tech run concurrently in this same fan-out). Both lists
+            # are already in a stable, non-set order — ctx.positions is the
+            # broker snapshot's own order, admitted_symbols is sorted()
+            # rather than iterated as a raw set — so the selection is
+            # reproducible in the offline rehearsal rig.
+            held = [
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in ctx.positions if getattr(p, "qty", 0)
+            ]
+            held = [s for s in held if s]
+            candidates = sorted(ctx.admitted_symbols)
             try:
                 return self._run_news_update(
                     ctx.run_id, session="morning", universe=effective_symbols,
+                    held_symbols=held, candidate_symbols=candidates,
                 )
             except TypeError as exc:
-                if "unexpected keyword argument 'universe'" not in str(exc):
+                # Test doubles (and any future caller) may inject a
+                # run_news_update_fn with a narrower signature than the real
+                # method — this pre-dates per-symbol news (see the original
+                # 'universe' fallback this generalizes). Any excess-kwarg
+                # TypeError here can only come from the CALL SITE not
+                # matching the injected callable's signature, never from
+                # inside a correctly-implemented _run_news_update, so
+                # retrying with the minimal 2-arg call is safe.
+                if "unexpected keyword argument" not in str(exc):
                     raise
                 return self._run_news_update(ctx.run_id, session="morning")
 
@@ -1695,6 +1719,12 @@ class DecisionStage:
         # every trades row this run's decisions produce (ExecutionStage).
         decision_id = f"{run_id}-dec-{uuid.uuid4().hex[:6]}"
         ctx.decision_id = decision_id
+        # Conviction ledger (spec §7.2): pm_result.model is the ACTUAL model
+        # that answered (see RunContext.decision_model docstring), threaded
+        # to ExecutionStage regardless of whether this call ultimately
+        # produced a valid decision — a failed/unparseable PM call still
+        # carries no trades, so an unused decision_model is harmless.
+        ctx.decision_model = pm_result.model
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -3117,6 +3147,15 @@ class ExecutionStage:
                         entry_analysis, "expected_horizon_sessions", None,
                     ),
                     setup_type=getattr(entry_analysis, "setup_type", None),
+                    # Conviction ledger (spec §7.2) — pinned at entry from
+                    # the constructor's TradeDecision (see portfolio_
+                    # constructor._build_buy/_build_short) and from this
+                    # run's PM model. None/None/None for a legacy notional
+                    # target that carried no risk-based plan.
+                    conviction=getattr(decision, "conviction", None),
+                    requested_risk_pct=getattr(decision, "requested_risk_pct", None),
+                    allocated_risk_pct=getattr(decision, "allocated_risk_pct", None),
+                    decision_model=ctx.decision_model,
                 )
 
                 try:

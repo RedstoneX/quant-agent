@@ -377,9 +377,9 @@ phases:
         note: "single-name short cap — deliberately half of max_position_pct, since a short's loss is unbounded where a long's floors at -100%."
       - kind: setting_equals
         path: "config/settings.yaml"
-        key: "risk.max_short_gross_pct"
+        key: "risk.max_gross_bearish_pct"
         value: 20
-        note: "book-wide gross-short cap."
+        note: "book-wide gross-bearish cap (renamed 2026-08-30 from risk.max_short_gross_pct when it was widened to also count long inverse-ETF positions, not just true shorts)."
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "risk.short_gap_risk_multiple"
