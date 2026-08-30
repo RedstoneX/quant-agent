@@ -1007,6 +1007,55 @@ class NewsConfig(BaseModel):
     set does not by itself raise this, so prompt size does not grow just
     because more wires are configured."""
 
+    # --- Per-symbol news (2026-08-30 owner decision) -----------------------
+    # The 2026-08-29 audit (src/data/news.py comment block) verified Yahoo
+    # Finance's per-symbol RSS live and working, but deliberately left it
+    # unwired: at the full ~101-symbol trading.universe it would be
+    # 101-202 extra requests/run to a free endpoint with no documented
+    # rate-limit tolerance — a real hammering risk — and scoping it to
+    # "only the symbols this run actually cares about" needed portfolio
+    # state threaded into the fetch call, which was a scope decision for the
+    # owner rather than something to bolt on silently. The owner has now
+    # made that call: free sources only, scoped to held positions + this
+    # run's admitted candidates. These four settings are the caps that make
+    # that safe — see `src/data/news.py::NewsDataProvider.fetch_news`.
+    per_symbol_enabled: bool = True
+    """Master switch. False disables per-symbol fetching entirely (zero
+    added requests) regardless of the caps below — an operator emergency-off
+    that doesn't require also zeroing out per_symbol_max_symbols."""
+
+    per_symbol_max_symbols: int = Field(default=15, ge=0, le=30)
+    """Hard cap on how many symbols get an individual per-symbol RSS fetch in
+    one run. This is the one knob standing between this feature and the
+    101-request hammering risk the 2026-08-29 audit flagged and refused to
+    ship without — and it is enforced a second time inside
+    NewsDataProvider itself (not only by the caller's symbol selection), so
+    a future caller bug that passes the whole ~101-symbol universe still
+    cannot regress to anywhere near 101 requests. Default 15: the live book
+    measured 2026-08-30 held 6 positions, and the run's candidate budgets
+    (smart_money.max_external_candidates=3,
+    nominations.max_total_per_run=6) bound how many more can be admitted in
+    one run — 15 covers that combined worst case with headroom for the book
+    to grow, at one request per symbol per run. The ge=0/le=30 bounds keep an
+    operator typo from silently reopening the 101-request risk (le=30 is
+    already generous — it is under a third of the ~101-symbol universe)."""
+
+    per_symbol_max_prompt_items: int = Field(default=15, ge=0, le=100)
+    """Of the items that make it into the analyst's prompt (bounded overall
+    by `max_prompt_items`), at most this many may be per-symbol-sourced.
+    Keeps a flood of single-name headlines (e.g. every held position
+    publishing something the same morning) from crowding out the general
+    wire feeds that the rest of `max_prompt_items` exists to carry."""
+
+    per_symbol_requests_per_second: float = Field(default=2.0, ge=0.2, le=10.0)
+    """Politeness throttle for per-symbol Yahoo Finance requests, same
+    request-interval-from-rate convention as
+    `smart_money.requests_per_second` (see `SECForm4Provider`'s
+    `request_interval_s` / `_RATE_LOCK` in src/data/smart_money.py, mirrored
+    for this feed in src/data/news.py). Yahoo's per-symbol RSS endpoint has
+    no documented rate-limit tolerance (2026-08-29 audit), so this defaults
+    far below smart_money's SEC-sanctioned 8 req/s."""
+
 
 class AppConfig(BaseModel):
     api_keys: ApiKeysConfig

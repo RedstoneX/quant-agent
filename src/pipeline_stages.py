@@ -874,12 +874,36 @@ class MorningResearchStage:
             return macro_summary, analysis, result
 
         def _run_news():
+            # Per-symbol news selection (2026-08-30 owner decision): held
+            # positions first, then this run's admitted candidates — the
+            # only run-scoped "active candidate" concept available BEFORE
+            # news fetches (tech/nomination candidates don't exist yet; news
+            # and tech run concurrently in this same fan-out). Both lists
+            # are already in a stable, non-set order — ctx.positions is the
+            # broker snapshot's own order, admitted_symbols is sorted()
+            # rather than iterated as a raw set — so the selection is
+            # reproducible in the offline rehearsal rig.
+            held = [
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in ctx.positions if getattr(p, "qty", 0)
+            ]
+            held = [s for s in held if s]
+            candidates = sorted(ctx.admitted_symbols)
             try:
                 return self._run_news_update(
                     ctx.run_id, session="morning", universe=effective_symbols,
+                    held_symbols=held, candidate_symbols=candidates,
                 )
             except TypeError as exc:
-                if "unexpected keyword argument 'universe'" not in str(exc):
+                # Test doubles (and any future caller) may inject a
+                # run_news_update_fn with a narrower signature than the real
+                # method — this pre-dates per-symbol news (see the original
+                # 'universe' fallback this generalizes). Any excess-kwarg
+                # TypeError here can only come from the CALL SITE not
+                # matching the injected callable's signature, never from
+                # inside a correctly-implemented _run_news_update, so
+                # retrying with the minimal 2-arg call is safe.
+                if "unexpected keyword argument" not in str(exc):
                     raise
                 return self._run_news_update(ctx.run_id, session="morning")
 
