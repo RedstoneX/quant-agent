@@ -65,6 +65,15 @@ def _risk_config(**overrides) -> SimpleNamespace:
         min_stop_atr_multiple=3.0, min_reward_risk_after_widening=1.5,
     )
     fields.update(overrides)
+    # Spec §9.4 — RiskConfig now validates that `agreement_ceiling_pct`
+    # never exceeds `max_position_risk_pct`. This fixture predates that
+    # field and doesn't exercise agreement sizing at all (the backtest
+    # engine sizes off `max_position_risk_pct` directly, never through
+    # PortfolioConstructor's agreement ceiling), so give it a flat
+    # schedule at whatever envelope this test configured rather than
+    # tracking every override site that changes `max_position_risk_pct`.
+    if "agreement_ceiling_pct" not in overrides:
+        fields["agreement_ceiling_pct"] = [fields["max_position_risk_pct"]] * 5
     return SimpleNamespace(risk=RiskConfig(**fields))
 
 

@@ -94,6 +94,18 @@ class ConstructorConfig:
     # opens a smaller short than an equivalent long. Keep in sync with
     # `risk.short_gap_risk_multiple`.
     short_gap_risk_multiple: float = 1.5
+    # Spec §9.4 "agreement earns size". Ceiling on a risk-based target's
+    # `risk_allocation_pct`, indexed by the number of independent seats
+    # whose canonical stance is directionally aligned with the target
+    # (see `src/risk/rules.py::count_aligned_sources` /
+    # `agreement_ceiling_for_count`, and `RiskConfig.agreement_ceiling_pct`
+    # in `src/config.py` for the measurement behind these numbers).
+    # Applied in `_plan_risk_targets`, strictly BEFORE `allocate_risk_budget`
+    # and the single-name clamps below — it can only ever REDUCE what a
+    # target receives, never raise it, and never past `risk_budget_pct`.
+    # Kept in sync with `risk.agreement_ceiling_pct` — pipeline.py wires
+    # them from the same setting, same pattern as every other ceiling here.
+    agreement_ceiling_pct: tuple[float, ...] = (3.0, 4.0, 5.0, 5.0, 5.0)
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
@@ -157,6 +169,7 @@ class PortfolioConstructor:
         existing_risk_pct: dict[str, float] | None = None,
         clusters: list[list[str]] | None = None,
         regime: str | None = None,
+        evidence_registry: dict[str, dict[str, str]] | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -177,6 +190,14 @@ class PortfolioConstructor:
         enforced — the constructor has no view of the book's risk and must not
         invent one — though per-position sizing and the 5% single-name ceiling
         still apply.
+
+        `evidence_registry`: spec §9.4. {symbol: {source: stance}} — the same
+        canonical registry `PortfolioManagerAgent.build_evidence_registry`
+        built for the PM's own prompt this session (the caller recomputes it
+        from the identical inputs; it is a pure function of them, so this is
+        guaranteed to agree with what the PM was shown). Drives the agreement
+        ceiling in `_plan_risk_targets`. Omitted, that ceiling is not enforced
+        — same "no view, don't invent one" posture as `existing_risk_pct`.
         """
         if total_value <= 0:
             return []
@@ -198,6 +219,7 @@ class PortfolioConstructor:
             existing_risk_pct=existing_risk_pct,
             clusters=clusters,
             regime=regime,
+            evidence_registry=evidence_registry,
         )
 
         sells: list[TradeDecision] = []
@@ -324,6 +346,7 @@ class PortfolioConstructor:
         existing_risk_pct: dict[str, float] | None,
         clusters: list[list[str]] | None,
         regime: str | None = None,
+        evidence_registry: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, RiskPlan]:
         """Turn risk-based targets into notional weights, under the budget.
 
@@ -337,9 +360,18 @@ class PortfolioConstructor:
         Spec §2.2: the requested risks are rationed against the total and
         per-cluster ceilings before any of them is converted to a size, so the
         book is bounded by construction rather than by a later veto.
+
+        Spec §9.4: before EITHER of the above, each request is additionally
+        ceilinged by how many independent sources agree with the target's
+        direction (`evidence_registry` + `count_aligned_sources`). This
+        composes with, and is applied strictly BEFORE, the envelope clamp
+        and `allocate_risk_budget` — a reduction only, never a multiplier:
+        it can only ever refuse size a request did not earn agreement for.
         """
         from src.risk.budget import RiskRequest, allocate_risk_budget
-        from src.risk.rules import _gross_multiplier
+        from src.risk.rules import (
+            _gross_multiplier, agreement_ceiling_for_count, count_aligned_sources,
+        )
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
         # Stage 3: direction is tracked alongside the priced entry/stop so
@@ -351,6 +383,11 @@ class PortfolioConstructor:
         directions: dict[str, str] = {}
         requests: list[RiskRequest] = []
         closes: set[str] = set()
+        # §9.4 provenance for the AI Risk Manager, same reason every other
+        # deterministic cut here carries one: an unexplained size difference
+        # between PM's stated allocation and the constructed order reads as
+        # PM contradicting itself (2026-08-20 incident), not as arithmetic.
+        agreement_notes: dict[str, str] = {}
 
         for target in targets:
             if target.risk_allocation_pct is None:
@@ -370,13 +407,47 @@ class PortfolioConstructor:
                 continue  # already logged; no stop means no honest size
             priced[sym] = (entry, stop)
             directions[sym] = target.direction
-            requests.append(RiskRequest(
-                sym,
-                # The single-name ceiling binds before the portfolio one. A PM
-                # asking for more than the ratified envelope is clamped rather
-                # than refused — the idea is sound, the size is not.
-                min(target.risk_allocation_pct, self.cfg.risk_budget_pct),
-            ))
+
+            # The single-name envelope binds before the portfolio one. A PM
+            # asking for more than the ratified envelope is clamped rather
+            # than refused — the idea is sound, the size is not.
+            envelope_capped = min(target.risk_allocation_pct, self.cfg.risk_budget_pct)
+            # §9.4: then the agreement ceiling, computed from THIS session's
+            # canonical registry (not from target.provenance — see
+            # `count_aligned_sources`), before the request ever reaches the
+            # portfolio-level budget allocator. Same "no view, don't invent
+            # one" posture as `existing_risk_pct`/`clusters` above: when the
+            # caller has no registry to offer, the ceiling is UNENFORCED
+            # (infinite), never silently treated as zero agreement — a
+            # missing registry is not evidence of disagreement.
+            agreement_count: int | None = None
+            if evidence_registry is not None:
+                sources = evidence_registry.get(sym.upper(), {})
+                agreement_count = count_aligned_sources(sym, sources, target.direction)
+                agreement_ceiling = agreement_ceiling_for_count(
+                    self.cfg.agreement_ceiling_pct, agreement_count,
+                )
+            else:
+                agreement_ceiling = float("inf")
+            requested_pct = min(envelope_capped, agreement_ceiling)
+            if agreement_ceiling < envelope_capped:
+                logger.info(
+                    "Constructor: %s risk capped by the agreement ceiling "
+                    "(%.2f%% → %.2f%%; %d independent source(s) aligned "
+                    "with this %s)",
+                    sym, envelope_capped, requested_pct, agreement_count,
+                    target.direction,
+                )
+                agreement_notes[sym] = (
+                    f"[constructor: {sym} risk capped to {requested_pct:.2f}% "
+                    f"by the agreement ceiling — only {agreement_count} "
+                    f"independent source(s) align with this {target.direction}, "
+                    f"below the {envelope_capped:.2f}% the envelope alone would "
+                    "allow. More independent confirmation earns more of the "
+                    "risk budget; this idea earned less. Deterministic, not "
+                    "PM inconsistency]"
+                )
+            requests.append(RiskRequest(sym, requested_pct))
 
         allocation = allocate_risk_budget(
             requests,
@@ -399,11 +470,16 @@ class PortfolioConstructor:
                 next(r.requested_pct for r in requests if r.symbol == sym),
                 self.cfg.risk_budget_pct,
             )
-            note = ""
+            # §9.4 note (if the agreement ceiling bound) always leads —
+            # order matters for audit readability, not correctness: it
+            # explains why the REQUEST itself was already smaller before
+            # the budget allocator ever saw it.
+            note_parts = [agreement_notes[sym]] if sym in agreement_notes else []
             if allocation is not None:
                 grant = allocation.grants.get(sym.upper())
                 granted = grant.granted_pct if grant else 0.0
-                note = grant.note if grant else ""
+                if grant and grant.note:
+                    note_parts.append(grant.note)
                 if granted <= 0:
                     logger.info(
                         "Constructor: %s produces no order — risk budget "
@@ -414,6 +490,7 @@ class PortfolioConstructor:
                     continue
             else:
                 granted = requested
+            note = " ".join(note_parts)
 
             # risk_pct x entry / risk_per_share: the §2.1 formula as a
             # weight. risk_per_share is UNSIGNED — `entry - stop` is
