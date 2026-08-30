@@ -242,11 +242,19 @@ def test_transient_fred_timeout_recovers_on_retry(mock_fred_cls, mock_sleep):
 @patch("src.data.macro.time.sleep")
 @patch("src.data.macro.Fred")
 def test_persistent_failure_returns_empty_after_bounded_retry(mock_fred_cls, mock_sleep):
+    """max_retries/breaker_after_failed_series are now operator settings
+    (see src/config.py::MacroConfig) rather than module constants — pinned
+    explicitly here to the pre-Phase-4.2 defaults so this test keeps
+    verifying the MECHANISM (bounded retry, then degrade) independent of
+    whatever the shipped defaults are tuned to. The new defaults themselves
+    (more retries, jitter, a hard deadline ceiling) are covered in
+    tests/test_macro_feed_resilience.py.
+    """
     mock = MagicMock()
     mock.get_series.side_effect = TimeoutError("The read operation timed out")
     mock_fred_cls.return_value = mock
 
-    provider = MacroDataProvider(api_key="test-key")
+    provider = MacroDataProvider(api_key="test-key", max_retries=1)
     vix = provider.get_vix()
 
     assert vix["current"] is None
@@ -260,12 +268,21 @@ def test_outage_breaker_stops_retrying_after_consecutive_failed_series(
 ):
     """Two series exhausting their retries looks like an outage, not a
     flake — later series must degrade after a single attempt so a full
-    FRED outage can't multiply its own latency across all eight series."""
+    FRED outage can't multiply its own latency across all eight series.
+
+    Pinned to max_retries=1/breaker_after_failed_series=2 (the
+    pre-Phase-4.2 defaults) so this test verifies the breaker MECHANISM
+    unchanged; the new default (breaker trips after just 1, since there
+    are now fifteen series sharing one deadline budget) is covered in
+    tests/test_macro_feed_resilience.py.
+    """
     mock = MagicMock()
     mock.get_series.side_effect = TimeoutError("down")
     mock_fred_cls.return_value = mock
 
-    provider = MacroDataProvider(api_key="test-key")
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=1, breaker_after_failed_series=2,
+    )
     provider.get_vix()              # attempts 2 (1 + retry)
     provider.get_fed_funds_rate()   # attempts 2 (1 + retry) -> breaker arms
     calls_before = mock.get_series.call_count
@@ -288,7 +305,9 @@ def test_success_resets_outage_breaker(mock_fred_cls, mock_sleep):
     ]
     mock_fred_cls.return_value = mock
 
-    provider = MacroDataProvider(api_key="test-key")
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=1, breaker_after_failed_series=2,
+    )
     provider.get_vix()
     provider.get_fed_funds_rate()
     result = provider.get_unemployment()

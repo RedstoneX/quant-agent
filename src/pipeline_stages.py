@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 from src.agents.base import agent_log_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
+from src.data.macro import MacroCoverage
 from src.data.technical import compute_indicators
 from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
 from src.nominations import select_nominations
@@ -854,6 +855,10 @@ class MorningResearchStage:
 
         def _run_macro():
             macro_summary = self.macro.get_macro_summary()
+            # Side channel, not part of macro_summary's own shape — see
+            # MacroCoverage's docstring (src/data/macro.py) for why
+            # get_macro_summary() itself still returns a bare dict.
+            macro_coverage = self.macro.last_coverage
             logger.info(
                 "Macro data: VIX=%s, HY OAS=%sbps, CPI core YoY=%s, UNRATE=%s",
                 macro_summary.get("vix", {}).get("current"),
@@ -866,13 +871,14 @@ class MorningResearchStage:
                 universe=effective_symbols,
                 last_state=prior_macro_state,
                 news_narrative=news_narrative,
+                macro_coverage=macro_coverage,
             )
             if analysis:
                 try:
                     self.macro_store.save_last_state(analysis.model_dump())
                 except Exception as e:
                     logger.warning("Failed to persist macro last state: %s", e)
-            return macro_summary, analysis, result
+            return macro_summary, analysis, result, macro_coverage
 
         def _run_news():
             # Per-symbol news selection (2026-08-30 owner decision): held
@@ -1086,13 +1092,49 @@ class MorningResearchStage:
             data_status["smart_money"] = "provider_error"
 
         # Macro
+        #
+        # Phase 4.2 fix: before this, `data_status["macro"]` was "ok" purely
+        # on whether the LLM call parsed — a run where every FRED series
+        # timed out (the 2026-08-26 17:01-17:03 UTC incident: all nine
+        # series failed) still said "ok" as long as the macro analyst
+        # produced valid JSON from all-None inputs. `macro_coverage`
+        # (src.data.macro.MacroCoverage) is the deterministic half of the
+        # fix, mirroring the 2026-08-28 news fix exactly: it reflects how
+        # many of the configured FRED series actually returned data,
+        # independent of whether the LLM call on top of them succeeded.
+        # Coverage failure dominates parse success below.
+        macro_coverage: "MacroCoverage | None" = None
         try:
-            macro_summary, macro_analysis, ma_result = macro_future.result()
+            macro_summary, macro_analysis, ma_result, macro_coverage = macro_future.result()
+            # A test double / older caller may hand back something other
+            # than a real MacroCoverage (e.g. a bare MagicMock attribute
+            # off an unconfigured mock provider) — treat anything that
+            # isn't the real dataclass as "coverage not reported" rather
+            # than crashing json.dumps() below on non-serializable mock
+            # internals. Mirrors how a coverage-less caller is already
+            # handled (macro_coverage is None branch further down).
+            if not isinstance(macro_coverage, MacroCoverage):
+                macro_coverage = None
             # audit round 2: commit the analysis to ctx BEFORE the agent_logs
             # write — a DB lock/timeout on the log write used to discard a
             # fully successful macro run (ctx fields were assigned after it).
             ctx.macro_summary = macro_summary
             ctx.macro_analysis = macro_analysis
+            ctx.macro_coverage = macro_coverage
+            if macro_coverage is not None:
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id, agent_name="macro_provider",
+                    kind="coverage", scope="run",
+                    evidence_json=__import__("json").dumps({
+                        "configured": macro_coverage.configured,
+                        "succeeded": macro_coverage.succeeded,
+                        "failed": [
+                            {"series_id": f.series_id, "reason": f.reason}
+                            for f in macro_coverage.failed
+                        ],
+                        "status": macro_coverage.status,
+                    }, sort_keys=True),
+                )
             self.db.insert_agent_log(
                 agent_name="macro_analyst", run_id=ctx.run_id,
                 input_summary=f"VIX={macro_summary.get('vix', {}).get('current')}",
@@ -1117,14 +1159,33 @@ class MorningResearchStage:
                     macro_analysis.regime, macro_analysis.equity_outlook,
                     macro_analysis.position_guidance.target_invested_pct,
                 )
-                data_status["macro"] = "ok"
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="macro_analyst",
                     kind="analysis", scope="run",
                     evidence_json=macro_analysis.model_dump_json(),
                 )
-            else:
+            # Coverage is authoritative over parse success: total FRED
+            # failure means "failed" even if the model still emitted a
+            # technically-valid report on all-None input. A coverage-less
+            # result (macro_coverage is None — a caller/test double that
+            # hasn't been updated to report it) falls back to the pre-fix
+            # ok/parse_error split rather than crashing on a missing value.
+            if macro_coverage is None:
+                data_status["macro"] = "ok" if macro_analysis else "parse_error"
+            elif macro_coverage.status == "failed":
+                data_status["macro"] = "failed"
+                logger.error(
+                    "Macro coverage FAILED this run: %s", macro_coverage.describe(),
+                )
+            elif not macro_analysis:
                 data_status["macro"] = "parse_error"
+            elif macro_coverage.status == "partial":
+                data_status["macro"] = "partial"
+                logger.warning(
+                    "Macro coverage PARTIAL this run: %s", macro_coverage.describe(),
+                )
+            else:
+                data_status["macro"] = "ok"
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
