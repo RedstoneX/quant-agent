@@ -29,7 +29,7 @@ LLM multi-agent quantitative trading system for US equities. Eight specialized d
 
 - **Telegram session-status push (opt-in).** Every session emits a structured status message — orders, R/R-weighted sizing, degraded-data flags, daily P&L, tomorrow's bias, or the exact exception trace on failure — to a Telegram chat you control. Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` to enable; missing creds make the notifier a silent no-op and trading is unchanged. Per-mode noise policy hides the 14 silent `intra_check` ticks per day and pre-market `nothing_new` earnings polls while always surfacing emergency liquidations, hard-risk blocks, exceptions, and the substantive morning / midday / close / evening completions. The notifier is wired into `main.py`'s `finally` block so even a `SystemExit` from a wrapper kill still produces a push before the process exits — and HTTP failures to Telegram are swallowed so an outage on their side can never cascade into a trading failure.
 
-- **Tested.** 2470 tests pin every invariant, including regression tests for every fix in the public commit history. Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
+- **Tested.** The full pytest suite pins every invariant, including regression tests for every fix in the public commit history — run `pytest tests/ -q` for the current count (a fixed number here has gone stale more than once). Per-entry isolation (one bad LLM sub-item must not drop the whole report) is now standard across all 9 agents — a discipline that surfaced after a single malformed `MissedOpportunity` entry took down a complete evening report; adding a 10th agent would inherit the same pattern.
 
 ## Architecture
 
@@ -185,7 +185,7 @@ As of remediation-spec Phase 2b, that ceiling is enforced, not just reported: th
 - Python 3.11+
 - [Alpaca](https://alpaca.markets/) account (paper trading supported)
 - [FRED](https://fred.stlouisfed.org/docs/api/api_key.html) API key
-- [Anthropic](https://console.anthropic.com/) API key (default since 2026-05-11 — all 9 agents on `claude-opus-4-7`) and/or [OpenAI](https://platform.openai.com/) API key (model-name routing: any agent set to `gpt-*` / `o1-*` / `o3-*` / `o4-*` in `config/settings.yaml` uses OpenAI; everything else uses Anthropic)
+- [OpenRouter](https://openrouter.ai/keys) API key — every agent's `<agent>_provider` is explicitly pinned to `"openrouter"` in `config/settings.yaml` (see the "Accepted model routing policy" comment above the `llm:` block), so this is the key a stock checkout actually needs. [Anthropic](https://console.anthropic.com/) API key is also required: not as a default agent seat but as the hardcoded cross-provider failover target — any OpenAI/DeepSeek/OpenRouter primary call retries once against `claude-opus-4-7` on sustained failure (`resolve_provider()` / `_FALLBACK_MODEL` in `src/agents/base.py`). [OpenAI](https://platform.openai.com/) / [DeepSeek](https://platform.deepseek.com/) API keys are optional, needed only if you move an agent off OpenRouter to call that provider directly (its `provider` must then be set explicitly, since an OpenRouter `vendor/model` id like `openai/gpt-5.5` can't be told apart from a native id by prefix alone)
 
 ### Install
 
@@ -200,9 +200,10 @@ pip install -e ".[dev]"
 1. Create `.env` (set `chmod 600` after — these are secrets):
 ```bash
 cat > .env << 'EOF'
-ANTHROPIC_API_KEY=sk-ant-...           # also the cross-provider failover key (OpenAI/DeepSeek → Claude)
-OPENAI_API_KEY=sk-...                  # optional — only needed if any agent stays on a gpt-*/o*-* model
-DEEPSEEK_API_KEY=sk-...                # optional — only needed if any agent uses a deepseek-* model
+OPENROUTER_API_KEY=sk-or-...           # required — every agent defaults to provider: openrouter
+ANTHROPIC_API_KEY=sk-ant-...           # also the cross-provider failover key (OpenAI/DeepSeek/OpenRouter → Claude)
+OPENAI_API_KEY=sk-...                  # optional — only needed if an agent is switched to call OpenAI directly
+DEEPSEEK_API_KEY=sk-...                # optional — only needed if an agent is switched to call DeepSeek directly
 FRED_API_KEY=...
 ALPACA_API_KEY=...
 ALPACA_SECRET_KEY=...
@@ -214,7 +215,7 @@ EOF
 chmod 600 .env
 ```
 
-2. Edit `config/settings.yaml` — models per agent, risk parameters, trading universe, schedule. Current default is `gpt-5.5` (OpenAI) for all 9 agents; flip an agent's model name to a `claude-*` (Anthropic), `deepseek-*` (DeepSeek, OpenAI-compatible — use `deepseek-v4-flash`; the `deepseek-chat`/`deepseek-reasoner` aliases retire 2026-07-24), or another `gpt-*`/`o*-*` (OpenAI) id and routing/keys/cost/failover follow the prefix automatically.
+2. Edit `config/settings.yaml` — models per agent, risk parameters, trading universe, schedule. Every seat currently routes through OpenRouter (`<agent>_provider: "openrouter"`), each with its own `<agent>_model`: the tech/news/macro/earnings/smart-money analysts, position reviewer, evening analyst and meta-reflector default to `google/gemini-2.5-flash-lite`, the Portfolio Manager to `openai/gpt-5.5` (via OpenRouter's cheaper `openai/flex` endpoint — see `portfolio_manager_provider_order`), and the Risk Manager to `qwen/qwen3-235b-a22b-2507` — see the "Accepted model routing policy" comment above the `llm:` block for why (measured per-seat benchmark, kept independent on purpose for PM/RM). To point a seat at a provider directly instead of OpenRouter, set both its `<agent>_model` (a `claude-*` / `gpt-*`/`o*-*` / `deepseek-*` id) **and** its `<agent>_provider` explicitly (`anthropic` / `openai` / `deepseek`) — an OpenRouter `vendor/model` id and a native id can look identical, so once `provider` is set it always wins; only an unset `provider` falls back to the old prefix inference. `claude-opus-4-7` also serves as the hardcoded cross-provider failover model regardless of per-agent config (`src/agents/base.py::_FALLBACK_MODEL`).
 
 ### Optional env vars
 
@@ -322,7 +323,7 @@ The **daily P&L CSV export** (`--mode daily`) is scheduled separately — it is 
 
 ## Trading Universe
 
-97 symbols (source of truth: `config/settings.yaml:trading.universe`):
+101 symbols (source of truth: `config/settings.yaml:trading.universe`):
 - **Index ETFs**: SPY, QQQ, IWM, DIA
 - **Sector ETFs**: XLF, XLE, XLV, XLI, XLP, XLY, XLU, XLRE, XLB, SMH, DRAM
 - **Inverse ETFs**: SH, SDS, PSQ, SQQQ (leverage-corrected in risk engine)
@@ -370,7 +371,7 @@ quant-agent/
 │   │   └── trailing.py            # Deterministic broker-resident trailing stops
 │   └── storage/
 │       └── db.py                  # SQLite (trades, positions, logs, PnL, insights)
-├── tests/                         # 2470 tests
+├── tests/                         # full pytest suite — `pytest tests/ -q` for current count
 ├── data/
 │   ├── quant_agent.db             # SQLite audit trail
 │   ├── earnings/                  # Cached SEC filing analyses
@@ -381,7 +382,7 @@ quant-agent/
 ## Tests
 
 ```bash
-pytest tests/ -v    # 2470 tests
+pytest tests/ -v    # full suite (see "Tested" above for why no count is pinned here)
 ```
 
 ## Data Sources
@@ -390,7 +391,7 @@ pytest tests/ -v    # 2470 tests
 |--------|------|----------|
 | Market data | OHLCV, sector performance, valuation (trailing PE / forward PE / P/S) | yfinance |
 | Macro | VIX, 2Y/10Y yields, DFF (daily fed funds), headline & core CPI, PCE, UNRATE, HY OAS spread | FRED API |
-| News | Real-time headlines (9 RSS feeds) | Reuters, CNBC, MarketWatch, AP, BBC, NPR, Fed |
+| News | Real-time headlines (11 standing RSS feeds), plus per-symbol Yahoo Finance RSS fetched each run for held positions + this run's candidates (added 2026-08-30, capped, not a standing feed) | CNBC, MarketWatch, Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq, BBC, NPR, Fed, SEC |
 | Earnings | 10-Q/10-K filings + strategic analysis | SEC EDGAR |
 | Trading | Orders, positions, account, calendar, live quotes | Alpaca API |
 

@@ -471,9 +471,32 @@ short-selling capability at all today. The prior exclusion was an engineering sc
 decision recorded here as an accepted constraint; it was never an owner requirement.
 Options and theta strategies remain outside the accepted architecture.
 
+*Correction (2026-08-30):* the "pending implementation" / "no short-selling
+capability at all today" claim above is now false. Real short selling was built in
+three stages — Stage 1 (a held short counts correctly in risk metrics), Stage 2
+(protective-stop and trailing-stop geometry are short-aware), Stage 3 (the actual
+open/cover order path, gated on the broker confirming the name is both
+`shortable` and `easy_to_borrow`, `AlpacaBroker.get_shortability` in
+`src/execution/broker.py`) — and all three stages are merged (PR #150) **and
+confirmed deployed**, production's HEAD matching `origin/main`. `TradeDecision`
+and the position-reviewer action enum now carry `SHORT`/`COVER` literals
+(`src/models.py`). See `docs/phases.yaml`'s `phase_5` entry for the full
+mechanical evidence. The four inverse ETFs remain in the trading universe as a
+separate, still-live bearish-expression path alongside real shorting — retiring
+them is noted as a residual, not yet decided.
+
 Note also that nothing in the codebase currently tells the Portfolio Manager that
 `SH`, `SDS`, `PSQ` and `SQQQ` are bearish instruments, so even the sanctioned
 bearish expression is not actually wired up.
+
+*Correction (2026-08-30):* also false as of today. `config/prompts/portfolio_manager.md`
+now carries a dedicated "Inverse ETFs are bearish, not a hedge-flavoured long"
+section stating that a long position in `SH`/`SDS`/`PSQ`/`SQQQ` is bearish
+exposure and draws from the same book-wide `max_gross_bearish_pct` budget as an
+outright short; `config/prompts/risk_manager.md`'s "Short discipline" section
+states the identical rule for audit purposes. Both prompts also carve out the
+inverse case correctly: shorting one of these funds is a bullish bet on the
+index, not additional bearish exposure, and is excluded from that budget.
 
 ## Model / provider policy
 
