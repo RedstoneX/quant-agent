@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from src.data.macro import MacroCoverage
     from src.data.news import NewsCoverage
     from src.models import NewsIntelligenceReport, PortfolioDecision, Position
     from src.risk.metrics import PortfolioHeat
@@ -75,6 +76,13 @@ class RunContext:
     # === Populated by the research stage (parallel fan-out) ===
     macro_summary: dict = field(default_factory=dict)
     macro_analysis: dict | None = None  # Macro Analyst's LLM output (model_dump)
+    # How many of the configured FRED series actually returned data this run
+    # (src.data.macro.MacroCoverage) — Phase 4.2 fix, mirroring news_coverage
+    # below exactly. Kept alongside macro_summary rather than folded into
+    # data_status because it carries the per-series detail (which series,
+    # why) that a single status word can't; data_status["macro"] is the
+    # summary, this is the evidence behind it.
+    macro_coverage: "MacroCoverage | None" = None
     news_intel: "NewsIntelligenceReport | None" = None
     # How many of the configured news wire feeds actually returned data this
     # run (src.data.news.NewsCoverage) — 2026-08-28 fix. Kept alongside
