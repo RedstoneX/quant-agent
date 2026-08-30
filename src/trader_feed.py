@@ -577,6 +577,20 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
         )
         if nested.get("error"):
             lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+    elif status == "intraday_scan_crashed":
+        # Operator-honesty fix: this used to be indistinguishable from a
+        # healthy tick that ran and found nothing — the scan raised, the
+        # caller swallowed the exception and set scan_result to None, and no
+        # `intraday_scan` key ever reached this formatter. Now the crash
+        # attaches a dict with this status, so it renders through the same
+        # nested path `paid_analysis_suspended` / `intraday_analysis_error`
+        # already use, instead of silently reading as "Status: ok".
+        lines.append(
+            f"🔴 Intraday opportunity scan crashed ({nested.get('error_type') or 'unknown'}); "
+            "the deterministic intraday loss check above completed normally."
+        )
+        if nested.get("error"):
+            lines.append(f"Error: {_clip(nested.get('error'), 900)}")
 
     pnl = _number(outer.get("daily_pnl"))
     ret = _number(outer.get("daily_return_pct"))

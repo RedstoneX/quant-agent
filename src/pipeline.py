@@ -9053,8 +9053,24 @@ class TradingPipeline:
                     }
                 except Exception as e:  # noqa: BLE001 — never let the scan
                     # turn a routine intra_check tick into a failed run.
+                    # Operator-honesty fix: a crash used to set scan_result to
+                    # None, which is exactly what a healthy "ran, nothing to
+                    # do" tick also produces — no `intraday_scan` key, session
+                    # status stays "ok". The Telegram feed and the rehearsal
+                    # rig were both blind to the difference. Attaching a
+                    # dict (mirroring the `paid_analysis_suspended` shape
+                    # above) makes the crash visible through the same nested
+                    # path, while the tick itself still completes normally —
+                    # the deterministic loss check above already ran and is
+                    # unaffected by anything below it.
                     logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
-                    scan_result = None
+                    scan_result = {
+                        "status": "intraday_scan_crashed",
+                        "run_id": run_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "preserved": "intraday deterministic loss protection",
+                    }
                 if scan_result is not None:
                     result["intraday_scan"] = scan_result
             return result

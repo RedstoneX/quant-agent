@@ -146,6 +146,23 @@ STATUS_PLAIN = {
     "intraday_executed": (
         "The intra-session check ran and submitted orders."
     ),
+    # "intraday_scan_crashed" (src/pipeline.py, run_intra_check's
+    # `except Exception` around the `_run_intraday_opportunity_scan` call):
+    # 2026-08-30 operator-honesty fix. Before this, a crash inside the
+    # opportunity scan set scan_result to None — byte-identical to a scan
+    # that ran and correctly found nothing, or one that never ran at all
+    # (disabled, process lock held, another session active). Now a crash
+    # attaches this status instead, nested at result["intraday_scan"]["status"]
+    # the same way "intraday_no_trades" / "intraday_executed" already are.
+    # Deliberately NOT in `_verdict`'s healthy set below — this is a genuine
+    # failure and must read FAIL. The deterministic intraday loss check that
+    # runs before the scan is unaffected either way.
+    "intraday_scan_crashed": (
+        "The intra-session check's opportunity scan crashed partway through. "
+        "The deterministic loss check that runs before it already completed "
+        "normally; only the new-opportunity discovery on top of that was lost "
+        "for this tick."
+    ),
     # "early_close" (run_position_review, shared by run_midday/run_close —
     # src/pipeline.py:7806): a deliberate skip when the regular session had
     # already closed for the day by the time midday/close fired (half-day
@@ -588,14 +605,18 @@ def collect(
     the report does not claim it.
     """
     status = str(result.get("status", "unknown")) if result else "did_not_finish"
+    nested_error: str | None = None
 
-    # For intra_check sessions, the intraday scan's own status is nested at
-    # result["intraday_scan"]["status"], not at the top level. Production's
-    # src/trader_feed.py reads this nesting explicitly. Mirror that behavior.
+    # For intra_check sessions, the intraday scan's own status — and, since
+    # the 2026-08-30 crash-visibility fix, its own error text on a crash —
+    # is nested at result["intraday_scan"], not at the top level.
+    # Production's src/trader_feed.py reads this same nesting. Mirror both.
     if session == "intra_check" and result and isinstance(result.get("intraday_scan"), dict):
-        nested_status = result["intraday_scan"].get("status")
+        nested = result["intraday_scan"]
+        nested_status = nested.get("status")
         if nested_status is not None:
             status = str(nested_status)
+        nested_error = nested.get("error")
 
     report = RehearsalReport(
         session=session,
@@ -610,7 +631,7 @@ def collect(
         notes=notes,
         fill_model=fill_model,
         duration_s=duration_s,
-        error=(error or result.get("error") if result else error),
+        error=(error or nested_error or (result.get("error") if result else None)),
     )
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -636,29 +657,44 @@ def collect(
     ])
     report.findings = list(getattr(library, "findings", []))
 
-    # For intra_check sessions, flag when the intraday_scan outcome is not visible.
-    # An absent key could mean the scan never attempted (config disabled, process locked,
-    # outside time window) — normal and healthy — or it crashed (exception caught at
-    # src/pipeline.py:8895-8898, scan_result set to None) — an error condition. The rig
-    # cannot distinguish these cases from outside because both leave no key and top-level
-    # status "ok". This is also a production honesty gap: the operator's feed would show
-    # the session as fine even if the scan crashed (line 8873's top-level status is "ok"
-    # for both cases). Without production exposing a marker in the result, the rig can only
-    # flag the limitation, not resolve it.
+    # For intra_check sessions, note when the intraday_scan outcome is not
+    # visible in the result at all (no `intraday_scan` key).
+    #
+    # UPDATE 2026-08-30: this used to be a genuine blind spot — an absent key
+    # could mean the scan never attempted (config disabled, process locked,
+    # another session recently active) OR that it crashed (exception caught
+    # at src/pipeline.py's `run_intra_check`, scan_result set to None), and
+    # the rig had no way to tell which. That ambiguity is now closed: a
+    # crash no longer sets scan_result to None — it attaches a dict with
+    # status "intraday_scan_crashed" (see the STATUS_PLAIN entry above),
+    # which IS an `intraday_scan` dict, so this branch no longer fires for
+    # it. `collect()`'s nested-status extraction picks it up directly and
+    # `_verdict` reads it as FAIL.
+    #
+    # What remains indistinguishable, and it is no longer a health question:
+    # among the paths that still leave no key at all, the rig (like
+    # production) cannot tell "never attempted" (disabled/locked/another
+    # session active) apart from "attempted and returned nothing at an
+    # early stage" (no qualifying price moves, no usable bars, no usable
+    # tech analysis — see `_intraday_opportunity_scan_body`'s early
+    # `return None` points). Both are healthy completions — neither is
+    # reported as a finding needing action — so this residual gap is about
+    # which flavor of "nothing happened" occurred, not whether the tick
+    # worked.
     if session == "intra_check" and result and not isinstance(result.get("intraday_scan"), dict):
         report.findings.append({
             "kind": "intraday_scan_visibility_gap",
             "agent": "rig",
             "detail": (
-                "The intraday opportunity scan outcome is not visible in the result. "
-                "This could be normal (scan not attempted due to config, process lock, "
-                "or time window) or could indicate the scan crashed. The rig cannot "
-                "distinguish these cases — the rig's own findings would be identical "
-                "whether the scan ran and decided there were no trades, or crashed "
-                "while running. Production's own status is also 'ok' for both cases, "
-                "so the operator's feed has the same visibility gap. To resolve this, "
-                "production would need to return a dict with an error status on crash, "
-                "rather than setting scan_result to None."
+                "The intraday opportunity scan left no outcome in the result "
+                "this tick. This is a normal, healthy shape — either the scan "
+                "never attempted (disabled by config, process lock held, or "
+                "another session recently active) or it attempted and found "
+                "nothing worth escalating before reaching a paid analysis "
+                "call. A crash no longer looks like this: since the "
+                "2026-08-30 fix, a crashed scan attaches an "
+                "'intraday_scan_crashed' result and is reported as a FAIL, "
+                "not folded into this silent case."
             ),
         })
 

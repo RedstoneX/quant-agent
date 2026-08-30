@@ -372,9 +372,18 @@ def test_run_intra_check_runs_scan_when_no_breach():
 
 
 def test_run_intra_check_scan_crash_does_not_fail_the_tick():
-    """A scan exception must degrade to 'no scan result this tick', never
-    turn a routine intra_check run into a failed/errored result — the
-    loss-protection check it wraps around already succeeded."""
+    """A scan exception must never turn a routine intra_check run into a
+    failed/errored result — the loss-protection check it wraps around
+    already succeeded — but it must NOT disappear silently either.
+
+    2026-08-30 operator-honesty fix: before this, the exception handler set
+    scan_result to None, which meant no `intraday_scan` key was attached at
+    all — byte-identical to a scan that ran and correctly found nothing.
+    Now a crash attaches an explicit error-status dict (see
+    tests/test_intraday_scan_crash_visibility.py for the full coverage of
+    that fix); this test only re-asserts the still-non-negotiable half of
+    the contract — the tick itself completes as "ok", never as a failure.
+    """
     p = TradingPipeline.__new__(TradingPipeline)
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
@@ -399,7 +408,8 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
     result = p.run_intra_check()
 
     assert result["status"] == "ok"
-    assert "intraday_scan" not in result
+    assert result["intraday_scan"]["status"] == "intraday_scan_crashed"
+    assert "boom" in result["intraday_scan"]["error"]
 
 
 # ---------- concurrency guard (intra_check is session-lock exempt) ----------
