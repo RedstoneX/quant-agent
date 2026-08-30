@@ -200,9 +200,13 @@ risk:
   # while a long's is capped at -100%, so one short's concentration budget
   # is tighter. Hard block on opening/adding a short; never blocks a COVER.
   max_single_short_pct: 10
-  # Largest total gross short exposure across the book, as % of equity.
-  # Hard block on opening/adding a short; never blocks a COVER.
-  max_short_gross_pct: 20
+  # Largest total gross BEARISH exposure across the book, as % of equity —
+  # true shorts plus LONG positions in an inverse/leveraged ETF (SH, SDS,
+  # PSQ, SQQQ), since holding one of those long is bearish exposure too.
+  # Renamed from max_short_gross_pct (2026-08-30) when the ceiling was
+  # widened to see inverse-ETF longs, not just true shorts. Hard block on
+  # opening/adding a short or buying an inverse ETF; never blocks a COVER.
+  max_gross_bearish_pct: 20
   # Sizing-only haircut (never stop placement) on a short's risk-per-share:
   # a short can gap through its stop with unbounded loss, so equal nominal
   # risk must not buy equal real risk. Range (1.0, 3.0].
