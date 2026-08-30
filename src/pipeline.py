@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
 from src.data.market import MarketDataProvider
-from src.data.macro import MacroDataProvider
+from src.data.macro import MacroCoverage, MacroDataProvider
 from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
@@ -299,7 +299,16 @@ class TradingPipeline:
     def __init__(self, config: AppConfig):
         self.config = config
         self.market = MarketDataProvider()
-        self.macro = MacroDataProvider(api_key=config.api_keys.fred)
+        self.macro = MacroDataProvider(
+            api_key=config.api_keys.fred,
+            request_timeout_s=config.macro.request_timeout_s,
+            max_retries=config.macro.max_retries,
+            retry_backoff_base_s=config.macro.retry_backoff_base_s,
+            retry_backoff_max_s=config.macro.retry_backoff_max_s,
+            retry_backoff_jitter_s=config.macro.retry_backoff_jitter_s,
+            breaker_after_failed_series=config.macro.breaker_after_failed_series,
+            total_fetch_deadline_s=config.macro.total_fetch_deadline_s,
+        )
 
         def _key_for(model: str, explicit_provider: str | None = None) -> str:
             """Return the right API key based on (explicit provider, else
@@ -8542,6 +8551,15 @@ class TradingPipeline:
 
         # 3. LLM position review — memory-heavy, 6-step CoT.
         macro_summary = self.macro.get_macro_summary()
+        macro_coverage = self.macro.last_coverage
+        if isinstance(macro_coverage, MacroCoverage) and macro_coverage.status != "ok":
+            # Same gap noted for news coverage just above: midday/close have
+            # no data_status mechanism of their own (that is a morning-only
+            # construct today — see MorningResearchStage), so a degraded
+            # FRED fetch here would otherwise be silent even after the
+            # Phase 4.2 macro-coverage fix. At minimum this keeps it out of
+            # the log-only failure mode the fix exists to close.
+            logger.warning("%s: %s", session_type, macro_coverage.describe())
         review = None
         # Pre-LLM orders (take-profit + ex-div) feed into the same bucket.
 
@@ -9889,6 +9907,13 @@ class TradingPipeline:
 
         # 3. LLM evening analysis — daily review and tomorrow outlook
         macro_summary = self.macro.get_macro_summary()
+        evening_macro_coverage = self.macro.last_coverage
+        if isinstance(evening_macro_coverage, MacroCoverage) and evening_macro_coverage.status != "ok":
+            # Same gap noted in run_position_review / the news coverage
+            # check above: evening has no data_status mechanism of its own
+            # to carry this further, so at minimum it does not disappear
+            # into a log-only "ok".
+            logger.warning("evening: %s", evening_macro_coverage.describe())
         # Sweep churn (SWEEP_BUY/SWEEP_SELL) is cash parking, not a trading
         # decision — narrating it to the evening analyst would feed the
         # learning loops noise (review finding). Fetch extra rows so the

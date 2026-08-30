@@ -28,6 +28,7 @@ class MacroAnalystAgent(BaseAgent):
         universe: list[str] = kwargs.get("universe", [])
         last_state: dict | None = kwargs.get("last_state")
         news_narrative: dict | None = kwargs.get("news_narrative")
+        macro_coverage = kwargs.get("macro_coverage")
 
         vix = macro_summary.get("vix", {}) or {}
         treasury = macro_summary.get("treasury", {}) or {}
@@ -35,8 +36,15 @@ class MacroAnalystAgent(BaseAgent):
         infl = macro_summary.get("inflation", {}) or {}
         une = macro_summary.get("unemployment", {}) or {}
         hy = macro_summary.get("credit_spread", {}) or {}
+        # Phase 4.2 additions (docs/AGENT_ROLE_AUDIT.md §2.3) — see the
+        # "Guardrails" note below on how these are scoped relative to the
+        # six PRIMARY confidence-calibration indicators above.
+        real_rates = macro_summary.get("real_rates", {}) or {}
+        dollar = macro_summary.get("dollar_index", {}) or {}
+        ig = macro_summary.get("ig_credit_spread", {}) or {}
+        claims = macro_summary.get("jobless_claims", {}) or {}
 
-        def _stale(d: dict, monthly: bool = False) -> str:
+        def _stale(d: dict, monthly: bool = False, weekly: bool = False) -> str:
             """Per-cadence staleness label.
 
             Daily series (VIX, yields, DFF, HY OAS): >3 business days
@@ -49,12 +57,20 @@ class MacroAnalystAgent(BaseAgent):
             cited "stale inflation figures" among the reasons for
             low-confidence / 55%-cash guidance. Monthly series are only
             flagged once a release cycle has actually been missed.
+
+            weekly=True (ICSA, and DTWEXBGS which publishes with a similar
+            lag despite being a daily-index series) uses a >10 business-day
+            threshold — live-verified 2026-08-30: ICSA's latest print
+            trailed by ~6 business days and DTWEXBGS's by ~7, both NORMAL
+            release cadence, not staleness.
             """
             s = d.get("staleness_days")
             if not isinstance(s, int):
                 return ""
             if monthly:
                 return f" (stale {s}d — release cycle missed)" if s > 55 else ""
+            if weekly:
+                return f" (stale {s}d)" if s > 10 else ""
             return f" (stale {s}d)" if s > 3 else ""
 
         universe_text = ", ".join(universe) if universe else "N/A"
@@ -78,7 +94,13 @@ class MacroAnalystAgent(BaseAgent):
 - State tracker:
 {tracker_text}"""
 
-        return f"""## Current Macro Indicators
+        coverage_section = "## Macro Data Coverage\nUNKNOWN (caller did not report FRED coverage). Treat with the same caution as a reported gap."
+        if macro_coverage is not None:
+            coverage_section = f"## Macro Data Coverage\n{macro_coverage.describe()}"
+
+        return f"""{coverage_section}
+
+## Current Macro Indicators
 
 ### VIX (CBOE Volatility Index){_stale(vix)}
 - Current: {vix.get('current', 'N/A')}
@@ -86,10 +108,13 @@ class MacroAnalystAgent(BaseAgent):
 - Trend: {vix.get('trend', 'N/A')}
 
 ### Treasury Yields{_stale(treasury)}
+- 3-Month: {treasury.get('us3mo', 'N/A')}%
 - 2-Year: {treasury.get('us2y', 'N/A')}%
 - 10-Year: {treasury.get('us10y', 'N/A')}%
 - 2Y-10Y Spread: {treasury.get('spread_2_10', 'N/A')}%
-- Inverted: {treasury.get('inverted', 'N/A')}
+- Inverted (2Y/10Y): {treasury.get('inverted', 'N/A')}
+- 3M-10Y Spread: {treasury.get('spread_3m_10y', 'N/A')}%
+- Inverted (3M/10Y): {treasury.get('inverted_3m_10y', 'N/A')}
 
 ### Fed Funds Rate (DFF, daily){_stale(fed)}
 - Current: {fed.get('current', 'N/A')}%
@@ -100,14 +125,31 @@ class MacroAnalystAgent(BaseAgent):
 - Core CPI YoY: {infl.get('core_cpi_yoy', 'N/A')}% (MoM: {infl.get('core_cpi_mom', 'N/A')}%)
 - PCE YoY: {infl.get('pce_yoy', 'N/A')}%
 
+### Real 10Y Yield & Breakeven Inflation (DFII10, T10YIE){_stale(real_rates)}
+- Real 10Y Yield: {real_rates.get('real_10y', 'N/A')}%
+- 10Y Breakeven Inflation: {real_rates.get('breakeven_10y', 'N/A')}%
+
 ### Unemployment (UNRATE){_stale(une, monthly=True)}
 - Current: {une.get('current', 'N/A')}%
 - Change 3m: {une.get('change_3m', 'N/A')}pp
 - Change 12m: {une.get('change_12m', 'N/A')}pp
 
+### Initial Jobless Claims (ICSA, weekly){_stale(claims, weekly=True)}
+- Current: {claims.get('current', 'N/A')}
+- 4-week change: {claims.get('change_4w', 'N/A')}
+- Trend: {claims.get('trend', 'N/A')}
+
 ### HY Credit Spread (BAMLH0A0HYM2){_stale(hy)}
 - Current: {hy.get('current_bps', 'N/A')}bps
 - 30-day change: {hy.get('change_30d_bps', 'N/A')}bps
+
+### IG Credit Spread (BAMLC0A0CM){_stale(ig)}
+- Current: {ig.get('current_bps', 'N/A')}bps
+- 30-day change: {ig.get('change_30d_bps', 'N/A')}bps
+
+### Dollar Index (DTWEXBGS, Fed Broad Nominal){_stale(dollar, weekly=True)}
+- Current: {dollar.get('current', 'N/A')}
+- 30-day change: {dollar.get('change_30d', 'N/A')}
 
 {prior_state_section}
 
@@ -124,18 +166,28 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         universe: list[str] | None = None,
         last_state: dict | None = None,
         news_narrative: dict | None = None,
+        macro_coverage=None,
     ) -> tuple[MacroAnalysis | None, AgentResult]:
         """Run LLM, validate via Pydantic, return the typed object.
 
         Phase 4 #7: returns MacroAnalysis instead of dict. Consumers that
         need dict form (PM's rendering, macro_store serialization) call
         .model_dump() at their boundary.
+
+        `macro_coverage` (src.data.macro.MacroCoverage, optional) is
+        Phase 4.2: how many of the configured FRED series actually
+        returned data this run. Threaded into the prompt's "Macro Data
+        Coverage" section — mirrors news_analyst's `news_coverage` kwarg
+        exactly. Optional/untyped here (rather than importing
+        MacroCoverage) to avoid a src.agents -> src.data import for a
+        value only ever used for its .describe() string.
         """
         result = self.run(
             macro_summary=macro_summary,
             universe=universe or [],
             last_state=last_state,
             news_narrative=news_narrative,
+            macro_coverage=macro_coverage,
         )
         parsed = result.parse_json()
         if parsed is None:

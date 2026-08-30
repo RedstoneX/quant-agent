@@ -322,6 +322,23 @@ news:
   per_symbol_max_prompt_items: 15
   per_symbol_requests_per_second: 2.0
 
+macro:
+  # FRED fetch resilience (src/data/macro.py). Production evidence
+  # 2026-08-26 17:01:29-17:03:49 UTC: all nine FRED series failed in ONE
+  # run with "The read operation timed out" under the old single-retry /
+  # flat-2s-backoff policy. total_fetch_deadline_s is the actual hard
+  # ceiling on added wall-clock (requests and backoff sleeps are clipped
+  # to it); the retry/backoff settings are the best-effort recovery layer
+  # underneath that ceiling. See src/config.py::MacroConfig for the
+  # reasoning behind each default.
+  request_timeout_s: 15.0
+  max_retries: 2
+  retry_backoff_base_s: 2.0
+  retry_backoff_max_s: 8.0
+  retry_backoff_jitter_s: 1.0
+  breaker_after_failed_series: 1
+  total_fetch_deadline_s: 90.0
+
 trading:
   universe:
     # Index ETF
