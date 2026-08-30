@@ -40,6 +40,7 @@ from contextvars import copy_context
 from typing import TYPE_CHECKING
 
 from src.agents.base import agent_log_kwargs
+from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.technical import compute_indicators
 from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
@@ -1780,6 +1781,20 @@ class DecisionStage:
         # leave both None and the portfolio ceilings unenforced rather than
         # enforced against a fabricated view of the book.
         existing_risk_pct, risk_clusters = _book_risk_inputs(ctx, total_value)
+        # Spec §9.4 — the SAME canonical evidence registry the PM's own
+        # prompt was built from (`build_evidence_registry` is a pure
+        # function of these exact inputs, so recomputing it here from the
+        # identical arguments passed to `decide()` above is guaranteed to
+        # agree with what PM was actually shown). Feeds the constructor's
+        # agreement ceiling — never invented from PM's own provenance,
+        # which the PM could under-cite.
+        evidence_registry = PortfolioManagerAgent.build_evidence_registry(
+            analyses=analyses, positions=positions, news_intel=news_intel,
+            earnings_analyses=earnings_results,
+            macro_analysis=_macro_analysis_as_dict(macro_analysis),
+            smart_money_findings=ctx.smart_money_findings,
+            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+        )
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
             targets=portfolio_decision.targets,
             positions=positions,
@@ -1792,6 +1807,7 @@ class DecisionStage:
             # band is not a fixed number of ATRs — a risk-off market swings
             # wider for the same ATR reading than a trending one.
             regime=_macro_regime(macro_analysis),
+            evidence_registry=evidence_registry,
         )
         logger.info(
             "Constructor: %d targets → %d decisions "

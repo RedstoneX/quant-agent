@@ -34,6 +34,86 @@ def _gross_multiplier(symbol: str) -> float:
     return abs(_ETF_LEVERAGE.get(symbol, 1.0))
 
 
+# --- Spec §9.4 "agreement earns size" -------------------------------------
+#
+# Shared polarity vocabulary. `PortfolioManagerAgent.validate_grounding`
+# (src/agents/portfolio_manager.py) uses this to decide whether a
+# provenance claim's stance "supports" a target's direction; the
+# constructor's agreement ceiling (`src/portfolio_constructor.py`) uses the
+# SAME rule to count how many of the canonical evidence registry's
+# independent sources are directionally aligned with what the PM is
+# actually proposing. One definition, two consumers, by design — a second,
+# divergent notion of "aligned" here would let the ceiling and the
+# grounding gate disagree about identical evidence.
+_BULLISH_STANCES = frozenset({
+    "strong_buy", "buy", "bullish", "positive", "risk_on",
+    "overweight", "favorable",
+})
+_BEARISH_STANCES = frozenset({
+    "strong_sell", "sell", "bearish", "negative", "risk_off",
+    "underweight", "unfavorable",
+})
+
+
+def stance_is_aligned(source: str, symbol: str, stance: str, *, wants_bullish: bool) -> bool:
+    """True when `stance` (a canonical registry stance for `source` on
+    `symbol`) points the direction `wants_bullish` asks for.
+
+    Carries the one twist `validate_grounding` has always applied: a
+    risk-off MACRO stance supports owning an INVERSE ETF, so macro's
+    polarity is flipped for a symbol with a negative effective multiplier
+    — the rating still describes the ETF's own price, which moves
+    opposite the index it inverts.
+    """
+    stance_is_bullish = stance in _BULLISH_STANCES
+    stance_is_bearish = stance in _BEARISH_STANCES
+    if source == "macro" and _effective_multiplier(symbol) < 0:
+        stance_is_bullish, stance_is_bearish = stance_is_bearish, stance_is_bullish
+    return stance_is_bullish if wants_bullish else stance_is_bearish
+
+
+def count_aligned_sources(symbol: str, sources: dict[str, str], direction: str) -> int:
+    """The deterministic "agreement count": how many independent seats (of
+    technical/news/earnings/macro/smart_money) recorded a stance for
+    `symbol` that points the same way as `direction` ("long" wants
+    bullish, "short" wants bearish).
+
+    `sources` must be one symbol's slice of the canonical evidence
+    registry (`PortfolioManagerAgent.build_evidence_registry`) — ALL
+    current coverage, not just what a target's own `provenance` list
+    happens to cite. That distinction is the point: this count is what
+    earns size, so it has to come from evidence the PM cannot selectively
+    quote from, not from the PM's own (possibly incomplete) claims about
+    itself.
+    """
+    wants_bullish = direction != "short"
+    return sum(
+        1 for source, stance in sources.items()
+        if stance_is_aligned(source, symbol, stance, wants_bullish=wants_bullish)
+    )
+
+
+def agreement_ceiling_for_count(schedule: list[float] | tuple[float, ...], count: int) -> float:
+    """The risk-allocation ceiling for `count` aligned sources.
+
+    `schedule[i]` is the ceiling for `i + 1` aligned sources. A count of
+    zero is treated exactly like one: the technical analysis mandatory for
+    any BUY/SHORT (`validate_grounding`'s "lacks a current-run Technical
+    analysis" rule) is always itself a registry entry, but it can rate
+    neutral or opposite to what the PM proposes — so zero aligned sources
+    is a real case, not a hypothetical one, and it is not punished any
+    harder than one. A count past the end of the schedule uses the last
+    (least restrictive) entry — this book has never measured more than
+    `len(schedule)` independent seats agreeing on one symbol, and the
+    ratified per-trade envelope (`RiskConfig.max_position_risk_pct`) is
+    the hard ceiling regardless, enforced independently of this schedule.
+    """
+    if not schedule:
+        return float("inf")  # no schedule configured — this ceiling is inert
+    index = max(0, min(count, len(schedule)) - 1)
+    return schedule[index]
+
+
 DRAWDOWN_BUY_SCALE = 0.5
 """Multiplier applied to every new BUY while the system is in drawdown.
 

@@ -539,6 +539,23 @@ class TradingPipeline:
                 return default
             return float(value) if value > 0 else default
 
+        def _risk_list_setting(name: str, default: list[float]) -> tuple[float, ...]:
+            """Read a risk-config list setting, or the ratified default.
+
+            Same Mock-safety posture as `_risk_setting`: a MagicMock
+            config fixture auto-creates a child mock for any attribute
+            access, which is neither a list nor numeric — guard for that
+            explicitly rather than let it reach the constructor as a
+            non-iterable and blow up deep in the sizing arithmetic.
+            """
+            value = getattr(_risk_cfg, name, default)
+            if not isinstance(value, (list, tuple)) or not value:
+                return tuple(default)
+            try:
+                return tuple(float(v) for v in value)
+            except (TypeError, ValueError):
+                return tuple(default)
+
         self.portfolio_constructor = PortfolioConstructor(ConstructorConfig(
             risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
             min_risk_pct=_risk_setting("min_position_risk_pct", 0.5),
@@ -556,6 +573,12 @@ class TradingPipeline:
             min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
+            ),
+            # Spec §9.4 "agreement earns size" — same "wire from the
+            # ratified setting, not the constructor's own default" pattern
+            # as every ceiling above.
+            agreement_ceiling_pct=_risk_list_setting(
+                "agreement_ceiling_pct", [3.0, 4.0, 5.0, 5.0, 5.0],
             ),
         ))
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings

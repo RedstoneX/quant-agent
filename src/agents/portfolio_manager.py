@@ -10,7 +10,7 @@ from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
     TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
 )
-from src.risk.rules import _effective_multiplier, _gross_multiplier
+from src.risk.rules import _gross_multiplier, count_aligned_sources, stance_is_aligned
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,24 @@ class PortfolioManagerAgent(BaseAgent):
         )
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
+        )
+        # §9.4 "agreement earns size" — tell the PM the count BEFORE it
+        # sizes, not after. Rendered for both directions since the PM has
+        # not chosen one yet when it reads this: a name it takes long
+        # counts bullish-aligned sources, one it shorts counts bearish.
+        # This is the exact registry the deterministic ceiling in
+        # `PortfolioConstructor` re-derives the count from — not a preview
+        # of a different number. See 2026-08-20/Phase 2b's incident class:
+        # a silent clamp the PM's own stated reasoning disagreed with.
+        agreement_lines = [
+            f"- {symbol}: {count_aligned_sources(symbol, sources, 'long')} aligned "
+            f"if long, {count_aligned_sources(symbol, sources, 'short')} aligned if "
+            f"short (of {len(sources)} source(s) with current coverage)"
+            for symbol, sources in sorted(evidence_registry.items())
+        ]
+        agreement_text = (
+            "\n".join(agreement_lines) if agreement_lines
+            else "No symbols with current coverage."
         )
         allowed_buy_symbols = sorted({
             str(symbol).strip().upper()
@@ -742,6 +760,13 @@ For every target, cite only source/stance pairs present for that exact symbol
 in this registry and copy the stance string exactly. Omit unavailable sources.
 Memory and narrative sections are context, never current specialist coverage.
 
+## Independent Source Agreement (deterministic ceiling — Step 5)
+{agreement_text}
+`risk_allocation_pct` is CEILINGED — never raised — by how many independent
+sources above are actually aligned with the direction you propose, computed
+from this registry, not from what you write in provenance. Ask for what the
+idea has earned; the ceiling only ever refuses size it did not earn.
+
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
 
     @staticmethod
@@ -1053,14 +1078,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             smart_money_eligible[symbol] = (
                 smart_money_eligible.get(symbol, False) or finding.support_eligible
             )
-        bullish = {
-            "strong_buy", "buy", "bullish", "positive", "risk_on",
-            "overweight", "favorable",
-        }
-        bearish = {
-            "strong_sell", "sell", "bearish", "negative", "risk_off",
-            "underweight", "unfavorable",
-        }
         reasoning_text = "\n".join(
             str(value) for value in decision.reasoning_chain.model_dump().values()
         )
@@ -1123,20 +1140,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     continue
                 seen_sources.add(source)
 
-                stance_is_bullish = stance in bullish
-                stance_is_bearish = stance in bearish
-                if source == "macro" and _effective_multiplier(symbol) < 0:
-                    # A risk-off macro view supports owning an inverse ETF;
-                    # the technical rating still describes the ETF itself.
-                    stance_is_bullish, stance_is_bearish = stance_is_bearish, stance_is_bullish
                 # Stage 3: "short" (opening/adding a short, direction=="short")
                 # needs the same bearish-polarity evidence a "sell" (trimming
                 # a long) does — both are bearish-direction actions on the
                 # symbol. Only "buy" (opening/adding a long) needs bullish
-                # evidence.
-                polarity_supports = (
-                    (intent == "buy" and stance_is_bullish)
-                    or (intent in ("sell", "short") and stance_is_bearish)
+                # evidence. `stance_is_aligned` (src/risk/rules.py) is the
+                # SAME polarity rule §9.4's agreement-count ceiling uses —
+                # one definition, not a second one that could quietly drift
+                # from this one.
+                polarity_supports = stance_is_aligned(
+                    source, symbol, stance, wants_bullish=(intent == "buy"),
                 )
                 if claim.relationship == "supports":
                     if source == "smart_money" and not smart_money_eligible.get(symbol, False):
