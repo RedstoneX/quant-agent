@@ -389,6 +389,12 @@ that X actually produces the symptom.
 
 ### Ordered backlog — RESUME POINT
 
+**Landed (2026-08-30) — deployed to production**
+
+- Four of the five ordered items from 2026-08-29 have shipped. Merged and deployed as of this morning (18:36 ET): inverse-ETF longs now count against the bearish exposure ceiling with a second commit fixing a sign error (per-symbol news can now be scoped to held positions and candidates instead of universally); every trade now carries its allocation, conviction, and deciding model pinned at entry; and the rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status. Two limitations in the last one are worth knowing: the nested-outcome path is unit-tested but no current production replay actually contains an intraday scan (none exist in live history yet), and a crashed scan still shows as healthy in the session report because a crash produces no marker. That gap is documented but not fixed by design.
+- The fifth item — the desk formally arguing out disagreements and sizing by agreement with independent sources — remains open: PR #160 is in review as of this writing.
+- To check the live state: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` should show PR #159 merged.
+
 **Landed (2026-08-29) — read this first, supersedes most of what follows**
 
 - Short selling is complete and live: the desk can now open a short and cover
@@ -429,32 +435,39 @@ Two owner decisions ratified 2026-08-30, recorded as ratified, not inferred:
 
 Five items, ordered by dependency then value:
 
-1. Make the inverse funds coherent with real short selling. Since they stay, a
+1. **DONE (PR #158)** — Make the inverse funds coherent with real short selling. Since they stay, a
    long position in one is bearish exposure the short-side ceiling cannot
-   currently see — the desk could hold the largest short position the rules
-   allow AND a full inverse-fund position at once, ending up twice as bearish
-   as either limit intends. That exposure must count against the same ceiling,
-   and the Portfolio Manager must be told these are bearish instruments; the
-   plan asked for this under short selling and it was never built.
-2. Widen the free news sources further. The genuine remaining gap is
-   per-company coverage. Free per-company feeds were verified working last
-   session but deferred, since covering the whole tradeable list would mean
-   roughly a hundred requests every run — so scope them to the names the desk
-   actually holds or is watching that day.
-3. The unbuilt half of the research-desk work: seats formally arguing out a
+   currently see. That exposure now counts against the same ceiling, and the
+   Portfolio Manager knows these are bearish instruments. Correction 2026-08-30:
+   a second commit in the same PR fixed a sign error: shorting an inverse ETF is
+   bullish (betting the underlying index rises), not bearish, and must not consume
+   the bearish budget. The setting was renamed from `risk.max_short_gross_pct` to
+   `risk.max_gross_bearish_pct` to reflect the widened scope.
+2. **DONE (PR #157)** — Widen the free news sources further. Per-company
+   coverage now exists but is scoped to the names the desk holds or is watching
+   that day instead of universally, capped so it does not explode to ~100 requests.
+   Yahoo per-symbol only; Seeking Alpha was verified working and deliberately not
+   enabled due to cost constraints.
+3. **NOT YET DONE (PR #160 in review)** — The unbuilt half of the research-desk work: seats formally arguing out a
    disagreement, and a name more independent seats agree on earning a larger
    share of the risk budget. Design caution: a grounding failure currently
    throws away the entire session's decision, so an unadjudicated conflict
    must drop just that one candidate instead — the punishment has to fit the
    offence. Sizing by agreement belongs in the deterministic risk code, not in
    an instruction to a model.
-4. Log every trade's allocated risk against how it actually turned out, so
-   conviction can be judged from data. Without this, item 3's "agreement earns
-   size" cannot be tested.
-5. One known defect remains open: an intra-session scan result that never
-   reaches the session report. Two other items filed the same day are already
-   fixed and should not be picked up again — the cancelling of a resting short
-   entry order, and the midday reviewer being unable to close a short.
+4. **DONE (PR #159)** — Log every trade's allocated risk against how it actually turned out, so
+   conviction can be judged from data. Each trade now carries its allocated risk
+   percentage, stated conviction, and deciding model pinned at entry. Exit rows
+   label whether they link to an originating decision or have none. The grouping
+   of outcome-by-conviction exists but is gated: below 20 per bucket it reaches
+   the human operator only and is kept out of every agent prompt.
+5. **DONE (PR #156, with documented gaps)** — The intra-session scan result that never
+   reaches the session report. The rehearsal harness can now read the intraday
+   scan's nested outcome from its own report instead of only the top-level status.
+   Two limitations are recorded and not fixed by design: the path is unit-tested
+   but no current production replay actually contains an intraday_scan key (none exist
+   in live history), and a crashed scan produces no marker — the session still
+   reports healthy and the operator cannot see the crash.
 
 Single ordered list of outstanding work. A session resuming cold should start
 here. Items are ordered by dependency first, then by value per unit of effort.
