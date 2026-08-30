@@ -333,7 +333,7 @@ The reasoning is already persisted; it is simply never shown.
 
 ## Phase 9 — The research desk actually deliberates
 
-**Status note (2026-08-30):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOT YET DELIVERED — PR #160 is in review and has not merged as of this audit. §9.5 (conviction ledger per candidate) is deliberately out of scope in PR #160.
+**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is deliberately not built.
 
 **Owner-directed, 2026-08-27.** Rex, verbatim: *"We have agents doing research
 and analysis. If something has high conviction or strong candidacy it should

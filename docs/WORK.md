@@ -389,11 +389,10 @@ that X actually produces the symptom.
 
 ### Ordered backlog — RESUME POINT
 
-**Landed (2026-08-30) — deployed to production**
+**Landed (2026-08-30 through ~15:00 UTC 2026-08-31) — all five items now deployed to production**
 
-- Four of the five ordered items from 2026-08-29 have shipped. Merged and deployed as of this morning (18:36 ET): inverse-ETF longs now count against the bearish exposure ceiling with a second commit fixing a sign error (per-symbol news can now be scoped to held positions and candidates instead of universally); every trade now carries its allocation, conviction, and deciding model pinned at entry; and the rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status. Two limitations in the last one are worth knowing: the nested-outcome path is unit-tested but no current production replay actually contains an intraday scan (none exist in live history yet), and a crashed scan still shows as healthy in the session report because a crash produces no marker. That gap is documented but not fixed by design.
-- The fifth item — the desk formally arguing out disagreements and sizing by agreement with independent sources — remains open: PR #160 is in review as of this writing.
-- To check the live state: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` should show PR #159 merged.
+- All five ordered items from the 2026-08-29 backlog have shipped. (1) Inverse-ETF longs now count against the bearish exposure ceiling, with a second commit fixing a sign error: shorting an inverse ETF is bullish, not bearish (PR #158). (2) Free per-symbol news feeds are scoped to held positions and candidates instead of universally requested (PR #157). (3) Every trade carries its allocation, conviction, and deciding model pinned at entry; exits label whether they link to an originating decision (PR #159). (4) The rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status — two limitations worth knowing: the nested-outcome path is unit-tested but no current production replay contains an intraday scan (none in live history yet), and a crashed scan produces no marker, so the session status remains 'ok' even on crash (production honesty gap, documented but not fixed by design) (PR #156). (5) The desk can now formally argue out disagreements and size trade risk by the number of independent seats that agree: a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence, single-target drop not session-wide), and risk_allocation_pct is ceilinged by agreement count in the deterministic risk code (PR #160, merged during this audit window).
+- To check the live state: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` should show PR #160 merged.
 
 **Landed (2026-08-29) — read this first, supersedes most of what follows**
 
@@ -448,13 +447,14 @@ Five items, ordered by dependency then value:
    that day instead of universally, capped so it does not explode to ~100 requests.
    Yahoo per-symbol only; Seeking Alpha was verified working and deliberately not
    enabled due to cost constraints.
-3. **NOT YET DONE (PR #160 in review)** — The unbuilt half of the research-desk work: seats formally arguing out a
+3. **DONE (PR #160, merged during audit)** — The unbuilt half of the research-desk work: seats formally arguing out a
    disagreement, and a name more independent seats agree on earning a larger
-   share of the risk budget. Design caution: a grounding failure currently
-   throws away the entire session's decision, so an unadjudicated conflict
-   must drop just that one candidate instead — the punishment has to fit the
-   offence. Sizing by agreement belongs in the deterministic risk code, not in
-   an instruction to a model.
+   share of the risk budget. A target carrying an unadjudicated conflict is now dropped
+   before grounding (punishment fits offence — single-target drop, not session-wide).
+   Sizing by agreement is now in the deterministic risk code (not a model instruction):
+   risk_allocation_pct is ceilinged by how many independent seats are directionally aligned,
+   indexed by agreement count. Default schedule is [3.0, 4.0, 5.0, 5.0, 5.0]%, keeping
+   1-source trades at 60% of the 5% envelope, 2-source at 80%, 3+ at full 100%.
 4. **DONE (PR #159)** — Log every trade's allocated risk against how it actually turned out, so
    conviction can be judged from data. Each trade now carries its allocated risk
    percentage, stated conviction, and deciding model pinned at entry. Exit rows
