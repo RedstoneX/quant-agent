@@ -403,6 +403,60 @@ class RiskConfig(BaseModel):
     # equal nominal risk is not equal real risk — so the same risk
     # allocation opens a SMALLER short than an equivalent long.
     short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
+    # --- Spec §9.4 "agreement earns size" --------------------------------
+    # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the
+    # number of independent seats (of technical/news/earnings/macro/
+    # smart_money) whose canonical stance is directionally aligned with
+    # the target's proposed action — see `src/risk/rules.py::
+    # count_aligned_sources` / `agreement_ceiling_for_count`. Index 0 is
+    # the ceiling for 1 (or 0 — see `agreement_ceiling_for_count`) aligned
+    # source, index 4 is for 5. A REDUCTION only: applied in the
+    # constructor strictly BEFORE `allocate_risk_budget` and the
+    # single-name clamps, so it can shrink what a target receives but can
+    # never grow it past what the PM asked for or past
+    # `max_position_risk_pct` (enforced below and again at the point of
+    # use).
+    #
+    # Measured against production `agent_logs` 2026-08-25 through 08-28 —
+    # the pre-nomination "technical-analysis bot" era the spec describes,
+    # and the most conservative case this schedule has to survive: of 75
+    # opening/increasing targets carrying live provenance, 67% (50/75)
+    # named exactly ONE aligned source (always `technical`), 29% (22/75)
+    # named two, 4% (3/75) named three, and NONE ever reached four or
+    # five. A schedule with tier 1 near the 5% envelope would do nothing;
+    # one with tier 1 much below ~2% would have clamped roughly nine in
+    # ten of the book's trades to a token size. [3.0, 4.0, 5.0, 5.0, 5.0]
+    # cuts single-source risk 40% (5.0% -> 3.0%, still 6x the 0.5% floor)
+    # and two-source risk 20%, while leaving three-or-more-source
+    # agreement — the rare, never-yet-observed high-conviction case — at
+    # the full envelope.
+    agreement_ceiling_pct: list[float] = Field(
+        default_factory=lambda: [3.0, 4.0, 5.0, 5.0, 5.0],
+    )
+
+    @model_validator(mode="after")
+    def _agreement_ceiling_is_well_formed(self):
+        schedule = self.agreement_ceiling_pct
+        if len(schedule) != 5:
+            raise ValueError(
+                "risk.agreement_ceiling_pct must have exactly 5 entries "
+                f"(1..5 aligned sources); got {len(schedule)}"
+            )
+        if any(v <= 0 for v in schedule):
+            raise ValueError("risk.agreement_ceiling_pct entries must be > 0")
+        if any(v > self.max_position_risk_pct for v in schedule):
+            raise ValueError(
+                "risk.agreement_ceiling_pct entries must never exceed "
+                f"max_position_risk_pct ({self.max_position_risk_pct}) — "
+                "the agreement ceiling can only narrow the per-trade "
+                "envelope, never widen it"
+            )
+        if any(b < a for a, b in zip(schedule, schedule[1:])):
+            raise ValueError(
+                "risk.agreement_ceiling_pct must be non-decreasing — more "
+                "independent agreement can never earn a SMALLER ceiling"
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod

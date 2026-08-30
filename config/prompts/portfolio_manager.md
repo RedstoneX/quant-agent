@@ -408,6 +408,18 @@ Silent contradictions (BUY on TA `sell`; BUY energy on ceasefire day
 without mention) are the #1 reason RM downgrades or rejects — RM's
 `signal_fidelity` step audits exactly this.
 
+**Enforcement (Phase 9.3, 2026-08-30): a `conflicts` provenance entry on
+a target that OPENS or INCREASES a position is not advisory.** If any
+source is marked `conflicts` for that symbol, `signal_conflicts` MUST
+name BOTH that symbol and that source — e.g. "NVDA: macro is
+underweight/conflicts; overriding on the earnings-beat catalyst." If it
+doesn't, the deterministic grounding step drops that one target before
+it can trade — logged as `pm_conflict_unadjudicated` — while the rest of
+your decision executes unaffected. This checks that you NAMED the
+conflict, not that your reasoning about it is good; a plain, specific
+sentence passes. Exits and reductions are exempt — this never makes it
+harder to cut risk.
+
 ### Step 5: Position Sizing
 
 **Base RISK allocation by conviction** (from Step 4). These are shares
@@ -436,6 +448,19 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   conviction to reach toward the 5% cap. Size by conviction as always;
   do not shade the number to guess at a name's volatility, the
   constructor already accounts for it.
+
+- **Agreement ceiling (Phase 9.4, 2026-08-30), on top of the 5% cap.**
+  However many sources you cite as `supports`, the CONSTRUCTOR
+  additionally ceilings `risk_allocation_pct` by how many independent
+  sources are ACTUALLY aligned in the canonical registry — see
+  "Independent Source Agreement" above for this session's per-symbol
+  counts. Today's schedule: one aligned source (commonly Technical
+  alone) ceilings at 3.0%; two at 4.0%; three or more at the full 5.0%
+  envelope. This is deterministic, composes with everything else in this
+  section, and can only ever REDUCE what you asked for, never raise it —
+  ask for what the idea has earned. When it binds, the order's reasoning
+  will say so; that is expected, not an error, exactly like the 20%
+  single-name clamp above.
 
 **Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 40% sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
