@@ -268,6 +268,114 @@ def _categorize_exit_reason(
     return _UNCATEGORISED_EXIT
 
 
+# ---------------------------------------------------------------------------
+# decision_id_status (conviction ledger, spec §7.2) — an honest label for
+# WHETHER an exit-family row is traceable to a PM decision, mirroring Phase
+# 3.1's pace/pace_status pattern: `pace` stays None and `pace_status` names
+# WHY rather than the reader having to guess. Here `decision_id` stays
+# whatever the caller passed (usually None for a broker/deterministic exit)
+# and `decision_id_status` says WHY: 'linked' when a real decision_id was
+# supplied (this exit was built from a PM/RM-reviewed TradeDecision the same
+# session — see the ordinary SELL/COVER loops in pipeline_stages.py's
+# ExecutionStage); 'no_originating_decision' when the row is exit-family but
+# the code path that wrote it never had ANY decision to attach (broker stop
+# fills, `_auto_take_profit`, deterministic trailing, emergency liquidation,
+# force-delever/sweep, the midday reviewer's own exits) — a labelled
+# absence, not a guess. None for BUY/SHORT/HOLD/SWEEP_* rows: the field
+# does not apply to them at all (mirrors `_categorize_exit_reason`
+# returning None for the same non-exit rows).
+#
+# Deliberately a BROADER predicate than `_is_position_exit_action`: that
+# function excludes plain COVER/PARTIAL_COVER (Stage 3's ordinary short
+# close is not yet part of the position_id/exit_reason_category chain —
+# see `_assign_position_ids`'s `is_open = action == "BUY"`, a pre-existing
+# gap this task does not touch), but an ordinary COVER absolutely CAN carry
+# a real decision_id (ExecutionStage's cover_decisions loop passes one) and
+# must be labelled 'linked' when it does. Using `_is_position_exit_action`
+# here would silently return None for every COVER row instead.
+_NON_POSITIONAL_ACTIONS: frozenset[str] = frozenset({
+    "BUY", "SHORT", "HOLD", "SWEEP_BUY", "SWEEP_SELL",
+})
+
+
+def _is_exit_family_for_decision_linking(action: str | None) -> bool:
+    act = (action or "").upper()
+    return bool(act) and act not in _NON_POSITIONAL_ACTIONS
+
+
+def _resolve_decision_id_status(action: str | None, decision_id: str | None) -> str | None:
+    if not _is_exit_family_for_decision_linking(action):
+        return None
+    return "linked" if decision_id else "no_originating_decision"
+
+
+#: Conviction ledger (spec §7.2) — the sample floor below which
+#: `compute_trade_calibration`'s `by_conviction` / `by_allocated_risk`
+#: groupings refuse to state a win rate, an average return, or any
+#: comparison between buckets. The function's EXISTING top-level gate
+#: (`len(closed) < 3`) governs whether `by_size`/`by_side` render at all,
+#: which is fine for "does this book's win rate look reasonable" — it is
+#: far too permissive for "does conviction predict outcome", a claim that
+#: will steer how much risk the desk allocates to its best ideas if it
+#: reaches a live prompt. Measured on real production data (2026-08-30,
+#: 40 trades / 17 entries / 8 closed round-trips, 2026-08-14 through
+#: 2026-08-28): the 8 closed trades split 4 high / 3 low / 1 medium
+#: conviction, and the high bucket's average return was WORSE than the
+#: low bucket's — noise from n=4 vs n=3, not a finding, and it would
+#: invert within a handful of trades. 20 is deliberately high: a bucket
+#: needs a real sample before "conviction predicts outcome" is asked of
+#: it at all, and the entire book will not clear this for a long time
+#: (see docs/QAMC_REMEDIATION_SPEC.md §7.2 and the conviction ledger
+#: report for the exact measured figures).
+_CONVICTION_OUTCOME_MIN_N = 20
+
+
+def _extract_pm_targets(full_response: str | None) -> list[dict]:
+    """Best-effort `targets` list out of a `portfolio_manager` agent_logs
+    row's `full_response`, for `Database.backfill_conviction_ledger`.
+
+    Real production history (verified 2026-08-30) stores this TWO ways
+    depending on which point in the prompt-format's history the row was
+    written: some rows fence the JSON in a ```json ... ``` code block,
+    others write the raw JSON object with no fence at all. Both are tried;
+    neither found or parseable returns [] rather than raising, so one
+    malformed historical row can't abort the whole backfill.
+    """
+    if not full_response:
+        return []
+    import json
+    import re
+    m = re.search(r"```json\s*(.*?)```", full_response, re.S)
+    body = m.group(1) if m else full_response
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    targets = data.get("targets")
+    return targets if isinstance(targets, list) else []
+
+
+def _find_pm_target_for_symbol(full_response: str | None, symbol: str) -> dict | None:
+    """The one target (if any) in a PM response matching `symbol`.
+
+    Case-insensitive / whitespace-tolerant match — the same normalization
+    `TargetPosition.normalize_symbol` applies going in, applied here going
+    back out, since the stored JSON is the raw pre-validation prose the
+    model wrote.
+    """
+    sym_norm = (symbol or "").strip().upper()
+    if not sym_norm:
+        return None
+    for target in _extract_pm_targets(full_response):
+        if not isinstance(target, dict):
+            continue
+        if str(target.get("symbol", "")).strip().upper() == sym_norm:
+            return target
+    return None
+
+
 class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -658,6 +766,35 @@ class Database:
         # migration time, only ever computed from real trade history.
         _ensure_column("trades", "position_id", "position_id TEXT")
         _ensure_column("trades", "exit_reason_category", "exit_reason_category TEXT")
+        # Conviction ledger (QAMC remediation spec §7.2): "Log each trade's
+        # allocated risk against its realized outcome. If the desk's
+        # conviction predicts results, conviction-weighted sizing amplifies
+        # the edge. If it does not, flat sizing is superior — and that must
+        # be discovered from data, not assumed." Pinned at ENTRY (BUY/SHORT)
+        # only, mirroring how expected_horizon_sessions/setup_type are
+        # pinned rather than recomputed — see `TradeDecision` in models.py
+        # for what each figure means and `ExecutionStage` (pipeline_stages.py)
+        # for where it's written. NULL on every legacy row, and on any new
+        # entry built from a legacy notional (target_weight_pct-only) target
+        # that carried no risk-based plan — never fabricated at migration
+        # time or by the backfill (scripts/backfill_conviction_ledger.py),
+        # only ever pinned from a real PM decision.
+        _ensure_column("trades", "requested_risk_pct", "requested_risk_pct REAL")
+        _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
+        _ensure_column("trades", "conviction", "conviction TEXT")
+        _ensure_column("trades", "decision_model", "decision_model TEXT")
+        # decision_id_status: the honest-absence label for `decision_id` on
+        # an exit-family row, mirroring Phase 3.1's pace/pace_status pattern
+        # (see `_resolve_decision_id_status` above `class Database`). ALWAYS
+        # derived inside `insert_trade`/`insert_stop_out_trade`, never
+        # accepted as an argument — same discipline as position_id/
+        # exit_reason_category. NULL on legacy rows until
+        # `scripts/backfill_conviction_ledger.py` runs; unlike position_id,
+        # this backfill is NEVER ambiguous — every insert_trade/insert_
+        # stop_out_trade call site in this codebase is enumerated, so a
+        # legacy exit-family row's decision_id NULL-ness is a known fact,
+        # not a gap to guess at.
+        _ensure_column("trades", "decision_id_status", "decision_id_status TEXT")
         # codex r7 P1 #3: pending_protection_restores table for older DBs
         # that pre-date the orphaned-stop-restore queue. Idempotent.
         try:
@@ -849,7 +986,11 @@ class Database:
                      fill_status: str | None = None,
                      decision_id: str | None = None,
                      expected_horizon_sessions: int | None = None,
-                     setup_type: str | None = None) -> int:
+                     setup_type: str | None = None,
+                     conviction: str | None = None,
+                     requested_risk_pct: float | None = None,
+                     allocated_risk_pct: float | None = None,
+                     decision_model: str | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `fill_status` semantics:
@@ -861,26 +1002,38 @@ class Database:
                            Legacy BUY/SELL rows still count as executed for back-compat;
                            synthetic HOLD rows are explicitly excluded from executed_only.
 
-        `position_id` and `exit_reason_category` (Phase 6, §6.2a/e) are
-        ALWAYS derived here, never accepted as arguments — see
-        `_resolve_new_row_position_id` and `_categorize_exit_reason`. Every
+        `position_id`, `exit_reason_category`, and `decision_id_status`
+        (Phase 6, §6.2a/e; conviction ledger §7.2) are ALWAYS derived here,
+        never accepted as arguments — see `_resolve_new_row_position_id`,
+        `_categorize_exit_reason`, and `_resolve_decision_id_status`. Every
         one of this method's ~12 call sites across the codebase gets the
-        chain-linking and exit classification for free with no change to
-        the call.
+        chain-linking, exit classification, and decision-link labelling for
+        free with no change to the call.
+
+        `conviction` / `requested_risk_pct` / `allocated_risk_pct` /
+        `decision_model` are the conviction ledger (§7.2) — pinned at ENTRY
+        only (see `TradeDecision` in models.py for what each figure means);
+        every existing caller that never passes them gets None, which is
+        correct for every non-entry row and every legacy caller.
         """
         def _do():
             position_id = self._resolve_new_row_position_id(
                 symbol, action, qty=qty, fill_status=fill_status, fill_qty=None,
             )
             exit_category = _categorize_exit_reason(action, reasoning, fill_status, None)
+            decision_link_status = _resolve_decision_id_status(action, decision_id)
             cur = self.conn.execute(
                 "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, "
                 "stop_loss, take_profit, broker_order_id, fill_status, decision_id, "
-                "expected_horizon_sessions, setup_type, position_id, exit_reason_category) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
+                "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
+                "decision_id_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
-                 expected_horizon_sessions, setup_type, position_id, exit_category),
+                 expected_horizon_sessions, setup_type, position_id, exit_category,
+                 conviction, requested_risk_pct, allocated_risk_pct, decision_model,
+                 decision_link_status),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -1229,15 +1382,22 @@ class Database:
                 timestamp=ts,
             )
             exit_category = _categorize_exit_reason(action, reasoning_final, "filled", qty)
+            # Conviction ledger (§7.2): this function's entire reason for
+            # existing is "the broker closed this with NO row and NO
+            # decision ever written" (see docstring above) — there is no
+            # decision_id parameter to accept here, so the label is always
+            # the honest absence, never conditional.
+            decision_link_status = "no_originating_decision"
             cur = self.conn.execute(
                 "INSERT INTO trades (symbol, action, qty, price, reasoning, "
                 "run_id, broker_order_id, fill_status, fill_qty, fill_price, "
-                "fill_reconciled_at, timestamp, position_id, exit_reason_category) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'filled', ?, ?, datetime('now'), ?, ?, ?)",
+                "fill_reconciled_at, timestamp, position_id, exit_reason_category, "
+                "decision_id_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'filled', ?, ?, datetime('now'), ?, ?, ?, ?)",
                 (
                     symbol, action, qty, price, reasoning_final,
                     run_id, broker_order_id, qty, price, ts,
-                    position_id, exit_category,
+                    position_id, exit_category, decision_link_status,
                 ),
             )
             row_id = cur.lastrowid
@@ -2111,6 +2271,143 @@ class Database:
             }
         return self._locked_write(_do, label="backfill_position_ids")
 
+    def backfill_conviction_ledger(self, *, dry_run: bool = False) -> dict:
+        """One-time reconstruction of the conviction-ledger columns (spec
+        §7.2) for `trades` rows written before they existed.
+
+        Two INDEPENDENT repairs, run together because both read `trades` in
+        one pass (mirrors `backfill_position_ids`'s shape and safety
+        posture — dry-run by default, idempotent, never guesses):
+
+        1. `decision_id_status` on every exit-family row (see
+           `_is_exit_family_for_decision_linking`) that predates the
+           column. This is NEVER ambiguous, unlike `position_id`'s
+           `left_null_ambiguous` case: every `insert_trade` / `insert_
+           stop_out_trade` call site in this codebase is enumerated, and an
+           exit row's `decision_id` is NULL if and only if the code path
+           that wrote it never had one to attach. So every eligible row
+           gets EITHER 'linked' or 'no_originating_decision' — there is no
+           third "can't tell" bucket the way position_id has.
+
+        2. `conviction` / `requested_risk_pct` / `decision_model` on BUY/
+           SHORT rows that already carry a real `decision_id`: recovered by
+           joining `agent_logs` (agent_name='portfolio_manager', matching
+           decision_id) and reading the `targets` entry matching this
+           trade's symbol out of `full_response` (see
+           `_find_pm_target_for_symbol` — handles both the fenced-```json
+           and raw-JSON formats seen in real history).
+
+           `allocated_risk_pct` (the POST-clamp figure the constructor's
+           RiskPlan actually granted) is DELIBERATELY NEVER backfilled —
+           it was never persisted anywhere retroactively readable (only
+           the PM's pre-clamp ask survives, inside `full_response`), and
+           reconstructing the granted figure would mean re-running the
+           constructor's budget rationing against point-in-time book state
+           this database does not fully preserve. Every backfilled row
+           gets `allocated_risk_pct = NULL`, always, and the returned dict
+           reports that as `allocated_risk_pct_recoverable: 0` rather than
+           letting a caller assume the gap was closed.
+
+        Idempotent: an exit row is only touched while `decision_id_status
+        IS NULL`; an entry row only while `conviction IS NULL AND
+        decision_model IS NULL` (a row already touched by this backfill,
+        or by live trading after this column existed, is never
+        reprocessed). `dry_run=True` (default) computes and returns counts
+        without writing.
+        """
+        def _do():
+            # ---- 1. exit rows: decision_id_status (fully recoverable) ----
+            exit_rows = self.conn.execute(
+                "SELECT id, action, decision_id FROM trades "
+                "WHERE decision_id_status IS NULL",
+            ).fetchall()
+            exit_updates: list[tuple[str, int]] = []
+            exit_linked = 0
+            exit_no_originating_decision = 0
+            exit_not_applicable = 0
+            for r in exit_rows:
+                status = _resolve_decision_id_status(r["action"], r["decision_id"])
+                if status is None:
+                    exit_not_applicable += 1
+                    continue
+                exit_updates.append((status, r["id"]))
+                if status == "linked":
+                    exit_linked += 1
+                else:
+                    exit_no_originating_decision += 1
+
+            # ---- 2. entry rows: conviction / requested_risk_pct / decision_model ----
+            entry_rows = self.conn.execute(
+                "SELECT id, symbol, decision_id FROM trades "
+                "WHERE action IN ('BUY', 'SHORT') AND decision_id IS NOT NULL "
+                "AND conviction IS NULL AND decision_model IS NULL",
+            ).fetchall()
+            decision_ids = sorted({r["decision_id"] for r in entry_rows if r["decision_id"]})
+            pm_logs: dict[str, dict] = {}
+            if decision_ids:
+                placeholders = ",".join("?" for _ in decision_ids)
+                for row in self.conn.execute(
+                    "SELECT decision_id, model, full_response FROM agent_logs "
+                    f"WHERE agent_name = 'portfolio_manager' AND decision_id IN ({placeholders})",
+                    tuple(decision_ids),
+                ).fetchall():
+                    # First row wins on a duplicate decision_id (retries are
+                    # not expected to share an id, but never overwrite a
+                    # resolved match with a later, possibly-unrelated one).
+                    pm_logs.setdefault(row["decision_id"], dict(row))
+
+            entry_updates: list[tuple] = []  # (conviction, requested_risk_pct, decision_model, id)
+            entry_recovered = 0
+            entry_unrecoverable_no_agent_log = 0
+            entry_unrecoverable_no_matching_target = 0
+            for r in entry_rows:
+                log_row = pm_logs.get(r["decision_id"])
+                if log_row is None:
+                    entry_unrecoverable_no_agent_log += 1
+                    continue
+                target = _find_pm_target_for_symbol(log_row.get("full_response"), r["symbol"])
+                if target is None:
+                    entry_unrecoverable_no_matching_target += 1
+                    continue
+                entry_updates.append((
+                    target.get("conviction"),
+                    target.get("risk_allocation_pct"),
+                    log_row.get("model"),
+                    r["id"],
+                ))
+                entry_recovered += 1
+
+            if not dry_run:
+                if exit_updates:
+                    self.conn.executemany(
+                        "UPDATE trades SET decision_id_status = ? WHERE id = ?",
+                        exit_updates,
+                    )
+                if entry_updates:
+                    self.conn.executemany(
+                        "UPDATE trades SET conviction = ?, requested_risk_pct = ?, "
+                        "decision_model = ? WHERE id = ?",
+                        entry_updates,
+                    )
+                self.conn.commit()
+
+            return {
+                "exit_rows_considered": len(exit_rows),
+                "exit_linked": exit_linked,
+                "exit_no_originating_decision": exit_no_originating_decision,
+                "exit_not_applicable": exit_not_applicable,
+                "entry_rows_considered": len(entry_rows),
+                "entry_recovered": entry_recovered,
+                "entry_unrecoverable_no_agent_log": entry_unrecoverable_no_agent_log,
+                "entry_unrecoverable_no_matching_target": entry_unrecoverable_no_matching_target,
+                # Always 0 — see docstring. Never silently "improves" as a
+                # side effect of a future change without this comment being
+                # revisited: allocated_risk_pct becoming recoverable would
+                # require a NEW data source, not a smarter backfill.
+                "allocated_risk_pct_recoverable": 0,
+            }
+        return self._locked_write(_do, label="backfill_conviction_ledger")
+
     def get_daily_pnl(self, limit: int = 30, before_date: str | None = None) -> list[dict]:
         conditions = []
         params: list = []
@@ -2230,12 +2527,41 @@ class Database:
              "by_side": {
                 "long": {...},   # same shape as the top level, long round-trips only
                 "short": {...},  # same shape, short round-trips only
-             }}
+             },
+             "by_conviction": {
+                "high": {...}, "medium": {...}, "low": {...},
+                # each shaped {"n": int, "insufficient_data": True,
+                # "message": "..."} below _CONVICTION_OUTCOME_MIN_N, or the
+                # full _bucket_stats shape (plus "insufficient_data": False)
+                # at or above it — see that constant's docstring.
+             },
+             "conviction_unknown_n": int,  # closed trades with no pinned
+                                            # conviction (pre-ledger rows,
+                                            # or not yet backfilled)
+             "by_allocated_risk": {
+                "high (≥3%)": {...}, "medium (1-3%)": {...},
+                "low (<1%)": {...},  # same gating as by_conviction
+             },
+             "allocated_risk_unknown_n": int,  # closed trades with no
+                                                 # allocated_risk_pct on
+                                                 # record (every historical
+                                                 # entry to date — see
+                                                 # _CONVICTION_OUTCOME_MIN_N)
+             }
             or {} when there are too few closed trades to be meaningful.
             For a book with no short round-trips, every top-level number
-            here is byte-identical to the pre-Stage-3 output — the new
-            `expectancy_pct` / `avg_win_loss_ratio` / `by_side` keys are pure
-            additions, not changes to the existing ones.
+            here is byte-identical to the pre-Stage-3 output — the
+            `expectancy_pct` / `avg_win_loss_ratio` / `by_side` /
+            `by_conviction` / `by_allocated_risk` keys are pure additions,
+            not changes to the existing ones.
+
+            IMPORTANT — `by_conviction` / `by_allocated_risk` are NEVER
+            rendered into any agent prompt below `_CONVICTION_OUTCOME_MIN_N`
+            per bucket; see `TradingPipeline._build_calibration_note`
+            (src/pipeline.py), which is the ONLY renderer of this dict into
+            PM/reviewer-facing text and enforces that gate explicitly. This
+            method only computes and labels; it does not decide what an
+            agent sees.
         """
         with self._lock:
             # Skip orders that never executed. Legacy rows with NULL fill_status
@@ -2249,7 +2575,8 @@ class Database:
             # reasoning applies to the SHORT/COVER queue below.
             rows = self.conn.execute(
                 "SELECT symbol, action, qty, price, timestamp, fill_qty, "
-                "fill_price, fill_status "
+                "fill_price, fill_status, conviction, allocated_risk_pct, "
+                "requested_risk_pct, decision_model "
                 "FROM trades "
                 f"WHERE {self._executed_trade_predicate()} "
                 "ORDER BY timestamp",
@@ -2274,10 +2601,25 @@ class Database:
             ts = row["timestamp"]
             if qty <= 0 or price <= 0:
                 continue
+            # Conviction ledger (§7.2): pinned at entry, carried through the
+            # FIFO lot so every closed record below knows the conviction /
+            # risk / model that OPENED it, regardless of which exit closes
+            # it or how many exits it takes. None for a legacy pre-ledger
+            # BUY/SHORT — never guessed.
+            entry_facts = {
+                "conviction": row["conviction"],
+                "allocated_risk_pct": row["allocated_risk_pct"],
+                "requested_risk_pct": row["requested_risk_pct"],
+                "decision_model": row["decision_model"],
+            }
             if act == "BUY":
-                open_lots[sym].append({"qty": qty, "price": price, "ts": ts})
+                open_lots[sym].append({
+                    "qty": qty, "price": price, "ts": ts, **entry_facts,
+                })
             elif act == "SHORT":
-                open_short_lots[sym].append({"qty": qty, "price": price, "ts": ts})
+                open_short_lots[sym].append({
+                    "qty": qty, "price": price, "ts": ts, **entry_facts,
+                })
             elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
                   or act in ("EMERGENCY_SELL", "FORCE_DELEVER",
                              "REDUCE", "TAKE_PROFIT", "STOP_OUT")
@@ -2334,6 +2676,10 @@ class Database:
                         "return_pct": ret_pct,
                         "hold_days": hold_days,
                         "entry_usd": entry_usd,
+                        "conviction": lot.get("conviction"),
+                        "allocated_risk_pct": lot.get("allocated_risk_pct"),
+                        "requested_risk_pct": lot.get("requested_risk_pct"),
+                        "decision_model": lot.get("decision_model"),
                     })
                     lot["qty"] -= closed_qty
                     if lot["qty"] <= 1e-9:
@@ -2381,6 +2727,10 @@ class Database:
                         "return_pct": ret_pct,
                         "hold_days": hold_days,
                         "entry_usd": entry_usd,
+                        "conviction": lot.get("conviction"),
+                        "allocated_risk_pct": lot.get("allocated_risk_pct"),
+                        "requested_risk_pct": lot.get("requested_risk_pct"),
+                        "decision_model": lot.get("decision_model"),
                     })
                     lot["qty"] -= closed_qty
                     if lot["qty"] <= 1e-9:
@@ -2431,6 +2781,60 @@ class Database:
         long_closed = [c for c in closed if c["side"] == "long"]
         short_closed = [c for c in closed if c["side"] == "short"]
 
+        def _gated_bucket_stats(bucket: list[dict], label: str) -> dict:
+            """Same shape as `_bucket_stats`, but refuses to state a win
+            rate / avg return / anything comparable below
+            `_CONVICTION_OUTCOME_MIN_N` — see that constant's docstring for
+            why this floor is deliberately much higher than the plain
+            `_bucket_stats` buckets above (by_size / by_side), which state
+            numbers for however many trades they have, however few.
+
+            Below the floor: {"n": n, "insufficient_data": True, "message":
+            "..."} — a running count and an explicit statement that n is
+            too few to conclude anything, never a win_rate/avg_return key
+            at all (not even a fabricated 0.0). At or above it: the full
+            `_bucket_stats` shape plus "insufficient_data": False.
+            """
+            n = len(bucket)
+            if n < _CONVICTION_OUTCOME_MIN_N:
+                return {
+                    "n": n,
+                    "insufficient_data": True,
+                    "message": (
+                        f"only {n} closed trade(s) for {label} — too few to "
+                        f"conclude anything about whether conviction "
+                        f"predicts outcome (floor is {_CONVICTION_OUTCOME_MIN_N})"
+                    ),
+                }
+            stats = _bucket_stats(bucket)
+            stats["insufficient_data"] = False
+            return stats
+
+        # by_conviction / by_allocated_risk (spec §7.2) — the grouping this
+        # task exists to add. `conviction` is pinned at entry on every BUY/
+        # SHORT going forward (see TradeDecision / ExecutionStage); rows
+        # from before that landed (or not yet run through
+        # scripts/backfill_conviction_ledger.py) carry conviction=None and
+        # are counted in `conviction_unknown_n` rather than silently folded
+        # into one of the three real labels.
+        by_conviction_high = [c for c in closed if c["conviction"] == "high"]
+        by_conviction_medium = [c for c in closed if c["conviction"] == "medium"]
+        by_conviction_low = [c for c in closed if c["conviction"] == "low"]
+        conviction_unknown_n = sum(1 for c in closed if not c["conviction"])
+
+        # `allocated_risk_pct` is None for every trade built from a legacy
+        # notional (target_weight_pct-only) target — which, measured
+        # against real production data 2026-08-30, is EVERY entry to date
+        # (risk-based sizing has been live since 2026-08-27 but no PM
+        # decision has emitted risk_allocation_pct yet). Excluded from the
+        # buckets below rather than coerced into one; counted honestly in
+        # `allocated_risk_unknown_n`.
+        risk_known = [c for c in closed if c["allocated_risk_pct"] is not None]
+        by_risk_high = [c for c in risk_known if c["allocated_risk_pct"] >= 3.0]
+        by_risk_medium = [c for c in risk_known if 1.0 <= c["allocated_risk_pct"] < 3.0]
+        by_risk_low = [c for c in risk_known if c["allocated_risk_pct"] < 1.0]
+        allocated_risk_unknown_n = len(closed) - len(risk_known)
+
         overall = _bucket_stats(closed)
         return {
             **overall,
@@ -2443,6 +2847,18 @@ class Database:
                 "long": _bucket_stats(long_closed),
                 "short": _bucket_stats(short_closed),
             },
+            "by_conviction": {
+                "high": _gated_bucket_stats(by_conviction_high, "high conviction"),
+                "medium": _gated_bucket_stats(by_conviction_medium, "medium conviction"),
+                "low": _gated_bucket_stats(by_conviction_low, "low conviction"),
+            },
+            "conviction_unknown_n": conviction_unknown_n,
+            "by_allocated_risk": {
+                "high (≥3%)": _gated_bucket_stats(by_risk_high, "high allocated risk"),
+                "medium (1-3%)": _gated_bucket_stats(by_risk_medium, "medium allocated risk"),
+                "low (<1%)": _gated_bucket_stats(by_risk_low, "low allocated risk"),
+            },
+            "allocated_risk_unknown_n": allocated_risk_unknown_n,
             "lookback_days": lookback_days,
         }
 

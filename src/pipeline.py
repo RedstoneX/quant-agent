@@ -6000,6 +6000,47 @@ class TradingPipeline:
 
         return f
 
+    @staticmethod
+    def _log_conviction_outcome_for_operator(stats: dict) -> None:
+        """Log the FULL by_conviction / by_allocated_risk breakdown for a
+        human operator reading logs — including every bucket below
+        `_CONVICTION_OUTCOME_MIN_N`, which `_build_calibration_note` never
+        puts in front of an agent (see the "MOST IMPORTANT CONSTRAINT" note
+        at its call site). This is the ONLY place that count is surfaced at
+        all: recorded, not silently dropped, per spec §7.2 — "that must be
+        discovered from data, not assumed" cuts both ways: assumed-absent
+        is as wrong as assumed-present.
+        """
+        try:
+            parts = []
+            for grouping_key in ("by_conviction", "by_allocated_risk"):
+                grouping = stats.get(grouping_key) or {}
+                bucket_strs = []
+                for label, s in grouping.items():
+                    if not s:
+                        continue
+                    if s.get("insufficient_data"):
+                        bucket_strs.append(f"{label}: n={s.get('n', 0)} (below floor)")
+                    else:
+                        bucket_strs.append(
+                            f"{label}: n={s.get('n')} win={s.get('win_rate_pct')}% "
+                            f"avg={s.get('avg_return_pct')}%"
+                        )
+                if bucket_strs:
+                    parts.append(f"{grouping_key}=[{'; '.join(bucket_strs)}]")
+            if not parts:
+                return
+            logger.info(
+                "Conviction/risk-outcome calibration (OPERATOR-ONLY — never "
+                "sent to any agent prompt below the sample floor): %s | "
+                "conviction_unknown_n=%s allocated_risk_unknown_n=%s",
+                " ".join(parts),
+                stats.get("conviction_unknown_n"),
+                stats.get("allocated_risk_unknown_n"),
+            )
+        except Exception as e:  # noqa: BLE001 — logging must never break calibration
+            logger.warning("conviction_outcome operator log failed: %s", e)
+
     def _build_calibration_note(self, lookback_days: int = 45) -> str:
         """Render PM's own hit rate + avg return on closed BUYs in the window.
 
@@ -6014,6 +6055,13 @@ class TradingPipeline:
             return ""
         if not isinstance(stats, dict) or not stats:
             return ""
+        # Conviction ledger (spec §7.2) — operator-only surface. Logged on
+        # EVERY call regardless of the floor below, deliberately separate
+        # from the prompt text being built: this is how a human operator
+        # sees "n=8, split 4/3/1, too few to conclude anything" WITHOUT it
+        # ever reaching an agent. Never gate this log on the floor — the
+        # whole point is that the operator sees the sub-floor count too.
+        self._log_conviction_outcome_for_operator(stats)
         try:
             if stats.get("n", 0) < 3:
                 return ""
@@ -6032,6 +6080,35 @@ class TradingPipeline:
                 f"  - {label}: {s['n']} trades, win {s['win_rate_pct']:.0f}%, "
                 f"avg {s['avg_return_pct']:+.2f}%, hold {s['avg_hold_days']:.1f}d"
             )
+        # Conviction ledger (spec §7.2) — THE MOST IMPORTANT CONSTRAINT on
+        # this whole feature: a bucket below `_CONVICTION_OUTCOME_MIN_N`
+        # (db.py) is `_gated_bucket_stats`-shaped ({"n", "insufficient_data":
+        # True, "message"}) and is skipped here ENTIRELY — no header, no
+        # line, nothing appended to `lines` — never a "too few trades" line
+        # either, because even that much would put the bucket's existence
+        # and its raw direction in front of the model. Only a bucket that
+        # has cleared the floor (`insufficient_data` False) ever reaches
+        # this prompt text. With production at n=8 total (2026-08-30),
+        # EVERY bucket in both groupings is below floor, so today this
+        # appends nothing at all — that is the correct, intended behaviour,
+        # not a bug to "fix" by lowering the floor.
+        for grouping_key, section_label in (
+            ("by_conviction", "By conviction"),
+            ("by_allocated_risk", "By allocated risk"),
+        ):
+            grouping = stats.get(grouping_key) or {}
+            qualifying = [
+                (label, s) for label, s in grouping.items()
+                if s and not s.get("insufficient_data", True) and s.get("n", 0) > 0
+            ]
+            if not qualifying:
+                continue
+            lines.append(f"  {section_label} (established sample):")
+            for label, s in qualifying:
+                lines.append(
+                    f"    - {label}: {s['n']} trades, win {s['win_rate_pct']:.0f}%, "
+                    f"avg {s['avg_return_pct']:+.2f}%, hold {s['avg_hold_days']:.1f}d"
+                )
         return "\n".join(lines)
 
     def _compute_recent_performance(self, current_equity: float) -> dict:

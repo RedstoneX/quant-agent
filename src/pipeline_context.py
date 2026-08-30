@@ -125,6 +125,15 @@ class RunContext:
     # up under future control-flow changes (see DecisionStage.run()). None
     # when DecisionStage never reached a successful PM call this run.
     decision_id: str | None = None
+    # Conviction ledger (spec §7.2): the ACTUAL model that answered this
+    # run's portfolio_manager call (`AgentResult.model` — corrected Stage
+    # 0.5 to mean the model that really responded, not merely the one
+    # requested). Threaded to every entry `trades` row this run produces so
+    # a later outcome can be traced to which model authored the decision —
+    # training-data contamination is the dominant failure mode in this
+    # literature (docs/RESEARCH_FINDINGS.md) and any evaluation must record
+    # which model produced each result. None alongside decision_id=None.
+    decision_model: str | None = None
 
     # === Populated by execution stage ===
     orders: list[dict] = field(default_factory=list)

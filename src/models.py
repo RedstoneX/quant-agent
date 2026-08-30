@@ -348,6 +348,33 @@ class TradeDecision(BaseModel):
     stop_loss: float
     take_profit: float
     reasoning: str
+    # --- Conviction ledger (QAMC remediation spec §7.2) --------------------
+    # Pinned at ENTRY (BUY/SHORT) only, mirroring how `expected_horizon_
+    # sessions`/`setup_type` are pinned at entry rather than recomputed
+    # later. All three default to None so every pre-existing construction
+    # site (HOLD/_build_sell/_build_cover, tests, replay.py, ops/model_
+    # policy/scenarios.py) is unaffected.
+    #
+    # `conviction` mirrors TargetPosition.conviction — the PM's own label
+    # for the idea, carried through the constructor unchanged.
+    conviction: Literal["high", "medium", "low"] | None = None
+    # `requested_risk_pct` is TargetPosition.risk_allocation_pct AS THE PM
+    # ASKED FOR IT — before the constructor's single-name clamp or the
+    # portfolio/cluster budget rationing touch it. None for a legacy
+    # notional (target_weight_pct-only) target, which asked for no risk
+    # figure at all.
+    requested_risk_pct: float | None = None
+    # `allocated_risk_pct` is `RiskPlan.risk_pct` — "what the budget
+    # actually granted" per that dataclass's own docstring, i.e. the
+    # PRE-clamp request rationed through `allocate_risk_budget` and the
+    # single-name ceiling in `_plan_risk_targets`. This is the closest
+    # cheaply-available approximation of "what was really used to size the
+    # order" — a further downstream notional clamp in `_build_buy`/
+    # `_build_short` (the single-name / single-short weight ceiling) can
+    # still shrink the FINAL position below what this figure implies; that
+    # last clamp is not re-derived into a third number here. None when no
+    # risk-based plan exists for this symbol (legacy notional target).
+    allocated_risk_pct: float | None = None
 
     @field_validator("symbol")
     @classmethod

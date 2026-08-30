@@ -1718,6 +1718,12 @@ class DecisionStage:
         # every trades row this run's decisions produce (ExecutionStage).
         decision_id = f"{run_id}-dec-{uuid.uuid4().hex[:6]}"
         ctx.decision_id = decision_id
+        # Conviction ledger (spec §7.2): pm_result.model is the ACTUAL model
+        # that answered (see RunContext.decision_model docstring), threaded
+        # to ExecutionStage regardless of whether this call ultimately
+        # produced a valid decision — a failed/unparseable PM call still
+        # carries no trades, so an unused decision_model is harmless.
+        ctx.decision_model = pm_result.model
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -3125,6 +3131,15 @@ class ExecutionStage:
                         entry_analysis, "expected_horizon_sessions", None,
                     ),
                     setup_type=getattr(entry_analysis, "setup_type", None),
+                    # Conviction ledger (spec §7.2) — pinned at entry from
+                    # the constructor's TradeDecision (see portfolio_
+                    # constructor._build_buy/_build_short) and from this
+                    # run's PM model. None/None/None for a legacy notional
+                    # target that carried no risk-based plan.
+                    conviction=getattr(decision, "conviction", None),
+                    requested_risk_pct=getattr(decision, "requested_risk_pct", None),
+                    allocated_risk_pct=getattr(decision, "allocated_risk_pct", None),
+                    decision_model=ctx.decision_model,
                 )
 
                 try:
