@@ -1,6 +1,6 @@
-"""Gross BEARISH exposure ceiling (2026-08-30).
+"""Gross BEARISH exposure ceiling (2026-08-30, corrected same day).
 
-The defect: `RiskRuleEngine.check`'s book-wide short-exposure cap
+Round 1 defect: `RiskRuleEngine.check`'s book-wide short-exposure cap
 (`max_short_gross_pct`, now `max_gross_bearish_pct`) summed only true
 shorts (`p.qty < 0`), and was only ever reached when `decision.action ==
 "SHORT"`. Four inverse ETFs (`SH` -1x, `SDS` -2x, `PSQ` -1x, `SQQQ` -3x —
@@ -12,17 +12,37 @@ position simultaneously and be materially more bearish than the 20% limit
 intends — worse at leverage, since a modest SQQQ notional is a large -3x
 bearish bet.
 
-The owner ratified (2026-08-30) that the inverse ETFs stay in the
-universe, so the fix widens the ceiling's arithmetic and its gate rather
-than removing them:
+Round 2 defect (the mirror image, caught in review before this shipped):
+the round-1 fix gated on `is_short or is_bearish_buy`, which wrongly
+treats EVERY short as bearish. Shorting an inverse ETF is a BULLISH bet —
+SQQQ falls when the index it inverts rises, so SHORT SQQQ profits from a
+RISING market exactly like a plain long would. `decision.action ==
+"SHORT"` is the wrong test in that quadrant.
 
-  1. the sum now also includes LONG positions whose signed
-     `_effective_multiplier` is negative;
-  2. the gate now fires on a SHORT of any symbol, OR a BUY whose
-     `_effective_multiplier` is negative — not only `action == "SHORT"`.
+The corrected rule uses `signed_new` (`new_investment * signed_mul *
+(-1 if is_short else 1)`), the same signed expression rule 2's net-
+exposure check already relies on, and keys both the gate and the
+contributed magnitude off ITS sign — not off `decision.action` and not
+off a hardcoded ticker list, so a fund added to `_ETF_LEVERAGE` later is
+covered automatically in whichever direction its sign implies. All four
+quadrants:
+
+    BUY   AAPL -> +new_investment    (bullish, excluded)
+    BUY   SQQQ -> -3*new_investment  (bearish, INCLUDED)
+    SHORT AAPL -> -new_investment    (bearish, INCLUDED)
+    SHORT SQQQ -> +3*new_investment  (bullish, excluded)
+
+The held book uses the equivalent unified rule: a position's signed
+bearish exposure is `p.market_value * _effective_multiplier(p.symbol)`
+(market_value is already signed for a held short); it counts, at
+`abs(...)`, only when that product is negative. A held SHORT of an
+inverse ETF is therefore excluded exactly like a held LONG of an ordinary
+name is — both are bullish exposure.
 
 `max_single_short_pct` (the tighter single-name cap) is deliberately NOT
-extended to inverse-ETF BUYs — see
+extended to inverse-ETF BUYs, and stays gated on `is_short` alone (a
+SHORT of anything still carries unbounded-loss / borrow risk regardless
+of its directional bet) — see
 `test_single_name_short_cap_still_short_only_not_extended_to_inverse_etf_buy`
 for why, and `src/risk/rules.py`'s comment at that rule.
 """
@@ -314,6 +334,140 @@ def test_single_name_short_cap_still_short_only_not_extended_to_inverse_etf_buy(
         "max_single_short_pct must remain SHORT-only; it must not fire for "
         "an inverse-ETF BUY no matter how large"
     )
+
+
+# ==========================================================================
+# 8. The direction x instrument quadrant table — the point of round 2.
+#
+# Round 1 of this fix gated on `is_short or is_bearish_buy`, which wrongly
+# treated EVERY short as bearish exposure. Shorting an inverse ETF is a
+# BULLISH bet (SQQQ falls when the index it inverts rises), so `SHORT
+# SQQQ` must NOT count against the bearish ceiling even though it is
+# mechanically a SHORT. These tests pin all four quadrants so this cannot
+# regress back to action-based gating.
+# ==========================================================================
+
+def test_short_of_inverse_etf_is_bullish_and_never_blocked_by_the_gross_bearish_ceiling():
+    """SHORT SQQQ is a BULLISH bet, not bearish exposure. It must never be
+    gated by `max_gross_bearish_pct` no matter how large, and it must not
+    poison the pending accumulator for a later, genuinely bearish order in
+    the same batch."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.risk_engine = RiskRuleEngine(_cfg(
+        max_gross_bearish_pct=20.0, max_single_short_pct=90.0,
+    ))
+    decisions = [
+        # 10% alloc * 3x = 30% notional -- if this were (wrongly) counted
+        # as bearish, it alone would breach the 20% ceiling.
+        _short("SQQQ", allocation_pct=10.0),
+        # 15% alloc * 1x = 15% gross bearish, under 20% ALONE -- must stay
+        # allowed. If SQQQ's 30% had wrongly polluted the pending
+        # accumulator, 15% + 30% = 45% would wrongly block this too.
+        _buy("PSQ", allocation_pct=15.0),
+    ]
+
+    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+        "src.execution.broker._get_sector", return_value="Broad"
+    ):
+        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+            decisions, positions=[], total_value=100_000, daily_pnl=0,
+        )
+
+    assert [d.symbol for d in allowed] == ["SQQQ", "PSQ"], (
+        f"SHORT SQQQ must never be blocked by the bearish ceiling and must "
+        f"not consume any of its budget for the later PSQ BUY; blocked={blocked}"
+    )
+
+
+def test_held_short_position_in_an_inverse_etf_contributes_nothing_to_the_ceiling():
+    """A held SHORT SQQQ position is BULLISH exposure (see the quadrant
+    table) and must contribute zero to the gross bearish sum, even though
+    its notional, measured the naive (wrong) way, is large."""
+    engine = RiskRuleEngine(_cfg(max_gross_bearish_pct=10.0, max_single_short_pct=90.0))
+    # -$10,000 short of a -3x fund = 30% gross notional if (wrongly)
+    # counted as bearish.
+    positions = [_pos("SQQQ", qty=-100, entry=100, price=100)]
+    # A genuinely bearish 5% ordinary short -- alone this is well under
+    # the 10% cap.
+    decision = _short("XYZ", allocation_pct=5.0)
+    violations = engine.check(
+        decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
+    )
+    rules = {v.rule for v in violations}
+    assert "max_gross_bearish_pct" not in rules, (
+        f"a held SHORT of an inverse ETF is bullish exposure and must not "
+        f"count toward the bearish ceiling (30% + 5% would wrongly breach "
+        f"the 10% cap if it did); got {rules}"
+    )
+
+
+def test_held_long_inverse_etf_and_held_short_ordinary_sum_correctly_together():
+    """A held LONG SQQQ (bearish, 3x) and a held SHORT of an ordinary name
+    (bearish, 1x) must both count and ADD -- proving the unified signed
+    sum handles a mixed bearish book, not just one quadrant in isolation."""
+    engine = RiskRuleEngine(_cfg(max_gross_bearish_pct=30.0, max_single_short_pct=90.0))
+    positions = [
+        _pos("SQQQ", qty=100, entry=100, price=100),  # LONG: +$10,000 * 3x = 30%
+        _pos("XYZ", qty=-50, entry=100, price=100),   # SHORT: -$5,000 * 1x = 5%
+    ]
+    # A small further ordinary short activates the gate -- a 0%-allocation
+    # decision produces signed_new == 0, which does not trigger the check
+    # at all (0 is not < 0), so this can't be probed with a no-op decision.
+    decision = _short("XYZ", allocation_pct=1.0)  # +$1,000 -> +1%
+    violations = engine.check(
+        decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
+    )
+    rules = {v.rule for v in violations}
+    assert "max_gross_bearish_pct" in rules, (
+        f"30% (held SQQQ long) + 5% (held XYZ short) + 1% (new increment) "
+        f"= 36% must breach the 30% cap; got {rules}"
+    )
+    violation = next(v for v in violations if v.rule == "max_gross_bearish_pct")
+    assert violation.value == pytest.approx(36.0)
+
+
+@pytest.mark.parametrize(
+    "action,symbol,entry,included,expected_pct",
+    [
+        # BUY  + ordinary (mult +1)  -> bullish   -> excluded
+        ("BUY", "AAPL", 200.0, False, None),
+        # BUY  + inverse  (mult -3)  -> bearish   -> included, at 3x
+        ("BUY", "SQQQ", 20.0, True, 30.0),
+        # SHORT + ordinary (mult +1) -> bearish   -> included, at 1x
+        ("SHORT", "AAPL", 200.0, True, 10.0),
+        # SHORT + inverse (mult -3)  -> BULLISH   -> excluded
+        ("SHORT", "SQQQ", 20.0, False, None),
+    ],
+    ids=["buy_ordinary_bullish_excluded", "buy_inverse_bearish_included",
+         "short_ordinary_bearish_included", "short_inverse_bullish_excluded"],
+)
+def test_all_four_direction_by_instrument_quadrants(action, symbol, entry, included, expected_pct):
+    """The full 2x2 table this fix depends on: direction (BUY/SHORT) x
+    instrument (ordinary/inverse). A 10% allocation against an empty book,
+    checked against a strict 5% ceiling -- low enough that either included
+    case (30% or 10%) breaches it, and high enough that either excluded
+    case (which contributes exactly 0%) does not."""
+    engine = RiskRuleEngine(_cfg(
+        max_gross_bearish_pct=5.0, max_single_short_pct=90.0, max_position_pct=80.0,
+    ))
+    decision = (_buy(symbol, allocation_pct=10.0, entry=entry) if action == "BUY"
+                else _short(symbol, allocation_pct=10.0, entry=entry))
+    violations = engine.check(
+        decision=decision, positions=[], total_value=100_000, daily_pnl=0.0,
+    )
+    rules = {v.rule for v in violations}
+    if included:
+        assert "max_gross_bearish_pct" in rules, (
+            f"{action} {symbol} is bearish exposure and must breach the 5% "
+            f"ceiling; got {rules}"
+        )
+        violation = next(v for v in violations if v.rule == "max_gross_bearish_pct")
+        assert violation.value == pytest.approx(expected_pct)
+    else:
+        assert "max_gross_bearish_pct" not in rules, (
+            f"{action} {symbol} is a BULLISH bet (not bearish exposure) and "
+            f"must not count against the bearish ceiling; got {rules}"
+        )
 
 
 # ==========================================================================

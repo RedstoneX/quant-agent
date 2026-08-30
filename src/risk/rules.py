@@ -202,12 +202,6 @@ class RiskRuleEngine:
         is_short = decision.action == "SHORT"
         signed_mul = _effective_multiplier(decision.symbol)  # net direction
         gross_mul = _gross_multiplier(decision.symbol)       # size magnitude
-        # A BUY of an inverse ETF (SH/SDS/PSQ/SQQQ — signed_mul < 0) is
-        # bearish exposure exactly like a SHORT is, just held long at the
-        # broker. It must clear the gross bearish ceiling below even though
-        # it is not a SHORT and never touches `max_single_short_pct` (see
-        # the comment at that rule for why that asymmetry is deliberate).
-        is_bearish_buy = decision.action == "BUY" and signed_mul < 0
         new_investment = total_value * (decision.allocation_pct / 100)
         # A SHORT moves net exposure the OPPOSITE way a BUY of the same
         # symbol would (it adds negative, not positive, directional
@@ -288,41 +282,50 @@ class RiskRuleEngine:
 
         # Gross BEARISH exposure ceiling. HARD BLOCK — in HARD_BLOCK_RULES
         # (src/pipeline.py). Renamed from the old `max_short_gross_pct`
-        # (2026-08-30): that cap summed only true shorts (qty < 0), which
-        # made a LONG position in an inverse ETF (SH, SDS, PSQ, SQQQ — see
-        # `_ETF_LEVERAGE`) invisible to it, even though holding one long is
-        # bearish exposure. Pre-fix the desk could sit at the full 20%
-        # short ceiling AND hold a full inverse-ETF position at once and be
-        # materially more bearish than either limit intends — worse at
-        # leverage, since a modest SQQQ notional is a large -3x bearish
-        # bet. So this now checks on a SHORT of any symbol, OR a BUY whose
-        # `_effective_multiplier` is negative (`is_bearish_buy` above) — an
-        # ordinary long BUY never reaches it, and SELL/COVER are exempted
-        # at the top of this method. The test is the SIGNED multiplier
-        # being negative, not a hardcoded ticker list, so a fund added to
-        # `_ETF_LEVERAGE` later is picked up automatically.
-        if is_short or is_bearish_buy:
+        # (2026-08-30) when it was widened to see inverse-ETF LONGs as
+        # bearish exposure — and corrected again the same day for the
+        # mirror-image error that first widening introduced: `is_short`
+        # alone is NOT "bearish". Shorting a -3x fund like SQQQ is a
+        # BULLISH bet — it profits when SQQQ falls, which is when the
+        # index it inverts RISES — so gating on `decision.action ==
+        # "SHORT"` charged a bullish position against the bearish ceiling.
+        # `signed_new` (computed above; the same expression rule 2's net-
+        # exposure check already relies on) is directionally correct in
+        # all four quadrants:
+        #   BUY   AAPL -> +new_investment    (bullish, excluded)
+        #   BUY   SQQQ -> -3*new_investment  (bearish, INCLUDED)
+        #   SHORT AAPL -> -new_investment    (bearish, INCLUDED)
+        #   SHORT SQQQ -> +3*new_investment  (bullish, excluded)
+        # so both the gate and the contribution key off ITS sign, not off
+        # `decision.action` or a hardcoded ticker list — a fund added to
+        # `_ETF_LEVERAGE` later is picked up automatically, in whichever
+        # direction its sign implies.
+        if signed_new < 0:
+            # Same unified rule for the held book: a position's signed
+            # bearish exposure is its (already-signed) market_value times
+            # its signed multiplier; a negative product is bearish, and
+            # `abs(...)` of it is what it costs against the ceiling. A
+            # held SHORT of an ordinary name (negative mv * +1 mult) is
+            # negative -> counted. A held LONG inverse ETF (positive mv *
+            # negative mult) is negative -> counted. A held SHORT of an
+            # INVERSE ETF (negative mv * negative mult) is POSITIVE ->
+            # NOT counted — it's bullish exposure, same as a held LONG of
+            # an ordinary name.
             current_gross_bearish = sum(
-                abs(p.market_value) * _gross_multiplier(p.symbol)
-                for p in positions if p.qty < 0
-            ) + sum(
-                abs(p.market_value) * abs(_effective_multiplier(p.symbol))
+                abs(p.market_value * _effective_multiplier(p.symbol))
                 for p in positions
-                if p.qty > 0 and _effective_multiplier(p.symbol) < 0
+                if p.market_value * _effective_multiplier(p.symbol) < 0
             )
             # `pending_gross_bearish_investment` is the running total of
-            # OTHER bearish orders — shorts OR inverse-ETF BUYs — already
-            # allowed earlier in this same batch (see
-            # `TradingPipeline._filter_hard_risk_decisions`) — without it,
-            # two bearish orders in the same run would each be checked
-            # against only the pre-existing book and never see each other,
-            # the same gap `pending_investment` closes for net exposure and
-            # `pending_sector_investment` closes for sector. `gross_new` is
-            # already the right unsigned figure for either a SHORT or a
-            # bearish BUY: `new_investment * gross_mul`, and `gross_mul` for
-            # an inverse ETF is `abs(_effective_multiplier(...))`.
+            # OTHER bearish orders — by this same signed test, not by
+            # `decision.action` — already allowed earlier in this same
+            # batch (see `TradingPipeline._filter_hard_risk_decisions`) —
+            # without it, two bearish orders in the same run would each be
+            # checked against only the pre-existing book and never see
+            # each other, the same gap `pending_investment` closes for net
+            # exposure and `pending_sector_investment` closes for sector.
             gross_bearish_pct = (
-                (current_gross_bearish + pending_gross_bearish_investment + gross_new)
+                (current_gross_bearish + pending_gross_bearish_investment + abs(signed_new))
                 / total_value * 100
             )
             if gross_bearish_pct > self.config.max_gross_bearish_pct:
