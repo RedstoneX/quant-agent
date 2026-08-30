@@ -93,7 +93,12 @@ HARD_BLOCK_RULES = {
     # D9 (Stage 3, shorts). Hard blocks on opening/adding a short; a COVER
     # is exempted before either rule can fire (src/risk/rules.py).
     "max_single_short_pct",
-    "max_short_gross_pct",
+    # Renamed from max_short_gross_pct (2026-08-30) — now hard blocks any
+    # BEARISH order (a SHORT of an ordinary name, or a BUY of an inverse
+    # ETF SH/SDS/PSQ/SQQQ), not only `action == "SHORT"`. A SHORT of an
+    # inverse ETF is a BULLISH bet and is correctly excluded
+    # (src/risk/rules.py).
+    "max_gross_bearish_pct",
 }
 
 
@@ -1032,11 +1037,15 @@ class TradingPipeline:
         pending_sector_investment: dict[str, float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
-        # D9 (Stage 3): running total of gross short notional already
-        # allowed earlier in this batch, so `max_short_gross_pct` sees two
-        # different symbols shorted in the same run rather than checking
-        # each against only the pre-existing book.
-        pending_short_gross_investment = 0.0
+        # D9 (Stage 3): running total of gross BEARISH notional already
+        # allowed earlier in this batch — a SHORT of an ordinary name, or a
+        # BUY of an inverse ETF, but NOT a SHORT of an inverse ETF (that is
+        # a bullish bet, not a bearish one; see the signed accumulation
+        # below) — so `max_gross_bearish_pct` sees two bearish orders in
+        # the same run rather than checking each against only the
+        # pre-existing book. Renamed from pending_short_gross_investment
+        # (2026-08-30) alongside the ceiling itself.
+        pending_gross_bearish_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -1136,7 +1145,7 @@ class TradingPipeline:
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
-                pending_short_gross_investment=pending_short_gross_investment,
+                pending_gross_bearish_investment=pending_gross_bearish_investment,
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
@@ -1162,19 +1171,26 @@ class TradingPipeline:
             # Sector exposure accumulates GROSS (direction-agnostic magnitude).
             gross_investment = raw_investment * _gross_multiplier(decision.symbol)
             pending_investment += signed_investment
-            if is_short:
-                # A SHORT does not spend the settled-cash pool the
-                # cash_only rule protects (see RiskRuleEngine.check) — do
-                # not debit pending_cash_outflow for it. It DOES grow the
-                # running gross-short total D9's book-wide cap checks
-                # against, so a second short later in this same batch sees
-                # this one.
-                pending_short_gross_investment += gross_investment
-            else:
+            if not is_short:
                 # Cash outflow is raw $ notional — leverage/direction don't
                 # change the brokerage cash the BUY consumes. Inverse/
                 # leveraged ETFs still cost their sticker price in cash.
+                # Unlike the gross-bearish accumulator just below, this is
+                # unconditional on direction — a SHORT of any symbol never
+                # spends this settled-cash pool (RiskRuleEngine.check), a
+                # BUY of any symbol always does.
                 pending_cash_outflow += raw_investment
+            # Gross BEARISH accumulator: keyed off the SIGN of
+            # `signed_investment`, not off `decision.action` or `is_short`.
+            # Shorting an ordinary name and buying an inverse ETF both push
+            # `signed_investment` negative and both count. The quadrant
+            # this mirrors: SHORTING an inverse ETF (e.g. SHORT SQQQ) is a
+            # BULLISH bet (SQQQ falls when the index it inverts rises), so
+            # it pushes `signed_investment` POSITIVE and must NOT count,
+            # even though it is mechanically a SHORT — matches the signed
+            # gate in RiskRuleEngine.check.
+            if signed_investment < 0:
+                pending_gross_bearish_investment += abs(signed_investment)
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )
