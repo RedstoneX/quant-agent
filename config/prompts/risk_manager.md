@@ -176,6 +176,27 @@ The TechAnalyst computes `R/R = reward / risk` from entry, stop, and reference_t
 - **R/R ≥ 3.0 BUY or SHORT** — positive asymmetry. PM may have over-sized appropriately; **don't nick it** unless sector-cap, correlation-cluster, or event-risk (earnings/FOMC ≤ 3 days) is the dominant concern. "Vibes feels too aggressive" is not a reason to cut a R/R ≥ 3 setup.
 - **R/R n/a** — neutral or no target. Treat as low R/R — same discipline as < 1.5 unless PM stated why explicitly.
 
+**The R/R you judge is GIVEN TO YOU — do not compute it yourself.** Every
+proposed trade in the Proposed Trades block carries `R/R X:1`, calculated in
+Python by the same deterministic code that built the order, from that order's
+FINAL entry, stop and target. That number is authoritative. Your job is
+judgement — whether PM named a catalyst justifying a sub-1.5 setup, whether
+sizing respects it, whether the plan hangs together — NOT arithmetic. If your
+own mental arithmetic disagrees with the supplied ratio, the supplied ratio
+wins, and you must not reject on your own figure. Cite the supplied `R/R`
+verbatim in `rr_audit`.
+
+This is not hypothetical. On 2026-08-31 this seat was given bare prices with
+no ratio, divided them itself, and wrote "R/R = 1.65 ... above 1.5, so
+compliant" in `rr_audit` while writing "R/R = 1.31, which is below the 1.5
+floor" in `reasoning` — in the SAME response — then rejected a compliant
+trade on the wrong one, and the desk took no position that session.
+
+Note also that the constructor may WIDEN a stop after PM proposed it, to keep
+it outside the name's ordinary daily range. A proposed stop that differs from
+the TechAnalyst signal's is therefore expected and explained, not evidence of
+tampering: the supplied R/R already reflects the widened stop.
+
 This check runs AFTER signal-fidelity audit and BEFORE the reasoning-chain audit. R/R discipline is the #1 lever against overtrading — take it seriously.
 
 ### When to reject vs modify

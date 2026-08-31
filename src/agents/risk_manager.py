@@ -99,9 +99,18 @@ class RiskManagerAgent(BaseAgent):
                 )
             else:
                 alloc = f"{d.allocation_pct}% of portfolio"
+            # R/R is rendered from `TradeDecision.reward_risk`, a Python
+            # computed field — NOT left for the model to divide out of the
+            # prices below. On 2026-08-31 this seat was given bare prices,
+            # did the arithmetic itself, produced 1.65 in `rr_audit` and 1.31
+            # in `reasoning` IN THE SAME RESPONSE, and rejected a compliant
+            # trade on the wrong one. The ratio the floor is judged against
+            # must come from the same deterministic code that built the order.
+            # None only for SELL/COVER/HOLD, which have no entry geometry.
+            rr = f" | R/R {d.reward_risk}:1" if d.reward_risk is not None else ""
             return (
                 f"- {d.action} {d.symbol}: {alloc} | Entry: ${d.entry_price} | "
-                f"Stop: ${d.stop_loss} | Target: ${d.take_profit}\n  Reasoning: {d.reasoning}"
+                f"Stop: ${d.stop_loss} | Target: ${d.take_profit}{rr}\n  Reasoning: {d.reasoning}"
             )
 
         decisions_text = "\n".join(

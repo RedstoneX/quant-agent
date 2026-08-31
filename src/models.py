@@ -376,6 +376,45 @@ class TradeDecision(BaseModel):
     # risk-based plan exists for this symbol (legacy notional target).
     allocated_risk_pct: float | None = None
 
+    @computed_field
+    @property
+    def reward_risk(self) -> float | None:
+        """Reward/risk ratio of the CONSTRUCTED order, computed in Python.
+
+        Deliberately mirrors `TechAnalysisResult.risk_reward` — including its
+        "not trusted to the LLM" rule — because the object that ACTUALLY
+        REACHES EXECUTION never got that treatment, and the omission cost a
+        live trading session on 2026-08-31.
+
+        What happened: the Risk Manager is handed entry/stop/target as bare
+        text with no ratio, so it does the division inside the model. For a
+        BUY on RSG (entry $221.14, stop $207.90, target $242.96) it computed
+        the ratio TWICE IN ONE RESPONSE — `rr_audit` said "R/R = 1.65 ...
+        above 1.5, so compliant", while `reasoning` said "R/R = 1.31, which
+        is below the 1.5 floor" and rejected the trade. The pipeline acts on
+        the second field. 1.65 is correct; 1.31 matches no combination of the
+        inputs and was simply wrong.
+
+        An LLM must not own the arithmetic of a gate. It judges; the
+        deterministic side computes. Geometry rules match the tech-analyst
+        field: prices must be present and the inequalities must hold for the
+        side, else None, so nobody renders a fake ratio.
+        """
+        if self.entry_price is None or self.stop_loss is None or self.take_profit is None:
+            return None
+        if self.action == "BUY":
+            risk = self.entry_price - self.stop_loss
+            reward = self.take_profit - self.entry_price
+        elif self.action == "SHORT":
+            risk = self.stop_loss - self.entry_price
+            reward = self.entry_price - self.take_profit
+        else:
+            # SELL / COVER reduce an existing position; HOLD opens nothing.
+            # No entry geometry to measure, so no ratio exists.
+            return None
+        if risk <= 0 or reward <= 0:
+            return None
+        return round(reward / risk, 2)
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:

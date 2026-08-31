@@ -425,3 +425,95 @@ def test_reviewer_prompt_documents_r_before_thesis_progress():
             / "config" / "prompts" / "position_reviewer.md").read_text()
     assert "R-multiple" in text
     assert text.index("`R` = the **R-multiple**") < text.index("`thesis_progress_pct` =")
+
+
+# ===========================================================================
+# The Risk Manager must be GIVEN reward:risk, never left to divide it itself
+#
+# 2026-08-31 incident. The RM received the constructed order as bare
+# Entry/Stop/Target text with no ratio, did the arithmetic inside the model,
+# and produced TWO DIFFERENT ANSWERS IN ONE RESPONSE for a BUY on RSG
+# (entry 221.14, stop 207.90, target 242.96): `rr_audit` said "R/R = 1.65 ...
+# above 1.5, so compliant", `reasoning` said "R/R = 1.31, which is below the
+# 1.5 floor". The pipeline acts on `reasoning`, so a compliant trade was
+# rejected and the desk took no position that session. 1.65 is correct; 1.31
+# matches no combination of the inputs.
+#
+# The seam these cover — build a real constructed order, render it into the
+# RM prompt, assert the ratio is present and correct — had NO test at all.
+# ===========================================================================
+
+def _decision(action="BUY", entry=221.14, stop=207.90, target=242.96):
+    from src.models import TradeDecision
+    return TradeDecision(
+        action=action, symbol="RSG", allocation_pct=5.0,
+        entry_price=entry, stop_loss=stop, take_profit=target,
+        reasoning="constructed order under test",
+    )
+
+
+def test_trade_decision_computes_reward_risk_in_python():
+    """The exact 2026-08-31 order. 1.65, deterministically, every time."""
+    assert _decision().reward_risk == 1.65
+
+
+def test_reward_risk_mirrors_the_short_side():
+    d = _decision(action="SHORT", entry=100.0, stop=110.0, target=80.0)
+    assert d.reward_risk == 2.0
+
+
+def test_reward_risk_is_none_when_there_is_no_entry_geometry():
+    """SELL/COVER reduce an existing position; HOLD opens nothing. A ratio
+    rendered for these would be fiction."""
+    for action in ("SELL", "COVER", "HOLD"):
+        assert _decision(action=action).reward_risk is None
+
+
+def test_malformed_buy_geometry_is_rejected_before_a_ratio_can_exist():
+    """A BUY whose stop sits above entry never becomes a TradeDecision at all
+    — `validate_buy_prices` refuses it at construction. Asserted here so the
+    reward_risk guard's None-branch is understood as defence in depth behind
+    an existing validator, not as the only thing standing between the desk and
+    a fake ratio."""
+    import pytest as _pytest
+    from pydantic import ValidationError
+    with _pytest.raises(ValidationError):
+        _decision(stop=230.0)
+
+
+def test_rm_prompt_carries_the_computed_reward_risk_for_each_trade():
+    """The regression that matters: the ratio must reach the RM's prompt, so
+    the model never has to derive the number its own floor is judged against."""
+    from src.models import PortfolioDecision, ReasoningChain
+
+    decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=[_decision()], portfolio_view="constructive",
+    )
+    msg = _rm_message(portfolio_decision=decision)
+    assert "R/R 1.65:1" in msg, (
+        "the constructed order's computed reward:risk must be rendered into "
+        "the Risk Manager prompt — without it the model divides the prices "
+        "itself, which is exactly what failed on 2026-08-31"
+    )
+
+
+def test_rm_prompt_omits_reward_risk_where_none_exists():
+    """A SELL must not carry a ratio — rendering 'R/R None:1' would be worse
+    than rendering nothing."""
+    from src.models import PortfolioDecision, ReasoningChain
+
+    decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=[_decision(action="SELL")], portfolio_view="constructive",
+    )
+    msg = _rm_message(portfolio_decision=decision)
+    assert "R/R None" not in msg
