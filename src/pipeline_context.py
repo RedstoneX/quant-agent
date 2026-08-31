@@ -114,6 +114,17 @@ class RunContext:
     # authored by an LLM.
     admitted_symbols: set[str] = field(default_factory=set)
     smart_money_admissions: dict[str, dict] = field(default_factory=dict)
+    # Conviction ledger (spec §9.5): {SYMBOL: {seat: {"conviction", "observation"}}}
+    # for every raw nomination this run produced, seat names already
+    # canonicalized (`src.conviction_ledger.normalize_seat`). Written by
+    # MorningResearchStage's nomination responder pass and read by
+    # DecisionStage, which is where a decision_id finally exists to record
+    # the stances against. Carried on the context rather than re-read from
+    # the evidence table because the pass already holds the typed objects —
+    # and because a read-back would make a forensic concern depend on a
+    # write having succeeded. Empty for every session that runs no
+    # nominations (intraday, close, evening), which is the honest state.
+    nomination_convictions: dict[str, dict[str, dict]] = field(default_factory=dict)
     symbols_bars: dict = field(default_factory=dict)  # {sym: list[OHLCV]}
     valuations: dict = field(default_factory=dict)  # {sym: {trailing_pe, ...}}
     data_status: dict[str, str] = field(default_factory=dict)

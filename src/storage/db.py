@@ -1927,6 +1927,323 @@ class Database:
             return cur.lastrowid or 0
         return self._locked_write(_do, label="insert_specialist_evidence")
 
+    # --- Conviction ledger (spec §9.5) -----------------------------------
+    #
+    # §9.1/§9.2 already persisted every raw nomination as a `pipeline_event`
+    # evidence row (outcome='nominated', carrying seat/conviction/observation)
+    # — but with decision_id NULL, because `RunContext.decision_id` is not
+    # minted until DecisionStage, which runs AFTER the nomination responder
+    # pass. Provenance existed; the JOIN did not, so no nomination could be
+    # traced to the trade it became or scored against an outcome.
+    #
+    # Three additions close that, all inside the existing
+    # `specialist_evidence` table (no new store — the table already carries
+    # per-symbol, per-decision evidence and is already pruned, indexed on
+    # decision_id, and documented as non-authoritative forensic display):
+    #
+    #   1. `link_nominations_to_decision` back-fills decision_id onto this
+    #      run's nomination rows once DecisionStage has minted one.
+    #   2. `record_seat_stances` writes kind='seat_stance' — every seat's
+    #      side per idea, dissent as well as support.
+    #   3. `resolve_conviction_ledger` scores closed positions into
+    #      kind='conviction_credit' rows, read back by
+    #      `get_conviction_credits` with no recomputation.
+    #
+    # ALL of it is bookkeeping. Nothing in this section is read by the
+    # trading decision chain, and the writes are best-effort at every call
+    # site (`.claude/rules/trading-core.md`: a forensic-persistence failure
+    # must never relax or alter a deterministic decision).
+
+    NOMINATION_KIND = "pipeline_event"
+    SEAT_STANCE_KIND = "seat_stance"
+    CONVICTION_CREDIT_KIND = "conviction_credit"
+
+    def link_nominations_to_decision(self, *, run_id: str, decision_id: str) -> int:
+        """Back-fill `decision_id` onto this run's unjoined nomination rows.
+
+        Spec §9.5. Targets exactly the rows `_record_pipeline_event` wrote
+        with outcome='nominated' for `run_id` that carry no decision_id yet —
+        never any other evidence row, and never one already joined (so a
+        retry, or a second call in the same run, is a no-op). Returns the
+        number of rows updated.
+
+        A run has one PM call and therefore one decision_id, which is what
+        makes the back-fill unambiguous: `trades.decision_id` +
+        `trades.symbol` then join straight to the nomination that raised the
+        symbol. Rows from a run whose PM never produced a decision stay NULL,
+        which is correct — there was no decision for them to point at.
+
+        Deliberately NOT a change to when nominations are recorded. Moving
+        the nomination write after DecisionStage would put a forensic
+        concern inside the decision path and reorder evidence relative to the
+        responder pass that consumes it; an UPDATE afterwards touches nothing
+        the pipeline reads.
+        """
+        if not run_id or not decision_id:
+            return 0
+
+        def _do():
+            cur = self.conn.execute(
+                "UPDATE specialist_evidence SET decision_id = ? "
+                "WHERE run_id = ? AND decision_id IS NULL "
+                "AND kind = ? AND agent_name = 'pipeline' "
+                "AND json_extract(evidence_json, '$.outcome') = 'nominated'",
+                (decision_id, run_id, self.NOMINATION_KIND),
+            )
+            self.conn.commit()
+            return cur.rowcount or 0
+        return self._locked_write(_do, label="link_nominations_to_decision")
+
+    def get_nominations_for_decision(self, decision_id: str) -> list[dict]:
+        """Every nomination row now joined to `decision_id`, oldest first.
+
+        The read side of the join: given a trade's decision_id, which seats
+        nominated which symbols in the run that produced it.
+        """
+        if not decision_id:
+            return []
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT symbol, evidence_json, run_id, timestamp "
+                "FROM specialist_evidence "
+                "WHERE decision_id = ? AND kind = ? AND agent_name = 'pipeline' "
+                "AND json_extract(evidence_json, '$.outcome') = 'nominated' "
+                "ORDER BY timestamp, id",
+                (decision_id, self.NOMINATION_KIND),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_seat_stances(
+        self, *, run_id: str, decision_id: str, stances,
+    ) -> int:
+        """Persist each seat's side on each idea — dissent as well as support.
+
+        `stances` is an iterable of `src.conviction_ledger.SeatStance`. One
+        row per (symbol, seat), `agent_name` set to the canonical seat name so
+        the ledger reads per analyst. Returns the number of rows written.
+
+        The stance itself is NOT re-derived here: it is the canonical
+        evidence-registry stance the §9.4 agreement ceiling already counts
+        (`PortfolioManagerAgent.build_evidence_registry`), so what the ledger
+        scores and what sizing counted are the same fact.
+        """
+        import json as _json
+        written = 0
+        for stance in stances or []:
+            payload = {
+                "seat": stance.seat,
+                "symbol": stance.symbol,
+                "stance": stance.stance,
+                "conviction": stance.conviction,
+                "nominated": bool(stance.nominated),
+                "observation": stance.observation,
+            }
+            self.insert_specialist_evidence(
+                run_id=run_id, decision_id=decision_id, agent_name=stance.seat,
+                kind=self.SEAT_STANCE_KIND, scope="symbol", symbol=stance.symbol,
+                evidence_json=_json.dumps(payload, sort_keys=True),
+            )
+            written += 1
+        return written
+
+    def get_seat_stances(
+        self, *, decision_id: str, symbol: str | None = None,
+    ) -> list:
+        """Reconstruct `SeatStance` objects for one decision (optionally one
+        symbol). Malformed rows are skipped with a warning rather than taking
+        down the read — same tolerance as every other evidence reader here."""
+        from src.conviction_ledger import SeatStance
+        if not decision_id:
+            return []
+        sql = (
+            "SELECT symbol, evidence_json FROM specialist_evidence "
+            "WHERE decision_id = ? AND kind = ?"
+        )
+        params: list = [decision_id, self.SEAT_STANCE_KIND]
+        if symbol:
+            sql += " AND symbol = ?"
+            params.append(symbol.strip().upper())
+        sql += " ORDER BY id"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        import json as _json
+        out = []
+        for row in rows:
+            try:
+                data = _json.loads(row["evidence_json"])
+                out.append(SeatStance(
+                    seat=data.get("seat") or "",
+                    symbol=data.get("symbol") or row["symbol"] or "",
+                    stance=data.get("stance") or "",
+                    conviction=data.get("conviction") or "medium",
+                    nominated=bool(data.get("nominated")),
+                    observation=data.get("observation") or "",
+                ))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Skipping malformed seat_stance row: %s", e)
+        return out
+
+    def get_conviction_credits(
+        self, *, seat: str | None = None, limit: int | None = None,
+    ) -> list:
+        """Every persisted `SeatCredit`, oldest first. Read back, not recomputed.
+
+        This is what makes the ledger cheap to display: scoring happens once,
+        when a position closes, and the aggregate
+        (`src.conviction_ledger.aggregate_seat_records`) is pure arithmetic
+        over these rows.
+        """
+        from src.conviction_ledger import SeatCredit
+        sql = (
+            "SELECT evidence_json FROM specialist_evidence WHERE kind = ?"
+        )
+        params: list = [self.CONVICTION_CREDIT_KIND]
+        if seat:
+            sql += " AND agent_name = ?"
+            params.append(str(seat).strip().lower())
+        sql += " ORDER BY timestamp, id"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        import json as _json
+        out = []
+        for row in rows:
+            try:
+                data = _json.loads(row["evidence_json"])
+                out.append(SeatCredit(
+                    seat=data["seat"], symbol=data["symbol"], side=data["side"],
+                    stance=data.get("stance", ""),
+                    conviction=data.get("conviction", "medium"),
+                    weight=float(data.get("weight", 1.0)),
+                    r_multiple=float(data.get("r_multiple", 0.0)),
+                    credit=float(data["credit"]),
+                    resolved_at=data.get("resolved_at", ""),
+                    position_id=data.get("position_id"),
+                    decision_id=data.get("decision_id"),
+                    direction=data.get("direction", "long"),
+                    nominated=bool(data.get("nominated")),
+                ))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Skipping malformed conviction_credit row: %s", e)
+        return out
+
+    def _scored_position_ids(self) -> set[str]:
+        """position_ids that already carry credit rows — the idempotency key."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT DISTINCT json_extract(evidence_json, '$.position_id') AS pid "
+                "FROM specialist_evidence WHERE kind = ?",
+                (self.CONVICTION_CREDIT_KIND,),
+            ).fetchall()
+        return {r["pid"] for r in rows if r["pid"]}
+
+    def resolve_conviction_ledger(self) -> dict:
+        """Score every newly-closed position into per-seat credit rows.
+
+        Spec §9.5 "score on close". For each `position_id` chain that has
+        gone flat and has not been scored before:
+
+          1. reduce it to a round trip (`summarize_closed_position`),
+          2. compute its realized R with `src.risk.metrics.r_multiple` — the
+             SAME function the heat block and PMFacts already use, against
+             the stop the position was OPENED with,
+          3. credit every seat that took a side at decision time
+             (`score_position`), conviction-weighted,
+          4. persist one `conviction_credit` evidence row per seat.
+
+        Idempotent by construction: a position whose id already appears in a
+        credit row is skipped, so this is safe to run every evening.
+
+        Never guesses. A chain with no entry stop on record has no honest
+        R-multiple denominator and is counted in `skipped_no_r` rather than
+        scored; a chain whose decision recorded no seat stances is counted in
+        `skipped_no_stances`. Neither is retried into a fabricated number.
+
+        Returns a counters dict — `{"closed_positions", "scored_positions",
+        "credits_written", "skipped_already_scored", "skipped_no_r",
+        "skipped_no_stances"}`. Purely observational: nothing in the trading
+        chain reads this method or the rows it writes.
+        """
+        import json as _json
+        from src.conviction_ledger import score_position, summarize_closed_position
+        from src.risk.metrics import r_multiple as _r_multiple
+
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, position_id, symbol, action, qty, price, fill_qty, "
+                "fill_price, fill_status, stop_loss, decision_id, run_id, "
+                "timestamp FROM trades WHERE position_id IS NOT NULL "
+                "ORDER BY position_id, timestamp, id",
+            ).fetchall()
+        chains: dict[str, list[dict]] = {}
+        for row in rows:
+            chains.setdefault(row["position_id"], []).append(dict(row))
+
+        already = self._scored_position_ids()
+        counters = {
+            "closed_positions": 0, "scored_positions": 0, "credits_written": 0,
+            "skipped_already_scored": 0, "skipped_no_r": 0,
+            "skipped_no_stances": 0,
+        }
+        for position_id, chain in chains.items():
+            closed = summarize_closed_position(chain)
+            if closed is None:
+                continue  # still open, or never opened — not an outcome yet
+            counters["closed_positions"] += 1
+            if position_id in already:
+                counters["skipped_already_scored"] += 1
+                continue
+            r = (
+                _r_multiple(
+                    closed.exit_price, closed.entry_price,
+                    closed.initial_stop, closed.qty,
+                )
+                if closed.initial_stop is not None else None
+            )
+            if r is None:
+                counters["skipped_no_r"] += 1
+                continue
+            stances = self.get_seat_stances(
+                decision_id=closed.decision_id or "", symbol=closed.symbol,
+            )
+            if not stances:
+                counters["skipped_no_stances"] += 1
+                continue
+            credits = score_position(
+                symbol=closed.symbol, direction=closed.direction, r_multiple=r,
+                stances=stances, position_id=position_id,
+                decision_id=closed.decision_id, resolved_at=closed.closed_at,
+            )
+            if not credits:
+                counters["skipped_no_stances"] += 1
+                continue
+            run_id = next(
+                (str(row.get("run_id") or "") for row in chain if row.get("run_id")),
+                "",
+            ) or f"ledger-{position_id}"
+            for credit in credits:
+                self.insert_specialist_evidence(
+                    run_id=run_id, decision_id=credit.decision_id,
+                    agent_name=credit.seat, kind=self.CONVICTION_CREDIT_KIND,
+                    scope="symbol", symbol=credit.symbol,
+                    evidence_json=_json.dumps({
+                        "seat": credit.seat, "symbol": credit.symbol,
+                        "side": credit.side, "stance": credit.stance,
+                        "conviction": credit.conviction, "weight": credit.weight,
+                        "r_multiple": credit.r_multiple, "credit": credit.credit,
+                        "resolved_at": credit.resolved_at,
+                        "position_id": credit.position_id,
+                        "decision_id": credit.decision_id,
+                        "direction": credit.direction,
+                        "nominated": credit.nominated,
+                    }, sort_keys=True),
+                )
+                counters["credits_written"] += 1
+            counters["scored_positions"] += 1
+        return counters
+
     # --- Position-reviewer memory (spec Phase 3.2 / audit §1.5) -----------
     #
     # `_build_own_recent_decisions` replays past ACTIONS and explicitly drops
