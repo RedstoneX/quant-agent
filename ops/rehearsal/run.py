@@ -2,8 +2,9 @@
 
     python ops/rehearsal/run.py --help
 
-See ops/rehearsal/README.md for the runbook, and runner.py for what is real
-and what is not.
+There is no separate setup guide — see runner.py's module docstring for the
+full example invocation and what runs for real vs. what is stubbed, and
+isolation.py's for the sandbox's isolation guarantees.
 """
 
 from __future__ import annotations

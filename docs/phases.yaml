@@ -309,15 +309,15 @@ phases:
   - id: phase_4
     title: "Phase 4 — Evidence symmetry and feed repair"
     plain_summary:
-      verdict: "The mid-day trading check no longer flies blind, and the outside data feeds it depends on got a serious repair — though two real gaps remain."
+      verdict: "The mid-day trading check no longer flies blind, and the outside data feeds it depends on got a serious repair. The two gaps this phase used to leave open are both closed: one shipped, one declined by the owner."
       points:
         - "The mid-day check used to make buy and sell decisions without the morning's macro and news findings, even though that information already existed elsewhere in the system — fixed and live."
         - "Several outside data feeds the desk depends on were broken or missing proper retries."
         - "The free news sources the desk reads were widened from 8 to 11 feeds, adding several major financial outlets and regulatory press releases; one feed that had silently stopped publishing over a year earlier, while still reporting itself as healthy, was found and removed."
         - "Free per-company news was also added, but only for stocks already held or being actively considered, and capped, to keep costs down."
         - "The economic-data feed had a real reliability problem — all of its data series once failed within the same short window because of weak retry handling. That has been replaced with proper retries, a real time limit, and six new data series, all verified live."
-      outstanding: "Two things remain. Full wire-service news coverage (Reuters/AP) needs a paid subscription and an owner decision, not more free-feed searching. And there is still no calendar of scheduled economic events, so questions about upcoming Fed decisions or inflation data are answered from the model's memory rather than real data — tracked separately as its own open item."
-    status: "PARTIAL"
+      outstanding: "Both things that used to remain here are now closed. Full wire-service news coverage (Reuters/AP) would need a paid subscription, and the owner has declined it — a closed decision, not an open one. And the calendar of scheduled economic events this phase was missing is now built, in a later phase: FRED covers the macro releases and the Fed's own free calendar covers FOMC meeting dates — see open_defects for that evidence."
+    status: "DONE"
     confidence: "high"
     evidence:
       - kind: commit_in_main
@@ -386,9 +386,9 @@ phases:
         symbol: "DFII10, T10YIE"
         note: "the macro analyst prompt explains the new series"
       - kind: manual
-        note: "This phase stays PARTIAL, not DONE — see the plain_summary. Two genuine gaps remain, neither closed by PR #162: wire-service breadth (Reuters/AP, needs a paid subscription and owner decision) and a macro event calendar (Fed decision / inflation release dates) — event_risk is still answered from the model's memory, not data. See open_defects."
+        note: "This phase moved from PARTIAL to DONE once the two gaps PR #162 left standing were both closed — neither by PR #162 itself. Wire-service breadth (Reuters/AP) needed a paid subscription; the owner has now declined it, closing the question rather than leaving it pending. The macro event calendar (Fed decision / inflation release dates) needed FRED's release calendar (shipped, PR #170) plus the Fed's own free FOMC calendar (shipped, PR #177) — event_risk now answers from fetched data, not the model's memory. See open_defects for the FOMC evidence specifically."
       - kind: manual
-        note: "RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
+        note: "RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. Full wire-service coverage — restoring Reuters/AP breadth — would need a paid API subscription; the owner has declined it. CLOSED as a declined question, not open work: not because the code is broken, and not pending a decision any more. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
       - kind: manual
         note: "PR #148 (commit 0418afd, 'feat(news): widen the free source set and cap what reaches the analyst') widened what the news seat reads — RSS_FEEDS grew from 8 to 11 entries (Seeking Alpha Market Currents, Investing.com News, Nasdaq News and SEC Press Releases added on top of the earlier Yahoo Finance addition) and one feed that 200s but has been dead for over a year (MarketWatch Markets) was found and removed the same day. See the mechanical rules below for the specific feed names and tests. Re-check: `python3 -c \"import src.data.news as n; print(len(n.RSS_FEEDS))\"` should print 11, and re-run the removed-feed comment search if this needs re-verifying later."
       - kind: pr_merged
@@ -849,17 +849,12 @@ phases:
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary:
-      verdict: "The 2026-08-30 review recorded thirteen problems, and the audit that worked through them turned up five more. All thirteen originals are closed — nine fixed and live, four found to be unused code and deleted. Of the five later ones, three are now fixed, one is a question put to the owner rather than scheduled work, and one small one remains."
+      verdict: "The 2026-08-30 review recorded thirteen problems, and the audit that worked through them turned up five more. All thirteen originals are closed — nine fixed and live, four found to be unused code and deleted. Of the five later ones, four are now fixed and one is a question put to the owner rather than scheduled work. Nothing remains on the ranked list."
       points:
-        - "Nothing left on the ranked list affects trading decisions or risk. It is a rough edge, not a hazard."
-        - "An internal note links to a setup document that was never written."
-      outstanding: "One item, described below. It is not urgent."
-    defects:
-      - id: "rehearsal-readme-missing"
-        title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 1
-        status: "OPEN"
-        summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
+        - "The ranked list below is now empty. Nothing on it ever affected trading decisions or risk — every entry was a rough edge, not a hazard."
+        - "The last entry, a docstring pointing readers at a setup guide that was never written, is closed by removing the dangling reference rather than writing one: the module it points at already documents itself in full."
+      outstanding: "Nothing on the ranked list. One separate item — whether to wire Telegram credentials into the deploy-drift alarm's own service environment — is still an open question for the owner, tracked in the evidence below rather than as a ranked defect."
+    defects: []
     evidence:
       - kind: manual
         note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. That audit surfaced five further items, tracked as NEW (1)-(5) in this evidence block: NEW (2), (3) and (4) are now closed (PRs #183, #185 and #178 respectively); NEW (1) is an open question for the owner rather than scheduled work; NEW (5) is the single entry left in the defects: list above. Each carries its own re-check command below."
@@ -884,9 +879,22 @@ phases:
       - kind: symbol_in_file
         path: "src/data/event_calendar.py"
         symbol: "UNCOVERED_EVENTS: tuple[str, ...] = ("
-        note: "(a) partially closed: macro releases are fetched from FRED for seven scheduled series (MACRO_RELEASES — CPI/NFP/PPI/PCE/GDP/Retail Sales/Jobless Claims); UNCOVERED_EVENTS is where the FOMC gap is declared explicitly to the seats rather than left silent."
+        note: "macro releases are fetched from FRED for seven scheduled series (MACRO_RELEASES — CPI/NFP/PPI/PCE/GDP/Retail Sales/Jobless Claims); UNCOVERED_EVENTS now lists only what genuinely has no free source (non-US central bank decisions, Treasury refunding, OPEC+, index rebalances, FOMC minutes release dates) — FOMC meeting dates themselves were removed from this list once (a) closed, below."
+      - kind: pr_merged
+        number: 177
+        note: "(a) closed: the owner decided in favour of adding the Fed's own free calendar page as a second FOMC source, after being asked; this PR is the implementation."
+      - kind: commit_in_main
+        sha: "d3d8fda0419e5a9ea8d8ab2fdd876cb77e7aedfc"
+        note: "feat(event-risk): fetch FOMC meeting dates from the Fed's own free calendar"
+      - kind: symbol_in_file
+        path: "src/data/event_calendar.py"
+        symbol: "class FOMCCalendarProvider"
+        note: "(a) closed: fetches federalreserve.gov/json/calendar.json as the primary source and falls back to the rendered fomccalendars.htm page for years the JSON feed does not reach yet (verified live: the JSON feed stops in 2026-12, the HTML page already lists all eight 2027 meetings)."
+      - kind: test_exists
+        path: "tests/test_event_risk_calendar.py"
+        test: "test_fred_is_still_not_the_fomc_source_and_the_gap_list_no_longer_claims_it_is"
       - kind: manual
-        note: "(a) STILL OPEN: no free FRED endpoint publishes the FOMC meeting calendar — verified live 2026-08-31, release 101 ('FOMC Press Release') returned all 240 calendar days over an eight-month probe window rather than a meeting schedule. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates only; NOT yet decided — this is an open question, not scheduled work. Re-check by asking whether that decision has since been made, and by re-reading the live-evidence note in src/data/event_calendar.py's module docstring for whether a free FOMC source has been found."
+        note: "(a) this evidence block previously read 'STILL OPEN ... NOT yet decided' — accurate when written (commit bcc4785, 2026-08-31 01:19 UTC) but the fix landed under an hour later (PR #177, 02:16 UTC) and the note was never revised through it, including through PR #180's otherwise-thorough related cleanup the same day. The owner has since confirmed the decision in favour, closing the question. Re-check: `grep -n 'class FOMCCalendarProvider' src/data/event_calendar.py` and `grep -n FOMC_JSON_CALENDAR_URL src/data/event_calendar.py`."
       - kind: symbol_in_file
         path: "src/data/event_calendar.py"
         symbol: "market_provider.get_next_earnings_date, symbol,"
@@ -990,10 +998,8 @@ phases:
         test: "test_the_daily_export_no_longer_points_at_the_upstream_fork"
       - kind: manual
         note: "NEW (4) verified live 2026-08-31 rather than taken from the merge: `sudo -n -u qamc cat /home/qamc/.config/systemd/user/quant-agent-daily.service` shows WorkingDirectory=/home/qamc/quant-agent, and the service's last run (Fri 2026-08-28 13:00 UTC) exited 0 having sent 14 rows as pnl_history_2026-08-28.csv. Re-check: `grep -rn /home/yebo scripts/systemd/` should return nothing, and tests/test_systemd_units.py pins it by name for every unit, not only this one."
-      - kind: symbol_in_file
-        path: "ops/rehearsal/run.py"
-        symbol: "ops/rehearsal/README.md"
-        note: "NEW (5): this module's docstring points readers to ops/rehearsal/README.md, which does not exist. Re-check: `ls ops/rehearsal/README.md` — currently 'No such file or directory'."
+      - kind: manual
+        note: "NEW (5) closed: ops/rehearsal/run.py's docstring pointed readers to ops/rehearsal/README.md, which never existed. Resolved by removing the dangling reference rather than writing the guide — every module in ops/rehearsal/ (run.py, runner.py, isolation.py, broker.py, clock.py, replay.py, report.py) already carries a full module docstring covering what it does and why; runner.py's gives the complete example invocation, isolation.py's gives the full isolation-guarantee writeup. A README would only restate them in a second location, which this repo's documentation policy treats as sprawl, not a setup guide's proper job. Re-check: `ls ops/rehearsal/README.md` should still report 'No such file or directory', and `grep -n README ops/rehearsal/run.py` should return nothing."
 
   - id: invariants
     title: "Invariants (must hold at all times)"
