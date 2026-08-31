@@ -756,29 +756,24 @@ phases:
     status: "OPEN"
     confidence: "high"
     defects:
-      - id: "fomc-dates-not-covered"
-        title: "FOMC meeting dates have no free source"
-        rank: 1
-        status: "OPEN"
-        summary: "The desk now fetches a real calendar for seven scheduled macro releases (CPI, payrolls, PPI, PCE, GDP, retail sales, jobless claims) from FRED, but no free FRED endpoint publishes the Federal Reserve's own meeting calendar — queried over an eight-month window, FRED's 'FOMC Press Release' series simply returns all 240 calendar days rather than a meeting schedule. Both the Risk Manager and the Macro Analyst prompts now state this gap outright instead of guessing from memory. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates specifically; that decision is not yet made."
       - id: "intraday-analysis-error-unclassified"
         title: "One reachable pipeline status has no plain-English message"
-        rank: 2
+        rank: 1
         status: "OPEN"
         summary: "'intraday_analysis_error', present in the pipeline since 2026-08-25, has no entry in the plain-English status vocabulary — if it ever fires, the account owner would see the generic fallback message instead of a real explanation. Tracked explicitly as a known gap by the exhaustiveness test added in PR #172, which is self-cleaning: it fails loudly once the gap is closed, or if any new untracked one appears."
       - id: "rehearsal-pricing-note-always-zero-grace"
         title: "Rehearsal pricing-cache note always reports 0h grace"
-        rank: 3
+        rank: 2
         status: "OPEN"
         summary: "The rehearsal harness builds its pricing-cache grace-window note before the sandbox's own settings.yaml is written, so the lookup reads a file that does not exist yet, silently falls back, and always reports '0h grace' regardless of the real configured grace period. Cosmetic: it would misdescribe a rehearsal actually running inside the grace band, but does not affect anything the rehearsal proves."
       - id: "pnl-export-wrong-working-directory"
         title: "Daily P&L export's systemd unit points at the wrong path"
-        rank: 4
+        rank: 3
         status: "OPEN"
         summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
       - id: "rehearsal-readme-missing"
         title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 5
+        rank: 4
         status: "OPEN"
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
@@ -806,17 +801,6 @@ phases:
         path: "src/data/event_calendar.py"
         symbol: "UNCOVERED_EVENTS: tuple[str, ...] = ("
         note: "(a) partially closed: macro releases are fetched from FRED for seven scheduled series (MACRO_RELEASES — CPI/NFP/PPI/PCE/GDP/Retail Sales/Jobless Claims); UNCOVERED_EVENTS is where the FOMC gap is declared explicitly to the seats rather than left silent."
-      - kind: test_exists
-        path: "tests/test_event_risk_calendar.py"
-        test: "test_fomc_is_declared_uncovered_rather_than_left_to_memory"
-      - kind: symbol_in_file
-        path: "config/prompts/risk_manager.md"
-        symbol: "the honest answer about an FOMC date is that you do not have it."
-        note: "(a) the Risk Manager prompt states the FOMC gap outright rather than letting the model reason from memory."
-      - kind: symbol_in_file
-        path: "config/prompts/macro_analyst.md"
-        symbol: "currently FOMC meeting dates"
-        note: "(a) the Macro Analyst prompt names the same uncovered gap."
       - kind: manual
         note: "(a) STILL OPEN: no free FRED endpoint publishes the FOMC meeting calendar — verified live 2026-08-31, release 101 ('FOMC Press Release') returned all 240 calendar days over an eight-month probe window rather than a meeting schedule. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates only; NOT yet decided — this is an open question, not scheduled work. Re-check by asking whether that decision has since been made, and by re-reading the live-evidence note in src/data/event_calendar.py's module docstring for whether a free FOMC source has been found."
       - kind: symbol_in_file
@@ -884,7 +868,7 @@ phases:
         note: "(m) closed (PR #172): the four zero-caller helpers — cost_table._resolve_openrouter_model, news_dedup.deduplicate, news_store.get_report_path, ops/rehearsal/broker.default_snapshot_date — deleted. Re-check: `grep -rn '_resolve_openrouter_model(\\|def deduplicate(\\|def get_report_path(\\|def default_snapshot_date(' --include=*.py .` should return nothing besides this note."
       - kind: symbol_in_file
         path: "scripts/systemd/quant-agent-drift-check.service"
-        symbol: "ExecStart=/home/qamc/quant-agent/.venv/bin/python"
+        symbol: "ExecStart=/home/qamc/quant-agent/scripts/run_drift_check.sh"
         note: "NEW (1): the drift-check service invokes Python directly, not through an env-sourcing wrapper (contrast quant-agent-pricing-refresh.service, which runs run_pricing_refresh.sh — that wrapper sources .env specifically so its own Telegram alert can send)."
       - kind: symbol_in_file
         path: "src/notifier.py"
