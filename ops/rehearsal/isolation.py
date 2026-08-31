@@ -283,8 +283,15 @@ def _copy_data_tree_as_user(
     ``cp -a`` runs as the owning user and writes into the sandbox, then
     ownership is handed back to us. Timestamps are preserved (``-a``) because
     at least one consumer — the OpenRouter pricing cache — treats file mtime
-    as a freshness signal, and a rehearsal must never make stale pricing look
-    current.
+    as a freshness signal, so a copy that reset every mtime to "now" would be
+    silently declaring every cache in the tree current.
+
+    That preserved mtime is the *starting* point, not the final one, for the
+    pricing cache specifically: `ops/rehearsal/runner.py` then stamps it with
+    the age the rehearsal declared (`pricing_cache_age_hours`) inside the
+    sandbox, so a rehearsal's verdict does not depend on when a paid session
+    last happened to refresh production's copy. See that module's docstring.
+    Nothing here or there ever writes to the production file.
     """
     import subprocess
 

@@ -67,6 +67,19 @@ class RiskManagerAgent(BaseAgent):
         # 5% position stopped 20% away. None when the heat build failed.
         heat = kwargs.get("heat")
         risk_ceiling_pct: float = float(kwargs.get("risk_ceiling_pct") or 25.0)
+        # `reasoning_chain.event_risk` is a REQUIRED field asking whether an
+        # earnings report or a macro release lands in the next few sessions.
+        # Until this block existed nothing fetched either fact, so the answer
+        # came from the model's memory — and `risk_manager.md` explicitly told
+        # it to reason that way. This is the fetched data that replaces the
+        # recollection; when the caller passes nothing, the block still renders
+        # and says NOT FETCHED, because a missing section reads as a calm one.
+        event_risk_block: str = str(kwargs.get("event_risk_block") or "").strip()
+        if not event_risk_block:
+            from src.data.event_calendar import format_event_risk_block
+            event_risk_block = format_event_risk_block(
+                earnings=None, events=None, coverage=None, horizon_days=0,
+            ).strip()
 
         # audit round 2 #6: allocation_pct has TWO meanings — %-of-portfolio
         # for BUY vs %-of-current-position for SELL (100 = full close,
@@ -373,7 +386,9 @@ Portfolio View: {portfolio_decision.portfolio_view}
 {tech_section}
 
 {news_section}
-{earnings_section}## Macro Context
+{earnings_section}{event_risk_block}
+
+## Macro Context
 - VIX: {_fmt_or_na(vix.get('current'))} (5d avg: {_fmt_or_na(vix.get('mean_5d'))}, trend: {_fmt_or_na(vix.get('trend'))})
 - 2Y Treasury: {_fmt_or_na(treasury.get('us2y'), '%')}
 - 10Y Treasury: {_fmt_or_na(treasury.get('us10y'), '%')}
@@ -397,7 +412,8 @@ Review these proposed trades and provide your verdict as JSON."""
                position_history: dict | None = None,
                recent_performance: dict | None = None,
                heat=None,
-               risk_ceiling_pct: float = 25.0) -> tuple[RiskVerdict | None, "AgentResult"]:
+               risk_ceiling_pct: float = 25.0,
+               event_risk_block: str | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
@@ -421,6 +437,12 @@ Review these proposed trades and provide your verdict as JSON."""
             recent_performance=recent_performance or {},
             heat=heat,
             risk_ceiling_pct=risk_ceiling_pct,
+            # Optional for the same reason every other evidence kwarg here is:
+            # existing call sites keep working. Absent, build_user_message
+            # renders the explicit NOT FETCHED form rather than nothing —
+            # `event_risk` is a MANDATORY output field, so the one thing this
+            # input must never do is disappear silently.
+            event_risk_block=event_risk_block,
         )
         parsed = result.parse_json()
         if parsed is None:

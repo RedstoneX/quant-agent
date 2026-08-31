@@ -460,6 +460,152 @@ def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
     assert any(o.get("action") == "SWEEP_BUY" for o in result["orders"])
 
 
+# ---------- defect (e): capped per-symbol news must not spend a slot on the ----------
+# ---------- parked cash-equivalent vehicle, in ANY of the three same-day    ----------
+# ---------- session paths (midday, close, evening)                         ----------
+#
+# 2026-08-31 fix: `run_position_review` (shared by run_midday/run_close) built
+# its `held_symbols` list for `_run_news_update` straight from the broker's
+# UNFILTERED position snapshot — the SGOV/cash-sweep vehicle rode along and
+# could consume one of `config.news.per_symbol_max_symbols`' capped slots that
+# would otherwise go to a real position. `run_evening` already filtered via
+# `sweeper.split_positions` before this point; midday/close did not. Both now
+# go through the single shared `TradingPipeline._news_held_symbols` helper —
+# same mechanism (`CashSweeper.split_positions`, keyed on `cash_sweep.symbol`,
+# "SGOV" by default) evening already used, lifted so the three paths cannot
+# drift apart again.
+
+def _position_review_fixture(tmp_path):
+    """Same fixture as test_position_review_hides_vehicle_and_parks_at_end,
+    factored out so both run_midday and run_close can drive it."""
+    from src.models import PositionReview, PositionReasoningChain
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    p = _sweep_pipeline()
+    p.db = db
+    p.broker.is_trading_day.return_value = True
+    p.broker.get_session_close = MagicMock(return_value=None)
+    p.broker.get_account.return_value = {
+        "cash": 85_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
+    }
+    p.broker.get_positions.return_value = [SGOV, NVDA]
+    p.broker.open_buy_notional.return_value = 0.0
+    p.broker.get_latest_price.return_value = 100.60
+    p.broker.submit_order.return_value = {"id": "sweep-1", "status": "accepted"}
+    p.broker.snapshot_protective_stops.return_value = (True, [])
+    p.macro = MagicMock()
+    p.macro.get_macro_summary.return_value = {}
+    p.macro_store = MagicMock()
+    p.macro_store.load_last_state.return_value = None
+    p.config.llm = MagicMock()
+    p.config.llm.position_reviewer_model = "test-model"
+    p._auto_take_profit = MagicMock(return_value=[])
+    p._handle_ex_dividends = MagicMock(return_value=[])
+    p._run_news_update = MagicMock(return_value=(None, None))
+    p._load_earnings_analyses = MagicMock(return_value=(None, []))
+    p._midday_execute_llm_actions = MagicMock(return_value=[])
+    p._reconcile_stop_coverage = MagicMock(return_value=[])
+    p.risk_engine = MagicMock()
+    p.risk_engine.check_daily_loss.return_value = None
+    p.position_reviewer = MagicMock()
+    p.position_reviewer.review.return_value = (
+        PositionReview(
+            reasoning_chain=PositionReasoningChain(
+                macro_continuity_check="x", thesis_progress_check="x",
+                thesis_integrity_check="x", winners_discipline_check="x",
+                session_disposition_check="x", execution_rationale="x",
+            ),
+            actions=[], overall_assessment="stable", risk_level="low",
+        ),
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0,
+                  model="test-model",
+                  requested_provider="anthropic", requested_model="test-model",
+                  actual_provider="anthropic", used_fallback=False,
+                  prompt_version="test-version", latency_s=0.1,
+                  finish_reason=None, truncated=False),
+    )
+    return p
+
+
+def test_midday_news_held_symbols_excludes_sweep_vehicle(tmp_path):
+    """run_midday (session_type='midday') must not hand SGOV to
+    _run_news_update — it would consume one of the capped per-symbol news
+    slots a real position should get."""
+    p = _position_review_fixture(tmp_path)
+
+    result = p.run_midday()
+
+    assert result["status"] == "reviewed"
+    held = p._run_news_update.call_args.kwargs["held_symbols"]
+    assert held == ["NVDA"]
+    assert "SGOV" not in held
+
+
+def test_close_news_held_symbols_excludes_sweep_vehicle(tmp_path):
+    """Same defect, same fix, the OTHER session_type run_position_review
+    serves — close (15:30 ET) shares the exact same held_symbols block as
+    midday, so both must be verified independently rather than assuming
+    fixing one fixed the other."""
+    p = _position_review_fixture(tmp_path)
+
+    result = p.run_close()
+
+    assert result["status"] == "reviewed"
+    held = p._run_news_update.call_args.kwargs["held_symbols"]
+    assert held == ["NVDA"]
+    assert "SGOV" not in held
+
+
+def test_evening_news_held_symbols_excludes_sweep_vehicle():
+    """run_evening already filtered its LLM-facing `positions` view before
+    this fix; this asserts the news call specifically still excludes SGOV
+    now that it goes through the same shared `_news_held_symbols` helper as
+    midday/close, not a second hand-rolled filter that could drift."""
+    from src.models import EveningReport
+    from tests.test_bugfixes import _valid_evening_rc
+
+    p = _sweep_pipeline()
+    p.broker.is_trading_day.return_value = True
+    p.broker.get_account.return_value = {
+        "cash": 15_000.0, "portfolio_value": 100_000.0, "last_equity": 99_000.0,
+    }
+    p.broker.get_positions.return_value = [SGOV, NVDA]
+    p.broker.get_recent_daily_closes.return_value = []
+    p.macro = MagicMock()
+    p.macro.get_macro_summary.return_value = {}
+    p.macro_store = MagicMock()
+    p.macro_store.load_last_state.return_value = None
+    p.news_store = MagicMock()
+    p.news_store.load_daily_report.return_value = None
+    p.config.llm = MagicMock()
+    p.config.llm.evening_analyst_model = "test-model"
+    p._run_news_update = MagicMock(return_value=(None, None))
+    p._load_earnings_analyses = MagicMock(return_value=([], []))
+    p._build_recent_sells_for_grading = MagicMock(return_value=[])
+    p._build_recent_buys_for_grading = MagicMock(return_value=[])
+    p._build_recent_outlook_calibration = MagicMock(return_value={"samples": [], "n": 0})
+    p._build_weekly_narrative = MagicMock(return_value="")
+    p._build_active_state_changes = MagicMock(return_value="")
+    p._reconcile_fills = MagicMock()
+    p.evening_analyst = MagicMock()
+    p.evening_analyst.analyze.return_value = (
+        EveningReport(reasoning_chain=_valid_evening_rc(), daily_summary="Up",
+                      lessons="n/a", tomorrow_outlook="Watch", risk_rating="low"),
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="test-model"),
+    )
+
+    p.run_evening()
+
+    held = p._run_news_update.call_args.kwargs["held_symbols"]
+    assert held == ["NVDA"]
+    assert "SGOV" not in held
+
+
 def test_risk_stage_rm_view_excludes_vehicle():
     """Review finding: RM (the veto layer) must see parked T-bills as cash,
     not as an 84%-of-book position — otherwise PM and RM get contradictory

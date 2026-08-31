@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from src.data.event_calendar import EventCalendarCoverage
     from src.data.macro import MacroCoverage
     from src.models import NewsIntelligenceReport, PortfolioDecision, Position
     from src.risk.metrics import PortfolioHeat
@@ -82,6 +83,17 @@ class RunContext:
     # can't; data_status["macro"] is the summary, this is the evidence
     # behind it.
     macro_coverage: "MacroCoverage | None" = None
+    # Scheduled macro releases landing inside this run's event horizon, and how
+    # much of the configured release set actually returned a schedule
+    # (src.data.event_calendar). Fetched once by the research stage and read
+    # again by RiskStage, so one session issues one calendar sweep rather than
+    # two. The pair is load-bearing TOGETHER: an empty `macro_events` means
+    # "nothing scheduled" ONLY when `macro_event_coverage.status == "ok"`;
+    # with coverage None or degraded it means NOT FETCHED, and every renderer
+    # must say which. Defaults (empty list / None) are the honest "not fetched
+    # this run" state for every session that never populates them.
+    macro_events: list = field(default_factory=list)  # list[MacroEvent]
+    macro_event_coverage: "EventCalendarCoverage | None" = None
     news_intel: "NewsIntelligenceReport | None" = None
     analyses: list = field(default_factory=list)  # list[TechAnalysisResult]
     earnings_results: list[dict] = field(default_factory=list)

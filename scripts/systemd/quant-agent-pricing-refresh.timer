@@ -1,0 +1,32 @@
+# Refreshes the LLM price caches twice a day, EVERY day.
+[Unit]
+Description=quant-agent LLM price-cache refresh — 06:30 and 18:30 ET, seven days a week
+
+[Timer]
+# SEVEN DAYS, not Mon-Fri. This is the whole point of the unit. Until it
+# existed the OpenRouter price list was only ever refreshed by a paid session
+# starting, so it aged exactly when nothing was watching: over the weekend of
+# 2026-08-30 it passed its 24h freshness window with no session to notice, and
+# only a manual refresh before Monday kept the desk from opening and trading
+# nothing. A weekday-only timer would have missed that verbatim.
+#
+# 06:30 ET is before earnings_preprocess (08:00) and the morning session
+# (09:30), so the trading day always opens on a cache a couple of hours old.
+# 18:30 ET falls between the close session (ends 16:00) and the evening
+# session (starts 20:00), so neither fire lands inside a session window.
+#
+# Twice a day against a 24h freshness window and a further 24h grace means one
+# failed fetch is survivable three times over: four more scheduled attempts
+# stand between a single failure and the hard suspension, and the script
+# alerts on the FIRST boundary — when the cache passes 24h, with the whole
+# grace window still in hand — not on the second.
+OnCalendar=*-*-* 06:30 America/New_York
+OnCalendar=*-*-* 18:30 America/New_York
+# Run a missed firing on boot (the box was down at 06:30).
+Persistent=true
+# The cache does not care about the exact minute; letting systemd batch this
+# with other timers is free.
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

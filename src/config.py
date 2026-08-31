@@ -1220,6 +1220,59 @@ class MacroConfig(BaseModel):
         return self
 
 
+class EventRiskConfig(BaseModel):
+    """Scheduled-event lookups that ground the Risk Manager's mandatory
+    `event_risk` check (`src/data/event_calendar.py`).
+
+    Added because that check was previously answered from the model's own
+    memory: `MarketDataProvider.get_next_earnings_date` had zero callers, and
+    no module fetched a macro release calendar at all. The numbers here are
+    ceilings, not tuning knobs — a session must never be delayed, and must
+    certainly never hang, because a nice-to-have calendar was slow. The FRED
+    retry/backoff policy itself is NOT duplicated here: the calendar hits the
+    same host as `src/data/macro.py` with the same failure mode, so
+    `src/pipeline.py` threads the existing `macro.*` retry settings into it and
+    only the deadline below is calendar-specific.
+    """
+
+    horizon_days: int = Field(default=10, ge=1, le=60)
+    """How far ahead the macro release calendar looks, in calendar days. 10
+    covers "the next few sessions" the `event_risk` field asks about with
+    enough margin to see a release the desk should already be positioning
+    around, without burying the seat in rows it will skim past."""
+
+    calendar_deadline_s: float = Field(default=20.0, ge=1.0, le=120.0)
+    """Hard wall-clock ceiling for one `get_upcoming_events()` call. Much
+    tighter than `macro.total_fetch_deadline_s` (90s) on purpose: the macro
+    summary is load-bearing for the regime call, this calendar is an
+    advisory layered on top of a session that must not wait for it. Enforced
+    the same way — every request timeout and every backoff sleep is clipped to
+    the remaining budget, and releases not yet started are skipped and reported
+    as `fetch_deadline_exceeded` rather than silently omitted."""
+
+    earnings_deadline_s: float = Field(default=20.0, ge=1.0, le=120.0)
+    """Hard wall-clock ceiling for the whole per-symbol earnings-date sweep.
+    Symbols not reached inside it come back labelled
+    `unavailable_deadline_exceeded`, never dropped."""
+
+    earnings_symbol_timeout_s: float = Field(default=8.0, ge=0.5, le=60.0)
+    """Per-symbol ceiling on the earnings-date lookup. `yfinance`'s calendar
+    call has no timeout of its own — the same hang risk `get_ohlcv` /
+    `get_valuation_metrics` are already `ThreadPoolExecutor`-bounded against."""
+
+    @model_validator(mode="after")
+    def _deadlines_are_well_formed(self):
+        if self.earnings_deadline_s < self.earnings_symbol_timeout_s:
+            raise ValueError(
+                "event_risk.earnings_deadline_s must be >= "
+                "earnings_symbol_timeout_s — a sweep budget shorter than one "
+                "symbol's own timeout would abandon every symbol before it "
+                f"could answer; got {self.earnings_deadline_s} < "
+                f"{self.earnings_symbol_timeout_s}"
+            )
+        return self
+
+
 class AppConfig(BaseModel):
     api_keys: ApiKeysConfig
     alpaca: AlpacaConfig
@@ -1258,6 +1311,10 @@ class AppConfig(BaseModel):
     # resilience defaults (see MacroConfig docstring), so older configs keep
     # working unchanged.
     macro: MacroConfig = Field(default_factory=MacroConfig)
+    # Optional section — a settings.yaml without it gets the documented
+    # event-lookup ceilings (see EventRiskConfig docstring), so older configs
+    # keep working unchanged.
+    event_risk: EventRiskConfig = Field(default_factory=EventRiskConfig)
 
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):

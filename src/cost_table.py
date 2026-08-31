@@ -15,8 +15,8 @@ input/output token counts returned by each provider, and by
      OpenRouter-routed traffic, and it does not carry OpenRouter's
      `vendor/model` ids at all.
   1. `data/pricing_cache.json` — fetched from LiteLLM upstream JSON.
-     Refreshed automatically every 24h via `refresh_pricing()` (also
-     callable on-demand via `scripts/refresh_pricing.py`).
+     Refreshed automatically every 24h via `refresh_pricing()`, and on a
+     schedule by `scripts/refresh_pricing.py` (see below).
   2. `_PRICING_FALLBACK` — hand-curated baseline below. Used when
      network is unreachable AND no cache exists. **Verified against
      LiteLLM 2026-05-13** (gpt-5.5 / claude-opus-4-8 re-verified
@@ -25,6 +25,19 @@ input/output token counts returned by each provider, and by
      `vendor/model` id that is NOT in the pinned table (i.e. an operator
      experimenting with a model the policy has not adopted). Cached to
      `data/openrouter_pricing_cache.json` on the same 24h discipline.
+
+WHO REFRESHES THE OPENROUTER CACHE. Both of the above are written by
+`scripts/refresh_pricing.py`, fired by `quant-agent-pricing-refresh.timer`
+twice a day, EVERY day. That timer is a safety component, not housekeeping:
+the OpenRouter cache is an input to the mandatory pre-call spending breaker,
+so once it ages past 24h + `llm_cost_circuit.openrouter_pricing_grace_period_
+hours` the circuit fails closed and suspends every paid call for the day.
+Before 2026-08-31 the only callers were `TradingPipeline.__init__` and
+`activate_paid_call_session` — i.e. the file was refreshed only by a paid
+session starting, so it aged exactly when nothing was running to notice, and
+over the weekend of 2026-08-30 it went stale unwatched. The refresh alerts
+over Telegram if it fails to land, because a scheduled job failing silently
+for a week reproduces that defect precisely.
 
 On-demand resolution: `estimate_cost()` for a model in NEITHER the cache
 nor `_PRICING_FALLBACK` triggers a one-time lookup against the LiteLLM
@@ -440,6 +453,44 @@ def _openrouter_cache_age_hours() -> float | None:
     if not _OPENROUTER_CACHE_PATH.exists():
         return None
     return (time.time() - _OPENROUTER_CACHE_PATH.stat().st_mtime) / 3600.0
+
+
+#: Hours a written OpenRouter cache counts as current. Past this the circuit
+#: is running on the grace window (see the long note below), and past
+#: this + `llm_cost_circuit.openrouter_pricing_grace_period_hours` it fails
+#: closed and suspends every paid call. Public so the scheduled refresh
+#: (`scripts/refresh_pricing.py`) can alert on the FIRST boundary — while
+#: there is still a full grace window of runway — instead of the second.
+OPENROUTER_CACHE_FRESH_HOURS = _CACHE_MAX_AGE_SECONDS / 3600.0
+
+
+def openrouter_cache_path() -> Path:
+    """Where the OpenRouter cache is read from and written to.
+
+    A function, not a constant: the path is relative, so it resolves against
+    the process working directory (which is how a rehearsal sandbox and the
+    systemd unit's `WorkingDirectory` both redirect it) and a constant bound
+    at import time would report the wrong file after any chdir.
+    """
+    return _OPENROUTER_CACHE_PATH.resolve()
+
+
+def litellm_cache_path() -> Path:
+    """Where the LiteLLM cost-reporting cache lives. See above on why this
+    is a function."""
+    return _CACHE_PATH.resolve()
+
+
+def openrouter_cache_age_hours() -> float | None:
+    """Age of the OpenRouter pricing cache in hours, or None if absent.
+
+    Public read-only view of `_openrouter_cache_age_hours` for operational
+    tooling. The scheduled refresh uses it to check its own work: "the fetch
+    call returned True" and "the file the cost circuit will read is actually
+    current" are different claims, and only the second one keeps the desk
+    trading.
+    """
+    return _openrouter_cache_age_hours()
 
 
 # === Grace window for a stale-but-present OpenRouter cache (2026-08-28) ===

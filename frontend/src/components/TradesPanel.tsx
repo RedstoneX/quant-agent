@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Badge, TextInput } from "@tremor/react";
 import { legacyCreateColumnHelper as createColumnHelper, type LegacyColumnDef } from "@tanstack/react-table/legacy";
 import { TradeItem } from "../api/client";
-import { fmtMoney, fmtTime, pnlClass } from "../lib/format";
+import { fmtMoney, fmtNum, fmtTime, pnlClass } from "../lib/format";
 import { displayFillPrice, displayFillQty } from "../lib/tradeFillDisplay";
 import { Panel, StateMessage } from "./ui/Panel";
 import { DataTable } from "./ui/DataTable";
@@ -15,6 +15,17 @@ const columnHelper = createColumnHelper<TradeItem>();
  * the row) owns the click so this never fights the table's own onRowClick —
  * mirrors the Symbol column's `event.stopPropagation()` above. */
 const REASONING_PREVIEW_CHARS = 70;
+
+/** requested_risk_pct/allocated_risk_pct (conviction ledger, spec §7.2) are
+ * plain non-negative percentages of equity — not a gain/loss, so unlike
+ * fmtPct these never take a "+" sign. Pinned at ENTRY only: null on every
+ * interim/exit row and on any row written before PR #159, rendered as a
+ * plain dash rather than "—%" or a fabricated 0%, same convention
+ * CandidateRail.tsx uses for the sibling pm_risk_allocation_pct field. */
+function RiskPctCell({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined) return <span className="text-dim">—</span>;
+  return <span>{fmtNum(value)}%</span>;
+}
 
 function ReasoningCell({ text }: { text: string | null }) {
   const [open, setOpen] = useState(false);
@@ -84,6 +95,15 @@ export function TradeTable({
       columnHelper.accessor("take_profit", { header: "Take profit", cell: (info) => fmtMoney(info.getValue()) }),
       columnHelper.accessor("run_id", { header: "Run", cell: (info) => info.getValue() || "—" }),
       columnHelper.accessor("decision_id", { header: "Decision", cell: (info) => info.getValue() || "—" }),
+      // Conviction ledger (spec §7.2, PR #159) — recorded at entry to
+      // explain why a trade was sized the way it was; previously captured
+      // for internal record-keeping only and invisible anywhere a human
+      // could see it. Read-only surfacing, same absence convention as the
+      // columns above: a dash, never a fabricated default.
+      columnHelper.accessor("conviction", { header: "Conviction", cell: (info) => info.getValue() || "—" }),
+      columnHelper.accessor("requested_risk_pct", { header: "Requested risk", cell: (info) => <RiskPctCell value={info.getValue()} /> }),
+      columnHelper.accessor("allocated_risk_pct", { header: "Allocated risk", cell: (info) => <RiskPctCell value={info.getValue()} /> }),
+      columnHelper.accessor("decision_model", { header: "Decision model", cell: (info) => info.getValue() || "—" }),
     ] as LegacyColumnDef<TradeItem, unknown>[],
     [onSelectSymbol]
   );

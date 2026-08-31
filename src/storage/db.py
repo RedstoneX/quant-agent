@@ -537,6 +537,18 @@ class Database:
                 sell_grades_json TEXT DEFAULT '[]',
                 buy_grades_json TEXT DEFAULT '[]',
                 missed_opportunities_json TEXT DEFAULT '[]',
+                -- Evening feedback-loop fields (defect (d) fix): produced by
+                -- the LLM every night but previously dropped before storage.
+                -- thesis_updates/selection_rules/discipline_notes are the
+                -- "Structured lesson categories" — portfolio_manager reads
+                -- them back the next session (Step 6 holding discipline +
+                -- new-position selection). previous_outlook_assessment is
+                -- evening's self-grade of its own prior-night forecast; kept
+                -- for the audit trail, no downstream prompt consumer.
+                thesis_updates_json TEXT DEFAULT '[]',
+                selection_rules_json TEXT DEFAULT '[]',
+                discipline_notes_json TEXT DEFAULT '[]',
+                previous_outlook_assessment TEXT DEFAULT '',
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -795,6 +807,19 @@ class Database:
         # legacy exit-family row's decision_id NULL-ness is a known fact,
         # not a gap to guess at.
         _ensure_column("trades", "decision_id_status", "decision_id_status TEXT")
+        # Defect (d) fix: evening's structured feedback-loop fields. The LLM
+        # has produced these every night since the 2026-04 value-lens
+        # upgrade, but `save_evening_snapshot` had no parameter for any of
+        # them, so they were dropped before ever reaching disk. NULL/'[]' on
+        # legacy rows — portfolio_manager's reader treats an empty list as a
+        # labelled absence, never a fabricated lesson.
+        _ensure_column("insights", "thesis_updates_json", "thesis_updates_json TEXT DEFAULT '[]'")
+        _ensure_column("insights", "selection_rules_json", "selection_rules_json TEXT DEFAULT '[]'")
+        _ensure_column("insights", "discipline_notes_json", "discipline_notes_json TEXT DEFAULT '[]'")
+        _ensure_column(
+            "insights", "previous_outlook_assessment",
+            "previous_outlook_assessment TEXT DEFAULT ''",
+        )
         # codex r7 P1 #3: pending_protection_restores table for older DBs
         # that pre-date the orphaned-stop-restore queue. Idempotent.
         try:
@@ -900,6 +925,10 @@ class Database:
         sell_grades=(),
         buy_grades=(),
         missed_opportunities=(),
+        thesis_updates=(),
+        selection_rules=(),
+        discipline_notes=(),
+        previous_outlook_assessment: str = "",
     ) -> None:
         """Atomically write the evening's daily_pnl + insights rows.
 
@@ -916,6 +945,15 @@ class Database:
         sell_grades / buy_grades are stored as JSON-serialized lists
         (list[dict] or list[Pydantic]). `_build_sell_calibration_summary`
         aggregates them into counts for position_reviewer's prompt.
+
+        thesis_updates / selection_rules / discipline_notes are the
+        "Structured lesson categories" (list[str]) — defect (d) fix.
+        Previously declared on EveningReport and asked for in the evening
+        prompt, but dropped here before ever reaching disk.
+        `portfolio_manager.build_user_message` reads them back the next
+        session via `yesterday_insights`. previous_outlook_assessment is
+        evening's prose self-grade of its own PRIOR night's forecast — kept
+        for the audit trail; no prompt currently reads it back.
         """
         import json
 
@@ -943,6 +981,22 @@ class Database:
         sell_grades_json = _to_json_list(sell_grades)
         buy_grades_json = _to_json_list(buy_grades)
         missed_opportunities_json = _to_json_list(missed_opportunities)
+
+        def _to_json_str_list(val) -> str:
+            # thesis_updates/selection_rules/discipline_notes are
+            # list[str], not list[dict-like] — `_to_json_list` above would
+            # silently drop plain strings (it only keeps items with
+            # `.model_dump()` or `isinstance(item, dict)`). Mirrors the
+            # existing tomorrow_key_risks handling below.
+            if isinstance(val, str):
+                return val or "[]"
+            if not val:
+                return "[]"
+            return json.dumps([str(item) for item in val])
+
+        thesis_updates_json = _to_json_str_list(thesis_updates)
+        selection_rules_json = _to_json_str_list(selection_rules)
+        discipline_notes_json = _to_json_str_list(discipline_notes)
         with self._lock:
             try:
                 self.conn.execute("BEGIN")
@@ -966,13 +1020,17 @@ class Database:
                     "(date, tomorrow_outlook, lessons, suggested_actions, risk_rating, "
                     "tomorrow_bias, tomorrow_conviction, tomorrow_key_risks, "
                     "sell_decisions_assessment, sell_grades_json, buy_grades_json, "
-                    "missed_opportunities_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "missed_opportunities_json, thesis_updates_json, "
+                    "selection_rules_json, discipline_notes_json, "
+                    "previous_outlook_assessment) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (date, tomorrow_outlook, lessons, actions_json, risk_rating,
                      tomorrow_bias, tomorrow_conviction, risks_json,
                      sell_decisions_assessment or "",
                      sell_grades_json, buy_grades_json,
-                     missed_opportunities_json),
+                     missed_opportunities_json,
+                     thesis_updates_json, selection_rules_json,
+                     discipline_notes_json, previous_outlook_assessment or ""),
                 )
                 self.conn.commit()
             except Exception:
