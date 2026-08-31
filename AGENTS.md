@@ -80,9 +80,10 @@ Two tiers. Know which one you are reading before you trust it.
 2. `docs/STATE.md` — accepted current truth about the system.
 3. `docs/WORK.md` — active work, including the ordered backlog that a cold session resumes from.
 4. `docs/OUTCOME.md` — the product mandate and intended outcome.
-5. `docs/PROJECT_COMPASS.md` — human-facing compass. Human-only; agents do not rewrite it.
 
-No agent may add a sixth. Proposals to change any of these follow the ratification rule below.
+No agent may add a fifth. Proposals to change any of these follow the ratification rule below.
+
+*`docs/PROJECT_COMPASS.md` held a fifth slot here and was retired by the owner on 2026-08-31. It was human-only — agents could not correct it under this section — and it had drifted into contradicting `OUTCOME.md` about the project's core purpose: it still framed QAMC as a paper-only experiment asking whether cheap AI adds trading value, against `OUTCOME.md`'s owner-corrected mandate that QAMC is a systematic trading desk built to make money. It duplicated `OUTCOME.md`'s role rather than serving one `OUTCOME.md` couldn't. Do not recreate it.*
 
 **Tier 2 — reference documents. Subordinate, non-authoritative, consumable.**
 
@@ -107,11 +108,15 @@ Long-lived, unlike Tier 2 — they are maintained rather than consumed, and **mu
 
 Outward-facing files following normal open-source convention. `README.md` describes the system to a newcomer; where it disagrees with `STATE.md`, `STATE.md` wins and the README is stale.
 
+**Acceptance evidence — `docs/verification/*`. Durable, point-in-time, never edited after the fact.**
+
+Screenshots and short write-ups recording that a rendered inspection actually happened, at the moment it happened — the proof the "Execution discipline" rule above requires when it says UI/frontend acceptance needs rendered desktop and iPad inspection, tests and builds alone being insufficient. Unlike Tier 2, it is not consumed or deleted once acted on: it is not a finding or a plan, so there is nothing to implement out from under it. Unlike Tier 3, it does not describe how a subsystem works and is never updated after it is written — it describes a moment, not a mechanism, so a later acceptance pass adds a new file rather than editing an old one.
+
 ---
 
 Status, current truth, and active work always live in Tier 1. If you are about to create a document to hold any of those, you are making a mistake.
 
-**Every documentation file in this repository belongs to exactly one of the five categories above.** If you cannot place a file, that is the signal not to create it.
+**Every documentation file in this repository belongs to exactly one of the six categories above.** If you cannot place a file, that is the signal not to create it.
 
 ## Governance ratification
 

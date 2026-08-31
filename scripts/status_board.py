@@ -4,8 +4,9 @@
 Why this exists
 ---------------
 Every human-facing status document in this repo has gone stale, repeatedly and
-expensively. `PROJECT_COMPASS.md` carried a production SHA three deploys out of
-date and a claim that the account had no margin (it is a 4x margin account).
+expensively. A human-facing compass document, since retired, carried a production
+SHA three deploys out of date and a claim that the account had no margin (it is a
+4x margin account).
 `STATE.md` named a production version three deploys stale. The remediation spec
 said Phase 2b was undeployed when it had been live for a day. Five separate
 wrong claims inside two days, every one of them a fact somebody had to REMEMBER

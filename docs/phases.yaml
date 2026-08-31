@@ -849,15 +849,15 @@ phases:
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary:
-      verdict: "The 2026-08-30 review recorded thirteen problems, and the audit that worked through them turned up five more. All thirteen originals are closed — nine fixed and live, four found to be unused code and deleted. Of the five later ones, four are now fixed and one is a question put to the owner rather than scheduled work. Nothing remains on the ranked list."
+      verdict: "The 2026-08-30 review recorded thirteen problems, and the audit that worked through them turned up five more. All thirteen originals are closed — nine fixed and live, four found to be unused code and deleted. All five later ones are now closed too. Nothing remains on the ranked list."
       points:
         - "The ranked list below is now empty. Nothing on it ever affected trading decisions or risk — every entry was a rough edge, not a hazard."
         - "The last entry, a docstring pointing readers at a setup guide that was never written, is closed by removing the dangling reference rather than writing one: the module it points at already documents itself in full."
-      outstanding: "Nothing on the ranked list. One separate item — whether to wire Telegram credentials into the deploy-drift alarm's own service environment — is still an open question for the owner, tracked in the evidence below rather than as a ranked defect."
+      outstanding: "Nothing on the ranked list, and no open owner decision. The deploy-drift alarm's inability to send its Telegram alert (NEW (1)) is closed: fixed in PR #175, installed on the production box and verified 2026-08-31 (see the evidence below)."
     defects: []
     evidence:
       - kind: manual
-        note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. That audit surfaced five further items, tracked as NEW (1)-(5) in this evidence block: NEW (2), (3) and (4) are now closed (PRs #183, #185 and #178 respectively); NEW (1) is an open question for the owner rather than scheduled work; NEW (5) is the single entry left in the defects: list above. Each carries its own re-check command below."
+        note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. That audit surfaced five further items, tracked as NEW (1)-(5) in this evidence block: all five are now closed (NEW (1) by PR #175, installed and verified 2026-08-31; NEW (2), (3) and (4) by PRs #183, #185 and #178 respectively; NEW (5) by removing the dangling docstring reference it named). Each carries its own re-check command below."
       - kind: pr_merged
         number: 167
         note: "feat/expose-trade-risk-fields — trade conviction/risk/model fields now reach the API and the cockpit"
@@ -958,16 +958,19 @@ phases:
         note: "(l) closed (PR #172): models.NewsAnalysisResult and its nested NewsEvent/SectorImpact/SymbolAlert shapes, superseded by NewsIntelligenceReport, deleted along with the test fixtures that manufactured it. Re-check: `grep -n NewsAnalysisResult src/models.py` should return nothing."
       - kind: manual
         note: "(m) closed (PR #172): the four zero-caller helpers — cost_table._resolve_openrouter_model, news_dedup.deduplicate, news_store.get_report_path, ops/rehearsal/broker.default_snapshot_date — deleted. Re-check: `grep -rn '_resolve_openrouter_model(\\|def deduplicate(\\|def get_report_path(\\|def default_snapshot_date(' --include=*.py .` should return nothing besides this note."
+      - kind: pr_merged
+        number: 175
+        note: "NEW (1) closed: the deploy-drift alarm could not send its Telegram alert. quant-agent-drift-check.service invoked the venv Python directly on scripts/check_deploy_drift.py with no EnvironmentFile and no .env sourcing, so TelegramNotifier built itself disabled and an alert would have reached the journal and nowhere else. This PR routes it through scripts/run_drift_check.sh, a wrapper that sources .env — the same pattern as run_pricing_refresh.sh and run_daily_export.sh."
       - kind: symbol_in_file
         path: "scripts/systemd/quant-agent-drift-check.service"
         symbol: "ExecStart=/home/qamc/quant-agent/scripts/run_drift_check.sh"
-        note: "NEW (1): the drift-check service invokes Python directly, not through an env-sourcing wrapper (contrast quant-agent-pricing-refresh.service, which runs run_pricing_refresh.sh — that wrapper sources .env specifically so its own Telegram alert can send)."
+        note: "NEW (1) closed: the unit now runs through the env-sourcing wrapper instead of invoking Python directly."
       - kind: symbol_in_file
-        path: "src/notifier.py"
-        symbol: "os.getenv(\"TELEGRAM_BOT_TOKEN\", \"\")"
-        note: "NEW (1): TelegramNotifier reads its credentials from the process environment, which the drift-check service never populates."
+        path: "scripts/run_drift_check.sh"
+        symbol: "source \"${PROJECT_ROOT}/.env\""
+        note: "NEW (1) closed: the wrapper sources .env before invoking check_deploy_drift.py, so TelegramNotifier constructs with credentials present."
       - kind: manual
-        note: "NEW (1), HIGHEST CONSEQUENCE, awaiting an owner decision — not recorded as scheduled work: the deploy-drift alarm that exists specifically to tell the owner a merge never reached production cannot send its alert. quant-agent-drift-check.service declares no EnvironmentFile, scripts/check_deploy_drift.py has no dotenv loader, and the qamc systemd user environment carries zero TELEGRAM_* variables — verified live 2026-08-31 with `XDG_RUNTIME_DIR=/run/user/1001 systemctl --user show-environment | grep TELEGRAM` (empty). So TelegramNotifier silently disables itself and a drift alert reaches the journal and nowhere else. Never yet exercised, because every run so far has reported in sync. Re-check by re-running the same systemctl command on the box, and by checking whether an EnvironmentFile or wrapper has since been added."
+        note: "NEW (1) closed, deployed, and no longer an open owner decision. PR #175 merged 2026-08-31 but was not installed on the production box for several hours afterward — the box kept running the old unit that invoked Python directly. The orchestrating agent installed the corrected units on 2026-08-31 and verified live: with .env sourced, TelegramNotifier constructs with enabled=True; without it, enabled=False. Both check_deploy_drift.py and check_unit_drift.py (the companion check added by PR #178 that catches hand-installed units the commit-comparison alone cannot see) now report in sync, and quant-agent-unit-drift.timer was enabled and is scheduled. Re-check: `sudo -n -u qamc systemctl --user cat quant-agent-drift-check.service | grep ExecStart` should show run_drift_check.sh, not check_deploy_drift.py invoked directly; `sudo -n -u qamc systemctl --user is-enabled quant-agent-unit-drift.timer` should print 'enabled'."
       - kind: symbol_in_file
         path: "ops/rehearsal/report.py"
         symbol: "\"intraday_analysis_error\": ("

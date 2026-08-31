@@ -356,7 +356,7 @@ alert-channel watchdog and retiring the weekly digest the owner rejected.
 
 - The macro data feed's retry policy has been rebuilt. The old one gave a failing economic-data series one quick second try and then gave up; that is exactly what let one bad three-minute stretch (2026-08-26) lose all nine numbers the macro seat reads, silently. It now tries harder, with a real time limit on the whole job — a minute and a half, not per series — so a slow patch can be ridden out without ever risking a session running long. Six new free indicators were added on top of what was already tracked — a real (inflation-adjusted) 10-year yield, the market's inflation expectation, a 3-month Treasury rate, the dollar's strength against other currencies, investment-grade borrowing costs, and weekly unemployment claims — each checked against the real data source before being wired in. And if any of these numbers fail to come back, the desk is now told so directly, the same way it is already told when the news feed is degraded, instead of quietly reasoning from nothing (PR #162).
 - A second, smaller repair: if the mid-day opportunity scan crashed partway through, it used to look exactly like a normal quiet check that found nothing — no error, no signal, nothing for anyone to see. It now says plainly that it crashed, and the rehearsal report counts that as a failure instead of a pass (PR #163).
-- A close call, caught in time, not yet fixed: the price list the spending safeguard uses to know what each AI call costs is supposed to refresh itself, but only when a real trading session actually starts one — nothing refreshes it on a clock. Over the weekend it sat unrefreshed long enough to cross the point where the safeguard would have refused to run any paid analysis at all come Monday morning, meaning the desk would have opened and done nothing. It was noticed and refreshed by hand before that happened. Nothing has been put in place yet to stop this from happening again — that is still open work.
+- A close call, caught in time: the price list the spending safeguard uses to know what each AI call costs is supposed to refresh itself, but only when a real trading session actually starts one — nothing refreshes it on a clock. Over the weekend it sat unrefreshed long enough to cross the point where the safeguard would have refused to run any paid analysis at all come Monday morning, meaning the desk would have opened and done nothing. It was noticed and refreshed by hand before that happened. (Closed: PR #168 added a systemd timer that refreshes the price list twice a day, seven days a week — see the 2026-08-31 entry above.)
 - Still missing on the macro side: there is no calendar of upcoming Fed decisions or inflation reports. Asked whether one is coming up, the desk still answers from what the model remembers, not from a real schedule.
 
 **Found (2026-08-30, documentation audit) — ten more open defects recorded, none fixed yet**
@@ -365,7 +365,7 @@ An audit raised eleven candidate defects beyond the two already tracked above; t
 
 **Checked and found NOT to be a defect:** a claim that `docs/STATE.md` pins a specific production commit that is now several merges behind current `main`. Verified live 2026-08-30: production HEAD and `origin/main` are both `6a8694a` — zero merges of gap (`scripts/status_board.py`'s own live `undeployed_merges` reading is 0). Not recorded as a defect.
 
-**Separately noticed while checking the above, not yet acted on (out of scope for this pass):** `docs/STATE.md`'s "Intraday opportunity discovery" section — the file is dated 2026-08-27 at the top — still says the broker layer has no short-selling capability at all today, and that nothing in the codebase tells the Portfolio Manager the inverse ETFs are bearish instruments. Both are now false: shorting went live 2026-08-29, and the inverse-ETF/Portfolio-Manager wiring landed 2026-08-30 (PR #158). Left as-is; flagged here for whoever next edits that file.
+**Separately noticed while checking the above:** `docs/STATE.md`'s "Intraday opportunity discovery" section — the file was dated 2026-08-27 at the top at the time — still said the broker layer has no short-selling capability at all today, and that nothing in the codebase tells the Portfolio Manager the inverse ETFs are bearish instruments. Both were false: shorting went live 2026-08-29, and the inverse-ETF/Portfolio-Manager wiring landed 2026-08-30 (PR #158). Flagged here rather than fixed in the moment — and fixed twelve minutes later anyway, in commit `4fb02e47`, which corrected both claims in place with dated notes.
 
 **Landed (2026-08-30 through ~15:00 UTC 2026-08-31) — all five items now deployed to production**
 
@@ -1158,8 +1158,16 @@ Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts pric
   from the LIST query and keeping them on the detail route.
 - `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
   the Tech Analyst accepts a `days_to_earnings` kwarg that nothing supplies.
+  **Correction: no longer true.** A real caller now exists
+  (`src/data/event_calendar.py`, submitted through a bounded
+  `ThreadPoolExecutor`), landed as part of closing defect (c) in
+  `docs/phases.yaml`'s `open_defects` entry.
 - Nothing tells the Portfolio Manager that `SH`, `SDS`, `PSQ` and `SQQQ` are
   bearish instruments, so even the sanctioned bearish expression is unwired.
+  **Correction: no longer true.** `config/prompts/portfolio_manager.md` now
+  carries a dedicated "Inverse ETFs are bearish, not a hedge-flavoured long"
+  section (PR #158; also confirmed in `config/prompts/risk_manager.md`'s
+  "Short discipline" section).
 - 26 unmerged branches await triage, including two abandoned VPS security
   branches (`claude/vps-security-hardening-t8m3qz`,
   `claude/vps-deployment-hardening-q3f7k2`) worth rescuing before deletion.
