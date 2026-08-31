@@ -308,7 +308,7 @@ def test_the_template_carries_every_placeholder_the_renderer_fills():
     for key in ("{{STAMP}}", "{{BUILT_SHA}}", "{{DEPLOY}}", "{{CIRCUIT}}", "{{SPEND}}",
                 "{{SPEND_PCT}}", "{{SPEND_NOTE}}", "{{SESSIONS}}", "{{ROWS}}", "{{ALARM}}",
                 "{{RULES_TOTAL}}", "{{RULES_PASS}}", "{{RULES_FAIL}}",
-                "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}"):
+                "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}", "{{JARGON_BANNER}}"):
         assert key in template, f"template is missing {key}"
 
 
@@ -684,3 +684,144 @@ def test_undeterminable_version_reports_unknown_not_a_false_all_clear(built, liv
     assert out != "", "an undeterminable version must not read as a clean bill of health"
     assert "unknown" in out.lower()
     assert 'class="stale"' in out
+
+
+# --------------------------------------------------------------------------
+# is this summary written for him, or for a developer?
+# --------------------------------------------------------------------------
+#
+# The owner reads this board and nothing else, and is not a developer.
+# `plain_summary` is supposed to be written for him, but it lives inside an
+# engineering document engineering agents maintain, so it drifts back toward
+# PR numbers and file paths the moment the next agent writes one. Blocking
+# on a wordlist of "technical-sounding" words was tried and rejected: it
+# produces jargon-free prose that is still useless to him, not good prose.
+# What ships instead detects the MECHANICAL SHAPE of engineering text (a
+# path, a reference number, a hash, a code identifier) and reports it
+# without blocking anything — see `summary_is_engineer_facing`.
+#
+# The failure mode that would make this feature ignored is a false positive
+# on ordinary English, so that gets tested for deliberately, not just the
+# positive cases.
+
+def test_plain_english_summaries_are_never_flagged():
+    """Genuinely plain-English summaries, including ones that use ordinary
+    slash and parenthesis constructions a naive detector could trip on."""
+    plain = [
+        "The system now checks stop-losses before every trade and blocks "
+        "anything too risky.",
+        "We fixed the bug where the desk sold winners too early. It now "
+        "holds until the target price.",
+        "The cost/benefit of each trade is weighed against the risk/reward "
+        "before it is sized.",
+        "Reported 3/15/2026 as the date the change went live, twenty-six "
+        "checks passed in a row.",
+    ]
+    for summary in plain:
+        flagged, reason = sb.summary_is_engineer_facing(summary)
+        assert flagged is False, f"false positive on plain English: {summary!r}"
+        assert reason == ""
+        assert sb.summary_engineering_markers(summary) == []
+
+
+def test_missing_or_empty_summary_is_flagged_with_its_own_reason():
+    """Silence is not neutral: nobody wrote a plain-English description, and
+    that gets a distinct reason from "wrote one but it's jargon"."""
+    for summary in ("", "   ", None):
+        flagged, reason = sb.summary_is_engineer_facing(summary)
+        assert flagged is True
+        assert "no plain-english description" in reason.lower()
+
+
+@pytest.mark.parametrize("summary,expected_marker", [
+    ("See docs/phases.yaml for the manifest.", "a file path"),
+    ("STATE.md still names a commit three deploys behind.", "a file path"),
+    ("The backtester lives in src/backtest/ and has its own CLI.", "a file path"),
+    ("Confirmed via sudo -n -u qamc git -C /home/qamc/quant-agent log "
+     "--oneline -1", "a file path"),
+    ("Fixes issue #42 where stops did not trail correctly.", "a PR or issue number"),
+    ("Landed in PR #150 and deployed the same day.", "a PR or issue number"),
+    ("Commit a1b2c3d fixed the regression.", "a commit hash"),
+    ("The `event_risk` field is now populated from real data.", "a code identifier"),
+    ("afternoon_reserve_pct now walls off part of the budget.", "a code identifier"),
+    ("refresh_openrouter_pricing() is only called from two places.", "a code identifier"),
+])
+def test_each_marker_type_is_detected(summary, expected_marker):
+    flagged, reason = sb.summary_is_engineer_facing(summary)
+    assert flagged is True, f"expected a flag on: {summary!r}"
+    assert expected_marker in sb.summary_engineering_markers(summary)
+    assert reason != ""
+
+
+def test_ordinary_pluralisation_is_not_read_as_a_function_call():
+    """"trade(s)" is ordinary English shorthand, not `word(...)` call syntax
+    — the parenthesis check must not treat every (s)/(es) as code."""
+    flagged, _ = sb.summary_is_engineer_facing(
+        "Every open trade(s) now carries its own stop-loss.")
+    assert flagged is False
+
+
+def test_a_bare_directory_word_pair_is_not_a_path():
+    """"data/info" and similar two-word slash pairings are ordinary English
+    shorthand, not a path — a path check anchored only on known directory
+    names would still catch this without a second path segment or an
+    extension, so this pins that it doesn't."""
+    flagged, _ = sb.summary_is_engineer_facing(
+        "The data/info from the news feed is combined before deciding.")
+    assert flagged is False
+
+
+def test_render_shows_a_top_of_page_count_when_something_is_flagged():
+    """The count belongs near the top, in the same region as the freshness
+    banner, so he doesn't have to hunt the list for it — not buried in a
+    per-item marker he might not scroll to."""
+    flagged_summary = "See docs/phases.yaml for the manifest."
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    p.summary = flagged_summary
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
+             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([p], state, template)
+    # Search for the rendered element (`class="jargon-banner"`), not the CSS
+    # rule (`.jargon-banner{...}`), which sits earlier in <head> and would
+    # make this pass without the banner actually being in the page body.
+    banner_idx = out.index('class="jargon-banner"')
+    header_idx = out.index('<header class="mast">')
+    assert banner_idx < header_idx, "the count must appear before the page header"
+    assert "1 description" in out
+
+
+def test_render_shows_no_jargon_banner_when_nothing_is_flagged():
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    p.summary = "A plain-English summary with nothing mechanical in it."
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
+             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([p], state, template)
+    # The CSS rule itself is always present (it's part of the static
+    # template); what must be absent is the rendered element.
+    assert 'class="jargon-banner"' not in out
+
+
+def test_flagged_summary_still_renders_in_full_underneath_the_marker():
+    """The board reports; it does not hide or strip anything. An unreadable
+    description is still more useful to him than no description."""
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    p.summary = "See docs/phases.yaml and PR #150 for the detail."
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
+             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([p], state, template)
+    assert "jargon-flag" in out
+    assert "See docs/phases.yaml and PR #150 for the detail." in out
+
+
+def test_flagging_a_summary_never_changes_the_phase_verdict():
+    """This feature reports on prose quality; it must never touch what the
+    board CHECKS. A jargon-heavy summary on a phase with passing evidence
+    still reads CONFIRMED, and the exit code (see main()) is untouched by
+    it — only a real contradiction moves that."""
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    p.summary = "See docs/phases.yaml and PR #150 for the detail."
+    assert p.verdict == "CONFIRMED"
+    assert p.summary_flagged is True

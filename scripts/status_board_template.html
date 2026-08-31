@@ -102,6 +102,18 @@ table.plan u{display:block;text-decoration:none;font-family:"IBM Plex Mono",mono
   background:var(--crit-bg);color:var(--crit);font-size:15.5px;box-shadow:var(--shadow)}
 .stale b{font-family:Archivo,sans-serif;font-weight:600}
 .stale-detail{display:block;margin-top:6px;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.5px;opacity:.7}
+/* Reuses the page's existing --warn / --warn-bg tokens (already defined
+   above for the deploy-drift dot) — no new colour, because a summary
+   written for a developer is a "needs your judgement" signal, not a
+   pass/fail one, and shouldn't borrow --crit's "something is broken" red. */
+.jargon-banner{margin:0 0 22px;padding:14px 16px;border:1px solid var(--warn);
+  border-radius:4px;background:var(--warn-bg);color:var(--warn);font-size:15.5px;
+  box-shadow:var(--shadow)}
+.jargon-banner b{font-family:Archivo,sans-serif;font-weight:600}
+.jargon-flag{margin:4px 0 2px;padding:5px 9px;border:1px solid var(--warn);
+  border-radius:3px;background:var(--warn-bg);color:var(--warn);font-size:13px;
+  font-family:"IBM Plex Mono",monospace;letter-spacing:.01em;line-height:1.5}
+.jargon-why{display:block;margin-top:2px;font-size:11px;opacity:.75}
 details.finished{margin-top:16px}
 details.finished>summary{cursor:pointer;list-style:none;font-family:"IBM Plex Mono",monospace;
   font-size:12.5px;letter-spacing:.04em;color:var(--muted);padding:10px 2px;
@@ -122,6 +134,7 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
 </head>
 <body>
 <div class="wrap">
+  {{JARGON_BANNER}}
 
   <header class="mast">
     <h1>QAMC Desk Board</h1>

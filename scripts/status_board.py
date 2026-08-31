@@ -237,6 +237,98 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
 
 
 # --------------------------------------------------------------------------
+# is this summary written for HIM, or for a developer?
+# --------------------------------------------------------------------------
+#
+# `plain_summary` exists so the owner — who reads this board and nothing
+# else, and is not a developer — can tell what happened without opening the
+# code. It lives inside docs/phases.yaml, an engineering document maintained
+# by engineering agents, so left unwatched it fills back up with PR numbers,
+# file paths and function names the moment the next agent writes one. That
+# already happened: several summaries below carry exactly that.
+#
+# Rejecting jargon outright — refusing to accept a summary that contains it —
+# was tried and rejected, correctly. Blocking "bad words" produces
+# jargon-free prose that is still useless to him; it does not produce good
+# writing. What this board can do honestly is detect the MECHANICAL SHAPE of
+# engineering text — a path, a PR number, a hash, a code identifier — and
+# show it to him, the one person who can actually judge whether a summary
+# reads like it was written for him. It never blocks and never rewrites: a
+# bad description still renders, because an unreadable description is more
+# useful than no description at all.
+#
+# Deliberately absent: a wordlist of "technical-sounding" words. That would
+# flag ordinary sentences as readily as real jargon and teach him to ignore
+# the marker — the exact failure mode blocking on it was rejected for.
+
+_JARGON_PATH_EXT = re.compile(
+    r"\b[\w-]+\.(?:py|ya?ml|md|html|json|db|sh|toml|cfg|ini|log|txt)\b", re.I)
+#: A leading "/" not glued onto a digit, so "3/15/2026" (a date) and "1/3" (a
+#: fraction) don't read as `/home/qamc/quant-agent` does.
+_JARGON_ABS_PATH = re.compile(r"(?<!\w)/[\w.-]+(?:/[\w.-]+)+")
+#: A directory this repo actually has, one more path segment deep, with no
+#: extension required — catches a bare directory mention like `src/backtest/`
+#: that `_JARGON_PATH_EXT` would miss. Anchored to real top-level directory
+#: names (not e.g. bare "data/") so an ordinary slash pairing in prose —
+#: "cost/benefit", "buy/sell", "his/her" — never matches: none of those
+#: words is followed by a second "/segment".
+_JARGON_DIR_ONLY = re.compile(r"\b(?:docs|src|scripts|tests|config|data)/[\w.-]+/[\w.-]*")
+_JARGON_PR_REF = re.compile(r"#\d+\b")
+_JARGON_HEX_TOKEN = re.compile(r"\b[0-9a-fA-F]{7,40}\b")
+_JARGON_BACKTICK = re.compile(r"`[^`]+`")
+_JARGON_SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+#: `word(...)`, but not `word(s)` / `word(es)` — ordinary English pluralises
+#: that way ("trade(s)") and it must not read as a function call.
+_JARGON_FUNC_CALL = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\((?!s\)|es\))[^()]*\)")
+
+
+def _is_commit_hash_token(token: str) -> bool:
+    """7+ hex characters is also a plain 7-digit number — a dollar figure, a
+    count, a year. A decimal number can't contain a-f, so require at least
+    one of those letters before calling it a hash; otherwise an ordinary
+    big number sitting in the text would read as a commit reference."""
+    return any(c in "abcdefABCDEF" for c in token)
+
+
+def summary_engineering_markers(summary: str) -> list[str]:
+    """The mechanical, engineer-facing markers found in `summary` — empty if
+    none. Each one is a SHAPE (a path, a reference number, a hash, a code
+    token), never a word choice, so this cannot flag a summary for sounding
+    technical — only for literally containing developer syntax. See the
+    section comment above for why that line is drawn there.
+    """
+    found: list[str] = []
+    if (_JARGON_PATH_EXT.search(summary) or _JARGON_ABS_PATH.search(summary)
+            or _JARGON_DIR_ONLY.search(summary)):
+        found.append("a file path")
+    if _JARGON_PR_REF.search(summary):
+        found.append("a PR or issue number")
+    if any(_is_commit_hash_token(t) for t in _JARGON_HEX_TOKEN.findall(summary)):
+        found.append("a commit hash")
+    if (_JARGON_BACKTICK.search(summary) or _JARGON_SNAKE_CASE.search(summary)
+            or _JARGON_FUNC_CALL.search(summary)):
+        found.append("a code identifier")
+    return found
+
+
+def summary_is_engineer_facing(summary: str) -> tuple[bool, str]:
+    """Whether `summary` reads as written for an engineer instead of the
+    owner, and, in his own words, why — the reason is what actually renders
+    on the board, so he never has to take the flag on faith.
+
+    A missing or empty summary is flagged too, with its own reason: silence
+    is not neutral here, it is a plain-English description nobody wrote.
+    """
+    text = (summary or "").strip()
+    if not text:
+        return True, "no plain-English description was written for this item"
+    markers = summary_engineering_markers(text)
+    if not markers:
+        return False, ""
+    return True, "reads like engineering notes — it contains " + ", ".join(markers)
+
+
+# --------------------------------------------------------------------------
 # phases
 # --------------------------------------------------------------------------
 
@@ -264,6 +356,19 @@ class PhaseView:
     @property
     def checkable(self) -> int:
         return self.passed + self.failed
+
+    @property
+    def summary_flagged(self) -> bool:
+        """True when `summary` reads as written for an engineer, not him —
+        see `summary_is_engineer_facing` for what that checks and why."""
+        flagged, _ = summary_is_engineer_facing(self.summary)
+        return flagged
+
+    @property
+    def summary_flag_reason(self) -> str:
+        """Plain-English reason `summary_flagged` is True; "" when it isn't."""
+        _, reason = summary_is_engineer_facing(self.summary)
+        return reason
 
     @property
     def verdict(self) -> str:
@@ -460,9 +565,20 @@ def _row(p: PhaseView) -> str:
     detail = f"{p.passed} of {p.checkable} checks pass"
     if p.unknown:
         detail += f" &middot; {p.unknown} need a human"
+    # The flag renders ABOVE the summary, never instead of it — the original
+    # text still shows underneath even when it's flagged, because an
+    # unreadable description is more useful to him than no description.
+    jargon = ""
+    if p.summary_flagged:
+        jargon = (
+            '<div class="jargon-flag">Not written for you &mdash; this reads '
+            'like a note for a developer. Needs a plain-English rewrite.'
+            f'<span class="jargon-why">{_esc(p.summary_flag_reason)}</span></div>'
+        )
     return (
         f'<tr><td><span class="pill {cls}">{_esc(label)}</span></td>'
         f'<td><b>{_esc(p.title)}</b>'
+        f'{jargon}'
         f'<i>{_esc(p.summary)}</i>'
         f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
     )
@@ -475,6 +591,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
     total_fail = sum(p.failed for p in phases)
     total_unknown = sum(p.unknown for p in phases)
     contradicted = [p for p in phases if p.verdict == "CONTRADICTED"]
+    jargon_flagged = [p for p in phases if p.summary_flagged]
 
     # Relevance ordering: anything CONTRADICTED first (loud, never
     # collapsed), then everything else still open or unverified, then --
@@ -515,6 +632,23 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
             'holding.</p></div>'
         )
 
+    # Reports, never gates: a flagged summary still renders in full further
+    # down (see `_row`). This is only the count, placed where the freshness
+    # banner already lives — right at the top, before he has to scroll past
+    # anything else — so he does not have to hunt through the list to find
+    # out how many descriptions were written for a developer instead of him.
+    jargon_banner = ""
+    if jargon_flagged:
+        n = len(jargon_flagged)
+        jargon_banner = (
+            '<div class="jargon-banner"><b>'
+            f'{n} description{"s" if n != 1 else ""} below {"are" if n != 1 else "is"} '
+            'written for a developer, not for you.</b> They are marked where they '
+            'appear so you can tell them apart from the ones already in plain '
+            'English &mdash; nothing is hidden, they still say what they say.'
+            '</div>'
+        )
+
     if state.get("in_sync") is True:
         deploy = ('<span class="dot ok"></span> The machine is running the latest '
                   'finished work.')
@@ -530,6 +664,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
     pct = int(round(100 * spend / limit)) if isinstance(spend, (int, float)) else None
 
     body = template.read_text()
+    body = body.replace("{{JARGON_BANNER}}", jargon_banner)
     body = body.replace("{{STAMP}}", now.strftime("%A %-d %B %Y &middot; %H:%M ET"))
     # The full commit this page was built against, stamped into a
     # machine-readable <meta> tag. src/api/server.py reads it back out at
