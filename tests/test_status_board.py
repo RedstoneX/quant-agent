@@ -591,36 +591,76 @@ def test_render_collapses_only_settled_phases_and_never_collapses_contradicted(t
     assert attention_chunk.index("Rotten thing") < attention_chunk.index("Partial thing")
 
 
-def test_stale_banner_absent_when_fresh():
+# --------------------------------------------------------------------------
+# the page has to notice its own death
+# --------------------------------------------------------------------------
+
+def test_stale_banner_is_measured_against_the_reader_not_the_build():
+    """The banner must compare build time to the READER's clock.
+
+    This is the trap, and it is worth spelling out because the obvious
+    implementation is silently useless: at build time the page is always zero
+    hours old, so a banner decided during rendering can never fire. The first
+    version of this feature did exactly that and shipped dead code.
+
+    The rebuild is change-driven, not scheduled, so a broken trigger raises no
+    error anywhere — it just goes quiet while the page keeps looking
+    authoritative. Nothing watches the watcher on purpose; that is a regress
+    with no end. Instead the page carries its build time and checks it when
+    opened, so the thing that reports the failure is the thing already being
+    read.
+    """
     from datetime import datetime, timedelta
-    now = datetime.now(sb.ET)
-    assert sb._staleness_banner(now, now) == ""
-    assert sb._staleness_banner(now, now - timedelta(hours=5)) == ""
+
+    built = datetime.now(sb.ET) - timedelta(days=3)
+    out = sb._staleness_banner(built)
+
+    # Emitted unconditionally and hidden — the decision happens in the reader's
+    # browser, not here. A render-time `if` is the bug this pins.
+    assert 'id="stale"' in out
+    assert "hidden" in out
+    assert built.isoformat() in out, "the build time must be embedded to compare against"
+
+    # A page built three days ago must NOT already contain the warning text,
+    # because that text is only correct once a reader's clock says so.
+    assert "last rebuilt" not in out.split("<script>")[0]
 
 
-def test_stale_banner_present_past_six_hours_and_says_so_plainly():
-    from datetime import datetime, timedelta
-    now = datetime.now(sb.ET)
-    banner = sb._staleness_banner(now, now - timedelta(hours=7))
-    assert "stale" in banner  # class name, present in the markup
-    assert "7 hours" in banner
-    assert "last rebuilt" in banner.lower()
+def test_stale_banner_threshold_is_wired_to_the_constant():
+    """The six-hour threshold must come from STALE_AFTER_HOURS, not a literal.
+
+    If someone raises the constant to quiet a noisy banner, the check has to
+    move with it, or the constant becomes a decoration that lies about what
+    the page actually does.
+    """
+    from datetime import datetime
+
+    out = sb._staleness_banner(datetime.now(sb.ET))
+    assert f"h>{sb.STALE_AFTER_HOURS}" in out.replace(" ", "")
 
 
-def test_stale_banner_reports_days_once_it_is_that_old():
-    from datetime import datetime, timedelta
-    now = datetime.now(sb.ET)
-    banner = sb._staleness_banner(now, now - timedelta(days=3))
-    assert "3 days" in banner
+def test_stale_banner_carries_no_network_dependency():
+    """One inline script doing arithmetic. Nothing fetched, nothing external.
+
+    The board is served to the owner over a private network and must keep
+    working with no outside access. A script tag is acceptable here; a request
+    to somewhere else is not.
+    """
+    from datetime import datetime
+
+    out = sb._staleness_banner(datetime.now(sb.ET))
+    for forbidden in ("http://", "https://", "fetch(", "XMLHttpRequest", "import ", "src="):
+        assert forbidden not in out, f"banner must not reference {forbidden!r}"
 
 
 def test_render_wires_the_stale_banner_into_the_page(tmp_path, monkeypatch):
-    """The banner placeholder must actually be filled from render()'s own
-    notion of `now`, not just exercised as a standalone function."""
+    """The banner reaches the rendered page, and no placeholder survives."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
     state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
              "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+
     out = sb.render([p], state, template)
-    # A freshly-generated page is 0 hours old: no banner.
-    assert 'class="stale"' not in out
+    assert 'id="stale"' in out
+    assert "{{STALE_BANNER}}" not in out
+    assert out.count("<script>") == 1, "the staleness check is the only script on the page"

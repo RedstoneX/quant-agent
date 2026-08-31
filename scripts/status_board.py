@@ -465,27 +465,36 @@ def _age_words(hours: float) -> str:
     return f"{whole} hour{'s' if whole != 1 else ''}"
 
 
-def _staleness_banner(now: datetime, generated_at: datetime) -> str:
-    """A page can only ever know its own build time. It cannot know, without
-    JavaScript (which this self-contained page deliberately carries none of),
-    how much real time has passed since a reader's browser opened it. So this
-    reports staleness AS OF THE MOMENT THIS PAGE WAS BUILT: if the build
-    itself is running more than STALE_AFTER_HOURS after `generated_at`
-    (normally the same instant `now` was captured, since every successful
-    run stamps itself fresh), that is worth saying plainly. It does not, and
-    cannot, catch a copy that sits un-rebuilt on disk after that -- only the
-    next successful run can.
-    """
-    age_hours = (now - generated_at).total_seconds() / 3600
-    if age_hours <= STALE_AFTER_HOURS:
-        return ""
-    return (
-        '<div class="stale">'
-        f'<b>This board was last rebuilt {_age_words(age_hours)} ago.</b> '
-        'It may not reflect current reality.'
-        '</div>'
-    )
+def _staleness_banner(generated_at: datetime) -> str:
+    """Warn a reader whose board has quietly stopped being rebuilt.
 
+    The rebuild fires on change, not on a clock. A broken trigger therefore
+    produces no error anywhere — it produces silence, and a page that still
+    looks authoritative while describing last week. Nothing watches the
+    watcher here on purpose: watchers watching watchers is a regress with no
+    natural end. Instead the page carries its own build time and checks it
+    against the reader's clock when opened, so the thing that reports the
+    failure is the thing the reader was already looking at.
+
+    This is the only script on the page. It does arithmetic on an embedded
+    timestamp — no network, no libraries, nothing to fetch. A build-time check
+    cannot do this job: at build time the page is always zero hours old, so
+    the warning could never fire.
+    """
+    return (
+        f'<div class="stale" id="stale" hidden data-built="{generated_at.isoformat()}"></div>'
+        "<script>(function(){"
+        "var e=document.getElementById('stale');if(!e)return;"
+        "var h=(Date.now()-new Date(e.dataset.built).getTime())/36e5;"
+        f"if(!(h>{STALE_AFTER_HOURS}))return;"
+        "var d=h>=47.5,n=d?Math.round(h/24):Math.round(h),u=d?'day':'hour';"
+        "e.textContent='';"
+        "var b=document.createElement('b');"
+        "b.textContent='This board was last rebuilt '+n+' '+u+(n!==1?'s':'')+' ago.';"
+        "e.appendChild(b);"
+        "e.appendChild(document.createTextNode(' It may not reflect current reality.'));"
+        "e.hidden=false;})();</script>"
+    )
 
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> str:
     now = datetime.now(ET)
@@ -516,7 +525,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
             '</details>'
         )
 
-    stale_banner = _staleness_banner(now, now)
+    stale_banner = _staleness_banner(now)
 
     alarm = ""
     if contradicted:
