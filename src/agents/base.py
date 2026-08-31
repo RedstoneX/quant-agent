@@ -241,6 +241,37 @@ def _max_retries() -> int:
     return max(1, n)
 
 
+def provider_attempt_budget(*, failover_available: bool) -> int:
+    """Worst-case provider attempts ONE logical agent call can make.
+
+    This is the single source of truth for that number, and the reason it
+    lives here rather than in configuration: the retry loop in ``run()`` is
+    what actually spends the attempts, and it takes its budget from
+    ``_max_retries()`` (env-overridable), not from ``settings.yaml``. Anything
+    downstream that needs to bound the same call — notably the cost circuit's
+    ``max_provider_attempts_per_call`` — must derive its ceiling from here
+    instead of pinning an independent number.
+
+    WHY THIS FUNCTION EXISTS (2026-08-31). The circuit's ceiling was pinned at
+    2 by hand while this loop's worst case was 3: ``_max_retries()`` primary
+    attempts, then one cross-provider failover. Any retryable primary failure
+    — a 429, a 5xx, a timeout, i.e. precisely the outages failover exists for
+    — therefore burned both permitted attempts on the primary and made the
+    failover attempt number 3, which tripped the circuit instead of rescuing
+    the session. On Monday 2026-08-31 an upstream rate-limit on the cheap
+    primary did exactly that at 09:32 ET, two minutes after the open, and
+    latched paid analysis off for the rest of the day over $0.05 of spend.
+    Cross-provider failover had never once been able to succeed.
+
+    The ``+ 1`` is the single-shot failover in ``run()`` (see ``_try_failover``:
+    it deliberately gets no retry budget of its own). ``failover_available``
+    mirrors that call site's own gate — a fallback key is configured and the
+    primary is not itself Anthropic; failing over from Claude to Claude is
+    pointless, so those agents never spend the extra attempt.
+    """
+    return _max_retries() + (1 if failover_available else 0)
+
+
 def _is_openai_model(model: str) -> bool:
     return any(model.startswith(p) for p in _OPENAI_PREFIXES)
 

@@ -594,7 +594,13 @@ llm_cost_circuit:
   # find the day's budget already spent by a busy or runaway morning.
   afternoon_reserve_pct: 40.0
   afternoon_reserve_release_et_hour: 12
-  max_provider_attempts_per_call: 2
+  # max_provider_attempts_per_call is deliberately NOT pinned here. It must
+  # cover what the agent retry loop can actually spend (primary attempts plus
+  # the single cross-provider failover), and that budget lives in code, not
+  # YAML -- see provider_attempt_budget() in src/agents/base.py. Pinning it
+  # here at 2 against a worst case of 3 is what made failover impossible to
+  # complete and darkened the desk on 2026-08-31. Config now derives it, and
+  # AppConfig refuses to load an explicit value below the real worst case.
   max_retry_attempts_per_session: 2
   reservation_ttl_minutes: 30
   reservation_multiplier: 1.05

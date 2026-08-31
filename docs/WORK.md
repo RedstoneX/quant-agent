@@ -21,6 +21,15 @@ looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
   any change to the agents, the risk engine, the cost circuit or execution.
 - Why this is not optional: a full trading day, 2026-08-28, was already lost
   to a defect a rehearsal would have caught before the market opened.
+- **It can now force a provider to fail (2026-08-31).** `--fail-provider
+  agent:kind[:count]` makes any provider attempt fail as a rate-limit, a
+  5xx, a timeout, a dead key or an out-of-money error — offline, free, any
+  hour. Before this, every response it replayed was one that had SUCCEEDED,
+  so the retry loop, the cross-provider failover, and every circuit guard
+  those cross could not be exercised here at all. That blind spot is exactly
+  what cost the 2026-08-31 open; see the incident entry below. Reproduce it
+  with `--fail-provider tech_analyst:rate_limit:2` — two rate-limited
+  primary attempts that the failover must rescue.
 - State plainly rather than round up: a draft of this note claimed the
   rig's own acceptance test did not pass — that replay ran out of recorded
   responses on the Technical Analyst's chunked calls and could not
@@ -283,6 +292,86 @@ that X actually produces the symptom.
 - **Subagents stall on polling loops** and will burn enormous token counts
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
+
+### 2026-08-31, market open — the desk went dark two minutes after the bell
+
+**Closed by `fix/provider-failover-attempt-budget`. Read this before touching
+the retry, failover or cost-circuit code.**
+
+What happened: at 09:32 ET, two minutes after the open, the morning session
+stopped with `paid_analysis_suspended` and every session after it no-opped.
+Spend at the moment it stopped: **$0.05 of a $2.75 day.** It required a
+manual operator reset, so the desk stayed dark until a human noticed.
+
+The cause was an arithmetic contradiction between two settings that lived in
+different files and were never compared:
+
+| | value | where |
+| --- | --- | --- |
+| attempts the retry loop can spend on one call | 3 (two primary + one failover) | `_max_retries()` in code, env-overridable |
+| attempts the cost circuit permitted per call | 2 | `config/settings.yaml` |
+
+So **cross-provider failover could never once complete.** Every failover was
+attempt three against a ceiling of two. It only ever mattered when the
+primary provider failed — which is the one situation failover exists for —
+and on 2026-08-31 an upstream rate-limit on the cheap primary finally
+produced it. The same family of limit had tripped on 08-26, 08-27 and twice
+on 08-28; each time a different number was raised and this one was not
+touched.
+
+Making it worse, `provider_attempt_limit` was the only trigger of its family
+still wired to the durable operator-reset latch. Its strictly WIDER sibling,
+`session_retry_attempt_limit`, was already correctly scoped to the session.
+Nothing chose that: unrecognised codes default to a hard latch.
+
+What changed:
+
+1. **The ceiling is derived, not typed.** `provider_attempt_budget()` in
+   `src/agents/base.py` owns the arithmetic, next to the loop that actually
+   spends the attempts. `config/settings.yaml` no longer pins it.
+2. **Disagreement is now a startup failure.** `AppConfig` refuses to load a
+   ceiling below the loop's worst case, naming both settings. It fails on
+   the ground instead of at 09:32 on a Monday.
+3. **`provider_attempt_limit` holds the session instead of latching the
+   desk**, matching its sibling.
+
+**Why a weekend of testing and auditing missed it, and the thing actually
+worth remembering:** the suite had thorough failover tests AND thorough
+circuit tests, and every one of them passed throughout. `tests/conftest.py`
+sets `_allow_unmetered_for_tests = True` for the whole suite, so the failover
+tests ran with **no cost circuit attached at all**, and the circuit tests ran
+with no failover. Nothing anywhere ran the two together — which is precisely
+where they contradicted each other. Two well-tested halves, an untested seam.
+`tests/test_provider_attempt_budget.py` now attaches a real breaker to a real
+agent and fails the primary for real reasons.
+
+**And the rehearsal rig could not have caught it either**, which is why it
+now can — see the fault-injection note above. Every recorded response it
+replays is a response that succeeded, so the failure branch was unreachable
+offline. It was reachable only by waiting for the market.
+
+**Two things deliberately left for the owner, not fixed here:**
+
+- **The backup model costs ~50x the primary.** Primary is
+  `google/gemini-2.5-flash-lite` at $0.10/$0.40 per million tokens; the
+  failover target is hard-coded to `claude-opus-4-7` at $5.00/$25.00. For
+  the Technical Analyst's ~150k-token prompt that is ~$0.02 versus ~$0.95 —
+  against a $0.90 per-session cap. So a failover on the biggest agent now
+  completes and delivers its analysis, then immediately holds the session on
+  cost, which can starve the Portfolio Manager that runs after it. Better
+  than a dead desk, but not a full rescue. A backup priced near the primary
+  would be; `_FALLBACK_MODEL` is a module constant with no config knob.
+  Model strategy is TABLED pending a clean spend re-measure, so this is
+  recorded, not changed.
+- **`fail_call` still charges for a request the circuit itself refused to
+  send.** A blocked attempt is provably $0 — no bytes left the process — but
+  the reservation covers the whole call, and earlier attempts on that same
+  call may have burned tokens nobody was told about. Marking it zero-cost
+  would risk under-counting real spend, which on a system that trades money
+  is the worse error. It no longer fires on this failure mode (with the
+  ceiling correct the failover simply succeeds), so what reaches it is a
+  genuine attempt runaway — arguably a thing an operator should look at.
+  Asserted explicitly in `test_cost_circuit.py` rather than glossed.
 
 ### Ordered backlog — RESUME POINT
 
