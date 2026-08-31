@@ -293,6 +293,83 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
+### NEXT UP — move the primary to Gemini direct, OpenRouter to backup
+
+**Owner decided this 2026-08-31 (option B, inverted). Not started: no code
+written, nothing uncommitted. Everything below is measured, not assumed.**
+
+**The shape:** `gemini-3.5-flash-lite` on BOTH routes — Google AI Studio
+direct as PRIMARY (free tier), OpenRouter as BACKUP (paid). Same model, two
+independent paths, so a failover changes the road and not the reasoning. That
+was the owner's core objection to the inherited Claude-Opus fallback and it is
+the requirement to preserve.
+
+**Why not keep 2.5:** Google refuses it to new keys outright — *"no longer
+available to new users"*. 3.5 is the only option a new key gets, so both ends
+move together or the backup stops being the same model.
+
+**Measured facts (do not re-derive):**
+
+- **Free-tier limits, read from the owner's own AI Studio dashboard**, project
+  `qamc-gemini`: **15 RPM, 250,000 TPM, 500 RPD.** Published blog figures
+  (1,000-1,500 RPD) are WRONG; the dashboard is authoritative.
+- **TPM is the binding constraint.** A morning pass is ~215k tokens — 86% of
+  the per-minute ceiling in one burst. A 6-request test at ~253k tokens
+  BREACHED it (recorded on the dashboard, though the calls happened to
+  succeed). Do not read "no error" as "no limit"; that mistake was made here.
+- Projected full-day load: **~76 requests / ~810k input tokens**, from
+  per-session measurements times the schedule — NOT from summing historical
+  days, which were truncated by the shutdowns and undercount badly.
+  RPD at 76/500 is a non-issue.
+- **Google's OpenAI-compatible endpoint works**, verified with streaming and
+  usage: `https://generativelanguage.googleapis.com/v1beta/openai/`. This is
+  what makes the change small — `_call_openai` is reused as-is rather than a
+  native Gemini client being written.
+- The OneCLI secret `Google Gemini - QAMC` is created, granted to the Default
+  Agent, and **its injection is already `Authorization: Bearer {value}`** for
+  that compat endpoint (the native endpoint's `x-goog-api-key` will NOT work
+  with it). Verified end to end from the box.
+
+**The work:**
+
+1. `VALID_PROVIDERS` is `{anthropic, openai, deepseek, openrouter}` — add
+   `google`, routed through `_call_openai` with the compat base URL. Give it
+   its own semaphore and its own entry in `_TOKEN_GOVERNORS`.
+2. **Set the Google governor to 200,000 TPM** — 80% of the measured 250k, not
+   a guessed number. This is the one place a ceiling is now justified by a
+   published limit rather than taste, which was the owner's objection to the
+   earlier 150k figure.
+3. **`_FALLBACK_MODEL` is hard-coded to `claude-opus-4-7`** and
+   `_try_failover` is hard-coded to Anthropic. Both must become configurable
+   so the fallback is OpenRouter on the same model. The Opus target is an
+   inherited remnant from upstream `yebof` (commit `d237f9b`, 2026-06-04,
+   "OpenAI->Anthropic auto-failover") that nobody chose — see the incident
+   entry below.
+4. Point the agents' `*_model` settings at the new primary and re-check that
+   `src/token_budget.py` refits — a new model id means no history, so it falls
+   back conservatively until ~8 calls accumulate. That is by design.
+
+**Verify, do not assume.** Every real error today was caught by looking at
+actual bytes: the phantom charge, an Alpaca account mix-up, and a 6.8x figure
+that was really 1.49x. Prove the failover with
+`ops/rehearsal/run.py --fail-provider tech_analyst:rate_limit:2`.
+
+**Still open for the owner:** whether to correct today's ledger, which carries
+~$1.94 of phantom charges against a $2.75 cap for calls that really cost about
+a penny. Left alone deliberately — `scripts/cost_circuit.py` promises never to
+erase settled spend.
+
+**Two traps that cost hours today:**
+
+- **OneCLI's `agent_secrets` table is OBSOLETE.** v1.45 uses policy grants;
+  the old table holds stale rows that read as "no grants" when an agent has
+  eight. Use `GET/PUT/DELETE /api/agents/:id/grants/secrets/:secretId`.
+- **Never give one agent two credentials matching the same host.** The Default
+  Agent briefly held both Alpaca pairs; `paper-api.alpaca.markets` beat
+  `*.alpaca.markets` on specificity and production silently pointed at the
+  rehearsal account. Ground truth is `GET /v2/account` — production is
+  `PA3DFXH9FF5V`, the rehearsal sandbox is `PA30V8QHEW1C`.
+
 ### 2026-08-31, afternoon — charged $0.62 for calls that cost nothing
 
 **The rate limit did not stop trading. The phantom bill for it did.**
