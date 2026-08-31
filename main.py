@@ -97,6 +97,10 @@ def main():
     start = time.monotonic()
     result = None
     error: BaseException | None = None
+    # Resolved once config loads; stays None on an early crash so the
+    # watchdog falls back to its own project-root default rather than
+    # guessing from a half-built config.
+    watchdog_db_path: str | None = None
     try:
         config_path = Path(args.config)
         if not config_path.is_absolute():
@@ -111,6 +115,9 @@ def main():
 
         config = load_config(config_path)
         logger.info("Config loaded. Universe: %s, Paper: %s", config.trading.universe, config.alpaca.paper)
+        db_path_value = getattr(getattr(config, "storage", None), "db_path", None)
+        if isinstance(db_path_value, str) and db_path_value.strip():
+            watchdog_db_path = db_path_value
 
         # Point the already-constructed notifier at Mission Control now that
         # config is available (the notifier itself is built BEFORE this line
@@ -211,6 +218,28 @@ def main():
         except Exception as exc:  # noqa: BLE001
             logger.exception("format_session_result raised in finally: %s", exc)
             message = None
+        # THE ALERT CHANNEL'S OWN WATCHDOG. Every session proves the path it
+        # is about to shout over, using the same send-and-delete probe the
+        # scheduled heartbeat uses, and records the verdict in SQLite where
+        # Mission Control can read it. The thing that depends on the alarm
+        # is the thing that tests it — no new schedule, no new credential,
+        # no external dependency. See src/alert_watchdog.py for why case (B)
+        # (the box itself being dead) is explicitly NOT covered here.
+        #
+        # Wrapped like everything else in this finally: a watchdog that can
+        # replace the in-flight session exception is worse than no watchdog.
+        try:
+            from src import alert_watchdog
+
+            before = alert_watchdog.read_health(watchdog_db_path)
+            verdict = alert_watchdog.verify_alert_channel(
+                notifier, source=args.mode, db_path=watchdog_db_path,
+            )
+            message = alert_watchdog.annotate_session_message(
+                message, mode=args.mode, before=before, result=verdict,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("alert watchdog failed in finally: %s", exc)
         if message:
             # Wrapped in its own try/except inside send(), but be doubly
             # defensive: notifier code in finally must NEVER mask the

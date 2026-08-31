@@ -44,8 +44,6 @@ DRIFT_SERVICE = SYSTEMD_DIR / "quant-agent-drift-check.service"
 DRIFT_WRAPPER = SCRIPTS_DIR / "run_drift_check.sh"
 HEARTBEAT_SERVICE = SYSTEMD_DIR / "quant-agent-alert-heartbeat.service"
 HEARTBEAT_TIMER = SYSTEMD_DIR / "quant-agent-alert-heartbeat.timer"
-DIGEST_SERVICE = SYSTEMD_DIR / "quant-agent-alert-digest.service"
-DIGEST_TIMER = SYSTEMD_DIR / "quant-agent-alert-digest.timer"
 HEARTBEAT_WRAPPER = SCRIPTS_DIR / "run_alert_heartbeat.sh"
 
 TELEGRAM_ENV = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_DISABLED")
@@ -604,98 +602,56 @@ def test_the_record_does_not_grow_without_bound(state_path):
 
 
 # ===========================================================================
-# 5. The weekly digest — and the bootstrap contract it carries
+# 5. The weekly digest is RETIRED — and must stay retired
 # ===========================================================================
+#
+# It sent the operator one "still alive" message every Sunday, and its
+# ABSENCE was supposed to be how he learned the channel had died. Two things
+# were wrong with that. A routine confirmation is a message an operator
+# learns to swipe away, so its absence is the last thing he notices. And a
+# channel that can be dead for seven days before anyone looks is not
+# monitored — the desk trades every one of those days.
+#
+# What replaced it: the sessions themselves prove the channel several times
+# a day and write the verdict somewhere that does not depend on Telegram
+# working (tests/test_alert_watchdog.py). The operator now hears nothing at
+# all until something is actually wrong.
 
-def _week_of_probes(count: int, ok: bool = True, now: datetime | None = None):
+def test_the_weekly_digest_mode_is_gone():
+    """Not deprecated, not hidden behind a flag — gone. A CLI that still
+    accepts `--digest` is a CLI someone re-adds a timer for."""
     import scripts.alert_heartbeat as hb
 
-    moment = now or datetime.now(timezone.utc)
-    state = hb.load_state(Path("/nonexistent"))
-    for day in range(count):
-        state = hb.record(
-            state, kind="probe", ok=ok,
-            stage="delivered" if ok else "api",
-            detail="" if ok else "Unauthorized",
-            now=moment - timedelta(days=count - day - 1),
-        )
-    return state
+    assert not hasattr(hb, "run_digest")
+    assert not hasattr(hb, "digest_text")
+    with pytest.raises(SystemExit) as exc:
+        hb.main(["--digest"])
+    assert exc.value.code == 2, "argparse should reject the retired flag"
 
 
-def test_the_digest_states_the_contract_its_own_absence_relies_on():
-    """The bootstrap answer, in the message body. If the channel dies no
-    message can report that, so the only surviving signal is a standing
-    appointment that stops being kept — and a contract the operator has to
-    remember unaided is a contract that decays."""
-    import scripts.alert_heartbeat as hb
-
-    text = hb.digest_text(_week_of_probes(7))
-    assert "every Sunday" in text
-    assert "a broken channel cannot tell you it is broken" in text
-    assert "7/7 delivered" in text
+def test_no_unit_schedules_a_routine_operator_message():
+    """The units are the part that would actually put a weekly message on
+    his phone, so assert against the shipped units, not the CLI."""
+    units = sorted(SYSTEMD_DIR.glob("quant-agent-alert-*"))
+    assert units, "the heartbeat units disappeared entirely"
+    for unit in units:
+        assert "digest" not in unit.name, f"{unit.name} still ships"
+        assert "--digest" not in unit.read_text(), f"{unit.name} still invokes it"
 
 
-def test_the_digest_reports_failures_it_saw_during_the_week():
-    import scripts.alert_heartbeat as hb
-
-    now = datetime.now(timezone.utc)
-    state = _week_of_probes(5, ok=True, now=now)
-    state = hb.record(
-        state, kind="probe", ok=False, stage="api",
-        detail="Unauthorized", now=now,
-    )
-    text = hb.digest_text(state, now=now)
-    assert "5/6 delivered" in text
-    assert "1 FAILED" in text
-    assert "Unauthorized" in text
-
-
-def test_the_digest_notices_that_the_daily_probe_stopped_running():
-    """A working channel with a dead probe timer is its own failure mode:
-    the digest still arrives, so silence stays uninformative. Say so."""
-    import scripts.alert_heartbeat as hb
-
-    stale = _week_of_probes(3, now=datetime.now(timezone.utc) - timedelta(days=40))
-    text = hb.digest_text(stale)
-    assert "No probe ran in the last 7 days" in text
-    assert "quant-agent-alert-heartbeat.timer" in text
-
-
-def test_the_digest_ignores_probes_older_than_its_window():
-    import scripts.alert_heartbeat as hb
-
-    now = datetime.now(timezone.utc)
-    state = _week_of_probes(3, ok=True, now=now)
-    state = hb.record(
-        state, kind="probe", ok=False, stage="api",
-        now=now - timedelta(days=30),
-    )
-    assert "3/3 delivered" in hb.digest_text(state, now=now)
-
-
-def test_the_digest_delivery_is_itself_a_channel_proof(wrapper_env, state_path):
+def test_a_healthy_probe_is_still_silent_to_the_operator(wrapper_env, state_path):
+    """The whole noise budget for a working channel is zero messages."""
     import scripts.alert_heartbeat as hb
 
     with patch("src.notifier.requests.post") as mock_post:
-        mock_post.return_value = _response()
-        assert hb.main(["--digest"]) == 0
+        mock_post.side_effect = [
+            _response(200, {"ok": True, "result": {"message_id": 1}}),
+            _response(200, {"ok": True, "result": True}),
+        ]
+        assert hb.main([]) == 0
 
-    assert mock_post.call_count == 1
-    assert "QAMC alerting heartbeat" in mock_post.call_args.kwargs["json"]["text"]
-    entry = hb.load_state(state_path)["history"][-1]
-    assert entry["kind"] == "digest"
-    assert entry["ok"] is True
-
-
-def test_a_digest_that_cannot_be_delivered_exits_nonzero(wrapper_env, state_path):
-    import scripts.alert_heartbeat as hb
-
-    with patch("src.notifier.requests.post") as mock_post:
-        mock_post.side_effect = ConnectionError("down")
-        assert hb.main(["--digest"]) == 1
-
-    assert hb.load_state(state_path)["history"][-1]["kind"] == "digest"
-    assert hb.load_state(state_path)["consecutive_failures"] == 1
+    # Exactly the probe send and its own delete. Nothing the operator sees.
+    assert mock_post.call_count == 2
 
 
 def test_status_prints_the_record_and_transmits_nothing(wrapper_env, state_path):
@@ -706,58 +662,113 @@ def test_status_prints_the_record_and_transmits_nothing(wrapper_env, state_path)
     assert mock_post.call_count == 0
 
 
-def test_the_out_of_band_switch_is_optional_and_off_by_default(monkeypatch):
-    """The only thing that can cross a fully dead Telegram path. Free,
-    unconfigured today, and a no-op until someone sets the variable."""
+def test_the_external_monitoring_hook_is_gone_and_must_stay_gone():
+    """REJECTED DESIGN, removed rather than switched off.
+
+    An earlier version pinged a healthchecks.io-style URL on success and
+    `/fail` on failure, so a dead Telegram channel would alert from a host
+    that is not this one. The owner refused the dependency outright: this
+    desk does not rely on an outside service to know its own alarm works.
+
+    It was deleted rather than left dormant because a rejected design
+    sitting unused in the repo is exactly how it gets switched on later by
+    someone who reads the env var and assumes it is supported. Same
+    treatment as the weekly digest above, for the same reason.
+    """
     import scripts.alert_heartbeat as hb
 
-    monkeypatch.delenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", raising=False)
-    with patch("requests.get") as mock_get:
-        hb.ping_healthcheck()
-    assert mock_get.call_count == 0
+    assert not hasattr(hb, "ping_healthcheck")
+    assert not hasattr(hb, "deadman_state")
+
+    source = (PROJECT_ROOT / "scripts" / "alert_heartbeat.py").read_text()
+    body = source.split('"""', 2)[-1]  # ignore the docstring that explains the removal
+    for banned in ("ALERT_HEARTBEAT_HEALTHCHECK_URL", "hc-ping", "healthchecks.io"):
+        assert banned not in body, f"{banned} came back into the executable body"
+
+
+def test_the_probe_contacts_nothing_but_telegram(wrapper_env, state_path, monkeypatch):
+    """The whole network budget for a probe is Telegram and nothing else.
+
+    Asserted at the transport boundary rather than by reading the source:
+    any outbound GET at all — to a monitoring service or anywhere else —
+    fails this test.
+    """
+    import scripts.alert_heartbeat as hb
 
     monkeypatch.setenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", "https://hc.invalid/abc")
-    with patch("requests.get") as mock_get:
-        hb.ping_healthcheck("/fail")
-    assert mock_get.call_args.args[0] == "https://hc.invalid/abc/fail"
+    monkeypatch.setenv("HEALTHCHECKS_URL", "https://hc.invalid/sessions")
+
+    with patch("requests.get") as mock_get, patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = [
+            _response(200, {"ok": True, "result": {"message_id": 1}}),
+            _response(200, {"ok": True, "result": True}),
+        ]
+        assert hb.main([]) == 0
+
+    assert mock_get.call_count == 0, "the probe reached out to a third-party service"
+    urls = [call.args[0] for call in mock_post.call_args_list]
+    assert all("api.telegram.org" in url for url in urls), urls
 
 
-def test_the_out_of_band_switch_is_separate_from_the_sessions_one(monkeypatch):
-    """run_if_et_window.sh already documents why sharing one dead-man's
-    check across many jobs pins it green and defeats its purpose."""
+def test_the_status_output_promises_no_out_of_band_cover(wrapper_env, state_path):
+    """`--status` must not imply anything outside this box is watching.
+
+    The removed hook used to print an "out-of-band switch" line here. With
+    it gone the line must be gone too — a status page that still named an
+    external switch would describe cover that does not exist.
+    """
     import scripts.alert_heartbeat as hb
 
-    monkeypatch.delenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", raising=False)
-    monkeypatch.setenv("HEALTHCHECKS_URL", "https://hc.invalid/sessions")
-    with patch("requests.get") as mock_get:
-        hb.ping_healthcheck()
-    assert mock_get.call_count == 0
+    _, text = hb.run_status()
+    assert "out-of-band" not in text.lower()
+    assert "durable record" in text.lower()
 
 
 # ===========================================================================
 # 6. The units
 # ===========================================================================
 
-def test_the_heartbeat_units_are_shipped_as_pairs():
-    for path in (HEARTBEAT_SERVICE, HEARTBEAT_TIMER, DIGEST_SERVICE, DIGEST_TIMER):
+def test_the_heartbeat_units_are_shipped_as_a_pair():
+    for path in (HEARTBEAT_SERVICE, HEARTBEAT_TIMER):
         assert path.is_file(), f"{path.name} is missing"
 
 
 def test_the_probe_timer_fires_every_day_including_weekends():
-    """Alarms fire on days the market is closed — the pricing refresh runs
-    06:30 and 18:30 seven days a week for exactly that reason. A channel
-    proved only on weekdays leaves the weekend alarms unbacked."""
+    """THE reason this timer still exists. The sessions are the primary
+    watchdog and they only run Mon-Fri; without a check that also runs on
+    Saturday and Sunday, `alert_watchdog.STALE_AFTER_HOURS` could not be an
+    alarm at all — it would fire every weekend and be switched off."""
     schedules = _parse_unit(HEARTBEAT_TIMER)["Timer.OnCalendar"]
     assert schedules
     for spec in schedules:
         assert spec.split()[0] == "*-*-*", (
-            f"OnCalendar={spec!r} restricts the days the channel is proved"
+            f"OnCalendar={spec!r} restricts the days the channel is proved; "
+            f"the weekend floor is the only reason this unit exists"
         )
 
 
+def test_the_daily_floor_is_never_looser_than_the_staleness_threshold():
+    """The number in the unit and the number in the code are one decision.
+    If the timer ever went to every-other-day, `stale` would fire on a
+    perfectly healthy desk and the operator would learn to ignore red."""
+    from src.alert_watchdog import STALE_AFTER_HOURS
+
+    schedules = _parse_unit(HEARTBEAT_TIMER)["Timer.OnCalendar"]
+    assert len(schedules) == 1
+    # `*-*-* HH:MM` = once every 24h. Anything sparser breaks the contract.
+    assert schedules[0].split()[0] == "*-*-*"
+    assert STALE_AFTER_HOURS > 24.0, (
+        "the staleness threshold must leave room for one daily firing plus "
+        "timer slack, or a healthy desk reports itself stale"
+    )
+    assert STALE_AFTER_HOURS < 48.0, (
+        "a threshold that tolerates two missed days is not a threshold"
+    )
+
+
 def test_the_probe_fires_before_the_first_scheduled_job_of_the_day():
-    """06:15 ET, ahead of the 06:30 pricing refresh: the channel is proved
-    before anything that might need to shout over it."""
+    """06:15 ET, ahead of the 06:30 pricing refresh: on a Monday the channel
+    is proved before the week's first session could need to shout over it."""
     spec = _parse_unit(HEARTBEAT_TIMER)["Timer.OnCalendar"][0]
     hh, mm = spec.split()[1].split(":")[:2]
     probe_minute = int(hh) * 60 + int(mm)
@@ -772,68 +783,49 @@ def test_the_probe_fires_before_the_first_scheduled_job_of_the_day():
     )
 
 
-def test_the_digest_fires_exactly_once_a_week():
-    """One message a week is the whole noise budget. A daily 'still alive'
-    is a message an operator learns to swipe away, and a confirmation
-    nobody reads is worth what no confirmation is worth."""
-    schedules = _parse_unit(DIGEST_TIMER)["Timer.OnCalendar"]
-    assert len(schedules) == 1, "more than one weekly heartbeat is not weekly"
-    spec = schedules[0]
-    weekdays = spec.split()[0]
-    assert weekdays == "Sun", (
-        f"OnCalendar={spec!r} does not pin a single fixed weekday; the "
-        f"operator has to be able to notice a missing one"
-    )
-
-
-def test_no_heartbeat_firing_lands_inside_a_trading_session_window():
-    """Checked against the authoritative window table, not a comment."""
+def test_the_daily_probe_never_fires_inside_a_trading_session_window():
+    """Checked against the authoritative window table, not a comment. The
+    per-session checks obviously run during sessions — that is their whole
+    job — but this standalone unit must stay outside them so a `failed`
+    heartbeat unit is never mistaken for a failed trading run."""
     from src.trading_calendar import SESSION_WINDOWS
 
-    for timer in (HEARTBEAT_TIMER, DIGEST_TIMER):
-        for spec in _parse_unit(timer)["Timer.OnCalendar"]:
-            hh, mm = spec.split()[1].split(":")[:2]
-            minute_of_day = int(hh) * 60 + int(mm)
-            for mode, (lo, hi) in SESSION_WINDOWS.items():
-                assert not (lo <= minute_of_day <= hi), (
-                    f"{timer.name}: OnCalendar={spec!r} fires inside the "
-                    f"{mode} window"
-                )
+    for spec in _parse_unit(HEARTBEAT_TIMER)["Timer.OnCalendar"]:
+        hh, mm = spec.split()[1].split(":")[:2]
+        minute_of_day = int(hh) * 60 + int(mm)
+        for mode, (lo, hi) in SESSION_WINDOWS.items():
+            assert not (lo <= minute_of_day <= hi), (
+                f"{HEARTBEAT_TIMER.name}: OnCalendar={spec!r} fires inside "
+                f"the {mode} window"
+            )
 
 
-def test_both_heartbeat_timers_catch_up_after_a_reboot():
-    """Persistent matters more here than anywhere else on this box: a
-    missed heartbeat and a dead channel look identical from the operator's
-    phone, and the design depends on them not being."""
-    for timer in (HEARTBEAT_TIMER, DIGEST_TIMER):
-        parsed = _parse_unit(timer)
-        assert parsed["Timer.Persistent"] == ["true"], timer.name
-        assert parsed["Install.WantedBy"] == ["timers.target"], timer.name
+def test_the_heartbeat_timer_catches_up_after_a_reboot():
+    """A missed check and a dead channel look identical in the record, and
+    the staleness signal depends on them not being."""
+    parsed = _parse_unit(HEARTBEAT_TIMER)
+    assert parsed["Timer.Persistent"] == ["true"]
+    assert parsed["Install.WantedBy"] == ["timers.target"]
 
 
-def test_the_heartbeat_units_run_the_env_sourcing_wrapper():
+def test_the_heartbeat_unit_runs_the_env_sourcing_wrapper():
     probe = _parse_unit(HEARTBEAT_SERVICE)["Service.ExecStart"][0]
-    digest = _parse_unit(DIGEST_SERVICE)["Service.ExecStart"][0]
     assert probe.split()[0].endswith("scripts/run_alert_heartbeat.sh")
-    assert digest.split()[0].endswith("scripts/run_alert_heartbeat.sh")
-    assert digest.endswith("--digest")
     assert 'source "${PROJECT_ROOT}/.env"' in HEARTBEAT_WRAPPER.read_text()
 
 
-def test_a_dead_alert_channel_marks_its_units_failed():
+def test_a_dead_alert_channel_marks_its_unit_failed():
     """Exit 1 means the desk cannot reach the operator. With the channel
     down, `systemctl --user status` is one of the only places that fact can
     still appear — so it must not be swallowed by SuccessExitStatus."""
-    for service in (HEARTBEAT_SERVICE, DIGEST_SERVICE):
-        assert _parse_unit(service)["Service.SuccessExitStatus"] == ["0"], service.name
+    assert _parse_unit(HEARTBEAT_SERVICE)["Service.SuccessExitStatus"] == ["0"]
 
 
-def test_the_heartbeat_units_deploy_path_matches_the_other_qamc_units():
+def test_the_heartbeat_unit_deploy_path_matches_the_other_qamc_units():
     reference = _parse_unit(DRIFT_SERVICE)["Service.WorkingDirectory"]
-    for service in (HEARTBEAT_SERVICE, DIGEST_SERVICE):
-        parsed = _parse_unit(service)
-        assert parsed["Service.WorkingDirectory"] == reference, service.name
-        assert parsed["Service.ExecStart"][0].startswith(reference[0]), service.name
+    parsed = _parse_unit(HEARTBEAT_SERVICE)
+    assert parsed["Service.WorkingDirectory"] == reference
+    assert parsed["Service.ExecStart"][0].startswith(reference[0])
 
 
 @pytest.mark.parametrize("wrapper", [DRIFT_WRAPPER, HEARTBEAT_WRAPPER],

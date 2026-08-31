@@ -173,6 +173,27 @@ class TradingScheduler:
                     message = format_session_result(
                         name, result, elapsed, error=error,
                     )
+                    # Parity with main.py's finally: every session proves
+                    # the alert path it is about to shout over and records
+                    # the verdict where Mission Control can read it. Same
+                    # module, same probe — see src/alert_watchdog.py.
+                    try:
+                        from src import alert_watchdog
+
+                        db_path = getattr(
+                            getattr(self.config, "storage", None), "db_path", None,
+                        )
+                        before = alert_watchdog.read_health(db_path)
+                        verdict = alert_watchdog.verify_alert_channel(
+                            self.notifier, source=name, db_path=db_path,
+                        )
+                        message = alert_watchdog.annotate_session_message(
+                            message, mode=name, before=before, result=verdict,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[%s] alert watchdog failed in _run_safe: %s", name, exc,
+                        )
                     if message:
                         self.notifier.send(message)
                 except Exception as exc:  # noqa: BLE001

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Alerting-heartbeat runner — systemd entry point for both the daily probe
-# and the weekly digest.
+# Alerting-heartbeat runner — systemd entry point for the daily probe that
+# is the seven-day-a-week floor under the sessions' own alert-channel
+# watchdog (src/alert_watchdog.py).
 #
 # Same shape as run_daily_export.sh, run_pricing_refresh.sh and
 # run_drift_check.sh, for the same reason: the script needs `.env` sourced
@@ -8,7 +9,10 @@
 # ran without credentials would report the alert channel broken every single
 # day and be measuring nothing but its own misconfiguration.
 #
-# Arguments are passed through (the digest unit passes --digest).
+# Arguments are passed through (`--status` prints the record and sends
+# nothing). The weekly digest this wrapper used to also drive is gone —
+# a routine confirmation the operator learns to ignore is worth nothing,
+# and a week of undetected breakage is not monitoring.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

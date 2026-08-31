@@ -11,9 +11,11 @@ Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
 # Sends one real Telegram message with disable_notification and deletes it
 # again, so the channel is proved without spending the operator's attention.
-# The only thing it writes is data/alerting/heartbeat.json; `data/` is
-# gitignored, so the record can never dirty the checkout and become deploy
-# drift.
+# The verdict goes to the `alert_channel_checks` table — the same durable
+# record every session writes to and Mission Control reads — plus
+# data/alerting/heartbeat.json as the on-box copy that still answers when
+# the database is the thing that is broken. `data/` is gitignored, so
+# neither record can dirty the checkout and become deploy drift.
 #
 # Through the wrapper for .env: a heartbeat with no credentials would report
 # the channel broken every day and be measuring nothing but its own
@@ -21,9 +23,10 @@ WorkingDirectory=/home/qamc/quant-agent
 # detector.
 ExecStart=/home/qamc/quant-agent/scripts/run_alert_heartbeat.sh
 # Exit 1 means the desk currently has NO way to reach the operator. That is
-# a real failure, not a finding, and marking the unit failed is most of the
-# point: when the alert channel is down, `systemctl --user status` and the
-# journal are the only places the answer can still appear.
+# a real failure, not a finding, and marking the unit failed is part of the
+# point: when the alert channel is down, `systemctl --user status`, the
+# journal, and Mission Control's red System-health panel are the only places
+# the answer can still appear.
 SuccessExitStatus=0
 # Above the wrapper's own 60+15s kill, so the wrapper kills Python before
 # systemd kills the wrapper.

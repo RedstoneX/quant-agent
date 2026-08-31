@@ -398,26 +398,49 @@ message, and nothing checked that a Telegram message can still be sent — so
 "no alert arrived" meant both "nothing is wrong" and "the alarm is broken",
 with nothing able to separate them. `scripts/alert_heartbeat.py` closes that:
 
-- **Daily probe, 06:15 ET, seven days a week**
-  (`quant-agent-alert-heartbeat.timer`). Sends a real message through the
-  real notifier with `disable_notification` and deletes it again, so it
-  exercises the whole path — token, chat id, egress, message shape — without
-  spending the operator's attention. A present-but-revoked token, a wrong
+- **Every session proves the channel — the primary mechanism.** All five to
+  six weekday sessions (plus the ~14 `intra_check` ticks) exercise the whole
+  Telegram path end to end before pushing their own message: one real send
+  with `disable_notification`, deleted immediately after
+  (`TelegramNotifier.probe`, reused). A present-but-revoked token, a wrong
   chat id, a blocked bot and a dropped egress route all pass a variable
-  check and fail this. The verdict is written to
+  check and fail this. `src/alert_watchdog.py` owns the design.
+- **The verdict is durable and rendered.** SQLite `alert_channel_checks`
+  (capped at 2000 rows), read by `/health` as a four-state `alert_channel`:
+  `ok` / `broken` / `stale` (last success older than
+  `STALE_AFTER_HOURS = 26`) / `unknown`. `broken` and `stale` flip
+  `/health.status` to `degraded` and render red in Mission Control;
+  `unknown` is amber and stated in words, never "ok".
+- **Silent on success.** A healthy channel sends nothing. A failed check
+  forces a message out even from sessions that are normally silent; a
+  recovery reports how many checks failed and when the channel last worked.
+- **Daily probe, 06:15 ET, seven days a week**
+  (`quant-agent-alert-heartbeat.timer`) — the floor, not the primary
+  mechanism. Sessions run Mon-Fri only, so without a weekend check the 26h
+  staleness threshold would fire every Saturday and have to be switched off.
+  It also covers the one case sessions structurally cannot report: every
+  session failing to start at all. Writes the same durable table plus
   `data/alerting/heartbeat.json` (gitignored, so it can never become deploy
-  drift) and a failure exits non-zero so the unit shows failed.
-- **Weekly digest, Sundays 17:00 ET** (`quant-agent-alert-digest.timer`).
-  The one routine message the desk sends on purpose. Its content is the
-  week's probe record; its arrival is the point.
-- **The bootstrap limit, stated plainly.** If the channel is what is broken,
-  no message over it can say so. The weekly digest is therefore a standing
-  appointment whose absence is the signal, and the message body says so every
-  week. On-box detection latency is 24h (the daily record and the failed
-  unit); operator-visible latency without an out-of-band channel is up to
-  seven days. `ALERT_HEARTBEAT_HEALTHCHECK_URL` in `.env` closes that gap
-  with a free healthchecks.io-style dead-man's switch — supported, and **not
-  currently configured**.
+  drift); a failure exits non-zero so the unit shows failed.
+- **Detection latency.** Weekday: ~30 minutes (the next `intra_check`
+  tick). Friday evening, after the week's last session: ~9 hours (the
+  Saturday 06:15 ET probe). The Saturday, Sunday and Monday probes all land
+  before Monday's first session at 08:00 ET, so the channel is proved
+  before the week's first session needs it.
+- **The bootstrap limit, stated plainly.** (A) The channel breaking while
+  the box runs is the likely failure, is fully detectable locally, and is
+  what the above covers. (B) The box itself being dead cannot be reported by
+  anything running on the box. An external monitoring service would cover
+  (B); that dependency was **refused outright**, so the old
+  `ALERT_HEARTBEAT_HEALTHCHECK_URL` hook was deleted rather than left
+  dormant, and a test keeps it gone. If the box dies, the owner finds out
+  when he next looks — not fixed, not pretended otherwise.
+- **The weekly Sunday digest is retired.** Its absence was supposed to be
+  the signal, which allowed up to seven days of undetected breakage. The
+  `--digest` flag, `run_digest`, `digest_text` and both
+  `quant-agent-alert-digest.{service,timer}` units are deleted, and tests
+  fail CI if a unit ships with `digest` in its name or `--digest` in its
+  `ExecStart`.
 
 ## Mandatory paid-analysis cost circuit
 

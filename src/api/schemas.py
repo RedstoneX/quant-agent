@@ -52,6 +52,11 @@ class HealthResponse(BaseModel):
     session_lock_active: bool | None = None  # best-effort process hint, not authoritative
     decision_path_status: str = "unknown"
     llm_circuit: dict | None = None
+    # Can this desk still reach the operator at all? Written by every
+    # session (src/alert_watchdog.py), never inferred here. `status` is one
+    # of ok / broken / stale / unknown — "unknown" means no check has been
+    # recorded, which is deliberately NOT the same as healthy.
+    alert_channel: dict | None = None
     timestamp: str
 
 

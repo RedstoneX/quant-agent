@@ -89,6 +89,28 @@ def is_executed_trade(row: dict) -> bool:
     return (fill_status is None and action != "HOLD") or fill_status == "filled" or fill_qty > 0
 
 
+def get_alert_channel_health() -> dict:
+    """Can this desk still reach the operator? — read-only.
+
+    Delegates to `src.alert_watchdog.read_health`, which opens its own
+    `mode=ro` connection exactly like `_connect()` above. One implementation
+    of "what does the check history say", shared by the sessions that write
+    it and the API that renders it; a second copy here would be free to
+    disagree with the writer and report health that nothing measured.
+
+    Never raises: a database that predates the `alert_channel_checks` table,
+    or no config at all, degrades to `status: unknown` — explicitly not `ok`.
+    """
+    try:
+        from src.alert_watchdog import read_health
+
+        return read_health(get_db_path()).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        from src.alert_watchdog import AlertChannelHealth
+
+        return AlertChannelHealth("unknown", error=str(exc)).to_dict()
+
+
 def get_llm_circuit_health() -> dict:
     """Read decision-path/cost-circuit health without acquiring write access."""
 
