@@ -44,7 +44,8 @@ from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro import MacroCoverage
 from src.data.event_calendar import (
-    EventCalendarCoverage, fetch_earnings_proximity, format_event_risk_block,
+    EventCalendarCoverage, FOMCCoverage, fetch_earnings_proximity,
+    format_event_risk_block,
 )
 from src.data.technical import compute_indicators
 from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
@@ -60,7 +61,9 @@ if TYPE_CHECKING:
     from src.data.smart_money import SmartMoneySource
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
-    from src.data.event_calendar import MacroEventCalendarProvider
+    from src.data.event_calendar import (
+        FOMCCalendarProvider, MacroEventCalendarProvider,
+    )
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
     from src.data.market import MarketDataProvider
@@ -737,6 +740,7 @@ class MorningResearchStage:
         admit_smart_money_candidates_fn=None,
         admit_nominated_candidates_fn=None,
         event_calendar: "MacroEventCalendarProvider | None" = None,
+        fomc_calendar: "FOMCCalendarProvider | None" = None,
     ):
         self.config = config
         self.db = db
@@ -747,6 +751,10 @@ class MorningResearchStage:
         # told the calendar was NOT FETCHED rather than being shown an empty
         # one it would read as "no events scheduled".
         self.event_calendar = event_calendar
+        # Same optionality and the same reason: absent, the seats are told the
+        # FOMC calendar was NOT FETCHED rather than shown an empty schedule
+        # that reads as "no Fed decision coming".
+        self.fomc_calendar = fomc_calendar
         self.news_provider = news_provider
         self.news_store = news_store
         self.macro_store = macro_store
@@ -894,6 +902,21 @@ class MorningResearchStage:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Macro event calendar fetch failed: %s", e)
                     macro_events, event_coverage = [], None
+            # FOMC meeting schedule, from the Fed's own free calendar. Fetched
+            # in the same worker for the same reason, under its own deadline
+            # (event_risk.fomc_deadline_s), and degrading the same way: the
+            # seats read a named absence, never an empty schedule.
+            fomc_meetings: list = []
+            fomc_coverage = None
+            if self.fomc_calendar is not None:
+                try:
+                    fomc_meetings = self.fomc_calendar.get_meetings(
+                        horizon_days=self.config.event_risk.horizon_days,
+                    )
+                    fomc_coverage = self.fomc_calendar.last_coverage
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("FOMC calendar fetch failed: %s", e)
+                    fomc_meetings, fomc_coverage = [], None
             analysis, result = self.macro_analyst.analyze(
                 macro_summary=macro_summary,
                 universe=effective_symbols,
@@ -903,6 +926,8 @@ class MorningResearchStage:
                 macro_events=macro_events,
                 event_coverage=event_coverage,
                 event_horizon_days=self.config.event_risk.horizon_days,
+                fomc_meetings=fomc_meetings,
+                fomc_coverage=fomc_coverage,
             )
             if analysis:
                 try:
@@ -911,7 +936,7 @@ class MorningResearchStage:
                     logger.warning("Failed to persist macro last state: %s", e)
             return (
                 macro_summary, analysis, result, macro_coverage,
-                macro_events, event_coverage,
+                macro_events, event_coverage, fomc_meetings, fomc_coverage,
             )
 
         def _run_news():
@@ -1141,7 +1166,7 @@ class MorningResearchStage:
         try:
             (
                 macro_summary, macro_analysis, ma_result, macro_coverage,
-                macro_events, event_coverage,
+                macro_events, event_coverage, fomc_meetings, fomc_coverage,
             ) = macro_future.result()
             # A test double / older caller may hand back something other
             # than a real MacroCoverage (e.g. a bare MagicMock attribute
@@ -1168,6 +1193,14 @@ class MorningResearchStage:
                 macro_events = []
             ctx.macro_events = list(macro_events or [])
             ctx.macro_event_coverage = event_coverage
+            # Same test-double guard, same reason: anything that is not the
+            # real dataclass reads as NOT FETCHED, which the renderer states
+            # outright rather than showing as an empty FOMC schedule.
+            if not isinstance(fomc_coverage, FOMCCoverage):
+                fomc_coverage = None
+                fomc_meetings = []
+            ctx.fomc_meetings = list(fomc_meetings or [])
+            ctx.fomc_coverage = fomc_coverage
             if event_coverage is not None and event_coverage.status != "ok":
                 # Deliberately NOT written into `data_status`. Every key in
                 # that dict feeds the `data_degraded` advisory's ">= 2 degraded
@@ -1180,6 +1213,15 @@ class MorningResearchStage:
                 logger.warning(
                     "Macro event calendar %s this run: %s",
                     event_coverage.status.upper(), event_coverage.describe(),
+                )
+            if fomc_coverage is not None and not fomc_coverage.measured:
+                # Same reasoning as the line above — the seats are told in
+                # their own block; this is the operator's copy. Kept out of
+                # `data_status` so it cannot move the `data_degraded`
+                # threshold as a side effect.
+                logger.warning(
+                    "FOMC calendar %s this run: %s",
+                    fomc_coverage.status.upper(), fomc_coverage.describe(),
                 )
             if macro_coverage is not None:
                 _persist_evidence(
@@ -1995,7 +2037,8 @@ class RiskStage:
     Reads:  ctx.portfolio_decision, ctx.positions, ctx.total_value,
             ctx.last_equity, ctx.earnings_results, ctx.macro_analysis,
             ctx.analyses, ctx.symbols_bars, ctx.data_status, ctx.news_intel,
-            ctx.macro_summary, ctx.macro_events, ctx.macro_event_coverage
+            ctx.macro_summary, ctx.macro_events, ctx.macro_event_coverage,
+            ctx.fomc_meetings, ctx.fomc_coverage
 
     Writes: ctx.portfolio_decision.decisions (filtered/capped/scaled),
             ctx.correlation_matrix, ctx.daily_pnl, ctx.macro_target_pct
@@ -2022,8 +2065,10 @@ class RiskStage:
         run's decisions), bounded per-symbol AND in aggregate so a stalled
         yfinance call can never delay the session. The macro calendar is REUSED
         from the research stage (`ctx.macro_events`) so one session issues one
-        FRED sweep; on a resume lane where research never ran, ctx carries its
-        "not fetched" defaults and the block says exactly that.
+        FRED sweep, and the FOMC schedule the same way (`ctx.fomc_meetings`),
+        so one session issues one Fed calendar fetch; on a resume lane where
+        research never ran, ctx carries its "not fetched" defaults and the
+        block says exactly that.
 
         Never raises and never returns an empty string: on any failure the seat
         is shown the NOT FETCHED form. A missing section reads as a calm
@@ -2059,10 +2104,22 @@ class RiskStage:
         if not isinstance(coverage, EventCalendarCoverage):
             coverage = None
         events = list(ctx.macro_events or []) if coverage is not None else None
+        # Same pairing rule for the FOMC half: the schedule is only shown
+        # alongside the coverage object that says how far it reaches, because
+        # an empty schedule with no coverage line reads as "no Fed decision
+        # coming" — the exact fabrication this block exists to prevent.
+        fomc_coverage = getattr(ctx, "fomc_coverage", None)
+        if not isinstance(fomc_coverage, FOMCCoverage):
+            fomc_coverage = None
+        fomc_meetings = (
+            list(getattr(ctx, "fomc_meetings", None) or [])
+            if fomc_coverage is not None else None
+        )
         try:
             return format_event_risk_block(
                 earnings=earnings, events=events, coverage=coverage,
                 horizon_days=horizon_days,
+                fomc_meetings=fomc_meetings, fomc_coverage=fomc_coverage,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Event-risk block render failed: %s", e)
