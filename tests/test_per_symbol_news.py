@@ -454,6 +454,8 @@ alpaca:
   paper: true
 llm:
   tech_analyst_model: "claude-sonnet-4-6"
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20

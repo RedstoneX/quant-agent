@@ -53,7 +53,7 @@ def _merged_call(
     full_response = "\n\n".join(f"--- {label} ---\n{resp}" for label, _, resp in parts)
     return RecordedCall(
         row_id=row_id, agent_name=agent_name, run_id=run_id,
-        timestamp="2026-08-28 13:32:42", model="google/gemini-2.5-flash-lite",
+        timestamp="2026-08-28 13:32:42", model="google/gemini-3.5-flash-lite",
         input_message=input_message, full_response=full_response,
         input_tokens=input_tokens, output_tokens=output_tokens,
         cost_usd=cost_usd, finish_reason=finish_reason,
@@ -129,7 +129,7 @@ def test_unmerge_leaves_non_chunked_row_untouched():
     """A normal single-call agent (no chunk markers at all) is unaffected."""
     call = RecordedCall(
         row_id=230, agent_name="news_analyst_morning", run_id="run-be9f8f06",
-        timestamp="2026-08-28 13:31:02", model="google/gemini-2.5-flash-lite",
+        timestamp="2026-08-28 13:31:02", model="google/gemini-3.5-flash-lite",
         input_message="ordinary news prompt, no markers",
         full_response='{"headline": "..."}',
         input_tokens=500, output_tokens=100, cost_usd=0.002,

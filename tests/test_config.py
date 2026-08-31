@@ -15,6 +15,8 @@ alpaca:
   paper: true
 llm:
   tech_analyst_model: "claude-sonnet-4-6"
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -57,6 +59,8 @@ alpaca:
   paper: true
 llm:
   tech_analyst_model: "claude-sonnet-4-6"
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -180,6 +184,8 @@ llm:
   position_reviewer_model: "gpt-5.4"
   evening_analyst_model: "gpt-5.4"
   meta_reflector_model: "gpt-5.4"
+  fallback_provider: "openai"
+  fallback_model: "gpt-5.4"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -353,6 +359,8 @@ alpaca:
   paper: true
 llm:
   tech_analyst_model: "claude-sonnet-4-6"
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -547,6 +555,8 @@ alpaca:
   paper: true
 llm:
   tech_analyst_model: "claude-sonnet-4-6"
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -586,11 +596,15 @@ storage:
 def test_llm_config_defaults_are_current_claude_model():
     """Stale claude-*-4-6 defaults are gone — if settings.yaml omits a model,
     agents fall back to a current, priced Claude model, not a 4-6."""
-    from src.config import LLMConfig
+    from src.config import AGENT_NAMES, LLMConfig
     from src.cost_table import estimate_cost
+    # Per-AGENT model fields only — excludes `fallback_model` (2026-08-31),
+    # a single process-wide field that also happens to end in "_model" but
+    # is not one of the per-agent defaults this test is about.
     defaults = {
         f: LLMConfig.model_fields[f].default
-        for f in LLMConfig.model_fields if f.endswith("_model")
+        for f in LLMConfig.model_fields
+        if f.endswith("_model") and f[: -len("_model")] in AGENT_NAMES
     }
     assert set(defaults.values()) == {"claude-opus-4-7"}, defaults
     # and the default is actually priced (cost won't show $?.??)
@@ -637,8 +651,12 @@ storage:
 
 
 def test_load_config_deepseek_only_does_not_require_anthropic(tmp_path):
-    """All-DeepSeek config with the DeepSeek key set loads clean and does NOT
-    demand ANTHROPIC_API_KEY (failover is best-effort, not mandatory)."""
+    """All-DeepSeek config with the DeepSeek key set, and the fallback ALSO
+    pinned to deepseek (no cross-provider failover configured — a legitimate
+    operator choice), loads clean and does NOT demand ANTHROPIC_API_KEY. A
+    fallback credential is only mandatory when failover is actually reachable
+    (2026-08-31) — here it deliberately is not, which is the modern shape of
+    "failover is best-effort, not mandatory"."""
     yaml_content = """
 api_keys:
   anthropic: ""
@@ -659,6 +677,8 @@ llm:
   position_reviewer_model: "deepseek-v4-flash"
   evening_analyst_model: "deepseek-v4-flash"
   meta_reflector_model: "deepseek-v4-flash"
+  fallback_provider: "deepseek"
+  fallback_model: "deepseek-v4-flash"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -699,6 +719,13 @@ alpaca:
 llm:
   tech_analyst_model: "{model}"
   {extra_llm}
+  # anthropic-key is always present in this template above, so pinning the
+  # cross-provider failover target here too means every _BASE_YAML-based
+  # fixture satisfies AppConfig._check_llm_provider_keys's fallback-key
+  # requirement (2026-08-31) without each call site having to reason about
+  # it individually.
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20
@@ -1005,6 +1032,8 @@ alpaca:
   paper: true
 llm:
   tech_analyst_model: "claude-sonnet-4-6"
+  fallback_provider: "anthropic"
+  fallback_model: "claude-opus-4-7"
   max_tokens: 4096
 risk:
   max_position_pct: 20

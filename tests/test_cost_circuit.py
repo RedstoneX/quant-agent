@@ -141,7 +141,7 @@ def test_optional_retry_budget_exhaustion_skips_without_opening_circuit(tmp_path
     with pytest.raises(OptionalPaidAnalysisRetrySkipped):
         circuit.begin_call(
             agent_name="tech_analyst",
-            model="google/gemini-2.5-flash-lite",
+            model="google/gemini-3.5-flash-lite",
             system_prompt="s",
             user_message="u",
             max_output_tokens=100,
@@ -172,7 +172,7 @@ def test_completed_session_spend_holds_only_that_session_and_cannot_be_reset(tmp
     circuit = LLMCostCircuitBreaker(path, cfg, notifier)
     circuit.activate_session("run-cost", "morning")
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     circuit.before_provider_attempt(reservation, model=reservation.model)
@@ -200,7 +200,7 @@ def test_completed_session_spend_holds_only_that_session_and_cannot_be_reset(tmp
     second.activate_session("run-cost-next", "midday")
     reservation = second.begin_call(
         agent_name="tech_analyst",
-        model="google/gemini-2.5-flash-lite",
+        model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id != "disabled"
@@ -340,7 +340,7 @@ def _wrapped(outer_message: str, *, outer_name: str, cause: BaseException) -> Ex
 
 def _authorize_and_fail(circuit, error: BaseException, *, run_id: str,
                          agent_name: str = "tech_analyst",
-                         model: str = "google/gemini-2.5-flash-lite"):
+                         model: str = "google/gemini-3.5-flash-lite"):
     """Reserve + authorize one provider attempt (so `attempt_count > 0`,
     matching every real call this classification applies to -- provider
     authorization always happens before the network call that can fail),
@@ -518,7 +518,7 @@ def test_unrecognized_failure_defaults_to_ambiguous_not_zero_cost(tmp_path):
 def _settle_cheap_session(circuit, path, run_id, mode, cost):
     circuit.activate_session(run_id, mode)
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     circuit.before_provider_attempt(reservation, model=reservation.model)
@@ -544,7 +544,7 @@ def test_old_session_count_default_no_longer_blocks_paid_sessions(tmp_path):
 
     circuit.activate_session("intra_check-2", "intra_check")
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id
@@ -592,7 +592,7 @@ def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
     circuit.activate_session("intra_check-3", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "session_retry_limit"
@@ -621,7 +621,7 @@ def test_mode_daily_spend_limit_trips_on_dollars_not_session_count(tmp_path):
     circuit.activate_session("intra_check-2", "intra_check")
     with pytest.raises(PaidAnalysisSuspended):
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     state = circuit.status()
@@ -648,7 +648,7 @@ def test_mode_daily_spend_limit_does_not_block_a_different_mode(tmp_path):
 
     circuit.activate_session("run-morning", "morning")
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id
@@ -684,7 +684,7 @@ def test_healthy_day_many_paid_sessions_never_trip_the_backstop(tmp_path):
 
     circuit.activate_session("intra_check-20", "intra_check")
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id
@@ -707,7 +707,7 @@ def test_genuine_free_failure_loop_trips_the_backstop_at_the_cap(tmp_path):
     circuit.activate_session("intra_check-8", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "session_retry_limit"
@@ -730,7 +730,7 @@ def test_mixed_day_only_free_failures_count_toward_the_backstop(tmp_path):
     circuit.activate_session("intra_check-next", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "session_retry_limit"
@@ -762,7 +762,7 @@ def test_backstop_cools_off_after_the_configured_window(tmp_path):
     circuit.activate_session("intra_check-3", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "session_retry_limit"
@@ -771,7 +771,7 @@ def test_backstop_cools_off_after_the_configured_window(tmp_path):
     circuit.activate_session("intra_check-4", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "session_retry_limit"
@@ -792,7 +792,7 @@ def test_backstop_cools_off_after_the_configured_window(tmp_path):
 
     circuit.activate_session("intra_check-5", "intra_check")
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id
@@ -806,7 +806,7 @@ def test_backstop_cools_off_after_the_configured_window(tmp_path):
     circuit.activate_session("intra_check-7", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "daily_cost_limit"
@@ -837,7 +837,7 @@ def test_mode_daily_spend_limit_still_latches_for_the_day_unaffected_by_cooloff(
     circuit.activate_session("intra_check-2", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "mode_daily_spend_limit"
@@ -859,7 +859,7 @@ def test_mode_daily_spend_limit_still_latches_for_the_day_unaffected_by_cooloff(
     circuit.activate_session("intra_check-3", "intra_check")
     with pytest.raises(PaidAnalysisSuspended) as excinfo:
         circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert excinfo.value.state["trigger_code"] == "mode_daily_spend_limit"
@@ -910,7 +910,7 @@ def test_afternoon_reserve_blocks_morning_spend_above_the_ceiling(tmp_path):
     with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=0.60):
         with pytest.raises(PaidAnalysisSuspended) as excinfo:
             circuit.begin_call(
-                agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+                agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
                 system_prompt="s", user_message="u", max_output_tokens=100,
             )
     assert excinfo.value.state["trigger_code"] == "morning_spend_ceiling"
@@ -949,7 +949,7 @@ def test_afternoon_reserve_recovers_the_same_day_without_a_rollover(tmp_path):
     with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=0.60):
         with pytest.raises(PaidAnalysisSuspended):
             circuit.begin_call(
-                agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+                agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
                 system_prompt="s", user_message="u", max_output_tokens=100,
             )
 
@@ -960,7 +960,7 @@ def test_afternoon_reserve_recovers_the_same_day_without_a_rollover(tmp_path):
     # rollover -- and confirm the identical session can now proceed.
     with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=None):
         reservation = circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     assert reservation.reservation_id
@@ -1300,9 +1300,13 @@ def test_percentile_helper_matches_linear_interpolation():
 
 def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
     path = _db_path(tmp_path)
+    # Limits sized to admit exactly ONE reservation at google/gemini-3.5-
+    # flash-lite's rate (~$0.0027/reservation here) but not two (~$0.0054) —
+    # same margin the pre-2026-08-31 numbers had against the OpenRouter rate
+    # in effect at the time (google/gemini-2.5-flash-lite, ~$0.00045).
     cfg = _config(
-        session_cost_limit_usd=0.0007,
-        daily_cost_limit_usd=0.0007,
+        session_cost_limit_usd=0.0042,
+        daily_cost_limit_usd=0.0042,
         max_free_failure_sessions_per_mode=10,
     )
     first = LLMCostCircuitBreaker(path, cfg, _Notifier())
@@ -1318,7 +1322,7 @@ def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
         try:
             circuit.begin_call(
                 agent_name=agent_name,
-                model="google/gemini-2.5-flash-lite",
+                model="google/gemini-3.5-flash-lite",
                 system_prompt="s",
                 user_message="u",
                 max_output_tokens=1_000,
@@ -1361,7 +1365,7 @@ def test_third_paid_session_in_same_mode_is_not_blocked_by_backstop(tmp_path):
         circuit.activate_session(run_id, "morning")
         reservation = circuit.begin_call(
             agent_name="tech_analyst",
-            model="google/gemini-2.5-flash-lite",
+            model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
         circuit.before_provider_attempt(reservation, model=reservation.model)
@@ -1370,7 +1374,7 @@ def test_third_paid_session_in_same_mode_is_not_blocked_by_backstop(tmp_path):
     circuit.activate_session("run-three", "morning")
     reservation = circuit.begin_call(
         agent_name="tech_analyst",
-        model="google/gemini-2.5-flash-lite",
+        model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     assert reservation.reservation_id
@@ -1400,11 +1404,11 @@ def test_quota_hold_cannot_authorize_an_old_reservation_above_settled_cap(tmp_pa
     )
     circuit.activate_session("run-reset-race", "morning")
     first = circuit.begin_call(
-        agent_name="first", model="google/gemini-2.5-flash-lite",
+        agent_name="first", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     waiting = circuit.begin_call(
-        agent_name="waiting", model="google/gemini-2.5-flash-lite",
+        agent_name="waiting", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     circuit.before_provider_attempt(first, model=first.model)
@@ -1435,13 +1439,13 @@ def test_provider_boundary_revalidates_ledger_after_reservation(tmp_path):
     )
     circuit.activate_session("run-waiting", "morning")
     waiting = circuit.begin_call(
-        agent_name="waiting", model="google/gemini-2.5-flash-lite",
+        agent_name="waiting", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
 
     circuit.activate_session("run-settled", "midday")
     settled = circuit.begin_call(
-        agent_name="settled", model="google/gemini-2.5-flash-lite",
+        agent_name="settled", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     circuit.before_provider_attempt(settled, model=settled.model)
@@ -1489,7 +1493,7 @@ def test_durable_emergency_latch_survives_new_process_and_preserves_trigger(tmp_
     with pytest.raises(PaidAnalysisSuspended):
         second.begin_call(
             agent_name="position_reviewer",
-            model="google/gemini-2.5-flash-lite",
+            model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
     second.mark_unavailable(
@@ -1507,7 +1511,7 @@ def test_external_emergency_latch_blocks_inflight_response_at_completion(tmp_pat
     worker = LLMCostCircuitBreaker(path, cfg, _Notifier())
     worker.activate_session("run-inflight", "morning")
     reservation = worker.begin_call(
-        agent_name="portfolio_manager", model="google/gemini-2.5-flash-lite",
+        agent_name="portfolio_manager", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     worker.before_provider_attempt(reservation, model=reservation.model)
@@ -1535,7 +1539,7 @@ def test_emergency_alert_prefers_exact_persisted_attempt_count(tmp_path):
     circuit = LLMCostCircuitBreaker(path, _config(), notifier)
     circuit.activate_session("run-snapshot", "morning")
     reservation = circuit.begin_call(
-        agent_name="tech", model="google/gemini-2.5-flash-lite",
+        agent_name="tech", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     circuit.before_provider_attempt(reservation, model=reservation.model)
@@ -1582,7 +1586,7 @@ def test_two_expired_started_calls_are_both_charged_before_alert_snapshot(tmp_pa
     reservations = []
     for agent_name in ("macro", "news"):
         reservation = circuit.begin_call(
-            agent_name=agent_name, model="google/gemini-2.5-flash-lite",
+            agent_name=agent_name, model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
         circuit.before_provider_attempt(reservation, model=reservation.model)
@@ -1728,7 +1732,7 @@ def test_cross_et_day_reservation_is_never_authorized(tmp_path, monkeypatch):
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     circuit.activate_session("run-midnight", "morning")
     reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-2.5-flash-lite",
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
     old_day = circuit.status()["current_day"]

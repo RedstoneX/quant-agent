@@ -652,7 +652,7 @@ def test_backfill_recovers_conviction_risk_and_model_for_entries(tmp_path):
             {"symbol": "NVDA", "target_weight_pct": 8.0, "conviction": "high",
              "thesis": "x", "thesis_invalid_if": "", "catalyst": ""},
         ]),
-        model="google/gemini-2.5-flash-lite", tokens_used=100,
+        model="google/gemini-3.5-flash-lite", tokens_used=100,
         decision_id="r1-dec-1",
     )
     # Entry row predates the ledger columns — written with no conviction/
@@ -670,7 +670,7 @@ def test_backfill_recovers_conviction_risk_and_model_for_entries(tmp_path):
     assert result_applied["entry_recovered"] == 1
     row = dict(db.conn.execute("SELECT * FROM trades WHERE id = ?", (row_id,)).fetchone())
     assert row["conviction"] == "high"
-    assert row["decision_model"] == "google/gemini-2.5-flash-lite"
+    assert row["decision_model"] == "google/gemini-3.5-flash-lite"
     assert row["allocated_risk_pct"] is None  # never backfilled — see docstring
     db.close()
 

@@ -3,6 +3,9 @@ api_keys:
   openai: "${OPENAI_API_KEY}"
   deepseek: "${DEEPSEEK_API_KEY}"   # optional; required only if any *_model is a deepseek-* id
   openrouter: "${OPENROUTER_API_KEY}"   # optional; required only if any agent has provider: openrouter
+  # Google AI Studio direct (2026-08-31 owner decision) — required: the eight
+  # specialist/review seats below run provider: google as their PRIMARY.
+  google: "${GOOGLE_API_KEY}"
   fred: "${FRED_API_KEY}"
   alpaca_key: "${ALPACA_API_KEY}"
   alpaca_secret: "${ALPACA_SECRET_KEY}"
@@ -35,16 +38,34 @@ llm:
   # "vendor/model" ids collide with native prefixes, so resolve_provider()
   # cannot infer them — an unset provider routes to Anthropic and fails on
   # the first call of the session (src/agents/base.py).
-  tech_analyst_provider: "openrouter"
-  tech_analyst_model: "google/gemini-2.5-flash-lite"
-  news_analyst_provider: "openrouter"
-  news_analyst_model: "google/gemini-2.5-flash-lite"
-  macro_analyst_provider: "openrouter"
-  macro_analyst_model: "google/gemini-2.5-flash-lite"
-  earnings_analyst_provider: "openrouter"
-  earnings_analyst_model: "google/gemini-2.5-flash-lite"
-  smart_money_analyst_provider: "openrouter"
-  smart_money_analyst_model: "google/gemini-2.5-flash-lite"
+  #
+  # === 2026-08-31: primary moved to Gemini DIRECT, OpenRouter to BACKUP ===
+  # Owner decision (docs/WORK.md "NEXT UP"). The eight seats below moved off
+  # `provider: openrouter` / `google/gemini-2.5-flash-lite` onto
+  # `provider: google` / `gemini-3.5-flash-lite` (Google AI Studio direct,
+  # bare id — no "google/" vendor prefix, that form is OpenRouter-only).
+  # Google refuses 2.5 outright to new keys ("no longer available to new
+  # users"), so 3.5 is the only id a new key gets — both the primary above
+  # and `llm.fallback_model` below move together, or the backup stops being
+  # the same model. Free tier for project qamc-gemini; see
+  # src/agents/base.py's _GOOGLE_TOKENS_PER_MIN for the measured RPM/TPM/RPD
+  # ceilings this governs against.
+  #
+  # A new model id carries no fitted history: src/token_budget.py's
+  # `_fit()` requires `MIN_SAMPLES = 8` (agents/model, agent_logs) before it
+  # trusts a per-byte size model, and falls back to the conservative default
+  # (1.0 tokens/byte, 6,000 fixed) below that — this is BY DESIGN (verified
+  # against src/token_budget.py, not assumed), not a bug to work around.
+  tech_analyst_provider: "google"
+  tech_analyst_model: "gemini-3.5-flash-lite"
+  news_analyst_provider: "google"
+  news_analyst_model: "gemini-3.5-flash-lite"
+  macro_analyst_provider: "google"
+  macro_analyst_model: "gemini-3.5-flash-lite"
+  earnings_analyst_provider: "google"
+  earnings_analyst_model: "gemini-3.5-flash-lite"
+  smart_money_analyst_provider: "google"
+  smart_money_analyst_model: "gemini-3.5-flash-lite"
   portfolio_manager_provider: "openrouter"
   # 2026-08-25 production-grounding re-measurement: Gemini scored 0.00 after
   # omitting provenance/inventing holdings; Luna was unstable under the final
@@ -95,10 +116,10 @@ llm:
   # NOT a general promotion of this model: it scored 0.95 mean / 0.85 worst
   # across the full six-scenario sweep and is measured only at THIS seat.
   risk_manager_model: "qwen/qwen3-235b-a22b-2507"
-  position_reviewer_provider: "openrouter"
-  position_reviewer_model: "google/gemini-2.5-flash-lite"
-  evening_analyst_provider: "openrouter"
-  evening_analyst_model: "google/gemini-2.5-flash-lite"
+  position_reviewer_provider: "google"
+  position_reviewer_model: "gemini-3.5-flash-lite"
+  evening_analyst_provider: "google"
+  evening_analyst_model: "gemini-3.5-flash-lite"
   # Global fallback — any per-agent override below takes precedence.
   # Hard output ceiling used by the pre-call cost reservation.  16K covers
   # the observed production PM payload (~11K output tokens) while making the
@@ -118,17 +139,36 @@ llm:
   # covers it (see MODEL_ROUTING_POLICY.md "Known limitations") — assigned
   # by analogy to the portfolio_manager seat, whose output shape it most
   # resembles and which measured 1.00/1.00.
-  meta_reflector_provider: "openrouter"
-  meta_reflector_model: "google/gemini-2.5-flash-lite"
+  meta_reflector_provider: "google"
+  meta_reflector_model: "gemini-3.5-flash-lite"
   meta_reflector_max_tokens: 16000
   # Stage 1 (QAMC): explicit per-agent provider override. Unset/null still
   # infers the provider from the model-id prefix exactly as before, but the
-  # accepted OpenRouter policy above does NOT rely on inference: every seat
-  # pins `provider: openrouter` because OpenRouter's "vendor/model" ids would
-  # otherwise be ambiguous. Example of the general seam:
+  # accepted policy above does NOT rely on inference for the OpenRouter
+  # seats: `provider: openrouter` is pinned because OpenRouter's
+  # "vendor/model" ids would otherwise be ambiguous. Google-direct bare ids
+  # (e.g. "gemini-3.5-flash-lite") ARE inferable from prefix, but `provider:
+  # google` is still pinned explicitly on every seat above for the same
+  # "never rely on inference for a live seat" discipline. Example of the
+  # general seam:
   #   tech_analyst_provider: "openrouter"
   #   tech_analyst_model: "anthropic/claude-3.5-sonnet"
-  # Valid values: anthropic | openai | deepseek | openrouter.
+  # Valid values: anthropic | openai | deepseek | openrouter | google.
+  #
+  # === Cross-provider failover target (2026-08-31 owner decision) ===
+  # Process-wide, not per-agent (see src/agents/base.py's
+  # _DEFAULT_FALLBACK_PROVIDER/_DEFAULT_FALLBACK_MODEL and LLMConfig.
+  # fallback_provider/fallback_model in src/config.py). OpenRouter serving
+  # the SAME model the primary above uses direct: a failover changes the
+  # ROAD, not the REASONING — the owner's explicit objection to the
+  # inherited claude-opus-4-7 Anthropic fallback (an upstream `yebof`
+  # remnant nobody at QAMC chose). Consequence worth noting: portfolio_manager
+  # (openrouter + openai/gpt-5.5) still gets a real fallback here too — same
+  # road (openrouter), different model (gemini instead of gpt-5.5) — which
+  # still rescues a model-specific rate-limit, the exact shape of the
+  # 2026-08-31 incident.
+  fallback_provider: "openrouter"
+  fallback_model: "google/gemini-3.5-flash-lite"
 
 # How aggressively an entry may cross the spread. Bounds EXECUTION cost, not
 # position risk. A too-tight cap does not make the book safer — it silently

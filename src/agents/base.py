@@ -44,6 +44,23 @@ _DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # no /v1, no trailing slash
 # below), never inferred from a prefix. Stage 1 (QAMC provider/model plumbing).
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
+# Google AI Studio's OpenAI-compatible endpoint (2026-08-31 owner decision:
+# gemini-3.5-flash-lite direct becomes the PRIMARY route for the eight
+# specialist/review seats, free tier). Verified end-to-end from the box with
+# streaming + usage — this is why `_call_openai`'s streamed OpenAI-wire path
+# is reused (see _openai_wire_call) rather than a native Gemini client being
+# written. The credential is injected as `Authorization: Bearer {value}`,
+# which the OpenAI SDK sends natively via `api_key=` — no custom header work
+# needed. NOTE: this is the COMPAT endpoint; the native Gemini REST endpoint
+# uses `x-goog-api-key` instead and will NOT accept this same credential.
+_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# Bare Google-direct model ids (e.g. "gemini-3.5-flash-lite") are inferable
+# from a prefix, unlike OpenRouter's "vendor/model" ids above — a config that
+# names the model with no explicit `provider` must still route to Google
+# rather than silently falling through to the Anthropic default.
+_GOOGLE_PREFIXES = ("gemini-",)
+
 # Per-model max-OUTPUT-token ceilings. We clamp client-side because DeepSeek
 # rejects an over-ceiling max_tokens (HTTP 400/422 "Invalid max_tokens value")
 # rather than silently clamping. The legacy deepseek-chat / deepseek-reasoner
@@ -201,6 +218,13 @@ _ANTHROPIC_LLM_SEMAPHORE = threading.Semaphore(_ANTHROPIC_MAX_CONCURRENT)
 # it must not share (and be starved by, or starve) the relay's cap.
 _OPENROUTER_MAX_CONCURRENT = _int_env("QUANT_AGENT_MAX_CONCURRENT_OPENROUTER", 3)
 _OPENROUTER_LLM_SEMAPHORE = threading.Semaphore(_OPENROUTER_MAX_CONCURRENT)
+# Google AI Studio direct is a third distinct account/rate-limit domain (its
+# own free-tier RPM/TPM/RPD ceiling — see _GOOGLE_TOKENS_PER_MIN below) and
+# must not share the OpenAI relay's or OpenRouter's cap. Default of 3 mirrors
+# OpenRouter's; the free tier's 15 RPM ceiling leaves ample headroom for 3
+# concurrent in-flight requests at the call latencies this desk sees.
+_GOOGLE_MAX_CONCURRENT = _int_env("QUANT_AGENT_MAX_CONCURRENT_GOOGLE", 3)
+_GOOGLE_LLM_SEMAPHORE = threading.Semaphore(_GOOGLE_MAX_CONCURRENT)
 
 # --- tokens per minute, the limit the semaphores above never bounded -------
 #
@@ -229,6 +253,22 @@ _OPENROUTER_LLM_SEMAPHORE = threading.Semaphore(_OPENROUTER_MAX_CONCURRENT)
 _OPENROUTER_TOKENS_PER_MIN = _int_env("QUANT_AGENT_OPENROUTER_TPM", 150_000)
 _OPENAI_TOKENS_PER_MIN = _int_env("QUANT_AGENT_OPENAI_TPM", 150_000)
 _ANTHROPIC_TOKENS_PER_MIN = _int_env("QUANT_AGENT_ANTHROPIC_TPM", 150_000)
+
+# Google AI Studio direct (project qamc-gemini) free tier, READ OFF THE
+# OWNER'S OWN AI STUDIO DASHBOARD 2026-08-31: 15 RPM / 250,000 TPM / 500 RPD.
+# Published blog figures (1,000-1,500 RPD) are WRONG for this project; the
+# dashboard is authoritative. TPM is the BINDING constraint, not RPD: a
+# morning pass is ~215,000 tokens — 86% of the per-minute ceiling in a single
+# burst — while RPD at ~76 requests/day against 500 is a non-issue.
+#
+# 200,000 is 80% of that measured 250,000 TPM ceiling, not a guessed number —
+# the owner's explicit objection to an earlier ceiling was that it was chosen
+# by taste rather than derived from a published/measured limit. A 6-request
+# test at ~253k tokens BREACHED the real ceiling (recorded on the dashboard,
+# though the calls happened to still succeed) — "no error" is not "no
+# limit", so this stays a genuine safety margin, not a number tuned to the
+# last incident.
+_GOOGLE_TOKENS_PER_MIN = _int_env("QUANT_AGENT_GOOGLE_TPM", 200_000)
 _GOVERNOR_MAX_WAIT_S = float(_int_env("QUANT_AGENT_TPM_MAX_WAIT_S", 120))
 
 # Pre-request size estimate. The dense numeric payload that actually trips
@@ -255,6 +295,9 @@ _TOKEN_GOVERNORS = {
     "deepseek": TokenRateGovernor(
         "DeepSeek", _int_env("QUANT_AGENT_DEEPSEEK_TPM", 150_000),
         max_wait_s=_GOVERNOR_MAX_WAIT_S,
+    ),
+    "google": TokenRateGovernor(
+        "Google", _GOOGLE_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
     ),
 }
 
@@ -327,9 +370,12 @@ def provider_attempt_budget(*, failover_available: bool) -> int:
 
     The ``+ 1`` is the single-shot failover in ``run()`` (see ``_try_failover``:
     it deliberately gets no retry budget of its own). ``failover_available``
-    mirrors that call site's own gate — a fallback key is configured and the
-    primary is not itself Anthropic; failing over from Claude to Claude is
-    pointless, so those agents never spend the extra attempt.
+    mirrors that call site's own gate — a fallback key is configured AND the
+    fallback (provider, model) pair differs from the primary's; failing over
+    onto the exact (provider, model) pair that just failed is pointless (not
+    just a Claude-to-Claude special case any more — see
+    ``BaseAgent._failover_reachable``), so those agents never spend the extra
+    attempt.
     """
     return _max_retries() + (1 if failover_available else 0)
 
@@ -338,41 +384,57 @@ def _is_openai_model(model: str) -> bool:
     return any(model.startswith(p) for p in _OPENAI_PREFIXES)
 
 
-def _governor_domain_for(model: str, agent) -> str:
+def _governor_domain_for(model: str, agent, *, is_failover: bool = False) -> str:
     """Which provider's token budget this request will actually consume.
 
-    Keyed on the MODEL being sent, not the agent's configured primary: a
-    cross-provider failover spends the fallback provider's rate limit, not
-    the primary's, and charging it to the wrong governor would let a failover
-    storm slip past the ceiling it is supposed to be bounded by.
+    Keyed on which PATH this attempt is taking, not on sniffing the model
+    string: a cross-provider failover spends the FALLBACK provider's rate
+    limit, not the primary's, and charging it to the wrong governor would let
+    a failover storm slip past the ceiling it is supposed to be bounded by.
+
+    ``is_failover`` is threaded explicitly from the call site (the dedicated
+    failover authorize-closure in ``_execute()``) rather than inferred from
+    the model text. Model-text sniffing was only ever safe because the old
+    fallback model (``claude-opus-4-7``) had a distinctive "claude" prefix no
+    primary model would ever share; now that the fallback (provider, model)
+    pair is configurable, nothing guarantees the fallback model's spelling is
+    distinctive — a Google-direct primary (bare id "gemini-3.5-flash-lite")
+    and an OpenRouter-vendor-prefixed fallback of the "same" model
+    ("google/gemini-3.5-flash-lite") happen to differ as strings, but that is
+    incidental and nothing should depend on it.
     """
-    if model == _FALLBACK_MODEL or str(model).startswith("claude"):
-        return "anthropic"
-    if getattr(agent, "_use_openrouter", False):
-        return "openrouter"
-    if getattr(agent, "_use_deepseek", False):
-        return "deepseek"
-    return "openai"
+    if is_failover:
+        fallback_provider = getattr(agent, "_fallback_provider", None)
+        return fallback_provider if fallback_provider in _TOKEN_GOVERNORS else "openrouter"
+    provider = getattr(agent, "_provider", None)
+    return provider if provider in _TOKEN_GOVERNORS else "openai"
 
 
 def _is_deepseek_model(model: str) -> bool:
     return any(model.startswith(p) for p in _DEEPSEEK_PREFIXES)
 
 
+def _is_google_model(model: str) -> bool:
+    return any(model.startswith(p) for p in _GOOGLE_PREFIXES)
+
+
 # Providers explicit config / _check_llm_provider_keys / pipeline.py are
 # allowed to name. Anything else is treated as "no explicit override" so a
 # typo can't silently misroute a live agent.
-VALID_PROVIDERS = frozenset({"anthropic", "openai", "deepseek", "openrouter"})
+VALID_PROVIDERS = frozenset({"anthropic", "openai", "deepseek", "openrouter", "google"})
 
 
 def _provider_for(model: str) -> str:
     """Provider implied by a model-id PREFIX alone (no explicit override).
-    This is the pre-Stage-1 inference chain, unchanged, so every existing
-    config keeps routing exactly as it did before Stage 1."""
+    This is the pre-Stage-1 inference chain, extended (not otherwise changed)
+    for Google-direct bare ids ("gemini-*") so every existing config keeps
+    routing exactly as it did before Stage 1 / before Google was added."""
     if _is_openai_model(model):
         return "openai"
     if _is_deepseek_model(model):
         return "deepseek"
+    if _is_google_model(model):
+        return "google"
     return "anthropic"
 
 
@@ -399,14 +461,26 @@ def resolve_provider(model: str, explicit_provider: str | None = None) -> str:
     return _provider_for(model)
 
 
-# Cross-provider failover target. When a non-Anthropic primary (OpenAI or
-# DeepSeek) call ultimately fails — quota exhausted (the 2026-05-11 incident),
-# DeepSeek 402 insufficient balance, dead key, sustained outage — the agent
-# retries ONCE on Anthropic with this model so the trading
-# session survives instead of dying. claude-opus-4-7 is the last production-
-# proven Claude model AND is priced in src.cost_table (so cost stays honest).
-# Hardcoded (not per-agent config) so the failover target can't silently drift.
-_FALLBACK_MODEL = "claude-opus-4-7"
+# Cross-provider failover target — CONFIGURABLE (2026-08-31 owner decision),
+# not hardcoded. When a primary call ultimately fails — quota exhausted (the
+# 2026-05-11 incident), DeepSeek 402 insufficient balance, a rate limit (the
+# 2026-08-31 incident), dead key, sustained outage — the agent retries ONCE
+# on the configured fallback (provider, model) so the trading session
+# survives instead of dying (see BaseAgent._try_failover).
+#
+# These are process-wide DEFAULTS, threaded through pipeline.py from
+# `config.llm.fallback_provider` / `fallback_model` (settings.yaml) into
+# every BaseAgent.__init__ — not per-agent, so the fallback target can't
+# silently drift seat-by-seat. The default pairs OpenRouter (paid, backup)
+# with the SAME model Google AI Studio direct serves as the primary
+# (gemini-3.5-flash-lite) for the eight specialist/review seats: a failover
+# changes the ROAD, not the REASONING, which was the owner's explicit
+# objection to the inherited claude-opus-4-7 Anthropic fallback (an
+# upstream `yebof` remnant, commit d237f9b 2026-06-04, that nobody at QAMC
+# chose) — a different model answering under stress is itself a source of
+# surprise, on top of whatever the primary's outage already was.
+_DEFAULT_FALLBACK_PROVIDER = "openrouter"
+_DEFAULT_FALLBACK_MODEL = "google/gemini-3.5-flash-lite"
 
 
 # Exception class names that are always transient regardless of any status
@@ -678,6 +752,73 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     )
 
 
+def _build_llm_client(provider: str, api_key: str):
+    """Construct the SDK client for `provider`, given its API key.
+
+    Shared by BaseAgent.__init__ (the primary client) and _try_failover (the
+    fallback client) so the two can never diverge in how a provider's client
+    is built — before this helper existed, __init__ had its own inline
+    if/elif chain and a hardcoded Anthropic construction lived separately
+    inside _try_failover, and the two had already started drifting (the
+    failover path never got DeepSeek/OpenRouter/relay/CA-bundle handling).
+
+    max_retries=0 on EVERY client built here: both SDKs default to 2 internal
+    retries on 429/5xx (incl. the relay's CF 524) with their own backoff,
+    silently turning each _execute() attempt into ~3 HTTP calls and
+    invalidating the retry-budget math documented at _DEFAULT_MAX_RETRIES.
+    The agent-level loop in _execute() is the SINGLE owner of retry policy.
+    """
+    if provider == "deepseek":
+        # OpenAI-compatible endpoint at a custom base_url with the DeepSeek key.
+        from openai import OpenAI
+        return OpenAI(api_key=api_key, base_url=_DEEPSEEK_BASE_URL,
+                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+    if provider == "openrouter":
+        # Also OpenAI-API-compatible — identical shape to the DeepSeek branch
+        # above, just a different base_url + key. Reuses _openai_wire_call()
+        # unmodified (see there): zero new call code.
+        from openai import OpenAI
+        return OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
+                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+    if provider == "google":
+        # Google AI Studio's OpenAI-compatible endpoint — same shape again.
+        # The credential is injected as `Authorization: Bearer {value}`,
+        # which the OpenAI SDK's `api_key=` already sends natively.
+        from openai import OpenAI
+        return OpenAI(api_key=api_key, base_url=_GOOGLE_BASE_URL,
+                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+    if provider == "openai":
+        from openai import OpenAI
+        # OPENAI_BASE_URL lets OpenAI traffic go through an OpenAI-compatible
+        # relay/proxy (a "中转站") instead of api.openai.com — same chat/
+        # completions wire format, just a different host + key. Empty/unset
+        # => the SDK's default (api.openai.com). Read explicitly (not via the
+        # SDK's own env magic) so it's visible + testable. The base_url must
+        # include the API path prefix the relay serves (e.g. .../v1).
+        base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or None
+        # OPENAI_CA_BUNDLE: trust a private CA for the relay's HTTPS (e.g. a
+        # relay behind Caddy's internal CA, whose self-signed chain the
+        # public trust store rejects). Path to a PEM of trust anchors (the
+        # relay's root CA). We still FULLY verify — cert chain + hostname/IP
+        # (the relay's leaf carries the IP in its SAN) — just against this CA
+        # instead of certifi. Scoped to the OpenAI client ONLY; every other
+        # provider's client keeps the public trust store. Unset => default
+        # public CAs.
+        ca_bundle = os.environ.get("OPENAI_CA_BUNDLE", "").strip()
+        if ca_bundle:
+            import httpx
+            return OpenAI(
+                api_key=api_key, base_url=base_url,
+                http_client=httpx.Client(verify=ca_bundle, timeout=_LLM_HTTP_TIMEOUT),
+                max_retries=0,
+            )
+        return OpenAI(api_key=api_key, base_url=base_url,
+                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+    # anthropic (default)
+    from anthropic import Anthropic
+    return Anthropic(api_key=api_key, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+
+
 class BaseAgent(ABC):
     # Unit tests that exercise isolated provider parsing may opt out through
     # tests/conftest.py. Production code never changes this flag: a paid call
@@ -686,7 +827,9 @@ class BaseAgent(ABC):
 
     def __init__(self, api_key: str, model: str, max_tokens: int = 4096,
                  fallback_api_key: str = "", provider: str | None = None,
-                 provider_order: list[str] | None = None):
+                 provider_order: list[str] | None = None,
+                 fallback_provider: str = _DEFAULT_FALLBACK_PROVIDER,
+                 fallback_model: str = _DEFAULT_FALLBACK_MODEL):
         self.model = model
         self.max_tokens = max_tokens
         # OpenRouter endpoint preference for this seat — see
@@ -695,7 +838,7 @@ class BaseAgent(ABC):
         # the same weights, so falling through to a pricier one costs money,
         # not correctness, whereas pinning `only` would fail the seat closed
         # over a price tier. Cost stays truthful because OpenRouter reports
-        # the actual charge per call (see _call_openai).
+        # the actual charge per call (see _openai_wire_call).
         self._provider_order = list(provider_order) if provider_order else None
         # `provider` is the Stage 1 explicit override (config.llm.<agent>_provider);
         # None (the default for every pre-Stage-1 config) falls through to the
@@ -704,63 +847,38 @@ class BaseAgent(ABC):
         self._use_deepseek = self._provider == "deepseek"
         self._use_openai = self._provider == "openai"
         self._use_openrouter = self._provider == "openrouter"
-        # Anthropic key for failover to Anthropic. Used when the primary is a
-        # non-Anthropic provider (OpenAI OR DeepSeek) — a Claude primary's
-        # fallback would hit the same provider, so run() no-ops it. Passing it
-        # for a Claude primary is harmless, NOT an error, so a future "switch
-        # back to Claude" can't crash construction. Empty => failover disabled.
+        self._use_google = self._provider == "google"
+        # Cross-provider failover target — configurable (see
+        # _DEFAULT_FALLBACK_PROVIDER/_DEFAULT_FALLBACK_MODEL above). Resolved
+        # through the same resolve_provider() helper as the primary so a
+        # typo'd `fallback_provider` can't silently misroute, exactly like
+        # every other provider field in this codebase.
+        self._fallback_provider = resolve_provider(fallback_model, fallback_provider)
+        self._fallback_model = fallback_model
+        # Failover credential. Empty => failover disabled outright regardless
+        # of the pair check below. Passing it when the fallback pair happens
+        # to equal the primary's is harmless, NOT an error — run() no-ops the
+        # failover attempt in that case (see _failover_reachable).
         self._fallback_api_key = (fallback_api_key or "").strip()
+        # The failover gate, computed once: a fallback key is configured AND
+        # the fallback (provider, model) pair is not identical to the
+        # primary's — never fail over onto the exact thing that just failed.
+        # This generalizes the old "primary is not itself Anthropic" special
+        # case (which only made sense when the ONLY fallback target was
+        # Anthropic): a Claude primary can now legitimately fail over too, as
+        # long as the configured fallback isn't Claude-to-Claude. Mirrored
+        # exactly in AppConfig._check_provider_attempt_budget /
+        # _check_llm_provider_keys (src/config.py) — those two independently
+        # computing this and drifting apart is what caused the 2026-08-31
+        # outage (see provider_attempt_budget's docstring).
+        self._failover_reachable = bool(self._fallback_api_key) and (
+            (self._fallback_provider, self._fallback_model)
+            != (self._provider, self.model)
+        )
         # Attached after TradingPipeline initializes the shared SQLite DB.
         self._cost_circuit = None
 
-        # max_retries=0 on EVERY SDK client construction: both SDKs default to
-        # 2 internal retries on 429/5xx (incl. the relay's CF 524) with their
-        # own backoff, silently turning each _execute() attempt into ~3 HTTP
-        # calls (~380s under sustained 524s) and invalidating the retry-budget
-        # math documented at _DEFAULT_MAX_RETRIES. The agent-level loop in
-        # _execute() is the SINGLE owner of retry policy.
-        if self._use_deepseek:
-            # OpenAI-compatible endpoint at a custom base_url with the DeepSeek key.
-            from openai import OpenAI
-            self.client = OpenAI(api_key=api_key, base_url=_DEEPSEEK_BASE_URL,
-                                 timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
-        elif self._use_openrouter:
-            # Also OpenAI-API-compatible — identical shape to the DeepSeek
-            # branch above, just a different base_url + key. Reuses
-            # _call_openai() unmodified (see there): zero new call code.
-            from openai import OpenAI
-            self.client = OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
-                                 timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
-        elif self._use_openai:
-            from openai import OpenAI
-            # OPENAI_BASE_URL lets OpenAI traffic go through an OpenAI-compatible
-            # relay/proxy (a "中转站") instead of api.openai.com — same chat/
-            # completions wire format, just a different host + key. Empty/unset
-            # => the SDK's default (api.openai.com). Read explicitly (not via the
-            # SDK's own env magic) so it's visible + testable. The base_url must
-            # include the API path prefix the relay serves (e.g. .../v1).
-            base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or None
-            # OPENAI_CA_BUNDLE: trust a private CA for the relay's HTTPS (e.g. a
-            # relay behind Caddy's internal CA, whose self-signed chain the
-            # public trust store rejects). Path to a PEM of trust anchors (the
-            # relay's root CA). We still FULLY verify — cert chain + hostname/IP
-            # (the relay's leaf carries the IP in its SAN) — just against this CA
-            # instead of certifi. Scoped to the OpenAI client ONLY; the Anthropic
-            # failover keeps the public trust store. Unset => default public CAs.
-            ca_bundle = os.environ.get("OPENAI_CA_BUNDLE", "").strip()
-            if ca_bundle:
-                import httpx
-                self.client = OpenAI(
-                    api_key=api_key, base_url=base_url,
-                    http_client=httpx.Client(verify=ca_bundle, timeout=_LLM_HTTP_TIMEOUT),
-                    max_retries=0,
-                )
-            else:
-                self.client = OpenAI(api_key=api_key, base_url=base_url,
-                                     timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
-        else:
-            from anthropic import Anthropic
-            self.client = Anthropic(api_key=api_key, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+        self.client = _build_llm_client(self._provider, api_key)
 
     def set_cost_circuit(self, circuit) -> None:
         """Attach the mandatory process-shared paid-analysis gate."""
@@ -953,7 +1071,7 @@ class BaseAgent(ABC):
                 )
                 _mark_circuit_unavailable(accounting_exc)
 
-        def _govern(model: str) -> None:
+        def _govern(model: str, *, is_failover: bool = False) -> None:
             """Pace this request so the desk never floods a provider.
 
             Deliberately placed AFTER the cost circuit has authorized the
@@ -961,9 +1079,13 @@ class BaseAgent(ABC):
             checked first, then speed, and there is exactly one path through
             here — every transport and the failover all authorize through
             this closure, so nothing can send without being counted.
+
+            `is_failover` is threaded explicitly (not sniffed from `model`)
+            so a failover call is always charged to the FALLBACK provider's
+            governor, never the primary's — see _governor_domain_for.
             """
             nonlocal governed_estimate, governed_provider
-            governed_provider = _governor_domain_for(model, self)
+            governed_provider = _governor_domain_for(model, self, is_failover=is_failover)
             governor = _TOKEN_GOVERNORS.get(governed_provider)
             if governor is None:
                 governed_estimate = 0
@@ -972,10 +1094,10 @@ class BaseAgent(ABC):
             governed_estimate = int(chars / _GOVERNOR_CHARS_PER_TOKEN) + self.max_tokens
             governor.charge(governed_estimate)
 
-        def _authorize(model: str) -> None:
+        def _authorize(model: str, *, is_failover: bool = False) -> None:
             nonlocal provider_requests
             if self._cost_circuit is None:
-                _govern(model)
+                _govern(model, is_failover=is_failover)
                 provider_requests += 1
                 return
             try:
@@ -988,8 +1110,11 @@ class BaseAgent(ABC):
                     "mandatory cost-circuit authorization failed",
                     state,
                 ) from exc
-            _govern(model)
+            _govern(model, is_failover=is_failover)
             provider_requests += 1
+
+        def _authorize_failover(model: str) -> None:
+            _authorize(model, is_failover=True)
 
         if self._cost_circuit is None and not self._allow_unmetered_for_tests:
             raise PaidAnalysisSuspended(
@@ -1029,8 +1154,9 @@ class BaseAgent(ABC):
                      reported_cost) = self._call_deepseek(
                         user_message, authorize=_authorize,
                     )
-                elif self._use_openrouter:
-                    # OpenRouter is OpenAI-wire-compatible — reuse _call_openai
+                elif self._use_openrouter or self._use_google:
+                    # OpenRouter and Google AI Studio's compat endpoint are
+                    # both OpenAI-wire-compatible — reuse _call_openai
                     # unmodified rather than duplicating the streaming/usage/
                     # empty-content logic.
                     (raw_text, input_tokens, output_tokens, finish_reason,
@@ -1099,22 +1225,20 @@ class BaseAgent(ABC):
         # Model that actually produced the output — primary unless failover wins.
         actual_model = self.model
         if primary_error is not None:
-            # Primary (OpenAI or DeepSeek) failed after retries. Try ONE Anthropic
-            # call so a quota/balance/auth/outage on the primary keeps the session
-            # alive (DeepSeek 402 "Insufficient Balance" is the exact analog of the
-            # OpenAI quota incident this was built for). Single-shot (no retry) to
-            # stay inside the session window. Only when the primary is a
-            # non-Anthropic provider and a fallback key is configured; otherwise
-            # re-raise (a Claude primary failing over to Claude is pointless).
+            # Primary failed after retries. Try ONE call on the configured
+            # fallback (provider, model) so a quota/balance/auth/rate-limit/
+            # outage on the primary keeps the session alive (DeepSeek 402
+            # "Insufficient Balance" and the 2026-08-31 OpenRouter rate-limit
+            # are both instances of the same shape this was built for).
+            # Single-shot (no retry) to stay inside the session window. Only
+            # when the fallback pair actually differs from the primary's
+            # (see _failover_reachable — never fail over onto the exact
+            # thing that just failed); otherwise re-raise.
             failover = None
-            if (
-                not single_provider_attempt
-                and (self._use_openai or self._use_deepseek or self._use_openrouter)
-                and self._fallback_api_key
-            ):
+            if not single_provider_attempt and self._failover_reachable:
                 try:
                     failover = self._try_failover(
-                        user_message, primary_error, authorize=_authorize,
+                        user_message, primary_error, authorize=_authorize_failover,
                         on_failure=_record_attempt_failure,
                     )
                 except PaidAnalysisSuspended as exc:
@@ -1125,7 +1249,7 @@ class BaseAgent(ABC):
                 raise primary_error
             (raw_text, input_tokens, output_tokens, finish_reason,
              reported_cost) = failover
-            actual_model = _FALLBACK_MODEL
+            actual_model = self._fallback_model
 
         # Truncation detection: a max_tokens / length cutoff means the output
         # is incomplete, NOT a deliberate "no action". Flag + log loudly so a
@@ -1216,9 +1340,10 @@ class BaseAgent(ABC):
         logger.info("Agent %s output:\n%s", self.name, raw_text)
         used_fallback = primary_error is not None
         # A vendor/model OpenRouter id is not inferable from its text. Primary
-        # success therefore uses the configured provider; only the explicit
-        # Anthropic failover changes attribution.
-        actual_provider = "anthropic" if used_fallback else requested_provider
+        # success therefore uses the configured provider; only a failover
+        # changes attribution, to whichever provider is actually CONFIGURED
+        # as the fallback (never a fabricated/hardcoded "anthropic" string).
+        actual_provider = self._fallback_provider if used_fallback else requested_provider
         latency_s = time.monotonic() - loop_start
         return AgentResult(
             raw_text=raw_text,
@@ -1244,12 +1369,14 @@ class BaseAgent(ABC):
     ) -> tuple[str, int, int, str | None, float | None]:
         """One Anthropic messages.create against an arbitrary client+model.
 
-        Shared by the primary path (_call_anthropic) and the provider-agnostic
-        failover to Anthropic (_try_failover) so both use the identical request shape +
-        usage/finish-reason extraction. Prompt caching is intentionally not
-        enabled: the breaker uses the pinned ordinary-input rates, so enabling
-        vendor-specific cache write/read pricing would make reservations and
-        reported cost incomparable until that pricing is modeled explicitly.
+        Shared by the primary path (_call_anthropic) and a cross-provider
+        failover that lands on Anthropic (_try_failover, when
+        `fallback_provider: anthropic` is configured) so both use the
+        identical request shape + usage/finish-reason extraction. Prompt
+        caching is intentionally not enabled: the breaker uses the pinned
+        ordinary-input rates, so enabling vendor-specific cache write/read
+        pricing would make reservations and reported cost incomparable until
+        that pricing is modeled explicitly.
         """
         with _ANTHROPIC_LLM_SEMAPHORE:
             if authorize is not None:
@@ -1284,47 +1411,69 @@ class BaseAgent(ABC):
 
     def _try_failover(self, user_message: str, primary_error: Exception, *,
                       authorize=None, on_failure=None):
-        """Primary provider (OpenAI or DeepSeek) failed → attempt ONE Anthropic
-        call with the fallback model. Returns the (text, in_tok, out_tok,
-        finish_reason) tuple on success, or None on failure (caller re-raises
-        the original primary error). Single-shot: the primary already burned its
-        retry budget, so a
-        second full budget here could blow the session window. Loud logging
-        either way — a provider failover is an event the operator must see.
+        """Primary provider exhausted its retries → attempt ONE call on the
+        configured fallback (provider, model). Returns the (text, in_tok,
+        out_tok, finish_reason, reported_cost) tuple on success, or None on
+        failure (caller re-raises the original primary error). Single-shot:
+        the primary already burned its retry budget, so a second full budget
+        here could blow the session window. Loud logging either way — a
+        provider failover is an event the operator must see.
+
+        Builds its own client via `_build_llm_client` (the same helper
+        __init__ uses for the primary) rather than duplicating client-
+        construction logic, and dispatches to the Anthropic SDK path when the
+        fallback provider is Anthropic, or the shared OpenAI-wire path
+        (`_openai_wire_call`) for everything else — OpenAI, DeepSeek,
+        OpenRouter, or Google all speak that same chat.completions shape.
         """
         logger.error(
-            "Agent %s: primary model %s failed after retries (%s) — failing over "
-            "to %s on Anthropic.", self.name, self.model, primary_error, _FALLBACK_MODEL,
+            "Agent %s: primary %s/%s failed after retries (%s) — failing over "
+            "to %s/%s.", self.name, self._provider, self.model, primary_error,
+            self._fallback_provider, self._fallback_model,
         )
         try:
-            from anthropic import Anthropic
-            client = Anthropic(api_key=self._fallback_api_key,
-                               timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
-            result = self._anthropic_call(
-                client, _FALLBACK_MODEL, user_message, authorize=authorize,
-            )
+            client = _build_llm_client(self._fallback_provider, self._fallback_api_key)
+            if self._fallback_provider == "anthropic":
+                result = self._anthropic_call(
+                    client, self._fallback_model, user_message, authorize=authorize,
+                )
+            else:
+                result = self._openai_wire_call(
+                    client, self._fallback_model, self._fallback_provider,
+                    user_message, authorize=authorize,
+                )
             logger.warning(
-                "Agent %s: FAILOVER to %s SUCCEEDED (in=%d out=%d) — session "
-                "continues on Anthropic.", self.name, _FALLBACK_MODEL, result[1], result[2],
+                "Agent %s: FAILOVER to %s/%s SUCCEEDED (in=%d out=%d) — "
+                "session continues.", self.name, self._fallback_provider,
+                self._fallback_model, result[1], result[2],
             )
             return result
         except PaidAnalysisSuspended:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                "Agent %s: failover to %s also FAILED: %s. Re-raising the "
-                "original primary error.", self.name, _FALLBACK_MODEL, exc,
+                "Agent %s: failover to %s/%s also FAILED: %s. Re-raising the "
+                "original primary error.", self.name, self._fallback_provider,
+                self._fallback_model, exc,
             )
             if on_failure is not None:
                 on_failure(exc)
             return None
 
-    def _call_openai(
-        self, user_message: str, *, authorize=None,
+    def _openai_wire_call(
+        self, client, model: str, provider: str, user_message: str, *,
+        provider_order: list[str] | None = None, authorize=None,
     ) -> tuple[str, int, int, str | None, float | None]:
-        """OpenAI path is STREAMED on purpose. The OPENAI_BASE_URL relay sits
-        behind Cloudflare, whose ~120s Proxy Read Timeout (HTTP 524) kills any
-        call that sends zero bytes until the model finishes — and PM / tech /
+        """One streamed chat.completions call against an arbitrary
+        client+model+provider. Shared by every OpenAI-wire-compatible
+        provider — OpenAI, DeepSeek's cousin OpenRouter, Google's compat
+        endpoint — and by a cross-provider failover landing on any of them
+        (_try_failover). `_call_openai` is a thin wrapper over this for the
+        primary path.
+
+        STREAMED on purpose. The OPENAI_BASE_URL relay sits behind
+        Cloudflare, whose ~120s Proxy Read Timeout (HTTP 524) kills any call
+        that sends zero bytes until the model finishes — and PM / tech /
         evening generations legitimately run 120s+, so non-streaming could
         never succeed through the relay (the 2026-06-08/09 outage: every long
         call 524'd, book froze sell-only). Streaming keeps bytes flowing so
@@ -1332,30 +1481,32 @@ class BaseAgent(ABC):
         read timeout, so a long *healthy* generation isn't axed either.
 
         The semaphore covers create + iteration: for a streamed response the
-        request is in flight (and counts against the relay's per-user
-        concurrency cap) until the last chunk is read. OpenRouter shares this
-        method (OpenAI-wire-compatible) but is a distinct account/rate-limit
-        domain, so it gets its own semaphore rather than contending with the
-        OpenAI relay's cap.
+        request is in flight (and counts against a relay's per-user
+        concurrency cap) until the last chunk is read. OpenRouter and Google
+        are each a distinct account/rate-limit domain, so each gets its own
+        semaphore rather than contending with the OpenAI relay's cap.
         """
-        semaphore = _OPENROUTER_LLM_SEMAPHORE if self._use_openrouter else _OPENAI_LLM_SEMAPHORE
+        semaphore = {
+            "openrouter": _OPENROUTER_LLM_SEMAPHORE,
+            "google": _GOOGLE_LLM_SEMAPHORE,
+        }.get(provider, _OPENAI_LLM_SEMAPHORE)
         # OpenRouter-only request extras. `usage.include` makes OpenRouter
         # return what it ACTUALLY charged for the call, which is the only
         # honest way to price a model served from endpoints at different
         # rates; `provider.order` expresses this seat's endpoint preference.
         extra_body: dict = {}
-        if self._use_openrouter:
+        if provider == "openrouter":
             extra_body["usage"] = {"include": True}
-            if self._provider_order:
+            if provider_order:
                 extra_body["provider"] = {
-                    "order": list(self._provider_order),
+                    "order": list(provider_order),
                     "allow_fallbacks": True,
                 }
         with semaphore:
             if authorize is not None:
-                authorize(self.model)
-            stream = self.client.chat.completions.create(
-                model=self.model,
+                authorize(model)
+            stream = client.chat.completions.create(
+                model=model,
                 max_completion_tokens=self.max_tokens,
                 messages=[
                     {"role": "system", "content": self.system_prompt},
@@ -1392,7 +1543,7 @@ class BaseAgent(ABC):
             # NOT be returned as success — a half-emitted PM decision parses
             # like 'no trades'. Raise retryable instead.
             raise LLMStreamInterruptedError(
-                f"OpenAI stream ended without finish_reason after {len(content)} "
+                f"OpenAI-wire stream ended without finish_reason after {len(content)} "
                 "chars — connection cut mid-generation; partial output discarded"
             )
         if not content and finish_reason not in _TRUNCATION_FINISH_REASONS:
@@ -1401,7 +1552,7 @@ class BaseAgent(ABC):
             # clean no-signal. Truncation-family reasons are exempt — an empty
             # body there is a legit ceiling hit, flagged via truncated=True.
             raise LLMEmptyResponseError(
-                f"OpenAI returned empty content (finish_reason={finish_reason})"
+                f"OpenAI-wire call returned empty content (finish_reason={finish_reason})"
             )
         if usage is not None:
             in_tok = _coerce_token_count(getattr(usage, "prompt_tokens", 0))
@@ -1414,12 +1565,23 @@ class BaseAgent(ABC):
             in_tok = 0
             out_tok = 0
             logger.warning(
-                "OpenAI stream for %s carried no usage chunk — token counts "
+                "OpenAI-wire stream for %s carried no usage chunk — token counts "
                 "and actual cost are unknown; paid analysis will suspend.",
                 self.name,
             )
         return (content, in_tok, out_tok, finish_reason,
                 _reported_cost_usd(usage, self.name))
+
+    def _call_openai(
+        self, user_message: str, *, authorize=None,
+    ) -> tuple[str, int, int, str | None, float | None]:
+        """Primary-path entry point for every OpenAI-wire-compatible
+        provider (OpenAI, OpenRouter, Google) — delegates to
+        `_openai_wire_call` with this agent's own client/model/provider."""
+        return self._openai_wire_call(
+            self.client, self.model, self._provider, user_message,
+            provider_order=self._provider_order, authorize=authorize,
+        )
 
     def _deepseek_max_output(self) -> int:
         """Clamp ceiling for this DeepSeek model. DeepSeek REJECTS (does not

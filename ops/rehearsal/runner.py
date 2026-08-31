@@ -153,8 +153,8 @@ def _sentinel_credentials():
 
     names = (
         "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY", "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
-        "FRED_API_KEY",
+        "DEEPSEEK_API_KEY", "GOOGLE_API_KEY", "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY", "FRED_API_KEY",
     )
     previous = {name: os.environ.get(name) for name in names}
     for name in names:

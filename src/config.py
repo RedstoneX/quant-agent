@@ -21,6 +21,12 @@ class ApiKeysConfig(BaseModel):
     # (enforced in AppConfig._check_llm_provider_keys, not here, since that's
     # the layer that already knows which agents are configured for it).
     openrouter: str = ""
+    # Google AI Studio direct (2026-08-31 owner decision: gemini-3.5-flash-lite
+    # direct becomes the PRIMARY route for the eight specialist/review seats) —
+    # optional, only required when an agent's explicit `provider: google` is
+    # selected, or google is reachable as the configured cross-provider
+    # failover target (both enforced in AppConfig._check_llm_provider_keys).
+    google: str = ""
     fred: str
     alpaca_key: str
     alpaca_secret: str
@@ -30,9 +36,13 @@ class ApiKeysConfig(BaseModel):
         for field_name in ("alpaca_key", "alpaca_secret", "fred"):
             if not getattr(self, field_name):
                 raise ValueError(f"Required API key '{field_name}' is empty — check your .env file")
-        if not self.anthropic and not self.openai and not self.deepseek and not self.openrouter:
+        if not (
+            self.anthropic or self.openai or self.deepseek
+            or self.openrouter or self.google
+        ):
             raise ValueError(
-                "At least one of 'anthropic', 'openai', 'deepseek', or 'openrouter' API key must be set"
+                "At least one of 'anthropic', 'openai', 'deepseek', 'openrouter', "
+                "or 'google' API key must be set"
             )
         return self
 
@@ -140,7 +150,21 @@ class LLMConfig(BaseModel):
     position_reviewer_provider_order: list[str] | None = None
     evening_analyst_provider_order: list[str] | None = None
     meta_reflector_provider_order: list[str] | None = None
-    # Global fallback — used by any agent without an explicit override below.
+    # Cross-provider FAILOVER target (2026-08-31 owner decision) — process-
+    # wide, not per-agent, so the target can't silently drift seat-by-seat.
+    # Threaded through pipeline.py into every BaseAgent.__init__ (see
+    # src/agents/base.py's _DEFAULT_FALLBACK_PROVIDER/_DEFAULT_FALLBACK_MODEL,
+    # BaseAgent._failover_reachable). Default pairs OpenRouter (paid, backup)
+    # with the SAME model Google AI Studio direct serves as the primary for
+    # the eight specialist/review seats: a failover changes the ROAD, not the
+    # REASONING — the owner's explicit objection to the inherited
+    # claude-opus-4-7 Anthropic fallback. Not to be confused with `max_tokens`
+    # below, an unrelated per-call OUTPUT ceiling that also uses the word
+    # "fallback" for its own inherited-by-every-agent meaning.
+    fallback_provider: str = "openrouter"
+    fallback_model: str = "google/gemini-3.5-flash-lite"
+    # Global output-ceiling fallback — used by any agent without an explicit
+    # override below.
     max_tokens: int
     # Per-agent overrides. Each agent emits a different output shape; the PM
     # writes 7-step reasoning + 20-35 target positions, while Macro emits a
@@ -248,6 +272,28 @@ class LLMConfig(BaseModel):
                 f"Invalid provider {v!r}; must be one of {sorted(VALID_PROVIDERS)} or unset"
             )
         return normalized
+
+    @field_validator("fallback_provider")
+    @classmethod
+    def _fallback_provider_is_valid(cls, v: str) -> str:
+        # Unlike the per-agent `*_provider` fields, this one has no "unset ->
+        # infer from prefix" escape hatch — it names a provider directly, so
+        # a typo must fail loudly rather than silently resolving to whatever
+        # `fallback_model`'s prefix happens to imply.
+        normalized = (v or "").strip().lower()
+        if normalized not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid llm.fallback_provider {v!r}; must be one of "
+                f"{sorted(VALID_PROVIDERS)}"
+            )
+        return normalized
+
+    @field_validator("fallback_model")
+    @classmethod
+    def _fallback_model_is_nonempty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("llm.fallback_model must be a non-empty model id")
+        return v.strip()
 
     @field_validator(
         "tech_analyst_provider_order", "news_analyst_provider_order",
@@ -1370,12 +1416,53 @@ class AppConfig(BaseModel):
     # keep working unchanged.
     event_risk: EventRiskConfig = Field(default_factory=EventRiskConfig)
 
+    def _fallback_key_for_provider(self) -> str:
+        """The API key credential that must be present for `llm.fallback_provider`
+        to actually be reachable as a cross-provider failover target. Reuses
+        the same provider-name -> api_keys.* mapping pipeline.py's own
+        `_key_for` closure uses, so config validation and client construction
+        can never disagree about which credential a given fallback provider
+        needs."""
+        return {
+            "openai": self.api_keys.openai,
+            "deepseek": self.api_keys.deepseek,
+            "openrouter": self.api_keys.openrouter,
+            "google": self.api_keys.google,
+        }.get(self.llm.fallback_provider, self.api_keys.anthropic)
+
+    def _fallback_reachable_for_any_agent(self) -> bool:
+        """True when at least one agent's (provider, model) pair differs from
+        the configured fallback pair — i.e. failover could ever actually fire
+        for that agent (mirrors `BaseAgent._failover_reachable`'s own
+        not-identical-pair rule in src/agents/base.py, minus the key check,
+        which the two call sites below apply separately).
+
+        Shared by `_check_llm_provider_keys` and `_check_provider_attempt_
+        budget` so they can never independently compute this and drift apart
+        — which is exactly what caused the 2026-08-31 outage (see
+        `provider_attempt_budget`'s docstring): the config check keyed off
+        `api_keys.anthropic` while the runtime gate keyed off the primary
+        provider, and the two were never proven to agree.
+        """
+        fallback_pair = (self.llm.fallback_provider, self.llm.fallback_model)
+        return any(
+            (
+                resolve_provider(
+                    getattr(self.llm, f"{agent_name}_model"),
+                    self.llm.get_provider(agent_name),
+                ),
+                getattr(self.llm, f"{agent_name}_model"),
+            ) != fallback_pair
+            for agent_name in AGENT_NAMES
+        )
+
     @model_validator(mode="after")
     def _check_llm_provider_keys(self):
         openai_models = []
         anthropic_models = []
         deepseek_models = []
         openrouter_models = []
+        google_models = []
 
         # Bucket by resolve_provider(model, explicit_provider) — the SAME
         # helper BaseAgent.__init__ uses to pick a client — rather than
@@ -1395,6 +1482,8 @@ class AppConfig(BaseModel):
                 deepseek_models.append(label)
             elif provider == "openrouter":
                 openrouter_models.append(label)
+            elif provider == "google":
+                google_models.append(label)
             elif provider == "openai":
                 openai_models.append(label)
             else:
@@ -1418,10 +1507,35 @@ class AppConfig(BaseModel):
                 f"OPENROUTER_API_KEY is required for selected OpenRouter models: {selected}"
             )
 
+        if google_models and not self.api_keys.google:
+            selected = ", ".join(google_models)
+            raise ValueError(
+                f"GOOGLE_API_KEY is required for selected Google models: {selected}"
+            )
+
         if anthropic_models and not self.api_keys.anthropic:
             selected = ", ".join(anthropic_models)
             raise ValueError(
                 f"ANTHROPIC_API_KEY is required for selected Anthropic models: {selected}"
+            )
+
+        # The failover credential cannot be silently missing when failover is
+        # actually reachable — otherwise it is discovered only when the
+        # primary fails and the failover attempt itself gets a 401. That is
+        # the second half of the 2026-08-31 incident: no agent used Anthropic
+        # as a primary, so the missing ANTHROPIC_API_KEY sat unnoticed until
+        # a retry-exhausted call fell through to failover and hit
+        # `401 credential_not_found` — after the attempt-budget arithmetic
+        # above had ALREADY been fixed, so the failover fired for the first
+        # time and immediately hit the second, independent gap.
+        if self._fallback_reachable_for_any_agent() and not self._fallback_key_for_provider():
+            raise ValueError(
+                f"An API key for llm.fallback_provider={self.llm.fallback_provider!r} "
+                f"is required: llm.fallback_model={self.llm.fallback_model!r} is "
+                "reachable as the cross-provider failover target for at least one "
+                "agent, but its credential is not configured. A silently-missing "
+                "fallback key is precisely how the 2026-08-31 outage's second half "
+                "happened — do not let this ship unnoticed again."
             )
 
         return self
@@ -1449,13 +1563,17 @@ class AppConfig(BaseModel):
         the agreement is enforced here, at load, rather than trusted to
         whoever edits either one next. Failing to boot is the loud failure;
         going dark two minutes after the opening bell is the quiet one.
+
+        `failover_available` is derived from the SAME not-identical-pair rule
+        `BaseAgent._failover_reachable` uses at runtime (via
+        `_fallback_reachable_for_any_agent`/`_fallback_key_for_provider`
+        above) rather than independently keying off `api_keys.anthropic` —
+        that independent keying is exactly what let this check and the
+        runtime gate disagree in the first place.
         """
-        failover_available = bool(self.api_keys.anthropic) and any(
-            resolve_provider(
-                getattr(self.llm, f"{agent_name}_model"),
-                self.llm.get_provider(agent_name),
-            ) != "anthropic"
-            for agent_name in AGENT_NAMES
+        failover_available = (
+            bool(self._fallback_key_for_provider())
+            and self._fallback_reachable_for_any_agent()
         )
         required = provider_attempt_budget(failover_available=failover_available)
         configured = int(self.llm_cost_circuit.max_provider_attempts_per_call)
