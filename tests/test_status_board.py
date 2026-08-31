@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from src.api.server import _freshness_banner
+
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "status_board.py"
 
 
@@ -303,8 +305,8 @@ def test_the_template_carries_every_placeholder_the_renderer_fills():
     on it. Cheap to catch here."""
     template = (Path(__file__).resolve().parents[1]
                 / "scripts" / "status_board_template.html").read_text()
-    for key in ("{{STAMP}}", "{{DEPLOY}}", "{{CIRCUIT}}", "{{SPEND}}", "{{SPEND_PCT}}",
-                "{{SPEND_NOTE}}", "{{SESSIONS}}", "{{ROWS}}", "{{ALARM}}",
+    for key in ("{{STAMP}}", "{{BUILT_SHA}}", "{{DEPLOY}}", "{{CIRCUIT}}", "{{SPEND}}",
+                "{{SPEND_PCT}}", "{{SPEND_NOTE}}", "{{SESSIONS}}", "{{ROWS}}", "{{ALARM}}",
                 "{{RULES_TOTAL}}", "{{RULES_PASS}}", "{{RULES_FAIL}}",
                 "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}"):
         assert key in template, f"template is missing {key}"
@@ -592,75 +594,93 @@ def test_render_collapses_only_settled_phases_and_never_collapses_contradicted(t
 
 
 # --------------------------------------------------------------------------
-# the page has to notice its own death
+# freshness is a fact check, not a clock
 # --------------------------------------------------------------------------
+#
+# The board rebuilds on change, not on a schedule, so a page's age proves
+# nothing on its own — a quiet weekend legitimately leaves it old with
+# nothing wrong. What actually means the system moved on since this page was
+# built is the one fact `scripts/status_board.py` already computes for
+# itself: the commit the box was running (`box_sha`). This module's job is
+# to stamp that fact into the page, in full, unfilled by any guess. The
+# server-side comparison against a freshly-read live commit — the part that
+# decides whether a banner is shown — lives in `src/api/server.py` and is
+# exercised there.
 
-def test_stale_banner_is_measured_against_the_reader_not_the_build():
-    """The banner must compare build time to the READER's clock.
-
-    This is the trap, and it is worth spelling out because the obvious
-    implementation is silently useless: at build time the page is always zero
-    hours old, so a banner decided during rendering can never fire. The first
-    version of this feature did exactly that and shipped dead code.
-
-    The rebuild is change-driven, not scheduled, so a broken trigger raises no
-    error anywhere — it just goes quiet while the page keeps looking
-    authoritative. Nothing watches the watcher on purpose; that is a regress
-    with no end. Instead the page carries its build time and checks it when
-    opened, so the thing that reports the failure is the thing already being
-    read.
-    """
-    from datetime import datetime, timedelta
-
-    built = datetime.now(sb.ET) - timedelta(days=3)
-    out = sb._staleness_banner(built)
-
-    # Emitted unconditionally and hidden — the decision happens in the reader's
-    # browser, not here. A render-time `if` is the bug this pins.
-    assert 'id="stale"' in out
-    assert "hidden" in out
-    assert built.isoformat() in out, "the build time must be embedded to compare against"
-
-    # A page built three days ago must NOT already contain the warning text,
-    # because that text is only correct once a reader's clock says so.
-    assert "last rebuilt" not in out.split("<script>")[0]
-
-
-def test_stale_banner_threshold_is_wired_to_the_constant():
-    """The six-hour threshold must come from STALE_AFTER_HOURS, not a literal.
-
-    If someone raises the constant to quiet a noisy banner, the check has to
-    move with it, or the constant becomes a decoration that lies about what
-    the page actually does.
-    """
-    from datetime import datetime
-
-    out = sb._staleness_banner(datetime.now(sb.ET))
-    assert f"h>{sb.STALE_AFTER_HOURS}" in out.replace(" ", "")
-
-
-def test_stale_banner_carries_no_network_dependency():
-    """One inline script doing arithmetic. Nothing fetched, nothing external.
-
-    The board is served to the owner over a private network and must keep
-    working with no outside access. A script tag is acceptable here; a request
-    to somewhere else is not.
-    """
-    from datetime import datetime
-
-    out = sb._staleness_banner(datetime.now(sb.ET))
-    for forbidden in ("http://", "https://", "fetch(", "XMLHttpRequest", "import ", "src="):
-        assert forbidden not in out, f"banner must not reference {forbidden!r}"
-
-
-def test_render_wires_the_stale_banner_into_the_page(tmp_path, monkeypatch):
-    """The banner reaches the rendered page, and no placeholder survives."""
+def test_render_stamps_the_untruncated_sha_for_machine_comparison():
+    """The machine-readable stamp must carry the FULL commit, not the 9-char
+    prefix used for the human-facing footer. A short prefix is a needless
+    collision risk for an equality check with nothing else moderating it."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    full = "abc1234567890abc1234567890abc1234567890"
     state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+             "sessions_today": 3, "box_sha": full[:9], "box_sha_full": full,
+             "main_sha": full[:9]}
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
-
     out = sb.render([p], state, template)
-    assert 'id="stale"' in out
-    assert "{{STALE_BANNER}}" not in out
-    assert out.count("<script>") == 1, "the staleness check is the only script on the page"
+    assert f'content="{full}"' in out, "the stamp must hold the untruncated SHA"
+    # And the footer keeps showing the short form for humans — unrelated to
+    # the machine stamp, must not regress alongside it.
+    assert full[:9] in out
+
+
+def test_render_leaves_the_stamp_empty_when_the_box_sha_is_unreadable():
+    """No commit could be read at build time: the stamp must be empty, never
+    a fabricated value. Empty is what src/api/server.py treats as "no
+    stamp" -> reported as UNKNOWN, never as a silent match."""
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    state = {"in_sync": None, "circuit": None, "spend_today": None,
+             "sessions_today": None, "box_sha": None, "box_sha_full": None,
+             "main_sha": None}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([p], state, template)
+    assert 'name="qamc-board-built-sha" content=""' in out
+
+
+def test_stale_banner_mechanism_is_gone():
+    """The time-based staleness banner (a fixed hour threshold, an inline
+    script computing page age in the reader's browser) is removed entirely,
+    not merely disabled. Freshness is decided server-side, from a fact."""
+    assert not hasattr(sb, "_staleness_banner")
+    assert not hasattr(sb, "STALE_AFTER_HOURS")
+    assert not hasattr(sb, "_age_words")
+    template = (Path(__file__).resolve().parents[1]
+                / "scripts" / "status_board_template.html").read_text()
+    assert "{{STALE_BANNER}}" not in template
+    assert "id=\"stale\"" not in template
+
+
+# --------------------------------------------------------------------------
+# the serve-time freshness banner (src/api/server.py)
+# --------------------------------------------------------------------------
+#
+# `_freshness_banner` is the actual "does the record still hold" decision:
+# it runs on every request, comparing the commit this page was built from
+# against the commit the box is running right now. Pure string-in,
+# string-out — no server, no filesystem — so it is pinned directly here.
+
+def test_matching_built_and_live_sha_produce_no_banner():
+    sha = "abc1234567890abc1234567890abc1234567890"
+    assert _freshness_banner(sha, sha) == ""
+
+
+def test_differing_built_and_live_sha_produce_a_banner_that_says_so():
+    built = "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"
+    live = "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
+    out = _freshness_banner(built, live)
+    assert out, "a version mismatch must produce a visible banner"
+    assert "out of date" in out.lower() or "changed" in out.lower()
+    assert built[:9] in out
+    assert live[:9] in out
+    # Reuses the page's existing crit-colour class; no new colour introduced.
+    assert 'class="stale"' in out
+
+
+@pytest.mark.parametrize("built,live", [(None, "a" * 40), ("a" * 40, None), (None, None)])
+def test_undeterminable_version_reports_unknown_not_a_false_all_clear(built, live):
+    """Either side missing must say UNKNOWN plainly — never silence (which a
+    reader takes as "fine") and never a claim it cannot back up."""
+    out = _freshness_banner(built, live)
+    assert out != "", "an undeterminable version must not read as a clean bill of health"
+    assert "unknown" in out.lower()
+    assert 'class="stale"' in out

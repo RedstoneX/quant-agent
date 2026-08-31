@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The full commit this page was built against. src/api/server.py reads
+     this back out at serve time and compares it to a freshly-read live SHA
+     to decide whether to show a freshness banner — a fact check, not a
+     clock. Empty when the box's SHA could not be read at build time. -->
+<meta name="qamc-board-built-sha" content="{{BUILT_SHA}}">
 <title>QAMC Desk Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -121,8 +126,6 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
     <h1>QAMC Desk Board</h1>
     <div class="stamp">{{STAMP}} &middot; Alpaca paper account</div>
   </header>
-
-  {{STALE_BANNER}}
 
   <section>
     <h2>Does the record still hold?</h2>

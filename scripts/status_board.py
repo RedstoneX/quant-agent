@@ -310,7 +310,12 @@ def live_state() -> dict[str, Any]:
     s["main_sha"] = main_sha[:9] if rc == 0 else None
 
     ok, box_sha = _prod_git("rev-parse", "HEAD")
-    s["box_sha"] = box_sha.strip()[:9] if ok else None
+    # The full, untruncated SHA is what gets stamped into the page for the
+    # serve-time freshness check (src/api/server.py) to compare against a
+    # freshly-read live SHA — a 9-char prefix is fine for a human footer but
+    # is a needless (if tiny) collision risk for a machine equality check.
+    s["box_sha_full"] = box_sha.strip() if ok else None
+    s["box_sha"] = s["box_sha_full"][:9] if s["box_sha_full"] else None
 
     if s["main_sha"] and s["box_sha"]:
         rc, out = _run(
@@ -432,9 +437,6 @@ VERDICT_PILL = {
 #: renderer already computes and changes no evidence rule.
 _SETTLED_STATUSES = {"done and live"}
 
-#: How old the rendered page can be before the staleness banner appears.
-STALE_AFTER_HOURS = 6
-
 
 def _is_settled(p: PhaseView) -> bool:
     """Fully verified AND finished: the manifest claims the canonical done
@@ -456,45 +458,6 @@ def _row(p: PhaseView) -> str:
         f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
     )
 
-
-def _age_words(hours: float) -> str:
-    if hours >= 47.5:
-        days = round(hours / 24)
-        return f"{days} day{'s' if days != 1 else ''}"
-    whole = round(hours)
-    return f"{whole} hour{'s' if whole != 1 else ''}"
-
-
-def _staleness_banner(generated_at: datetime) -> str:
-    """Warn a reader whose board has quietly stopped being rebuilt.
-
-    The rebuild fires on change, not on a clock. A broken trigger therefore
-    produces no error anywhere — it produces silence, and a page that still
-    looks authoritative while describing last week. Nothing watches the
-    watcher here on purpose: watchers watching watchers is a regress with no
-    natural end. Instead the page carries its own build time and checks it
-    against the reader's clock when opened, so the thing that reports the
-    failure is the thing the reader was already looking at.
-
-    This is the only script on the page. It does arithmetic on an embedded
-    timestamp — no network, no libraries, nothing to fetch. A build-time check
-    cannot do this job: at build time the page is always zero hours old, so
-    the warning could never fire.
-    """
-    return (
-        f'<div class="stale" id="stale" hidden data-built="{generated_at.isoformat()}"></div>'
-        "<script>(function(){"
-        "var e=document.getElementById('stale');if(!e)return;"
-        "var h=(Date.now()-new Date(e.dataset.built).getTime())/36e5;"
-        f"if(!(h>{STALE_AFTER_HOURS}))return;"
-        "var d=h>=47.5,n=d?Math.round(h/24):Math.round(h),u=d?'day':'hour';"
-        "e.textContent='';"
-        "var b=document.createElement('b');"
-        "b.textContent='This board was last rebuilt '+n+' '+u+(n!==1?'s':'')+' ago.';"
-        "e.appendChild(b);"
-        "e.appendChild(document.createTextNode(' It may not reflect current reality.'));"
-        "e.hidden=false;})();</script>"
-    )
 
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> str:
     now = datetime.now(ET)
@@ -524,8 +487,6 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
             f'<table class="plan">{"".join(_row(p) for p in settled)}</table>'
             '</details>'
         )
-
-    stale_banner = _staleness_banner(now)
 
     alarm = ""
     if contradicted:
@@ -561,7 +522,13 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
 
     body = template.read_text()
     body = body.replace("{{STAMP}}", now.strftime("%A %-d %B %Y &middot; %H:%M ET"))
-    body = body.replace("{{STALE_BANNER}}", stale_banner)
+    # The full commit this page was built against, stamped into a
+    # machine-readable <meta> tag. src/api/server.py reads it back out at
+    # serve time and compares it to a freshly-read live SHA — that comparison
+    # (fact vs. fact), not page age, is what decides whether a freshness
+    # banner is shown. Empty when the box's SHA could not be read, which the
+    # server-side check treats as UNKNOWN, never as "fine".
+    body = body.replace("{{BUILT_SHA}}", _esc(state.get("box_sha_full") or ""))
     body = body.replace("{{DEPLOY}}", deploy)
     body = body.replace("{{CIRCUIT}}", _fmt(state.get("circuit")))
     body = body.replace("{{SPEND}}", f"${spend:.2f}" if spend is not None else
