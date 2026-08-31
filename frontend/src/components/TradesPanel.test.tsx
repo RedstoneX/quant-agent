@@ -106,3 +106,51 @@ describe("TradesPanel/TradeTable reasoning column", () => {
     );
   });
 });
+
+// Defect (f): conviction/requested_risk_pct/allocated_risk_pct/decision_model
+// (conviction ledger, spec §7.2, PR #159) are recorded at entry to explain
+// why a trade was sized the way it was, but were invisible anywhere a human
+// could see them — captured for internal record-keeping only. Pins the fix
+// at the one shared table every trade view renders through.
+describe("TradesPanel/TradeTable conviction ledger columns", () => {
+  it("renders conviction, requested/allocated risk, and decision model when present", () => {
+    render(
+      <TradeTable
+        trades={[
+          trade({
+            conviction: "high",
+            requested_risk_pct: 1.5,
+            allocated_risk_pct: 1.2,
+            decision_model: "gpt-5.5",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("high")).toBeTruthy();
+    expect(screen.getByText("1.5%")).toBeTruthy();
+    expect(screen.getByText("1.2%")).toBeTruthy();
+    expect(screen.getByText("gpt-5.5")).toBeTruthy();
+  });
+
+  it("renders a plain dash, not 0% or a fabricated default, when the ledger fields are absent (rows predating PR #159, or any interim/exit row)", () => {
+    render(
+      <TradeTable
+        trades={[
+          trade({
+            conviction: null,
+            requested_risk_pct: null,
+            allocated_risk_pct: null,
+            decision_model: null,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("0%")).toBeNull();
+    expect(screen.queryByText(/^0(\.0+)?%$/)).toBeNull();
+    // Same row also renders "—" for reasoning/decision_id/etc (see the
+    // fixture above) — assert presence, not uniqueness, of the dash.
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+});

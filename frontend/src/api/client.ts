@@ -163,6 +163,13 @@ export interface TradeItem {
   take_profit: number | null;
   position_id?: string | null;
   exit_reason_category?: string | null;
+  // Conviction ledger (spec §7.2, PR #159) — pinned at ENTRY only, so
+  // interim/exit rows and any row written before PR #159 carry null here,
+  // never a fabricated default.
+  conviction?: string | null;
+  requested_risk_pct?: number | null;
+  allocated_risk_pct?: number | null;
+  decision_model?: string | null;
 }
 
 export interface TradesResponse {
