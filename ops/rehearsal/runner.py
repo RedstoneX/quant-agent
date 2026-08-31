@@ -23,6 +23,27 @@ row it is replaying. The day's already-recorded spending is inherited as-is,
 which makes the rehearsal's budget position equal to or tighter than the real
 one — the conservative direction, and the only one that cannot turn a real
 block into a rehearsed pass.
+
+PRICING-CACHE AGE IS AN INPUT, NOT AN INHERITANCE
+-------------------------------------------------
+Everything else in the sandbox is production's state as it stands. The
+OpenRouter pricing cache is the one deliberate exception: its *age* is set by
+`pricing_cache_age_hours` (default `DEFAULT_PRICING_CACHE_AGE_HOURS`, i.e.
+fresh), not inherited from whenever production last happened to refresh it.
+
+Until this was fixed the sandbox copy carried production's real mtime, so a
+rehearsal run on a weekend — when nothing refreshes that file — could report
+`paid_analysis_suspended` for a reason that had nothing whatever to do with
+what the rehearsal was testing. `tests/test_rehearsal_reproduces_cost_ceiling.py`
+exists to prove a specific spending-limit failure still reproduces on demand;
+it must fail when that failure regresses, and for no other reason.
+
+This is not a safety shortcut. Nothing about the circuit's fail-closed
+behaviour changes — a rehearsal that ASKS for a stale cache (pass an age past
+24h + the configured grace) still gets the suspension, and that is how the
+staleness path itself is tested. What changed is that staleness became
+something a rehearsal declares rather than something it catches from the
+calendar.
 """
 
 from __future__ import annotations
@@ -38,6 +59,18 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 logger = logging.getLogger(__name__)
+
+#: Age, in hours, the OpenRouter pricing cache is given inside a rehearsal
+#: sandbox unless the caller asks for something else. Comfortably inside the
+#: 24h freshness window with room to spare, so a rehearsal exercises the
+#: normal priced path and never the grace band by accident. Not zero: a
+#: zero-age file is not a state production can ever actually be in, and a
+#: rehearsal should run against a plausible one.
+DEFAULT_PRICING_CACHE_AGE_HOURS = 1.0
+
+#: Name of the cache file inside the sandbox's data directory. Must match
+#: `_OPENROUTER_CACHE_PATH` in src/cost_table.py.
+PRICING_CACHE_FILENAME = "openrouter_pricing_cache.json"
 
 SESSIONS = {
     "morning": "run_morning",
@@ -192,8 +225,16 @@ def run_rehearsal(
     production_db: str | Path | None = None,
     sudo_user: str | None = None,
     base_settings: Path | None = None,
+    pricing_cache_age_hours: float | None = DEFAULT_PRICING_CACHE_AGE_HOURS,
 ):
-    """Rehearse one session in `sandbox` and return a `RehearsalReport`."""
+    """Rehearse one session in `sandbox` and return a `RehearsalReport`.
+
+    `pricing_cache_age_hours` is the age the sandbox's OpenRouter pricing
+    cache is stamped with — see `apply_pricing_cache_age` and the module
+    docstring. Pass a value past 24h + the configured grace to rehearse the
+    fail-closed staleness path deliberately; pass `None` to inherit
+    production's real mtime.
+    """
     _ensure_import_path()
 
     from ops.rehearsal.broker import (
@@ -219,6 +260,9 @@ def run_rehearsal(
     run_id = f"rehearsal-{session}-{now_et.strftime('%Y%m%d')}"
 
     notes = list(sandbox.notes)
+    age_note = apply_pricing_cache_age(sandbox, pricing_cache_age_hours)
+    if age_note:
+        notes.append(age_note)
     notes.append(_pricing_cache_note(sandbox))
 
     library = ResponseLibrary.from_database(str(sandbox.db_path), run_id=replay_run)
@@ -309,9 +353,47 @@ def run_rehearsal(
     return report
 
 
+def apply_pricing_cache_age(sandbox, age_hours: float | None) -> str | None:
+    """Give the sandbox's OpenRouter pricing cache a chosen age. Returns a note.
+
+    `age_hours=None` means "leave production's real mtime alone" — the old
+    behaviour, kept because "what would the desk do with the cache exactly as
+    it stands right now" is a legitimate diagnostic question. It is not the
+    default, because as a default it made every rehearsal's verdict depend on
+    when a paid session last happened to run (see the module docstring).
+
+    Refuses to touch anything that is not inside the sandbox. The production
+    cache's mtime is load-bearing for the live cost circuit; a harness that
+    could reach it would be able to make production's pricing look current
+    when it is not, which is the one thing this file must never do.
+    """
+    cache = sandbox.data_dir / PRICING_CACHE_FILENAME
+    if age_hours is None:
+        return (
+            "pricing-cache age: inherited from the production copy (explicitly "
+            "requested) — this rehearsal's pricing verdict depends on when a "
+            "paid session last refreshed that file"
+        )
+    if not cache.exists():
+        return None  # `_pricing_cache_note` already reports the absence
+    if not sandbox.contains(cache):
+        raise ValueError(
+            f"refusing to set the mtime of {cache}, which is outside the "
+            f"rehearsal sandbox {sandbox.root}"
+        )
+    if age_hours < 0:
+        raise ValueError(f"pricing cache age must not be negative, got {age_hours}")
+    stamp = time.time() - age_hours * 3600
+    os.utime(cache, (stamp, stamp))
+    return (
+        f"pricing-cache age: set to {age_hours:g}h by the harness, not "
+        f"inherited from production's copy"
+    )
+
+
 def _pricing_cache_note(sandbox) -> str:
     """State the pricing-provenance position rather than assuming it."""
-    cache = sandbox.data_dir / "openrouter_pricing_cache.json"
+    cache = sandbox.data_dir / PRICING_CACHE_FILENAME
     if not cache.exists():
         return (
             "no OpenRouter pricing cache in the sandbox — the cost circuit "
@@ -329,21 +411,25 @@ def _pricing_cache_note(sandbox) -> str:
     # use) still fails closed. A note that kept quoting a flat 24h would have
     # been wrong for the whole grace band — the exact kind of stale-by-hand
     # claim this project has been bitten by repeatedly.
+    #
+    # The age itself is whatever `apply_pricing_cache_age` stamped on the
+    # sandbox copy (a rehearsal input, reported in its own note), or
+    # production's real mtime when the caller explicitly asked to inherit it.
+    # Either way this reads the file as it stands and states the consequence;
+    # it never adjusts anything to reach a nicer verdict.
     grace_h = _pricing_grace_hours(sandbox)
     if age_h >= 24 + grace_h:
         return (
             f"the OpenRouter pricing cache is {age_h:.0f}h old — past the "
             f"{24 + grace_h:.0f}h limit (24h fresh + {grace_h:.0f}h grace). "
             f"The cost circuit will treat pricing as unconfirmed and suspend "
-            f"paid analysis. Its timestamp is deliberately NOT refreshed — "
-            f"making stale pricing look current would be faking a safety check"
+            f"paid analysis, which is the correct fail-closed behaviour"
         )
     if age_h >= 24:
         return (
             f"the OpenRouter pricing cache is {age_h:.0f}h old — stale but "
             f"inside the {grace_h:.0f}h grace window, so paid analysis "
-            f"proceeds with a widened reservation multiplier. Its timestamp "
-            f"is deliberately NOT refreshed"
+            f"proceeds with a widened reservation multiplier"
         )
     return f"OpenRouter pricing cache is {age_h:.0f}h old (fresh, under 24h)"
 

@@ -322,6 +322,10 @@ python main.py --mode daily      # P&L history CSV -> Telegram document
 
 The **daily P&L CSV export** (`--mode daily`) is scheduled separately — it is a pure data export (no LLM, no orders), so it skips the window/lock wrapper entirely. A fixed-time systemd timer fires it Mon-Fri 09:00 ET via `scripts/run_daily_export.sh` (sources `.env`, 300s timeout). Units are tracked at `scripts/systemd/quant-agent-daily.{service,timer}`; install with `cp scripts/systemd/quant-agent-daily.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-daily.timer`. The CSV replaced the P&L history text table that the evening push used to embed.
 
+The **LLM price-cache refresh** runs on its own timer at **06:30 and 18:30 ET, seven days a week** — `scripts/systemd/quant-agent-pricing-refresh.{service,timer}`, via `scripts/run_pricing_refresh.sh` (sources `.env`, 120s timeout, passes `--force`). Install the same way: `cp scripts/systemd/quant-agent-pricing-refresh.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-pricing-refresh.timer`.
+
+Seven days matters. `data/openrouter_pricing_cache.json` is an input to the mandatory cost circuit, not telemetry: past 24h freshness plus the configured grace window the circuit fails closed and suspends every paid call for the day. Until this timer existed the file was only ever refreshed by a paid session starting, so it aged precisely when no session was running to notice — over the weekend of 2026-08-30 it went stale unwatched, and only a manual refresh before Monday kept the desk from opening and trading nothing. The script checks its own work against the file rather than the return value, and pushes a Telegram alert (same `TelegramNotifier`, no new channel) the moment the cache passes its freshness window — while the whole grace window is still in hand, not after it runs out. Run it by hand with `python scripts/refresh_pricing.py --force`.
+
 ## Trading Universe
 
 101 symbols (source of truth: `config/settings.yaml:trading.universe`):
