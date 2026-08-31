@@ -1,0 +1,727 @@
+{
+  "generated_at": "2026-08-31T21:59:21Z",
+  "wiring_source": "environment",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "3-symbol batch: uptrend, downtrend, rangebound. Grades schema survival, directional sanity, ATR stop discipline."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "Stressed macro tape (VIX p88, spreads +63bps). Grades regime read and defensive positioning."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "7 mixed headlines. Grades structured extraction and per-symbol attribution."
+    },
+    "pm_constrained": {
+      "role": "portfolio_manager",
+      "description": "Risk-off macro, 5.7% cash, margin OFF. Grades funding arithmetic and signal consistency."
+    },
+    "risk_rr_breach": {
+      "role": "risk_manager",
+      "description": "Plan contains a 0.42R BUY at 18% of book. Grades whether the last LLM gate catches and names it."
+    },
+    "midday_exit": {
+      "role": "position_reviewer",
+      "description": "One broken thesis pinned to its stop, one working winner. Grades the exit path in both directions."
+    }
+  },
+  "pricing_used": {
+    "google/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5
+    }
+  },
+  "trials": [
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_symbols_returned",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "got ['AAPL', 'XLE', 'XLU'] want ['AAPL', 'XLE', 'XLU']"
+        },
+        {
+          "name": "uptrend_not_bearish",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "AAPL rating=neutral"
+        },
+        {
+          "name": "downtrend_not_bullish",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "XLE rating=neutral"
+        },
+        {
+          "name": "atr_stop_discipline",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 24814,
+      "output_tokens": 1954,
+      "cost_usd": 0.0123292,
+      "latency_s": 6.91,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"AAPL\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": null,\n    \"reasoning_chain\": {\n      \"trend\": \"Price 202.35 is above rising MA20 (196.4), MA50 (188.1), and MA200 (175.6) in a clean bullish stack.\",\n      \"momentum\": \"RSI at 64.2 reflects solid momentum without immediate extreme overbought risk; MACD positive at 2.81 over signal 1.94.\",\n      \"volatility\": \"Price trades below upper Bollinger band (204.2); ATR expanding at 3.45.\",\n      \"volume\": \"Up/down volume ratio indicates ongoing accumulation, though recent vol change is +12.4%.\",\n      \"support_resistance\": \"Structural levels are omitted per instructions due to insufficient clean price history.\"\n    },\n    \"reasoning\": \"Despite a strong bullish trend and positive momentum, structural levels are missing per the symbol metadata, mandating a neutral rating.\"\n  },\n  {\n    \"symbol\": \"XLE\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": null,\n    \"reasoning_chain\": {\n      \"trend\": \"Price 79.38 is well below declining MA20 (82.1), MA50 (86.9), and MA200 (91.4",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_symbols_returned",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "got ['AAPL', 'XLE', 'XLU'] want ['AAPL', 'XLE', 'XLU']"
+        },
+        {
+          "name": "uptrend_not_bearish",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "AAPL rating=neutral"
+        },
+        {
+          "name": "downtrend_not_bullish",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "XLE rating=neutral"
+        },
+        {
+          "name": "atr_stop_discipline",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 12405,
+      "output_tokens": 989,
+      "cost_usd": 0.006194,
+      "latency_s": 3.46,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"AAPL\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price 202.35 is above rising MA20 (196.4), MA50 (188.1), and MA200 (175.6), showing a strong bullish alignment.\",\n      \"momentum\": \"RSI at 64.2 reflects solid momentum without immediate extreme overbought concerns, and MACD (2.81/1.94) is positive.\",\n      \"volatility\": \"Bollinger Bands span 188.6 to 204.2 with price near the upper band; ATR is 3.45 and expanding.\",\n      \"volume\": \"Up/down volume ratio of 99.00 indicates strong ongoing accumulation.\",\n      \"support_resistance\": \"Per structural source constraints, no reliable clean structural levels have been identified in the supplied dataset.\"\n    },\n    \"reasoning\": \"Despite positive trend and momentum indicators, explicit structural levels are missing per system constraints, requiring a neutral rating.\"\n  },\n  {\n    \"symbol\": \"XLE\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price 79.38 sits below falling",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "MacroAnalysis validated"
+        },
+        {
+          "name": "defensive_positioning",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "target_invested_pct=50.0 (stress input; expected <= 80)"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "12 sector calls"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "6/6 steps"
+        }
+      ],
+      "input_tokens": 7028,
+      "output_tokens": 1352,
+      "cost_usd": 0.0054884,
+      "latency_s": 5.21,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX is at 27.4 [UNSOURCED:stale_VIX], placing it firmly in the elevated-to-high volatility band (25-30). This indicates significant market anxiety and defensive pricing, creating a direct headwind for risk assets.\",\n    \"yield_curve_analysis\": \"Treasury yield data and spreads are entirely missing (N/A) [UNSOURCED:stale_Treasury_Yields], preventing any assessment of curve slope, inversion status, or growth expectations from the bond market.\",\n    \"monetary_policy_analysis\": \"Fed Funds Rate is reported at 4.25%, but with missing 30-day change data [UNSOURCED:stale_DFF], the immediate rate trajectory remains opaque. Real yields and breakeven inflation data are entirely absent.\",\n    \"inflation_labor_credit\": \"Headline CPI is at 3.1% YoY and Core CPI at 3.4% YoY [UNSOURCED:stale_CPI], showing persistent stickiness above target. Unemployment ticks up to 4.4% [UNSOURCED:stale_UNRATE]. High Yield credit spread sits at 412bps [UNSOURCED:stale_HY_OAS], which is in the upper normal range bordering on elevated, though lacking IG and claims context.\",\n    \"cross_signal_synthesis\": \"With VIX elevated at 27.4, sticky core inflation at 3.4%, and key yield and claims data entirely unavailable, cross-signal coherence is low. The elevated VIX combined with moderate-to-elevated credit spreads (412bps) points away from risk-on, while missing structural yield data prevents a firm risk-off conviction. The environment is transitional and ",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "MacroAnalysis validated"
+        },
+        {
+          "name": "defensive_positioning",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "target_invested_pct=50.0 (stress input; expected <= 80)"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "12 sector calls"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "6/6 steps"
+        }
+      ],
+      "input_tokens": 7026,
+      "output_tokens": 1433,
+      "cost_usd": 0.0056903,
+      "latency_s": 5.38,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX is at 27.4 [UNSOURCED:stale_VIX], indicating elevated market volatility well above the normal range of 15-20 and approaching high-volatility territory. This reflects mounting fear or uncertainty in the equity market.\",\n    \"yield_curve_analysis\": \"Treasury yield data across 3M, 2Y, and 10Y is unavailable [UNSOURCED:stale_yields], preventing a direct assessment of yield curve slope or current term premium.\",\n    \"monetary_policy_analysis\": \"Fed Funds Rate (DFF) stands at 4.25%, with 30-day change unavailable [UNSOURCED:stale_DFF]. This points to a moderately restrictive monetary policy stance, but without recent directional change data.\",\n    \"inflation_labor_credit\": \"Headline CPI is at 3.1% YoY and Core CPI at 3.4% YoY, indicating sticky inflation above the Fed's target. Unemployment is reported at 4.4% [UNSOURCED:stale_UNRATE]. High Yield credit spread (HY OAS) is at 412 bps [UNSOURCED:stale_HY_OAS], sitting in the normal-to-elevated range.\",\n    \"cross_signal_synthesis\": \"With VIX elevated at 27.4, HY credit spreads at 412 bps, sticky core inflation at 3.4%, and significant missing/stale data across key indicators (yields, real rates, jobless claims, dollar index) alongside un-fetched macro event calendars, cross-signal coherence is low. The elevated VIX combined with moderate-to-elevated credit spreads and sticky inflation points to a transitional or risk-off environment.\",\n    \"sector_implications\": \"Given ",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "current_regime 91 chars"
+        },
+        {
+          "name": "state_changes_extracted",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "2 state changes"
+        },
+        {
+          "name": "symbols_attributed",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "named ['MU', 'NVDA', 'AAPL', 'XLE', 'XLU', 'AVGO']"
+        },
+        {
+          "name": "stock_news_structured",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "6 symbols in stock_news"
+        }
+      ],
+      "input_tokens": 4535,
+      "output_tokens": 1325,
+      "cost_usd": 0.004673,
+      "latency_s": 5.03,
+      "error": "",
+      "sample_output": "```json\n{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-08-31\",\n    \"era_themes\": [\n      \"AI/LLM infrastructure supercycle driving high-bandwidth memory and semiconductor capex\",\n      \"US monetary policy inflection point amid sticky labor and cooling growth\",\n      \"Geopolitical trade and export curbs expanding into Middle Eastern advanced accelerator channels\"\n    ],\n    \"current_regime\": \"Defensive rotation with restrictive Fed stance and tightening semiconductor export scrutiny\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"Restrictive \u2014 Barkin emphasizes rates must stay restrictive for some time; September cut odds trimmed to 22%\",\n      \"labor_market\": \"Softening \u2014 weekly jobless claims rise to 254k, highest since February\",\n      \"energy_markets\": \"Bearish \u2014 crude falling fourth consecutive session on OPEC+ quota increase signals\",\n      \"semiconductor_supply\": \"Tight \u2014 Micron HBM4 demand exceptionally strong, memory supply constrained into 2027\",\n      \"geopolitical_tech\": \"Expanding curbs \u2014 Nvidia and Broadcom subject to new export licence review covering Gulf states\"\n    }\n  },\n  \"state_changes\": [\n    {\n      \"event\": \"Fed officials push back on near-term cuts as jobless claims tick up to 254k\",\n      \"previous_state\": \"Market pricing steady easing path with high conviction\",\n      \"new_state\": \"September cut odds trimmed to 22% on Barkin hawkish comments and rising weekly claims\",\n      \"market_impact\": \"Headwind for high-multiple growth equities; tailwind ",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "current_regime 192 chars"
+        },
+        {
+          "name": "state_changes_extracted",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "2 state changes"
+        },
+        {
+          "name": "symbols_attributed",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "named ['MU', 'NVDA', 'AAPL', 'XLE', 'XLU', 'AVGO']"
+        },
+        {
+          "name": "stock_news_structured",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "4 symbols in stock_news"
+        }
+      ],
+      "input_tokens": 4535,
+      "output_tokens": 1192,
+      "cost_usd": 0.0043405,
+      "latency_s": 4.77,
+      "error": "",
+      "sample_output": "```json\n{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-08-31\",\n    \"era_themes\": [\n      \"AI/LLM infrastructure supercycle and memory supply tightness driving semiconductor capex\",\n      \"Fed restrictive monetary policy balancing labor market softening against stubborn inflation\",\n      \"Geopolitical export controls and OPEC+ supply adjustments creating cross-sector divergence\"\n    ],\n    \"current_regime\": \"Defensive rotation with tech dispersion \u2014 rising jobless claims and restrictive Fed rhetoric weigh on broad risk appetite, while AI hardware demand remains strong despite regulatory headwinds.\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"Restrictive \u2014 Barkin signals rates must stay high 'for some time', September cut odds trimmed to 22%.\",\n      \"labor_market\": \"Softening \u2014 weekly jobless claims rise to 254k (highest since February) alongside rising continuing claims.\",\n      \"energy_market\": \"Oversupplied \u2014 crude falls for a fourth session as OPEC+ signals higher quotas.\",\n      \"semiconductor_cycle\": \"Divergent \u2014 robust HBM4 demand and tight memory supply offset by new export licence reviews for advanced accelerators.\",\n      \"consumer_tech\": \"Cooling \u2014 supplier checks point to softer iPhone build plans for December quarter.\"\n    }\n  },\n  \"state_changes\": [\n    {\n      \"event\": \"Fed restrictive rhetoric and rising jobless claims trim September rate cut odds to 22%\",\n      \"previous_state\": \"Expectations leaning toward near-term easing with stable labor data\",\n  ",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "pm_constrained",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.8182,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PortfolioDecision validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "7/7 steps"
+        },
+        {
+          "name": "respects_cash_no_margin",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "added=0.0% vs funded=48.9% (cash 5.7% + trims 43.2%)"
+        },
+        {
+          "name": "targets_emitted",
+          "weight": 0.05,
+          "passed": true,
+          "detail": "2 targets"
+        },
+        {
+          "name": "no_signal_contradiction",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "XLE target=risk 2.0%"
+        },
+        {
+          "name": "acts_on_the_actionable_signal",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "targets=['NVDA', 'XLE'] portfolio_view mentions AAPL=False"
+        },
+        {
+          "name": "targets_have_thesis",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "2/2 with thesis"
+        }
+      ],
+      "input_tokens": 16630,
+      "output_tokens": 1012,
+      "cost_usd": 0.007519,
+      "latency_s": 4.08,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk_off with a bearish outlook, targeting an invested percentage of 55.0% and a cash recommendation of 45.0%. Current invested percentage is at 94.3% with $2,400.00 cash, requiring significant de-risking to align with the risk_off macro stance.\",\n    \"news_check\": \"No news intelligence data is currently available in the rolling window.\",\n    \"earnings_check\": \"No recent earnings filings available for evaluation.\",\n    \"signal_conflicts\": \"NVDA: available=macro=bearish. Conflict: macro is bearish while holding a large long position. Resolution: trim/close to align with macro risk_off. XLU: available=macro=bullish. Conflict: none, utilities sector guidance is bullish. Resolution: maintain position. XLE: available=macro=bearish, technical=sell. Conflict: none, bearish alignment supports short position. AAPL: available=macro=bearish, technical=buy. Conflict: macro bearish versus technical buy. Resolution: skip buying AAPL due to risk_off macro conflict.\",\n    \"sizing_logic\": \"To align the portfolio with the 55.0% target invested percentage from the risk_off macro regime, we must liquidate NVDA (which is currently overweight at 43.2% of the book) and exit the oversized long exposure. XLE short is proposed with high conviction backed by technical sell and macro bearish stance.\",\n    \"portfolio_balance\": \"Reducing technology sector concentration by closing NVDA. Maintaining XLU (Utilities, bullish sector guidance",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "pm_constrained",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "PortfolioDecision validated"
+        }
+      ],
+      "input_tokens": 16632,
+      "output_tokens": 802,
+      "cost_usd": 0.006994599999999999,
+      "latency_s": 3.66,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"[UNSOURCED:no_macro_history] Macro regime is risk_off with a bearish outlook and target invested % of 55.0%. Utilities are bullish, energy is bearish. VIX 88th percentile and widening credit spreads call for defensiveness.\",\n    \"news_check\": \"No news intelligence data is available for this session; relying on technical reports, current positions, and macro regime constraints.\",\n    \"earnings_check\": \"No recent earnings filings available for evaluation.\",\n    \"signal_conflicts\": \"NVDA: available=macro=bearish. Conflict: macro is bearish while position is held long with 43.2% weight, and NVDA has no current technical coverage. Resolution: trim NVDA significantly to reduce concentration and align with risk_off macro.\",\n    \"sizing_logic\": \"NVDA weight is 43.2% (>18% hard concentration limit), requiring an immediate trim. XLU is held at 16.0% with a bullish macro stance and utilities guidance, and can be maintained. XLE has a technical sell and bearish macro stance, but as a short requires checking borrow status and caps; given cash constraints ($2,400 cash, 94.3% invested), we prioritize trimming oversized NVDA to raise cash toward the 45.0% recommendation.\",\n    \"portfolio_balance\": \"Current invested is 94.3% ($39,600) against a target invested of 55.0% ($23,100). NVDA alone accounts for 43.2% ($18,126 value) of the $42,000 portfolio, violating single-name and concentration rules. Trimming NVDA reduces overexposure.\",\n    \"",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "risk_rr_breach",
+      "role": "risk_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "RiskVerdict validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "catches_rr_breach",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "approved=True mu_mods=1 scale_all_buys=0.7"
+        },
+        {
+          "name": "names_offender_in_rr_audit",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "rr_audit='MU R/R is 0.42:1 (Entry $118.0, Stop $112.0, Target $120.5), which is well below the 1.5 minimum floor. XLU R/'"
+        },
+        {
+          "name": "reason_category_not_clean",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "reason_category=rr_fail"
+        }
+      ],
+      "input_tokens": 8335,
+      "output_tokens": 724,
+      "cost_usd": 0.0043105,
+      "latency_s": 3.35,
+      "error": "",
+      "sample_output": "```json\n{\n  \"approved\": true,\n  \"reasoning_chain\": {\n    \"rr_audit\": \"MU R/R is 0.42:1 (Entry $118.0, Stop $112.0, Target $120.5), which is well below the 1.5 minimum floor. XLU R/R is 2.25:1, compliant. MU requires allocation halving or downscaling due to the weak R/R without a named catalyst justifying it.\",\n    \"signal_fidelity\": \"Tech signals were not provided this run ((not provided) in Tech Analyst block). PM claims TA and macro broadly aligned, but without primary TA signals to verify against, we must rely strictly on R/R and sizing discipline.\",\n    \"correlation_check\": \"NVDA already constitutes 43.2% of the book in Technology. Adding MU (another Tech name) at 18.0% pushes tech concentration dangerously high, near 61.2% total book weight in a single sector, though the sector cap advisory did not explicitly fire. MU sizing must be cut significantly to prevent excessive sector concentration.\",\n    \"event_risk\": \"Event risk block shows 'NOT FETCHED this run' for earnings, macro releases, and FOMC meetings. Earnings proximity for MU and XLU is therefore UNKNOWN, not confirmed clear. Treat as unmeasured event risk, which weighs against oversized allocations like an 18% MU entry.\",\n    \"sizing_sanity\": \"Total portfolio equity is $42,000 with only $5,040 (12%) in deployable cash. Proposing an 18% MU allocation ($7,560) exceeds available cash ($5,040) entirely! Even with XLE being sold (value $7,714), proposing an 18% slug on a single name in an account with tight liquidity i",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "risk_rr_breach",
+      "role": "risk_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "RiskVerdict validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "catches_rr_breach",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "approved=True mu_mods=1 scale_all_buys=1.0"
+        },
+        {
+          "name": "names_offender_in_rr_audit",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "rr_audit='MU arrives with an R/R of 0.42:1, which severely breaches the 1.5 minimum floor without a named catalyst. XLU '"
+        },
+        {
+          "name": "reason_category_not_clean",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "reason_category=rr_fail"
+        }
+      ],
+      "input_tokens": 8333,
+      "output_tokens": 646,
+      "cost_usd": 0.0041148999999999995,
+      "latency_s": 20.7,
+      "error": "",
+      "sample_output": "```json\n{\n  \"approved\": true,\n  \"reasoning_chain\": {\n    \"rr_audit\": \"MU arrives with an R/R of 0.42:1, which severely breaches the 1.5 minimum floor without a named catalyst. XLU arrives with an R/R of 2.25:1, which is compliant. Per the R/R discipline rule, MU's allocation must be halved or scaled down.\",\n    \"signal_fidelity\": \"Tech signals were not provided in the tech block (marked as not provided), so trade alignment is judged primarily against PM's stated thesis and the portfolio structure.\",\n    \"correlation_check\": \"NVDA currently occupies 43.2% of the book in the Technology sector. Adding a large MU position would heavily concentrate tech exposure further, violating sensible correlation/concentration boundaries, necessitating a reduction in MU's size.\",\n    \"event_risk\": \"Earnings proximity for MU and XLU is NOT FETCHED this run (absence of data), so binary-event exposure is unquantified. Macro release and FOMC calendars were also not fetched and are treated as UNKNOWN.\",\n    \"sizing_sanity\": \"MU is proposed at an excessive 18% of portfolio notional with a terrible R/R (0.42:1). Furthermore, total deployable cash is only 12.0% ($5,040), meaning an 18% MU allocation ($7,560) exceeds total available cash, making it impossible to fund without closing XLE first. XLE close frees up $7,714, but sizing MU at 18% leaves no buffer. MU allocation is modified down to 6.0%.\",\n    \"overall\": \"The plan includes a severe R/R and sizing violation on MU (0.42:1 R/R and 18% weight ex",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "midday_exit",
+      "role": "position_reviewer",
+      "ok": true,
+      "quality": 0.65,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PositionReview validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "acts_on_broken_thesis",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "AMD action=HOLD (stop 0.25xATR away, -12% thesis progress in 21d)"
+        },
+        {
+          "name": "does_not_cut_the_winner",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "NVDA action=HOLD (1.8x pace, 11% above stop)"
+        }
+      ],
+      "input_tokens": 7398,
+      "output_tokens": 814,
+      "cost_usd": 0.004254399999999999,
+      "latency_s": 3.69,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_continuity_check\": \"Macro regime is risk_off with a bearish outlook and VIX at 27.4. Target invested is 55.0% (current book is heavily weighted to tech longs, total exposure is around 81.1%). Cautious backdrop, but macro alone does not trigger exits without specific stock thesis breaks.\",\n    \"thesis_progress_check\": \"AMD: days_held=21, thesis_progress=-12%, pace=0.00x, weight=34.3%, to_stop=0.4% (near critical stop zone at $151.14 vs $151.75 price). NVDA: days_held=34, thesis_progress=62%, pace=1.80x (ahead of schedule, fast mover), weight=46.8%, to_stop=11.2% (healthy buffer at 5.30 ATRs).\",\n    \"thesis_integrity_check\": \"AMD is sitting extremely close to its broker hard stop (0.4% away, stop distance 0.25x ATR). While pre-empting a broker stop is discouraged, AMD is heavily over-weighted in a risk-off macro environment and dangerously close to the broker-enforced stop line; however, per instructions, 'to_stop is advisory distance, never a trigger: only the broker fills stops' and 'pre-empting the stop converts protection into a realized whipsaw'. Therefore, we do not manual-sell AMD ahead of its stop; we let the broker hard stop manage the risk or hold. NVDA remains a strong mature winner with 1.80x pace and solid ATR buffer.\",\n    \"winners_discipline_check\": \"NVDA is up +15.4% with pace=1.80x and stop_distance=5.30x ATR. No parabolic exhaustion or trigger present. HOLD and let the winner run.\",\n    \"session_disposition_check\": \"",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "midday_exit",
+      "role": "position_reviewer",
+      "ok": true,
+      "quality": 0.65,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PositionReview validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "acts_on_broken_thesis",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "AMD action=HOLD (stop 0.25xATR away, -12% thesis progress in 21d)"
+        },
+        {
+          "name": "does_not_cut_the_winner",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "NVDA action=HOLD (1.8x pace, 11% above stop)"
+        }
+      ],
+      "input_tokens": 7398,
+      "output_tokens": 659,
+      "cost_usd": 0.0038669,
+      "latency_s": 3.06,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_continuity_check\": \"Macro regime is risk_off with VIX elevated at 27.4 and bearish outlook. Target invested is 55.0%, and total book exposure requires careful management, particularly regarding oversized positions.\",\n    \"thesis_progress_check\": \"AMD: progress -12%, pace 0.00x, heavy weight (34.3%), sitting 0.4% from hard stop (0.25x ATR). NVDA: progress 62%, pace 1.80x (fast mover), healthy stop distance at 5.3x ATR, P&L +15.4%.\",\n    \"thesis_integrity_check\": \"AMD is severely pressured, touching its broker hard stop zone (0.4% to stop) with high concentration (34.3%) in a risk_off regime. NVDA remains resilient with strong momentum despite macro headwinds.\",\n    \"winners_discipline_check\": \"NVDA is a mature, fast-moving winner (+15.4%, pace 1.80x) with ample room above its stop (5.3 ATRs). No parabolic exhaustion flags or triggers to disturb it; keep holding.\",\n    \"session_disposition_check\": \"Midday session with 2.5+ hours remaining. Prefer patience, but AMD's proximity to its hard stop (0.4%) and outsized weight (34.3%) under risk_off macro require recognizing that if the broker stop executes, it executes automatically. However, rule states: 'to_stop is ADVISORY DISTANCE, never a trigger: only the broker fills stops. Close to stop is NOT a reason to SELL ahead of it.' Therefore, hold AMD to let the broker stop manage or let it recover, avoiding a manual preemptive error.\",\n    \"execution_rationale\": \"AMD: Hold despite being 0.4",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google/gemini-3.5-flash-lite|tech_batch": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.009262,
+        "latency_mean": 5.19,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|macro_stress": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.005589,
+        "latency_mean": 5.29,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|news_intel": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.004507,
+        "latency_mean": 4.9,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|pm_constrained": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "pm_constrained",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.4091,
+        "quality_min": 0.0,
+        "cost_mean": 0.007257,
+        "latency_mean": 3.87,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|risk_rr_breach": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "risk_rr_breach",
+        "role": "risk_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.004213,
+        "latency_mean": 12.03,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|midday_exit": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "midday_exit",
+        "role": "position_reviewer",
+        "runs": 2,
+        "quality_mean": 0.65,
+        "quality_min": 0.65,
+        "cost_mean": 0.004061,
+        "latency_mean": 3.38,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "google/gemini-3.5-flash-lite": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.009262,
+            "latency_mean": 5.19,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.005589,
+            "latency_mean": 5.29,
+            "errors": [],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.004507,
+            "latency_mean": 4.9,
+            "errors": [],
+            "misattributed": []
+          },
+          "pm_constrained": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "pm_constrained",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.4091,
+            "quality_min": 0.0,
+            "cost_mean": 0.007257,
+            "latency_mean": 3.87,
+            "errors": [],
+            "misattributed": []
+          },
+          "risk_rr_breach": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "risk_rr_breach",
+            "role": "risk_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.004213,
+            "latency_mean": 12.03,
+            "errors": [],
+            "misattributed": []
+          },
+          "midday_exit": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "midday_exit",
+            "role": "position_reviewer",
+            "runs": 2,
+            "quality_mean": 0.65,
+            "quality_min": 0.65,
+            "cost_mean": 0.004061,
+            "latency_mean": 3.38,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.8432,
+        "quality_worst": 0.4091,
+        "quality_worst_run": 0.0,
+        "cost_total": 0.034889,
+        "quality_per_dollar": 24.17
+      }
+    }
+  }
+}
