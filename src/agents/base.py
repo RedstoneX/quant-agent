@@ -893,6 +893,7 @@ class BaseAgent(ABC):
         prompt_version = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:12]
         reservation = None
         provider_requests = 0
+        attempt_errors: list[BaseException] = []
         governed_estimate = 0
         governed_provider: str | None = None
 
@@ -920,11 +921,31 @@ class BaseAgent(ABC):
                 getattr(reservation, "mode", "unknown"),
             )
 
+        def _record_attempt_failure(exc: BaseException) -> None:
+            """Keep every attempt's failure, not just the one re-raised.
+
+            A logical call can make several provider attempts against
+            DIFFERENT providers, and only the primary's error survives to the
+            caller — `run()` re-raises `primary_error` and discards whatever
+            the failover hit. The cost circuit then judges whether the call
+            provably cost nothing from that single exception, so a failover
+            rejected with 401 (billed nothing, by definition) was invisible to
+            it and the whole call was charged its conservative reserve at the
+            FAILOVER model's price. On 2026-08-31 that put $0.62 on the ledger
+            for two refusals and a missing credential that together cost $0,
+            and the unexplained spend then latched the desk.
+            """
+            attempt_errors.append(exc)
+
         def _safe_fail_reservation(exc: BaseException) -> None:
             if self._cost_circuit is None or reservation is None:
                 return
+            if exc not in attempt_errors:
+                attempt_errors.append(exc)
             try:
-                self._cost_circuit.fail_call(reservation, exc)
+                self._cost_circuit.fail_call(
+                    reservation, exc, attempt_errors=list(attempt_errors),
+                )
             except Exception as accounting_exc:
                 logger.critical(
                     "Cost-circuit failure accounting failed closed: %s",
@@ -1033,6 +1054,7 @@ class BaseAgent(ABC):
                 raise
             except Exception as e:
                 primary_error = e
+                _record_attempt_failure(e)
                 # Non-retryable (auth / bad-request / 4xx / context-length):
                 # stop retrying — sleeping won't help. (Was: raise. Now we
                 # break so the cross-provider failover below can still try.)
@@ -1093,6 +1115,7 @@ class BaseAgent(ABC):
                 try:
                     failover = self._try_failover(
                         user_message, primary_error, authorize=_authorize,
+                        on_failure=_record_attempt_failure,
                     )
                 except PaidAnalysisSuspended as exc:
                     _safe_fail_reservation(exc)
@@ -1259,7 +1282,8 @@ class BaseAgent(ABC):
             self.client, self.model, user_message, authorize=authorize,
         )
 
-    def _try_failover(self, user_message: str, primary_error: Exception, *, authorize=None):
+    def _try_failover(self, user_message: str, primary_error: Exception, *,
+                      authorize=None, on_failure=None):
         """Primary provider (OpenAI or DeepSeek) failed → attempt ONE Anthropic
         call with the fallback model. Returns the (text, in_tok, out_tok,
         finish_reason) tuple on success, or None on failure (caller re-raises
@@ -1291,6 +1315,8 @@ class BaseAgent(ABC):
                 "Agent %s: failover to %s also FAILED: %s. Re-raising the "
                 "original primary error.", self.name, _FALLBACK_MODEL, exc,
             )
+            if on_failure is not None:
+                on_failure(exc)
             return None
 
     def _call_openai(
