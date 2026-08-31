@@ -867,14 +867,9 @@ phases:
         rank: 2
         status: "OPEN"
         summary: "The rehearsal harness builds its pricing-cache grace-window note before the sandbox's own settings.yaml is written, so the lookup reads a file that does not exist yet, silently falls back, and always reports '0h grace' regardless of the real configured grace period. Cosmetic: it would misdescribe a rehearsal actually running inside the grace band, but does not affect anything the rehearsal proves."
-      - id: "pnl-export-wrong-working-directory"
-        title: "Daily P&L export's systemd unit points at the wrong path"
-        rank: 3
-        status: "OPEN"
-        summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
       - id: "rehearsal-readme-missing"
         title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 4
+        rank: 3
         status: "OPEN"
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
@@ -997,10 +992,6 @@ phases:
         note: "NEW (3): the sandbox's config/settings.yaml is written here, after the pricing note above has already been built."
       - kind: manual
         note: "NEW (3): because _pricing_cache_note runs before build_rehearsal_config writes the sandbox's settings.yaml, _pricing_grace_hours reads a file that does not exist yet, its except clause fires, and the note always reports '0h grace' regardless of the real configured grace period. Cosmetic — it would misdescribe a rehearsal actually running inside the grace band. Re-check: `grep -n '_pricing_cache_note(sandbox)\\|config = build_rehearsal_config(' ops/rehearsal/runner.py` and confirm which line number comes first."
-      - kind: symbol_in_file
-        path: "scripts/systemd/quant-agent-daily.service"
-        symbol: "WorkingDirectory=/home/yebo/quant-agent"
-        note: "NEW (4): inherited from the upstream fork — this box is /home/qamc, not /home/yebo."
       - kind: symbol_in_file
         path: "ops/rehearsal/run.py"
         symbol: "ops/rehearsal/README.md"

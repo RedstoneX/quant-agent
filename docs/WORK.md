@@ -326,18 +326,19 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
 2. A cosmetic bug in the rehearsal tool: a note about how much slack the
    price-list safeguard has always reads as "none," regardless of the real
    setting, because it is checked before that setting is available.
-3. A leftover scheduled job still points at a folder from the project's original
-   owner instead of this one. A fix is written and passing on an open pull
-   request, not yet merged.
-4. A setup guide referenced by one internal file does not exist.
+3. A setup guide referenced by one internal file does not exist.
 5. Unchanged: full wire-service news coverage still needs a paid subscription
    the owner has already declined. Not a defect — a closed question.
 
-**Open pull requests carrying unfinished work:** bringing every one of the
-server's startup files under version control, with an automatic daily check
-that reports any difference between the server and the repository (ready, needs
-a refresh before merging); and the alert-path rework described above (draft,
-tests never run).
+**Also landed and deployed (2026-08-31, end of session):** every one of the
+server's startup files is now under version control — only six of twenty-one
+were, and the seven that actually run the trading day existed nowhere but on
+that one machine. A daily check now reports any difference between the server
+and the repository, so this cannot drift back unnoticed. And the alert path is
+now proved by the trading sessions themselves rather than by a weekly message:
+a broken channel turns Mission Control red and forces a message out even from
+sessions that are normally silent. Worst case it goes unnoticed about ten
+hours, not a week, and Monday's open is always covered.
 
 **Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
 
