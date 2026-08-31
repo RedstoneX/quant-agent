@@ -293,6 +293,36 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
+### DEPLOYED 2026-08-31 21:20 UTC — and one blocker that tests could not catch
+
+Running at `b88b836`. PRs #202 and #203 both merged, API restarted, served
+cockpit bundle matches disk, rehearsal PASS against the deployed code with the
+production database byte-identical.
+
+**The blocker worth remembering: `GOOGLE_API_KEY` was not on the box.** Seven
+seats now declare `provider: google`, and `_check_llm_provider_keys` refuses to
+load a config whose in-use provider has no key. Not degraded — the desk would
+not have STARTED, and the first symptom at 09:30 would have been silence. Every
+test passed and both PRs were green; the thing that would have broken lived
+entirely outside the repo. Fixed by adding
+`GOOGLE_API_KEY=placeholder-managed-by-onecli` (same convention as
+OPENROUTER_API_KEY — the real credential is injected by the gateway on the way
+out; .env only needs it non-empty). Original .env backed up to
+`/home/qamc/.env.bak-2026-08-31`, OUTSIDE the repo so it cannot read as drift.
+**Generalise this: after any change to which providers the seats use, load the
+config ON THE BOX before trusting a green CI run.**
+
+**Proven live, not assumed.** A forced evening session ran on the new routing at
+21:29 UTC: `evening_analyst` on `gemini-3.5-flash-lite`, 20,642 tokens, **cost
+$0.00**, status `analyzed`. The free tier works end to end through the gateway,
+and the $0.00 pricing row settles correctly rather than reading as unknown. The
+two new alert lines were also confirmed rendering from the box.
+
+**Runway.** OpenRouter is prepaid: $32.09 left, per-key cap removed. A CLEAN
+day costs $1.02 (2026-08-27 — the only day that week where all six sessions ran
+and the morning completed first time). Never estimate from an average of recent
+days: they are cheap precisely because the desk kept crashing early.
+
 ### 2026-08-31 evening — the reward:risk gate was being narrated, not computed
 
 **Two forced sessions rejected every trade. Neither rejection was a judgement
