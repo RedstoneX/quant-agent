@@ -300,14 +300,44 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
 - Three previously-identical "nothing happened" outcomes inside the mid-day quick check (feature off, already running, nothing found) now report distinctly, so they can be told apart after the fact. All three are and remain harmless.
 - Four pieces of dead code confirmed to have zero callers anywhere, including tests, were deleted: an unused local copy of the holdings list, a write-only bookkeeping field, a superseded internal data shape, and four small orphaned helper functions.
 
-**New, found by the same audit, not fixed — ranked by consequence:**
+**Landed (2026-08-31, later) — two of the items below were fixed the same night**
 
-1. **Highest consequence:** the alarm that is supposed to tell the owner a code change never actually reached the live server cannot send its alert — a missing piece of wiring means the notification credentials never reach it. It has never actually needed to fire yet, so this has gone unnoticed. Awaiting an owner decision on how to wire it; not scheduled work.
-2. One mid-day failure outcome still has no plain-English explanation and would show a raw internal code instead. Low frequency, tracked, self-flagging if it's missed again.
-3. A cosmetic bug in the rehearsal tool: a note about how much slack the price-list safeguard has always reads as "none," regardless of the real setting, because it's checked before that setting is available.
-4. A leftover scheduled job still points at a folder from the project's original owner instead of this one.
-5. A setup guide referenced by one internal file doesn't exist.
-6. Unchanged: full wire-service news coverage still needs a paid subscription the owner has already declined. Not a defect — a closed question.
+- Fed meeting dates are no longer a gap. The Federal Reserve publishes its own
+  meeting calendar free and the desk now reads it. A second source covers the
+  years the machine-readable feed does not reach — without it the desk would
+  have confidently reported "no meeting" for dates it simply could not see.
+  "No meeting is scheduled" now prints only when a real schedule genuinely
+  covers the window asked about; every other case says so in words.
+- The alarm that tells the owner a change never reached the live server can
+  now actually send. It never could: the credentials were never wired into it,
+  so an alert would have gone to a log file and nobody. It has a probe that
+  proves the channel still works rather than assuming it.
+  **Not finished:** the accompanying scheduled jobs are written but were
+  deliberately NOT switched on. They implement a weekly confirmation the owner
+  rejected — a week of undetected silence is not monitoring. The replacement,
+  where every trading session proves the alert path as part of its own run, is
+  unfinished on an open draft pull request.
+
+**Still open, ranked by consequence:**
+
+1. One mid-day failure outcome still has no plain-English explanation and would
+   show a raw internal code instead. Low frequency, tracked, self-flagging if
+   it is ever missed again.
+2. A cosmetic bug in the rehearsal tool: a note about how much slack the
+   price-list safeguard has always reads as "none," regardless of the real
+   setting, because it is checked before that setting is available.
+3. A leftover scheduled job still points at a folder from the project's original
+   owner instead of this one. A fix is written and passing on an open pull
+   request, not yet merged.
+4. A setup guide referenced by one internal file does not exist.
+5. Unchanged: full wire-service news coverage still needs a paid subscription
+   the owner has already declined. Not a defect — a closed question.
+
+**Open pull requests carrying unfinished work:** bringing every one of the
+server's startup files under version control, with an automatic daily check
+that reports any difference between the server and the repository (ready, needs
+a refresh before merging); and the alert-path rework described above (draft,
+tests never run).
 
 **Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
 
