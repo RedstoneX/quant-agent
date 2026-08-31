@@ -293,83 +293,94 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
-### NEXT UP — move the primary to Gemini direct, OpenRouter to backup
+### 2026-08-31 evening — the reward:risk gate was being narrated, not computed
 
-**Owner decided this 2026-08-31 (option B, inverted). Not started: no code
-written, nothing uncommitted. Everything below is measured, not assumed.**
+**Two forced sessions rejected every trade. Neither rejection was a judgement
+call; both were the deterministic constructor and the LLM Risk Manager
+disagreeing about facts the RM should never have been asked to derive.**
 
-**The shape:** `gemini-3.5-flash-lite` on BOTH routes — Google AI Studio
-direct as PRIMARY (free tier), OpenRouter as BACKUP (paid). Same model, two
-independent paths, so a failover changes the road and not the reasoning. That
-was the owner's core objection to the inherited Claude-Opus fallback and it is
-the requirement to preserve.
+- **The RM was doing the arithmetic its own gate is judged on.** It receives
+  the constructed order as bare Entry/Stop/Target text with no ratio. For a
+  BUY on RSG it computed the ratio TWICE IN ONE RESPONSE — `rr_audit` said
+  "R/R = 1.65 ... above 1.5, so compliant", `reasoning` said "R/R = 1.31,
+  which is below the 1.5 floor" and rejected. The pipeline acts on
+  `reasoning`. 1.65 is right; 1.31 matches no combination of the inputs.
+  `TradeDecision.reward_risk` is now a Python computed field, mirroring
+  `TechAnalysisResult.risk_reward` and its "not trusted to the LLM" rule,
+  rendered into the prompt and declared authoritative there. PR #202.
+- **The constructor removed trades without telling anyone.** It struck NVDA on
+  the reward:risk floor; PM's narrative — written BEFORE construction and
+  rendered verbatim — still argued for it, so the RM vetoed the whole plan
+  ("While COP and V are valid, the plan as presented is not internally
+  consistent"). Two valid trades died for a bookkeeping mismatch.
+  `PortfolioDecision.constructor_dropped` now carries removals into the
+  prompt. Same pattern as the existing `cap_note`, whose own comment records
+  the identical failure from 2026-08-20 — solved once for allocation caps,
+  never extended to removals. PR #202.
+- **Ten new tests over the constructor→RM handoff, which had none.** No test
+  anywhere built a widened-stop order and asserted what the RM prompt shows
+  for it. That is exactly the seam both defects lived in.
 
-**Why not keep 2.5:** Google refuses it to new keys outright — *"no longer
-available to new users"*. 3.5 is the only option a new key gets, so both ends
-move together or the backup stops being the same model.
+**Three grandfathered stops widened to the noise-band floor.** V, DIS and
+CMCSA were opened 2026-08-27 13:36 UTC; `min_stop_atr_multiple = 3.0` was
+committed the same day at 22:28 UTC, after the close, so they were never
+subject to it. Measured 2026-08-31 they sat at 1.02x / 1.03x / 1.62x ATR —
+inside a single ordinary day's range for the first two. Widened via
+`broker.replace_stop_loss(..., allow_lowering=True)`, the same supported path
+the ex-dividend adjustment uses, NOT a hand edit: it snapshots and rolls back
+on failure and leaves no unprotected window for the ~30-min coverage
+reconciler to "repair" by reinstating the original tight stop. MSFT was left
+alone — its live stop had already trailed up to 485.10 and is correct against
+current price, not the 480.30 the entry row still records.
 
-**Measured facts (do not re-derive):**
+**The ledger was corrected, on owner instruction, and the tool has no path for
+it.** Recorded spend went 2.1741 -> 0.2494, the exact sum of `agent_logs`
+provider-reported costs for the ET day. `scripts/cost_circuit.py` only ever
+clears latches and promises never to erase settled spend, so this was a direct
+row edit. **Editing `llm_budget_days` alone raises an emergency latch** — a
+hard check joins it to `llm_budget_sessions` and `llm_budget_reservations`
+(`cost_circuit.py:1216-1247`) and both ledgers must move in one transaction.
+Learned by tripping it. Prior row backed up to
+`data/ledger_backup_2026-08-31.json`; caps unchanged.
 
-- **Free-tier limits, read from the owner's own AI Studio dashboard**, project
-  `qamc-gemini`: **15 RPM, 250,000 TPM, 500 RPD.** Published blog figures
-  (1,000-1,500 RPD) are WRONG; the dashboard is authoritative.
-- **TPM is the binding constraint.** A morning pass is ~215k tokens — 86% of
-  the per-minute ceiling in one burst. A 6-request test at ~253k tokens
-  BREACHED it (recorded on the dashboard, though the calls happened to
-  succeed). Do not read "no error" as "no limit"; that mistake was made here.
-- Projected full-day load: **~76 requests / ~810k input tokens**, from
-  per-session measurements times the schedule — NOT from summing historical
-  days, which were truncated by the shutdowns and undercount badly.
-  RPD at 76/500 is a non-issue.
-- **Google's OpenAI-compatible endpoint works**, verified with streaming and
-  usage: `https://generativelanguage.googleapis.com/v1beta/openai/`. This is
-  what makes the change small — `_call_openai` is reused as-is rather than a
-  native Gemini client being written.
-- The OneCLI secret `Google Gemini - QAMC` is created, granted to the Default
-  Agent, and **its injection is already `Authorization: Bearer {value}`** for
-  that compat endpoint (the native endpoint's `x-goog-api-key` will NOT work
-  with it). Verified end to end from the box.
+**STILL UNRESOLVED — do not let anyone tell you this is closed.** Whether a
+real OpenRouter rate-limit reaches `_is_known_zero_cost_failure` carrying
+`status_code = 429` is UNVERIFIED. Reading the allow-list is not proof. The
+rehearsal rig cannot settle it either: `ops/rehearsal/faults.py` builds its
+`RateLimited` fault with a hard-coded `status_code = 429`, so it encodes the
+assumption in doubt and can only ever confirm it. Settling this needs a
+captured real rate-limit, or a classifier robust to both shapes.
 
-**The work:**
+### DONE 2026-08-31 — primary moved to Gemini direct, OpenRouter to backup
 
-1. `VALID_PROVIDERS` is `{anthropic, openai, deepseek, openrouter}` — add
-   `google`, routed through `_call_openai` with the compat base URL. Give it
-   its own semaphore and its own entry in `_TOKEN_GOVERNORS`.
-2. **Set the Google governor to 200,000 TPM** — 80% of the measured 250k, not
-   a guessed number. This is the one place a ceiling is now justified by a
-   published limit rather than taste, which was the owner's objection to the
-   earlier 150k figure.
-3. **`_FALLBACK_MODEL` is hard-coded to `claude-opus-4-7`** and
-   `_try_failover` is hard-coded to Anthropic. Both must become configurable
-   so the fallback is OpenRouter on the same model. The Opus target is an
-   inherited remnant from upstream `yebof` (commit `d237f9b`, 2026-06-04,
-   "OpenAI->Anthropic auto-failover") that nobody chose — see the incident
-   entry below.
-4. Point the agents' `*_model` settings at the new primary and re-check that
-   `src/token_budget.py` refits — a new model id means no history, so it falls
-   back conservatively until ~8 calls accumulate. That is by design.
+**Shipped as PR #203.** Seven specialist seats run `provider: google` /
+`gemini-3.5-flash-lite` on the AI Studio free tier; OpenRouter carries the
+same model as a paid backup, so a failover changes the road and not the
+reasoning. The failover target is configuration now, not the hard-coded
+`claude-opus-4-7` — an inherited remnant at ~50x the primary's price that had
+never once completed, because no Anthropic credential was ever configured.
+Measured limits, endpoint verification and rates are in the code comments and
+PR #203; not restated here.
 
-**Verify, do not assume.** Every real error today was caught by looking at
-actual bytes: the phantom charge, an Alpaca account mix-up, and a 6.8x figure
-that was really 1.49x. Prove the failover with
-`ops/rehearsal/run.py --fail-provider tech_analyst:rate_limit:2`.
+**Three things that are still open, and only these:**
 
-**Still open for the owner:** whether to correct today's ledger, which carries
-~$1.94 of phantom charges against a $2.75 cap for calls that really cost about
-a penny. Left alone deliberately — `scripts/cost_circuit.py` promises never to
-erase settled spend.
-
-**Two traps that cost hours today:**
-
-- **OneCLI's `agent_secrets` table is OBSOLETE.** v1.45 uses policy grants;
-  the old table holds stale rows that read as "no grants" when an agent has
-  eight. Use `GET/PUT/DELETE /api/agents/:id/grants/secrets/:secretId`.
-- **Never give one agent two credentials matching the same host.** The Default
-  Agent briefly held both Alpaca pairs; `paper-api.alpaca.markets` beat
-  `*.alpaca.markets` on specificity and production silently pointed at the
-  rehearsal account. Ground truth is `GET /v2/account` — production is
-  `PA3DFXH9FF5V`, the rehearsal sandbox is `PA30V8QHEW1C`.
-
+- **`position_reviewer` was deliberately NOT migrated.** It is a decision seat
+  and `test_decision_seats_run_a_model_measured_at_that_seat` demands a model
+  measured at its own scenario. No benchmark exists for 3.5 at `midday_exit`,
+  and none can be produced against the 2.5 incumbent because Google refuses
+  2.5 to new keys. It moves after
+  `ops/model_policy/benchmark_models.py --scenario midday_exit --models gemini-3.5-flash-lite`
+  is run and committed.
+- **`ops/commissioning/verify_commissioning.py` carries stale
+  `EXPECTED_PROVIDER` / `EXPECTED_ROUTING` constants** and will report FAIL
+  against the new routing. Its own tests do not catch this because they
+  self-reference the same constants instead of reading `settings.yaml`.
+- **This saves ~7% of spend, not the bill.** Measured from `agent_logs` over
+  7 days: `openai/gpt-5.5` (portfolio_manager) is $6.64 of a ~$7.16 week — 93%
+  of spend on 21% of calls. The eight Gemini seats are $0.51 between them. The
+  cost ledger remains, almost entirely, a guard on the PM seat. The real lever
+  there is input size and prompt caching, NOT a weaker model — the owner has
+  ruled that out and is right to.
 ### 2026-08-31, afternoon — charged $0.62 for calls that cost nothing
 
 **The rate limit did not stop trading. The phantom bill for it did.**

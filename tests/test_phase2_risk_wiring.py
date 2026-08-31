@@ -425,3 +425,160 @@ def test_reviewer_prompt_documents_r_before_thesis_progress():
             / "config" / "prompts" / "position_reviewer.md").read_text()
     assert "R-multiple" in text
     assert text.index("`R` = the **R-multiple**") < text.index("`thesis_progress_pct` =")
+
+
+# ===========================================================================
+# The Risk Manager must be GIVEN reward:risk, never left to divide it itself
+#
+# 2026-08-31 incident. The RM received the constructed order as bare
+# Entry/Stop/Target text with no ratio, did the arithmetic inside the model,
+# and produced TWO DIFFERENT ANSWERS IN ONE RESPONSE for a BUY on RSG
+# (entry 221.14, stop 207.90, target 242.96): `rr_audit` said "R/R = 1.65 ...
+# above 1.5, so compliant", `reasoning` said "R/R = 1.31, which is below the
+# 1.5 floor". The pipeline acts on `reasoning`, so a compliant trade was
+# rejected and the desk took no position that session. 1.65 is correct; 1.31
+# matches no combination of the inputs.
+#
+# The seam these cover — build a real constructed order, render it into the
+# RM prompt, assert the ratio is present and correct — had NO test at all.
+# ===========================================================================
+
+def _decision(action="BUY", entry=221.14, stop=207.90, target=242.96):
+    from src.models import TradeDecision
+    return TradeDecision(
+        action=action, symbol="RSG", allocation_pct=5.0,
+        entry_price=entry, stop_loss=stop, take_profit=target,
+        reasoning="constructed order under test",
+    )
+
+
+def test_trade_decision_computes_reward_risk_in_python():
+    """The exact 2026-08-31 order. 1.65, deterministically, every time."""
+    assert _decision().reward_risk == 1.65
+
+
+def test_reward_risk_mirrors_the_short_side():
+    d = _decision(action="SHORT", entry=100.0, stop=110.0, target=80.0)
+    assert d.reward_risk == 2.0
+
+
+def test_reward_risk_is_none_when_there_is_no_entry_geometry():
+    """SELL/COVER reduce an existing position; HOLD opens nothing. A ratio
+    rendered for these would be fiction."""
+    for action in ("SELL", "COVER", "HOLD"):
+        assert _decision(action=action).reward_risk is None
+
+
+def test_malformed_buy_geometry_is_rejected_before_a_ratio_can_exist():
+    """A BUY whose stop sits above entry never becomes a TradeDecision at all
+    — `validate_buy_prices` refuses it at construction. Asserted here so the
+    reward_risk guard's None-branch is understood as defence in depth behind
+    an existing validator, not as the only thing standing between the desk and
+    a fake ratio."""
+    import pytest as _pytest
+    from pydantic import ValidationError
+    with _pytest.raises(ValidationError):
+        _decision(stop=230.0)
+
+
+def test_rm_prompt_carries_the_computed_reward_risk_for_each_trade():
+    """The regression that matters: the ratio must reach the RM's prompt, so
+    the model never has to derive the number its own floor is judged against."""
+    from src.models import PortfolioDecision, ReasoningChain
+
+    decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=[_decision()], portfolio_view="constructive",
+    )
+    msg = _rm_message(portfolio_decision=decision)
+    assert "R/R 1.65:1" in msg, (
+        "the constructed order's computed reward:risk must be rendered into "
+        "the Risk Manager prompt — without it the model divides the prices "
+        "itself, which is exactly what failed on 2026-08-31"
+    )
+
+
+def test_rm_prompt_omits_reward_risk_where_none_exists():
+    """A SELL must not carry a ratio — rendering 'R/R None:1' would be worse
+    than rendering nothing."""
+    from src.models import PortfolioDecision, ReasoningChain
+
+    decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=[_decision(action="SELL")], portfolio_view="constructive",
+    )
+    msg = _rm_message(portfolio_decision=decision)
+    assert "R/R None" not in msg
+
+
+# ===========================================================================
+# The constructor must SAY what it removed, or the RM vetoes the survivors
+#
+# 2026-08-31, first forced session of the day. The constructor struck a BUY on
+# NVDA (reward:risk 1.42 against the 1.50 floor). PM's reasoning_chain, written
+# BEFORE the constructor ran, still argued for it. The RM saw a narrative about
+# a trade absent from the order list and rejected the ENTIRE plan:
+#
+#   "PM constructs a detailed narrative around a BUY NVDA trade that does not
+#    exist in the proposed orders. This undermines trust in the decision logic.
+#    While COP and V are valid, the plan as presented is not internally
+#    consistent and cannot be approved."
+#
+# Two trades it had just called valid died for a bookkeeping mismatch. The RM
+# was reasoning correctly from what it was shown; it was shown the wrong thing.
+# ===========================================================================
+
+def _pd_with(dropped, decisions=None):
+    from src.models import PortfolioDecision, ReasoningChain
+    return PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=decisions if decisions is not None else [_decision()],
+        constructor_dropped=dropped,
+        portfolio_view="constructive",
+    )
+
+
+def test_rm_is_told_which_symbols_the_constructor_removed():
+    msg = _rm_message(portfolio_decision=_pd_with(["NVDA", "VLO"]))
+    assert "Removed Before You Saw This" in msg
+    assert "NVDA" in msg and "VLO" in msg
+
+
+def test_rm_is_told_removal_was_deterministic_and_not_incoherence():
+    """The block must not merely list symbols — it must tell the RM that a
+    narrative mentioning them is EXPECTED, which is the part that stops the
+    full-plan veto."""
+    msg = _rm_message(portfolio_decision=_pd_with(["NVDA"]))
+    assert "EXPECTED" in msg
+    assert "do not veto the surviving trades" in msg
+
+
+def test_no_removal_block_when_the_constructor_dropped_nothing():
+    """A clean plan must not carry an empty scary heading."""
+    msg = _rm_message(portfolio_decision=_pd_with([]))
+    assert "Removed Before You Saw This" not in msg
+
+
+def test_constructor_dropped_defaults_empty_so_old_call_sites_are_unaffected():
+    from src.models import PortfolioDecision, ReasoningChain
+    pd = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="a", news_check="b", earnings_check="c",
+            signal_conflicts="d", sizing_logic="e", portfolio_balance="f",
+            cash_target="g",
+        ),
+        portfolio_view="x",
+    )
+    assert pd.constructor_dropped == []

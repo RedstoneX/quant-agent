@@ -99,9 +99,18 @@ class RiskManagerAgent(BaseAgent):
                 )
             else:
                 alloc = f"{d.allocation_pct}% of portfolio"
+            # R/R is rendered from `TradeDecision.reward_risk`, a Python
+            # computed field — NOT left for the model to divide out of the
+            # prices below. On 2026-08-31 this seat was given bare prices,
+            # did the arithmetic itself, produced 1.65 in `rr_audit` and 1.31
+            # in `reasoning` IN THE SAME RESPONSE, and rejected a compliant
+            # trade on the wrong one. The ratio the floor is judged against
+            # must come from the same deterministic code that built the order.
+            # None only for SELL/COVER/HOLD, which have no entry geometry.
+            rr = f" | R/R {d.reward_risk}:1" if d.reward_risk is not None else ""
             return (
                 f"- {d.action} {d.symbol}: {alloc} | Entry: ${d.entry_price} | "
-                f"Stop: ${d.stop_loss} | Target: ${d.take_profit}\n  Reasoning: {d.reasoning}"
+                f"Stop: ${d.stop_loss} | Target: ${d.take_profit}{rr}\n  Reasoning: {d.reasoning}"
             )
 
         decisions_text = "\n".join(
@@ -373,9 +382,30 @@ Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
         # before the verdict is the one input PM did not author. Nothing was
         # added to or removed from what RM may DO about a disagreement — no
         # threshold moved; only the order in which it learns things.
+        # Deterministic removals, stated plainly. PM's reasoning_chain below
+        # was written BEFORE the constructor ran, so it may argue for symbols
+        # that are not in the order list above. Without this block that reads
+        # as PM contradicting itself and invites a full-plan veto — which is
+        # exactly what happened on 2026-08-31, costing two trades this seat
+        # had just called valid.
+        dropped = getattr(portfolio_decision, "constructor_dropped", None) or []
+        dropped_text = ""
+        if dropped:
+            dropped_text = (
+                "\n## Removed Before You Saw This\n"
+                f"The deterministic constructor removed: {', '.join(dropped)}.\n"
+                "These failed a hard rule (reward:risk floor, no structural "
+                "target, or no valid stop) and were struck by code, not by "
+                "judgement. PM's reasoning below was written BEFORE that "
+                "happened, so it may still argue for them. That is EXPECTED "
+                "and is NOT evidence of an incoherent plan — do not veto the "
+                "surviving trades over it. Judge only the orders listed "
+                "above.\n"
+            )
+
         return f"""## Proposed Trades
 {decisions_text}
-
+{dropped_text}
 Portfolio View: {portfolio_decision.portfolio_view}
 
 {account_section}

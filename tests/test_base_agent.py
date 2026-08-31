@@ -793,11 +793,21 @@ def test_openai_no_ca_bundle_uses_default_trust(monkeypatch):
 
 # === streamed OpenAI path + relay hardening (CF-524 / 429 storms / degenerate 200s) ===
 
-def _stream_chunk(piece=None, finish_reason=None, usage=None):
+def _stream_chunk(piece=None, finish_reason=None, usage=None, error=None, chunk_id=None):
     """One streamed chunk. A usage-only chunk (include_usage's final extra
     chunk) carries an empty choices list."""
     chunk = MagicMock()
     chunk.usage = usage  # explicit None — MagicMock auto-attrs would count as usage
+    # Same hazard for the mid-stream error field: an auto-attr MagicMock is
+    # truthy and would read as "the provider errored" on every healthy chunk.
+    # A real SDK chunk has no `error` attribute at all on the happy path.
+    chunk.error = error
+    chunk.model_extra = {}
+    # Same hazard again for `id`: an auto-attr MagicMock is truthy but not a
+    # str, so _call_openai's isinstance guard would ignore it anyway — but
+    # setting it explicitly (default None) keeps every existing test's
+    # generation_id capture honest rather than relying on that guard alone.
+    chunk.id = chunk_id
     if piece is None and finish_reason is None and usage is not None:
         chunk.choices = []
         return chunk
@@ -817,20 +827,22 @@ def _stream_usage(prompt=100, completion=50):
     return u
 
 
-def _openai_stream_mock(pieces=('{"result"', ': "ok"}'), finish_reason="stop", usage="default"):
+def _openai_stream_mock(pieces=('{"result"', ': "ok"}'), finish_reason="stop", usage="default",
+                        gen_id=None):
     """Mock OpenAI client whose chat.completions.create returns a streamed
     (iterable-of-chunks) response — the shape _call_openai consumes.
     finish_reason=None simulates a connection cut mid-generation (no final
     chunk ever carries a finish_reason). usage=None simulates a relay that
-    ignores stream_options include_usage."""
+    ignores stream_options include_usage. gen_id, when set, is stamped on
+    every chunk — a real stream repeats the same generation id throughout."""
     oai = MagicMock()
-    chunks = [_stream_chunk(piece=p) for p in pieces]
+    chunks = [_stream_chunk(piece=p, chunk_id=gen_id) for p in pieces]
     if finish_reason is not None:
-        chunks.append(_stream_chunk(finish_reason=finish_reason))
+        chunks.append(_stream_chunk(finish_reason=finish_reason, chunk_id=gen_id))
     if usage == "default":
         usage = _stream_usage()
     if usage is not None:
-        chunks.append(_stream_chunk(usage=usage))
+        chunks.append(_stream_chunk(usage=usage, chunk_id=gen_id))
     oai.chat.completions.create.return_value = chunks
     return oai
 
@@ -1301,6 +1313,187 @@ def test_openrouter_uses_dedicated_semaphore_not_openai_relay():
     assert base_mod._OPENAI_LLM_SEMAPHORE._value == openai_start
 
 
+# === OpenRouter post-hoc generation-cost recovery ===============================
+# When a streamed OpenRouter call carries content + finish_reason but NO usage
+# chunk, _call_openai used to settle it as 0/0-unknown, which the cost circuit
+# then charges at the FULL pre-call reservation ($0.60-$1.20 against a $2.75
+# daily cap). OpenRouter retains the true billed cost behind
+# GET /generation?id=<chunk.id> — not immediately queryable (measured 404 then
+# resolves minutes later), so recovery is a small bounded best-effort retry
+# that must never raise and must never make a call worse than 0/0-unknown.
+
+def _generation_response(total_cost=1.1e-06, tokens_prompt=8, tokens_completion=1):
+    """A requests.Response-shaped mock for GET /generation?id=..., matching
+    the live shape verified 2026-08-31 (see src/agents/base.py)."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {
+        "data": {
+            "total_cost": total_cost,
+            "tokens_prompt": tokens_prompt,
+            "tokens_completion": tokens_completion,
+            "native_tokens_prompt": tokens_prompt,
+            "native_tokens_completion": tokens_completion,
+            "model": "anthropic/claude-3.5-sonnet",
+            "streamed": True,
+        }
+    }
+    return resp
+
+
+def _404_response():
+    resp = MagicMock()
+    resp.status_code = 404
+    return resp
+
+
+def _requests_get_stub(generation_response=None, generation_exception=None):
+    """requests.get replacement that answers ONLY the OpenRouter /generation
+    URL; any other URL (notably cost_table's unrelated on-demand pricing-
+    catalog fetch to .../v1/models, which run() can trigger while computing
+    the ratio-check log against the estimate) gets the same 'network
+    disabled' behavior conftest's autouse fixture normally provides. That
+    keeps assertions about the generation lookup from being confused by an
+    unrelated call sharing the same requests.get patch target."""
+    from src.agents.base import _OPENROUTER_GENERATION_URL
+    import requests as _requests
+
+    def _get(url, *args, **kwargs):
+        if url == _OPENROUTER_GENERATION_URL:
+            if generation_exception is not None:
+                raise generation_exception
+            return generation_response
+        raise _requests.ConnectionError(
+            "outbound HTTP disabled in this test (only /generation is stubbed)"
+        )
+    return MagicMock(side_effect=_get)
+
+
+def _generation_calls(mock_get):
+    """The subset of a stubbed requests.get's calls that hit /generation —
+    filters out any unrelated pricing-catalog call sharing the same mock."""
+    from src.agents.base import _OPENROUTER_GENERATION_URL
+    return [c for c in mock_get.call_args_list if c.args[:1] == (_OPENROUTER_GENERATION_URL,)]
+
+
+def test_generation_id_captured_and_used_for_recovery_lookup(monkeypatch):
+    """chunk.id (the last non-empty one seen) is what gets looked up, sent as
+    the `id` query param with this client's own API key as the bearer."""
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    mock_get = _requests_get_stub(generation_response=_generation_response())
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        client = _openai_stream_mock(usage=None, gen_id="gen-abc123")
+        # patch("openai.OpenAI") replaces the constructor itself, so
+        # self.client here is this bare MagicMock — it won't reflect the
+        # constructor's api_key kwarg the way a real OpenAI() client does
+        # (verified separately: real OpenAI(api_key=...).api_key round-
+        # trips). Set it explicitly to exercise "read it off self.client".
+        client.api_key = "ork"
+        oai_cls.return_value = client
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")
+        agent.run(data="x")
+    calls = _generation_calls(mock_get)
+    assert len(calls) == 1
+    assert calls[0].kwargs["params"] == {"id": "gen-abc123"}
+    assert calls[0].kwargs["headers"] == {"Authorization": "Bearer ork"}
+
+
+def test_recovered_openrouter_cost_reaches_settled_cost(monkeypatch):
+    """A successful post-hoc lookup must settle the ACTUAL cost/tokens, not
+    the 0/0-unknown fallback that would otherwise hold the full reservation."""
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    mock_get = _requests_get_stub(generation_response=_generation_response(
+        total_cost=1.1e-06, tokens_prompt=8, tokens_completion=1,
+    ))
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-xyz")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")
+        result = agent.run(data="x")
+    assert result.input_tokens == 8
+    assert result.output_tokens == 1
+    assert result.cost_usd == pytest.approx(1.1e-06)
+
+
+def test_recovery_only_attempted_when_usage_absent():
+    """A healthy stream WITH a usage chunk must never touch the network —
+    recovery exists only for the no-usage case."""
+    mock_get = _requests_get_stub(generation_response=_generation_response())
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock(gen_id="gen-should-be-unused")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")
+        result = agent.run(data="x")
+    assert _generation_calls(mock_get) == []
+    assert result.input_tokens == 100 and result.output_tokens == 50
+
+
+def test_recovery_404_falls_back_to_unknown_cost_without_raising(monkeypatch):
+    """The measured common case (querying right after the stream closes) —
+    must degrade to exactly today's unknown-cost behavior, never raise, and
+    stop after the bounded retry budget."""
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    mock_get = _requests_get_stub(generation_response=_404_response())
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-404")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")
+        result = agent.run(data="x")
+    assert result.input_tokens == 0 and result.output_tokens == 0
+    assert result.cost_usd is None
+    from src.agents.base import _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+    assert len(_generation_calls(mock_get)) == _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+
+
+def test_recovery_timeout_falls_back_to_unknown_cost_without_raising(monkeypatch):
+    """A network timeout must degrade the same way as a 404 — never raise,
+    never block the session beyond the bounded retry budget."""
+    import requests
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    mock_get = _requests_get_stub(
+        generation_exception=requests.Timeout("generation lookup timed out")
+    )
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-timeout")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")
+        result = agent.run(data="x")
+    assert result.input_tokens == 0 and result.output_tokens == 0
+    assert result.cost_usd is None
+    from src.agents.base import _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+    assert len(_generation_calls(mock_get)) == _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+
+
+def test_non_openrouter_provider_skips_generation_lookup_entirely():
+    """Only OpenRouter has this endpoint — a plain OpenAI call with a
+    (hypothetically) captured id must still skip the lookup cleanly rather
+    than calling a URL that cannot work for this provider."""
+    mock_get = _requests_get_stub(generation_response=_generation_response())
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-openai-plain")
+        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64)
+        result = agent.run(data="x")
+    assert _generation_calls(mock_get) == []
+    assert result.input_tokens == 0 and result.output_tokens == 0
+    assert result.cost_usd is None
+
+
+def test_recovery_skipped_when_no_generation_id_was_ever_seen():
+    """OpenRouter, no usage chunk, but the stream never carried an id either
+    (older relay / stripped field) — nothing to look up, must skip rather
+    than querying with id=None."""
+    mock_get = _requests_get_stub(generation_response=_generation_response())
+    with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock(usage=None, gen_id=None)
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                              max_tokens=64, provider="openrouter")
+        result = agent.run(data="x")
+    assert _generation_calls(mock_get) == []
+    assert result.cost_usd is None
+
+
 def test_agent_result_new_fields_populated_on_primary_success(mock_anthropic):
     """requested_* mirrors actual_* on a clean primary success; used_fallback
     False; prompt_version deterministic; latency_s measured."""
@@ -1405,3 +1598,83 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
     statuses = [getattr(e, "status_code", None) for e in seen["attempts"]]
     assert 401 in statuses, "the failover's 401 must reach the circuit"
     assert statuses.count(429) == 2, "and both primary refusals"
+
+
+# ===========================================================================
+# Mid-stream provider errors must keep their status code
+#
+# OpenRouter cannot change the HTTP status once the first byte is written, so
+# a rate limit that lands mid-stream arrives as an SSE chunk carrying a
+# top-level `error` object (code/message/metadata.error_type) plus
+# finish_reason "error", on an HTTP 200.
+#
+# Before this, such a chunk fell through to the empty-content guard and raised
+# LLMEmptyResponseError, which carries NO status_code. The cost circuit's
+# zero-cost classifier keys on status_code, found none, failed closed, and
+# charged the full pre-call reservation for a call the provider refused and
+# never billed. On 2026-08-31 that consumed $1.92 of a $2.75 daily cap and
+# shut the desk down. Adding 429 to the allow-list did not help, because the
+# status never reached the classifier.
+# ===========================================================================
+
+def _mid_stream_error(code=429, error_type="rate_limit_exceeded", message="rate-limited upstream"):
+    oai = MagicMock()
+    oai.chat.completions.create.return_value = [
+        _stream_chunk(piece='{"partial"'),
+        _stream_chunk(error={"code": code, "message": message,
+                             "metadata": {"error_type": error_type}},
+                      finish_reason="error"),
+    ]
+    return oai
+
+
+def test_mid_stream_error_surfaces_the_providers_status_code():
+    from src.agents.base import LLMStreamErrorChunk
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _mid_stream_error()
+        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
+        with pytest.raises(LLMStreamErrorChunk) as exc:
+            agent._call_openai("x")
+    assert exc.value.status_code == 429
+    assert exc.value.error_type == "rate_limit_exceeded"
+
+
+def test_mid_stream_rate_limit_is_classified_provably_free():
+    """The whole point: a 429 the provider refused before billing must reach
+    the cost circuit AS a 429, so it settles at $0 instead of the full
+    reservation."""
+    from src.agents.base import LLMStreamErrorChunk
+    from src.cost_circuit import _is_known_zero_cost_failure
+    assert _is_known_zero_cost_failure(
+        LLMStreamErrorChunk("rate limited", status_code=429,
+                            error_type="rate_limit_exceeded")
+    ) is True
+
+
+def test_mid_stream_error_without_a_code_stays_ambiguous():
+    """Fail-closed is preserved. This change does not widen what counts as
+    free — it only stops discarding a status the provider did send."""
+    from src.agents.base import LLMStreamErrorChunk
+    from src.cost_circuit import _is_known_zero_cost_failure
+    assert _is_known_zero_cost_failure(
+        LLMStreamErrorChunk("something odd", status_code=None)
+    ) is False
+
+
+def test_mid_stream_429_retries_but_400_fast_fails():
+    """LLMStreamErrorChunk is deliberately NOT in _RETRYABLE_EXC_NAMES, which
+    is checked before status_code — so it is judged on the provider's own
+    code rather than blanket-retried."""
+    from src.agents.base import LLMStreamErrorChunk, _is_retryable
+    assert _is_retryable(LLMStreamErrorChunk("rl", status_code=429)) is True
+    assert _is_retryable(LLMStreamErrorChunk("bad", status_code=400)) is False
+    assert _is_retryable(LLMStreamErrorChunk("upstream", status_code=502)) is True
+
+
+def test_healthy_stream_is_unaffected_by_the_error_check():
+    """A normal chunk has no error field; the check must not fire on it."""
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
+        result = agent.run(data="x")
+    assert result.raw_text == '{"result": "ok"}'

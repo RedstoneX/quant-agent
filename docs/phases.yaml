@@ -998,9 +998,10 @@ phases:
         path: "frontend/src/components/TradesPanel.tsx"
         symbol: "columnHelper.accessor(\"conviction\""
         note: "(f) closed: the cockpit's trade table renders the ledger fields, a plain dash when absent."
-      - kind: file_exists
-        path: "src/api/static_cockpit/assets/index-B0mble5n.js"
-        note: "(f) the rebuilt cockpit bundle carrying the ledger columns is deployed."
+      - kind: symbol_in_file
+        path: "frontend/src/components/TradesPanel.tsx"
+        symbol: "conviction"
+        note: "(f) the cockpit renders the ledger columns. This replaced a file_exists rule naming a single hashed bundle (index-B0mble5n.js). That rule ROTTED BY CONSTRUCTION: every frontend rebuild emits a new content hash, so the named file disappears and the whole open_defects entry renders CONTRADICTED for a reason that has nothing to do with defects — which is exactly what happened on 2026-08-31 when another session rebuilt the bundle. Never pin evidence to a hashed asset filename; check the source that produces it instead."
       - kind: symbol_in_file
         path: "ops/rehearsal/runner.py"
         symbol: "def apply_pricing_cache_age"

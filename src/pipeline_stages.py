@@ -2127,6 +2127,21 @@ class DecisionStage:
             regime=_macro_regime(macro_analysis),
             evidence_registry=evidence_registry,
         )
+        # Provenance for the AI Risk Manager: which proposed symbols did the
+        # deterministic constructor remove? Derived here (targets minus
+        # decisions) rather than by changing construct_orders' signature.
+        # HOLD decisions still count as "kept" — the symbol survived review.
+        _kept = {d.symbol.upper() for d in portfolio_decision.decisions}
+        portfolio_decision.constructor_dropped = [
+            t.symbol.upper() for t in portfolio_decision.targets
+            if t.symbol.upper() not in _kept
+        ]
+        if portfolio_decision.constructor_dropped:
+            logger.info(
+                "Constructor dropped %s — recorded for the Risk Manager so "
+                "PM's narrative mentioning them does not read as incoherence.",
+                ", ".join(portfolio_decision.constructor_dropped),
+            )
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",

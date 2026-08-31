@@ -567,6 +567,26 @@ def format_session_result(
     if cost_line:
         lines.append(cost_line)
 
+    # Prepaid OpenRouter balance, once a day, on the morning message only.
+    # Owner request 2026-08-31: he wants to see the balance falling rather
+    # than discover it empty. OpenRouter is PREPAID — when the credit runs
+    # out the desk stops mid-session, at whatever moment the money ends. On
+    # 2026-08-31 the account was down to $7.10, about seven clean trading
+    # days, and nothing in the system would have said so.
+    # Morning only: it changes slowly, and repeating it on every session
+    # would train the operator to skim past it.
+    # Day-to-date against the self-imposed brake. Shown on every session that
+    # spent money, because that is when "how close am I" is actually being
+    # asked. Distinct from the balance line below, which is real money.
+    day_line = _day_cost_line()
+    if day_line and cost_line:
+        lines.append(day_line)
+
+    if mode in ("morning", "once"):
+        balance_line = _openrouter_balance_line()
+        if balance_line:
+            lines.append(balance_line)
+
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
         _append_trade_session_body(lines, result)
@@ -1068,6 +1088,116 @@ def _session_cost_line(run_id: str | None) -> str | None:
     if total < 0.01:
         return f"💵 cost: ${total:.4f} ({requests} provider requests)"
     return f"💵 cost: ${total:,.2f} ({requests} provider requests)"
+
+
+def _day_cost_line() -> str | None:
+    """'📅 today: $X.XX of $Y.YY daily limit (N%)', or None.
+
+    The per-session line above answers "what did THIS session cost". It does
+    not answer "how close am I to the brake", which is the question that
+    matters on a day with several sessions — and the answer lived only on the
+    dashboard. On 2026-08-31 the desk hit that brake twice and the Telegram
+    messages never once showed how near it was.
+
+    NOTE this is QAMC's OWN self-imposed daily cap, not money. Reaching it
+    stops paid analysis for the day but costs nothing; that is the point of
+    it. The separate balance line reports actual prepaid funds. Two different
+    numbers, deliberately labelled differently, because conflating them was
+    already possible and would be expensive.
+
+    Reads the same ledger the circuit enforces against, so it can never
+    disagree with the brake. Never raises.
+    """
+    try:
+        import sqlite3
+        if not _DB_PATH.exists():
+            return None
+        from src.trading_calendar import et_now
+        day = et_now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(str(_DB_PATH))
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(baseline_cost_usd,0) + COALESCE(incremental_cost_usd,0) "
+                "FROM llm_budget_days WHERE day = ?",
+                (day,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — never break the alert
+        logger.warning("daily cost lookup failed: %s", exc)
+        return None
+    if row is None or row[0] is None:
+        return None
+    spent = float(row[0])
+    limit = _daily_cost_limit()
+    if not limit:
+        return f"📅 today: ${spent:,.2f} so far"
+    pct = int(round(spent / limit * 100))
+    return f"📅 today: ${spent:,.2f} of ${limit:,.2f} daily limit ({pct}%)"
+
+
+def _daily_cost_limit() -> float | None:
+    """The configured daily cap, or None if it cannot be read."""
+    try:
+        from src.config import load_config
+        cfg = load_config("config/settings.yaml")
+        return float(cfg.llm_cost_circuit.daily_cost_limit_usd)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _openrouter_balance_line() -> str | None:
+    """'🔋 OpenRouter: $X left (~N trading days)', or None if unavailable.
+
+    WHY THIS EXISTS. OpenRouter is prepaid. When the balance reaches zero the
+    desk does not degrade gracefully — it stops at whatever point in a session
+    the money ends, which on this system's form means two minutes after the
+    opening bell. Nothing surfaced the balance anywhere, so the only way to
+    learn it was to go and look. Owner asked for it on the morning message.
+
+    The day estimate is deliberately based on a CLEAN day's cost, not on an
+    average of recent days. Days on which the desk crashed early are cheap,
+    so averaging them in flatters the runway exactly when things are going
+    worst. $1.02 is the measured cost of 2026-08-27, the one day in that week
+    where all six sessions ran and the morning completed first time.
+
+    Never raises and never blocks: a balance lookup must not be able to stop
+    a trading alert from going out. Any failure returns None and the line is
+    simply absent. Suppressed under QAMC_REHEARSAL for the same reason every
+    other outbound call is — a rehearsal must not touch the network.
+    """
+    if _REHEARSAL_MODE:
+        return None
+    key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        import json as _json
+        import urllib.request
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/credits",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        # Short timeout on purpose: this is a nicety attached to an alert
+        # that matters. It must never delay the alert noticeably.
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = _json.load(resp).get("data") or {}
+        purchased = float(data["total_credits"])
+        used = float(data["total_usage"])
+    except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
+        logger.warning("OpenRouter balance lookup failed: %s", exc)
+        return None
+    remaining = purchased - used
+    #: Measured cost of one clean trading day (2026-08-27: all six sessions,
+    #: morning completed on its first attempt). See the docstring on why this
+    #: is not an average.
+    clean_day_usd = 1.02
+    days = max(0, int(remaining / clean_day_usd))
+    warn = " ⚠️ top up" if days <= 7 else ""
+    return (
+        f"🔋 OpenRouter: ${remaining:,.2f} left of ${purchased:,.2f} "
+        f"(~{days} trading days){warn}"
+    )
 
 
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:
