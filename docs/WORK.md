@@ -315,8 +315,8 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
   **Not finished:** the accompanying scheduled jobs are written but were
   deliberately NOT switched on. They implement a weekly confirmation the owner
   rejected — a week of undetected silence is not monitoring. The replacement,
-  where every trading session proves the alert path as part of its own run, is
-  unfinished on an open draft pull request.
+  where every trading session proves the alert path as part of its own run, was
+  unfinished when this was written and has since merged — see below.
 
 **Closed (2026-08-31, later still):**
 
@@ -332,21 +332,24 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
   opposite verdict, not a wrong number. The silent guess that hid it is now a
   hard stop: asked before it can know, the tool refuses to answer rather than
   making something up.
+- The scheduled job that pointed at a folder from the project's original owner
+  is corrected and merged. It was never wrong on the live server — only in the
+  repository's own copy, which meant installing that copy would have broken the
+  daily report on contact. Confirmed against the running server, not just the
+  merge: the job runs from the right folder and its last run sent the report
+  as normal.
 
-**Still open, ranked by consequence:**
+**Still open:**
 
-1. A leftover scheduled job still points at a folder from the project's original
-   owner instead of this one. A fix is written and passing on an open pull
-   request, not yet merged.
-2. A setup guide referenced by one internal file does not exist.
-3. Unchanged: full wire-service news coverage still needs a paid subscription
+1. A setup guide referenced by one internal file does not exist.
+2. Unchanged: full wire-service news coverage still needs a paid subscription
    the owner has already declined. Not a defect — a closed question.
 
-**Open pull requests carrying unfinished work:** bringing every one of the
-server's startup files under version control, with an automatic daily check
-that reports any difference between the server and the repository (ready, needs
-a refresh before merging); and the alert-path rework described above (draft,
-tests never run).
+**Both pull requests noted here as unfinished have since merged:** every one of
+the server's startup files is now under version control with an automatic daily
+check that reports any difference between the server and the repository; and
+the alert-path rework landed, making the trading sessions themselves the
+alert-channel watchdog and retiring the weekly digest the owner rejected.
 
 **Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
 
