@@ -1649,16 +1649,45 @@ class LLMCostCircuitBreaker:
             raise RuntimeError(
                 f"cost-circuit day accounting row is missing for {current_day}"
             )
-        if int(day_row["unknown_cost_rows"] or 0) or not bool(day_row["costs_exact"]):
-            raise RuntimeError(
-                f"cost-circuit cannot rearm {current_day}: current-day accounting "
-                "is not exact"
-            )
 
         cross_day_holds = conn.execute(
             "SELECT * FROM llm_quota_holds WHERE active=1 AND day<>? ORDER BY id",
             (current_day,),
         ).fetchall()
+
+        # The exactness precondition guards ONE operation: releasing a hold
+        # carried over from an earlier ET day. Rearming yesterday's stop while
+        # today's books are unproven is what it exists to prevent, and it
+        # still does.
+        #
+        # It used to be checked before this query, so it fired even when there
+        # was no cross-day hold to rearm -- gating an operation that was not
+        # being performed. That made it a booby trap on the ordinary path,
+        # because this reconciler runs on EVERY `begin_call`, and `fail_call`
+        # stamps the day inexact whenever it charges a conservative reserve
+        # for a request whose true cost it never learned. So the FIRST such
+        # failure in a day poisoned every paid call after it: the raise is
+        # read as the circuit's own infrastructure failing, which writes the
+        # emergency latch and stops the desk until an operator clears it.
+        #
+        # One rate-limited request, and the trading day was over. That is the
+        # 2026-08-26/27/28/31 pattern, and it survived four rounds of fixing
+        # limits because nobody was looking at the reconciler -- the earlier
+        # hard latches masked it, since this function returns early whenever
+        # one is set. Removing the last of those masks (see the NOTE by
+        # _SESSION_QUOTA_TRIGGERS) is what finally showed it, on the live desk
+        # at 10:36 ET on 2026-08-31, as a crash instead of a suspension.
+        #
+        # Scope restored to what it protects: no cross-day hold, nothing to
+        # rearm, nothing to be exact about.
+        if cross_day_holds and (
+            int(day_row["unknown_cost_rows"] or 0)
+            or not bool(day_row["costs_exact"])
+        ):
+            raise RuntimeError(
+                f"cost-circuit cannot rearm {current_day}: current-day accounting "
+                "is not exact"
+            )
         holds = []
         for hold in cross_day_holds:
             try:

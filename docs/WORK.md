@@ -371,6 +371,33 @@ conservative figure good enough to continue on is an operator's call;
 recomputing what the provider really charged is not something the code can
 honestly do.
 
+**The one underneath both of those — the real cause of the pattern (found
+10:36 ET on the live desk, while verifying the fix):** the quota reconciler
+runs on **every** paid call, and it refused to proceed whenever the current
+ET day's accounting was inexact — even when it had nothing to do. Its
+exactness precondition guards exactly one operation: releasing a hold carried
+over from an *earlier* day. The check sat before the query that finds those
+holds, so it fired when there were none.
+
+`fail_call` stamps the day inexact whenever it charges a conservative reserve
+for a request whose true cost it never learned. So **the first failed request
+of any day poisoned every paid call after it** — the refusal reads as the
+circuit's own infrastructure failing, which writes the emergency latch and
+stops the desk until an operator clears it.
+
+One rate-limited request, and the trading day was over. **That is the
+2026-08-26 / 08-27 / 08-28 / 08-31 pattern**, and it survived four rounds of
+raising limits because nobody was looking at the reconciler: the hard latches
+masked it, since it returns early whenever one is set. Removing the last mask
+is what finally showed it — as a crash rather than a suspension, which is
+worse, and which is why it was found within minutes of deploying instead of
+next Monday.
+
+Fixed by restoring the check to what it protects: no cross-day hold, nothing
+to rearm, nothing to be exact about. The safety property is unchanged and
+pinned by its own test — rearming yesterday's stop on unproven books is still
+refused.
+
 **Two things deliberately left for the owner, not fixed here:**
 
 - **The backup model costs ~50x the primary.** Primary is

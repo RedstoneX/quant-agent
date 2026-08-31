@@ -442,17 +442,61 @@ def test_the_reset_does_not_erase_the_days_recorded_spend(tmp_path):
     assert spend == pytest.approx(0.0524)
 
 
-def test_a_later_session_activates_once_the_day_is_reconciled(tmp_path):
-    """The operative point: after the reset, the desk actually runs again.
-    Before it, this raised RuntimeError rather than any circuit exception."""
+def test_an_inexact_day_alone_does_not_stop_the_next_session(tmp_path):
+    """Defect 6 (2026-08-31, found on the live desk): the exactness
+    precondition guards ONE operation — releasing a hold carried over from an
+    earlier ET day. It used to be checked before the query that finds those
+    holds, so it fired when there were none, gating an operation that was not
+    being performed.
+
+    Because the reconciler runs on every `begin_call`, and `fail_call` stamps
+    the day inexact whenever it charges a conservative reserve, the FIRST
+    failed request in a day poisoned every paid call after it — the raise
+    reads as the circuit's own infrastructure failing, which writes the
+    emergency latch and stops the desk until an operator clears it.
+
+    One rate-limited request, and the trading day was over."""
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     circuit.activate_session("run-first", "morning")
     _make_day_inexact(circuit, _current_day())
 
+    later = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    later.activate_session("run-after", "intra_check")
+    assert _reserve(later, agent="news_analyst") is not None
+
+
+def test_an_inexact_day_still_refuses_to_rearm_a_cross_day_hold(tmp_path):
+    """The safety property itself is unchanged: releasing YESTERDAY's stop
+    while today's books are unproven is exactly what the precondition exists
+    to prevent, and it still does."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-first", "morning")
+    _make_day_inexact(circuit, _current_day())
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        conn.execute(
+            "INSERT INTO llm_quota_holds "
+            "(scope, scope_key, day, trigger_code, trigger_detail, run_id, mode, "
+            " agent_name, attempts, attempts_exact, costs_exact, session_cost_usd, "
+            " daily_cost_usd, session_limit_usd, daily_limit_usd, active) "
+            "VALUES ('mode_day','1999-01-01:morning','1999-01-01','daily_cost_limit',"
+            "'yesterday','run-old','morning','tech_analyst',0,1,1,0,0,0.9,2.75,1)"
+        )
+        conn.commit()
+
     blocked = LLMCostCircuitBreaker(path, _config(), _Notifier())
     with pytest.raises(RuntimeError, match="accounting is not exact"):
         blocked.activate_session("run-blocked", "intra_check")
+
+
+def test_a_later_session_activates_once_the_day_is_reconciled(tmp_path):
+    """And the operator reset still clears the day, so a cross-day rearm can
+    proceed after review."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-first", "morning")
+    _make_day_inexact(circuit, _current_day())
 
     circuit.reset("operator accepted the conservative figure")
 
