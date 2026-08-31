@@ -124,12 +124,22 @@ export function IdeaTrace({
       analystNode(participant, dollarsPerCall, 0, index * 116),
     );
     const middle = ((everyone.length - 1) * 116) / 2;
+    // React Flow's fitView scales to whichever axis binds first. This stack of
+    // analyst cards is far taller than the three columns are wide, so fitView
+    // was fitting the HEIGHT and letterboxing the graph into the middle ~40%
+    // of the canvas with dead space either side. Spreading the columns in
+    // proportion to the stack's height keeps the drawn shape near the
+    // canvas's own ratio, so it fills the width at any number of analysts.
+    const stackHeight = (everyone.length - 1) * 116 + 96;
+    const span = Math.max(760, stackHeight * 3.4);
+    const tradeX = Math.round(span * 0.42);
+    const resultX = Math.round(span * 0.74);
     const outcome = idea.r_multiple * dollarsPerCall;
 
     nodes.push({
       id: "trade",
       type: "fact",
-      position: { x: 300, y: middle - 24 },
+      position: { x: tradeX, y: middle - 24 },
       data: {
         heading: "The trade",
         headline: idea.symbol,
@@ -144,7 +154,7 @@ export function IdeaTrace({
     nodes.push({
       id: "result",
       type: "fact",
-      position: { x: 560, y: middle - 24 },
+      position: { x: resultX, y: middle - 24 },
       data: {
         heading: "What happened",
         headline: `${trendGlyph(outcome)} ${signedMoney(outcome)}`,
