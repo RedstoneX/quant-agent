@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
@@ -6,6 +7,7 @@ from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspe
 from src.data.context import compute_market_context, format_context_block
 from src.data.levels import find_structural_levels, format_levels_block
 from src.models import TechAnalysisResult
+from src.token_budget import pack_to_budget, size_model_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +20,55 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "tech
 # history (see src/data/levels.py), so this stays small on purpose.
 _BARS_PER_SYMBOL = 40
 
+# Ceiling on ONE request's predicted tokens. Chosen from measurement, not
+# taste: at 45k a 53-symbol universe packs into 5 requests with a ~44k peak
+# and ~214k total, against today's 3 requests at a ~135k peak and ~290k
+# total — both peak and total fall. Raising it to 60k saves 2% of tokens for
+# a 33% higher peak; 100k saves 4% for a peak nearly three times larger. The
+# curve knees here. Override with QUANT_AGENT_TECH_REQUEST_TOKENS.
+_REQUEST_TOKEN_BUDGET = int(os.environ.get("QUANT_AGENT_TECH_REQUEST_TOKENS", "45000"))
+
+
+def _px(value) -> str:
+    """Render a price without the float64 conversion noise.
+
+    Bars arrive as float32 from the data provider and are upcast to float64
+    for arithmetic, so Python's default repr prints the upcast artefact in
+    full: `O=14.920000076293945` for a stock that traded at $14.92. Every
+    digit past the sixth significant one is conversion noise that was never
+    price data, and it was being sent for every bar of every symbol, three
+    times a session.
+
+    Measured on the 2026-08-31 morning prompt: raw bars were 72% of the
+    Technical Analyst's payload (215,617 of 296,007 characters), and this
+    formatting is roughly half of that — the single largest thing the desk
+    sends, and it carries no information.
+
+    `.6g` keeps six significant digits, which is float32's own precision, so
+    nothing real is lost: the source could not distinguish finer values in
+    the first place. Falls back to a fixed format if a value is small or
+    large enough to go scientific, and passes non-numerics through untouched
+    so a missing field still renders as whatever it was.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    out = f"{value:.6g}"
+    if "e" in out or "E" in out:
+        return f"{value:.6f}".rstrip("0").rstrip(".") or "0"
+    return out
+
 # Auto-chunk the batch when a single LLM call would carry too many symbols.
-# 25 picked so chunks stay comfortably within typical LLM context, assuming
-# ~300 input tokens per symbol (20 bars + indicators).
+# 25 picked so chunks stay comfortably within typical LLM context.
+#
+# The "~300 input tokens per symbol (20 bars + indicators)" this was once
+# calibrated against stopped being true and nobody re-derived it: the window
+# grew to 40 bars, per-symbol context (prior rating, valuation, structural
+# levels, relative strength, intraday block) was added on top, and the
+# measured figure on 2026-08-31 was ~1,396 tokens per symbol — 4.7x the
+# assumption. Context length was never the binding constraint anyway (the
+# model takes 1M), but the provider's rate limit is: see the token-rate
+# governor in src/agents/base.py, which now bounds what a batch may send per
+# minute regardless of how this number drifts.
 _MAX_SYMBOLS_PER_CALL = 30
 _CHUNK_SIZE = 25
 
@@ -175,7 +223,18 @@ class TechAnalystAgent(BaseAgent):
         # batch rather than requiring another fetch. A stock rising less than
         # its index is weak however green the candle looks — the analyst was
         # previously blind to this entirely.
-        bars_by_symbol = {i["symbol"]: i["bars"] for i in symbols_data}
+        # Chosen over the WHOLE batch, not this chunk. The index ETFs sit at
+        # the top of the universe, so with fixed 25-symbol chunks only the
+        # first chunk ever contained SPY and every symbol after it silently
+        # lost its relative-strength context — a stock rising less than its
+        # index looked fine. Worse, WHICH symbols kept the benchmark depended
+        # on the chunk size, so changing how batches are split would quietly
+        # change the analysis. Passing the full batch's bars makes each
+        # symbol's section identical however the batch is divided, which is
+        # both correct and what lets chunks be packed to a size budget.
+        bars_by_symbol = dict(kwargs.get("benchmark_pool") or {})
+        for i in symbols_data:
+            bars_by_symbol.setdefault(i["symbol"], i["bars"])
         benchmark_symbol = next(
             (s for s in ("SPY", "QQQ", "IWM") if bars_by_symbol.get(s)), None
         )
@@ -189,7 +248,8 @@ class TechAnalystAgent(BaseAgent):
             indicators = item["indicators"]
             recent_bars = bars[-_BARS_PER_SYMBOL:] if len(bars) > _BARS_PER_SYMBOL else bars
             bars_text = "\n".join(
-                f"  {b.date}: O={b.open} H={b.high} L={b.low} C={b.close} V={b.volume}"
+                f"  {b.date}: O={_px(b.open)} H={_px(b.high)} "
+                f"L={_px(b.low)} C={_px(b.close)} V={_px(b.volume)}"
                 for b in recent_bars
             )
             last_close = recent_bars[-1].close if recent_bars else "N/A"
@@ -219,8 +279,8 @@ class TechAnalystAgent(BaseAgent):
 {levels_text}
 Price (last {len(recent_bars)} COMPLETED daily bars):
 {bars_text}
-Indicators: MA20={indicators.ma_20} MA50={indicators.ma_50} MA200={indicators.ma_200} | RSI={indicators.rsi_14} | MACD={indicators.macd}/{indicators.macd_signal}/{indicators.macd_hist} | BB={indicators.bb_lower}/{indicators.bb_middle}/{indicators.bb_upper} | ATR={indicators.atr_14} | Vol%={indicators.volume_change_pct}
-Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
+Indicators: MA20={_px(indicators.ma_20)} MA50={_px(indicators.ma_50)} MA200={_px(indicators.ma_200)} | RSI={_px(indicators.rsi_14)} | MACD={_px(indicators.macd)}/{_px(indicators.macd_signal)}/{_px(indicators.macd_hist)} | BB={_px(indicators.bb_lower)}/{_px(indicators.bb_middle)}/{_px(indicators.bb_upper)} | ATR={_px(indicators.atr_14)} | Vol%={_px(indicators.volume_change_pct)}
+Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
 
         macro_context = ""
         if prior_macro_regime:
@@ -281,21 +341,18 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         if not symbols_data:
             return {}, None
 
-        if len(symbols_data) <= _MAX_SYMBOLS_PER_CALL:
+        benchmark_pool = {i["symbol"]: i["bars"] for i in symbols_data}
+        chunks = self._split_to_budget(
+            symbols_data, prior_ratings, valuations,
+            prior_macro_regime, prior_macro_outlook, intraday_context,
+            benchmark_pool,
+        )
+        if len(chunks) <= 1:
             return self._analyze_chunk(
                 symbols_data, prior_ratings, valuations,
                 prior_macro_regime, prior_macro_outlook, intraday_context,
+                benchmark_pool=benchmark_pool,
             )
-
-        # Chunk and stitch.
-        chunks = [
-            symbols_data[i : i + _CHUNK_SIZE]
-            for i in range(0, len(symbols_data), _CHUNK_SIZE)
-        ]
-        logger.info(
-            "Tech batch too large (%d symbols); splitting into %d chunks of up to %d.",
-            len(symbols_data), len(chunks), _CHUNK_SIZE,
-        )
 
         merged: dict[str, TechAnalysisResult | None] = {}
         result_parts: list[tuple[str, AgentResult]] = []
@@ -306,7 +363,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
             chunk_analyses, chunk_result = self._analyze_chunk(
                 chunk, prior_ratings, valuations,
                 prior_macro_regime, prior_macro_outlook, intraday_context,
-                _retries_left=0,
+                _retries_left=0, benchmark_pool=benchmark_pool,
             )
             merged.update(chunk_analyses)
             if chunk_result is not None:
@@ -443,6 +500,91 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         )
         return merged, merged_result
 
+    def _split_to_budget(
+        self, symbols_data, prior_ratings, valuations,
+        prior_macro_regime, prior_macro_outlook, intraday_context,
+        benchmark_pool,
+    ) -> list[list[dict]]:
+        """Split the batch so no request exceeds the per-request token budget.
+
+        Packs by MEASURED bytes: each symbol's section is rendered once and
+        its real length used, so the only estimate anywhere is bytes-to-tokens
+        — and that comes from a model fitted to this agent's own past calls
+        (see src/token_budget.py), not from a guess.
+
+        This replaces a fixed 25-symbols-per-request split that was calibrated
+        against "~300 input tokens per symbol" and had drifted to ~3,600,
+        producing ~135,000-token requests. A count cannot bound tokens; the
+        content underneath it changes and nothing complains until a provider
+        refuses the result.
+
+        Falls back to the old fixed split on ANY problem. Sizing is an
+        efficiency measure, and an efficiency measure that can stop a trading
+        session is a bad trade.
+        """
+        if len(symbols_data) <= 1:
+            return [list(symbols_data)]
+        try:
+            def render(item):
+                return self.build_user_message(
+                    symbols_data=[item],
+                    prior_ratings=prior_ratings or {},
+                    valuations=valuations or {},
+                    prior_macro_regime=prior_macro_regime,
+                    prior_macro_outlook=prior_macro_outlook,
+                    intraday_context=intraday_context or {},
+                    benchmark_pool=benchmark_pool or {},
+                )
+
+            # The framing that every request carries regardless of content;
+            # subtracting it leaves each symbol's own contribution.
+            envelope = len(self.build_user_message(
+                symbols_data=[],
+                prior_macro_regime=prior_macro_regime,
+                prior_macro_outlook=prior_macro_outlook,
+            ))
+            sizes = {
+                id(item): max(0, len(render(item)) - envelope)
+                for item in symbols_data
+            }
+            model = size_model_for_agent(self)
+            chunks = pack_to_budget(
+                list(symbols_data),
+                lambda item: sizes[id(item)],
+                budget_tokens=_REQUEST_TOKEN_BUDGET,
+                model=model,
+                max_items=_MAX_SYMBOLS_PER_CALL,
+            )
+            if not chunks or sum(len(c) for c in chunks) != len(symbols_data):
+                raise ValueError("packing lost or duplicated symbols")
+            if len(chunks) > 1:
+                peak = max(
+                    model.predict(sum(sizes[id(i)] for i in c)) for c in chunks
+                )
+                logger.info(
+                    "Tech batch: %d symbols packed into %d requests of up to "
+                    "%s symbols, peak ~%d tokens against a %d budget (%s size "
+                    "model: %.0f fixed + %.3f/byte).",
+                    len(symbols_data), len(chunks),
+                    max(len(c) for c in chunks), peak, _REQUEST_TOKEN_BUDGET,
+                    "measured" if model.measured else "fallback",
+                    model.fixed_tokens, model.tokens_per_byte,
+                )
+            return chunks
+        except Exception:
+            logger.warning(
+                "Tech batch: could not size the request set; falling back to "
+                "fixed %d-symbol chunks. Analysis is unaffected — this only "
+                "changes how the batch is divided.",
+                _CHUNK_SIZE, exc_info=True,
+            )
+            if len(symbols_data) <= _MAX_SYMBOLS_PER_CALL:
+                return [list(symbols_data)]
+            return [
+                symbols_data[i : i + _CHUNK_SIZE]
+                for i in range(0, len(symbols_data), _CHUNK_SIZE)
+            ]
+
     def _analyze_chunk(
         self,
         symbols_data: list[dict],
@@ -453,6 +595,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
         intraday_context: dict[str, dict] | None = None,
         _retries_left: int = _MAX_MISSING_RETRIES,
         _is_logical_retry: bool = False,
+        benchmark_pool: dict | None = None,
     ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
         """Single-call variant used inside the chunking loop.
 
@@ -474,6 +617,7 @@ Last completed close: {last_close}{_intraday_block(symbol, last_close)}""")
             prior_macro_regime=prior_macro_regime,
             prior_macro_outlook=prior_macro_outlook,
             intraday_context=intraday_context or {},
+            benchmark_pool=benchmark_pool or {},
         )
         result = self._execute(
             user_message,

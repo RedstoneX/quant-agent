@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from src.agents.tech_analyst import TechAnalystAgent
+from src.agents.tech_analyst import TechAnalystAgent, _CHUNK_SIZE
 from src.cost_circuit import LLMCostCircuitBreaker
 from src.models import OHLCV, TechnicalIndicators
 from src.storage.db import Database
@@ -118,13 +118,17 @@ def test_build_user_message_includes_indicators_and_current_close(sample_indicat
         agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
         msg = agent.build_user_message(symbols_data=_sym_data("SPY", sample_bars, sample_indicators))
         assert "SPY" in msg
-        assert "505.0" in msg      # ma_20
-        assert "58.0" in msg       # rsi_14
+        # Prices are rendered through _px, which drops float64 conversion
+        # noise AND a bare trailing ".0" — 505.0 and 505 are the same number,
+        # and asserting the spelling rather than the value is what made this
+        # test fail on a change that lost no information (2026-08-31).
+        assert "MA20=505" in msg and "MA20=505.0" not in msg
+        assert "RSI=58" in msg     # rsi_14
         assert "ATR=8.5" in msg    # ATR is surfaced for ATR-based stops
         # Renamed from "Current close" (2026-08-19): with intraday context
         # now possible, calling the last completed daily close "current"
         # was the exact ambiguity that let a stale price read as live.
-        assert "Last completed close: 507.0" in msg
+        assert "Last completed close: 507" in msg
         # With no prior_ratings passed, no prior line should appear
         assert "Prior rating" not in msg
 
@@ -190,6 +194,44 @@ def test_build_user_message_omits_prior_for_new_symbol(sample_indicators, sample
         assert "Prior rating" not in msg
 
 
+
+@pytest.fixture
+def fixed_chunks(monkeypatch):
+    """Pin the batch split to the classic fixed 25 symbols per request.
+
+    These tests are about the SHARED missing-symbol recovery budget across
+    chunks, and their arithmetic depends on how many chunks there are. Since
+    2026-08-31 the real split is packed to a token budget, so on tiny
+    fixtures it produces a different (correct) number of chunks and the
+    retry arithmetic no longer lines up. Pinning it here keeps each test
+    about one thing: chunk SIZING is covered by
+    test_tech_analyst_auto_chunks_large_batch and
+    tests/test_token_budget.py, retry SEMANTICS are covered here.
+    """
+    from src.agents.tech_analyst import TechAnalystAgent, _CHUNK_SIZE
+
+    def _fixed(self, symbols_data, *args, **kwargs):
+        return [
+            symbols_data[i : i + _CHUNK_SIZE]
+            for i in range(0, len(symbols_data), _CHUNK_SIZE)
+        ]
+
+    monkeypatch.setattr(TechAnalystAgent, "_split_to_budget", _fixed)
+
+
+def _assert_clean_split(asked_per_call, syms):
+    """Every symbol asked exactly once, in more than one request, none over
+    the per-call cap. The sizes themselves are a budget outcome, not a
+    constant — asserting them pinned the arithmetic instead of the property.
+    """
+    from src.agents.tech_analyst import _MAX_SYMBOLS_PER_CALL
+
+    assert len(asked_per_call) > 1, "a large batch must still be split"
+    flat = [s for asked in asked_per_call for s in asked]
+    assert sorted(flat) == sorted(syms), "every symbol asked exactly once"
+    assert all(len(a) <= _MAX_SYMBOLS_PER_CALL for a in asked_per_call)
+
+
 @patch("anthropic.Anthropic")
 def test_tech_analyst_auto_chunks_large_batch(mock_cls, sample_indicators, sample_bars):
     """Batches > 30 symbols are split into chunks of 25 to avoid context overflow."""
@@ -202,13 +244,18 @@ def test_tech_analyst_auto_chunks_large_batch(mock_cls, sample_indicators, sampl
         for s in syms
     ]
 
-    # Each chunked call returns a 25-item valid array (reuse a single template).
-    call_counter = {"n": 0}
+    # Answer whatever was actually asked. Hardcoding syms[:25]/syms[25:] tied
+    # this mock to one particular split, so it silently returned the wrong
+    # symbols the moment chunking became a token budget rather than a count —
+    # and the resulting "missing symbol" recovery pass looked like a chunking
+    # bug instead of a stale fixture.
+    calls = []
 
     def _chunk_response(**kw):
-        call_counter["n"] += 1
-        chunk_syms = syms[:25] if call_counter["n"] == 1 else syms[25:]
-        arr = [json.loads(_valid_response_for(s))[0] for s in chunk_syms]
+        content = kw.get("messages", [{}])[0].get("content", "")
+        asked = [sym for sym in syms if f"### {sym}" in content]
+        calls.append(asked)
+        arr = [json.loads(_valid_response_for(s))[0] for s in asked]
         resp = MagicMock()
         resp.content = [MagicMock(text=json.dumps(arr))]
         resp.usage.input_tokens = 1000
@@ -222,11 +269,14 @@ def test_tech_analyst_auto_chunks_large_batch(mock_cls, sample_indicators, sampl
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     results, merged = agent.analyze_batch(data)
 
-    # All 50 symbols present; 2 LLM calls issued.
+    # All 50 symbols present, split across more than one request, each asked
+    # exactly once. The number of requests is a budget outcome now.
     assert len(results) == 50
-    assert mock_client.messages.create.call_count == 2
+    _assert_clean_split(calls, syms)
+    n_calls = mock_client.messages.create.call_count
+    assert n_calls == len(calls)
     # Token accounting aggregates across chunks.
-    assert merged.tokens_used == 1000 * 2 + 500 * 2
+    assert merged.tokens_used == 1500 * n_calls
     # Cost accounting also aggregates across chunks — was buggy until
     # 2026-05-13 (the merged AgentResult only summed tokens_used and
     # left input_tokens / output_tokens / cost_usd at their defaults,
@@ -242,7 +292,7 @@ def test_tech_analyst_auto_chunks_large_batch(mock_cls, sample_indicators, sampl
 
 @patch("anthropic.Anthropic")
 def test_tech_analyst_chunked_merged_cost_sums_when_model_priced(
-    mock_cls, sample_indicators, sample_bars, monkeypatch,
+    mock_cls, fixed_chunks, sample_indicators, sample_bars, monkeypatch,
 ):
     """Pin the happy path: when the configured model IS in cost_table.PRICING
     (e.g. claude-opus-4-7), the merged AgentResult.cost_usd is the sum
@@ -500,7 +550,7 @@ def test_chunked_batch_never_loses_a_symbol_across_chunks(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_shares_one_missing_symbol_retry_budget(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls, fixed_chunks, sample_indicators, sample_bars,
 ):
     """Large batches must not spend one logical repair per chunk.
 
@@ -516,7 +566,10 @@ def test_chunked_batch_shares_one_missing_symbol_retry_budget(
         content = kw.get("messages", [{}])[0].get("content", "")
         asked = [symbol for symbol in syms if f"### {symbol}" in content]
         asked_per_call.append(asked)
-        returned = asked[1:] if len(asked) == 25 else asked
+        # Only a FULL primary chunk drops a symbol; the recovery call that
+        # re-asks for the missing ones must answer in full or recovery can
+        # never succeed. These tests pin the split at 25 (see fixed_chunks).
+        returned = asked[1:] if len(asked) == _CHUNK_SIZE else asked
         resp = MagicMock()
         resp.content = [MagicMock(text=json.dumps([
             json.loads(_valid_response_for(symbol))[0] for symbol in returned
@@ -536,6 +589,9 @@ def test_chunked_batch_shares_one_missing_symbol_retry_budget(
 
     assert set(results) == set(syms)
     assert all(result is not None for result in results.values())
+    # Split pinned by `fixed_chunks`, so the exact shape is meaningful here:
+    # three full primary chunks, then ONE shared recovery call carrying every
+    # omitted symbol — not three separate per-chunk repairs.
     assert [len(asked) for asked in asked_per_call] == [25, 25, 25, 3]
     assert asked_per_call[-1] == ["SYM00", "SYM25", "SYM50"]
     assert mock_client.messages.create.call_count == 4  # 3 chunks + 1 repair
@@ -543,7 +599,7 @@ def test_chunked_batch_shares_one_missing_symbol_retry_budget(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls, fixed_chunks, sample_indicators, sample_bars,
 ):
     """A severely incomplete batch still makes only one bounded repair."""
     syms = [f"SYM{i:02d}" for i in range(75)]
@@ -581,7 +637,7 @@ def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_composes_with_session_retry_circuit(
-    mock_cls, sample_indicators, sample_bars, tmp_path,
+    mock_cls, fixed_chunks, sample_indicators, sample_bars, tmp_path,
 ):
     """Production-scale Tech uses one of the session's two retry slots."""
     syms = [f"SYM{i:02d}" for i in range(75)]
@@ -589,7 +645,10 @@ def test_chunked_batch_composes_with_session_retry_circuit(
     def _respond(**kw):
         content = kw.get("messages", [{}])[0].get("content", "")
         asked = [symbol for symbol in syms if f"### {symbol}" in content]
-        returned = asked[1:] if len(asked) == 25 else asked
+        # Only a FULL primary chunk drops a symbol; the recovery call that
+        # re-asks for the missing ones must answer in full or recovery can
+        # never succeed. These tests pin the split at 25 (see fixed_chunks).
+        returned = asked[1:] if len(asked) == _CHUNK_SIZE else asked
         resp = MagicMock()
         resp.content = [MagicMock(text=json.dumps([
             json.loads(_valid_response_for(symbol))[0] for symbol in returned
@@ -642,7 +701,7 @@ def test_chunked_batch_composes_with_session_retry_circuit(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
-    mock_cls, sample_indicators, sample_bars, tmp_path,
+    mock_cls, fixed_chunks, sample_indicators, sample_bars, tmp_path,
 ):
     syms = [f"SYM{i:02d}" for i in range(75)]
 

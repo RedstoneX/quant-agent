@@ -681,7 +681,9 @@ def test_tech_prompt_renders_todays_move_without_faking_a_daily_bar():
     assert "CURRENT SESSION" in msg and "INCOMPLETE" in msg
     assert "110.00" in msg                    # today's live price
     assert "+10.00%" in msg                   # move vs prior close
-    assert "Last completed close: 100.0" in msg
+    # 100.0 now renders as "100" — see _px in src/agents/tech_analyst.py.
+    # Same number, fewer tokens; assert the value, not its spelling.
+    assert "Last completed close: 100\n" in msg or "Last completed close: 100" in msg
     # The completed-bar series must still contain ONLY the finished day.
     completed = msg.split("CURRENT SESSION")[0]
     assert "2026-08-18" in completed
