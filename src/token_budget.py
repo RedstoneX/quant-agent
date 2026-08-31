@@ -81,6 +81,13 @@ MIN_SAMPLES = 8
 # minutes. Re-reading `agent_logs` on every call would be pure overhead.
 _CACHE_TTL_S = 900.0
 
+# The session suffixes some call sites append to `agent_logs.agent_name`.
+# Kept in step with `ops/rehearsal/replay.py`, which needs the same list for
+# the same reason.
+_SESSION_SUFFIXES = (
+    "_morning", "_midday", "_close", "_evening", "_intra_check", "_preprocess",
+)
+
 _cache: dict[tuple[str, str], tuple[float, "SizeModel"]] = {}
 _cache_lock = threading.Lock()
 
@@ -158,12 +165,28 @@ def size_model(conn, agent_name: str, model: str, *, now=time.monotonic) -> Size
             return hit[1]
     fitted = None
     try:
+        # `agent_logs.agent_name` is written by the call site, which for some
+        # seats appends the session (`news_analyst_morning`,
+        # `earnings_analyst_preprocess`) while `BaseAgent.name` never does.
+        # An exact match therefore finds nothing for exactly those agents and
+        # silently falls back to the conservative default — safe, but it
+        # throws away the history that makes this measured rather than
+        # guessed.
+        #
+        # Matched against an explicit suffix list rather than a `name_%`
+        # wildcard: a wildcard would let a seat named `news` absorb every
+        # `news_analyst_*` row. No two current agent names collide that way,
+        # but a rule that is only safe because of today's naming is a trap
+        # for whoever adds the next agent.
+        names = [agent_name] + [agent_name + suffix for suffix in _SESSION_SUFFIXES]
+        placeholders = ",".join("?" * len(names))
         rows = conn.execute(
             "SELECT LENGTH(CAST(COALESCE(input_message, '') AS BLOB)) AS b, "
             "input_tokens AS t FROM agent_logs "
-            "WHERE agent_name=? AND model=? AND input_tokens > 0 "
+            f"WHERE agent_name IN ({placeholders}) "
+            "AND model = ? AND input_tokens > 0 "
             "AND LENGTH(COALESCE(input_message, '')) > 0",
-            (agent_name, model),
+            (*names, model),
         ).fetchall()
         fitted = _fit([(r[0], r[1]) for r in rows])
     except Exception:
