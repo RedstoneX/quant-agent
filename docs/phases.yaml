@@ -831,13 +831,13 @@ phases:
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary:
-      verdict: "Of the defects found in the last review, most are already fixed and deployed. A few turned out to be safely-unused code and were deleted outright. Six items remain open, ranked below by how much they matter."
+      verdict: "Thirteen problems were found in the last review. Nine are fixed and live, four turned out to be unused code and were deleted. Four small ones remain."
       points:
-        - "Thirteen problems were found and logged. Nine have since been fixed and confirmed live, and four more turned out to be unused code that wasn't actually running anywhere — deleted outright rather than patched."
-        - "All of the underlying fixes have been merged and are confirmed live in production."
-      outstanding: "Six items remain open, in order. No free source publishes upcoming Federal Reserve meeting dates, so a decision on how to get them is pending with the owner. The automatic alert meant to warn if a finished change never reached the live trading server can't currently send its message, because of a missing piece of setup — it has never had to fire for real, since production has stayed in sync so far. One rare failure case would show a generic technical message instead of plain English if it ever happened. A testing tool's freshness indicator is stuck always reporting itself as up to date. One background job still points at an old file location left over from before this server was set up. And one internal help-document points readers to a file that doesn't exist."
-    status: "OPEN"
-    confidence: "high"
+        - "Nothing left on this list affects trading decisions or risk. These are rough edges, not hazards."
+        - "One rare failure would show a technical message instead of plain English if it ever happened."
+        - "A rehearsal tool always reports its price data as fresh, whether it is or not."
+        - "A daily report job points at a folder left over from before this server existed, and an internal note links to a document that was never written."
+      outstanding: "Four items, ranked below. None is urgent."
     defects:
       - id: "intraday-analysis-error-unclassified"
         title: "One reachable pipeline status has no plain-English message"
