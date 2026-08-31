@@ -336,7 +336,14 @@ def summary_is_engineer_facing(summary: str) -> tuple[bool, str]:
 class PhaseView:
     id: str
     title: str
-    summary: str
+    # `plain_summary` in the manifest is either a plain string (legacy shape,
+    # rendered exactly as it always has been) or a structured dict with
+    # `verdict`, `points`, and an optional `outstanding` (see
+    # `_render_summary`). Kept as `Any` and passed through unconverted so
+    # both shapes survive to render time — coercing to `str` here would
+    # flatten a dict into Python's `repr`, which is the bug this comment is
+    # here to stop someone reintroducing.
+    summary: Any
     recorded: str
     confidence: str
     results: list[RuleResult] = field(default_factory=list)
@@ -361,13 +368,13 @@ class PhaseView:
     def summary_flagged(self) -> bool:
         """True when `summary` reads as written for an engineer, not him —
         see `summary_is_engineer_facing` for what that checks and why."""
-        flagged, _ = summary_is_engineer_facing(self.summary)
+        flagged, _ = summary_is_engineer_facing(_summary_text(self.summary))
         return flagged
 
     @property
     def summary_flag_reason(self) -> str:
         """Plain-English reason `summary_flagged` is True; "" when it isn't."""
-        _, reason = summary_is_engineer_facing(self.summary)
+        _, reason = summary_is_engineer_facing(_summary_text(self.summary))
         return reason
 
     @property
@@ -393,7 +400,7 @@ def load_phases(manifest: Path, cfg: dict) -> list[PhaseView]:
         v = PhaseView(
             id=str(e.get("id", "?")),
             title=str(e.get("title", "?")),
-            summary=str(e.get("plain_summary", "")),
+            summary=e.get("plain_summary", ""),
             recorded=str(e.get("status", "?")),
             confidence=str(e.get("confidence", "?")),
         )
@@ -538,6 +545,55 @@ def _fmt(value: Any, unit: str = "") -> str:
     return f"{_esc(value)}{unit}"
 
 
+def _summary_text(summary: Any) -> str:
+    """Flatten a `plain_summary` (either shape) to plain text for the jargon
+    detector, which only ever reasons about a string. The legacy shape is
+    already a string; the structured shape concatenates `verdict`, every
+    `points` entry, and `outstanding` (if present) into one string — the
+    detector runs on the words actually shown to him, in either shape."""
+    if not isinstance(summary, dict):
+        return str(summary or "")
+    parts = [str(summary.get("verdict", ""))]
+    parts.extend(str(pt) for pt in (summary.get("points") or []))
+    outstanding = summary.get("outstanding")
+    if outstanding:
+        parts.append(str(outstanding))
+    return " ".join(p for p in parts if p)
+
+
+def _render_summary(summary: Any) -> str:
+    """Render a phase's `plain_summary`, in either shape the manifest may use.
+
+    Legacy shape: a plain string, rendered exactly as it always has been (one
+    escaped italic block) — entries that have not been migrated must keep
+    looking the same.
+
+    Structured shape: a dict with `verdict` (one line, rendered prominently),
+    `points` (a real bulleted list), and an optional `outstanding` line
+    (rendered visually distinct, in the warning colour). Every field is
+    escaped individually — this function must never emit a manifest value as
+    raw HTML.
+    """
+    if not isinstance(summary, dict):
+        return f"<i>{_esc(summary)}</i>"
+
+    parts = [f'<p class="ps-verdict">{_esc(summary.get("verdict", ""))}</p>']
+
+    points = summary.get("points") or []
+    if points:
+        items = "".join(f"<li>{_esc(pt)}</li>" for pt in points)
+        parts.append(f'<ul class="ps-points">{items}</ul>')
+
+    outstanding = summary.get("outstanding")
+    if outstanding:
+        parts.append(
+            f'<p class="ps-outstanding"><span class="ps-label">Still outstanding'
+            f'&nbsp;&mdash;</span> {_esc(outstanding)}</p>'
+        )
+
+    return f'<div class="ps">{"".join(parts)}</div>'
+
+
 VERDICT_PILL = {
     "CONFIRMED": ("p-done", "Verified"),
     "CONTRADICTED": ("p-urgent", "Proof failed"),
@@ -579,7 +635,7 @@ def _row(p: PhaseView) -> str:
         f'<tr><td><span class="pill {cls}">{_esc(label)}</span></td>'
         f'<td><b>{_esc(p.title)}</b>'
         f'{jargon}'
-        f'<i>{_esc(p.summary)}</i>'
+        f'{_render_summary(p.summary)}'
         f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
     )
 

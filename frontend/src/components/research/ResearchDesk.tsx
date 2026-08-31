@@ -8,6 +8,88 @@ import { AgentBriefsPanel, DailyThesisPanel, DecisionDeltaPanel, ReviewPanel, Si
 import { ResearchState } from "./ResearchPrimitives";
 import { buildResearchDesk } from "./buildResearchDesk";
 
+/* Standing acceptance contract for this desk, relocated from AGENTS.md's
+ * "Shipped tranche" section on 2026-08-31 (shipped; kept here as the
+ * regression yardstick for this file, not open work — that file loads on
+ * every session, this only matters when someone touches this desk). The
+ * matching Smart Money Analyst backend contract lives in
+ * src/agents/smart_money_analyst.py.
+ *
+ * Research/reading experience outcome:
+ *
+ * Desktop should have a strong designed default composition, then let the
+ * operator rearrange it. Reuse Dockview so panels can move, resize, tab,
+ * maximize and persist their layout. iPad should be composed for reading,
+ * not squeezed from desktop.
+ *
+ * The writing should be compact but substantive. Short sentences. Strong
+ * editing. No filler, repeated conclusions, forced jokes, fake quotes or
+ * generic AI throat-clearing. Wit should come from judgment, not
+ * punchlines. Quiet days should stay quiet.
+ *
+ * Use visual structure where it genuinely helps:
+ * - signal stack — quick agreement/conflict across relevant agents;
+ * - what changed — the new information since the prior useful read;
+ * - tension — the most important disagreement or contradiction;
+ * - why now — why the item deserves attention today;
+ * - evidence strip — compact factual chips instead of prose where possible;
+ * - mini chart/sparkline — only when it adds immediate market context;
+ * - Read / PM / Risk — clearly separated judgment, portfolio implication
+ *   and risk consequence;
+ * - dry annotation — occasional, restrained, evidence-based commentary
+ *   when the situation earns it.
+ *
+ * Do not force every device onto every card. The point is rhythm and
+ * hierarchy, not decoration. One important story may be visually dominant
+ * while supporting research is smaller. Balance matters more than
+ * symmetry.
+ *
+ * Favor useful editorial synthesis such as daily market thesis, agent
+ * findings, disagreement, Smart Money evidence, PM ruling, Risk response,
+ * proposed-versus-executed delta, position review, after-the-bell lessons
+ * and tomorrow watch. Raw structured evidence remains secondary
+ * drill-down.
+ *
+ * No fabricated confidence, quotes, history or facts. Sparse, stale,
+ * partial, no-news, no-trade and provider-error states must look
+ * intentional and remain truthful.
+ *
+ * Acceptance — this (and the Smart Money Analyst contract above) is
+ * complete when real stored QAMC data demonstrates that:
+ *
+ * 1. An operator can read a coherent daily story without opening logs or
+ *    JSON.
+ * 2. Every relevant agent has a useful, visually balanced representation
+ *    of its findings, strongest evidence, meaningful changes and
+ *    disagreement where supported.
+ * 3. The writing is substantive without being verbose, visually
+ *    scannable, and has a restrained private-desk personality rather than
+ *    corporate/LLM prose.
+ * 4. Signal stacks, change markers, tension, why-now context, evidence
+ *    strips, mini-chart context, Read/PM/Risk separation and occasional
+ *    dry annotations are used where they improve comprehension rather
+ *    than mechanically everywhere.
+ * 5. PM/Risk/execution are understandable as deltas: what PM wanted, what
+ *    Risk changed, what deterministic code allowed/blocked, and what
+ *    actually executed.
+ * 6. Desktop research panels are genuinely
+ *    movable/resizable/tabbable/maximizable with persisted layout and a
+ *    sensible default workspace.
+ * 7. iPad has a deliberately designed reading/navigation experience with
+ *    no horizontal overflow or micro-text.
+ * 8. Smart Money Analyst is SEC-source-backed, accession/timestamp/lag-aware,
+ *    attributable, direction-validated, noise-suppressing, and reaches PM
+ *    only through the accepted specialist path. Any external symbol is
+ *    run-scoped, visibly admitted by deterministic evidence, and still
+ *    traverses the full Technical → PM → AI Risk → deterministic gate →
+ *    broker chain.
+ * 9. Empty, stale, partial and provider-error states are truthful and
+ *    visually composed.
+ * 10. Targeted tests/build pass and rendered desktop+iPad visual
+ *     acceptance passes with zero console/page errors and no horizontal
+ *     overflow.
+ */
+
 type DeskSection = "brief" | "signals" | "decision" | "review";
 const ResearchContext = createContext<ResearchDeskData | null>(null);
 function useResearch() { const value = useContext(ResearchContext); if (!value) throw new Error("ResearchDesk context missing"); return value; }
