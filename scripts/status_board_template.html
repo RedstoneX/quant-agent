@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The full commit this page was built against. src/api/server.py reads
+     this back out at serve time and compares it to a freshly-read live SHA
+     to decide whether to show a freshness banner — a fact check, not a
+     clock. Empty when the box's SHA could not be read at build time. -->
+<meta name="qamc-board-built-sha" content="{{BUILT_SHA}}">
 <title>QAMC Desk Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -93,6 +98,31 @@ table.plan u{display:block;text-decoration:none;font-family:"IBM Plex Mono",mono
 .note{margin-top:38px;padding:16px 18px;border:1px dashed var(--rule);border-radius:4px;
   color:var(--muted);font-size:15px}
 .note b{color:var(--ink);font-family:Archivo,sans-serif;font-weight:600}
+.stale{margin:0 0 22px;padding:14px 16px;border:1px solid var(--crit);border-radius:4px;
+  background:var(--crit-bg);color:var(--crit);font-size:15.5px;box-shadow:var(--shadow)}
+.stale b{font-family:Archivo,sans-serif;font-weight:600}
+.stale-detail{display:block;margin-top:6px;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.5px;opacity:.7}
+/* Reuses the page's existing --warn / --warn-bg tokens (already defined
+   above for the deploy-drift dot) — no new colour, because a summary
+   written for a developer is a "needs your judgement" signal, not a
+   pass/fail one, and shouldn't borrow --crit's "something is broken" red. */
+.jargon-banner{margin:0 0 22px;padding:14px 16px;border:1px solid var(--warn);
+  border-radius:4px;background:var(--warn-bg);color:var(--warn);font-size:15.5px;
+  box-shadow:var(--shadow)}
+.jargon-banner b{font-family:Archivo,sans-serif;font-weight:600}
+.jargon-flag{margin:4px 0 2px;padding:5px 9px;border:1px solid var(--warn);
+  border-radius:3px;background:var(--warn-bg);color:var(--warn);font-size:13px;
+  font-family:"IBM Plex Mono",monospace;letter-spacing:.01em;line-height:1.5}
+.jargon-why{display:block;margin-top:2px;font-size:11px;opacity:.75}
+details.finished{margin-top:16px}
+details.finished>summary{cursor:pointer;list-style:none;font-family:"IBM Plex Mono",monospace;
+  font-size:12.5px;letter-spacing:.04em;color:var(--muted);padding:10px 2px;
+  border-top:1px dashed var(--rule)}
+details.finished>summary::-webkit-details-marker{display:none}
+details.finished>summary::before{content:"\25B8  ";color:var(--faint)}
+details.finished[open]>summary{border-bottom:1px dashed var(--rule);margin-bottom:10px}
+details.finished[open]>summary::before{content:"\25BE  "}
+details.finished table.plan{margin-top:4px}
 footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
   color:var(--faint);font-size:13.5px;
   font-family:"IBM Plex Mono",monospace;line-height:1.7}
@@ -104,11 +134,17 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
 </head>
 <body>
 <div class="wrap">
+  {{JARGON_BANNER}}
 
   <header class="mast">
     <h1>QAMC Desk Board</h1>
     <div class="stamp">{{STAMP}} &middot; Alpaca paper account</div>
   </header>
+
+  <section>
+    <h2>Does the record still hold?</h2>
+    {{ALARM}}
+  </section>
 
   <div class="state">
     <div class="state-top">{{DEPLOY}}</div>
@@ -128,18 +164,12 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
   </div>
 
   <section>
-    <h2>Does the record still hold?</h2>
-    {{ALARM}}
-  </section>
-
-  <section>
     <h2>Where the plan stands</h2>
     <p class="lede">Every line below was re-checked against the system just now &mdash;
       {{RULES_PASS}} of {{RULES_TOTAL}} checks pass, {{RULES_FAIL}} fail,
-      {{RULES_UNKNOWN}} need a human to look.</p>
-    <table class="plan">
-      {{ROWS}}
-    </table>
+      {{RULES_UNKNOWN}} need a human to look. Unfinished work is listed first;
+      finished, verified work is tucked away below.</p>
+    {{ROWS}}
   </section>
 
   <div class="note">
