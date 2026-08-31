@@ -752,101 +752,148 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Correction 2026-08-30: the two defects previously recorded here are both fixed — see the manual note below for the evidence trail. (1) A crashed intraday scan used to set scan_result=None with no error marker, indistinguishable from a healthy never-ran tick; PR #163 attaches an explicit crashed status that reports as a failure. (2) FRED's fetch used one bounded retry with a flat 2-second backoff and no wall-clock ceiling; PR #162 replaced it with config-driven retries, exponential backoff, and a real deadline — see the phase_4 entry for the full detail. Two different defects are recorded here in their place, found in the course of that same work and still genuinely open. (a) The desk has no macro EVENT CALENDAR: when the risk manager is asked whether a Fed decision or inflation print is coming in the next few days, it answers from the model's own memory, not from any fetched data — a real calendar was deliberately out of scope for PR #162, not authorised. (b) The OpenRouter price list the spending circuit depends on to safely estimate cost is a single point of failure: it only ever refreshes when a paid trading session actually starts, and nothing refreshes it on a schedule. Verified live 2026-08-30: the cache was last refreshed by a real session on 2026-08-28 (~13:30 UTC, per quant_agent.log's own cache-age readings), and by 2026-08-30 — a weekend, with no trading session running to notice — it had gone stale past the 48-hour point (24h fresh plus a 24h grace period) at which the circuit fails closed and hard-suspends every paid call for the rest of the day. No suspension event or operator reset is recorded in the live circuit log, and both pricing cache files carry a 2026-08-30 21:24 UTC timestamp, so someone refreshed it by hand before any session tried and failed. Had Monday's first session run before that manual refresh, the desk would have opened and traded nothing that day. A further audit on 2026-08-30 found ten more genuine defects, none overlapping (a) or (b) above, ranked here by how directly each touches a trading or risk decision. (c) The risk manager is required, for every trade, to say whether the company reports earnings in the next few days — and a piece of code built specifically to answer that from real data exists, but nothing in the system ever calls it, including the tests. The answer the model gives today is still a guess from its own memory, exactly as if that code did not exist. (d) Every evening the desk writes a report meant to carry lessons into tomorrow — specific reminders about trading discipline, updates to the thinking behind positions still held, and a grade on whether yesterday's forecast turned out right. None of that reaches the database or any later decision: those three items are produced by the model every night and then dropped on the way to storage, so the loop the evening report explicitly promises never closes. (e) A smaller inconsistency in the same area: the end-of-day check correctly leaves the parked cash-equivalent holding out of the list of names it looks up individual company news for, since a stopgap cash-parking vehicle has no thesis to follow — but the two earlier same-day checks do not apply that same exclusion, so the parked holding can occupy one of the capped slots that would otherwise go to a real position. (f) Since a recent change, every trade now carries how much conviction it was given, how much risk was requested versus allocated, and which model decided it — but none of that reaches the dashboard or the API a person actually looks at. It is captured for internal record-keeping only; today, a human reviewing the desk cannot see it. (g) The automated check that proves the desk can still reproduce last week's spending-limit failure on demand quietly depends on the same price-list refresh problem as (b) above: if that price list happens to be stale at the moment the check runs, the check can fail for a reason that has nothing to do with the thing it exists to test. (h) A safety-net test meant to guarantee that every outcome of the mid-day quick check prints a plain explanation, never a raw unexplained code, describes itself as exhaustive but is not — its own checklist is missing several outcomes that a companion test in the same file proves are real and already handled. It currently passes only by checking that its list agrees with itself, not with reality. (i) Inside the mid-day quick check's opportunity scan, several different everyday situations — the feature being turned off, one scan overlapping with another already running, and a scan that ran and simply found nothing worth acting on — all produce the exact same 'nothing to report' shape as each other. All of these are healthy outcomes, so this is benign, but it is a loose end left over from this month's fix that made a crashed scan visible: the crash is now unambiguous, but these other cases still are not distinguishable from one another afterward. (j) A second, private record of the desk's holdings exists in the database, separate from the live broker account, complete with its own code to read and write it — but no daily operation ever reads from it; every real decision about what the desk holds goes to the broker directly. The only place that second record is ever touched is in tests. (k) A piece of bookkeeping meant to carry forward how much of the day's news actually came back successfully is written once during the day's run and never read back by anything — the real decision about whether the news feed counts as healthy, degraded or failed is made and used elsewhere before that bookkeeping value is even written. Harmless, but decorative. (l) An older shape for the news analyst's output, replaced some time ago by the version actually in use today, is still fully defined in the code and still gets manufactured inside a handful of tests, even though no working part of the desk produces or reads it any more. It survives only because the tests referencing it were never updated. (m) A handful of small helper functions — one that prices a model from an external catalog, one that deduplicates near-identical news stories, one that reports where a day's news write-up was saved, and one that picks the account date a rehearsal should read — are not called by anything anywhere in the code, including tests. Each was superseded or never wired up; none currently does anything."
+    plain_summary: "Correction 2026-08-31: this entry recorded thirteen defects (a)-(m) on 2026-08-30. Nine of them are now fixed and deployed, and four more were deleted outright as confirmed dead code — all six PRs (#167-#172) merged AND deployed to production at d62d5fe. (a) PARTIALLY CLOSED (PR #170): the desk now fetches a real forward calendar of seven scheduled US macro releases (CPI, payrolls, PPI, PCE, GDP, retail sales, jobless claims) from FRED's free release-dates API and shows it to the Risk Manager and the Macro Analyst, and the earnings-proximity check that used to run on the model's memory now runs on fetched data too. STILL OPEN: FOMC meeting dates. No free FRED endpoint publishes the Fed's meeting calendar — its 'FOMC Press Release' release is a daily release, not a meeting schedule, and queried over an eight-month window it simply returns all 240 calendar days — so rather than let the model fill that silence from memory, both prompts now state the gap outright. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates specifically; that decision is NOT yet made — record as an open question, not as scheduled work. (b) CLOSED (PR #168): the OpenRouter price list that gates every paid LLM call used to refresh only when a paid session happened to start, which is exactly how it went stale over the 2026-08-30 weekend and nearly opened Monday with the desk unable to trade at all. A systemd timer now force-refreshes it at 06:30 and 18:30 ET, seven days a week including weekends, installed and verified live on the box, and alerts over Telegram the first time the cache crosses into its grace window rather than waiting for the hard suspension. A correction to the record while we're here: the earlier evidence note below claimed the box's own timer list had no quant-agent entry at all — that check was run against the wrong systemd user session (it needed XDG_RUNTIME_DIR=/run/user/1001); the box has always had its user timers. The staleness defect itself was real, only that one supporting observation was wrong. (c) CLOSED (PR #170): the earnings-date lookup built specifically to ground the Risk Manager's mandatory event-risk check now has a real caller, submitted through a bounded-timeout executor rather than called bare. (d) CLOSED (PR #169): the evening report's discipline notes, selection-rule insights and thesis updates are now saved and read back the next session by the Portfolio Manager, with a labelled absence when there is nothing to carry forward. The fourth field — the prior night's own grade of its outlook — is saved for the audit trail only and deliberately given no prompt reader: feeding a seat its own self-grade risks the same self-referential loop Phase 3.1 already cut. (e) CLOSED (PR #171): every same-day session that fetches held-symbol news now shares one exclusion helper, so the parked cash-sweep vehicle can no longer occupy one of the capped per-symbol news slots the way it could in the midday and close checks. (f) CLOSED (PR #167): every trade's conviction, requested/allocated risk and deciding model now reach the API and render in the cockpit's trade table — a plain dash when absent, never a fabricated value. Cockpit bundle rebuilt and deployed. (g) CLOSED (PR #168): the rehearsal harness's pricing-cache age is now a declared input, defaulting to a fresh cache rather than inheriting whenever production last happened to refresh it, with an explicit inherit mode kept for the old behaviour on request. (h) CLOSED (PR #172): the exhaustiveness test's checklist of pipeline statuses is now derived by walking the AST of the functions that actually produce them, instead of a hand list that only ever agreed with itself — verified by probe, removing a STATUS_PLAIN entry makes it fail. (i) CLOSED (PR #171): the intraday scan's three healthy no-op outcomes — feature disabled, another scan already holding the lock, and a scan that ran and found nothing — now carry three distinct statuses, all recognized as healthy rather than collapsing into one indistinguishable shape. (j)-(m) CLOSED (PR #172), deleted outright as confirmed dead code, each re-verified with its own grep immediately before deletion: the unused local positions-table mirror (j), the write-only news_coverage run-context field (k), the superseded NewsAnalysisResult model family and the test fixtures that manufactured it (l), and four zero-caller helper functions across four files (m). New items found by this same 2026-08-31 audit, none overlapping (a)-(m), ranked by consequence: (1) HIGHEST CONSEQUENCE, awaiting an owner decision, not scheduled work — the deploy-drift alarm that exists specifically to tell the owner a merge never reached production cannot send its alert. Its systemd service invokes Python directly with no env-sourcing wrapper and no EnvironmentFile, the qamc systemd user session carries zero TELEGRAM_* variables, and the check script itself has no dotenv loader, so TelegramNotifier silently disables itself and a drift alert reaches only the journal. Never yet exercised, because every run so far has reported in sync. (2) 'intraday_analysis_error', present in the pipeline since 2026-08-25, has no plain-English entry — it would print the generic status fallback to the account owner if it ever fired. Tracked explicitly as a known gap by the new exhaustiveness test, which is self-cleaning: it fails loudly once the gap is closed or if any new untracked one appears. (3) The rehearsal's pricing-cache note always reports '0h grace': it is built before the sandbox's own settings.yaml is written, so the grace-window lookup reads a file that does not exist yet and silently falls back to zero. Cosmetic — it would misdescribe a rehearsal actually running inside the grace band. (4) The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, not /home/qamc/quant-agent where this box actually lives. (5) One rehearsal module's docstring (ops/rehearsal/run.py) points readers to an ops/rehearsal/README.md that does not exist. (6) Carried forward, unchanged, and not itself a defect: full wire-service news breadth (Reuters/AP) still needs a paid subscription, which the owner has permanently refused — see the phase_4 entry for the full history."
     status: "OPEN"
     confidence: "high"
     evidence:
       - kind: manual
-        note: "Correction 2026-08-30: this entry previously named two defects that are now fixed. (1) A crashed intraday scan used to set scan_result=None with no error marker. PR #163 (commit 7b040f1e8d1a96bc5bf71ff504dc046dac992d0e) attaches an explicit 'intraday_scan_crashed' status on a crash, flowing through the same nested result[\"intraday_scan\"][\"status\"] shape the healthy statuses already use, present in ops/rehearsal/report.py's STATUS_PLAIN vocabulary, and deliberately excluded from _verdict's healthy set — see tests/test_intraday_scan_crash_visibility.py. (2) FRED's fetch used one bounded retry with a flat 2-second backoff and no wall-clock ceiling. PR #162 (commit 92689e6f3363ec8ed676f415cdb7337ec99644fd) replaced it with config-driven retries, exponential backoff with jitter, and a real total_fetch_deadline_s ceiling (90s default) that clips every timeout/backoff sleep and skips not-yet-attempted series once exhausted — see tests/test_macro_feed_resilience.py. Both PRs are merged AND deployed (production HEAD confirmed via `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` at audit time). Re-verify with: `grep -n intraday_scan_crashed ops/rehearsal/report.py` and `grep -n total_fetch_deadline_s src/data/macro.py config/settings.yaml`."
+        note: "Correction 2026-08-31: this entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and the six new items below remain open — see the plain_summary for the full narrative and each block below for its own re-check command."
       - kind: pr_merged
-        number: 163
-        note: "fix/intraday-scan-crash-visible — a crashed scan now attaches an explicit failing status instead of looking identical to a healthy no-op"
-      - kind: test_exists
-        path: "tests/test_intraday_scan_crash_visibility.py"
-        test: "test_scan_crash_attaches_error_status_and_tick_completes"
-      - kind: test_exists
-        path: "tests/test_intraday_scan_crash_visibility.py"
-        test: "test_crashed_status_is_not_in_the_verdicts_healthy_set"
+        number: 167
+        note: "feat/expose-trade-risk-fields — trade conviction/risk/model fields now reach the API and the cockpit"
       - kind: pr_merged
-        number: 162
-        note: "fix/fred-feed-repair — config-driven FRED retries, exponential backoff with jitter, a real wall-clock ceiling, and coverage visibility"
+        number: 168
+        note: "fix/pricing-cache-scheduled-refresh — a systemd timer refreshes the OpenRouter price list twice a day, seven days a week, and rehearsals stop inheriting its age by default"
+      - kind: pr_merged
+        number: 169
+        note: "fix/evening-report-loop — discipline notes, selection rules and thesis updates now persist and feed the next session's Portfolio Manager"
+      - kind: pr_merged
+        number: 170
+        note: "feat/event-risk-real-data — a real macro release calendar and a wired earnings-date lookup ground the mandatory event-risk check"
+      - kind: pr_merged
+        number: 171
+        note: "fix/news-scope-and-scan-visibility — the cash-sweep vehicle is excluded from per-symbol news everywhere, and the intraday scan's healthy no-ops get distinct statuses"
+      - kind: pr_merged
+        number: 172
+        note: "chore/dead-code-and-test-exhaustiveness — the status-completeness test is AST-derived, and five confirmed-dead code paths ((j)-(m)) are deleted"
+      - kind: symbol_in_file
+        path: "src/data/event_calendar.py"
+        symbol: "UNCOVERED_EVENTS: tuple[str, ...] = ("
+        note: "(a) partially closed: macro releases are fetched from FRED for seven scheduled series (MACRO_RELEASES — CPI/NFP/PPI/PCE/GDP/Retail Sales/Jobless Claims); UNCOVERED_EVENTS is where the FOMC gap is declared explicitly to the seats rather than left silent."
       - kind: test_exists
-        path: "tests/test_macro_feed_resilience.py"
-        test: "test_backoff_and_deadline_bound_worst_case_wall_clock"
+        path: "tests/test_event_risk_calendar.py"
+        test: "test_fomc_is_declared_uncovered_rather_than_left_to_memory"
       - kind: symbol_in_file
-        path: "src/models.py"
-        symbol: "event_risk: str = Field(min_length=1)"
-        note: "still-open gap: event_risk is a required narrative field the risk manager fills from its own reasoning — nothing here is fetched from a real economic/earnings calendar"
-      - kind: manual
-        note: "Still open: there is no macro event calendar. `grep -n event_risk config/prompts/risk_manager.md config/prompts/macro_analyst.md` shows the model is instructed to reason about upcoming Fed/earnings/macro events from its own knowledge; no module under src/data/ fetches a calendar of scheduled macro releases. Re-check by searching src/data/ for a FOMC/CPI/NFP release-date fetcher — if one exists, this item is closed."
-      - kind: manual
-        note: "Still open: the OpenRouter price list is a single point of failure. src/cost_table.py's refresh_openrouter_pricing() is only invoked from TradingPipeline.__init__ and activate_paid_call_session — i.e. only when a paid session actually starts — and no systemd timer or cron job refreshes data/openrouter_pricing_cache.json on its own schedule (checked live: `systemctl list-timers --all` on the production host has no quant-agent entry at all). config/settings.yaml's llm_cost_circuit.openrouter_pricing_grace_period_hours (24.0, on top of the 24h freshness window) is the full tolerance before the circuit fails closed. Verified live 2026-08-30 against the production database (llm_circuit_state, llm_circuit_events) and quant_agent.log — see the plain_summary above for the specific timestamps. Re-check by re-reading those same live sources, and by checking whether a scheduled refresh has since been added."
+        path: "config/prompts/risk_manager.md"
+        symbol: "the honest answer about an FOMC date is that you do not have it."
+        note: "(a) the Risk Manager prompt states the FOMC gap outright rather than letting the model reason from memory."
       - kind: symbol_in_file
-        path: "src/data/market.py"
-        symbol: "def get_next_earnings_date"
-        note: "(c) still open: this method exists specifically to answer 'is an earnings report imminent' from real data instead of the model's memory — the Risk Manager's mandatory event_risk step still answers from memory. Confirmed 2026-08-30: zero callers anywhere in src/ or tests/, no dynamic dispatch, no string reference. docs/STATE.md already flagged this as 'available but unwired' on 2026-08-27; three days later it still is."
+        path: "config/prompts/macro_analyst.md"
+        symbol: "currently FOMC meeting dates"
+        note: "(a) the Macro Analyst prompt names the same uncovered gap."
       - kind: manual
-        note: "(c) Re-check with: `grep -rn get_next_earnings_date --include=*.py .` — if any caller other than the definition appears, this item is closed."
+        note: "(a) STILL OPEN: no free FRED endpoint publishes the FOMC meeting calendar — verified live 2026-08-31, release 101 ('FOMC Press Release') returned all 240 calendar days over an eight-month probe window rather than a meeting schedule. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates only; NOT yet decided — this is an open question, not scheduled work. Re-check by asking whether that decision has since been made, and by re-reading the live-evidence note in src/data/event_calendar.py's module docstring for whether a free FOMC source has been found."
       - kind: symbol_in_file
-        path: "src/models.py"
-        symbol: "discipline_notes: list[str] = []"
-        note: "(d) still open: the evening report's schema carries discipline_notes, selection_rules, thesis_updates and previous_outlook_assessment, all produced by the LLM every night — but the database write that persists the evening report has no parameter for any of the four, and nothing outside src/models.py and the evening prompt itself reads any of the four names back."
+        path: "src/data/event_calendar.py"
+        symbol: "market_provider.get_next_earnings_date, symbol,"
+        note: "(c) closed: get_next_earnings_date now has a real caller, submitted through a bounded ThreadPoolExecutor rather than called bare."
       - kind: manual
-        note: "(d) Re-check with: `grep -n 'def save_evening_snapshot' -A 20 src/storage/db.py` for the parameter list, and `grep -rn 'thesis_updates\\|selection_rules\\|discipline_notes\\|previous_outlook_assessment' src/` for any reader outside src/models.py and the evening prompt. If the four fields gain a persisted column and a reader, this item is closed."
+        note: "(c) Re-check with: `grep -rn get_next_earnings_date --include=*.py .` — a caller other than the definition itself and this module confirms it is still wired."
       - kind: symbol_in_file
-        path: "src/pipeline.py"
-        symbol: "hide the cash-sweep vehicle from evening's position"
-        note: "(e) still open: the evening session filters the parked cash-equivalent holding out of its position list before choosing which symbols get individual company news; the two same-day checks earlier in the day build that same symbol list from the unfiltered broker snapshot, so the parked holding can consume one of the capped per-symbol news slots there."
-      - kind: manual
-        note: "(e) Re-check by reading the held_symbols construction immediately before each session's news-update call in src/pipeline.py (run_position_review and run_evening) and confirming whether the cash-sweep symbol has been filtered out before that point in both, not just one."
+        path: "src/agents/portfolio_manager.py"
+        symbol: "discipline_notes_json"
+        note: "(d) closed: the Portfolio Manager reads discipline_notes/selection_rules/thesis_updates back from yesterday's insights row."
       - kind: symbol_in_file
         path: "src/storage/db.py"
-        symbol: "decision_model: str | None = None"
-        note: "(f) still open: every trade row persists conviction, requested_risk_pct, allocated_risk_pct and decision_model, but neither the trades API schema nor the frontend's trade type carries any of the four — a human looking at the dashboard or calling the API cannot see them."
+        symbol: "discipline_notes_json TEXT DEFAULT"
+        note: "(d) closed: the insights table now persists the field instead of dropping it on the way to storage."
       - kind: manual
-        note: "(f) Re-check with: `grep -n 'conviction\\|allocated_risk_pct\\|requested_risk_pct\\|decision_model' src/api/schemas.py` — if a trade-level field for any of these appears there (not just tomorrow_conviction, which is a different, unrelated field), this item is closed."
+        note: "(d) previous_outlook_assessment is persisted for the audit trail only, with no prompt consumer — a deliberate scope call, not an oversight (feeding a seat its own self-grade risks the same self-referential loop Phase 3.1 cut). Re-check: `grep -n previous_outlook_assessment src/agents/*.py` should show no prompt-building reader."
+      - kind: symbol_in_file
+        path: "src/pipeline.py"
+        symbol: "def _news_held_symbols"
+        note: "(e) closed: every same-day session that fetches held-symbol news now routes through this one helper, which applies the same cash-sweep exclusion as every other LLM-facing position view."
+      - kind: manual
+        note: "(e) Re-check: `grep -n _news_held_symbols src/pipeline.py` for every call site — run_position_review (backing both midday and close) and run_evening should both appear."
+      - kind: symbol_in_file
+        path: "src/api/schemas.py"
+        symbol: "conviction: str | None = None"
+        note: "(f) closed: the trades API schema now carries the conviction ledger fields."
+      - kind: symbol_in_file
+        path: "frontend/src/components/TradesPanel.tsx"
+        symbol: "columnHelper.accessor(\"conviction\""
+        note: "(f) closed: the cockpit's trade table renders the ledger fields, a plain dash when absent."
+      - kind: file_exists
+        path: "src/api/static_cockpit/assets/index-B0mble5n.js"
+        note: "(f) the rebuilt cockpit bundle carrying the ledger columns is deployed."
       - kind: symbol_in_file
         path: "ops/rehearsal/runner.py"
-        symbol: "def _pricing_cache_note"
-        note: "(g) still open: the rehearsal harness copies the real production OpenRouter pricing cache into its sandbox, file age and all, so the same staleness described in defect (b) can trip the cost circuit inside a rehearsal for a reason unrelated to whatever the rehearsal is actually testing — including the test that exists specifically to prove the 2026-08-28 spending-limit failure still reproduces on demand."
-      - kind: manual
-        note: "(g) Re-check by reading tests/test_rehearsal_reproduces_cost_ceiling.py and ops/rehearsal/runner.py's _pricing_cache_note / _pricing_grace_hours, and confirming whether the harness still uses the live pricing cache's real age rather than a fixed, controlled one."
+        symbol: "def apply_pricing_cache_age"
+        note: "(g) closed: the rehearsal harness now stamps the sandbox pricing cache's age explicitly instead of always inheriting production's real mtime."
+      - kind: symbol_in_file
+        path: "ops/rehearsal/runner.py"
+        symbol: "pricing_cache_age_hours: float | None = DEFAULT_PRICING_CACHE_AGE_HOURS"
+        note: "(g) closed: the default is a fresh cache; passing None explicitly restores the old inherit-production's-age behaviour."
       - kind: test_exists
         path: "tests/test_rehearsal_report_verdict.py"
         test: "test_every_known_pipeline_terminal_status_is_classified"
-        note: "(h) still open: this test's docstring claims to guard against any pipeline status printing unexplained to the account owner, but its hardcoded checklist for the mid-day quick check lists only one outcome ('ok'), while a companion test earlier in the same file proves at least two more real outcomes exist and are already handled. The assertion only checks that the checklist agrees with itself, not that the checklist is complete, so this gap does not make the test fail — it just means the test does not prove what its own docstring says it proves."
-      - kind: manual
-        note: "(h) Re-check by reading known_statuses inside test_every_known_pipeline_terminal_status_is_classified (tests/test_rehearsal_report_verdict.py) and comparing its run_intra_check entries against every value asserted into STATUS_PLAIN earlier in the same file."
+      - kind: symbol_in_file
+        path: "tests/test_rehearsal_report_verdict.py"
+        symbol: "def _derive_known_pipeline_statuses"
+        note: "(h) closed: known_statuses is derived by an AST walk of src/pipeline.py (plus RiskStage.run and _semantic_failure) instead of a hand-maintained list."
+      - kind: test_exists
+        path: "tests/test_intraday_scan_crash_visibility.py"
+        test: "test_disabled_lock_and_no_opportunity_all_classify_as_healthy"
       - kind: symbol_in_file
         path: "src/pipeline.py"
-        symbol: "def _run_intraday_opportunity_scan"
-        note: "(i) benign, still open: the feature being switched off, one scan overlapping with another still running, and a scan that ran and found nothing worth acting on all produce the identical absent-result shape. All three are healthy outcomes, so nothing unsafe follows, but they remain indistinguishable from each other even after this month's fix made a genuine crash unambiguous."
+        symbol: "{\"status\": \"intraday_scan_no_opportunity\", \"run_id\": ctx.run_id}"
+        note: "(i) closed: the intraday scan's three healthy no-op paths (disabled / lock-contended / no-opportunity) now carry three distinct statuses instead of one shared shape."
       - kind: manual
-        note: "(i) Re-check by reading _run_intraday_opportunity_scan and _intraday_opportunity_scan_body in src/pipeline.py for every `return None` and confirming whether each still collapses to the same missing-key shape in run_intra_check's result."
+        note: "(j) closed (PR #172): db.get_positions/upsert_position — the unused local positions-table mirror — deleted outright, re-verified dead (zero callers outside tests) immediately before deletion. Re-check: `grep -n 'def get_positions\\|def upsert_position' src/storage/db.py` should return nothing."
+      - kind: manual
+        note: "(k) closed (PR #172): RunContext.news_coverage — written once per run, never read back — deleted. Re-check: `grep -n news_coverage src/pipeline_context.py` should return nothing."
+      - kind: manual
+        note: "(l) closed (PR #172): models.NewsAnalysisResult and its nested NewsEvent/SectorImpact/SymbolAlert shapes, superseded by NewsIntelligenceReport, deleted along with the test fixtures that manufactured it. Re-check: `grep -n NewsAnalysisResult src/models.py` should return nothing."
+      - kind: manual
+        note: "(m) closed (PR #172): the four zero-caller helpers — cost_table._resolve_openrouter_model, news_dedup.deduplicate, news_store.get_report_path, ops/rehearsal/broker.default_snapshot_date — deleted. Re-check: `grep -rn '_resolve_openrouter_model(\\|def deduplicate(\\|def get_report_path(\\|def default_snapshot_date(' --include=*.py .` should return nothing besides this note."
       - kind: symbol_in_file
-        path: "src/storage/db.py"
-        symbol: "def get_positions"
-        note: "(j) low consequence, still open: a locally-stored positions table with its own read/write methods exists in the database layer, but production code reads live holdings from the broker exclusively — grepping every caller of get_positions/upsert_position outside tests/ turns up nothing."
-      - kind: manual
-        note: "(j) Re-check with: `grep -rn 'db.get_positions(\\|db.upsert_position(' src/` — any hit outside src/storage/db.py's own definition closes this item."
+        path: "scripts/systemd/quant-agent-drift-check.service"
+        symbol: "ExecStart=/home/qamc/quant-agent/.venv/bin/python"
+        note: "NEW (1): the drift-check service invokes Python directly, not through an env-sourcing wrapper (contrast quant-agent-pricing-refresh.service, which runs run_pricing_refresh.sh — that wrapper sources .env specifically so its own Telegram alert can send)."
       - kind: symbol_in_file
-        path: "src/pipeline_context.py"
-        symbol: "news_coverage: "
-        note: "(k) low consequence, still open: this run-context field is written exactly once per run and never read back — the actual healthy/degraded/failed decision for the news feed is computed from a local variable at the same call site, before the field is even set."
+        path: "src/notifier.py"
+        symbol: "os.getenv(\"TELEGRAM_BOT_TOKEN\", \"\")"
+        note: "NEW (1): TelegramNotifier reads its credentials from the process environment, which the drift-check service never populates."
       - kind: manual
-        note: "(k) Re-check with: `grep -rn '\\.news_coverage\\b' src/` — a read site anywhere other than the assignment and its own test closes this item."
+        note: "NEW (1), HIGHEST CONSEQUENCE, awaiting an owner decision — not recorded as scheduled work: the deploy-drift alarm that exists specifically to tell the owner a merge never reached production cannot send its alert. quant-agent-drift-check.service declares no EnvironmentFile, scripts/check_deploy_drift.py has no dotenv loader, and the qamc systemd user environment carries zero TELEGRAM_* variables — verified live 2026-08-31 with `XDG_RUNTIME_DIR=/run/user/1001 systemctl --user show-environment | grep TELEGRAM` (empty). So TelegramNotifier silently disables itself and a drift alert reaches the journal and nowhere else. Never yet exercised, because every run so far has reported in sync. Re-check by re-running the same systemctl command on the box, and by checking whether an EnvironmentFile or wrapper has since been added."
       - kind: symbol_in_file
-        path: "src/models.py"
-        symbol: "class NewsAnalysisResult(BaseModel):"
-        note: "(l) low consequence, still open: this news-analysis shape (and the three smaller shapes nested inside it) was superseded some time ago by the report type the news analyst actually returns today. No agent module constructs or reads it any more; it is only ever instantiated inside test fixtures."
-      - kind: manual
-        note: "(l) Re-check with: `grep -rln NewsAnalysisResult src/` — a hit outside src/models.py closes this item."
+        path: "src/pipeline.py"
+        symbol: "\"status\": \"intraday_analysis_error\","
+        note: "NEW (2): a real, reachable run_intra_check terminal status with no STATUS_PLAIN entry — present since 2026-08-25."
       - kind: symbol_in_file
-        path: "ops/rehearsal/broker.py"
-        symbol: "def default_snapshot_date"
-        note: "(m) lowest consequence, still open: four small helper functions — this one, plus one each in src/cost_table.py, src/data/news_dedup.py and src/data/news_store.py — have zero callers anywhere in the codebase, including tests, and no dynamic/string reference either."
+        path: "tests/test_rehearsal_report_verdict.py"
+        symbol: "_KNOWN_STATUS_PLAIN_GAPS = {"
+        note: "NEW (2): the gap is tracked explicitly here rather than silently passed over. This test is self-cleaning — it fails loudly once a STATUS_PLAIN entry is added for a tracked gap (now stale) or if any new untracked gap appears."
       - kind: manual
-        note: "(m) Re-check with: `grep -rn '_resolve_openrouter_model(\\|deduplicate(\\|get_report_path(\\|default_snapshot_date(' --include=*.py .` — any hit besides the four definitions themselves closes the relevant one."
+        note: "NEW (2) Re-check: read _KNOWN_STATUS_PLAIN_GAPS in tests/test_rehearsal_report_verdict.py — empty means intraday_analysis_error (or whatever it tracked) has been fixed."
+      - kind: symbol_in_file
+        path: "ops/rehearsal/runner.py"
+        symbol: "notes.append(_pricing_cache_note(sandbox))"
+        note: "NEW (3): the pricing note is built here, before the sandbox's own config/settings.yaml exists."
+      - kind: symbol_in_file
+        path: "ops/rehearsal/runner.py"
+        symbol: "config = build_rehearsal_config("
+        note: "NEW (3): the sandbox's config/settings.yaml is written here, after the pricing note above has already been built."
+      - kind: manual
+        note: "NEW (3): because _pricing_cache_note runs before build_rehearsal_config writes the sandbox's settings.yaml, _pricing_grace_hours reads a file that does not exist yet, its except clause fires, and the note always reports '0h grace' regardless of the real configured grace period. Cosmetic — it would misdescribe a rehearsal actually running inside the grace band. Re-check: `grep -n '_pricing_cache_note(sandbox)\\|config = build_rehearsal_config(' ops/rehearsal/runner.py` and confirm which line number comes first."
+      - kind: symbol_in_file
+        path: "scripts/systemd/quant-agent-daily.service"
+        symbol: "WorkingDirectory=/home/yebo/quant-agent"
+        note: "NEW (4): inherited from the upstream fork — this box is /home/qamc, not /home/yebo."
+      - kind: symbol_in_file
+        path: "ops/rehearsal/run.py"
+        symbol: "ops/rehearsal/README.md"
+        note: "NEW (5): this module's docstring points readers to ops/rehearsal/README.md, which does not exist. Re-check: `ls ops/rehearsal/README.md` — currently 'No such file or directory'."
 
   - id: invariants
     title: "Invariants (must hold at all times)"

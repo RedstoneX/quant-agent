@@ -389,6 +389,29 @@ that X actually produces the symptom.
 
 ### Ordered backlog — RESUME POINT
 
+**Landed (2026-08-31) — six PRs, all merged and deployed. Nine open defects closed, four more deleted, six new ones found — read this first**
+
+Tonight's audit worked through the thirteen open defects recorded below on 2026-08-30. Full detail and re-check commands for every item are in `docs/phases.yaml`'s `open_defects` entry — this is the plain-language summary.
+
+- The macro event calendar is now half-real. The desk fetches a genuine forward schedule of seven US macro releases (CPI, payrolls, PPI, PCE, GDP, retail sales, jobless claims) from a free government source and shows it to the Risk Manager and the Macro Analyst, and the earnings-date lookup that existed but was never called is now wired in. **Still missing: Fed meeting dates specifically.** No free source publishes those, so both prompts now say so outright instead of guessing. Whether to add the Fed's own free calendar page just for that has been put to the owner — **not yet decided.**
+- The price-list refresh gap is closed. A scheduled job now refreshes it twice a day, every day including weekends, and pages over Telegram the moment it starts going stale rather than waiting for the hard cutoff. (Correction to an earlier note: the claim that the box had no scheduled jobs at all was a checking mistake, not a real finding — the box has always had them. The refresh gap itself was real and is now fixed.)
+- The evening report's lessons and reminders now actually carry forward: they're saved and read back by tomorrow's trading decisions instead of being generated and thrown away. One of the four fields — the report grading its own prior forecast — is kept for the record but deliberately not fed back in, to avoid the same self-review loop that was cut once before.
+- A smaller inconsistency is fixed: the parked cash-equivalent holding can no longer take up one of the limited slots meant for real positions' news coverage.
+- Every trade's conviction, requested risk, allocated risk and which model decided it are now visible on the dashboard and through the API, not just recorded internally.
+- The rehearsal tool used to test changes offline no longer depends on how stale the live price list happens to be at the moment someone runs it — that dependency mismatched what it was supposed to be testing and could produce a false failure.
+- A safety-net test that was supposed to guarantee every outcome prints a plain explanation, but only ever checked itself against itself, has been rebuilt to check against the real code instead. It already found one genuine, small gap in the process (see below).
+- Three previously-identical "nothing happened" outcomes inside the mid-day quick check (feature off, already running, nothing found) now report distinctly, so they can be told apart after the fact. All three are and remain harmless.
+- Four pieces of dead code confirmed to have zero callers anywhere, including tests, were deleted: an unused local copy of the holdings list, a write-only bookkeeping field, a superseded internal data shape, and four small orphaned helper functions.
+
+**New, found by the same audit, not fixed — ranked by consequence:**
+
+1. **Highest consequence:** the alarm that is supposed to tell the owner a code change never actually reached the live server cannot send its alert — a missing piece of wiring means the notification credentials never reach it. It has never actually needed to fire yet, so this has gone unnoticed. Awaiting an owner decision on how to wire it; not scheduled work.
+2. One mid-day failure outcome still has no plain-English explanation and would show a raw internal code instead. Low frequency, tracked, self-flagging if it's missed again.
+3. A cosmetic bug in the rehearsal tool: a note about how much slack the price-list safeguard has always reads as "none," regardless of the real setting, because it's checked before that setting is available.
+4. A leftover scheduled job still points at a folder from the project's original owner instead of this one.
+5. A setup guide referenced by one internal file doesn't exist.
+6. Unchanged: full wire-service news coverage still needs a paid subscription the owner has already declined. Not a defect — a closed question.
+
 **Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
 
 - The macro data feed's retry policy has been rebuilt. The old one gave a failing economic-data series one quick second try and then gave up; that is exactly what let one bad three-minute stretch (2026-08-26) lose all nine numbers the macro seat reads, silently. It now tries harder, with a real time limit on the whole job — a minute and a half, not per series — so a slow patch can be ridden out without ever risking a session running long. Six new free indicators were added on top of what was already tracked — a real (inflation-adjusted) 10-year yield, the market's inflation expectation, a 3-month Treasury rate, the dollar's strength against other currencies, investment-grade borrowing costs, and weekly unemployment claims — each checked against the real data source before being wired in. And if any of these numbers fail to come back, the desk is now told so directly, the same way it is already told when the news feed is degraded, instead of quietly reasoning from nothing (PR #162).
