@@ -21,6 +21,15 @@ looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
   any change to the agents, the risk engine, the cost circuit or execution.
 - Why this is not optional: a full trading day, 2026-08-28, was already lost
   to a defect a rehearsal would have caught before the market opened.
+- **It can now force a provider to fail (2026-08-31).** `--fail-provider
+  agent:kind[:count]` makes any provider attempt fail as a rate-limit, a
+  5xx, a timeout, a dead key or an out-of-money error — offline, free, any
+  hour. Before this, every response it replayed was one that had SUCCEEDED,
+  so the retry loop, the cross-provider failover, and every circuit guard
+  those cross could not be exercised here at all. That blind spot is exactly
+  what cost the 2026-08-31 open; see the incident entry below. Reproduce it
+  with `--fail-provider tech_analyst:rate_limit:2` — two rate-limited
+  primary attempts that the failover must rescue.
 - State plainly rather than round up: a draft of this note claimed the
   rig's own acceptance test did not pass — that replay ran out of recorded
   responses on the Technical Analyst's chunked calls and could not
@@ -284,6 +293,86 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
+### 2026-08-31, market open — the desk went dark two minutes after the bell
+
+**Closed by `fix/provider-failover-attempt-budget`. Read this before touching
+the retry, failover or cost-circuit code.**
+
+What happened: at 09:32 ET, two minutes after the open, the morning session
+stopped with `paid_analysis_suspended` and every session after it no-opped.
+Spend at the moment it stopped: **$0.05 of a $2.75 day.** It required a
+manual operator reset, so the desk stayed dark until a human noticed.
+
+The cause was an arithmetic contradiction between two settings that lived in
+different files and were never compared:
+
+| | value | where |
+| --- | --- | --- |
+| attempts the retry loop can spend on one call | 3 (two primary + one failover) | `_max_retries()` in code, env-overridable |
+| attempts the cost circuit permitted per call | 2 | `config/settings.yaml` |
+
+So **cross-provider failover could never once complete.** Every failover was
+attempt three against a ceiling of two. It only ever mattered when the
+primary provider failed — which is the one situation failover exists for —
+and on 2026-08-31 an upstream rate-limit on the cheap primary finally
+produced it. The same family of limit had tripped on 08-26, 08-27 and twice
+on 08-28; each time a different number was raised and this one was not
+touched.
+
+Making it worse, `provider_attempt_limit` was the only trigger of its family
+still wired to the durable operator-reset latch. Its strictly WIDER sibling,
+`session_retry_attempt_limit`, was already correctly scoped to the session.
+Nothing chose that: unrecognised codes default to a hard latch.
+
+What changed:
+
+1. **The ceiling is derived, not typed.** `provider_attempt_budget()` in
+   `src/agents/base.py` owns the arithmetic, next to the loop that actually
+   spends the attempts. `config/settings.yaml` no longer pins it.
+2. **Disagreement is now a startup failure.** `AppConfig` refuses to load a
+   ceiling below the loop's worst case, naming both settings. It fails on
+   the ground instead of at 09:32 on a Monday.
+3. **`provider_attempt_limit` holds the session instead of latching the
+   desk**, matching its sibling.
+
+**Why a weekend of testing and auditing missed it, and the thing actually
+worth remembering:** the suite had thorough failover tests AND thorough
+circuit tests, and every one of them passed throughout. `tests/conftest.py`
+sets `_allow_unmetered_for_tests = True` for the whole suite, so the failover
+tests ran with **no cost circuit attached at all**, and the circuit tests ran
+with no failover. Nothing anywhere ran the two together — which is precisely
+where they contradicted each other. Two well-tested halves, an untested seam.
+`tests/test_provider_attempt_budget.py` now attaches a real breaker to a real
+agent and fails the primary for real reasons.
+
+**And the rehearsal rig could not have caught it either**, which is why it
+now can — see the fault-injection note above. Every recorded response it
+replays is a response that succeeded, so the failure branch was unreachable
+offline. It was reachable only by waiting for the market.
+
+**Two things deliberately left for the owner, not fixed here:**
+
+- **The backup model costs ~50x the primary.** Primary is
+  `google/gemini-2.5-flash-lite` at $0.10/$0.40 per million tokens; the
+  failover target is hard-coded to `claude-opus-4-7` at $5.00/$25.00. For
+  the Technical Analyst's ~150k-token prompt that is ~$0.02 versus ~$0.95 —
+  against a $0.90 per-session cap. So a failover on the biggest agent now
+  completes and delivers its analysis, then immediately holds the session on
+  cost, which can starve the Portfolio Manager that runs after it. Better
+  than a dead desk, but not a full rescue. A backup priced near the primary
+  would be; `_FALLBACK_MODEL` is a module constant with no config knob.
+  Model strategy is TABLED pending a clean spend re-measure, so this is
+  recorded, not changed.
+- **`fail_call` still charges for a request the circuit itself refused to
+  send.** A blocked attempt is provably $0 — no bytes left the process — but
+  the reservation covers the whole call, and earlier attempts on that same
+  call may have burned tokens nobody was told about. Marking it zero-cost
+  would risk under-counting real spend, which on a system that trades money
+  is the worse error. It no longer fires on this failure mode (with the
+  ceiling correct the failover simply succeeds), so what reaches it is a
+  genuine attempt runaway — arguably a thing an operator should look at.
+  Asserted explicitly in `test_cost_circuit.py` rather than glossed.
+
 ### Ordered backlog — RESUME POINT
 
 **Landed (2026-08-31) — six PRs, all merged and deployed. Nine open defects closed, four more deleted, six new ones found — read this first**
@@ -455,322 +544,14 @@ Rationale for the trading items is in `docs/QAMC_REMEDIATION_SPEC.md`; evidence
 for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
 `docs/RESEARCH_FINDINGS.md`.
 
-**Landed (2026-08-27)**
-
-- Phase 0 — CI is a real gate. `pytest` required on `main`, strict, and
-  `enforce_admins: true`. Proven by a deliberately failing test being refused.
-  Root causes were fork-level workflow disablement plus `fastapi` living only in
-  the `[api]` extra while CI installed `.[dev]`.
-- Governance — owner-ratification rule in `AGENTS.md`; `OUTCOME.md` corrected to
-  a profit mandate; `STATE.md` corrected on five false claims.
-- Repository hygiene — branches reduced from 110 to 27.
-- **Phase 1 + 1b** (PR #102, merged) — structural levels from five years of
-  history (`src/data/levels.py`), market context (`src/data/context.py`),
-  invented stops and targets deleted. PRs #103, #104 and #105 followed
-  (audit + research docs, then the document-authority tiers).
-- **Phase 2a** — committed as `c89e957` on branch
-  `feat/risk-metrics-and-pm-correlation`, merged and deployed. Folds in the four
-  audit findings that were blocking real Phase 2 sizing work: the drawdown-halve
-  is now deterministic code (§1.1, `src/risk/rules.py::apply_drawdown_scale` +
-  `drawdown_buy_cap`), the Portfolio Manager sees the correlation matrix before
-  it decides (§1.2), portfolio heat / budget risk / open risk exist and render
-  to PM + RM (§1.3, `src/risk/metrics.py`), and R-multiple reaches the Position
-  Reviewer (§1.4). New `risk.max_portfolio_risk_pct` (25%) is **reporting-only**
-  — it does not gate anything yet.
-- **Phase 3.1 + 3.2** — committed as `aea82ee` on branch
-  `feat/exit-rework-pace-and-memory`, merged and deployed. §3.1: the `pace` feedback
-  loop is broken — `expected_horizon_sessions` and `setup_type` are pinned on
-  the `trades` row at BUY time and never recomputed, the rolling-calibration
-  `avg_hold_days` query is deleted from the review path, and `pace_status`
-  (`measured` / `too_early` / `n/a_breakout` / `unavailable_no_pinned_horizon`)
-  replaces a fabricated figure with a labeled absence. §3.2 (audit §1.5): the
-  reviewer now has memory — each review snapshots its per-position metrics
-  (`db.save_position_review_metrics`), the next review receives the deltas,
-  and new `src/risk/exit_guard.py` vetoes a SELL/REDUCE whose stated reason is
-  a deterioration claim when every metric that moved actually improved. Exits
-  on new information are never vetoed. 2323 tests pass (2283 on main, +40).
-- **Phase 3.3** — committed as `2f177e33` on branch
-  `feat/exit-gate-and-risk-routing`, merged and deployed. The hard-trigger phrase
-  gate previously applied only to a symbol already trimmed that day, so a
-  position's *first* sale executed on soft reasoning unchecked — almost
-  every sale. Two of 2026-08-26's evening-graded `premature` exits (EPD,
-  MRVL) were first sales that went straight through the gap. Every SELL and
-  REDUCE now requires the reason to name a recognized trigger; a
-  non-matching reason is dropped and logged as
-  `exit_blocked_no_named_trigger`. The trigger vocabulary
-  (`_HARD_TRIGGER_KEYWORDS`, `src/pipeline.py`) was widened first — macro
-  regime shift, sector shock, adverse/material news, earnings miss, guidance
-  cut, all sanctioned by spec §3.8 and previously unrepresented — so gating
-  every exit against the old list would have blocked legitimate ones.
-  Concentration and drift were deliberately NOT added: their reason shape is
-  the verbatim 2026-05-04 AMZN double-trim, and drift trims belong to the
-  Portfolio Manager's rule-priority rows 4-5, not this seat.
-  `config/prompts/position_reviewer.md` states the new scope and full
-  trigger list. 2324 tests pass (2323 before).
-  **§3.4–§3.7 landed afterward** (route exits through AI Risk, ATR noise
-  band, broker-resident trailing stops — see "Phase 3 — COMPLETE" below);
-  §3.5 (upgrade the reviewer's model off `gemini-2.5-flash-lite`) was
-  resolved as an owner decision rather than implemented. **Note on §3.5:** its
-  "weakest model in
-  the stack" premise is contradicted by the committed benchmark data —
-  `ops/model_policy/results/merged.json` scores `gemini-2.5-flash-lite` at
-  quality 1.0/1.0 on its own `midday_exit` scenario, tied with four other
-  candidates including the PM's own `gpt-5.5`. See the correction note under
-  `QAMC_REMEDIATION_SPEC.md` §3.5 for the full evidence. This needs an owner
-  decision on what §3.5 should actually be scoped to; it is not decided
-  here.
-
-- **Phase 3 — COMPLETE (2026-08-27).** §3.1 pace feedback loop cut (horizon
-  pinned at entry on the trade row; `avg_hold_days` removed from the review
-  path entirely) and §3.2 reviewer memory + the metric-contradiction veto
-  (`src/risk/exit_guard.py`) landed in PR #107. §3.3 every exit must name a
-  trigger and §3.4 exits route through AI Risk — fail-OPEN, deliberately
-  asymmetric with the entry path — landed in PR #108. §3.6 ATR noise band on
-  price-derived exits and §3.7 deterministic broker-resident trailing
-  (`src/risk/trailing.py`, range vs breakout keyed on the pinned `setup_type`)
-  landed in PR #109. §3.5 resolved as an owner decision, see below. §3.8
-  unchanged — the reviewer keeps full authority to exit on new information.
-- **DEPLOYED to the live paper account 2026-08-27 ~09:20 ET** at `058273f1`;
-  rollback SHA `9f77b03e`. Verified on the box: `paper=true`,
-  `intraday_scan.enabled: true` (the only tracked config delta) preserved
-  through the checkout, `drawdown_buy_cap` armed, the OKLO noise-band case
-  blocks, and the `trades` migration (`expected_horizon_sessions`,
-  `setup_type`) plus the reviewer-memory reader were pre-run so the 09:30
-  session would not hit a cold migration. **Phase 2b was NOT deployed at this
-  point — see below; it has since been merged and deployed too (same evening,
-  as part of PR #113).**
-
-- **GPT-5.5 Flex for the Portfolio Manager — done.** `16f6535` on branch
-  `feat/pm-flex-routing`, merged and deployed as part of PR #113. OpenRouter serves
-  the PM's exact model (`openai/gpt-5.5-20260423`) from `openai/flex` at half
-  price ($2.50/$15 vs $5/$30 per M tokens) — an endpoint choice, not a model
-  choice, so no benchmark was needed. New `llm.<agent>_provider_order`
-  (`["openai/flex"]` for the PM), rejected at config load on any non-OpenRouter
-  seat. Fallbacks stay enabled rather than pinned `only`: the fallback serves
-  the same weights, so the exposure is money, and failing a session closed to
-  save $0.11 is a bad trade. Because one model id now has two prices,
-  OpenRouter calls request `usage: {include: true}` and the daily cost
-  circuit spends against the provider-reported cost, not the pinned-table
-  estimate, degrading to the estimate when no figure comes back.
-  `EXPECTED_PROVIDER_ORDER` added to `ops/commissioning/verify_commissioning.py`
-  so a runtime host silently losing this preference doubles the PM's cost
-  while looking normal. Expected effect: PM cost per run roughly halves.
-- **Phase 2b — risk-based sizing and correlation budget — done.** `75c0233`,
-  same branch. §2.1: `TargetPosition.risk_allocation_pct` (0.5–5.0% of equity)
-  replaces `target_weight_pct` as the live sizing field;
-  `shares = (equity × risk_pct/100) / |entry − stop|`, so a wider stop yields
-  a smaller position rather than a rejected trade. `target_weight_pct` stays
-  Optional only so stored decisions still replay. §2.2: new
-  `src/risk/budget.py::allocate_risk_budget` enforces the 25% total at-risk
-  ceiling and a 40%-of-total per-correlated-cluster cap as a live gate,
-  largest-request-first with an alphabetical tie-break, denying a request
-  below the 0.5% floor rather than shrinking it. New config:
-  `max_position_risk_pct` 5, `min_position_risk_pct` 0.5,
-  `max_cluster_risk_share_pct` 40. §2.4 verified already satisfied — no fixed
-  position-count target exists anywhere. The gate is enforced only when the
-  caller supplies book risk + clusters (`pipeline_stages._book_risk_inputs`);
-  otherwise portfolio ceilings are deliberately unenforced and only the 5%
-  single-name cap applies. **See the caution above** — a separate,
-  uncommitted attempt at this same phase still sits in the `phase2b`
-  worktree and needs reconciling.
-
-  **Two follow-on fixes landed on top, same branch, both PR #113, both merged
-  and deployed 2026-08-27 evening.** `b712f4c`: `max_position_pct` (20%) is a HARD BLOCK rule in the
-  risk engine, not a trim, and nothing connected it to §2.1's sizing — the
-  constructor was free to build orders the engine existed to refuse. Measured
-  against the book: the 17 most recent BUYs carried stops a median 4.3% below
-  entry, which admits at most 0.86% risk under the 20% ceiling, so every
-  target from moderate conviction upward was silently hard-blocked (empty
-  book, not an error). The constructor now clamps to that same ceiling itself
-  and states in the order's reasoning that the position therefore risks LESS
-  than the PM allocated. `3dff940` then fixed the reason the stops were that
-  tight in the first place: they sat a median 1.7 ATRs from entry — barely
-  past one ordinary day's range, the same noise band Phase 3's trailing-stop
-  work established at 1.25 ATR. A stop that tight was both firing on ordinary
-  volatility (Phase 3's failure mode) and forcing the 20% clamp to bind at
-  every conviction level (this failure mode) — one root cause, two symptoms.
-  Entry stops placed inside `risk.min_stop_atr_multiple` ATRs (base 3.0,
-  scaled 0.85x/1.15x by breakout/range setup and 0.95x/1.10x/1.20x by
-  risk-on/transitional/risk-off regime) are now pushed out to that floor;
-  structure still places the stop, this only widens one placed inside the
-  noise, never tightens a wide one. A widened stop that drops reward:risk
-  below `risk.min_reward_risk_after_widening` (1.5) rejects the trade rather
-  than taking it at a payoff it never earned. Measured effect: MSFT's stop
-  went 2.4% → 7.0%, VLO 4.5% → 9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% risk
-  now produces 7.1/14.2/20.0% positions instead of clamping all three to 20%
-  — conviction changes size again. `config/prompts/portfolio_manager.md`'s
-  conviction bands and `tech_analyst.md`'s stop guidance were recalibrated to
-  match (2026-08-27 doc-sync pass). 2487 tests pass. **This bullet does not
-  track live deploy status** — see "Session start" above for how to check
-  what production is actually running.
-- **`intra_check` un-blindfolded — done.** `fb88e08`, same branch. It cost
-  $0.222/run vs morning's $0.221 while the PM received a technical-only
-  evidence registry. The morning's macro/news are now carried forward
-  (date-scoped: refuses anything not from today) and labelled
-  `carried_from_morning` in `data_status` instead of `not_run_intraday`, so
-  the degraded-sources advisory still fires honestly. Nothing is re-fetched.
-  `session_type` removed from `build_evidence_registry`/`validate_grounding`
-  entirely rather than left inert.
-- **Cockpit surfaces `agent_logs.input_message` — done, premise corrected.**
-  `6b7af86`, same branch. The backlog previously claimed the field
-  "already stores the PM's complete prompt" but "nothing populates or serves
-  it" — the first half was right, the second was **false**: all 32 PM rows in
-  the live DB carry it (13KB–190KB each), and `/runs/{run_id}` has always
-  served it via `SELECT *`. The only real gap was `frontend/src/api/client.ts`'s
-  `AgentLogItem` interface omitting the field — a frontend-only fix, now
-  rendered by a new `AgentPromptViewer` in the Run Detail modal.
-- **Macro sector-stance vocabulary unified, and a live crash fixed.**
-  `cdb387b`, same branch. Macro sector stances reached the PM in two
-  vocabularies — the live agent's overweight/underweight vs `MacroStore`'s
-  persisted bullish/bearish — and both now arrive in normal operation because
-  the intraday tick (above) carries stored macro forward.
-  `SECTOR_STANCE_TO_DIRECTION`/`SECTOR_DIRECTIONS`/`normalize_sector_stance`
-  now live once in `src/models.py`, imported by `macro_store`. Also fixed a
-  live crash the carry-forward surfaced: `build_user_message` indexed each
-  `sector_guidance` entry as a mapping, so the persisted dict shape raised
-  `TypeError: string indices must be integers` and killed every intraday PM
-  call carrying macro forward.
-- **`ops/` and `scripts/` are now import-guarded — done.** `6f897a1`, same
-  branch, new `tests/test_ops_scripts_importable.py`. `pytest` collects
-  `tests/` only, so the operational tooling (the model benchmark, the
-  commissioning verifier, the pricing check, replay and preview) had zero
-  coverage and a `src/models.py` schema change could break a tool while the
-  suite stayed green. Three consumers drifted that way on 2026-08-27 alone:
-  `ops/model_policy/scenarios.py` stopped importing when `138edd2`'s Phase 1
-  tranche made `setup_type` required (fixed same-day in `300ea14` — the
-  harness was broken for HOURS, not months; an earlier verbal description of
-  it as "rotted months ago" was wrong and has been corrected in
-  `tests/test_model_policy_harness_imports.py`, `e19d42b`), and
-  `ops/preview/branch_preview.py` plus the Mission Control evidence route both
-  kept reading `TargetPosition.target_weight_pct` after Phase 2b made it
-  optional (`002095c`). The new guard discovers every module under `ops/` and
-  `scripts/` dynamically rather than hardcoding a list, so a new file is
-  covered the moment it lands. Import is deliberately shallow — it proves a
-  tool still agrees with the schemas it's built on, not that the tool works.
-  2470 tests pass.
-- **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
-  merged or deployed.** `f3aeba4` + `866e423` (original implementation) plus
-  a 2026-08-28 finishing pass on branch `feat/insider-signal-filter`
-  (worktree `insider-filter`). `src/data/insider_signal.py::classify_transaction`
-  implements the Cohen/Malloy/Pomorski (JF 2012) routine-versus-opportunistic
-  test in pure Python, first-match-wins: non-open-market codes, incomplete
-  amounts and zero-price rows are handled first (mostly contract guards —
-  `SECForm4Provider` already drops everything but non-derivative P/S), then
-  the calendar-month test (same insider, same issuer, same calendar month,
-  same direction, in each of the 3 preceding years), then a recurring-cadence
-  fallback (>=3 prior same-direction trades, mean gap 20-120 days, coefficient
-  of variation <=0.25) for when 3 years of history is not yet available, then
-  proportional-size rules on sells (routine under 5% of the pre-transaction
-  holding) and all buys opportunistic. `SmartMoneyObservation` gains
-  `signal_class`/`signal_class_reason`/`signal_class_detail`/`signal_weight`;
-  a routine purchase can no longer make a symbol `admission_eligible` (narrows
-  the existing gate only — broker/price/liquidity/history/sector gates in
-  `pipeline.py` are untouched); `smart_money_analyst.md` and the analyst's
-  compact payload now carry the verdict and weight dollar totals by class. New
-  `data/smart_money/insider_history.json`, pruned at `insider_history_retention_days`
-  (default 5 years), because `observations.json` is pruned to the lookback
-  window and the calendar test needs years of retained history.
-  **Deliberate departure from the folk version of this filter:** a 10b5-1
-  checkbox alone never marks a sale routine — `RESEARCH_FINDINGS.md` §1
-  states plainly that planned and discretionary high-value sales show
-  similar opportunism, so the flag only ever supports a routine label for a
-  sale that is already proportionally small; a large planned sale stays
-  `material_stake_sale` and its reason text records that the flag was seen
-  and not acted on. Two tests pin this.
-
-  **2026-08-28 finishing pass** (this PR) closed two gaps found on review of
-  the original commits:
-  1. **Every classification threshold was a module-level constant** —
-     `MIN_MATERIAL_SELL_FRACTION`, `CALENDAR_ROUTINE_YEARS`,
-     `MIN_CADENCE_TRADES`, the cadence gap/dispersion bounds, and
-     `HISTORY_RETENTION_DAYS` — which violates the standing rule that a
-     number able to change classification output is an operator setting,
-     not a hardcoded one. Moved to seven new fields on `SmartMoneyConfig`
-     (`src/config.py`, all prefixed `insider_`, defaults unchanged from the
-     old constants so unconfigured behavior is identical), threaded through
-     a new `InsiderSignalThresholds` dataclass into `classify_transaction`/
-     `classify_observations`, and wired end-to-end through
-     `SECForm4Provider.__init__` → `src/pipeline.py`'s construction of it →
-     `config/settings.yaml`. A config-load validator rejects a cadence
-     window with `min >= max` and a history retention shorter than the
-     calendar-routine lookback requires.
-  2. **Test gaps required by the finishing task:** every reachable
-     transaction-code path pinned with hard literals (P, S, and the `""`
-     contract-guard path directly; `SmartMoneyObservation.transaction_code`
-     is `Literal["", "P", "S"]`, so A/M/F/G/D/X cannot reach the classifier
-     at all — those six are instead pinned at the parser boundary in
-     `tests/test_smart_money.py::test_every_non_open_market_code_is_dropped_before_the_classifier`,
-     proving they never arrive); an indeterminate (unclassifiable) filing
-     confirmed KEPT through the full `fetch()` pipeline, not just at
-     `classify_transaction`; three tests proving the thresholds are
-     genuinely configurable (same input, different threshold, different
-     verdict — something a hardcoded constant could not do); and a revert
-     cross-check (`src/` reverted to `origin/main` with these tests left in
-     place) that failed 4 tests directly plus a whole-module collection
-     error on `tests/test_insider_signal.py` (36 tests that never got to
-     run) — i.e. the tests actually depend on this implementation existing.
-     `tests/test_smart_money.py` (pre-existing, untouched by the original
-     commits) continues to pass unchanged, pinning that non-routine Smart
-     Money behavior — admission, materiality, clustering — is unaffected.
-
-  **Measured against the real production cache**
-  (`/home/qamc/quant-agent/data/smart_money/observations.json`, read-only,
-  2026-08-28): **2,742 stream=insider rows within the 7-day lookback, 1,224
-  filings, 2026-08-21 to 2026-08-28 — 57.3% routine (1,572), 42.6%
-  opportunistic (1,167), 0.1% indeterminate (3).** This re-confirms the
-  original 56.2%-of-2,188 figure (measured a day earlier, 2026-08-21 to
-  2026-08-27) rather than replacing it — same order of magnitude, same
-  caveat: **zero rows matched the calendar-month or cadence rules** in
-  either measurement, because `insider_history.json` still does not exist
-  in production (this PR is not deployed). The 57.3% is still driven
-  entirely by the proportional-sell rules (`planned_small_disposition` +
-  `immaterial_stake_sale` = 1,568 of 1,572 routine rows; the remaining 4 are
-  `zero_price_transaction`) plus, this time, one previously-unmeasured
-  finding: **only 1 of the 413 buy-side (code `P`) rows was routine at all**
-  (a single `$0`-price transaction) — the routine label is concentrated
-  almost entirely on the sell side, which the admission gate never reads.
-
-  **Before/after on `SECForm4Provider.fetch()`, same real cache, same
-  `config/settings.yaml`, uncapped `max_observations` (measuring the gate,
-  not the 40-row display limit), classifier vs. a stub that force-labels
-  every row `opportunistic` (byte-for-byte what `fetch()` did before this
-  branch — the only change is the added `and verdict.label != "routine"`
-  clause):**
-  - **Admission-eligible symbols: unchanged, 43 both before and after** —
-    the sole buy-side row the classifier demotes (the `$0` transaction
-    above) was already excluded by the pre-existing materiality floor
-    regardless of its label, so on today's snapshot the narrower admission
-    gate has not yet flipped any symbol's eligibility. This will not stay
-    true forever — it holds only because no *material* buy in the current
-    7-day window happens to be routine yet, and because the calendar test
-    has no history to draw on.
-  - **Ranking impact is real and large even though admission isn't**: of
-    the 1,842 rows that clear `fetch()`'s materiality/cluster gates, 1,113
-    (60.4%) are routine and now sort last / contribute `$0` to the
-    dollar-weighted ranking sum `smart_money_analyst.py::_symbol_rank`
-    uses. **94 symbols in the fetch() output have their entire visible
-    dollar volume down-weighted to `$0`** — including one (`IHT`) whose raw
-    total was **$2.04 billion**, entirely two routine sales, that would
-    previously have dominated the ranked list ahead of every genuine
-    opportunistic signal in the universe.
-
-  **Pre-existing gap found, not fixed (out of this task's scope, flagged
-  per the stop-on-pre-existing-rot rule):** a row with
-  `transaction_value_usd is None` (e.g. `incomplete_amounts`) can never
-  survive `fetch()`'s survivors loop at all — both the individual-
-  materiality and cluster-window branches require
-  `transaction_value_usd is not None` before a row is even added to the
-  candidate set, dropping it regardless of `signal_class`. This predates
-  the classifier (`b1944cd`, "add SEC smart-money transient admissions")
-  and is a materiality-gate limitation, not a routine/opportunistic
-  classification defect — the classifier itself still returns
-  `indeterminate`, never `routine`, for this case
-  (`tests/test_insider_signal.py::test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine`
-  pins that). Worth a separate look if unpriced Form 4 rows turn out to be
-  common enough to matter.
-
-  Full suite: 2,713 tests pass (2,696 after merging current `main`, +17 net
-  new in this finishing pass). Nothing here is deployed; PR only.
+**Landed (2026-08-27)** — cut 2026-08-31 to stay under the size cap that
+`tests/test_status_board.py::test_work_md_stays_under_a_hundred_thousand_bytes`
+enforces. It was ~21KB of PR-by-PR narrative for work merged and deployed four
+days earlier: Phase 0 (CI as a real gate), governance and document-authority
+tiers, branch hygiene 110->27, Phases 1/1b/2a/2b/3 and the Form 4 insider work.
+Every item is recorded with evidence and re-check commands in
+`docs/phases.yaml` — the authority for what shipped. The ratified owner
+decisions from that day are live, not finished, and stay below.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 

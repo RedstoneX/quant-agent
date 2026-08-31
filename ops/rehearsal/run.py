@@ -95,6 +95,19 @@ def build_parser() -> argparse.ArgumentParser:
             "'inherit' to use production's real mtime"
         ),
     )
+    parser.add_argument(
+        "--fail-provider", dest="provider_faults", action="append",
+        default=[], metavar="AGENT:KIND[:COUNT]",
+        help=(
+            "force provider attempts to fail, e.g. 'tech_analyst:rate_limit:2' "
+            "to rehearse a rate-limited primary that must be rescued by the "
+            "cross-provider failover. AGENT may be '*'. Repeatable. Kinds: "
+            "rate_limit, server_error, timeout, auth, insufficient_balance. "
+            "Recorded responses are all successes, so this is the only way to "
+            "exercise the retry and failover paths offline — see "
+            "ops/rehearsal/faults.py"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON as well")
     return parser
 
@@ -178,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             pricing_cache_age_hours=_parse_pricing_age(
                 args.pricing_cache_age_hours
             ),
+            provider_faults=args.provider_faults,
         )
         print(report.render())
         if args.json:

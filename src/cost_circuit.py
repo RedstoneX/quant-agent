@@ -53,6 +53,33 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
     "provider_projected_session_cost_limit",
     "outstanding_projected_session_cost_limit",
     "session_retry_attempt_limit",
+    # Defect 5 (2026-08-31): "provider_attempt_limit" moved here from the
+    # default hard latch. It bounds attempts within ONE call, which is
+    # strictly NARROWER than "session_retry_attempt_limit" directly above --
+    # yet it was the only one of the pair wired to the durable
+    # operator-reset latch, so the smaller problem produced the larger
+    # response. Nothing chose that; it was never added to a set, and
+    # `_trigger_scope` defaults the unrecognised to "hard".
+    #
+    # What that cost: on 2026-08-31 an upstream rate-limit on the primary
+    # model made the cross-provider failover attempt number 3 against a
+    # ceiling of 2 (see `provider_attempt_budget` for that arithmetic, now
+    # fixed). The circuit latched paid analysis off at 09:32 ET -- two
+    # minutes after the open -- having spent $0.05 of a $2.75 day, and every
+    # session after it no-opped until an operator reset it by hand. Same
+    # shape as the 2026-08-28 incident that Defect 2 and Defect 4.1 were
+    # each written to stop: a transient provider fault escalated into a lost
+    # trading day.
+    #
+    # Attempt counts are a PROXY for spend. Spend itself keeps its own
+    # guards, all unchanged and all still stricter than this one: the
+    # per-session and per-day dollar ceilings, the projected-cost checks
+    # re-run at every network boundary, and the conservative per-attempt
+    # reservation that prices a failover at the FAILOVER model's rate before
+    # it is allowed to proceed. An expensive failover is stopped by those on
+    # its cost, which is the honest reason to stop it. This limit no longer
+    # needs to hold the whole desk hostage to catch it.
+    "provider_attempt_limit",
 })
 
 # NOTE on "morning_spend_ceiling" (Defect 4, 2026-08-28): that trigger code

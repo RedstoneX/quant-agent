@@ -232,6 +232,7 @@ def run_rehearsal(
     sudo_user: str | None = None,
     base_settings: Path | None = None,
     pricing_cache_age_hours: float | None = DEFAULT_PRICING_CACHE_AGE_HOURS,
+    provider_faults=None,
 ):
     """Rehearse one session in `sandbox` and return a `RehearsalReport`.
 
@@ -240,6 +241,12 @@ def run_rehearsal(
     docstring. Pass a value past 24h + the configured grace to rehearse the
     fail-closed staleness path deliberately; pass `None` to inherit
     production's real mtime.
+
+    `provider_faults` is an optional list of `agent:kind[:count]` specs (see
+    `ops/rehearsal/faults.py`) that force provider attempts to fail. Without
+    it a rehearsal can only replay responses that succeeded, which leaves the
+    retry and cross-provider failover branches — and the circuit guards they
+    cross — untestable outside a live session.
     """
     _ensure_import_path()
 
@@ -250,6 +257,7 @@ def run_rehearsal(
     from ops.rehearsal.isolation import (
         ProductionWitness, assert_broker_is_stubbed, assert_isolated, no_network,
     )
+    from ops.rehearsal.faults import ProviderFaultInjector
     from ops.rehearsal.replay import ResponseLibrary, replay_provider_calls
     from ops.rehearsal.report import collect
 
@@ -257,6 +265,10 @@ def run_rehearsal(
         raise ValueError(
             f"unknown session '{session}'; expected one of {sorted(SESSIONS)}"
         )
+
+    # Parsed before any sandbox work: a typo in a fault spec should cost a
+    # message, not a database snapshot.
+    injector = ProviderFaultInjector.from_specs(provider_faults)
 
     from src.trading_calendar import ET
 
@@ -289,6 +301,12 @@ def run_rehearsal(
     else:
         counts = ", ".join(f"{k} x{v}" for k, v in sorted(library.available().items()))
         notes.append(f"recorded responses loaded: {counts}")
+
+    # Stated in the report's own notes, not only in the log: a run whose
+    # providers were forced to fail describes a hypothetical, and must never
+    # read as an account of what production would have done unprompted.
+    for line in injector.summary():
+        notes.append(f"PROVIDER FAULT INJECTED — {line}")
 
     snapshot = BrokerSnapshot.from_database(str(sandbox.db_path), now_et.date())
     notes.extend(snapshot.notes)
@@ -328,7 +346,7 @@ def run_rehearsal(
             "the session"
         )
 
-        stack.enter_context(replay_provider_calls(library))
+        stack.enter_context(replay_provider_calls(library, faults=injector))
         try:
             result = getattr(pipeline, SESSIONS[session])() or {}
         except Exception as exc:  # a crash IS the finding; report it

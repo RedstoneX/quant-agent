@@ -258,13 +258,32 @@ def test_base_agent_third_provider_attempt_is_blocked_before_network(tmp_path, m
         with pytest.raises(PaidAnalysisSuspended):
             agent.run()
 
+    # The point of the test, unchanged: the attempt past the ceiling never
+    # reaches the network.
     assert client.messages.create.call_count == 2
+    assert circuit.status()["provider_attempts"] == 2
+
+    # Defect 5 (2026-08-31): the attempt limit now HOLDS the run rather than
+    # latching the desk, so it is the first of two alerts, not the only one.
+    assert "QUOTA HOLD" in notifier.messages[0]
+    assert "provider attempt 3 exceeds per-call safe limit 2" in notifier.messages[0]
+    assert "scope: run run-retries only" in notifier.messages[0]
+
+    # And then the call it blocked fails with no usage telemetry, which is a
+    # SEPARATE, still-hard trigger. Asserted rather than glossed: this is the
+    # remaining path by which a per-call attempt stop can still cost a
+    # trading day, and it is deliberately left alone. `fail_call` cannot tell
+    # "the circuit refused to send attempt 3" from "attempts 1 and 2 burned
+    # tokens we never got told about", and on a system that trades money,
+    # under-counting real spend is the worse error. It no longer fires on the
+    # 2026-08-31 failure mode (see tests/test_provider_attempt_budget.py --
+    # with the ceiling correct, the failover simply succeeds), so what
+    # reaches here is a genuine attempt runaway, which is a thing an operator
+    # SHOULD be made to look at.
     state = circuit.status()
-    assert state["trigger_code"] == "provider_attempt_limit"
-    assert state["provider_attempts"] == 2
-    assert len(notifier.messages) == 1
-    assert "attempts: 2 provider attempts" in notifier.messages[0]
-    assert "includes conservative or unresolved-request accounting" in notifier.messages[0]
+    assert state["trigger_code"] == "failed_call_unknown_cost"
+    assert len(notifier.messages) == 2
+    assert "without final usage telemetry" in notifier.messages[1]
 
 
 def test_failed_call_without_usage_consumes_reserve_and_latches(tmp_path, monkeypatch):
@@ -1778,7 +1797,13 @@ def test_production_pm_sized_prompt_fits_reserved_exposure_cap(tmp_path):
         ("provider_projected_session_cost_limit", "session"),
         ("outstanding_projected_session_cost_limit", "session"),
         ("session_retry_attempt_limit", "session"),
-        ("provider_attempt_limit", "hard"),
+        # Defect 5 (2026-08-31): "provider_attempt_limit" moved from "hard"
+        # to "session". It bounds attempts within ONE call -- strictly
+        # narrower than "session_retry_attempt_limit" directly above -- yet
+        # was the only one of the pair on the durable operator-reset latch,
+        # so the smaller problem produced the larger response. See the NOTE
+        # by _SESSION_QUOTA_TRIGGERS in src/cost_circuit.py.
+        ("provider_attempt_limit", "session"),
         ("legacy_unknown_cost", "hard"),
         ("unknown_model_price", "hard"),
         ("unknown_actual_cost", "hard"),

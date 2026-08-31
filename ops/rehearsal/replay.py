@@ -466,12 +466,19 @@ class ResponseLibrary:
 
 
 @contextmanager
-def replay_provider_calls(library: ResponseLibrary):
+def replay_provider_calls(library: ResponseLibrary, faults=None):
     """Replace the three provider transports with recorded-response replay.
 
     Everything above the transport — reservation, authorization, retry loop,
     failover, truncation detection, cost accounting, agent_logs write — is the
     real code, untouched.
+
+    `faults` is an optional `ops.rehearsal.faults.ProviderFaultInjector`. Every
+    recorded response is by definition a response that succeeded, so without
+    it the retry and failover branches are unreachable offline — see that
+    module for what that blind spot cost on 2026-08-31. Injected failures are
+    reported as findings so a fault-injected run can never be mistaken for a
+    clean one.
     """
     from src.agents.base import BaseAgent
 
@@ -487,6 +494,16 @@ def replay_provider_calls(library: ResponseLibrary):
         # it would against a live provider.
         if authorize is not None:
             authorize(model)
+        # After authorization, before any "response": exactly where a real
+        # transport failure surfaces. The attempt has already been counted and
+        # priced by the circuit, which is the whole point — a fault that
+        # skipped that would not be testing the thing that broke.
+        if faults is not None:
+            try:
+                faults.check(agent.name, model)
+            except Exception as fault:
+                library.findings.append(fault.record)
+                raise
         call = library.match(agent.name, user_message)
         logger.info(
             "Rehearsal: replaying %s from agent_logs row %d (recorded %s)",
@@ -508,6 +525,10 @@ def replay_provider_calls(library: ResponseLibrary):
 
     def deepseek_call(self, user_message, *, authorize=None):
         return _replay(self, self.model, user_message, authorize)
+
+    if faults is not None and faults.active:
+        for line in faults.summary():
+            logger.warning("Rehearsal FAULT INJECTION active — %s", line)
 
     BaseAgent._anthropic_call = anthropic_call
     BaseAgent._call_openai = openai_call
