@@ -671,6 +671,33 @@ class TradingPipeline:
         except Exception:  # noqa: BLE001 — a broken config must not take down a session
             return None
 
+    def _news_held_symbols(self, positions) -> list[str]:
+        """Held symbols eligible for the capped per-symbol company-news fetch.
+
+        Applies the same cash-sweep exclusion as every other LLM-facing
+        position view (`CashSweeper.split_positions`) before extracting
+        symbols: the parked T-bill vehicle is cash-equivalent, has no
+        thesis to follow, and must never consume one of
+        `config.news.per_symbol_max_symbols`' capped slots (2026-08-31
+        forensic — it was doing exactly that in the midday/close path).
+
+        Shared by every same-day session that fetches held-symbol news
+        (`run_position_review`, which itself backs both midday and close,
+        and `run_evening`) so the exclusion cannot drift apart between
+        them again.
+        """
+        sweeper = self._sweeper()
+        investable = positions
+        if sweeper is not None:
+            investable, _parked = sweeper.split_positions(positions)
+        return [
+            s for s in (
+                str(getattr(p, "symbol", "")).strip().upper()
+                for p in investable if getattr(p, "qty", 0)
+            )
+            if s
+        ]
+
     def _compute_deployable_cash(self, cash: float, positions) -> float:
         """Cash QAMC can deploy into equities WITHOUT borrowing.
 
@@ -8502,20 +8529,17 @@ class TradingPipeline:
 
         # 2. News + Earnings update — capture developments since morning.
         try:
-            # held_symbols: current book, in broker snapshot order (stable
-            # within this run — see _run_news_update's ordering contract).
-            # No separate "candidate_symbols" concept exists at this point
-            # in the midday/close path (unlike MorningResearchStage, which
-            # has ctx.admitted_symbols computed before news fetches) — a
+            # held_symbols: current book, cash-sweep vehicle excluded (see
+            # _news_held_symbols), in broker snapshot order (stable within
+            # this run — see _run_news_update's ordering contract). No
+            # separate "candidate_symbols" concept exists at this point in
+            # the midday/close path (unlike MorningResearchStage, which has
+            # ctx.admitted_symbols computed before news fetches) — a
             # deliberate scope limit, not an oversight; see the PR
             # description.
-            held_symbols = [
-                str(getattr(p, "symbol", "")).strip().upper()
-                for p in positions if getattr(p, "qty", 0)
-            ]
             session_news, session_news_coverage = self._run_news_update(
                 run_id, session=session_type,
-                held_symbols=[s for s in held_symbols if s],
+                held_symbols=self._news_held_symbols(positions),
             )
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
@@ -9408,14 +9432,37 @@ class TradingPipeline:
                 except Exception:  # noqa: BLE001
                     pass
 
-    def _run_intraday_opportunity_scan(self, ctx: RunContext) -> dict | None:
-        """Concurrency-guarded wrapper around the scan body."""
+    def _run_intraday_opportunity_scan(self, ctx: RunContext) -> dict:
+        """Concurrency-guarded wrapper around the scan body.
+
+        2026-08-31 visibility fix: every path through this wrapper and the
+        body it delegates to now returns an explicit result dict — never a
+        bare None — so run_intra_check's `intraday_scan` key distinguishes
+        the three everyday reasons a tick adds no new activity from EACH
+        OTHER and from a crash. PR #163 (2026-08-30) made a crashed scan
+        visible as "intraday_scan_crashed" but left these three still
+        collapsed onto the identical absent-key shape:
+
+          - "intraday_scan_disabled": the feature is off in config.
+          - "intraday_scan_lock_contended": another scan already owns this
+            window — either this process's own advisory flock (see
+            `_intraday_scan_process_lock`) or a morning/midday/close/
+            intra_check session detected by
+            `_another_session_recently_active` inside the body.
+          - "intraday_scan_no_opportunity": the scan ran and found nothing
+            worth escalating (see `_intraday_opportunity_scan_body`'s
+            early-return points).
+
+        All three are HEALTHY completions — see ops/rehearsal/report.py's
+        STATUS_PLAIN entries and `_verdict`'s healthy set, which is where
+        "intraday_scan_crashed" is deliberately NOT included.
+        """
         cfg = getattr(self.config, "intraday_scan", None)
         if cfg is None or not getattr(cfg, "enabled", False):
-            return None
+            return {"status": "intraday_scan_disabled", "run_id": ctx.run_id}
         with self._intraday_scan_process_lock() as acquired:
             if not acquired:
-                return None
+                return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
             return self._intraday_opportunity_scan_body(ctx)
 
     def _carry_forward_macro(self) -> dict | None:
@@ -9465,7 +9512,7 @@ class TradingPipeline:
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
             return None
 
-    def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict | None:
+    def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
         Runs on the existing intra_check cadence — no new systemd timer,
@@ -9482,13 +9529,19 @@ class TradingPipeline:
         as a qualifying move in those symbols the same way a rally shows
         up in a long candidate — no separate bearish code path needed.
 
-        Returns None when nothing qualifies or when tech analysis produced
-        nothing usable. Otherwise a result dict mirroring the shape callers
-        of run_morning already expect (status/orders/run_id). Best-effort:
-        any failure degrades to None, never raises (the caller also wraps
-        this defensively) — a scan miss costs a possible trade; a scan
-        crash must never cost the loss-protection check that already ran
-        this tick.
+        Returns a status dict at every early-exit point — never a bare
+        None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
+        for the full rationale). "intraday_scan_lock_contended" when
+        `_another_session_recently_active` detects a concurrent session;
+        "intraday_scan_no_opportunity" for every other early return (no
+        snapshots, no qualifying moves, no ledgerable symbols, no usable
+        bars, no usable tech analysis). Past that point, a real result dict
+        mirroring the shape callers of run_morning already expect
+        (status/orders/run_id). Best-effort: any failure degrades to a
+        status dict, never raises (the caller also wraps this
+        defensively) — a scan miss costs a possible trade; a scan crash
+        must never cost the loss-protection check that already ran this
+        tick.
 
         The enabled-check and the process-level lock live in the
         `_run_intraday_opportunity_scan` wrapper; this is the body.
@@ -9502,12 +9555,12 @@ class TradingPipeline:
         # deliberately exempt from the wrapper script's cross-mode session
         # lock (for the circuit breaker), so this path must check itself.
         if self._another_session_recently_active(ctx.run_id):
-            return None
+            return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
 
         universe = list(self.config.trading.universe)
         snapshots = self.broker.get_intraday_snapshots(universe)
         if not snapshots:
-            return None
+            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
         candidates: list[tuple[str, float]] = []
         for symbol in universe:
@@ -9526,7 +9579,7 @@ class TradingPipeline:
             candidates.append((symbol, move_pct))
 
         if not candidates:
-            return None
+            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
         # Largest moves first, capped — bounded per-tick cost regardless of
         # how many symbols move on a broad market day; not a scan of
@@ -9563,7 +9616,7 @@ class TradingPipeline:
             )
         symbols = ledgered_symbols
         if not symbols:
-            return None
+            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
         symbols_data = []
         symbols_bars: dict[str, list] = {}
@@ -9588,7 +9641,7 @@ class TradingPipeline:
             symbols_data.append({"symbol": symbol, "bars": bars, "indicators": indicators})
             symbols_bars[symbol] = bars
         if not symbols_data:
-            return None
+            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
         ctx.symbols_bars = symbols_bars
 
         prior_macro_state: dict = {}
@@ -9683,7 +9736,7 @@ class TradingPipeline:
 
         if not analyses:
             logger.info("Intraday scan: tech_analyst returned no usable analyses this tick")
-            return None
+            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
         # Same shared chain morning uses — no separate PM/RM/gate logic.
         #
@@ -9873,14 +9926,12 @@ class TradingPipeline:
         try:
             # Same held-symbols-only scope as run_position_review — see the
             # comment there. No separate candidate list exists pre-fetch in
-            # this path.
-            held_symbols = [
-                str(getattr(p, "symbol", "")).strip().upper()
-                for p in positions if getattr(p, "qty", 0)
-            ]
+            # this path. `positions` here was already sweeper-split above,
+            # so _news_held_symbols' own split is a no-op; called anyway to
+            # keep this call site identical to the other two.
             evening_news, evening_news_coverage = self._run_news_update(
                 run_id, session="evening",
-                held_symbols=[s for s in held_symbols if s],
+                held_symbols=self._news_held_symbols(positions),
             )
         except PaidAnalysisSuspended as exc:
             self.db.insert_daily_pnl(

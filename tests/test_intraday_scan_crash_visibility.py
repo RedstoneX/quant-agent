@@ -28,6 +28,20 @@ This suite asserts the three cases are now distinguishable:
   - the scan ran and crashed (unhealthy — "intraday_scan_crashed")
 and that the non-negotiable guarantee survives: a crash never fails the
 tick, and the deterministic loss check runs regardless.
+
+2026-08-31 follow-up: the middle case above ("the scan never ran at all")
+was itself three different, still-mutually-indistinguishable situations —
+disabled by config, lock/session contention, and (a related but distinct
+gap) a scan that DID run but found nothing worth escalating. All four of
+`_run_intraday_opportunity_scan` / `_intraday_opportunity_scan_body`'s
+"nothing happened" early-return points now attach their own status instead
+of a bare None: "intraday_scan_disabled", "intraday_scan_lock_contended",
+and "intraday_scan_no_opportunity" — following exactly the pattern above
+for "intraday_scan_crashed". All three stay in the healthy set (unlike the
+crash status) and are silent on the Telegram feed (src/trader_feed.py's
+`_INTRADAY_SILENT_STATUSES`), same as the old no-key ticks were. The tests
+in the "never ran" section below were updated in place to assert the new
+explicit statuses rather than the absence of a key.
 """
 from __future__ import annotations
 
@@ -231,6 +245,15 @@ def test_deterministic_loss_protection_still_runs_when_scan_crashes():
 
 
 # ------------------------------------------------------------ never ran
+#
+# 2026-08-31 fix: these three used to collapse onto an absent
+# `intraday_scan` key — indistinguishable from each other AND from a scan
+# that ran and genuinely found nothing (the next section down). Each now
+# attaches its own explicit status, following the same pattern
+# "intraday_scan_crashed" established above. All three stay silent on the
+# Telegram feed (src/trader_feed.py's `_INTRADAY_SILENT_STATUSES`) — same
+# operator-facing behavior as before, now backed by real evidence instead
+# of an absent key.
 
 
 def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monkeypatch):
@@ -240,7 +263,9 @@ def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monk
     result = p.run_intra_check()
 
     assert result["status"] == "ok"
-    assert "intraday_scan" not in result
+    assert result["intraday_scan"] == {
+        "status": "intraday_scan_disabled", "run_id": result["run_id"],
+    }
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 
@@ -259,7 +284,9 @@ def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
         holder.close()
 
     assert result["status"] == "ok"
-    assert "intraday_scan" not in result
+    assert result["intraday_scan"] == {
+        "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
+    }
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 
@@ -279,8 +306,68 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     result = p.run_intra_check()
 
     assert result["status"] == "ok"
-    assert "intraday_scan" not in result
+    # Same status as literal process-lock contention above — both are
+    # "something else already owns this window" from the caller's
+    # perspective, one via the advisory flock, one via the DB-row guard.
+    assert result["intraday_scan"] == {
+        "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
+    }
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
+
+
+def test_the_four_no_new_activity_statuses_are_pairwise_distinguishable(
+    tmp_path, monkeypatch,
+):
+    """The whole point of the 2026-08-31 fix: disabled, lock-contended,
+    no-opportunity and crashed must be four different strings, not the same
+    value or the same missing key wearing different hats."""
+    _make_db(tmp_path, monkeypatch)
+
+    disabled = _pipeline(enabled=False)
+    disabled_status = disabled.run_intra_check()["intraday_scan"]["status"]
+
+    lock_held = _pipeline(enabled=True)
+    lock_path = Path(lock_held.config.storage.db_path).parent / ".intraday_scan.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = open(lock_path, "w")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        lock_status = lock_held.run_intra_check()["intraday_scan"]["status"]
+    finally:
+        holder.close()
+
+    no_opportunity = _pipeline(enabled=True, universe=("AAPL",))
+    no_opportunity.broker.get_intraday_snapshots.return_value = {}
+    no_opportunity_status = no_opportunity.run_intra_check()["intraday_scan"]["status"]
+
+    crashed = _pipeline(enabled=True)
+    crashed.broker.get_intraday_snapshots.side_effect = RuntimeError("boom")
+    crashed_status = crashed.run_intra_check()["intraday_scan"]["status"]
+
+    statuses = {disabled_status, lock_status, no_opportunity_status, crashed_status}
+    assert statuses == {
+        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity", "intraday_scan_crashed",
+    }
+    assert len(statuses) == 4, "all four outcomes must be distinct strings"
+
+
+def test_disabled_lock_and_no_opportunity_all_classify_as_healthy():
+    """The three new statuses must land in `_verdict`'s healthy set — they
+    are routine, not failures — unlike "intraday_scan_crashed"."""
+    from ops.rehearsal.report import _verdict
+
+    for status in (
+        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity",
+    ):
+        result = {
+            "status": "ok", "run_id": "r-health",
+            "intraday_scan": {"status": status, "run_id": "r-health"},
+        }
+        report = _rehearsal_collect(result)
+        assert report.status == status
+        assert _verdict(report) == "PASS", f"{status} must classify as healthy"
 
 
 # ------------------------------------------------------- ran, nothing found
@@ -399,3 +486,35 @@ def test_crashed_status_is_not_in_the_verdicts_healthy_set():
     healthy_line_start = src.index("healthy = {")
     healthy_block = src[healthy_line_start: src.index("}", healthy_line_start)]
     assert "intraday_scan_crashed" not in healthy_block
+
+
+def test_the_three_no_new_activity_statuses_are_in_the_rigs_vocabulary():
+    """Same requirement as the crash status above: each of the three new
+    healthy "nothing happened" statuses needs a plain-English explanation,
+    not the generic 'ended with status X' fallback."""
+    from ops.rehearsal.report import STATUS_PLAIN
+
+    for status in (
+        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity",
+    ):
+        assert status in STATUS_PLAIN
+        assert STATUS_PLAIN[status]
+
+
+def test_the_three_no_new_activity_statuses_are_in_the_verdicts_healthy_set():
+    """Mirror image of `test_crashed_status_is_not_in_the_verdicts_healthy_set`:
+    these three ARE routine, healthy outcomes and belong in the healthy set,
+    unlike "intraday_scan_crashed"."""
+    import inspect
+
+    from ops.rehearsal.report import _verdict
+
+    src = inspect.getsource(_verdict)
+    healthy_line_start = src.index("healthy = {")
+    healthy_block = src[healthy_line_start: src.index("}", healthy_line_start)]
+    for status in (
+        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity",
+    ):
+        assert status in healthy_block, f"{status} must be in _verdict's healthy set"

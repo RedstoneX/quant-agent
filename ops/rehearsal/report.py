@@ -163,6 +163,35 @@ STATUS_PLAIN = {
         "normally; only the new-opportunity discovery on top of that was lost "
         "for this tick."
     ),
+    # "intraday_scan_disabled" / "intraday_scan_lock_contended" /
+    # "intraday_scan_no_opportunity" (src/pipeline.py's
+    # `_run_intraday_opportunity_scan` / `_intraday_opportunity_scan_body`):
+    # 2026-08-31 fix, same pattern as "intraday_scan_crashed" above. Before
+    # this, these three everyday, healthy reasons a tick added no new
+    # activity — feature off, another scan/session already using this
+    # window, and a scan that ran and genuinely found nothing — all left NO
+    # `intraday_scan` key at all, indistinguishable from each other (though
+    # already distinguishable from a crash, which PR #163 fixed). Now each
+    # attaches its own status, nested at result["intraday_scan"]["status"]
+    # the same way every other intraday_scan outcome is. All three stay in
+    # `_verdict`'s healthy set below — nothing about them is a failure. As
+    # with "intraday_no_trades"/"intraday_executed", no current production
+    # replay contains an intraday_scan key yet, so this is unit-tested only
+    # (tests/test_intraday_scan_crash_visibility.py), not exercised by real
+    # historical data.
+    "intraday_scan_disabled": (
+        "The intra-session check's opportunity scan is turned off in "
+        "config, so it did not run this tick."
+    ),
+    "intraday_scan_lock_contended": (
+        "The intra-session check's opportunity scan did not run this tick "
+        "because another scan or trading session already had this window — "
+        "it will simply try again on the next tick."
+    ),
+    "intraday_scan_no_opportunity": (
+        "The intra-session check's opportunity scan ran and found nothing "
+        "worth acting on this tick."
+    ),
     # "early_close" (run_position_review, shared by run_midday/run_close —
     # src/pipeline.py:7806): a deliberate skip when the regular session had
     # already closed for the day by the time midday/close fired (half-day
@@ -664,37 +693,49 @@ def collect(
     # could mean the scan never attempted (config disabled, process locked,
     # another session recently active) OR that it crashed (exception caught
     # at src/pipeline.py's `run_intra_check`, scan_result set to None), and
-    # the rig had no way to tell which. That ambiguity is now closed: a
-    # crash no longer sets scan_result to None — it attaches a dict with
-    # status "intraday_scan_crashed" (see the STATUS_PLAIN entry above),
-    # which IS an `intraday_scan` dict, so this branch no longer fires for
-    # it. `collect()`'s nested-status extraction picks it up directly and
-    # `_verdict` reads it as FAIL.
+    # the rig had no way to tell which. A crash no longer sets scan_result to
+    # None — it attaches a dict with status "intraday_scan_crashed" (see the
+    # STATUS_PLAIN entry above), so this branch no longer fires for it.
     #
-    # What remains indistinguishable, and it is no longer a health question:
-    # among the paths that still leave no key at all, the rig (like
-    # production) cannot tell "never attempted" (disabled/locked/another
-    # session active) apart from "attempted and returned nothing at an
-    # early stage" (no qualifying price moves, no usable bars, no usable
-    # tech analysis — see `_intraday_opportunity_scan_body`'s early
-    # `return None` points). Both are healthy completions — neither is
-    # reported as a finding needing action — so this residual gap is about
-    # which flavor of "nothing happened" occurred, not whether the tick
-    # worked.
+    # UPDATE 2026-08-31: the "never attempted" vs "attempted and found
+    # nothing" ambiguity noted below is ALSO closed now. Disabled-by-config,
+    # lock/session contention, and a scan that ran and found nothing each
+    # attach their own status ("intraday_scan_disabled" /
+    # "intraday_scan_lock_contended" / "intraday_scan_no_opportunity" — see
+    # their STATUS_PLAIN entries) instead of leaving no key. `collect()`'s
+    # nested-status extraction picks each up directly and `_verdict` reads
+    # all three as PASS.
+    #
+    # What remains, and it is not a health question: `run_intra_check`'s
+    # belt-and-suspenders gate skips calling the scan entirely (never even
+    # reaching `_run_intraday_opportunity_scan`) when a daily-loss breach
+    # was detected but there were no positions to force-liquidate — a
+    # daily-loss breach must never add new risk, regardless of whether there
+    # happened to be something to force-close. That specific combination is
+    # the only production path left that can produce an "ok" top-level
+    # status with no `intraday_scan` key at all; it is exercised directly by
+    # tests/test_intraday_scan.py's
+    # test_run_intra_check_skips_scan_on_daily_loss_breach_even_with_no_positions,
+    # not by this finding.
     if session == "intra_check" and result and not isinstance(result.get("intraday_scan"), dict):
         report.findings.append({
             "kind": "intraday_scan_visibility_gap",
             "agent": "rig",
             "detail": (
-                "The intraday opportunity scan left no outcome in the result "
-                "this tick. This is a normal, healthy shape — either the scan "
-                "never attempted (disabled by config, process lock held, or "
-                "another session recently active) or it attempted and found "
-                "nothing worth escalating before reaching a paid analysis "
-                "call. A crash no longer looks like this: since the "
-                "2026-08-30 fix, a crashed scan attaches an "
-                "'intraday_scan_crashed' result and is reported as a FAIL, "
-                "not folded into this silent case."
+                "This intra_check tick has no `intraday_scan` key at all — "
+                "this fires whenever the top-level status is something "
+                "other than a scan-bearing 'ok' (e.g. the market was "
+                "closed, or the account hit its deterministic hard-stop "
+                "path) as well as for the one intraday-scan-specific case "
+                "left: a daily-loss breach detected with no positions to "
+                "force-liquidate, where run_intra_check's belt-and-"
+                "suspenders gate skips calling the scan outright rather "
+                "than risk adding new exposure on a breach day. As of the "
+                "2026-08-31 fix, every case where the scan itself actually "
+                "ran (disabled, lock/session contention, no opportunity "
+                "found, a real trade decision, or a crash) now attaches its "
+                "own status instead of leaving no key — this finding no "
+                "longer covers those."
             ),
         })
 
@@ -852,13 +893,20 @@ def _verdict(report: RehearsalReport) -> str:
     # "intraday_executed" are healthy completions of run_intra_check's
     # opportunity scan, now reachable in `report.status` via nested extraction
     # from result["intraday_scan"]["status"] in collect() — see the
-    # STATUS_PLAIN comment and the nested extraction logic for details. See
-    # the matching STATUS_PLAIN entries above for how each was confirmed
-    # against src/pipeline.py and against production's own trader_feed.py /
-    # notifier.py status groupings.
+    # STATUS_PLAIN comment and the nested extraction logic for details.
+    # "intraday_scan_disabled" / "intraday_scan_lock_contended" /
+    # "intraday_scan_no_opportunity" (2026-08-31) are the same opportunity
+    # scan's three everyday no-new-activity outcomes — off in config, another
+    # scan/session already using the window, or ran and found nothing — and
+    # belong here for the same reason: none of them is a failure.
+    # "intraday_scan_crashed" is deliberately excluded — see its STATUS_PLAIN
+    # entry. See the matching STATUS_PLAIN entries above for how each was
+    # confirmed against src/pipeline.py and against production's own
+    # trader_feed.py / notifier.py status groupings.
     healthy = {
         "executed", "no_orders", "no_trades", "market_holiday", "early_close",
         "reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed",
-        "nothing_new", "preprocessed",
+        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity", "nothing_new", "preprocessed",
     }
     return "PASS" if report.status in healthy else "FAIL"
