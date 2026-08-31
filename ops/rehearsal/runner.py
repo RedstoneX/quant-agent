@@ -180,6 +180,12 @@ def _sentinel_credentials():
             os.environ["QAMC_REHEARSAL"] = previous_rehearsal
 
 
+# Placeholder for the pricing-cache note's reserved slot in `run_rehearsal`'s
+# notes list. It is overwritten before the list is read; if this string ever
+# reaches a report, the fill-in below `build_rehearsal_config` was skipped.
+_PENDING_NOTE = "pricing-cache note not built"
+
+
 def build_rehearsal_config(sandbox, *, base_settings: Path | None = None,
                            overrides: dict | None = None):
     """Write a sandbox settings.yaml and load it through the real loader.
@@ -263,7 +269,16 @@ def run_rehearsal(
     age_note = apply_pricing_cache_age(sandbox, pricing_cache_age_hours)
     if age_note:
         notes.append(age_note)
-    notes.append(_pricing_cache_note(sandbox))
+    # The pricing-cache note quotes the grace window this rehearsal actually
+    # ran under, which only exists once `build_rehearsal_config` below has
+    # written the sandbox's own config/settings.yaml. Built here, it read a
+    # file that did not exist yet, fell through `_pricing_grace_hours`'s
+    # except clause, and reported "0h grace" on every rehearsal regardless of
+    # the real setting -- misdescribing any rehearsal running inside the
+    # grace band. Its place in the ordering is reserved now and filled in
+    # below, so the note keeps its position without being built too early.
+    pricing_note_index = len(notes)
+    notes.append(_PENDING_NOTE)
 
     library = ResponseLibrary.from_database(str(sandbox.db_path), run_id=replay_run)
     if not library.available():
@@ -290,6 +305,9 @@ def run_rehearsal(
         config = build_rehearsal_config(
             sandbox, base_settings=base_settings, overrides=config_overrides,
         )
+        # Now that the sandbox carries its own settings.yaml, the note can
+        # state the real grace window instead of guessing at it.
+        notes[pricing_note_index] = _pricing_cache_note(sandbox)
         checks = assert_isolated(sandbox, config, production_db=production_db)
 
         stack.enter_context(_metered_agents())
@@ -437,16 +455,35 @@ def _pricing_cache_note(sandbox) -> str:
 def _pricing_grace_hours(sandbox) -> float:
     """The configured grace window, read from the sandbox's own settings so
     the note describes the policy this rehearsal actually ran under rather
-    than a number written here by hand."""
+    than a number written here by hand.
+
+    Raises when the sandbox has no settings.yaml at all. That is not a
+    policy question with a safe default — it is the caller running before
+    `build_rehearsal_config` wrote the file, which is exactly the bug this
+    guard exists to stop coming back: the old code caught it in the `except`
+    below and reported "0h grace" on every rehearsal, indistinguishable from
+    a genuinely configured zero. A rehearsal harness that quietly misstates
+    the policy it ran under is worse than one that stops.
+    """
+    settings = sandbox.root / "config" / "settings.yaml"
+    if not settings.is_file():
+        raise RuntimeError(
+            f"{settings} does not exist yet — the pricing-cache note quotes "
+            "the configured grace window and must be built after "
+            "build_rehearsal_config has written the sandbox's settings. "
+            "Reporting a fallback here would silently misdescribe the policy "
+            "this rehearsal ran under."
+        )
     try:
         import yaml
-        cfg = yaml.safe_load((sandbox.root / "config" / "settings.yaml").read_text())
+        cfg = yaml.safe_load(settings.read_text())
         return float(
             (cfg.get("llm_cost_circuit") or {}).get(
                 "openrouter_pricing_grace_period_hours", 0.0
             )
         )
     except Exception:
-        # Unknown grace means describe the strict policy — never claim more
-        # tolerance than we can prove is configured.
+        # The file exists but carries no readable value: describe the strict
+        # policy — never claim more tolerance than we can prove is
+        # configured.
         return 0.0

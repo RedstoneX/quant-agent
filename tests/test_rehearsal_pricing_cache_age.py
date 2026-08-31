@@ -227,6 +227,87 @@ def test_a_requested_age_inside_the_grace_band_still_reports_as_stale(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# The note has to describe the policy the rehearsal actually ran under
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT (recorded as open defect "rehearsal-pricing-note-always-zero-
+# grace"). `run_rehearsal` built the pricing-cache note BEFORE
+# `build_rehearsal_config` wrote the sandbox's own config/settings.yaml. So
+# `_pricing_grace_hours` read a file that did not exist yet, its `except`
+# clause fired, and the note reported "0h grace" on every rehearsal ever run
+# — indistinguishable from a genuinely configured zero. A rehearsal actually
+# running inside the grace band was described as one that could not be.
+#
+# Every test above this point wrote the settings file by hand first, which is
+# precisely why none of them ever saw it: they exercised the helper in an
+# order `run_rehearsal` never used.
+
+
+def test_a_sandbox_with_no_settings_refuses_to_guess_at_the_grace_window(
+    tmp_path,
+):
+    """The silent fallback that made the defect invisible is now a stop.
+
+    A missing sandbox settings.yaml is not a policy question with a safe
+    default — it means the note is being built before the config exists,
+    which is the defect itself. Reporting "0h" for it is the harness lying
+    about the policy it ran under, and that is the one thing this file must
+    never do.
+    """
+    from ops.rehearsal.runner import _pricing_cache_note, apply_pricing_cache_age
+
+    sandbox = _sandbox(tmp_path / "sandbox", cache_age_hours=1.0)
+    apply_pricing_cache_age(sandbox, 30.0)  # inside a 24h grace band
+    assert not (sandbox.root / "config" / "settings.yaml").exists()
+
+    with pytest.raises(RuntimeError, match="build_rehearsal_config"):
+        _pricing_cache_note(sandbox)
+
+
+def test_the_grace_window_is_read_once_the_sandbox_config_exists(tmp_path):
+    """The same 30h cache, once the config is written, reads as the grace-band
+    note it always should have been — with the real number in it."""
+    from ops.rehearsal.runner import _pricing_cache_note, apply_pricing_cache_age
+
+    sandbox = _sandbox(tmp_path / "sandbox", cache_age_hours=1.0)
+    apply_pricing_cache_age(sandbox, 30.0)
+    _write_grace_config(sandbox)
+
+    note = _pricing_cache_note(sandbox)
+    assert "grace window" in note
+    assert f"{GRACE_HOURS:.0f}h grace window" in note
+    assert "0h grace" not in note
+
+
+def test_run_rehearsal_builds_the_pricing_note_after_the_sandbox_config():
+    """The ordering, pinned where it broke.
+
+    The two tests above prove the helper is honest once its input exists;
+    this one proves `run_rehearsal` gives it that input first. Asserted on
+    the source because the defect was purely one of order — both call sites
+    were individually correct, and only their sequence was wrong. This is the
+    same check `docs/phases.yaml` recorded by hand as the defect's re-check
+    command.
+    """
+    import inspect
+
+    from ops.rehearsal import runner
+
+    src = inspect.getsource(runner.run_rehearsal).splitlines()
+    built_config = next(
+        i for i, line in enumerate(src) if "build_rehearsal_config(" in line
+    )
+    built_note = next(
+        i for i, line in enumerate(src) if "_pricing_cache_note(sandbox)" in line
+    )
+    assert built_note > built_config, (
+        "run_rehearsal builds the pricing-cache note before writing the "
+        "sandbox's settings.yaml — _pricing_grace_hours will have no file to "
+        "read and the note will misstate the grace window"
+    )
+
+
+# ---------------------------------------------------------------------------
 # It must never be able to reach the production file
 # ---------------------------------------------------------------------------
 

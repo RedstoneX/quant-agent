@@ -318,22 +318,28 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
   where every trading session proves the alert path as part of its own run, is
   unfinished on an open draft pull request.
 
-**Closed (2026-08-31, later still):** the mid-day failure outcome that would
-have shown a raw internal code now explains itself in plain English. The
-safety-net test that found it is back to tracking nothing, which is the state
-it is meant to be kept in — anything parked in it is a defect deferred in
-writing.
+**Closed (2026-08-31, later still):**
+
+- The mid-day failure outcome that would have shown a raw internal code now
+  explains itself in plain English. The safety-net test that found it is back
+  to tracking nothing, which is the state it is meant to be kept in — anything
+  parked in it is a defect deferred in writing.
+- The offline rehearsal tool no longer misreports how much slack the price-list
+  safeguard has. **This was recorded as cosmetic and it was not.** It was
+  checked before the setting was available, so it always read "none" — which
+  meant the tool told the reader the desk would refuse to run any paid analysis
+  in exactly the situation where the desk would in fact have run normally. The
+  opposite verdict, not a wrong number. The silent guess that hid it is now a
+  hard stop: asked before it can know, the tool refuses to answer rather than
+  making something up.
 
 **Still open, ranked by consequence:**
 
-1. A cosmetic bug in the rehearsal tool: a note about how much slack the
-   price-list safeguard has always reads as "none," regardless of the real
-   setting, because it is checked before that setting is available.
-2. A leftover scheduled job still points at a folder from the project's original
+1. A leftover scheduled job still points at a folder from the project's original
    owner instead of this one. A fix is written and passing on an open pull
    request, not yet merged.
-3. A setup guide referenced by one internal file does not exist.
-4. Unchanged: full wire-service news coverage still needs a paid subscription
+2. A setup guide referenced by one internal file does not exist.
+3. Unchanged: full wire-service news coverage still needs a paid subscription
    the owner has already declined. Not a defect — a closed question.
 
 **Open pull requests carrying unfinished work:** bringing every one of the
