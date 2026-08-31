@@ -4,19 +4,20 @@ import { AccountResponse, HealthResponse } from "../api/client";
 function healthColor(health: HealthResponse | null): { dot: string; label: string } {
   if (!health) return { dot: "bg-dim", label: "health unavailable" };
   if (!health.db_reachable) return { dot: "bg-neg", label: "database unreachable" };
-  // Ranked directly under "the database is gone" and above everything
-  // else on purpose: every other fault on this board is reported to the
+  // Ranked directly under "the database is gone" and above every other
+  // FAULT on purpose: every other fault on this board is reported to the
   // operator over Telegram, so a dead alert channel hides all of them.
   // This banner is the only place a fully-dead channel can still say so.
+  //
+  // Only the two RED states are ranked here. `unknown` is a missing
+  // measurement, not a detected fault, and is ranked far below — see the
+  // note further down.
   const channel = health.alert_channel;
   if (channel?.status === "broken") {
     return { dot: "bg-neg", label: "ALERT CHANNEL BROKEN — alarms reach nobody" };
   }
   if (channel?.status === "stale") {
     return { dot: "bg-neg", label: "alert channel unverified — no recent check" };
-  }
-  if (!channel || channel.status === "unknown") {
-    return { dot: "bg-warn", label: "alert channel never verified" };
   }
   if (health.broker_reachable === false) return { dot: "bg-warn", label: "broker unreachable" };
   if (health.broker_reachable === null) return { dot: "bg-warn", label: "broker not configured" };
@@ -32,6 +33,17 @@ function healthColor(health: HealthResponse | null): { dot: string; label: strin
   }
   if ((circuit?.active_quota_holds?.length ?? 0) > 0) {
     return { dot: "bg-warn", label: "scoped paid-analysis quota hold — other sessions eligible" };
+  }
+  // A channel nothing has ever checked (fresh database, or a deploy that
+  // has not run a session yet). Amber and ranked BELOW every detected
+  // fault, deliberately: "we have not measured this" must never mask a
+  // broker that is actually unreachable or a safety circuit that is
+  // actually down. It still outranks the green states, because rendering
+  // an unmeasured channel as "all systems reachable" is the exact lie this
+  // whole feature exists to remove. Matches `/health`, which also declines
+  // to flip the board red on `unknown`.
+  if (!channel || channel.status === "unknown") {
+    return { dot: "bg-warn", label: "alert channel never verified" };
   }
   if (circuit?.recent_recovery) {
     return { dot: "bg-pos", label: "paid analysis rearmed — checks passed" };

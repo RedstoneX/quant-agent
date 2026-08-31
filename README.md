@@ -244,8 +244,6 @@ chmod 600 .env
 
   **Proving the channel still works.** `scripts/telegram_test.py` answers this on demand; `scripts/alert_heartbeat.py` answers it on a schedule and records the answer — see [Proving the alert channel is alive](#proving-the-alert-channel-is-alive).
 
-- `ALERT_HEARTBEAT_HEALTHCHECK_URL` — optional out-of-band dead-man's switch for the alerting heartbeat. Point it at a healthchecks.io-style check (free tier) and the daily probe pings it on success and `<url>/fail` on failure, so a dead Telegram channel alerts from a host that is not this one. Unset by default and a no-op when absent. Deliberately separate from the sessions' `HEALTHCHECKS_URL`: sharing one check across many jobs pins it green and defeats it.
-
 ### Production deployment
 
 Either OS-level scheduler can drive the 6 sessions; both wrap `scripts/run_if_et_window.sh` so the actual ET-window / last-run / cross-mode-lock logic is shared.
@@ -334,18 +332,32 @@ The **deploy-drift check** runs Mon-Fri 08:45 ET — `scripts/systemd/quant-agen
 
 ### Proving the alert channel is alive
 
-Every alarm here is a Telegram message. Nothing used to check that a Telegram message could still be sent, so **"no alert arrived" meant both "nothing is wrong" and "the alarm is broken"** — a present-but-revoked token, a wrong chat id, a blocked bot, or a new egress rule are all invisible to a credentials check and fatal to a send. Two timers close that:
+Every alarm here is a Telegram message. Nothing used to check that a Telegram message could still be sent, so **"no alert arrived" meant both "nothing is wrong" and "the alarm is broken"** — a present-but-revoked token, a wrong chat id, a blocked bot, or a new egress rule are all invisible to a credentials check and fatal to a send.
 
-| Unit | When | What it does |
+**The sessions are the watchdog.** The desk already runs five to six sessions every weekday and every one of them ends by pushing a Telegram message, so every session now exercises the whole alert path end to end first — one real message with `disable_notification`, deleted immediately afterwards (`TelegramNotifier.probe`, reused not reimplemented) — and writes the verdict to SQLite. The thing that depends on the alarm is the thing that tests it: no new schedule, no new credential, no new dependency, no LLM call. On a weekday that is roughly twenty checks, one every half hour or so while the market is open. `src/alert_watchdog.py` owns the design and the reasoning.
+
+**Where the answer appears when Telegram is the thing that is broken.** The verdict goes to the `alert_channel_checks` table, and Mission Control's `/health` renders it as a four-state `alert_channel`:
+
+| status | meaning | Mission Control |
 |---|---|---|
-| `quant-agent-alert-heartbeat.timer` | 06:15 ET, **every day** | Sends a real message through the real notifier with `disable_notification`, then deletes it. Records the verdict in `data/alerting/heartbeat.json` (gitignored). Sends you **nothing** on success; exits non-zero on failure so the unit shows failed. |
-| `quant-agent-alert-digest.timer` | **Sundays 17:00 ET** | The one routine message this desk sends on purpose. Its content is the week's probe record; its arrival is the point. |
+| `ok` | the last check sent a real message and it arrived | green |
+| `broken` | the last check **failed** — alarms reach nobody | **red, `/health.status` = degraded** |
+| `stale` | the last success is older than 26h — the checks themselves stopped | **red, degraded** |
+| `unknown` | no check has ever been recorded (fresh DB, pre-upgrade) | amber, stated in words, **never "ok"** |
 
-Install both the same way: `cp scripts/systemd/quant-agent-alert-*.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-alert-heartbeat.timer quant-agent-alert-digest.timer`. Run by hand with `scripts/run_alert_heartbeat.sh`, `scripts/run_alert_heartbeat.sh --digest`, or `python scripts/alert_heartbeat.py --status` (prints the record, sends nothing).
+`TopStrip` ranks a broken alert channel directly under "database unreachable" and above everything else, because every other fault on that board is reported over the same Telegram path — a dead channel hides all of them.
 
-Daily rather than hourly because the alert path breaks for structural reasons — a rotated credential, a deleted chat, a firewall rule — none of which arrive on a minute scale; daily bounds "how long can the alarm be dead before the box knows" at 24h. Weekly rather than daily for the digest because a routine "still alive" every morning is a message you learn to swipe away, and a confirmation nobody reads is worth what no confirmation is worth.
+**Silent on success.** A healthy channel produces zero messages. Only two things are ever said: the channel just failed its check (forced out even from sessions whose noise policy is normally silent — a probe can fail at a stage an ordinary send survives), and the channel just **recovered**, carrying how many checks failed and when it last worked. That recovery line is the one signal that reaches you without your having to go and look.
 
-**The bootstrap limit, stated plainly:** if the channel is what is broken, no message over it can report that. So the weekly digest is a standing appointment and its *absence* is the alarm — the message says so in its own body every week. On the box, detection is same-day (the daily record plus a failed unit); to you, without an out-of-band channel, it is up to seven days. Setting `ALERT_HEARTBEAT_HEALTHCHECK_URL` in `.env` to a healthchecks.io-style check (free tier) closes that gap by alerting from a host that is not this one over a path that is not Telegram. It is supported and **not currently configured**. It is deliberately a separate variable from the sessions' `HEALTHCHECKS_URL`: sharing one dead-man's check across many jobs pins it green and defeats it.
+| Unit | When | What it adds |
+|---|---|---|
+| `quant-agent-alert-heartbeat.timer` | 06:15 ET, **every day including weekends** | The floor under the staleness threshold, not the primary mechanism. Sessions only run Mon-Fri, so without a weekend check "no successful check in 26h" would fire every Saturday and get switched off. It also covers the one thing sessions structurally cannot report: every session failing to start at all. |
+
+Install: `cp scripts/systemd/quant-agent-alert-heartbeat.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-alert-heartbeat.timer`. Run by hand with `scripts/run_alert_heartbeat.sh`, or `python scripts/alert_heartbeat.py --status` (prints the record, sends nothing).
+
+**Detection latency.** A weekday break is caught within about 30 minutes — the next `intra_check` tick. A break on a Friday evening, after the week's last session, is caught by the Saturday 06:15 ET probe, roughly 9 hours later; the Saturday, Sunday and Monday 06:15 ET probes all land before Monday's first session (08:00 ET earnings pre-process) and well before the open. Every figure is time-to-**recorded-and-rendered**, not time-to-push: on a fully dead channel nothing can push, and Mission Control plus the systemd journal are where the answer appears.
+
+**The bootstrap limit, stated plainly.** Two failure modes, deliberately not conflated. **(A)** The channel is broken while the box is alive — revoked token, wrong chat id, blocked bot, egress rule, a unit that never sourced `.env`. This is the likely failure, it is fully detectable from inside the box, and it is what everything above covers. **(B)** The box itself is dead, off or unreachable. Nothing running on the box can report that, and no local engineering changes it. An out-of-band ping to an external monitoring service would cover (B); that dependency was **refused outright** — this desk does not rely on an outside service to know its own alarm works — so the hook was deleted rather than left switched off, and a test keeps it gone. **If the box dies, you find out when you next look.** That is not fixed here and nothing in this design quietly pretends otherwise.
 
 ## Trading Universe
 

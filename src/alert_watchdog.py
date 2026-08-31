@@ -28,10 +28,11 @@ to be the signal — i.e. up to seven days of undetected breakage).
   (B) THE BOX ITSELF IS DEAD, OFF, OR UNREACHABLE. By definition nothing
       running on the box can report this. No amount of local engineering
       solves it and this module does not pretend to. See README's
-      "Proving the alert channel is alive" for what is and is not covered,
-      and `scripts/alert_heartbeat.py::ping_healthcheck` for the dormant,
-      unconfigured out-of-band hook that would cover it if the owner ever
-      wants an external dependency.
+      "Proving the alert channel is alive" for what is and is not covered.
+      An out-of-band ping to an external monitoring service would cover it;
+      the owner refused that dependency outright, so the gap is stated
+      rather than closed, and no dormant hook is left lying around to be
+      switched on by mistake.
 
 THE MECHANISM FOR (A): THE THING THAT DEPENDS ON THE ALARM TESTS IT
 -------------------------------------------------------------------

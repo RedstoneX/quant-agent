@@ -683,3 +683,129 @@ def test_the_watchdog_uses_the_notifiers_own_probe(db, telegram_env):
     ) as probe:
         alert_watchdog.verify_alert_channel(notifier, source="close")
     probe.assert_called_once_with()
+
+
+# ===========================================================================
+# 10. THE WATCHDOG MUST NEVER COST A TRADING DAY
+# ===========================================================================
+#
+# This runs inside every session, on the trading path, against a third-party
+# endpoint the desk does not control. The failure that would make the whole
+# feature a net negative is not a missed detection — it is a session that
+# ran late or died because api.telegram.org went slow.
+#
+# `TelegramNotifier.probe` never raises on transport (it catches and returns
+# ProbeResult(ok=False, stage="transport")) and every request it makes is
+# bounded by `HTTP_TIMEOUT_S`. These tests hold both properties down.
+
+def test_every_probe_request_is_bounded_by_a_timeout(telegram_env):
+    """The structural guarantee: no socket the watchdog opens can hang.
+
+    Without a timeout `requests` waits forever, and a hung probe inside
+    `main.py`'s finally block would wedge a trading session until systemd's
+    own kill timer — which is minutes, not seconds.
+    """
+    assert TelegramNotifier.HTTP_TIMEOUT_S > 0
+    assert TelegramNotifier.HTTP_TIMEOUT_S <= 15, (
+        f"HTTP_TIMEOUT_S={TelegramNotifier.HTTP_TIMEOUT_S}s is too long to sit "
+        "on the trading path"
+    )
+
+    with patch("src.notifier.requests.post") as post:
+        post.side_effect = _healthy_transport()
+        TelegramNotifier().probe()
+
+    assert post.call_count == 2, "expected exactly sendMessage + deleteMessage"
+    for call in post.call_args_list:
+        timeout = call.kwargs.get("timeout")
+        assert timeout is not None, "a probe request went out with no timeout"
+        assert 0 < timeout <= 15, timeout
+
+
+def test_a_hanging_telegram_endpoint_cannot_stall_or_fail_a_session(
+    tmp_path, monkeypatch, telegram_env,
+):
+    """The load-bearing safety test: Telegram goes dark and the session is
+    unaffected except for being told the alarm is down.
+
+    Stands in for an endpoint that accepts the connection and never answers.
+    `requests` gives up at its timeout and raises; the probe catches it,
+    calls the channel broken, and the session finishes normally. A session
+    that raised, hung, or exited non-zero here would mean the watchdog can
+    cost a trading day, which is a worse defect than the one it fixes.
+    """
+    import time
+
+    import requests as requests_mod
+
+    calls: list[float] = []
+
+    def hangs_then_times_out(*args, **kwargs):
+        # A real hang ends in requests raising at `timeout`; the sleep keeps
+        # the test honest about elapsed time without waiting 5s per call.
+        assert kwargs.get("timeout"), "a request went out unbounded"
+        calls.append(time.monotonic())
+        time.sleep(0.05)
+        raise requests_mod.exceptions.ReadTimeout("simulated hang")
+
+    started = time.monotonic()
+    with patch("src.notifier.requests.post", side_effect=hangs_then_times_out):
+        # No pytest.raises: the session must complete, not survive an error.
+        db_path = _run_session(monkeypatch, tmp_path, mode="intra_check")
+    elapsed = time.monotonic() - started
+
+    assert calls, "the watchdog never even tried the channel"
+    # Bounded work, not an unbounded retry loop against a dead endpoint.
+    assert len(calls) <= 4, f"{len(calls)} requests against a hanging endpoint"
+    assert elapsed < 5, f"the session stalled for {elapsed:.1f}s on Telegram"
+
+    # And the outage was still detected, recorded and attributed correctly.
+    health = alert_watchdog.read_health(db_path)
+    assert health.status == "broken"
+    assert health.last_stage == "transport"
+
+
+def test_a_slow_endpoint_delays_a_session_by_at_most_its_timeout(telegram_env):
+    """Worst case is bounded arithmetic, not a hope.
+
+    A probe is two sequential requests, each capped at HTTP_TIMEOUT_S, so
+    the most a totally unresponsive Telegram can add to a session is
+    2 x HTTP_TIMEOUT_S. At 5s that is 10s on a session budgeted in minutes.
+    """
+    worst_case = 2 * TelegramNotifier.HTTP_TIMEOUT_S
+    assert worst_case <= 30, (
+        f"worst-case watchdog delay is {worst_case}s — too much to add to a "
+        "session on the trading path"
+    )
+
+
+def test_a_watchdog_that_hangs_cannot_block_the_sessions_own_alert(
+    tmp_path, monkeypatch, telegram_env,
+):
+    """Ordering: the session's own message still goes out after a dead probe.
+
+    The watchdog runs before the session pushes its result. If a failed or
+    slow probe could swallow that push, a bad watchdog would silence the
+    reporting it was added to protect.
+    """
+    import requests as requests_mod
+
+    sent: list[str] = []
+    state = {"probe_calls": 0}
+
+    def transport(*args, **kwargs):
+        # Call 1 is the probe's sendMessage — it hangs, so the probe never
+        # reaches its deleteMessage. Everything after is the session's own
+        # push, which must still get through.
+        state["probe_calls"] += 1
+        if state["probe_calls"] == 1:
+            raise requests_mod.exceptions.ReadTimeout("probe hangs")
+        sent.append(kwargs.get("json", {}).get("text", ""))
+        return _response(200, {"ok": True, "result": {"message_id": 7}})
+
+    with patch("src.notifier.requests.post", side_effect=transport):
+        db_path = _run_session(monkeypatch, tmp_path, mode="intra_check")
+
+    assert alert_watchdog.read_health(db_path).status == "broken"
+    assert sent, "the session's own message never left after a hanging probe"
+    assert any("ALERT CHANNEL FAILED" in text for text in sent)

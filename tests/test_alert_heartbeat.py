@@ -662,88 +662,66 @@ def test_status_prints_the_record_and_transmits_nothing(wrapper_env, state_path)
     assert mock_post.call_count == 0
 
 
-def test_the_out_of_band_switch_is_dormant_and_off_by_default(monkeypatch):
-    """DORMANT, not primary. The likely failure — the channel breaking while
-    the box runs — is covered locally by the sessions with no outside
-    dependency. This hook only addresses the box itself dying, which nothing
-    on the box can report, and turning it on means accepting a third-party
-    service. That is the owner's call, so the default is off."""
+def test_the_external_monitoring_hook_is_gone_and_must_stay_gone():
+    """REJECTED DESIGN, removed rather than switched off.
+
+    An earlier version pinged a healthchecks.io-style URL on success and
+    `/fail` on failure, so a dead Telegram channel would alert from a host
+    that is not this one. The owner refused the dependency outright: this
+    desk does not rely on an outside service to know its own alarm works.
+
+    It was deleted rather than left dormant because a rejected design
+    sitting unused in the repo is exactly how it gets switched on later by
+    someone who reads the env var and assumes it is supported. Same
+    treatment as the weekly digest above, for the same reason.
+    """
     import scripts.alert_heartbeat as hb
 
-    monkeypatch.delenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", raising=False)
-    with patch("requests.get") as mock_get:
-        hb.ping_healthcheck()
-    assert mock_get.call_count == 0
+    assert not hasattr(hb, "ping_healthcheck")
+    assert not hasattr(hb, "deadman_state")
 
-    monkeypatch.setenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", "https://hc.invalid/abc")
-    with patch("requests.get") as mock_get:
-        hb.ping_healthcheck("/fail")
-    assert mock_get.call_args.args[0] == "https://hc.invalid/abc/fail"
+    source = (PROJECT_ROOT / "scripts" / "alert_heartbeat.py").read_text()
+    body = source.split('"""', 2)[-1]  # ignore the docstring that explains the removal
+    for banned in ("ALERT_HEARTBEAT_HEALTHCHECK_URL", "hc-ping", "healthchecks.io"):
+        assert banned not in body, f"{banned} came back into the executable body"
 
 
-def test_an_unconfigured_switch_never_reads_as_a_working_one(monkeypatch):
-    """"Not configured" rendered as blank reads as "fine". Wherever health
-    is printed it has to say so in words."""
-    import scripts.alert_heartbeat as hb
+def test_the_probe_contacts_nothing_but_telegram(wrapper_env, state_path, monkeypatch):
+    """The whole network budget for a probe is Telegram and nothing else.
 
-    monkeypatch.delenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", raising=False)
-    assert "NOT CONFIGURED" in hb.deadman_state()
-    _, text = hb.run_status()
-    assert "NOT CONFIGURED" in text
-
-    monkeypatch.setenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", "https://hc.invalid/abc")
-    assert "NOT CONFIGURED" not in hb.deadman_state()
-
-
-def test_a_hanging_monitoring_endpoint_cannot_stall_or_fail_the_probe(
-    wrapper_env, state_path, monkeypatch,
-):
-    """A dormant hook that can wedge the job it monitors is worse than no
-    hook. Bounded by a timeout, and every failure swallowed."""
-    import time as _time
-
-    import requests as _requests
-
+    Asserted at the transport boundary rather than by reading the source:
+    any outbound GET at all — to a monitoring service or anywhere else —
+    fails this test.
+    """
     import scripts.alert_heartbeat as hb
 
     monkeypatch.setenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", "https://hc.invalid/abc")
-    seen: dict[str, object] = {}
+    monkeypatch.setenv("HEALTHCHECKS_URL", "https://hc.invalid/sessions")
 
-    def _hangs(url, timeout=None, **kwargs):
-        # Stands in for an endpoint that never answers: `requests` gives up
-        # at `timeout` and raises. If no timeout were passed this would hang
-        # the trading box's systemd unit until its own kill timer.
-        seen["timeout"] = timeout
-        _time.sleep(0.2)
-        raise _requests.exceptions.ReadTimeout("simulated hang")
-
-    started = _time.monotonic()
-    with patch("src.notifier.requests.post") as mock_post:
+    with patch("requests.get") as mock_get, patch("src.notifier.requests.post") as mock_post:
         mock_post.side_effect = [
             _response(200, {"ok": True, "result": {"message_id": 1}}),
             _response(200, {"ok": True, "result": True}),
         ]
-        with patch("requests.get", side_effect=_hangs):
-            assert hb.main([]) == 0, "a hanging monitor must not fail the job"
-    elapsed = _time.monotonic() - started
+        assert hb.main([]) == 0
 
-    assert seen["timeout"] is not None, "the ping must be bounded by a timeout"
-    assert seen["timeout"] <= 10, seen["timeout"]
-    assert elapsed < 5, f"the probe stalled for {elapsed:.1f}s on the monitor"
-    # And the real verdict is unaffected by the monitor's failure.
-    assert hb.load_state(state_path)["last_ok"]
+    assert mock_get.call_count == 0, "the probe reached out to a third-party service"
+    urls = [call.args[0] for call in mock_post.call_args_list]
+    assert all("api.telegram.org" in url for url in urls), urls
 
 
-def test_the_out_of_band_switch_is_separate_from_the_sessions_one(monkeypatch):
-    """run_if_et_window.sh already documents why sharing one dead-man's
-    check across many jobs pins it green and defeats its purpose."""
+def test_the_status_output_promises_no_out_of_band_cover(wrapper_env, state_path):
+    """`--status` must not imply anything outside this box is watching.
+
+    The removed hook used to print an "out-of-band switch" line here. With
+    it gone the line must be gone too — a status page that still named an
+    external switch would describe cover that does not exist.
+    """
     import scripts.alert_heartbeat as hb
 
-    monkeypatch.delenv("ALERT_HEARTBEAT_HEALTHCHECK_URL", raising=False)
-    monkeypatch.setenv("HEALTHCHECKS_URL", "https://hc.invalid/sessions")
-    with patch("requests.get") as mock_get:
-        hb.ping_healthcheck()
-    assert mock_get.call_count == 0
+    _, text = hb.run_status()
+    assert "out-of-band" not in text.lower()
+    assert "durable record" in text.lower()
 
 
 # ===========================================================================

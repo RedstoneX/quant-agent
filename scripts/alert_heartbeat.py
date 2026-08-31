@@ -38,6 +38,23 @@ seven days before anyone notices is not monitored. The durable check history
 plus the Mission Control red state replaced it; the operator now hears
 nothing at all until something is actually wrong.
 
+NO EXTERNAL MONITORING SERVICE
+------------------------------
+An earlier version carried a dormant `ALERT_HEARTBEAT_HEALTHCHECK_URL` hook
+that would ping a healthchecks.io-style check on success and `/fail` on
+failure. The owner refused that outright: this desk does not depend on an
+outside service to know whether its own alarm works. The hook is gone
+rather than left switched off, because a rejected design sitting unused in
+the repo is how it gets turned on by mistake later — and a test asserts it
+stays gone.
+
+The consequence is stated plainly rather than worked around: if the BOX
+itself dies, nothing running on the box reports it, and no local
+engineering can change that. This script and `src/alert_watchdog.py` cover
+the channel breaking while the box runs, which is the likely failure and is
+fully detectable from here. They do not cover the box being dead, and they
+do not pretend to.
+
 TWO RECORDS, TWO JOBS
 ---------------------
   * SQLite `alert_channel_checks` — the durable record. What Mission
@@ -202,52 +219,6 @@ def failure_text(stage: str, detail: str) -> str:
     )
 
 
-def ping_healthcheck(suffix: str = "") -> None:
-    """DORMANT out-of-band hook. Unconfigured, and a no-op until it is not.
-
-    NOT the primary mechanism, and deliberately not enabled. The alert
-    channel breaking while the box runs (`src/alert_watchdog.py` case A) is
-    covered locally, by the sessions, with no outside dependency. This hook
-    only addresses case B — the box itself being dead — which nothing
-    running on the box can report, and which is currently UNCOVERED.
-
-    Turning it on means accepting a dependency on a third-party service.
-    That is the owner's call, not this script's default, so it stays off:
-    with `ALERT_HEARTBEAT_HEALTHCHECK_URL` unset this function does nothing
-    at all and nothing on the box changes.
-
-    Deliberately a SEPARATE variable from the sessions' HEALTHCHECKS_URL:
-    run_if_et_window.sh already documents why sharing one check across many
-    jobs pins it green and defeats the purpose.
-    """
-    url = os.environ.get("ALERT_HEARTBEAT_HEALTHCHECK_URL", "").strip()
-    if not url:
-        return
-    try:
-        import requests
-
-        # Bounded, and every failure swallowed: a monitoring endpoint that
-        # hangs or 500s must never stall or fail the job it is monitoring.
-        requests.get(f"{url}{suffix}", timeout=10)
-    except Exception:  # noqa: BLE001 - a dead-man's switch must never raise
-        pass
-
-
-def deadman_state() -> str:
-    """How the dormant hook is reported wherever health is printed.
-
-    Never "fine" by omission: an unconfigured switch that renders as blank
-    reads as a working one, which is the exact failure this whole area
-    exists to remove.
-    """
-    if os.environ.get("ALERT_HEARTBEAT_HEALTHCHECK_URL", "").strip():
-        return "configured (out-of-band ping enabled)"
-    return (
-        "NOT CONFIGURED — nothing outside this box is watching; if the box "
-        "itself dies, nothing reports it"
-    )
-
-
 def build_notifier():
     """The same `TelegramNotifier` every alarm on this desk uses.
 
@@ -293,13 +264,11 @@ def run_probe(now: datetime | None = None) -> tuple[int, str]:
     record_durably(result, now=now)
 
     if result.ok:
-        ping_healthcheck()
-        return 0, f"alert_heartbeat: {result.summary()}; out-of-band switch: {deadman_state()}"
+        return 0, f"alert_heartbeat: {result.summary()}"
 
     message = failure_text(result.stage, result.detail)
     print(message, file=sys.stderr)
     delivered = bool(notifier.send(message))
-    ping_healthcheck("/fail")
     return 1, (
         f"alert_heartbeat: {result.summary()}; "
         f"failure alert {'delivered' if delivered else 'could NOT be delivered'}"
@@ -353,8 +322,6 @@ def run_status() -> tuple[int, str]:
     """Print the record. Sends nothing, exercises nothing."""
     state = load_state()
     lines = durable_status_lines() + [
-        "",
-        f"out-of-band switch:     {deadman_state()}",
         "",
         f"on-box record: {STATE_PATH}",
         f"  last ok:              {state.get('last_ok') or 'never'}",
