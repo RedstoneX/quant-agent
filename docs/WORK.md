@@ -338,12 +338,13 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
   daily report on contact. Confirmed against the running server, not just the
   merge: the job runs from the right folder and its last run sent the report
   as normal.
-
-**Still open:**
-
-1. A setup guide referenced by one internal file does not exist.
-2. Unchanged: full wire-service news coverage still needs a paid subscription
-   the owner has already declined. Not a defect — a closed question.
+- The setup guide one internal file pointed readers at, and that never
+  existed, is no longer promised. The reference was removed rather than
+  writing a guide — the module it points at already documents itself in
+  full, and a second document would only have restated it.
+- Full wire-service news coverage is formally closed, not merely unchanged:
+  the owner has declined the paid subscription it would need. Free coverage
+  stays as already widened.
 
 **Both pull requests noted here as unfinished have since merged:** every one of
 the server's startup files is now under version control with an automatic daily

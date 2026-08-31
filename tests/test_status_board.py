@@ -476,6 +476,14 @@ def test_open_defects_is_a_ranked_list_not_a_paragraph():
     real list precisely so a session (or a script) can read `rank: 1` and
     stop, instead of parsing prose to reconstruct an order that was never
     machine-readable in the first place.
+
+    An empty list is a legitimate value, not a regression back to prose: the
+    repo's own convention (see PR #180, and the 2026-08-31 closure that
+    emptied the list entirely) is to remove a defect from this list the same
+    commit that closes it, recording the closure as evidence instead. Zero
+    open defects is the list doing its job, not losing its shape — so this
+    only pins that `defects:` stays a real list, and that whatever entries
+    it does carry are well-formed.
     """
     import yaml
 
@@ -485,9 +493,7 @@ def test_open_defects_is_a_ranked_list_not_a_paragraph():
     hit = [e for e in phases if str(e.get("id")) == "open_defects"]
     assert hit, "no open_defects entry in the manifest"
     defects = hit[0].get("defects")
-    assert isinstance(defects, list) and defects, (
-        "open_defects carries no defects: list"
-    )
+    assert isinstance(defects, list), "open_defects.defects must be a list"
     for d in defects:
         for field in ("id", "title", "rank", "status"):
             assert d.get(field) not in (None, ""), (
