@@ -6,13 +6,15 @@ Current engineering lead: **Codex**. This contract is intentionally agent-neutra
 
 Read `docs/STATE.md`, then `docs/WORK.md`. Use `docs/OUTCOME.md` for product intent and only the accepted architecture/contracts relevant to the task. `docs/FUTURE_*` is conceptual only.
 
+Do not trust a document's claimed status at face value — check reality first: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.
+
 ## Paper-beta autonomy
 
 While QAMC remains Alpaca Paper, already-authorized engineering may run end-to-end without a human review/merge/deploy gate:
 
 **diagnose → implement → test → inspect → PR → merge → deploy → verify → rollback if needed**
 
-Use `ubuntu` for engineering/deployment orchestration. Keep `qamc` runtime-only. Keep `dev` parked.
+Use two active accounts until QAMC is stable. `ubuntu` is engineering/operator: Codex sessions, checkouts/worktrees outside `/home/qamc`, Git/GitHub, dev tooling, tests/builds, private preview/browser work, Docker/sudo engineering tasks, and deployment orchestration. `qamc` is runtime-only: it owns `/home/qamc/quant-agent`, runtime `.env`/OneCLI wiring, services/timers, and QAMC Paper execution — never run Codex as `qamc` or turn it into a general engineering account. Keep `dev` parked: no normal use and no permission expansion during stabilization.
 
 This fast lane does not authorize live capital, paid dependencies, secrets/credential redesign, destructive infrastructure replacement, or material architecture outside current authority.
 
@@ -35,11 +37,14 @@ Parallelism is an efficiency tool, not an agent-count target.
 - Alpaca Paper only; live-broker order submission needs separate explicit authorization.
 - Preserve **Specialists → Portfolio Manager → AI Risk → deterministic Python → broker**.
 - Deterministic risk/broker protections remain final authority and fail closed.
-- Mission Control/API/journal/search/UI remain read-only and non-critical to trading unless accepted work explicitly changes that.
-- Do not expose secrets or fabricate production state.
+- Mission Control/API/journal/search/UI remain read-only and non-critical to trading unless accepted work explicitly changes that. Telegram remains output-only.
+- Do not expose secrets or fabricate production state. Preserve OneCLI secret handling. No public exposure of QAMC or OneCLI.
 - Existing trading records remain canonical; UI/journal/search projections are derived and must not become a second trading-memory system.
 - Before trading-core changes, read `docs/architecture/SAFETY_BOUNDARIES.md`.
 - For API/read-side changes, preserve the isolation contract in `docs/architecture/MISSION_CONTROL_API.md`.
+- Do not force or manufacture trades, or weaken safeguards to increase activity.
+- Do not create paper-only trading semantics — no code path that behaves differently "because it's paper."
+- No new daemon/service/database/proxy/security/credential/orchestration architecture, and no paid alternative-data dependency, without separate explicit approval.
 
 ## Execution discipline
 
@@ -49,10 +54,21 @@ Parallelism is an efficiency tool, not an agent-count target.
 - UI/frontend acceptance requires rendered desktop and iPad inspection; tests/builds alone are insufficient.
 - Stop when the result is proven. Re-validation without new evidence is waste.
 - Keep handoffs short: **changed / verified / preview if relevant / unresolved blocker / production state**.
+- Do not infer current defects from historical notes. Reopen a resolved area only from current operator or production evidence.
+- Private preview/browser verification is standing-authorized for relevant engineering work.
 
 ## Git and continuity
 
-Use dedicated branches/PRs for substantive work. Do not force-push or push implementation directly to `main`. Paper-beta autonomy includes merging the agent's own verified PR and deploying it. Keep rollback possible.
+Use dedicated branches/PRs for substantive work. Do not force-push or push implementation directly to `main`. Paper-beta autonomy includes merging the agent's own verified PR and deploying it. Keep rollback possible. Bundle production preflight/deploy/restart/acceptance into the shortest safe intervention.
+
+## Decisions ratified
+
+- Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
+- Real short selling, not inverse ETFs. Three stages: countable, safe, live.
+- No dev/prod mirror. Production is paper and resets, so the case for enterprise staging collapses. Build the rehearsal harness instead.
+- The system already sends marketable limit orders, which is a market order with a bounded worst case. No change needed.
+- Documentation is the source of truth. Wrong documentation is corrected on sight without asking.
+- Rehearsal alerts are suppressed rather than routed to a second Telegram bot.
 
 ## Document authority
 

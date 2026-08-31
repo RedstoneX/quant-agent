@@ -350,6 +350,49 @@ alarm could speak. Fixed by routing the unit through
 any unit in `scripts/systemd/` whose script can raise a Telegram alert but
 whose `ExecStart` does not go through an `.env`-sourcing wrapper.
 
+**The schedule was not under version control (2026-08-31).** The deploy-drift
+alarm above compares *commits*, which left a second gap nothing was watching:
+installing a systemd unit is a `cp` into `~/.config/systemd/user`, and git
+never sees it. Measured on the box that day — 11 services and 10 timers
+installed, 6 services and 4 timers tracked. The seven units that run the
+trading day and serve Mission Control (`api`, `morning`, `midday`,
+`intra_check`, `close`, `evening`, `earnings_preprocess`) existed nowhere but
+on that one machine, and had since 2026-08-10. The tracked copies were not
+trustworthy either: `quant-agent-daily.service` declared
+`WorkingDirectory=/home/yebo/quant-agent` and ran the export from the same
+path — the upstream fork's, present on no QAMC machine — so installing the
+repository's own copy would have broken the daily P&L export on contact.
+
+All 21 installed units are now captured verbatim in `scripts/systemd/`,
+byte-for-byte as the box runs them, and the `/home/yebo` path is corrected to
+`/home/qamc`. Capture was faithful, not improved: the repo describes the
+running system even where the running system is imperfect.
+
+Two checks keep it that way, and neither subsumes the other — CI cannot see
+the box, and the box cannot see a pull request:
+
+- **`scripts/check_unit_drift.py`, 08:50 ET seven days a week**
+  (`quant-agent-unit-drift.timer`). Compares the deployed checkout's
+  `scripts/systemd/` against the installed units byte for byte and alerts on
+  four buckets: `untracked` (installed but not in the repo — the hand-added
+  unit no commit comparison can ever see), `modified`, `undeployed`, and
+  `not_enabled` (installed, correct, and never fires because nothing linked
+  it into `.wants`). Compared against the *deployed checkout* rather than
+  `origin/main` on purpose, so it stays disjoint from the deploy-drift alarm
+  and the two never report one condition twice. Exit 1 is a finding; exit 3
+  is an operator problem and marks the unit failed.
+- **`tests/test_systemd_units.py`** gates the repository: no foreign
+  `/home/*` path (the `/home/yebo` defect, pinned by name), `WorkingDirectory`
+  at the deploy root, every `ExecStart` naming a script that exists, every
+  timer paired and installable, every service reachable by a timer or
+  `[Install]`, no inline credentials, and the six session units plus the API
+  pinned by name.
+
+Not yet deployed at the time of writing: the box still carries the pre-#175
+`quant-agent-drift-check.service` and none of the alert-heartbeat, alert-digest
+or unit-drift units. That is ordinary pending-deploy state, and the checks
+above report it correctly.
+
 **Alerting heartbeat (2026-08-31).** Every alarm on this desk is a Telegram
 message, and nothing checked that a Telegram message can still be sent — so
 "no alert arrived" meant both "nothing is wrong" and "the alarm is broken",
@@ -601,10 +644,19 @@ owner decision. The macro event calendar was built on 2026-08-31
 (`src/data/event_calendar.py`): FRED's free release-dates API supplies the forward
 schedule for CPI, Employment Situation (NFP), PPI, PCE, GDP, retail sales and
 jobless claims, threaded into both the macro analyst and the Risk Manager with a
-`MacroCoverage`-shaped coverage line. **FOMC meeting dates are NOT covered** — FRED
-carries no meeting schedule (release 101 reports as a daily release, so its date list
-is every calendar day) and paid sources are refused; the gap is stated to both seats
-explicitly rather than left for a model to fill from memory.
+`MacroCoverage`-shaped coverage line. **FOMC meeting dates are covered as of
+2026-08-31** (same module, same block): FRED cannot supply them — release 101 reports
+as a daily release, so its date list is every calendar day — so the schedule comes
+from the Federal Reserve's own free calendar instead. `https://www.federalreserve.gov/
+json/calendar.json` is the primary source (structured JSON; the rows typed `FOMC` and
+titled `FOMC Meeting` carry the concluding date and the block length), and the
+rendered `fomccalendars.htm` page is a fallback used only when that feed fails or its
+schedule stops before the end of the horizon — which it does at every year boundary,
+since the feed carries the current year and the page already carries the next. No key,
+no cost. The schedule is cached at `data/fomc_calendar.json` and a stale cache is
+served labelled `measured_from_stale_cache` with its age, never silently. An empty
+meeting list is only allowed to read as "no meeting scheduled" when the coverage line
+says the published schedule spans the whole horizon; every other case reads UNKNOWN.
 
 `get_latest_price` returning `None` on a genuine market-data exception is an intentional fail-closed/degradation contract and is covered by existing tests. Do not change this trading-critical method merely because `feed` is omitted. Reopen it only on concrete production evidence of incorrect behavior.
 

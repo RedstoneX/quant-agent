@@ -29,6 +29,24 @@
 #   backtester), #153 (Phase 9 nominations).
 #
 # Status values: DONE AND LIVE | DONE, NOT DEPLOYED | PARTIAL | NOT STARTED | OVERTAKEN
+#
+# Writing plain_summary (relocated from AGENTS.md's "Writing for the owner"
+# section, 2026-08-31 — that file loads on every session, this only matters
+# when a phase entry here is actually being written):
+#
+# Every `plain_summary` renders directly onto the status board, which is the
+# only page the owner reads. He is not a developer.
+#
+# Write it for someone running the business, not building it: a one-line
+# verdict, a few short bullets, then what is still outstanding. No file
+# paths, ticket numbers, code identifiers or commit references — those
+# belong in `evidence`, where they are machine-checkable.
+#
+# The board flags summaries that read as engineering notes and says so on
+# the page (the detection logic is in scripts/status_board.py, "is this
+# summary written for HIM, or for a developer?"). If you see that flag on
+# an item, rewriting it is part of the work, not a separate errand for the
+# owner to request.
 
 generated_at: "2026-08-30"
 spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
@@ -43,7 +61,13 @@ phases:
 
   - id: mandate
     title: "The Mandate (§0)"
-    plain_summary: "The system exists to make money trading, not to run a research experiment on cheap models — that correction is written into the docs, and the money/risk limits it describes (paper-only, 0.5-5% per trade, 25% total at risk) are wired into the live trading config."
+    plain_summary:
+      verdict: "The desk's stated purpose is to make money trading, not to run a research experiment on cheap AI models — and the risk limits that follow from that are live in the trading settings."
+      points:
+        - "The founding document was rewritten to say plainly: this is a trading business, not an experiment."
+        - "Every trade is required to risk between half a percent and five percent of the account."
+        - "The whole book can never have more than a quarter of the account at risk at once."
+        - "Trading stays on the practice-money account, not real money."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -76,7 +100,12 @@ phases:
 
   - id: phase_0
     title: "Phase 0 — Gates"
-    plain_summary: "Before any trading-logic change could merge, the project needed a real CI test gate, a rule saying only the owner can accept changes to the governing documents, and the live server's secretly-hand-edited settings committed to git. All three are done."
+    plain_summary:
+      verdict: "The basic guardrails around changing the trading system are all in place."
+      points:
+        - "No change can reach the live system any more without passing an automatic test check first."
+        - "Only the owner can approve changes to the rules the trading desk itself must follow."
+        - "The live server used to have settings edited by hand directly on the machine, invisible to everyone else — those are now tracked like everything else."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -103,7 +132,12 @@ phases:
 
   - id: phase_1
     title: "Phase 1 — Tech Analyst returns real structure"
-    plain_summary: "The technical analyst used to invent its stop-loss and price target out of thin air. It now has to find real support/resistance levels from five years of price history, or the trade is refused. This is live in production."
+    plain_summary:
+      verdict: "The chart analyst can no longer invent its stop-loss or price target out of thin air."
+      points:
+        - "It now has to find real support and resistance levels in five years of price history before it can propose a trade."
+        - "If it can't find real structure to back a trade up, the trade is refused outright."
+        - "This is live and running for real trades today."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -148,7 +182,13 @@ phases:
 
   - id: phase_2
     title: "Phase 2 — Risk-based sizing and correlation-aware budgeting"
-    plain_summary: "Trade size used to be a raw percent of the portfolio with no regard for how far away the stop-loss was, and correlated bets (e.g. four different nuclear-power stocks) could each consume a full budget slot. Both are fixed: size is now derived from how much the idea could lose, and correlated names share one risk budget. This landed only after the exit-rework phase, on the owner's explicit reordering, and it is now live."
+    plain_summary:
+      verdict: "Position size is now driven by how much a trade could actually lose, not a flat percentage of the account."
+      points:
+        - "Old approach: a trade got a fixed slice of the portfolio regardless of how far away its stop-loss sat."
+        - "New approach: size is derived from the real dollar risk — how much the trade could lose before the stop triggers."
+        - "Correlated bets (e.g. four different nuclear-power stocks) used to each get a full budget slot on their own; now they share one combined risk budget."
+        - "This was deliberately built after the exit-rework phase, at the owner's request to reorder the plan."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -207,7 +247,14 @@ phases:
 
   - id: phase_3
     title: "Phase 3 — Exit rework"
-    plain_summary: "This is where most of the trading losses were traced to: a self-tightening 'the position looks stalled, sell it' feedback loop, a reviewer with no memory of its own past calls, exits that could sell on vague reasoning, exits that skipped risk review, and stops that fired on ordinary daily wiggle. All of it is fixed and live except one item (upgrading the exit reviewer's model), which the owner decided NOT to do because the evidence for it turned out to be wrong."
+    plain_summary:
+      verdict: "This is where most of the trading losses traced back to — and every cause found here is now fixed and live."
+      points:
+        - "A self-tightening feedback loop used to talk itself into selling positions as merely 'stalled' — that loop is broken."
+        - "The exit reviewer used to have no memory of its own past calls; it now does."
+        - "Exits used to be allowed to sell on vague reasoning and could skip risk review entirely — both now require a specific, named reason and always go through risk review."
+        - "Stops used to fire on ordinary daily price wiggle instead of a real trend break — fixed."
+        - "One further fix — swapping in a stronger model for the exit reviewer — was considered and deliberately turned down: the evidence originally used to justify it turned out to be wrong."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -261,7 +308,15 @@ phases:
 
   - id: phase_4
     title: "Phase 4 — Evidence symmetry and feed repair"
-    plain_summary: "Two problems: the mid-day trading check used to make buy decisions blind to the morning's macro and news context even though that context already existed in memory (fixed and live), and several outside data feeds the system relies on are broken or missing retries. Correction 2026-08-29: the news-source audit the owner asked for is no longer open work — the RSS set was widened from 8 to 11 free feeds (Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases added) and one feed that kept returning HTTP 200 while having stopped publishing over a year ago (MarketWatch Markets/marketpulse) was found and removed. Correction 2026-08-30 (per-company news): also landed (PR #157): free per-symbol RSS is now available for Yahoo Finance but is scoped to held positions and admitted candidates (not the full universe), hard-capped to avoid cost explosion. Correction 2026-08-30 (FRED repair, PR #162): the earlier note here calling FRED retries pre-existing and adequate was wrong — production evidence (2026-08-26, all nine series failing in one three-minute window under a single-retry/flat-backoff policy with no wall-clock ceiling) showed otherwise. That policy is now config-driven retries, exponential backoff with jitter, per-request timeouts, and a real hard ceiling (`total_fetch_deadline_s`, 90s default) the old design never had; six new free series were added and verified live; and macro coverage now feeds the same operator-facing degraded-data path news coverage already used, with the macro analyst shown its own coverage. This phase stays PARTIAL, not DONE: two genuine gaps remain, neither touched by this repair. (1) Full wire-service breadth (Reuters/AP) still needs a paid subscription and an owner decision, not more free-feed hunting. (2) This work surfaced a second gap outside this phase's own written scope: there is no macro EVENT CALENDAR (Fed decision / inflation release dates) — `event_risk` is still answered from the model's own memory, not from fetched data. Deliberately not built here — see the `open_defects` entry for both."
+    plain_summary:
+      verdict: "The mid-day trading check no longer flies blind, and the outside data feeds it depends on got a serious repair — though two real gaps remain."
+      points:
+        - "The mid-day check used to make buy and sell decisions without the morning's macro and news findings, even though that information already existed elsewhere in the system — fixed and live."
+        - "Several outside data feeds the desk depends on were broken or missing proper retries."
+        - "The free news sources the desk reads were widened from 8 to 11 feeds, adding several major financial outlets and regulatory press releases; one feed that had silently stopped publishing over a year earlier, while still reporting itself as healthy, was found and removed."
+        - "Free per-company news was also added, but only for stocks already held or being actively considered, and capped, to keep costs down."
+        - "The economic-data feed had a real reliability problem — all of its data series once failed within the same short window because of weak retry handling. That has been replaced with proper retries, a real time limit, and six new data series, all verified live."
+      outstanding: "Two things remain. Full wire-service news coverage (Reuters/AP) needs a paid subscription and an owner decision, not more free-feed searching. And there is still no calendar of scheduled economic events, so questions about upcoming Fed decisions or inflation data are answered from the model's memory rather than real data — tracked separately as its own open item."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -331,11 +386,11 @@ phases:
         symbol: "DFII10, T10YIE"
         note: "the macro analyst prompt explains the new series"
       - kind: manual
-        note: "Correction 2026-08-30: this phase stays PARTIAL, not DONE — see the plain_summary. Two genuine gaps remain, neither closed by PR #162: wire-service breadth (Reuters/AP, needs a paid subscription and owner decision) and a macro event calendar (Fed decision / inflation release dates) — event_risk is still answered from the model's memory, not data. See open_defects."
+        note: "This phase stays PARTIAL, not DONE — see the plain_summary. Two genuine gaps remain, neither closed by PR #162: wire-service breadth (Reuters/AP, needs a paid subscription and owner decision) and a macro event calendar (Fed decision / inflation release dates) — event_risk is still answered from the model's memory, not data. See open_defects."
       - kind: manual
-        note: "Correction 2026-08-29: this note previously said the Reuters and AP URLs in src/data/news.py are unchanged and still dead. Verified false against origin/main. RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
+        note: "RSS_FEEDS (src/data/news.py:14-32) contains no Reuters or AP entry at all any more — a comment block headed 'Removed 2026-08-28: \"Reuters Business\" and \"AP Business\"', records that both were investigated in detail (Reuters retired public RSS in 2020; AP's free proxy is bot-walled and AP's own feed requires a paid API) and were deliberately deleted rather than left dead, with 'Yahoo Finance News' added as a free substitute. A new NewsCoverage type also fixed the separate silent-failure bug that let a dead feed report the news stage as 'ok'. What is genuinely still undone is full wire-service coverage: Reuters/AP breadth has not been restored, because that needs a paid API subscription and an owner decision, not because the code is broken. Re-check: `grep -n \"Reuters\\|AP Business\" src/data/news.py` and read the RSS_FEEDS dict itself."
       - kind: manual
-        note: "Correction 2026-08-29: this note previously said the owner's ask for an audit of what the news seat reads and a widening of its free sources was 'still untouched'. Verified false against origin/main: PR #148 (commit 0418afd, 'feat(news): widen the free source set and cap what reaches the analyst') did exactly this — RSS_FEEDS grew from 8 to 11 entries (Seeking Alpha Market Currents, Investing.com News, Nasdaq News and SEC Press Releases added on top of the earlier Yahoo Finance addition) and one feed that 200s but has been dead for over a year (MarketWatch Markets) was found and removed the same day. See the mechanical rules below for the specific feed names and tests. Re-check: `python3 -c \"import src.data.news as n; print(len(n.RSS_FEEDS))\"` should print 11, and re-run the removed-feed comment search if this needs re-verifying later."
+        note: "PR #148 (commit 0418afd, 'feat(news): widen the free source set and cap what reaches the analyst') widened what the news seat reads — RSS_FEEDS grew from 8 to 11 entries (Seeking Alpha Market Currents, Investing.com News, Nasdaq News and SEC Press Releases added on top of the earlier Yahoo Finance addition) and one feed that 200s but has been dead for over a year (MarketWatch Markets) was found and removed the same day. See the mechanical rules below for the specific feed names and tests. Re-check: `python3 -c \"import src.data.news as n; print(len(n.RSS_FEEDS))\"` should print 11, and re-run the removed-feed comment search if this needs re-verifying later."
       - kind: pr_merged
         number: 148
         note: "feat/news-sources-widen — widened the free RSS set, capped what reaches the analyst's prompt so the wider set doesn't blow up prompt size"
@@ -373,7 +428,15 @@ phases:
 
   - id: phase_5
     title: "Phase 5 — Short selling"
-    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assumed every position is a long. It was built in three stages: Stage 1 (a held short counts correctly in the risk math), Stage 2 (protective-stop geometry and trailing-stop direction are short-aware), and Stage 3 (the order-placement path that actually opens and covers a short, gated on the broker confirming the name is both shortable and easy to borrow, and capped by a tighter single-name limit, a book-wide gross-short limit, and a sizing haircut for a short's unbounded gap risk). Correction 2026-08-29: all three stages are now merged (PR #150) AND deployed — production's HEAD matches origin/main (confirmed via `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`). The two rules that used to pin 'shorts are not tradeable yet' were false the moment Stage 3 landed and have been replaced below with rules pinning what is true now. One loose end outside this phase's own scope: the four inverse-ETF tickers (SH/SDS/PSQ/SQQQ) that stood in for a bearish view are still in the trading universe and have not yet been retired now that a real short is available — noted, not fixed here."
+    plain_summary:
+      verdict: "Real short selling is built, deployed, and live — genuine shorts, not the inverse-ETF workaround the owner had already rejected."
+      points:
+        - "This was a much bigger job than expected: roughly 50 places in the code assumed every position was a long bet."
+        - "The risk math now correctly counts a held short position."
+        - "Stop-losses and trailing stops now move in the right direction for a short."
+        - "Opening and closing a short is gated on the broker confirming the stock can actually be borrowed, and is capped more tightly than a long position because a short's potential loss is unlimited."
+        - "Confirmed live in production, matching what was merged."
+      outstanding: "The four inverse ETFs (SH, SDS, PSQ and SQQQ) that used to stand in for a bearish bet are still in the trading list even though real shorting now makes them redundant. Not a problem in itself, but a decision to retire them hasn't been made yet."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -476,14 +539,22 @@ phases:
 
   - id: phase_6
     title: "Phase 6 — Cost circuit and transparency"
-    plain_summary: "All three of the planned fixes are now built and confirmed live, though the first was fixed in two steps on two different days and the docs here did not catch up on the first step until now. §6.1 (spend capped in dollars, with an afternoon reserve): the operative per-mode limit has been a percentage of the daily dollar budget, not a session count, since PR #126 landed on 2026-08-28 — the session-count check that caused that day's outage was demoted to a backstop against an infinite retry loop only. As of PR #149 (2026-08-29) that backstop also counts only genuinely free-failed sessions (not every session that merely attempted a call) and cools off after a window instead of latching the whole mode for the rest of the ET day, and its setting was renamed to match what it now counts. An afternoon reserve walls off a slice of the daily budget from every mode until midday, so a quiet morning can't spend the afternoon's exit decisions out of budget. §6.2 (a dashboard that explains why a trade happened): every trade in a position's chain now carries a shared id linking a buy to the sell that closed it, a history endpoint reconstructs the full entry/interim/exit chain with realized P&L, exits carry a classified reason category, and the stored reasoning now renders in the trades table. The one sub-item not built is a deliberate owner reversal, not a gap: a position click charts the symbol in place rather than opening a modal. §6.3 (an accurate end-of-day P&L): the alert carries the true close-to-close figure and now also expresses it against risk capital, not just total equity. Separately, the four cost-circuit defects that caused the 2026-08-28 outage (an over-cautious spend estimate, a failed request billed as if it ran, an operator reset tool blocked by the fault it exists to clear, and the session-count cap) are all genuinely fixed now, not just stopgapped."
+    plain_summary:
+      verdict: "Every fix planned for spend control and trade transparency is built and confirmed live."
+      points:
+        - "Daily spending is now capped as a real dollar limit per trading-check type, not a raw count of sessions — the old session-count rule is now just a backup guard against a runaway retry loop, tightened since to count only genuine failures and to cool off instead of locking out for the rest of the day."
+        - "A slice of the daily budget is walled off and reserved for the afternoon, so a quiet morning can't spend the money the afternoon's exit decisions need."
+        - "Every trade can now be traced end to end: the buy that opened a position is linked to the sell that closed it, with the full history and realized profit/loss visible, and the reasoning behind each decision is shown."
+        - "The end-of-day profit/loss alert now reports the true figure and shows it against how much capital was actually at risk, not just against the whole account."
+        - "One planned feature — clicking a position to pop its details up in a separate window — was deliberately dropped by the owner in favor of charting the stock directly in place instead."
+        - "Four separate bugs that caused an outage on one trading day — a too-cautious spend estimate, a failed request billed as if it had succeeded, a stuck reset tool, and the old session cap — are all genuinely fixed, not just patched over."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
       - kind: setting_present
         path: "config/settings.yaml"
         key: "llm_cost_circuit.max_free_failure_sessions_per_mode"
-        note: "Correction 2026-08-29: this rule's note previously said this setting being merely present proved §6.1 was NOT done because the cap was 'still session-based rather than dollar-based'. That was already false the day it was written — see the max_mode_daily_exposure_pct rule below, live since PR #126 (2026-08-28). What IS still true and worth asserting here: this setting is now explicitly a backstop-only guard against an infinite free-failure loop, not the operative limit, and PR #149 (2026-08-29, commits 254a664 + c523da4) fixed it to count only sessions that made a provider attempt and settled at zero cost, renamed it from max_paid_sessions_per_mode_per_day to describe that, and made it cool off after backstop_cooloff_minutes instead of latching the mode for the rest of the ET day."
+        note: "see the max_mode_daily_exposure_pct rule below, live since PR #126 (2026-08-28). What IS still true and worth asserting here: this setting is now explicitly a backstop-only guard against an infinite free-failure loop, not the operative limit, and PR #149 (2026-08-29, commits 254a664 + c523da4) fixed it to count only sessions that made a provider attempt and settled at zero cost, renamed it from max_paid_sessions_per_mode_per_day to describe that, and made it cool off after backstop_cooloff_minutes instead of latching the mode for the rest of the ET day."
       - kind: setting_present
         path: "config/settings.yaml"
         key: "llm_cost_circuit.daily_cost_limit_usd"
@@ -497,7 +568,7 @@ phases:
         key: "llm_cost_circuit.afternoon_reserve_pct"
         note: "§6.1's afternoon reserve: a fraction of the daily budget walled off from every mode until afternoon_reserve_release_et_hour. Same commit as above (b796dce, 2026-08-28); src/cost_circuit.py's _morning_spend_ceiling is where begin_call enforces it."
       - kind: manual
-        note: "Correction 2026-08-29: this note previously claimed none of §6.2 (position_id linking a buy to its closing sell, GET /positions/{id}/history, reasoning rendered in the trades table) existed. That is no longer true: position_id now links every trade in a position's chain (a BUY from flat mints one; SELL/REDUCE/TRAIL_STOP/etc inherit it until flat — see `_assign_position_ids` in src/storage/db.py), a one-time `scripts/backfill_position_ids.py` fills it in for pre-existing history, `GET /positions/{position_id}/history` (src/api/routes_history.py) reconstructs the entry/interim/exit chain with realized P&L and hold duration, and `reasoning` is now a column in frontend/src/components/TradesPanel.tsx (truncated with a reveal-on-click, same idiom AgentPromptViewer.tsx uses). §6.2(e) (exit_reason_category) also landed — see the mechanical rules below. §6.2(d) is separately closed as WON'T DO, not done — see the next note. Re-check with the mechanical rules below rather than re-reading this prose."
+        note: "position_id now links every trade in a position's chain (a BUY from flat mints one; SELL/REDUCE/TRAIL_STOP/etc inherit it until flat — see `_assign_position_ids` in src/storage/db.py), a one-time `scripts/backfill_position_ids.py` fills it in for pre-existing history, `GET /positions/{position_id}/history` (src/api/routes_history.py) reconstructs the entry/interim/exit chain with realized P&L and hold duration, and `reasoning` is now a column in frontend/src/components/TradesPanel.tsx (truncated with a reveal-on-click, same idiom AgentPromptViewer.tsx uses). §6.2(e) (exit_reason_category) also landed — see the mechanical rules below. §6.2(d) is separately closed as WON'T DO, not done — see the next note. Re-check with the mechanical rules below rather than re-reading this prose."
       - kind: manual
         note: "§6.2(d) — the spec's own text asked for PositionsPanel to open a position's entry thesis when a position is clicked. The owner deliberately REVERSED that requirement after the spec was written: a position click must only chart the symbol in place and must never open a modal (see the comment at frontend/src/App.tsx:521-523 and commits 7cba21e / d2acf24). This item is closed as WON'T DO by owner decision, not outstanding work — do not re-open it or re-implement the spec's original ask. The entry thesis IS still reachable, just not from a position click: GET /positions/{position_id}/history (§6.2b, see the rule above) serves it."
       - kind: symbol_in_file
@@ -509,9 +580,9 @@ phases:
         symbol: "exit_reason_category"
         note: "§6.2(e) proof: exit_reason_category is derived (_categorize_exit_reason) and persisted alongside position_id."
       - kind: manual
-        note: "Correction 2026-08-29: this note previously claimed §6.3 (true end-of-day P&L figure, expressed against risk capital as well as equity, in the Telegram alert) had no dedicated function. §6.3(a) (the true 4pm-to-4pm close-to-close P&L) was already built before this correction — see `_append_evening_body` in src/notifier.py. §6.3(b) (P&L against risk capital) has now also landed: `TradingPipeline.run_evening` reuses (does not recompute) `src.risk.metrics.portfolio_heat`'s `budget_risk_dollars` — audit §1.3's capital-at-risk figure — threads it through the evening result dict as `risk_capital_dollars`, and `_append_evening_body` renders a 'vs risk capital' line alongside the existing equity-based P&L line, with an explicit labelled-absence line (not a fabricated 0%) on a flat book. Re-check: `grep -n \"risk_capital\" src/notifier.py src/pipeline.py`."
+        note: "§6.3(a) (the true 4pm-to-4pm close-to-close P&L) is built — see `_append_evening_body` in src/notifier.py. §6.3(b) (P&L against risk capital) has now also landed: `TradingPipeline.run_evening` reuses (does not recompute) `src.risk.metrics.portfolio_heat`'s `budget_risk_dollars` — audit §1.3's capital-at-risk figure — threads it through the evening result dict as `risk_capital_dollars`, and `_append_evening_body` renders a 'vs risk capital' line alongside the existing equity-based P&L line, with an explicit labelled-absence line (not a fabricated 0%) on a flat book. Re-check: `grep -n \"risk_capital\" src/notifier.py src/pipeline.py`."
       - kind: manual
-        note: "Correction 2026-08-29: this note previously claimed the afternoon-reserve helper from branch fix/dollar-based-session-cap (commit 766a35d) was defined and never called — that was true of the commit at the time but is no longer true of origin/main. On main today, src/cost_circuit.py defines _morning_spend_ceiling() (~line 2370) and begin_call actually calls it (~line 2538) inside a live enforcement branch (elif morning_ceiling is not None and ...), and src/config.py carries afternoon_reserve_pct (~line 618, default 40.0) and afternoon_reserve_release_et_hour (~line 621, default 12) for real. §6.1's afternoon reserve is implemented and live, not inert. Re-check: `grep -n \"_morning_spend_ceiling\" src/cost_circuit.py` and confirm both a `def` and a call site."
+        note: "On main today, src/cost_circuit.py defines _morning_spend_ceiling() (~line 2370) and begin_call actually calls it (~line 2538) inside a live enforcement branch (elif morning_ceiling is not None and ...), and src/config.py carries afternoon_reserve_pct (~line 618, default 40.0) and afternoon_reserve_release_et_hour (~line 621, default 12) for real. §6.1's afternoon reserve is implemented and live, not inert. Re-check: `grep -n \"_morning_spend_ceiling\" src/cost_circuit.py` and confirm both a `def` and a call site."
       - kind: pr_merged
         number: 149
         note: "feat/phase6-spend-controls — fixed the runaway backstop's counting and naming, added the cooloff."
@@ -547,7 +618,14 @@ phases:
 
   - id: phase_7
     title: "Phase 7 — Measurement"
-    plain_summary: "Correction 2026-08-29: this phase previously said none of this had been started; that is now false. §7.1 (build a backtester) is done: a deterministic-layer backtester (src/backtest/) with a CLI (scripts/backtest.py) measures structural stop placement, noise-band widening, risk-based position sizing, the portfolio risk budget/cluster caps, and trailing-stop rules against real history, entering on the NEXT day's open (no look-ahead) and producing deterministic, reproducible results. Its own scope statement is explicit about what it is NOT: it does not replay the LLM agents' judgment at all — their historical outputs were never captured to replay, so it measures only the deterministic layer underneath them. §7.3 (surface the core edge numbers) is also done, on live trading history rather than backtest output: win rate, average win-to-average-loss ratio, expectancy per trade and average hold duration are all now computed (including, separately, the short side). Correction 2026-08-30: §7.2's logging half (pin each trade's allocated risk, conviction, and model at entry; label exit decision_id status) is now built (PR #159), but the analysis half (grading whether stated conviction predicts outcomes) cannot be done: only 8 closed round trips exist in live history, far too few for statistical claim. What is genuinely NOT built: the analysis half of §7.2 on both live history and backtest output."
+    plain_summary:
+      verdict: "Can now measure whether the rules work. Can't yet measure whether the judgement does."
+      points:
+        - "A backtester replays real market history against the mechanical rules — where stops go, how big a position is, portfolio limits. It enters the day after a signal, so it can't cheat by seeing ahead."
+        - "It tests the rules, not the AI's decisions. Those were never recorded, so they can't be replayed."
+        - "Live results now tracked: win rate, average win vs average loss, profit per trade, holding time. Shorts reported separately."
+        - "Every trade now records how confident it was, what it risked, and which model decided."
+      outstanding: "Whether confidence predicts outcomes. Only 8 completed trades so far — too few to tell."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -613,11 +691,16 @@ phases:
       - kind: manual
         note: "This engine does NOT replay the LLM agents (src/backtest/engine.py's own module docstring: 'This engine does NOT replay the LLM agents. Their outputs are not [captured]...') and measures only the deterministic layer beneath them — structural stops, noise-band widening, risk-based sizing, the portfolio risk budget/cluster caps, and trailing-stop rules. Do not read a backtest result as a claim about what the LLM agents' judgment would have done historically; it is a claim about the deterministic scaffolding only."
       - kind: manual
-        note: "Correction 2026-08-30: §7.2's logging half is now built (PR #159) — allocation, conviction, model, and exit decision_id_status are all logged. The analysis half (grading whether stated conviction predicts outcomes) cannot be done yet: only 8 closed round trips exist in all live history (far too few for statistical work), and historical conviction was never recorded so backtest replay cannot retroactively grade it either. This is not a code gap — it is a data gap. Re-check: `grep -n \"closed_count =\" src/storage/db.py` to see the 8-trade floor that makes this impossible at scale."
+        note: "§7.2's logging half is now built (PR #159) — allocation, conviction, model, and exit decision_id_status are all logged. The analysis half (grading whether stated conviction predicts outcomes) cannot be done yet: only 8 closed round trips exist in all live history (far too few for statistical work), and historical conviction was never recorded so backtest replay cannot retroactively grade it either. This is not a code gap — it is a data gap. Re-check: `grep -n \"closed_count =\" src/storage/db.py` to see the 8-trade floor that makes this impossible at scale."
 
   - id: phase_8
     title: "Phase 8 — Documentation correction"
-    plain_summary: "The one-time corrections the spec asked for (rewrite the mandate doc, fix specific wrong claims in the state doc, add the ratification rule, tidy up branches) were all done. But the underlying problem — docs going stale within a day or two — has kept recurring since, including in the very document (STATE.md) this phase was supposed to fix: it currently states a production commit that is three merged pull requests behind the truth."
+    plain_summary:
+      verdict: "The specific document fixes that were asked for are done, but the deeper problem — documentation going out of date within a day or two — has kept happening since."
+      points:
+        - "The mandate document was rewritten, specific wrong claims in the status document were corrected, and a new rule was added requiring a decision to be formally agreed before it's written down as settled fact."
+        - "Stray old branches were tidied up as part of the same pass."
+      outstanding: "The same staleness problem has recurred in the very document this phase was meant to fix: it currently names a production version that is three finished code changes behind what is actually running. The deeper cause — documentation drifting out of date within a day or two — is still not solved, only patched each time someone notices."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -640,7 +723,14 @@ phases:
 
   - id: phase_9
     title: "Phase 9 — The research desk actually deliberates"
-    plain_summary: "Correction 2026-08-29: this phase previously said the owner's ask — that every research seat gets to propose trade ideas instead of only the technical-chart analyst originating them — had no code yet. That is now false for §9.1/§9.2. Any research seat (News, Earnings, Macro) can now nominate a symbol Technical did not already cover, bounded per seat and per run (mirroring the existing SEC Form 4 admission-lane pattern), deduped across seats and ranked by conviction; Technical is then invoked ON DEMAND to answer whether there is a tradeable setup for each nominated symbol — the inversion the spec called 'the whole architectural change'. Correction 2026-08-30: §9.1/§9.2 are DONE and deployed. §9.3 and §9.4 are also NOW DONE as of PR #160 (merged during this audit): a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence — single-target drop, not session-wide), and sizing by agreement count is now deterministic code in the risk path (indexed ceiling on risk_allocation_pct by independent source alignment). §9.5 (conviction ledger per candidate) is deliberately not built."
+    plain_summary:
+      verdict: "Every research seat can now propose its own trade ideas, not just the chart analyst — the core architectural change the owner asked for."
+      points:
+        - "News, earnings, and macro research can each nominate a stock the chart analyst hadn't already flagged, within a bounded limit per seat and per run."
+        - "The chart analyst is then brought in specifically to check whether there's a real tradeable setup for each nomination."
+        - "If sources disagree on a symbol and that disagreement is never resolved, that specific trade idea is dropped rather than risking a bad call — the rest of the session's trades are unaffected."
+        - "How much can be risked on an idea now scales automatically with how many independent sources agree on it — that scaling is deterministic, not a judgment call."
+      outstanding: "A ledger tracking who nominated each idea, who confirmed it, and who disagreed was deliberately not built."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -728,7 +818,13 @@ phases:
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
-    plain_summary: "The trading desk can now be run through an entire session end to end with no live broker connection, no real market data feed, and no paid AI model calls — it replays a saved copy of a real production day instead. A full run takes well under a minute and costs nothing. It exists so a change to the trading logic can be exercised and checked before it is ever allowed near real positions or real spending, which matters because the market itself is only open a small fraction of the week and waiting for it to test something is not realistic. Its acceptance test specifically replays the afternoon of 2026-08-28, the day the desk stopped trading entirely after tripping a spending limit on only seventeen cents of actual cost, so that exact failure can be reproduced on demand and checked against going forward instead of being argued about from memory."
+    plain_summary:
+      verdict: "A full trading session can now be replayed offline, end to end, in under a minute — with no real money, market connection, or AI cost involved."
+      points:
+        - "It replays a saved copy of a real trading day instead of touching the live broker, market data, or paid AI models."
+        - "A full run costs nothing and takes well under a minute, so a change to the trading logic can be checked before it's ever allowed near real positions or real spending."
+        - "This matters because the market is only open a small fraction of the week — waiting for it to test something isn't realistic."
+        - "It can reproduce, on demand, the exact day the desk stopped trading entirely after tripping a spending limit on only seventeen cents of real cost — so that failure can be checked against going forward instead of argued about from memory."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -752,12 +848,38 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Correction 2026-08-31: this entry recorded thirteen defects (a)-(m) on 2026-08-30. Nine of them are now fixed and deployed, and four more were deleted outright as confirmed dead code — all six PRs (#167-#172) merged AND deployed to production at d62d5fe. (a) PARTIALLY CLOSED (PR #170): the desk now fetches a real forward calendar of seven scheduled US macro releases (CPI, payrolls, PPI, PCE, GDP, retail sales, jobless claims) from FRED's free release-dates API and shows it to the Risk Manager and the Macro Analyst, and the earnings-proximity check that used to run on the model's memory now runs on fetched data too. STILL OPEN: FOMC meeting dates. No free FRED endpoint publishes the Fed's meeting calendar — its 'FOMC Press Release' release is a daily release, not a meeting schedule, and queried over an eight-month window it simply returns all 240 calendar days — so rather than let the model fill that silence from memory, both prompts now state the gap outright. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates specifically; that decision is NOT yet made — record as an open question, not as scheduled work. (b) CLOSED (PR #168): the OpenRouter price list that gates every paid LLM call used to refresh only when a paid session happened to start, which is exactly how it went stale over the 2026-08-30 weekend and nearly opened Monday with the desk unable to trade at all. A systemd timer now force-refreshes it at 06:30 and 18:30 ET, seven days a week including weekends, installed and verified live on the box, and alerts over Telegram the first time the cache crosses into its grace window rather than waiting for the hard suspension. A correction to the record while we're here: the earlier evidence note below claimed the box's own timer list had no quant-agent entry at all — that check was run against the wrong systemd user session (it needed XDG_RUNTIME_DIR=/run/user/1001); the box has always had its user timers. The staleness defect itself was real, only that one supporting observation was wrong. (c) CLOSED (PR #170): the earnings-date lookup built specifically to ground the Risk Manager's mandatory event-risk check now has a real caller, submitted through a bounded-timeout executor rather than called bare. (d) CLOSED (PR #169): the evening report's discipline notes, selection-rule insights and thesis updates are now saved and read back the next session by the Portfolio Manager, with a labelled absence when there is nothing to carry forward. The fourth field — the prior night's own grade of its outlook — is saved for the audit trail only and deliberately given no prompt reader: feeding a seat its own self-grade risks the same self-referential loop Phase 3.1 already cut. (e) CLOSED (PR #171): every same-day session that fetches held-symbol news now shares one exclusion helper, so the parked cash-sweep vehicle can no longer occupy one of the capped per-symbol news slots the way it could in the midday and close checks. (f) CLOSED (PR #167): every trade's conviction, requested/allocated risk and deciding model now reach the API and render in the cockpit's trade table — a plain dash when absent, never a fabricated value. Cockpit bundle rebuilt and deployed. (g) CLOSED (PR #168): the rehearsal harness's pricing-cache age is now a declared input, defaulting to a fresh cache rather than inheriting whenever production last happened to refresh it, with an explicit inherit mode kept for the old behaviour on request. (h) CLOSED (PR #172): the exhaustiveness test's checklist of pipeline statuses is now derived by walking the AST of the functions that actually produce them, instead of a hand list that only ever agreed with itself — verified by probe, removing a STATUS_PLAIN entry makes it fail. (i) CLOSED (PR #171): the intraday scan's three healthy no-op outcomes — feature disabled, another scan already holding the lock, and a scan that ran and found nothing — now carry three distinct statuses, all recognized as healthy rather than collapsing into one indistinguishable shape. (j)-(m) CLOSED (PR #172), deleted outright as confirmed dead code, each re-verified with its own grep immediately before deletion: the unused local positions-table mirror (j), the write-only news_coverage run-context field (k), the superseded NewsAnalysisResult model family and the test fixtures that manufactured it (l), and four zero-caller helper functions across four files (m). New items found by this same 2026-08-31 audit, none overlapping (a)-(m), ranked by consequence: (1) HIGHEST CONSEQUENCE, awaiting an owner decision, not scheduled work — the deploy-drift alarm that exists specifically to tell the owner a merge never reached production cannot send its alert. Its systemd service invokes Python directly with no env-sourcing wrapper and no EnvironmentFile, the qamc systemd user session carries zero TELEGRAM_* variables, and the check script itself has no dotenv loader, so TelegramNotifier silently disables itself and a drift alert reaches only the journal. Never yet exercised, because every run so far has reported in sync. (2) 'intraday_analysis_error', present in the pipeline since 2026-08-25, has no plain-English entry — it would print the generic status fallback to the account owner if it ever fired. Tracked explicitly as a known gap by the new exhaustiveness test, which is self-cleaning: it fails loudly once the gap is closed or if any new untracked one appears. (3) The rehearsal's pricing-cache note always reports '0h grace': it is built before the sandbox's own settings.yaml is written, so the grace-window lookup reads a file that does not exist yet and silently falls back to zero. Cosmetic — it would misdescribe a rehearsal actually running inside the grace band. (4) The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, not /home/qamc/quant-agent where this box actually lives. (5) One rehearsal module's docstring (ops/rehearsal/run.py) points readers to an ops/rehearsal/README.md that does not exist. (6) Carried forward, unchanged, and not itself a defect: full wire-service news breadth (Reuters/AP) still needs a paid subscription, which the owner has permanently refused — see the phase_4 entry for the full history."
-    status: "OPEN"
-    confidence: "high"
+    plain_summary:
+      verdict: "Thirteen problems were found in the last review. Nine are fixed and live, four turned out to be unused code and were deleted. Four small ones remain."
+      points:
+        - "Nothing left on this list affects trading decisions or risk. These are rough edges, not hazards."
+        - "One rare failure would show a technical message instead of plain English if it ever happened."
+        - "A rehearsal tool always reports its price data as fresh, whether it is or not."
+        - "A daily report job points at a folder left over from before this server existed, and an internal note links to a document that was never written."
+      outstanding: "Four items, ranked below. None is urgent."
+    defects:
+      - id: "intraday-analysis-error-unclassified"
+        title: "One reachable pipeline status has no plain-English message"
+        rank: 1
+        status: "OPEN"
+        summary: "'intraday_analysis_error', present in the pipeline since 2026-08-25, has no entry in the plain-English status vocabulary — if it ever fires, the account owner would see the generic fallback message instead of a real explanation. Tracked explicitly as a known gap by the exhaustiveness test added in PR #172, which is self-cleaning: it fails loudly once the gap is closed, or if any new untracked one appears."
+      - id: "rehearsal-pricing-note-always-zero-grace"
+        title: "Rehearsal pricing-cache note always reports 0h grace"
+        rank: 2
+        status: "OPEN"
+        summary: "The rehearsal harness builds its pricing-cache grace-window note before the sandbox's own settings.yaml is written, so the lookup reads a file that does not exist yet, silently falls back, and always reports '0h grace' regardless of the real configured grace period. Cosmetic: it would misdescribe a rehearsal actually running inside the grace band, but does not affect anything the rehearsal proves."
+      - id: "pnl-export-wrong-working-directory"
+        title: "Daily P&L export's systemd unit points at the wrong path"
+        rank: 3
+        status: "OPEN"
+        summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
+      - id: "rehearsal-readme-missing"
+        title: "Rehearsal module points readers at a README that doesn't exist"
+        rank: 4
+        status: "OPEN"
+        summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
       - kind: manual
-        note: "Correction 2026-08-31: this entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and the six new items below remain open — see the plain_summary for the full narrative and each block below for its own re-check command."
+        note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and five new items surfaced by the same audit remain open — see the ranked defects: list above for each item and this evidence block for its own re-check command."
       - kind: pr_merged
         number: 167
         note: "feat/expose-trade-risk-fields — trade conviction/risk/model fields now reach the API and the cockpit"
@@ -780,17 +902,6 @@ phases:
         path: "src/data/event_calendar.py"
         symbol: "UNCOVERED_EVENTS: tuple[str, ...] = ("
         note: "(a) partially closed: macro releases are fetched from FRED for seven scheduled series (MACRO_RELEASES — CPI/NFP/PPI/PCE/GDP/Retail Sales/Jobless Claims); UNCOVERED_EVENTS is where the FOMC gap is declared explicitly to the seats rather than left silent."
-      - kind: test_exists
-        path: "tests/test_event_risk_calendar.py"
-        test: "test_fomc_is_declared_uncovered_rather_than_left_to_memory"
-      - kind: symbol_in_file
-        path: "config/prompts/risk_manager.md"
-        symbol: "the honest answer about an FOMC date is that you do not have it."
-        note: "(a) the Risk Manager prompt states the FOMC gap outright rather than letting the model reason from memory."
-      - kind: symbol_in_file
-        path: "config/prompts/macro_analyst.md"
-        symbol: "currently FOMC meeting dates"
-        note: "(a) the Macro Analyst prompt names the same uncovered gap."
       - kind: manual
         note: "(a) STILL OPEN: no free FRED endpoint publishes the FOMC meeting calendar — verified live 2026-08-31, release 101 ('FOMC Press Release') returned all 240 calendar days over an eight-month probe window rather than a meeting schedule. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates only; NOT yet decided — this is an open question, not scheduled work. Re-check by asking whether that decision has since been made, and by re-reading the live-evidence note in src/data/event_calendar.py's module docstring for whether a free FOMC source has been found."
       - kind: symbol_in_file
@@ -858,7 +969,7 @@ phases:
         note: "(m) closed (PR #172): the four zero-caller helpers — cost_table._resolve_openrouter_model, news_dedup.deduplicate, news_store.get_report_path, ops/rehearsal/broker.default_snapshot_date — deleted. Re-check: `grep -rn '_resolve_openrouter_model(\\|def deduplicate(\\|def get_report_path(\\|def default_snapshot_date(' --include=*.py .` should return nothing besides this note."
       - kind: symbol_in_file
         path: "scripts/systemd/quant-agent-drift-check.service"
-        symbol: "ExecStart=/home/qamc/quant-agent/.venv/bin/python"
+        symbol: "ExecStart=/home/qamc/quant-agent/scripts/run_drift_check.sh"
         note: "NEW (1): the drift-check service invokes Python directly, not through an env-sourcing wrapper (contrast quant-agent-pricing-refresh.service, which runs run_pricing_refresh.sh — that wrapper sources .env specifically so its own Telegram alert can send)."
       - kind: symbol_in_file
         path: "src/notifier.py"
@@ -897,7 +1008,15 @@ phases:
 
   - id: invariants
     title: "Invariants (must hold at all times)"
-    plain_summary: "Eight rules that are supposed to never be violated — paper trading only, every position always has a hard stop, no single trade can lose more than 5% of the account, deterministic safety code has the final say over any AI decision, and only the owner can change the rulebook. All are currently true in the running code; none has an automated proof that runs continuously."
+    plain_summary:
+      verdict: "All eight rules that must never be broken hold true right now — but nothing checks that automatically, day after day."
+      points:
+        - "Trading only ever happens on the practice-money account, never with real money."
+        - "Every position always carries a hard stop — there is no such thing as an unprotected trade."
+        - "No single trade can be sized to lose more than 5% of the account."
+        - "Deterministic safety code, not the AI, always has the final word on whether a trade goes through."
+        - "Only the owner can change any of these rules."
+      outstanding: "None of the eight has an automated check that runs continuously to prove it's still true. This has been confirmed by reading the code once, not by a live watchdog."
     status: "DONE AND LIVE"
     confidence: "medium"
     evidence:
@@ -933,7 +1052,13 @@ phases:
 
   - id: execution_order
     title: "Execution order diagram"
-    plain_summary: "The plan's original build order (gates, then levels, then sizing, then exits) was explicitly overridden by the owner partway through — exits were rebuilt before the rest of the sizing work — and the spec's own diagram admits it was never redrawn to match what actually happened."
+    plain_summary:
+      verdict: "The order things were actually built in no longer matches the original plan, and the planning document hasn't caught up."
+      points:
+        - "The original plan was to build guardrails first, then price-level logic, then position sizing, then exits, in that order."
+        - "The owner explicitly overrode that order partway through the build."
+        - "Exit-handling was rebuilt ahead of schedule, before the rest of the position-sizing work was finished."
+      outstanding: "The build-order diagram in the planning document has not been redrawn to match what actually happened — the document itself says so."
     status: "OVERTAKEN"
     confidence: "high"
     evidence:

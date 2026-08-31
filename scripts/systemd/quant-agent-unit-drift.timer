@@ -1,0 +1,30 @@
+# Checks the box's installed units against the repository, every day.
+[Unit]
+Description=quant-agent systemd unit-drift check — 08:50 ET, seven days a week
+
+[Timer]
+# 08:50 ET sits five minutes after the deploy-drift check (08:45) and well
+# before the morning session (09:30). The ordering is deliberate: read
+# together, the two answer different halves of one question — "is the
+# checkout behind?" then "do the units systemd loaded still match that
+# checkout?" — and a deploy that moved the checkout and forgot the `cp`
+# shows up as the second passing check failing while the first is clean.
+#
+# SEVEN DAYS, not Mon-Fri, matching the pricing-refresh and alert-heartbeat
+# timers and for the recorded reason: this desk's blind spot has been the
+# weekend. A unit hand-added or hand-edited on a Saturday would otherwise
+# sit undetected until Monday, and the whole point of this check is that
+# hand edits are invisible to everything else. The check costs no network
+# and no model call — two directory reads and a byte comparison — so a
+# weekend firing is free.
+#
+# systemd resolves the IANA zone, so this stays 08:50 New York across DST.
+OnCalendar=*-*-* 08:50 America/New_York
+# Run a missed firing on boot (the box was down at 08:50).
+Persistent=true
+# The comparison does not care about the exact minute; letting systemd batch
+# this with other timers is free.
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

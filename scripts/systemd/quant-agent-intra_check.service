@@ -1,0 +1,10 @@
+[Unit]
+Description=quant-agent intra_check trading session (fires only inside its ET window; self-gated no-op otherwise)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+ExecStart=/home/qamc/quant-agent/scripts/run_if_et_window.sh intra_check
+TimeoutStartSec=1260
+StandardOutput=journal
+StandardError=journal
