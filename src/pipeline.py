@@ -10169,6 +10169,15 @@ class TradingPipeline:
                 # memory next morning and the quarterly meta-reflector's
                 # theme_coverage_report.
                 missed_opportunities=analysis.missed_opportunities,
+                # Defect (d) fix: these four were produced by the LLM every
+                # night and declared on EveningReport, but had no parameter
+                # here — dropped before ever reaching disk.
+                # thesis_updates/selection_rules/discipline_notes feed
+                # tomorrow's portfolio_manager (see build_user_message).
+                thesis_updates=analysis.thesis_updates,
+                selection_rules=analysis.selection_rules,
+                discipline_notes=analysis.discipline_notes,
+                previous_outlook_assessment=analysis.previous_outlook_assessment,
             )
         else:
             # LLM failed — keep at least the P&L number for daily audit.

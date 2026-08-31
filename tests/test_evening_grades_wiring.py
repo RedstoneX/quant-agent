@@ -371,3 +371,215 @@ def test_prompt_surfaces_lessons_and_sell_prose_from_yesterday():
     )
     assert "don't trim winners" in msg
     assert "GOOGL sell premature" in msg
+
+
+# ---------------------------------------------------------------------------
+# Defect (d): thesis_updates / selection_rules / discipline_notes /
+# previous_outlook_assessment — produced by the LLM every night, declared on
+# EveningReport, but dropped by save_evening_snapshot before ever reaching
+# disk. Below: DB round trip for all four, then proof the three "lesson"
+# lists reach portfolio_manager's prompt (the receiving seat — see
+# config/prompts/evening_analyst.md "Outputs consumed by": thesis_updates +
+# discipline_notes inform PM Step 6 holding discipline; selection_rules is
+# the analogous new-position-selection counterpart).
+# ---------------------------------------------------------------------------
+
+def test_save_evening_snapshot_persists_lesson_fields_and_outlook_assessment(tmp_path):
+    """DB round trip: produced by the model -> written -> read back."""
+    import json
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    db.save_evening_snapshot(
+        date="2026-04-18", total_value=100_000, daily_pnl=800,
+        daily_return_pct=0.8,
+        tomorrow_outlook="bullish continuation", lessons="don't trim winners",
+        suggested_actions=["hold NVDA"], risk_rating="moderate",
+        thesis_updates=[
+            "NVDA thesis strengthening: capex guide +18% QoQ",
+            "XOM thesis weakening: 3rd straight inventory build",
+        ],
+        selection_rules=[
+            "On value-entry plays, require valuation_signal in {cheap, fair} before sizing > 3%",
+        ],
+        discipline_notes=[
+            "3 of last 5 sells premature — stop cutting on single-day -2% noise",
+        ],
+        previous_outlook_assessment=(
+            "Yesterday's bullish/medium call matched today's +0.8% outcome."
+        ),
+    )
+
+    row = db.get_latest_insights(before_date="2026-04-19")
+    assert row is not None
+    assert row["date"] == "2026-04-18"
+    thesis = json.loads(row["thesis_updates_json"])
+    selection = json.loads(row["selection_rules_json"])
+    discipline = json.loads(row["discipline_notes_json"])
+    assert thesis == [
+        "NVDA thesis strengthening: capex guide +18% QoQ",
+        "XOM thesis weakening: 3rd straight inventory build",
+    ]
+    assert selection == [
+        "On value-entry plays, require valuation_signal in {cheap, fair} before sizing > 3%",
+    ]
+    assert discipline == [
+        "3 of last 5 sells premature — stop cutting on single-day -2% noise",
+    ]
+    assert row["previous_outlook_assessment"] == (
+        "Yesterday's bullish/medium call matched today's +0.8% outcome."
+    )
+
+    # Also visible via get_recent_insights (SELECT * — same columns).
+    recent = db.get_recent_insights(limit=1)
+    assert recent[0]["date"] == "2026-04-18"
+    assert json.loads(recent[0]["discipline_notes_json"]) == discipline
+
+
+def test_save_evening_snapshot_defaults_lesson_fields_to_empty(tmp_path):
+    """No LLM output for these fields that night -> stored as '[]' / '' —
+    never absent columns, never a fabricated value."""
+    import json
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.save_evening_snapshot(
+        date="2026-04-18", total_value=100_000, daily_pnl=0,
+        daily_return_pct=0.0,
+        tomorrow_outlook="x", lessons="x", suggested_actions=[],
+        risk_rating="low",
+    )
+    row = db.get_latest_insights(before_date="2026-04-19")
+    assert json.loads(row["thesis_updates_json"]) == []
+    assert json.loads(row["selection_rules_json"]) == []
+    assert json.loads(row["discipline_notes_json"]) == []
+    assert row["previous_outlook_assessment"] == ""
+
+
+def test_evening_snapshot_migration_backfills_existing_rows(tmp_path):
+    """A DB written by the pre-fix code (no lesson columns at all) must gain
+    them on the next `initialize()` — the `_ensure_column` migration path —
+    with existing rows defaulting to '[]' / '', never NULL-as-crash."""
+    import sqlite3
+
+    db_path = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE insights (date TEXT PRIMARY KEY, tomorrow_outlook TEXT, "
+        "lessons TEXT, suggested_actions TEXT, risk_rating TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO insights (date, tomorrow_outlook, lessons, suggested_actions, risk_rating) "
+        "VALUES ('2026-04-10', 'old outlook', 'old lessons', '[]', 'low')"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    db.initialize()  # runs _migrate()
+
+    row = db.get_latest_insights(before_date="2026-04-11")
+    assert row is not None
+    assert row["thesis_updates_json"] == "[]"
+    assert row["selection_rules_json"] == "[]"
+    assert row["discipline_notes_json"] == "[]"
+    assert row["previous_outlook_assessment"] == ""
+
+
+def test_evening_report_model_round_trips_through_db_to_pm_prompt():
+    """Full loop: LLM output (EveningReport) -> save_evening_snapshot ->
+    get_latest_insights -> portfolio_manager.build_user_message. Proves the
+    carried-forward content actually reaches the receiving seat's input,
+    not just the database."""
+    import tempfile
+    from unittest.mock import patch
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    from src.models import EveningReport, EveningReasoningChain
+
+    rc = EveningReasoningChain(
+        performance_attribution="x", outlook_retrospection="x",
+        thesis_health_review="x", decision_quality_review="x",
+        calibration_meta="x", market_regime_read="x",
+        tomorrow_preparation="x",
+    )
+    report = EveningReport(
+        reasoning_chain=rc,
+        daily_summary="ok day", lessons="don't chase",
+        tomorrow_outlook="cautiously bullish", risk_rating="moderate",
+        thesis_updates=["NVDA thesis strengthening on capex guide"],
+        selection_rules=["Require 2 confirming prints before sizing >5%"],
+        discipline_notes=["Stop cutting GOOGL on single-day wobbles"],
+        previous_outlook_assessment="Prior call was directionally right.",
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(f"{td}/t.db")
+        db.initialize()
+        db.save_evening_snapshot(
+            date="2026-04-18", total_value=100_000, daily_pnl=500,
+            daily_return_pct=0.5,
+            tomorrow_outlook=report.tomorrow_outlook, lessons=report.lessons,
+            suggested_actions=report.suggested_actions,
+            risk_rating=report.risk_rating,
+            thesis_updates=report.thesis_updates,
+            selection_rules=report.selection_rules,
+            discipline_notes=report.discipline_notes,
+            previous_outlook_assessment=report.previous_outlook_assessment,
+        )
+        yesterday_insights = db.get_latest_insights(before_date="2026-04-19")
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=5000.0, total_value=10000.0,
+            yesterday_insights=yesterday_insights,
+        )
+
+    assert "NVDA thesis strengthening on capex guide" in msg
+    assert "Require 2 confirming prints before sizing >5%" in msg
+    assert "Stop cutting GOOGL on single-day wobbles" in msg
+    # Date-scoped: the block carries the actual source date, not a bare claim.
+    assert "2026-04-18" in msg
+
+
+def test_pm_labels_absent_lesson_fields_not_silence():
+    """A prior insights row exists (tomorrow_outlook present) but the LLM
+    filled none of the three lesson categories that night — PM must see a
+    labelled absence for each, not a silently dropped line and not an
+    invented stand-in."""
+    with patch("anthropic.Anthropic"):
+        from src.agents.portfolio_manager import PortfolioManagerAgent
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=5000.0, total_value=10000.0,
+            yesterday_insights={
+                "date": "2026-04-17",
+                "tomorrow_outlook": "neutral chop expected",
+                "risk_rating": "moderate",
+                "thesis_updates_json": "[]",
+                "selection_rules_json": "[]",
+                "discipline_notes_json": "[]",
+            },
+        )
+    assert "no thesis updates carried from last night" in msg
+    assert "no new selection rules carried from last night" in msg
+    assert "no discipline notes carried from last night" in msg
+
+
+def test_pm_no_prior_insights_shows_labelled_absence_not_silence():
+    """No insights row at all (fresh DB / first run) -> PM's whole section
+    must say so explicitly, including the lesson categories, rather than
+    silently omitting the section."""
+    with patch("anthropic.Anthropic"):
+        from src.agents.portfolio_manager import PortfolioManagerAgent
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=5000.0, total_value=10000.0,
+            yesterday_insights=None,
+        )
+    assert "No prior session insights available" in msg
+    assert "thesis/selection/discipline" in msg
