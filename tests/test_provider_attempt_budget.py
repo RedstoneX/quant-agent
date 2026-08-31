@@ -370,3 +370,101 @@ def test_a_failover_that_also_fails_does_not_latch_the_desk(tmp_path, monkeypatc
             "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
         ).fetchone()[0]
     assert not latched
+
+
+# ------------------------------------ an inexact day must stay recoverable
+
+# Found on 2026-08-31 by deploying the scope change above to production and
+# watching what happened next. `fail_call` stamps the ET day inexact when it
+# charges a conservative reserve for a request whose true cost it never
+# learned, and nothing clears that within the day. The reconciler refuses to
+# rearm over an inexact day, BUT returns early whenever a hard latch is set —
+# so for as long as `provider_attempt_limit` latched, the latch masked the
+# refusal. Scoping it to the session removed the mask, and the live desk went
+# from "suspended" to "every activate_session raises RuntimeError, with no
+# operator action able to clear it until ET rollover".
+#
+# A crash loop is a worse failure than the suspension it replaced. These pin
+# the recovery path.
+
+
+def _make_day_inexact(circuit, day):
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        conn.execute(
+            "UPDATE llm_budget_days SET costs_exact=0 WHERE day=?", (day,)
+        )
+        conn.commit()
+
+
+def _current_day():
+    from src.cost_circuit import _et_day_and_utc_bounds
+
+    return _et_day_and_utc_bounds()[0]
+
+
+def test_an_inexact_day_with_no_latch_is_operator_resettable(tmp_path):
+    """The exact live state after the deploy: no hard latch, inexact day."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-inexact", "morning")
+    _make_day_inexact(circuit, _current_day())
+
+    circuit.reset("operator reviewed the conservative figure and accepted it")
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        row = conn.execute(
+            "SELECT costs_exact, unknown_cost_rows FROM llm_budget_days WHERE day=?",
+            (_current_day(),),
+        ).fetchone()
+    assert row[0] == 1 and row[1] == 0
+
+
+def test_the_reset_does_not_erase_the_days_recorded_spend(tmp_path):
+    """`scripts/cost_circuit.py` promises reset "never erases settled spend".
+    Clearing the unprovable-figure flag must not become a way to zero the
+    ledger — the conservative amount OVER-states cost, which is the safe
+    direction, and it stays."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-keep", "morning")
+    day = _current_day()
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=0.0524, costs_exact=0 "
+            "WHERE day=?", (day,)
+        )
+        conn.commit()
+
+    circuit.reset("accepted the conservative figure")
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        spend = conn.execute(
+            "SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?", (day,)
+        ).fetchone()[0]
+    assert spend == pytest.approx(0.0524)
+
+
+def test_a_later_session_activates_once_the_day_is_reconciled(tmp_path):
+    """The operative point: after the reset, the desk actually runs again.
+    Before it, this raised RuntimeError rather than any circuit exception."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-first", "morning")
+    _make_day_inexact(circuit, _current_day())
+
+    blocked = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    with pytest.raises(RuntimeError, match="accounting is not exact"):
+        blocked.activate_session("run-blocked", "intra_check")
+
+    circuit.reset("operator accepted the conservative figure")
+
+    recovered = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    recovered.activate_session("run-after", "intra_check")
+    assert _reserve(recovered, agent="news_analyst") is not None
+
+
+def test_reset_still_refuses_when_there_is_nothing_to_reset(tmp_path):
+    """The guard must not become a no-op: a healthy circuit on an exact day
+    has nothing an operator reset should touch."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-healthy", "morning")
+    with pytest.raises(ValueError, match="accounting is exact"):
+        circuit.reset("nothing is wrong")
