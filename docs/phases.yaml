@@ -730,9 +730,9 @@ phases:
         - "The chart analyst is then brought in specifically to check whether there's a real tradeable setup for each nomination."
         - "If sources disagree on a symbol and that disagreement is never resolved, that specific trade idea is dropped rather than risking a bad call — the rest of the session's trades are unaffected."
         - "How much can be risked on an idea now scales automatically with how many independent sources agree on it — that scaling is deterministic, not a judgment call."
-        - "The desk now keeps a scorecard: which researcher raised each idea, which ones backed it, which ones argued against it, and — once the position closes — who was right. A researcher who correctly warned against a trade that lost money is credited for it."
-        - "That scorecard is a record only. It does not influence what gets traded or how much is risked, and a test enforces that."
-      outstanding: "The scorecard has no screen yet — the numbers are recorded but nothing displays them to the operator. Trades taken on the short side are also not scored yet, because they are not chained into positions the way ordinary buys are."
+        - "The desk now keeps a scorecard: which researcher raised each idea, which ones backed it, which ones argued against it, and — once the position closes — who was right. A researcher who correctly warned against a trade that lost money is credited for it, weighted by how strongly it said so."
+        - "That scorecard is a record only. It does not influence what gets traded or how much is risked, and a test enforces that by running the decision step with the scorecard on and off and requiring identical orders."
+      outstanding: "The scorecard is recorded but has no screen — nothing displays it to the operator yet. Still missing from the owner's full specification: separate scores for raising an idea versus judging someone else's, how often a researcher's ideas actually become trades, scoring an objection that blocked a trade against what that trade would have done, a rolling window so old calls fade, and tracking how a researcher's view of a symbol changes between sessions. Short trades are also not scored, because they are not grouped into positions the way ordinary buys are."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -852,11 +852,13 @@ phases:
         test: "test_ledger_recording_does_not_change_a_single_trading_decision"
         note: "§9.5 safety: DecisionStage run with ledger recording enabled and disabled must produce byte-identical constructed orders. The ledger is advisory and must never move a trade."
       - kind: manual
-        note: "§9.5 is PARTIALLY BUILT as of the feat/conviction-ledger-recording branch: the recording and scoring layer (join, dissent, score-on-close, per-analyst aggregate) exists and is tested. NOT built: any operator-facing view (no API route, no Mission Control research view), the 'what changed since the previous session' diff, and scoring of short round trips."
+        note: "§9.5 (conviction ledger per candidate) is specified in full and owner-ratified as scheduled work (docs/QAMC_REMEDIATION_SPEC.md §9.5, expanded 2026-08-31). It is now PARTIALLY BUILT: the recording and scoring data layer landed on feat/conviction-ledger-recording. §9.1-§9.4 remain as shipped in PR #153/#160."
       - kind: manual
-        note: "Short round trips are unscored because they carry no position_id: _assign_position_ids (§6.2a) opens a chain only on a BUY, so no SHORT is chained today. Pre-existing gap in the chaining, not introduced by §9.5; the ledger's arithmetic is already direction-aware."
+        note: "§9.5 items BUILT: item 1 recording (seat, stance, declared conviction, originated-vs-responding, session date — per idea, per decision), item 3 scoring on close (+R aligned / -R opposed, conviction-weighted, via r_multiple), item 6 advisory-only (test-enforced byte-identical decisions), item 8 no sample gate (raw counts returned). Plus the join item 10 named as the central missing piece: nomination evidence rows are back-filled with decision_id, so nomination -> decision -> trade is now a real query."
       - kind: manual
-        note: "An earlier revision of this entry recorded §9.5 as 'deliberately NOT built' — an unattributed engineering scope decision stated as settled truth. Corrected 2026-08-31 per AGENTS.md's Governance ratification rule."
+        note: "§9.5 items NOT built: item 1's longitudinal cross-session view ('what changed since the previous session'); item 2's separate origination-vs-judgement scores (the `nominated` flag is persisted on every stance and credit row so the split is derivable, but aggregate_seat_records returns ONE record per seat); item 4's conversion-rate metric; item 5's shadowed objections; item 7's rolling-window decay (the record is lifetime); item 9's presentation layer — no API route, no Mission Control view, no frontend."
+      - kind: manual
+        note: "Short round trips are unscored because they carry no position_id: _assign_position_ids (§6.2a) opens a chain only on a BUY, so no SHORT is chained today. Pre-existing gap in the chaining, not introduced by §9.5; the ledger's arithmetic is already direction-aware and will score shorts unchanged once they receive chains."
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
