@@ -46,6 +46,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,46 @@ _REHEARSAL_MODE = os.environ.get("QAMC_REHEARSAL") == "1"
 
 
 _DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """Outcome of `TelegramNotifier.probe()` — did the alert channel work.
+
+    `stage` names the first thing that failed, because the three failures
+    need three different repairs and "the alert didn't send" does not tell
+    an operator which one he has:
+
+      credentials — the process has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+                    (or TELEGRAM_DISABLED is set). Fix the unit's env, not
+                    the network.
+      transport   — the POST never completed: DNS, TLS, proxy, an egress
+                    rule, a timeout. Fix the box's outbound path.
+      api         — Telegram answered and refused: revoked token (401),
+                    wrong or deleted chat id (400 "chat not found"), bot
+                    blocked by the user (403). Fix the credential or the
+                    chat.
+      delivered   — the message really went out. ok=True.
+
+    `residue` means the send worked but the tidy-up delete did not, so one
+    self-describing probe message is sitting in the operator's chat. Not a
+    failure of the alert channel — the channel demonstrably works — but
+    worth saying so nobody wonders what the stray message was.
+    """
+
+    ok: bool
+    stage: str
+    detail: str = ""
+    residue: bool = False
+
+    def summary(self) -> str:
+        verdict = "alert channel PROVED" if self.ok else "alert channel BROKEN"
+        line = f"{verdict} (stage={self.stage})"
+        if self.detail:
+            line += f": {self.detail}"
+        if self.residue:
+            line += " [probe message could not be deleted; it stays in the chat]"
+        return line
 
 # Cash-sweep parking vehicles — cash equivalents, never "deployed capital".
 # The notifier reads the DB directly (it deliberately doesn't thread config
@@ -133,7 +174,17 @@ class TelegramNotifier:
     """
 
     API_URL = "https://api.telegram.org/bot{token}/sendMessage"
+    API_BASE = "https://api.telegram.org/bot{token}"
     HTTP_TIMEOUT_S = 5.0
+    #: Sent by `probe()` and deleted a moment later. Written to be
+    #: self-explanatory on the off chance the delete fails and the operator
+    #: reads it — an unexplained robot message in the alert channel is
+    #: exactly the kind of thing that teaches someone to mute the channel.
+    PROBE_TEXT = (
+        "QAMC alerting self-test. This is the scheduled check that the alert "
+        "channel still works; it deletes itself a second later. If you are "
+        "reading it, only the delete failed — the channel is fine."
+    )
     # Telegram hard limit is 4096; leave room for a truncation marker.
     MAX_MESSAGE_CHARS = 4000
     DEFAULT_LINK_LABEL = "🔗 Open Mission Control"
@@ -235,6 +286,43 @@ class TelegramNotifier:
             )
             return False
 
+        payload = self._build_payload(text, link_url, link_label)
+
+        try:
+            response = requests.post(
+                self.API_URL.format(token=self.token),
+                json=payload,
+                timeout=self.HTTP_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            return True
+        except Exception as exc:
+            # Catch broadly on purpose — TelegramNotifier is a
+            # best-effort side channel. A 429 rate-limit, a 5xx, a
+            # connection reset, a DNS failure, a bad token — none of
+            # those should bubble up and crash the trading session.
+            logger.warning("Telegram notify failed: %s", self._redact(exc))
+            return False
+
+    def _api_url(self, method: str) -> str:
+        """Bot API endpoint for `method` (sendMessage, deleteMessage, ...)."""
+        return f"{self.API_BASE.format(token=self.token)}/{method}"
+
+    def _build_payload(
+        self,
+        text: str,
+        link_url: str | None = None,
+        link_label: str | None = None,
+    ) -> dict[str, Any]:
+        """The exact JSON body `send()` puts on the wire.
+
+        Factored out so `probe()` can transmit a body built by this same
+        code rather than one of its own. A probe that assembled its own
+        payload would prove that *some* request reaches Telegram while
+        leaving the real message shape — HTML parse mode, escaping, the
+        length budget — untested, which is how a self-test ends up passing
+        while the thing it stands in for is broken.
+        """
         # HTML over MarkdownV2: PM/tech rationale is full of tickers with
         # underscores, "*" bullets, parentheticals, and "%" — MarkdownV2
         # demands escaping ~18 characters or Telegram rejects the entire
@@ -266,26 +354,113 @@ class TelegramNotifier:
             escaped = _clip_text(escaped, budget, marker="\n[...truncated]")
         final_text = escaped + link_html
 
+        return {
+            "chat_id": self.chat_id,
+            "text": final_text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+
+    @staticmethod
+    def _json_body(response: Any) -> dict[str, Any]:
+        """Telegram's JSON body, or {} if it did not send parseable JSON."""
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001 - a proxy error page is not JSON
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def probe(self, text: str | None = None) -> ProbeResult:
+        """Prove the alert channel works, by using it.
+
+        WHY THIS IS NOT AN ENV-VAR CHECK. "Are the credentials set" answers
+        a question nobody has. The failures that actually silence this desk
+        are a token that is set but revoked, a chat id that is set but wrong
+        or deleted, a bot the operator blocked, and an egress rule that
+        drops api.telegram.org. Every one of those passes a variable check
+        and fails a send. So this sends.
+
+        WHY IT IS STILL QUIET. The message goes out with
+        `disable_notification` (delivered, no buzz) and is deleted
+        immediately afterwards, so proving the channel does not spend the
+        operator's attention. The Bot API lets a bot delete its own message
+        for 48h, so the delete is reliable; when it is not, `residue` says
+        so and the message itself explains what it is.
+
+        Returns a ProbeResult rather than a bool: an operator needs to know
+        WHICH of the four failures he has, and they need four different
+        repairs.
+        """
+        if _REHEARSAL_MODE:
+            # A rehearsal must not transmit. Reported as not-ok with its own
+            # stage so a caller can tell "we did not check" apart from "we
+            # checked and it is broken" — collapsing those two is the exact
+            # defect this whole probe exists to remove.
+            return ProbeResult(
+                False, "rehearsal", "suppressed: QAMC_REHEARSAL=1, nothing sent",
+            )
+        if not self.enabled:
+            return ProbeResult(
+                False,
+                "credentials",
+                "this process has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID "
+                "(or TELEGRAM_DISABLED is set) — an alert raised here would "
+                "reach nobody",
+            )
+
+        # link_url="" — never append the Mission Control link to a probe.
+        payload = self._build_payload(text or self.PROBE_TEXT, link_url="")
+        # Delivered silently: the operator's phone must not buzz daily for
+        # this. Deletion below removes it from the chat entirely.
+        payload["disable_notification"] = True
+
         try:
             response = requests.post(
                 self.API_URL.format(token=self.token),
-                json={
-                    "chat_id": self.chat_id,
-                    "text": final_text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
+                json=payload,
                 timeout=self.HTTP_TIMEOUT_S,
             )
-            response.raise_for_status()
-            return True
-        except Exception as exc:
-            # Catch broadly on purpose — TelegramNotifier is a
-            # best-effort side channel. A 429 rate-limit, a 5xx, a
-            # connection reset, a DNS failure, a bad token — none of
-            # those should bubble up and crash the trading session.
-            logger.warning("Telegram notify failed: %s", self._redact(exc))
-            return False
+        except Exception as exc:  # noqa: BLE001
+            return ProbeResult(False, "transport", self._redact(exc))
+
+        body = self._json_body(response)
+        if response.status_code >= 400 or not body.get("ok"):
+            # Telegram reports refusals as HTTP 4xx with a `description`
+            # ("Unauthorized", "chat not found", "bot was blocked by the
+            # user"). Carry the description through — it names the repair.
+            detail = body.get("description") or f"HTTP {response.status_code}"
+            return ProbeResult(False, "api", self._redact(detail))
+
+        result = body.get("result")
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        if message_id is None:
+            # Accepted but unidentifiable. The send worked, so the channel is
+            # proved; we simply cannot clean up after ourselves.
+            return ProbeResult(
+                True,
+                "delivered",
+                "Telegram accepted the probe but returned no message_id",
+                residue=True,
+            )
+
+        deleted, delete_detail = self._delete_message(message_id)
+        return ProbeResult(True, "delivered", delete_detail, residue=not deleted)
+
+    def _delete_message(self, message_id: int) -> tuple[bool, str]:
+        """Best-effort removal of a message this bot sent. Never raises."""
+        try:
+            response = requests.post(
+                self._api_url("deleteMessage"),
+                json={"chat_id": self.chat_id, "message_id": message_id},
+                timeout=self.HTTP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return False, f"delete failed: {self._redact(exc)}"
+        body = self._json_body(response)
+        if response.status_code >= 400 or not body.get("ok"):
+            detail = body.get("description") or f"HTTP {response.status_code}"
+            return False, f"delete refused: {self._redact(detail)}"
+        return True, ""
 
     def send_document(self, csv_bytes: bytes, filename: str, caption: str = "") -> bool:
         """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort."""

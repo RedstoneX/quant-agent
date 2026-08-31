@@ -1,0 +1,27 @@
+# Weekly alerting heartbeat to the operator — pairs with
+# quant-agent-alert-digest.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-alert-digest.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-alert-digest.timer
+[Unit]
+Description=quant-agent weekly alerting heartbeat to the operator (no LLM, no trading)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# The ONE routine message this desk sends on purpose. Its content is the
+# week's probe record; its arrival is the point. If the alert channel dies,
+# no message can report that — so the standing weekly appointment is what
+# makes the channel's own silence mean something, and the message body says
+# so in as many words every week.
+#
+# Same wrapper, same .env, as the daily probe.
+ExecStart=/home/qamc/quant-agent/scripts/run_alert_heartbeat.sh --digest
+# Exit 1 means the digest did not go out, i.e. the operator has no working
+# alert channel. A real failure, visible in `systemctl --user status`.
+SuccessExitStatus=0
+# Above the wrapper's own 60+15s kill.
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
