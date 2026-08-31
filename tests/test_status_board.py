@@ -522,3 +522,105 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
         "or decided content has likely crept back in; cut or move it rather "
         "than raising this number"
     )
+# relevance ordering: unfinished on top, finished collapsed, rot never hidden
+# --------------------------------------------------------------------------
+
+def _phase_with(verdict_results, recorded="DONE AND LIVE", title="t", id_="x"):
+    p = sb.PhaseView(id=id_, title=title, summary="s", recorded=recorded,
+                     confidence="high")
+    p.results = verdict_results
+    return p
+
+
+def test_settled_phase_is_confirmed_and_recorded_done_and_live():
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    assert p.verdict == "CONFIRMED"
+    assert sb._is_settled(p) is True
+
+
+def test_confirmed_but_partial_phase_is_not_settled():
+    """CONFIRMED only means the checkable rules hold, not that there is no
+    work left. A phase still recorded as PARTIAL (or OPEN, NOT STARTED, ...)
+    must stay in the visible list even when every rule it does carry passes."""
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")], recorded="PARTIAL")
+    assert p.verdict == "CONFIRMED"
+    assert sb._is_settled(p) is False
+
+
+def test_contradicted_phase_is_never_settled():
+    p = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")])
+    assert p.verdict == "CONTRADICTED"
+    assert sb._is_settled(p) is False
+
+
+def test_render_collapses_only_settled_phases_and_never_collapses_contradicted(tmp_path):
+    """Pins the actual page structure: a closed <details class="finished">
+    holds only the fully-verified, recorded-done phases; a CONTRADICTED
+    phase's row must never appear inside it, and must render outside any
+    <details> at all."""
+    done = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")],
+                        recorded="DONE AND LIVE", title="Finished thing", id_="done")
+    partial = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")],
+                           recorded="PARTIAL", title="Partial thing", id_="partial")
+    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")],
+                          recorded="DONE AND LIVE", title="Rotten thing", id_="rotten")
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
+             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([done, partial, rotten], state, template)
+
+    # No <details> block ever contains the contradicted phase's title.
+    details_start = out.index('<details class="finished">')
+    details_end = out.index("</details>", details_start)
+    collapsed_chunk = out[details_start:details_end]
+    assert "Rotten thing" not in collapsed_chunk
+    assert "Finished thing" in collapsed_chunk
+    assert "Partial thing" not in collapsed_chunk
+
+    # The summary reports exactly one settled phase, and <details> is closed
+    # by default (no `open` attribute).
+    assert "1 finished and verified" in out
+    assert "<details class=\"finished\" open>" not in out
+    assert "<details open class=\"finished\">" not in out
+
+    # Rotten and partial both render before the <details> block (attention
+    # section), and the contradicted one appears first among them.
+    attention_chunk = out[:details_start]
+    assert "Rotten thing" in attention_chunk
+    assert "Partial thing" in attention_chunk
+    assert attention_chunk.index("Rotten thing") < attention_chunk.index("Partial thing")
+
+
+def test_stale_banner_absent_when_fresh():
+    from datetime import datetime, timedelta
+    now = datetime.now(sb.ET)
+    assert sb._staleness_banner(now, now) == ""
+    assert sb._staleness_banner(now, now - timedelta(hours=5)) == ""
+
+
+def test_stale_banner_present_past_six_hours_and_says_so_plainly():
+    from datetime import datetime, timedelta
+    now = datetime.now(sb.ET)
+    banner = sb._staleness_banner(now, now - timedelta(hours=7))
+    assert "stale" in banner  # class name, present in the markup
+    assert "7 hours" in banner
+    assert "last rebuilt" in banner.lower()
+
+
+def test_stale_banner_reports_days_once_it_is_that_old():
+    from datetime import datetime, timedelta
+    now = datetime.now(sb.ET)
+    banner = sb._staleness_banner(now, now - timedelta(days=3))
+    assert "3 days" in banner
+
+
+def test_render_wires_the_stale_banner_into_the_page(tmp_path, monkeypatch):
+    """The banner placeholder must actually be filled from render()'s own
+    notion of `now`, not just exercised as a standalone function."""
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
+             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([p], state, template)
+    # A freshly-generated page is 0 hours old: no banner.
+    assert 'class="stale"' not in out

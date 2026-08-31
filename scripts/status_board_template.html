@@ -93,6 +93,18 @@ table.plan u{display:block;text-decoration:none;font-family:"IBM Plex Mono",mono
 .note{margin-top:38px;padding:16px 18px;border:1px dashed var(--rule);border-radius:4px;
   color:var(--muted);font-size:15px}
 .note b{color:var(--ink);font-family:Archivo,sans-serif;font-weight:600}
+.stale{margin:0 0 22px;padding:14px 16px;border:1px solid var(--crit);border-radius:4px;
+  background:var(--crit-bg);color:var(--crit);font-size:15.5px;box-shadow:var(--shadow)}
+.stale b{font-family:Archivo,sans-serif;font-weight:600}
+details.finished{margin-top:16px}
+details.finished>summary{cursor:pointer;list-style:none;font-family:"IBM Plex Mono",monospace;
+  font-size:12.5px;letter-spacing:.04em;color:var(--muted);padding:10px 2px;
+  border-top:1px dashed var(--rule)}
+details.finished>summary::-webkit-details-marker{display:none}
+details.finished>summary::before{content:"\25B8  ";color:var(--faint)}
+details.finished[open]>summary{border-bottom:1px dashed var(--rule);margin-bottom:10px}
+details.finished[open]>summary::before{content:"\25BE  "}
+details.finished table.plan{margin-top:4px}
 footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
   color:var(--faint);font-size:13.5px;
   font-family:"IBM Plex Mono",monospace;line-height:1.7}
@@ -109,6 +121,13 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
     <h1>QAMC Desk Board</h1>
     <div class="stamp">{{STAMP}} &middot; Alpaca paper account</div>
   </header>
+
+  {{STALE_BANNER}}
+
+  <section>
+    <h2>Does the record still hold?</h2>
+    {{ALARM}}
+  </section>
 
   <div class="state">
     <div class="state-top">{{DEPLOY}}</div>
@@ -128,18 +147,12 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
   </div>
 
   <section>
-    <h2>Does the record still hold?</h2>
-    {{ALARM}}
-  </section>
-
-  <section>
     <h2>Where the plan stands</h2>
     <p class="lede">Every line below was re-checked against the system just now &mdash;
       {{RULES_PASS}} of {{RULES_TOTAL}} checks pass, {{RULES_FAIL}} fail,
-      {{RULES_UNKNOWN}} need a human to look.</p>
-    <table class="plan">
-      {{ROWS}}
-    </table>
+      {{RULES_UNKNOWN}} need a human to look. Unfinished work is listed first;
+      finished, verified work is tucked away below.</p>
+    {{ROWS}}
   </section>
 
   <div class="note">

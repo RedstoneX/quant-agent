@@ -425,6 +425,67 @@ VERDICT_PILL = {
     "UNVERIFIED": ("p-none", "Not checkable"),
 }
 
+#: The one recorded status that means "nothing left to do, and the board's
+#: own re-check agrees." Everything else -- PARTIAL, NOT STARTED, OPEN,
+#: OVERTAKEN, or a status the board can't confirm -- stays in the visible,
+#: uncollapsed list. This governs presentation only; it reads fields the
+#: renderer already computes and changes no evidence rule.
+_SETTLED_STATUSES = {"done and live"}
+
+#: How old the rendered page can be before the staleness banner appears.
+STALE_AFTER_HOURS = 6
+
+
+def _is_settled(p: PhaseView) -> bool:
+    """Fully verified AND finished: the manifest claims the canonical done
+    state, and the board's live re-check still confirms it. A phase that is
+    merely CONFIRMED but recorded as PARTIAL/OPEN/etc. still has open work
+    and must stay visible, not tucked into the collapsed section."""
+    return p.verdict == "CONFIRMED" and p.recorded.strip().lower() in _SETTLED_STATUSES
+
+
+def _row(p: PhaseView) -> str:
+    cls, label = VERDICT_PILL[p.verdict]
+    detail = f"{p.passed} of {p.checkable} checks pass"
+    if p.unknown:
+        detail += f" &middot; {p.unknown} need a human"
+    return (
+        f'<tr><td><span class="pill {cls}">{_esc(label)}</span></td>'
+        f'<td><b>{_esc(p.title)}</b>'
+        f'<i>{_esc(p.summary)}</i>'
+        f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
+    )
+
+
+def _age_words(hours: float) -> str:
+    if hours >= 47.5:
+        days = round(hours / 24)
+        return f"{days} day{'s' if days != 1 else ''}"
+    whole = round(hours)
+    return f"{whole} hour{'s' if whole != 1 else ''}"
+
+
+def _staleness_banner(now: datetime, generated_at: datetime) -> str:
+    """A page can only ever know its own build time. It cannot know, without
+    JavaScript (which this self-contained page deliberately carries none of),
+    how much real time has passed since a reader's browser opened it. So this
+    reports staleness AS OF THE MOMENT THIS PAGE WAS BUILT: if the build
+    itself is running more than STALE_AFTER_HOURS after `generated_at`
+    (normally the same instant `now` was captured, since every successful
+    run stamps itself fresh), that is worth saying plainly. It does not, and
+    cannot, catch a copy that sits un-rebuilt on disk after that -- only the
+    next successful run can.
+    """
+    age_hours = (now - generated_at).total_seconds() / 3600
+    if age_hours <= STALE_AFTER_HOURS:
+        return ""
+    return (
+        '<div class="stale">'
+        f'<b>This board was last rebuilt {_age_words(age_hours)} ago.</b> '
+        'It may not reflect current reality.'
+        '</div>'
+    )
+
 
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> str:
     now = datetime.now(ET)
@@ -434,18 +495,28 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
     total_unknown = sum(p.unknown for p in phases)
     contradicted = [p for p in phases if p.verdict == "CONTRADICTED"]
 
-    rows = []
-    for p in phases:
-        cls, label = VERDICT_PILL[p.verdict]
-        detail = f"{p.passed} of {p.checkable} checks pass"
-        if p.unknown:
-            detail += f" &middot; {p.unknown} need a human"
-        rows.append(
-            f'<tr><td><span class="pill {cls}">{_esc(label)}</span></td>'
-            f'<td><b>{_esc(p.title)}</b>'
-            f'<i>{_esc(p.summary)}</i>'
-            f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
+    # Relevance ordering: anything CONTRADICTED first (loud, never
+    # collapsed), then everything else still open or unverified, then --
+    # only at the very bottom, and only inside a closed <details> -- the
+    # phases that are both fully verified and recorded as finished. This
+    # changes how phases are grouped and displayed, not which rule kind
+    # produced which verdict.
+    settled = [p for p in phases if _is_settled(p)]
+    attention = contradicted + [p for p in phases if p not in contradicted and not _is_settled(p)]
+
+    if attention:
+        rows = f'<table class="plan">{"".join(_row(p) for p in attention)}</table>'
+    else:
+        rows = '<p class="lede">Nothing needs attention right now &mdash; every open item has settled.</p>'
+    if settled:
+        rows += (
+            '<details class="finished">'
+            f'<summary>{len(settled)} finished and verified &mdash; expand to review</summary>'
+            f'<table class="plan">{"".join(_row(p) for p in settled)}</table>'
+            '</details>'
         )
+
+    stale_banner = _staleness_banner(now, now)
 
     alarm = ""
     if contradicted:
@@ -481,6 +552,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
 
     body = template.read_text()
     body = body.replace("{{STAMP}}", now.strftime("%A %-d %B %Y &middot; %H:%M ET"))
+    body = body.replace("{{STALE_BANNER}}", stale_banner)
     body = body.replace("{{DEPLOY}}", deploy)
     body = body.replace("{{CIRCUIT}}", _fmt(state.get("circuit")))
     body = body.replace("{{SPEND}}", f"${spend:.2f}" if spend is not None else
@@ -490,7 +562,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
                         f"of the ${limit:.2f} daily limit &mdash; {pct}% used"
                         if pct is not None else "daily spend could not be read")
     body = body.replace("{{SESSIONS}}", _fmt(state.get("sessions_today")))
-    body = body.replace("{{ROWS}}", "\n".join(rows))
+    body = body.replace("{{ROWS}}", rows)
     body = body.replace("{{ALARM}}", alarm)
     body = body.replace("{{RULES_TOTAL}}", str(total_rules))
     body = body.replace("{{RULES_PASS}}", str(total_pass))
