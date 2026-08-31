@@ -1368,7 +1368,17 @@ class BaseAgent(ABC):
             parts: list[str] = []
             finish_reason: str | None = None
             usage = None
+            # The id OpenRouter's /generation lookup is keyed on (see
+            # _recover_openrouter_generation below) — every chunk on a real
+            # stream repeats the same generation id, so keep the last
+            # non-empty one seen. isinstance-guarded (not just truthy) so a
+            # test double's auto-attribute MagicMock — truthy but not a str —
+            # can never be mistaken for a real id.
+            generation_id: str | None = None
             for chunk in stream:
+                chunk_id = getattr(chunk, "id", None)
+                if isinstance(chunk_id, str) and chunk_id:
+                    generation_id = chunk_id
                 # include_usage delivers usage on a final extra chunk whose
                 # choices list is empty.
                 chunk_usage = getattr(chunk, "usage", None)
@@ -1406,20 +1416,45 @@ class BaseAgent(ABC):
         if usage is not None:
             in_tok = _coerce_token_count(getattr(usage, "prompt_tokens", 0))
             out_tok = _coerce_token_count(getattr(usage, "completion_tokens", 0))
+            reported_cost = _reported_cost_usd(usage, self.name)
         else:
-            # Character heuristics are not billing telemetry.  Returning 0/0
-            # deliberately routes this success through the breaker's
-            # unknown-actual-cost path: retain the full reservation and latch
-            # instead of releasing it against a soft estimate.
-            in_tok = 0
-            out_tok = 0
-            logger.warning(
-                "OpenAI stream for %s carried no usage chunk — token counts "
-                "and actual cost are unknown; paid analysis will suspend.",
-                self.name,
-            )
-        return (content, in_tok, out_tok, finish_reason,
-                _reported_cost_usd(usage, self.name))
+            # Character heuristics are not billing telemetry. The default,
+            # UNLESS the OpenRouter recovery below finds a real figure, is
+            # still 0/0/unknown — deliberately routing this success through
+            # the breaker's unknown-actual-cost path: retain the full
+            # reservation and latch instead of releasing it against a soft
+            # estimate.
+            in_tok, out_tok, reported_cost = 0, 0, None
+            recovered = None
+            if self._use_openrouter and generation_id:
+                recovered = _recover_openrouter_generation(
+                    generation_id, self.client.api_key, self.name,
+                )
+            if recovered is not None:
+                in_tok, out_tok, reported_cost = recovered
+                logger.warning(
+                    "Agent %s: stream for generation %s carried no usage "
+                    "chunk, but OpenRouter's /generation endpoint recovered "
+                    "the real billing after the fact — cost=%s tokens_in=%d "
+                    "tokens_out=%d. This REPLACES what would otherwise have "
+                    "settled as a full conservative reservation charge.",
+                    self.name, generation_id, fmt_cost(reported_cost),
+                    in_tok, out_tok,
+                )
+            else:
+                # Either not OpenRouter, no generation id was ever seen on
+                # the stream, or the bounded recovery attempt below gave up
+                # (its own warning states which, and why) — either way the
+                # cost stays unknown and this settles at the conservative
+                # full-reservation charge, exactly as before this recovery
+                # path existed.
+                logger.warning(
+                    "OpenAI stream for %s carried no usage chunk — token "
+                    "counts and actual cost are unknown; paid analysis will "
+                    "suspend.",
+                    self.name,
+                )
+        return (content, in_tok, out_tok, finish_reason, reported_cost)
 
     def _deepseek_max_output(self) -> int:
         """Clamp ceiling for this DeepSeek model. DeepSeek REJECTS (does not
@@ -1540,6 +1575,96 @@ def _reported_cost_usd(usage, agent_name: str) -> float | None:
         )
         return None
     return float(value)
+
+
+# Bounded retry budget for the post-hoc OpenRouter generation lookup below.
+# Measured live 2026-08-31: querying a generation id immediately after its
+# stream closed 404'd twice in a row, and the SAME id then resolved cleanly
+# minutes later — OpenRouter's billing pipeline is asynchronous, not
+# instant. Seconds of retrying here will therefore rarely out-wait a genuine
+# not-yet-indexed 404; the budget exists to absorb transient blips (a slow
+# DNS lookup, a dropped packet, an id that happens to land quickly) without
+# meaningfully delaying a live trading session. 3 attempts x 1.0s timeout +
+# 2 sleeps x 1.0s between them bounds the worst case (every attempt times
+# out) at 5s, comfortably under the ~6s ceiling — well short of blocking the
+# session, and if it fails the call still settles via the existing
+# conservative fallback exactly as it did before this path existed.
+_OPENROUTER_GENERATION_LOOKUP_ATTEMPTS = 3
+_OPENROUTER_GENERATION_LOOKUP_TIMEOUT_S = 1.0
+_OPENROUTER_GENERATION_LOOKUP_SLEEP_S = 1.0
+_OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
+
+
+def _recover_openrouter_generation(
+    generation_id: str, api_key: str, agent_name: str,
+) -> tuple[int, int, float] | None:
+    """Best-effort recovery of the real cost/tokens for a streamed
+    OpenRouter call whose stream carried no usage chunk (e.g. a relay that
+    strips stream_options include_usage).
+
+    OpenRouter retains the true billed cost for every generation — streamed
+    calls included — behind GET /generation?id=..., but see the module
+    comment above _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS: the record is not
+    immediately queryable, so this makes a small bounded number of short
+    attempts and gives up rather than blocking a live session on an
+    endpoint that may genuinely take minutes to catch up.
+
+    Returns (tokens_prompt, tokens_completion, total_cost_usd) on success.
+    Returns None on ANY failure — 404, timeout, network error, malformed
+    body, non-finite/negative numbers — so the caller falls back to today's
+    unknown-cost behavior. NEVER raises; this must never make a call worse
+    than it already was.
+    """
+    import requests  # lazy import — same pattern as src/cost_table.py
+
+    last_reason = "no attempts made"
+    for attempt in range(_OPENROUTER_GENERATION_LOOKUP_ATTEMPTS):
+        try:
+            resp = requests.get(
+                _OPENROUTER_GENERATION_URL,
+                params={"id": generation_id},
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=_OPENROUTER_GENERATION_LOOKUP_TIMEOUT_S,
+            )
+            if resp.status_code == 404:
+                last_reason = "404 (generation not yet indexed)"
+            else:
+                resp.raise_for_status()
+                body = resp.json()
+                data = body.get("data") if isinstance(body, dict) else None
+                if not isinstance(data, dict):
+                    last_reason = f"malformed response body: {body!r}"
+                else:
+                    cost = data.get("total_cost")
+                    tok_in = data.get("tokens_prompt")
+                    tok_out = data.get("tokens_completion")
+                    cost_ok = (
+                        isinstance(cost, (int, float)) and not isinstance(cost, bool)
+                        and math.isfinite(cost) and cost >= 0
+                    )
+                    tok_in_ok = (
+                        isinstance(tok_in, int) and not isinstance(tok_in, bool)
+                        and tok_in >= 0
+                    )
+                    tok_out_ok = (
+                        isinstance(tok_out, int) and not isinstance(tok_out, bool)
+                        and tok_out >= 0
+                    )
+                    if cost_ok and tok_in_ok and tok_out_ok:
+                        return (tok_in, tok_out, float(cost))
+                    last_reason = f"unusable fields in response: {data!r}"
+        except Exception as exc:
+            last_reason = f"{type(exc).__name__}: {exc}"
+        if attempt < _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS - 1:
+            time.sleep(_OPENROUTER_GENERATION_LOOKUP_SLEEP_S)
+    logger.warning(
+        "Agent %s: OpenRouter generation lookup for %s did not recover "
+        "billing after %d attempt(s) — %s. Cost stays unknown; this call "
+        "will settle at the full conservative reservation.",
+        agent_name, generation_id, _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS,
+        last_reason,
+    )
+    return None
 
 
 def _extract_anthropic_usage(response, agent_name: str) -> tuple[int, int]:
