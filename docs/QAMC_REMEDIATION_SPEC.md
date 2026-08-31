@@ -419,7 +419,9 @@ the risk budget.
 
 **Status (owner-ratified 2026-08-31): specified, scheduled work. PARTIALLY
 BUILT — the recording and scoring data layer landed on
-`feat/conviction-ledger-recording`; nothing reads it back to a human.** The
+`feat/conviction-ledger-recording` (PR #196), and the read side (one read-only
+API route plus the Mission Control panel) landed on
+`feat/analyst-scorecard-panel`.** Items 2, 4, 5 and 7 remain unbuilt. The
 per-item implementation status is item 11 at the end of this section, and item
 10's "missing" list has been corrected to match. Everything between here and
 item 10 is the specification as ratified, unchanged.
@@ -692,7 +694,7 @@ route, no frontend, and no change to sizing or to what gets traded.
 | 6 — advisory only | **Built and enforced.** Nothing in the trading chain reads any ledger row; every write is best-effort. `tests/test_conviction_ledger.py::test_ledger_recording_does_not_change_a_single_trading_decision` runs `DecisionStage` with recording live and disabled and requires the constructed orders to serialize byte-identically. | `src/pipeline_stages.py::_link_nominations_to_decision` / `_record_seat_stances` |
 | 7 — decay / rolling window | **Not built.** The record is lifetime. | — |
 | 8 — no arbitrary sample gate | **Built.** `aggregate_seat_records` returns raw `resolved_calls` and `calls_right` with no threshold anywhere. | `src/conviction_ledger.py` |
-| 9 — presentation | **Not built.** Out of scope for that branch. | — |
+| 9 — presentation | **Built**, as a Mission Control view rather than the bullet graph item 9 recommended — see item 12. Raw counts always accompany any percentage, and no meaning rests on hue alone. | `GET /analysts/scorecard`, `frontend/src/components/scorecard/` |
 | 10 — the join | **Built.** See the corrected list above. | `Database.link_nominations_to_decision` |
 
 Additionally built, as the read side items 2/4/9 will need: a per-analyst
@@ -700,6 +702,58 @@ aggregate — `src/conviction_ledger.py::aggregate_seat_records` returns, per
 seat, resolved calls, calls right, average win, average loss, the cumulative
 profit series over time, and current drawdown from that seat's own peak. Pure
 logic, no I/O, same posture as `src/nominations.py`.
+
+**12. The read side (`feat/analyst-scorecard-panel`).**
+
+One read-only endpoint and one Mission Control view. No write path, no change
+to sizing, no change to what gets traded — item 6 holds unchanged.
+
+- **`GET /analysts/scorecard`** (`src/api/routes_scorecard.py`,
+  `AnalystScorecardResponse` in `src/api/schemas.py`). Reads the persisted
+  `conviction_credit` and `seat_stance` evidence rows through
+  `db_reads.get_conviction_ledger()` — an independent SQLite `mode=ro`
+  connection, like every other Mission Control read. It **scores nothing**:
+  no `r_multiple` is computed, no stance is re-classified as supporting or
+  opposing, and no conviction weight is applied. It sums stored `credit`
+  values into per-analyst totals, a running series, a peak, a distance below
+  that peak, and monthly buckets.
+- **It does not import `src.conviction_ledger`**, even though
+  `aggregate_seat_records` produces the same per-analyst totals, because that
+  module imports `src.risk.rules` and `tests/test_api_safety.py` forbids any
+  `src.risk` import from `src/api/`. The aggregation is therefore mirrored in
+  the route, and `tests/test_api_scorecard.py::test_projection_matches_the_ledgers_own_aggregate_when_it_is_available`
+  compares the two implementations against identical input so they cannot
+  drift apart. This duplication is a deliberate cost of the isolation
+  contract, not an oversight.
+- **The panel** (`frontend/src/components/scorecard/`, reachable from the
+  cockpit's top nav as "Analyst Scorecard"). Four sections: two slope panels
+  comparing every analyst at the earliest and latest month on accuracy and on
+  money; a ranked table; one analyst opened (running-profit chart, a strip
+  showing how far below its own best it has fallen and for how long, and a
+  month-by-month waterfall); and one closed idea traced back to everyone who
+  took a side on it. Drawn with `lightweight-charts`, `recharts` used
+  directly, plain SVG with `d3-scale`/`d3-shape`, and `@xyflow/react` — no new
+  dependency, and deliberately not Tremor.
+- **Item 9's bullet-graph recommendation was not followed**, and the
+  recommendation itself said it was not a ratified decision. What it was
+  protecting — never collapsing "how often right" and "by how much" into one
+  mark — is preserved: the two are separate panels in section 1 and separate
+  columns in the table. The binding accessibility constraint is met by
+  position against a drawn zero line, explicit + / − signs, ▲ / ▼ glyphs and
+  solid-versus-outlined shapes; colour only ever repeats one of those.
+- **Plain language is enforced by test.** The panel defines every term on the
+  page before using it, states the $100-at-risk convention, that nothing
+  compounds and nothing expires, that no score changes how much money any
+  trade gets, and that no minimum call count hides anything.
+  `frontend/src/components/scorecard/AnalystScorecard.test.tsx` asserts that
+  "R-multiple", "seat", "payoff ratio", "expectancy", "drawdown" and
+  "conviction-weighted" appear nowhere in what renders.
+- **Example data, clearly labelled.** Until a position closes and is scored
+  the ledger is empty, so the panel renders a committed fixture
+  (`frontend/src/fixtures/analystScorecard.ts`) behind a permanent
+  "Example data — not real" banner, and switches to the live record the moment
+  the endpoint returns scored calls. The fixture is never merged into a live
+  response, and the API never fabricates a row.
 
 **One gap worth naming separately:** short round trips are not scored, because
 they carry no `position_id` to chain on — `_assign_position_ids` (§6.2a) opens

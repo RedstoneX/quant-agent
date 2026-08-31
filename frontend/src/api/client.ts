@@ -763,6 +763,82 @@ export interface ResearchDailyResponse {
 }
 
 // ---------------------------------------------------------------------
+// /analysts/scorecard — the conviction ledger, per analyst (spec §9.5)
+//
+// `credit` / `r_multiple` / `cumulative` are in R: profit as a multiple of
+// the risk the position was opened with. The panel never shows R; it
+// multiplies by `risk_dollars_per_call` and shows dollars.
+// ---------------------------------------------------------------------
+
+export interface ScorecardPoint {
+  resolved_at: string;
+  cumulative: number;
+  peak: number;
+  /** peak - cumulative, never negative: how far below its own best. */
+  below_best: number;
+}
+
+export interface ScorecardMonthPoint {
+  month: string; // "YYYY-MM"
+  credit: number;
+  cumulative: number;
+  resolved_calls: number;
+  calls_right: number;
+  hit_rate_pct: number | null;
+}
+
+export interface AnalystScorecardItem {
+  analyst: string;
+  resolved_calls: number;
+  calls_right: number;
+  hit_rate_pct: number | null;
+  avg_win: number | null;
+  /** Negative, not a magnitude. */
+  avg_loss: number | null;
+  cumulative_credit: number;
+  peak: number;
+  below_best: number;
+  below_best_since: string | null;
+  calls_since_peak: number;
+  cumulative: ScorecardPoint[];
+  monthly: ScorecardMonthPoint[];
+}
+
+export interface ScorecardIdeaAnalyst {
+  analyst: string;
+  side: "supported" | "opposed";
+  stance: string;
+  conviction: string;
+  weight: number;
+  credit: number;
+  nominated: boolean;
+  reason: string;
+}
+
+export interface ScorecardIdea {
+  symbol: string;
+  direction: string;
+  position_id: string | null;
+  decision_id: string | null;
+  resolved_at: string;
+  r_multiple: number;
+  supported: ScorecardIdeaAnalyst[];
+  opposed: ScorecardIdeaAnalyst[];
+}
+
+export interface AnalystScorecardResponse {
+  as_of: string;
+  state: "populated" | "empty" | "error";
+  read_error: string | null;
+  risk_dollars_per_call: number;
+  resolved_calls_total: number;
+  months: string[];
+  analysts: AnalystScorecardItem[];
+  ideas: ScorecardIdea[];
+}
+
+
+// ---------------------------------------------------------------------
 // Calls
 // ---------------------------------------------------------------------
 
@@ -795,6 +871,8 @@ export const api = {
   journalDay: (date: string) => getJSON<JournalDayResponse>(`/journal/${encodeURIComponent(date)}`),
   researchDaily: (date: string) =>
     getJSON<ResearchDailyResponse>(`/research/daily/${encodeURIComponent(date)}`),
+  analystScorecard: (ideaLimit = 25) =>
+    getJSON<AnalystScorecardResponse>(`/analysts/scorecard?idea_limit=${ideaLimit}`),
   search: (q: string, limit = 50) =>
     getJSON<SearchResponse>(`/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 };

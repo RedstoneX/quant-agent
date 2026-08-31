@@ -1081,3 +1081,119 @@ def list_meta_periods() -> list[dict]:
             "has_proposed_edits": (entry / "proposed_edits.json").is_file(),
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Conviction ledger (spec §9.5) — the analyst scorecard's only data source.
+#
+# The ledger writes into the EXISTING `specialist_evidence` table (no new
+# store): `kind='seat_stance'` for the side each analyst took on an idea, and
+# `kind='conviction_credit'` for the scored outcome once the position closed.
+# Both are read here through the same independent `mode=ro` connection every
+# other function in this module uses.
+#
+# NOTHING is scored here. The signed, conviction-weighted `credit` value, the
+# realized `r_multiple`, the alignment decision and the conviction weight are
+# all computed once by the ledger layer at close time and persisted; this
+# function only parses the stored JSON. `src/api` deliberately does not import
+# `src.conviction_ledger`, because that module imports `src.risk.rules` and
+# `tests/test_api_safety.py` forbids any `src.risk` import from this package —
+# see docs/architecture/MISSION_CONTROL_API.md.
+#
+# A database written before the ledger existed simply has no rows of these
+# kinds and reads back as an empty list — not an error.
+# ---------------------------------------------------------------------------
+
+CONVICTION_CREDIT_KIND = "conviction_credit"
+SEAT_STANCE_KIND = "seat_stance"
+
+
+def _parse_evidence_payload(raw: str | None) -> dict | None:
+    try:
+        parsed = json.loads(raw or "")
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def get_conviction_ledger() -> dict:
+    """Every persisted conviction-credit row, plus the stances behind them.
+
+    Returns `{"read_error": str | None, "credits": [...], "stances": [...]}`.
+    `read_error` is explicit and sanitized so a SQLite failure is never
+    presented as a desk that simply has not scored anything yet — the same
+    distinction `get_research_day` draws.
+
+    Rows whose `evidence_json` will not parse, or that carry no numeric
+    `credit`, are skipped rather than defaulted to zero: a malformed row is
+    absence of evidence, not evidence of a break-even call.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        credit_rows = conn.execute(
+            "SELECT agent_name, symbol, timestamp, decision_id, evidence_json "
+            "FROM specialist_evidence WHERE kind = ? ORDER BY timestamp, id",
+            (CONVICTION_CREDIT_KIND,),
+        ).fetchall()
+        stance_rows = conn.execute(
+            "SELECT agent_name, symbol, decision_id, evidence_json "
+            "FROM specialist_evidence WHERE kind = ? ORDER BY id",
+            (SEAT_STANCE_KIND,),
+        ).fetchall()
+    except sqlite3.Error:
+        return {
+            "read_error": "conviction ledger unavailable",
+            "credits": [],
+            "stances": [],
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+    credits: list[dict] = []
+    for row in credit_rows:
+        payload = _parse_evidence_payload(row["evidence_json"])
+        if payload is None:
+            continue
+        try:
+            credit = float(payload["credit"])
+            r_multiple = float(payload.get("r_multiple", 0.0))
+            weight = float(payload.get("weight", 1.0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        credits.append({
+            "analyst": str(payload.get("seat") or row["agent_name"] or ""),
+            "symbol": str(payload.get("symbol") or row["symbol"] or ""),
+            "side": str(payload.get("side") or ""),
+            "stance": str(payload.get("stance") or ""),
+            "conviction": str(payload.get("conviction") or ""),
+            "weight": weight,
+            "r_multiple": r_multiple,
+            "credit": credit,
+            # The ledger stamps `resolved_at` from the closing trade; fall
+            # back to the evidence row's own timestamp rather than dropping
+            # a scored call out of the series for want of a date.
+            "resolved_at": str(payload.get("resolved_at") or row["timestamp"] or ""),
+            "position_id": payload.get("position_id"),
+            "decision_id": payload.get("decision_id") or row["decision_id"],
+            "direction": str(payload.get("direction") or "long"),
+            "nominated": bool(payload.get("nominated")),
+        })
+
+    stances: list[dict] = []
+    for row in stance_rows:
+        payload = _parse_evidence_payload(row["evidence_json"])
+        if payload is None:
+            continue
+        stances.append({
+            "analyst": str(payload.get("seat") or row["agent_name"] or ""),
+            "symbol": str(payload.get("symbol") or row["symbol"] or ""),
+            "decision_id": row["decision_id"],
+            "stance": str(payload.get("stance") or ""),
+            "conviction": str(payload.get("conviction") or ""),
+            "nominated": bool(payload.get("nominated")),
+            "observation": str(payload.get("observation") or ""),
+        })
+
+    return {"read_error": None, "credits": credits, "stances": stances}
