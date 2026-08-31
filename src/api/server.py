@@ -154,10 +154,12 @@ def _freshness_banner(built_sha: str | None, live_sha: str | None) -> str:
     if built_sha != live_sha:
         return (
             '<div class="stale"><b>This board is out of date.</b> '
-            f"It was built from commit {built_sha[:9]}, but the system is "
-            f"now running {live_sha[:9]}. The system has changed since this "
-            "board was built &mdash; treat what follows as a snapshot, not "
-            "current state.</div>"
+            "The desk has been updated since this page was built, so what "
+            "follows is a snapshot rather than the current picture. If this "
+            "does not clear on its own within a few minutes, the rebuild "
+            "that should have refreshed it is not running."
+            f'<span class="stale-detail">built {built_sha[:9]} &middot; '
+            f'running {live_sha[:9]}</span></div>'
         )
     return ""
 
