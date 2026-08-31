@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from src.cost_table import estimate_cost, fmt_cost
+from src.token_rate import TokenRateGovernor
 from src.cost_circuit import (
     OptionalPaidAnalysisRetrySkipped,
     PaidAnalysisSuspended,
@@ -201,6 +202,67 @@ _ANTHROPIC_LLM_SEMAPHORE = threading.Semaphore(_ANTHROPIC_MAX_CONCURRENT)
 _OPENROUTER_MAX_CONCURRENT = _int_env("QUANT_AGENT_MAX_CONCURRENT_OPENROUTER", 3)
 _OPENROUTER_LLM_SEMAPHORE = threading.Semaphore(_OPENROUTER_MAX_CONCURRENT)
 
+# --- tokens per minute, the limit the semaphores above never bounded -------
+#
+# A concurrency cap counts REQUESTS. A provider rate limit counts TOKENS per
+# minute. Three concurrent 80,000-token requests satisfy a cap of three and
+# are exactly what gets declined, which is how the Technical Analyst could
+# send ~314,000 tokens in 80 seconds (~252k/min) while every cap in the
+# system read as green. It was the only agent ever rate-limited: eleven times
+# in three weeks, with no other agent declined once.
+#
+# This is a BACKSTOP, not the mechanism. The actual fix is that requests are
+# now built to a size budget rather than cut to a fixed item count (see
+# src/token_budget.py): the largest request a morning pass can produce fell
+# from ~136,000 tokens to ~44,700, so even all three concurrent slots full
+# is ~134k/min — under this ceiling by construction, not by luck.
+#
+# The ceiling exists for what the budget cannot see: a new agent, a prompt
+# that grows, a retry storm. 150k/min sits below the ~252k/min burst that
+# was actually being refused and above anything the packer can now emit, so
+# in normal operation it must never fire. If it does, that is a bug report
+# about something having grown — and it says exactly that, at CRITICAL.
+#
+# Deliberately NOT the primary control: pacing against a guessed ceiling
+# means discovering the real limit by being refused, and every refusal is
+# paid for. Sizing the request before it leaves costs nothing.
+_OPENROUTER_TOKENS_PER_MIN = _int_env("QUANT_AGENT_OPENROUTER_TPM", 150_000)
+_OPENAI_TOKENS_PER_MIN = _int_env("QUANT_AGENT_OPENAI_TPM", 150_000)
+_ANTHROPIC_TOKENS_PER_MIN = _int_env("QUANT_AGENT_ANTHROPIC_TPM", 150_000)
+_GOVERNOR_MAX_WAIT_S = float(_int_env("QUANT_AGENT_TPM_MAX_WAIT_S", 120))
+
+# Pre-request size estimate. The dense numeric payload that actually trips
+# rate limits tokenizes at roughly ONE token per character (measured: 314,366
+# tokens for ~355,000 characters of OHLCV rows), nothing like the ~4 that
+# prose gives. Estimating at 1.5 stays conservative for that case rather than
+# under-charging the very requests the governor exists to bound; prose is
+# over-charged, which only costs a little headroom on agents that send a
+# twentieth as much. Every charge is reconciled to the provider's real usage
+# the moment the response lands, so this constant only ever affects one
+# request's wait decision, never the window's accuracy.
+_GOVERNOR_CHARS_PER_TOKEN = 1.5
+
+_TOKEN_GOVERNORS = {
+    "openrouter": TokenRateGovernor(
+        "OpenRouter", _OPENROUTER_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+    ),
+    "openai": TokenRateGovernor(
+        "OpenAI", _OPENAI_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+    ),
+    "anthropic": TokenRateGovernor(
+        "Anthropic", _ANTHROPIC_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+    ),
+    "deepseek": TokenRateGovernor(
+        "DeepSeek", _int_env("QUANT_AGENT_DEEPSEEK_TPM", 150_000),
+        max_wait_s=_GOVERNOR_MAX_WAIT_S,
+    ),
+}
+
+
+def token_governor_snapshots() -> list[dict]:
+    """Every governor's current state, for status reporting."""
+    return [g.snapshot() for g in _TOKEN_GOVERNORS.values()]
+
 
 # finish/stop reasons that mean "output hit a ceiling mid-generation".
 # Shared by the truncation flag in _execute() and the empty-content guards:
@@ -274,6 +336,23 @@ def provider_attempt_budget(*, failover_available: bool) -> int:
 
 def _is_openai_model(model: str) -> bool:
     return any(model.startswith(p) for p in _OPENAI_PREFIXES)
+
+
+def _governor_domain_for(model: str, agent) -> str:
+    """Which provider's token budget this request will actually consume.
+
+    Keyed on the MODEL being sent, not the agent's configured primary: a
+    cross-provider failover spends the fallback provider's rate limit, not
+    the primary's, and charging it to the wrong governor would let a failover
+    storm slip past the ceiling it is supposed to be bounded by.
+    """
+    if model == _FALLBACK_MODEL or str(model).startswith("claude"):
+        return "anthropic"
+    if getattr(agent, "_use_openrouter", False):
+        return "openrouter"
+    if getattr(agent, "_use_deepseek", False):
+        return "deepseek"
+    return "openai"
 
 
 def _is_deepseek_model(model: str) -> bool:
@@ -814,6 +893,8 @@ class BaseAgent(ABC):
         prompt_version = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:12]
         reservation = None
         provider_requests = 0
+        governed_estimate = 0
+        governed_provider: str | None = None
 
         def _mark_circuit_unavailable(exc: BaseException) -> dict:
             marker = getattr(self._cost_circuit, "mark_unavailable", None)
@@ -851,9 +932,29 @@ class BaseAgent(ABC):
                 )
                 _mark_circuit_unavailable(accounting_exc)
 
+        def _govern(model: str) -> None:
+            """Pace this request so the desk never floods a provider.
+
+            Deliberately placed AFTER the cost circuit has authorized the
+            attempt and immediately before the request leaves: money is
+            checked first, then speed, and there is exactly one path through
+            here — every transport and the failover all authorize through
+            this closure, so nothing can send without being counted.
+            """
+            nonlocal governed_estimate, governed_provider
+            governed_provider = _governor_domain_for(model, self)
+            governor = _TOKEN_GOVERNORS.get(governed_provider)
+            if governor is None:
+                governed_estimate = 0
+                return
+            chars = len(self.system_prompt) + len(user_message)
+            governed_estimate = int(chars / _GOVERNOR_CHARS_PER_TOKEN) + self.max_tokens
+            governor.charge(governed_estimate)
+
         def _authorize(model: str) -> None:
             nonlocal provider_requests
             if self._cost_circuit is None:
+                _govern(model)
                 provider_requests += 1
                 return
             try:
@@ -866,6 +967,7 @@ class BaseAgent(ABC):
                     "mandatory cost-circuit authorization failed",
                     state,
                 ) from exc
+            _govern(model)
             provider_requests += 1
 
         if self._cost_circuit is None and not self._allow_unmetered_for_tests:
@@ -1017,6 +1119,14 @@ class BaseAgent(ABC):
                 "'cut off', not 'no signal'.",
                 self.name, finish_reason, self.max_tokens,
             )
+
+        # The governor's window must reflect what was really sent, not what
+        # the pre-request estimate guessed, or the ceiling quietly means
+        # something other than it says.
+        if governed_provider and governed_estimate:
+            governor = _TOKEN_GOVERNORS.get(governed_provider)
+            if governor is not None:
+                governor.reconcile(governed_estimate, input_tokens + output_tokens)
 
         tokens = input_tokens + output_tokens
         # Cost computation — uses src.cost_table.PRICING. Returns None
@@ -1432,7 +1542,27 @@ def _extract_openai_usage(response, agent_name: str) -> tuple[int, int]:
             agent_name,
         )
         return (0, 0)
+    prompt_tokens = _coerce_token_count(getattr(usage, "prompt_tokens", 0))
+
+    # Cache accounting, measured rather than assumed (2026-08-31). Splitting a
+    # batch into more, smaller requests repeats the system prompt more often,
+    # and whether that costs anything depends entirely on whether the provider
+    # is serving it from cache. On this seat's route a cached prompt token is
+    # billed at $0.01/M against $0.10/M — a 10x discount that decides the
+    # trade-off outright. Nobody knew which way it went because nothing ever
+    # read the field. Reported, not acted on: this only ever logs.
+    cached = 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is not None:
+        cached = _coerce_token_count(getattr(details, "cached_tokens", 0))
+    if cached:
+        logger.info(
+            "Agent %s: %d of %d prompt tokens served from the provider's cache "
+            "(%.0f%%) — repeated system prompts are being discounted.",
+            agent_name, cached, prompt_tokens,
+            (cached / prompt_tokens * 100) if prompt_tokens else 0.0,
+        )
     return (
-        _coerce_token_count(getattr(usage, "prompt_tokens", 0)),
+        prompt_tokens,
         _coerce_token_count(getattr(usage, "completion_tokens", 0)),
     )

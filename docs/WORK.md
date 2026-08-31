@@ -293,6 +293,114 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
+### 2026-08-31, afternoon — why the provider was refusing us, and the fix
+
+**The owner's framing, and it was the right one: never discover a limit by
+hitting it.** Every request costs money, so the work of sizing one belongs on
+our side of the wire. That rules out both obvious designs — a rate ceiling
+that backs off when it trips, and a ceiling that learns from refusals — because
+each pays the provider for the lesson.
+
+**What was actually happening.** Every one of the eleven rate limits in three
+weeks of logs hit the **same agent**, the Technical Analyst, and no other agent
+was declined once. It is the only one that bursts: ~314,000 tokens inside 80
+seconds, ~252,000 per minute, against 20-30k for everything else. Not market-open
+congestion — the refusals land at 10:01, 10:30, 11:31 on other days. And
+OpenRouter's own message says why: *"add your own key to accumulate your rate
+limits"* — we share its pooled Google credentials, so other customers' traffic
+counts against us.
+
+Nothing bounded the burst. Concurrency was capped at three requests and context
+was capped per call, but a rate limit counts **tokens per minute**, and three
+concurrent 80,000-token requests clear both caps while being exactly what gets
+refused.
+
+**Three things were wrong, all measurable:**
+
+1. **72% of the payload was raw price bars, and half of that was noise.** Bars
+   were serialised at full float64 precision — `O=14.920000076293945` for a
+   stock that traded at $14.92. Those digits are float32-to-float64 conversion
+   artefacts, not price data; the source could not represent them. Rendering at
+   six significant figures cuts the payload 30% and loses nothing.
+2. **The batch split was a fixed count calibrated against a stale assumption.**
+   `_CHUNK_SIZE = 25` was set against "~300 input tokens per symbol". The bar
+   window grew from 20 to 40, per-symbol context was added, and the real figure
+   became ~3,600. Nothing failed loudly, because context length was never the
+   binding constraint — the model takes a million tokens. **A count cannot bound
+   tokens.**
+3. **Relative-strength context depended on how the batch was split.** The index
+   ETFs sit at the top of the universe, so only the first chunk ever contained
+   SPY; every symbol after it silently lost its benchmark. Which symbols kept it
+   was a function of the chunk size.
+
+**The fix — build to a budget, not to a count.** Requests are packed until the
+next symbol would exceed a token budget, then a new request starts. An oversized
+request is not unlikely, it is unreachable: nothing is added to a full batch.
+The bytes-to-tokens conversion comes from a model fitted to each agent's own
+past calls — data already paid for, so measuring costs nothing and improves as
+the desk runs. It never learns from a refusal.
+
+The model is two parameters, and both are physically real:
+
+    tokens = fixed_tokens + tokens_per_byte x content_bytes
+
+    tech_analyst        4,127 tok + 0.939 tok/byte
+    news_analyst        4,200 tok + 0.227 tok/byte
+    portfolio_manager  12,483 tok + 0.214 tok/byte
+
+The intercepts recover each agent's system prompt (tech_analyst's is 19,792
+bytes of prose; 19,792/4,127 = 4.8 bytes per token, exactly what English
+tokenizes at). The slopes recover the content: ~1.07 bytes/token for dense OHLCV
+digits, ~4.4 for prose. Median prediction error 0.9-4.3%. A single
+bytes-per-token ratio cannot express this — it folds a per-request constant into
+a per-byte rate, so it is right at only one message size, and tech_analyst's
+messages span 6KB to 379KB.
+
+**Measured on 53 real production symbol sections:**
+
+| | requests | peak request | total |
+| --- | --- | --- | --- |
+| before | 3 | 136,449 tok | 290,329 tok |
+| trim only | 3 | 96,135 tok | 205,833 tok |
+| **trim + 45k budget** | **5** | **44,654 tok** | **214,087 tok** |
+
+**Peak down 67%, total down 26%** — both directions improve, because the trim
+more than pays for the extra repeated system prompts. Worst case with all three
+concurrent slots full is ~134k/min, against the ~252k/min that was being refused.
+
+**And the repeated system prompts may be free anyway.** This seat's route bills
+a cached prompt token at $0.01/M against $0.10/M — a 10x discount that decides
+the trade-off outright. Nobody knew whether it was happening because nothing
+read the field. Cache hits are now logged; the answer arrives with the next
+session's logs.
+
+**Why 45,000 and not something else.** It is where the curve knees: 60k saves 2%
+of total tokens for a 33% higher peak, 100k saves 4% for a peak nearly three
+times larger. Overridable with `QUANT_AGENT_TECH_REQUEST_TOKENS`.
+
+**A tokens-per-minute governor exists but is a BACKSTOP, not the control.** It
+cannot fire in normal operation now — the packer cannot emit a burst that large.
+It is there for what the budget cannot see (a new agent, a prompt that grows, a
+retry storm) and it reports at CRITICAL if it ever engages, because that would
+mean something grew.
+
+**Failure posture, deliberately.** Nothing in the sizing path may take a session
+down: every entry point catches broadly and degrades to the old fixed split. An
+efficiency measure that can stop a trading desk is a bad trade — which is the
+whole lesson of the morning recorded below.
+
+**Left open, owner's call:** our own Google key (a free tier exists, and Google
+serves the *same* Gemini model directly, so it is a same-model backup with no
+consistency problem at all); and whether to pin a cheaper route — the identical
+model is served by five endpoints, one at half our current price.
+
+**Not the cause, and a correction to an earlier note in this file:** the
+reservation estimator's conservatism was reported here as 6.8x. That was an
+apples-to-oranges comparison of morning estimates against intra-day actuals.
+Measured like-for-like across ten runs it is **1.49x**, which is roughly what a
+deliberately conservative reserve should look like. It contributed to the
+2026-08-28 ceiling trip; it is not the pattern, and it has not been changed.
+
 ### 2026-08-31, market open — the desk went dark two minutes after the bell
 
 **Closed by `fix/provider-failover-attempt-budget`. Read this before touching
