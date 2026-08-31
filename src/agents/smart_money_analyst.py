@@ -1,3 +1,75 @@
+"""Smart Money Analyst seat.
+
+Standing acceptance contract for this seat, relocated from AGENTS.md's
+"Shipped tranche" section on 2026-08-31 (shipped; kept here as the
+regression yardstick for this file, not open work — that file loads on
+every session, this only matters when someone touches this seat). The
+matching frontend acceptance contract lives in
+frontend/src/components/research/ResearchDesk.tsx.
+
+Use first-party, credentialless SEC data for v1. Phase A is broad Form 4
+discovery of exact non-derivative open-market purchase/sale codes `P` and `S`,
+with accession-level provenance, transaction time, SEC acceptance time, lag,
+owner identity/role, amendment and 10b5-1 context where present. Python owns
+parsing, direction, recency, materiality, independent-owner clustering,
+deduplication and admission eligibility. Quiet or unchanged evidence must use
+zero model tokens; the LLM sees only compact surviving evidence and may
+synthesize meaning but cannot author source facts or admission.
+
+The permanent configured universe remains unchanged. A fresh external `P`
+purchase that clears the higher external materiality threshold may be admitted
+for the current run only after deterministic Alpaca common-US-equity/tradable
+eligibility, supported-exchange, minimum-price, minimum-history, minimum
+20-session dollar-liquidity and known-sector checks. At most three external
+symbols may be admitted per run. Admission only adds the symbol to that run's
+research/PM allowlist; it must still receive current Technical analysis and
+pass Portfolio Manager grounding, AI Risk, every deterministic risk/funding
+rule and broker protection. It is never written into the permanent universe.
+
+Schedule 13D/13G and curated-manager 13F deltas remain possible later phases,
+not v1 admission inputs. Alpha Vantage may be considered only as an optional
+cross-check/fallback; Bargo may be reconsidered if access arrives. Neither is
+a current dependency. Paid alternative-data dependencies remain unauthorized.
+
+The Smart Money Analyst should identify viable present-tense trading
+evidence, not merely summarize disclosure feeds. It must distinguish
+evidence by freshness and economic meaning. Congressional trades can be
+disclosed up to roughly 45 days after the transaction and 13F holdings can
+be filed up to 45 days after quarter-end, so those streams are primarily
+thematic/confirmatory context. SEC Form 4 insider transactions are generally
+filed within two business days and are materially more timely. Any
+genuinely real-time/near-real-time stream made available under the accepted
+free source may be treated according to its actual timestamp and
+provenance.
+
+The seat should intelligently suppress noise and surface only material
+patterns: clustered or repeated activity; unusual size/direction relative
+to the available disclosure; multiple independent smart-money streams
+aligning; activity that confirms or contradicts current
+News/Macro/Earnings/Technical evidence; and fresh evidence that changes the
+current thesis. A lone stale politician transaction is not a trade signal.
+Every surfaced finding must state what happened, when it happened, when it
+became knowable, why it matters now, and whether it is actionable,
+confirmatory, contradictory or merely historical.
+
+If other genuinely free, reliable, source-backed smart-money streams are
+available under acceptable terms, Codex may incorporate them into this same
+seat rather than proliferating agents. Provider/API details should remain
+replaceable rather than becoming trading architecture.
+
+The seat may inform the Portfolio Manager through the existing
+specialist-evidence path. It must not bypass PM, AI Risk, deterministic
+Python or broker protections and must not create a new execution path.
+
+Acceptance (item 8 of the shipped tranche's 10-item contract; items 1-7,
+9-10 live with the reading experience in ResearchDesk.tsx, see above): this
+seat is SEC-source-backed, accession/timestamp/lag-aware, attributable,
+direction-validated, noise-suppressing, and reaches PM only through the
+accepted specialist path. Any external symbol is run-scoped, visibly
+admitted by deterministic evidence, and still traverses the full
+Technical → PM → AI Risk → deterministic gate → broker chain.
+"""
+
 import json
 import hashlib
 import logging

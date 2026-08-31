@@ -29,6 +29,24 @@
 #   backtester), #153 (Phase 9 nominations).
 #
 # Status values: DONE AND LIVE | DONE, NOT DEPLOYED | PARTIAL | NOT STARTED | OVERTAKEN
+#
+# Writing plain_summary (relocated from AGENTS.md's "Writing for the owner"
+# section, 2026-08-31 — that file loads on every session, this only matters
+# when a phase entry here is actually being written):
+#
+# Every `plain_summary` renders directly onto the status board, which is the
+# only page the owner reads. He is not a developer.
+#
+# Write it for someone running the business, not building it: a one-line
+# verdict, a few short bullets, then what is still outstanding. No file
+# paths, ticket numbers, code identifiers or commit references — those
+# belong in `evidence`, where they are machine-checkable.
+#
+# The board flags summaries that read as engineering notes and says so on
+# the page (the detection logic is in scripts/status_board.py, "is this
+# summary written for HIM, or for a developer?"). If you see that flag on
+# an item, rewriting it is part of the work, not a separate errand for the
+# owner to request.
 
 generated_at: "2026-08-30"
 spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
