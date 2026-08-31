@@ -415,10 +415,252 @@ the risk budget.
 
 ### 9.5 — A conviction ledger per candidate
 
-Who nominated it, who confirmed, who dissented and on what grounds, and what
-changed since the previous session. This is the artifact that makes the desk
-legible to the operator without reading logs, and it is the natural input to
-Mission Control's research view.
+**Status (owner-ratified 2026-08-31): specified, scheduled work. Not built.**
+
+`docs/phases.yaml` had recorded this as "deliberately NOT built," with no
+attribution and no stated reason — the exact pattern `AGENTS.md`'s
+"Governance ratification" section exists to prevent: an engineering scope cut
+recorded as though it were settled, with nothing to show it was ever a
+decision rather than an omission. The owner reopened it on 2026-08-31. What
+follows is the specification; nothing below is built yet.
+
+Note the name collision before anything else: `src/storage/db.py` already
+has a `_CONVICTION_OUTCOME_MIN_N` constant and a `trades.conviction` /
+`requested_risk_pct` / `allocated_risk_pct` / `decision_model` column set,
+both labelled "conviction ledger" in their own comments — but that is
+**§7.2's** ledger, a single PM-assigned conviction value per *trade*, graded
+against that trade's own outcome. **This section is a different thing**: a
+per-*seat*, per-*idea* record, tracking every seat that took a position on a
+symbol, not just the one conviction value the PM finally acted on. The two
+should not be conflated; §9.5 does not replace or modify §7.2's ledger, and
+item 8 below states exactly where the two touch.
+
+**1. What is recorded.**
+
+Per idea (symbol), per session, one row per seat that took a position on it:
+which seat, its stance (long/short/pass) and declared conviction
+(low/medium/high — `Nomination.conviction`'s existing scale), its stated
+reason, whether it originated the idea or is responding to a seat that
+already tabled it, and the session date.
+
+The original wording for this section said the ledger tracks "what changed
+since the previous session." That line is easy to read past, but it is the
+point: this is **not a per-run snapshot**. A seat's stance on a symbol it
+already has a position on can strengthen, soften, or reverse from one session
+to the next, and that trajectory — not any single session's snapshot — is
+what makes a seat's judgement legible. The ledger is longitudinal per idea by
+design, not a table refreshed and discarded every morning.
+
+**2. Two skills, scored separately.**
+
+*Origination* — the seat that first tabled the symbol — and *judgement* —
+any seat (including the originator, on a later session) taking a position on
+an idea someone else already put on the table — are scored independently. A
+seat can be a sharp originator and a weak judge of others' ideas, or the
+reverse; collapsing the two into one number hides which skill is which.
+
+**3. Scoring.**
+
+On position close, the realized outcome in R
+(`src/risk/metrics.py::r_multiple`) is credited backwards to every seat that
+took a stance on that idea: seats whose stance aligned with the direction
+actually taken score **+R**, seats opposed score **−R**. A seat that argued
+against a trade that went on to lose therefore gains from having been right
+to dissent — the ledger scores the call, not the trade. Each seat's score is
+weighted by its own declared conviction on that call, so a loud wrong call
+costs more than a quiet one, and a loud right call earns more than a quiet
+one.
+
+**4. Unconverted nominations are not scored, but tracked.**
+
+An idea that never became a trade has no outcome and gets no verdict — there
+is nothing in R to credit. It is not silently dropped, though: conversion
+rate (nominations that became a trade ÷ nominations made) is tracked and
+shown per seat, alongside the scored record. A seat that nominates constantly
+but rarely survives to a trade is a different seat from one that nominates
+rarely but almost always converts, and the ledger should show that
+difference even though neither number is a win/loss score.
+
+**5. Shadowed objections. (Owner decision, 2026-08-31.)**
+
+When a seat's objection blocks a trade outright, there is no real market
+outcome to grade the objection against. The trade is *shadowed* instead:
+tracked as if it had been taken, at the price and structural levels the
+desk would have used, so the blocking seat's objection is scored against
+what actually happened to the position it prevented.
+
+*Rationale (owner):* without this, the cheapest way for any seat to look
+good on this ledger is to block everything. A seat that only ever votes no
+would otherwise be unscoreable — never wrong, because never in a trade — and
+that is a worse incentive than the one the ledger is trying to fix.
+
+**6. Advisory only. (Owner decision, 2026-08-31.)**
+
+No score produced by this ledger feeds back into position sizing, in this
+build, under any circumstance.
+
+*Rationale (owner):* a leaderboard that reallocates risk starts grading
+itself on trades it caused. A seat upweighted because it scored well starts
+influencing the very trades that determine whether it keeps scoring well —
+the measurement poisons itself the moment it has power over the thing it is
+measuring. This ledger stays read-only until that circularity has a real
+answer, which is not attempted here.
+
+**7. Decay. (Owner decision, 2026-08-31.)**
+
+Scores are computed over a rolling window, not a lifetime record, so a seat
+is judged on the regime it is trading now rather than carrying a call from
+eight months ago at equal weight to one from last week.
+
+*Tension to flag explicitly, per the owner:* decay too aggressively and no
+seat ever accumulates enough resolved calls inside the window to be
+statistically readable — the same small-n problem §7.2 already hit at 8
+closed round trips (see the `_CONVICTION_OUTCOME_MIN_N` comment in
+`src/storage/db.py`). The window length is not fixed by this spec; whoever
+implements this has to pick a value that survives that tension, not assume
+one exists by default.
+
+**8. No arbitrary sample gate. (Owner decision, 2026-08-31 — reverses earlier
+design.)**
+
+An earlier version of this plan gated any displayed score behind 20 resolved
+calls per seat — the threshold `src/storage/db.py::_CONVICTION_OUTCOME_MIN_N`
+already uses to gate §7.2's `by_conviction` / `by_allocated_risk` outcome
+buckets. The owner rejected the gate as arbitrary: a reader can tell the
+difference between "3 of 3" and "25 of 30" without being told which one is
+allowed to be shown. **Show the raw counts (n resolved, n scored) alongside
+every figure; never hide a score behind a threshold.**
+
+This is a deliberate, narrow reversal, and it does not touch
+`_CONVICTION_OUTCOME_MIN_N` itself. That constant keeps its existing job
+exactly as-is: gating whether §7.2's `compute_trade_calibration` states a
+win rate / average return for a *conviction bucket across the whole book* (a
+claim strong enough to justify changing how much risk the desk allocates, if
+it were ever wired to sizing — which per item 6 above, this ledger's
+per-seat score will not be). The two ledgers are answering different
+questions at different resolutions, and only one of them is gated. Anyone
+extending §7.2's aggregate claims should keep using the floor there; this
+section's per-seat, raw-count display is the only thing exempted.
+
+**9. Presentation — a recommendation, not a decision.**
+
+Five encodings were prototyped for showing one seat's record at a glance and
+rejected. Recording why, so nobody re-discovers the same dead ends:
+
+- **(a) A diverging bar-per-call strip** (one bar per resolved call, signed
+  by outcome) — shows the sequence of calls but hides the total at a glance.
+- **(b) A stacked distribution / dot plot** — shows the spread of outcomes
+  but hides which order they happened in.
+- **(c) A hard-edged confidence-interval bar** — Correll & Gleicher (IEEE
+  TVCG 2014,
+  https://graphics.cs.wisc.edu/Papers/2014/CG14/Preprint.pdf) show that a
+  hard interval edge causes readers to systematically over-trust values
+  just inside the bar ("within-the-bar" overconfidence) — the wrong failure
+  mode for a metric meant to be read skeptically.
+- **(d) A variable-width "tug of war" bar** (width/area encoding conviction
+  or magnitude) — width and area are weak perceptual channels next to
+  position and length (Cleveland & McGill's ranking of perceptual
+  accuracy), which is why differences in block size did not actually read
+  to a viewer.
+- **(e) Any single mark trying to combine frequency and magnitude into one
+  number** — collapsing "how often" and "by how much" loses exactly the
+  distinction item 2 above depends on (origination vs. judgement are
+  different skills; a single score cannot show both were measured
+  separately).
+
+**Recommendation:** a **bullet graph** (Stephen Few — designed for exactly
+this: a compact, dashboard-row-sized metric) carrying magnitude as
+**length from a baseline** (cumulative R, or average R per call), paired
+with a **separate small glyph** for hit rate (calls scored positive ÷ calls
+scored) rather than folding the two together.
+
+*Justification:* this is a convergent convention, not a personal
+preference. Trading journals separate win% from average-win-vs-average-loss.
+Sports tipster tables separate strike rate from ROI. Forecasting scorers
+(Brier score) separate calibration from sharpness. Three independent
+domains that all face this exact "frequency vs. magnitude" problem
+independently refuse to collapse it into one number — that convergence is
+the strongest evidence available that two channels, not one, is correct.
+
+*Binding accessibility constraint:* the owner has red-green color
+blindness. Meaning must never rest on hue alone anywhere in this
+presentation — encode sign and category with position, length, shape, or an
+explicit +/− glyph, and use color only as reinforcement on top of one of
+those, never as the sole carrier.
+
+This section is a recommendation for whoever builds the Mission Control view,
+not a locked decision — unlike items 5–8, it carries no owner ratification,
+because no design has been shown to the owner yet.
+
+**10. What already exists versus what must be built.**
+
+Verified by reading the current code, not assumed:
+
+*Already exists:*
+
+- **Nomination capture.** Every seat's raw nomination (symbol, conviction,
+  observation) is already captured, per seat, before capping/dedup
+  (`src/nominations.py::_collect_seat_nominations` is called from
+  `src/pipeline_stages.py::_run_nomination_responder_pass`), and is already
+  **persisted** — one `specialist_evidence` row per nomination, kind
+  `pipeline_event`, `outcome="nominated"`, carrying `seat`, `conviction` and
+  `observation` in its JSON payload, scoped to that symbol
+  (`src/pipeline_stages.py::_record_pipeline_event` /
+  `Database.insert_specialist_evidence`). It is even already surfaced
+  read-only through Mission Control's research/evidence API
+  (`src/api/routes_evidence.py`, `src/api/routes_research.py`) as a per-run
+  event timeline. **This corrects the premise that nominator identity is
+  computed and then discarded — it reaches `src/storage/db.py` today.** What
+  it is NOT, today, is a ledger: it is one forensic log line per event, per
+  run, with no aggregation, no cross-session view, and (see below) no link
+  to what the trade did.
+- **Per-seat, per-symbol stance for a session.** Each seat's own structured
+  analysis for a symbol is independently persisted
+  (`specialist_evidence`, kind `analysis`) and is the exact registry
+  `src/risk/rules.py::count_aligned_sources` reads to compute how many seats
+  agree. This is effectively the raw material for "who confirmed, who
+  dissented" — but nothing marks an analysis row as a response *to a
+  specific nomination*, so that relationship has to be reconstructed, not
+  read.
+- **Seat alignment counting.** `count_aligned_sources` and
+  `agreement_ceiling_for_count` (`src/risk/rules.py`) already turn per-seat
+  stances into a deterministic agreement count and a sizing ceiling (§9.4,
+  shipped in PR #160).
+- **R computation.** `src/risk/metrics.py::r_multiple` already turns
+  current price, entry and initial stop into a signed R-multiple for either
+  side (long or short), which is exactly the scoring unit item 3 needs.
+- **Per-trade risk fields.** The `trades` table already carries `conviction`,
+  `requested_risk_pct`, `allocated_risk_pct` and `decision_model` pinned at
+  entry, and exits are already labelled `linked` /
+  `no_originating_decision` against their originating decision
+  (`src/storage/db.py`, §7.2). That is the single-conviction-per-trade
+  ledger, distinct from this one (see the note above item 1), but its
+  `decision_id` linking pattern is the precedent to reuse.
+
+*Missing — has to be built:*
+
+- **Persistence of nominator/dissenter identity as a structured, joinable
+  record**, rather than a flat per-run event log. Concretely: the
+  nomination `pipeline_event` rows are written with `decision_id=None` —
+  `RunContext.decision_id` (`src/pipeline_context.py`) defaults to `None`
+  and is not assigned until `DecisionStage` runs
+  (`src/pipeline_stages.py`, ~line 1882), which is *after*
+  `_run_nomination_responder_pass` has already written its evidence rows.
+  So there is, today, no code path connecting a stored nomination event to
+  the decision it fed, and by extension none to that decision's eventual
+  trade.
+- **The join from ledger to trade outcome.** Nothing today walks from a
+  nomination or a seat's stance to the trade's realized R
+  (`r_multiple`) and writes a scored verdict back per seat. This is the
+  central piece items 2–5 depend on.
+- **The longitudinal per-idea view.** Everything currently persisted is
+  scoped to one run. Nothing aggregates a symbol's nomination/stance
+  history *across* sessions, which is what item 1's "what changed since the
+  previous session" requires.
+- **Origination vs. judgement scoring**, the conversion-rate metric, the
+  shadowed-objection tracking, the decay window, and the presentation layer
+  (item 9) — none of these exist in any form; they are new work, not
+  extensions of something partially built.
 
 ### Sequencing
 

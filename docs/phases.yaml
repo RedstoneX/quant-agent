@@ -730,7 +730,7 @@ phases:
         - "The chart analyst is then brought in specifically to check whether there's a real tradeable setup for each nomination."
         - "If sources disagree on a symbol and that disagreement is never resolved, that specific trade idea is dropped rather than risking a bad call — the rest of the session's trades are unaffected."
         - "How much can be risked on an idea now scales automatically with how many independent sources agree on it — that scaling is deterministic, not a judgment call."
-      outstanding: "A ledger tracking who nominated each idea, who confirmed it, and who disagreed was deliberately not built."
+      outstanding: "A ledger tracking who nominated each idea, who confirmed it, and who disagreed is not built yet. It is now fully specified and owner-ratified as scheduled work (docs/QAMC_REMEDIATION_SPEC.md §9.5, expanded 2026-08-31) — this was previously recorded here as a deliberate, unattributed cut; the owner reopened it."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -814,7 +814,7 @@ phases:
       - kind: manual
         note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing, and in turn §9.3/§9.4."
       - kind: manual
-        note: "§9.5 (conviction ledger per candidate — who nominated, who confirmed, who dissented) is deliberately NOT built. Only §9.1, §9.2, §9.3, §9.4 are in PR #160."
+        note: "§9.5 (conviction ledger per candidate — who nominated, who confirmed, who dissented) is NOT built. It is now specified in full and owner-ratified as scheduled work (docs/QAMC_REMEDIATION_SPEC.md §9.5, expanded 2026-08-31): per-seat origination/judgement scoring in R, shadowed objections, advisory-only, rolling-window decay, no sample-size gate, and a bullet-graph presentation recommendation. Only §9.1, §9.2, §9.3, §9.4 are in PR #160 — §9.5 remains unimplemented."
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
