@@ -3489,7 +3489,34 @@ class LLMCostCircuitBreaker:
         return result
 
     def reset(self, reason: str) -> None:
-        """Operator-only manual reset. A reason is mandatory and audited."""
+        """Operator-only manual reset. A reason is mandatory and audited.
+
+        Also clears an INEXACT current ET day, which is the other fault only
+        an operator can resolve. `fail_call` stamps `costs_exact=0` when it
+        charges a conservative reserve for a request whose true cost it could
+        not learn, and nothing sets it back within the day -- the flag clears
+        only when the next ET day seeds a fresh row. Meanwhile
+        `_reconcile_quota_holds_locked` REFUSES to rearm over an inexact day,
+        by design.
+
+        Until 2026-08-31 those two facts never met, because an inexact day
+        was always accompanied by a hard latch, and the reconciler returns
+        early whenever one is set -- the latch was, in effect, masking the
+        refusal. Scoping `provider_attempt_limit` to the session removed that
+        latch and exposed the real shape of it: an inexact day with no latch
+        made every subsequent `activate_session` raise, with no operator
+        action able to clear it, until ET rollover. A crash loop is a worse
+        failure than the suspension it replaced.
+
+        What this does NOT do is erase settled spend. The day's recorded
+        amount is left exactly as it stands -- including the conservative
+        reserve charged for the unresolved request, which over-states cost
+        rather than under-stating it. Only the "we could not prove this
+        figure" flag is cleared, and only by a named operator giving a
+        reason. Deciding that a conservative figure is good enough to
+        continue on is precisely an operator's call; recomputing what the
+        provider really charged is not something this code can honestly do.
+        """
 
         reason = reason.strip()
         if not reason:
@@ -3506,9 +3533,24 @@ class LLMCostCircuitBreaker:
                     self._emergency_latch_path is not None
                     and self._emergency_latch_path.exists()
                 )
-                if not int(state.get("suspended") or 0) and not emergency_latched:
+                current_day, _, _ = _et_day_and_utc_bounds()
+                day_row = conn.execute(
+                    "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days "
+                    "WHERE day=?",
+                    (current_day,),
+                ).fetchone()
+                day_inexact = day_row is not None and (
+                    int(day_row["unknown_cost_rows"] or 0)
+                    or not bool(day_row["costs_exact"])
+                )
+                if (
+                    not int(state.get("suspended") or 0)
+                    and not emergency_latched
+                    and not day_inexact
+                ):
                     raise ValueError(
-                        "no operator-resettable hard circuit is active; scoped quota "
+                        "no operator-resettable hard circuit is active and the "
+                        "current ET day's accounting is exact; scoped quota "
                         "holds expire only with their budget window"
                     )
                 conn.execute(
@@ -3534,6 +3576,16 @@ class LLMCostCircuitBreaker:
                 )
                 if updated_state.rowcount != 1:
                     raise RuntimeError("cost-circuit singleton could not be reset")
+                if day_inexact:
+                    # The amount is untouched on purpose -- see the docstring.
+                    # Only the unprovable-figure flag is cleared, so the
+                    # reconciler can rearm and the desk can continue on a
+                    # conservative number the operator has accepted.
+                    conn.execute(
+                        "UPDATE llm_budget_days SET unknown_cost_rows=0, "
+                        "costs_exact=1, updated_at=datetime('now') WHERE day=?",
+                        (current_day,),
+                    )
                 conn.commit()
             # DB opens first while the marker still blocks every process; the
             # unlink is the final operator-authorized transition.

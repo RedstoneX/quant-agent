@@ -350,6 +350,27 @@ now can — see the fault-injection note above. Every recorded response it
 replays is a response that succeeded, so the failure branch was unreachable
 offline. It was reachable only by waiting for the market.
 
+**A second defect this one was hiding, found by deploying it (same day):**
+`fail_call` stamps the ET day's accounting inexact when it charges a
+conservative reserve for a request whose true cost it never learned, and
+nothing clears that flag within the day — it lifts only when the next ET day
+seeds a fresh row. The quota reconciler refuses to rearm over an inexact day,
+by design. Those two facts had never met, because an inexact day always came
+with a hard latch and the reconciler returns early whenever one is set. **The
+latch was masking the refusal.** Scoping `provider_attempt_limit` to the
+session removed the mask, and the live desk went straight from "suspended" to
+"every session start raises, and no operator action can clear it until
+midnight". A crash loop is a worse failure than the suspension it replaced.
+
+Fixed by letting an operator reset clear an inexact day, with the same
+mandatory audited reason. It clears only the *we-could-not-prove-this-figure*
+flag; the recorded amount is left exactly as it stands, conservative reserve
+included, because that over-states cost rather than under-stating it and
+`scripts/cost_circuit.py` promises reset never erases settled spend. Judging a
+conservative figure good enough to continue on is an operator's call;
+recomputing what the provider really charged is not something the code can
+honestly do.
+
 **Two things deliberately left for the owner, not fixed here:**
 
 - **The backup model costs ~50x the primary.** Primary is
