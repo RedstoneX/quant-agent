@@ -787,6 +787,18 @@ export interface ScorecardMonthPoint {
   hit_rate_pct: number | null;
 }
 
+export interface ScorecardConfidenceBreakdown {
+  /** "high" / "medium" / "low", or whatever else the analyst declared. */
+  conviction: string;
+  resolved_calls: number;
+  calls_right: number;
+  hit_rate_pct: number | null;
+  avg_win: number | null;
+  /** Negative, not a magnitude. */
+  avg_loss: number | null;
+  cumulative_credit: number;
+}
+
 export interface AnalystScorecardItem {
   analyst: string;
   resolved_calls: number;
@@ -802,14 +814,21 @@ export interface AnalystScorecardItem {
   calls_since_peak: number;
   cumulative: ScorecardPoint[];
   monthly: ScorecardMonthPoint[];
+  /** The same calls split by the confidence the analyst declared on each,
+   * high first. Only levels it actually used appear. This replaced the
+   * conviction weight: credit is raw and unweighted, so whether confident
+   * calls are worth more is shown rather than asserted. */
+  by_confidence: ScorecardConfidenceBreakdown[];
 }
 
 export interface ScorecardIdeaAnalyst {
   analyst: string;
   side: "supported" | "opposed";
   stance: string;
+  /** What the analyst declared. Reported, never applied — it scales nothing. */
   conviction: string;
-  weight: number;
+  /** Raw signed score in R: positive when this analyst's side made money,
+   * negative when it lost. Identical convention for a short and a long. */
   credit: number;
   nominated: boolean;
   reason: string;
@@ -817,6 +836,7 @@ export interface ScorecardIdeaAnalyst {
 
 export interface ScorecardIdea {
   symbol: string;
+  /** "long" | "short". Descriptive only — nothing inverts on it. */
   direction: string;
   position_id: string | null;
   decision_id: string | null;

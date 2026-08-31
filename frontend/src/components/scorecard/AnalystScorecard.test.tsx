@@ -88,6 +88,12 @@ const ONE_LIVE_ANALYST: AnalystScorecardResponse = emptyResponse({
           resolved_calls: 1, calls_right: 0, hit_rate_pct: 0,
         },
       ],
+      by_confidence: [
+        {
+          conviction: "high", resolved_calls: 1, calls_right: 0, hit_rate_pct: 0,
+          avg_win: null, avg_loss: -0.9, cumulative_credit: -0.9,
+        },
+      ],
     },
   ],
   ideas: [
@@ -101,7 +107,7 @@ const ONE_LIVE_ANALYST: AnalystScorecardResponse = emptyResponse({
       supported: [
         {
           analyst: "macro", side: "supported", stance: "buy", conviction: "high",
-          weight: 1, credit: -0.9, nominated: true, reason: "Crude inventories were drawing.",
+          credit: -0.9, nominated: true, reason: "Crude inventories were drawing.",
         },
       ],
       opposed: [],
@@ -198,6 +204,37 @@ describe("analyst scorecard — plain language", () => {
     expect(text).toContain("no recent-months window is applied");
     expect(text).toContain("No score on this page changes how much money any trade gets");
     expect(text).toContain("There is no minimum number of calls");
+  });
+
+  it("says plainly that confidence changes nothing about the amount", async () => {
+    scorecard.mockResolvedValue(emptyResponse());
+    render(<AnalystScorecard />);
+    const guide = await screen.findByTestId("how-to-read");
+    const text = guide.textContent ?? "";
+
+    expect(text).toContain("How confidently the analyst spoke");
+    expect(text).toContain("does not change what the call is worth");
+    expect(text).toContain("credited or charged exactly the same amount");
+    // ...and the record is split by it instead, further down the page.
+    const split = screen.getAllByTestId("by-confidence");
+    expect(split.length).toBeGreaterThan(0);
+    expect(document.body.textContent).toContain("When it said it was sure, and when it hedged");
+  });
+
+  it("describes a bet on a fall in the same words as any other trade", async () => {
+    scorecard.mockResolvedValue(emptyResponse());
+    render(<AnalystScorecard />);
+    const guide = await screen.findByTestId("how-to-read");
+    const text = guide.textContent ?? "";
+
+    expect(text).toContain("Betting on a share going down");
+    expect(text).toContain("It counts exactly the same way");
+    expect(text).toContain("Nothing on this page is reversed");
+    // The traced idea uses one sentence for both directions — only the verb
+    // differs. Neither wording says a bet on a fall is scored backwards.
+    const trace = screen.getByTestId("idea-trace");
+    expect(trace.textContent).toMatch(/the desk bet it would (rise|fall)/);
+    expect(trace.textContent).not.toMatch(/invert|reversed|negative of/i);
   });
 
   it("uses none of the jargon words anywhere in what renders", async () => {

@@ -6,11 +6,24 @@ One GET route, `/analysts/scorecard`. It reads the ledger's persisted
 connection, like every other read in this package — and projects them into
 the shape the Mission Control panel renders.
 
-**It scores nothing.** The signed, conviction-weighted `credit`, the realized
-`r_multiple`, the alignment call and the conviction weight are all decided by
-the ledger layer when a position closes and written down; this module only
-adds them up. Concretely: no `r_multiple` is computed here, no stance is
-re-classified as supporting or opposing, and no conviction weight is applied.
+**It scores nothing.** The realized `r_multiple` and the alignment call
+(`side`) are decided by the ledger layer when a position closes and written
+down; this module only adds them up. Concretely: no `r_multiple` is computed
+here and no stance is re-classified as supporting or opposing.
+
+**Credit is raw signed R.** There is no conviction weight to apply — it was
+removed by owner decision on 2026-08-31, because weighting an analyst's credit
+by its own declared confidence assumes the very thing the ledger exists to
+measure, and because a confident call already earns a bigger position and so a
+bigger R. What replaced it is `by_confidence`: each analyst's record split by
+the confidence it declared, so a reader can see whether its confident calls
+actually earn more instead of being told so by a multiplier.
+
+**A short reads exactly like a long.** Direction is carried on an idea for
+description only. A short that made money is a positive number and a win; the
+analyst that argued for it is credited and the one that argued against it is
+charged — the same words, the same sign, the same side of zero as a long.
+Nothing in this module or the panel it feeds inverts anything on direction.
 
 **Why the arithmetic below is not imported from the ledger.**
 `src.conviction_ledger.aggregate_seat_records` produces the same per-analyst
@@ -40,6 +53,7 @@ from src.api import db_reads
 from src.api.schemas import (
     AnalystScorecardItem,
     AnalystScorecardResponse,
+    ScorecardConfidenceBreakdown,
     ScorecardIdea,
     ScorecardIdeaAnalyst,
     ScorecardMonthPoint,
@@ -55,6 +69,14 @@ MAX_IDEA_LIMIT = 200
 #: The notional risk per call used to express R in dollars. Stated once, here,
 #: and echoed in the response so the panel never invents its own figure.
 RISK_DOLLARS_PER_CALL = 100.0
+
+#: Declared-confidence levels in the order a reader expects, mirroring
+#: `src.conviction_ledger.CONFIDENCE_ORDER` (which this package may not
+#: import — see the module docstring). Anything an analyst declared that is
+#: not in this list sorts after it, under its own name, rather than being
+#: folded into one of these.
+CONFIDENCE_ORDER: tuple[str, ...] = ("high", "medium", "low")
+DEFAULT_CONFIDENCE = "medium"
 
 
 def _sort_key(credit: dict) -> tuple:
@@ -120,6 +142,41 @@ def _monthly(ordered: list[dict]) -> list[ScorecardMonthPoint]:
     return points
 
 
+def _confidence_key(conviction: str) -> tuple[int, str]:
+    try:
+        return (CONFIDENCE_ORDER.index(conviction), "")
+    except ValueError:
+        return (len(CONFIDENCE_ORDER), conviction)
+
+
+def _by_confidence(ordered: list[dict]) -> list[ScorecardConfidenceBreakdown]:
+    """The same calls, split by the confidence the analyst declared on each.
+
+    The replacement for the conviction weight: the split is REPORTED and
+    nothing compares or ranks the levels. Rows sum back to the analyst's own
+    totals, so a reader can check the split against the headline figure.
+    """
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in ordered:
+        grouped[str(row.get("conviction") or "").strip().lower() or DEFAULT_CONFIDENCE].append(row)
+
+    out: list[ScorecardConfidenceBreakdown] = []
+    for conviction in sorted(grouped, key=_confidence_key):
+        rows = grouped[conviction]
+        wins = [row["credit"] for row in rows if row["credit"] > 0]
+        losses = [row["credit"] for row in rows if row["credit"] < 0]
+        out.append(ScorecardConfidenceBreakdown(
+            conviction=conviction,
+            resolved_calls=len(rows),
+            calls_right=len(wins),
+            hit_rate_pct=_hit_rate(len(wins), len(rows)),
+            avg_win=round(sum(wins) / len(wins), 4) if wins else None,
+            avg_loss=round(sum(losses) / len(losses), 4) if losses else None,
+            cumulative_credit=round(sum(row["credit"] for row in rows), 4),
+        ))
+    return out
+
+
 def _analyst_item(analyst: str, credits: list[dict]) -> AnalystScorecardItem:
     ordered = sorted(credits, key=_sort_key)
     wins = [row["credit"] for row in ordered if row["credit"] > 0]
@@ -162,6 +219,7 @@ def _analyst_item(analyst: str, credits: list[dict]) -> AnalystScorecardItem:
         calls_since_peak=calls_since_peak if below_best > 0 else 0,
         cumulative=series,
         monthly=_monthly(ordered),
+        by_confidence=_by_confidence(ordered),
     )
 
 
@@ -210,7 +268,6 @@ def _ideas(credits: list[dict], stances: list[dict], limit: int) -> list[Scoreca
                 side=row["side"],
                 stance=row["stance"],
                 conviction=row["conviction"],
-                weight=row["weight"],
                 credit=row["credit"],
                 nominated=row["nominated"],
                 reason=reasons.get(

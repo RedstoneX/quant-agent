@@ -8,19 +8,27 @@
  * banner — every time it is showing — that these rows are invented.
  *
  * HOW IT WAS BUILT. Not by hand. A list of ideas (who backed each one, who
- * objected, what the trade did) was run through the SAME aggregation
- * `src/api/routes_scorecard.py` performs, so every total, running series, peak
- * and monthly step below is arithmetically consistent with the endpoint's own
- * output rather than a plausible-looking guess. The generator's idea list is
- * reproduced in the test that guards this file.
+ * objected, how confidently each spoke, what the trade did) was run through the
+ * SAME aggregation `src/api/routes_scorecard.py` performs, so every total,
+ * running series, peak, monthly step and confidence split below is
+ * arithmetically consistent with the endpoint's own output rather than a
+ * plausible-looking guess. The properties the generator asserts are reproduced
+ * in the test that guards this file.
  *
  * WHAT IT DEMONSTRATES, deliberately:
- *   - `news` gets MORE accurate while LOSING money (50% -> 56%, -$126 -> -$558).
- *   - `technical` gets LESS accurate while MAKING money (67% -> 62%, +$108 -> +$744).
+ *   - `news` gets MORE accurate while LOSING money.
+ *   - `technical` gets LESS accurate while MAKING money.
  *     Those two together are the contrast the desk overview exists to show.
  *   - `smart_money` and `earnings` have no record at the earlier date at all,
  *     which is a different thing from a record of zero and must render as such.
  *   - `smart_money` earns most of its money by OBJECTING to trades that lost.
+ *   - Several analysts used more than one confidence level, so the
+ *     per-confidence split has something in it to read. Credit is raw and
+ *     unweighted (owner decision, 2026-08-31): two calls with the same outcome
+ *     are worth the same whether they were stated confidently or hedged.
+ *   - Two of the trades are bets on a share FALLING, scored exactly like the
+ *     rest: the profitable one is a positive number for the analysts that
+ *     backed it and a negative one for the analyst that argued against it.
  *
  * This is the fixture only. It is never merged with, defaulted into, or used
  * to fill gaps in a live response — see `chooseView` in scorecardModel.ts.
@@ -34,7 +42,7 @@ export const ANALYST_SCORECARD_EXAMPLE: AnalystScorecardResponse =
   "state": "populated",
   "read_error": null,
   "risk_dollars_per_call": 100.0,
-  "resolved_calls_total": 47,
+  "resolved_calls_total": 34,
   "months": [
     "2026-05",
     "2026-06",
@@ -44,1047 +52,820 @@ export const ANALYST_SCORECARD_EXAMPLE: AnalystScorecardResponse =
   "analysts": [
     {
       "analyst": "technical",
-      "resolved_calls": 13,
-      "calls_right": 8,
-      "hit_rate_pct": 61.54,
-      "avg_win": 1.3762,
-      "avg_loss": -0.714,
-      "cumulative_credit": 7.44,
-      "peak": 7.44,
-      "below_best": 0.0,
-      "below_best_since": null,
-      "calls_since_peak": 0,
+      "resolved_calls": 10,
+      "calls_right": 7,
+      "hit_rate_pct": 70.0,
+      "avg_win": 1.7143,
+      "avg_loss": -0.8,
+      "cumulative_credit": 9.6,
+      "peak": 10.1,
+      "below_best": 0.5,
+      "below_best_since": "2026-08-04 20:00:00",
+      "calls_since_peak": 2,
       "cumulative": [
         {
           "resolved_at": "2026-05-06 20:00:00",
-          "cumulative": 0.9,
-          "peak": 0.9,
+          "cumulative": 1.0,
+          "peak": 1.0,
+          "below_best": 0.0
+        },
+        {
+          "resolved_at": "2026-05-12 20:00:00",
+          "cumulative": 2.2,
+          "peak": 2.2,
           "below_best": 0.0
         },
         {
           "resolved_at": "2026-05-19 20:00:00",
-          "cumulative": 1.98,
-          "peak": 1.98,
+          "cumulative": 4.2,
+          "peak": 4.2,
           "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-05-21 20:00:00",
-          "cumulative": 1.08,
-          "peak": 1.98,
-          "below_best": 0.9
         },
         {
           "resolved_at": "2026-06-03 20:00:00",
-          "cumulative": 3.48,
-          "peak": 3.48,
+          "cumulative": 6.7,
+          "peak": 6.7,
           "below_best": 0.0
         },
         {
-          "resolved_at": "2026-06-17 20:00:00",
-          "cumulative": 2.48,
-          "peak": 3.48,
-          "below_best": 1.0
-        },
-        {
-          "resolved_at": "2026-06-25 20:00:00",
-          "cumulative": 3.11,
-          "peak": 3.48,
-          "below_best": 0.37
-        },
-        {
-          "resolved_at": "2026-07-02 20:00:00",
-          "cumulative": 4.71,
-          "peak": 4.71,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-07-15 20:00:00",
-          "cumulative": 4.56,
-          "peak": 4.71,
-          "below_best": 0.15
-        },
-        {
-          "resolved_at": "2026-07-19 20:00:00",
-          "cumulative": 3.84,
-          "peak": 4.71,
-          "below_best": 0.87
-        },
-        {
-          "resolved_at": "2026-07-29 20:00:00",
-          "cumulative": 4.74,
-          "peak": 4.74,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-08-13 20:00:00",
-          "cumulative": 6.84,
-          "peak": 6.84,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-08-20 20:00:00",
-          "cumulative": 6.04,
-          "peak": 6.84,
+          "resolved_at": "2026-06-11 20:00:00",
+          "cumulative": 5.9,
+          "peak": 6.7,
           "below_best": 0.8
         },
         {
-          "resolved_at": "2026-08-26 20:00:00",
-          "cumulative": 7.44,
-          "peak": 7.44,
+          "resolved_at": "2026-07-09 20:00:00",
+          "cumulative": 8.4,
+          "peak": 8.4,
           "below_best": 0.0
+        },
+        {
+          "resolved_at": "2026-07-16 20:00:00",
+          "cumulative": 7.6,
+          "peak": 8.4,
+          "below_best": 0.8
+        },
+        {
+          "resolved_at": "2026-08-04 20:00:00",
+          "cumulative": 10.1,
+          "peak": 10.1,
+          "below_best": 0.0
+        },
+        {
+          "resolved_at": "2026-08-11 20:00:00",
+          "cumulative": 9.3,
+          "peak": 10.1,
+          "below_best": 0.8
+        },
+        {
+          "resolved_at": "2026-08-25 20:00:00",
+          "cumulative": 9.6,
+          "peak": 10.1,
+          "below_best": 0.5
         }
       ],
       "monthly": [
         {
           "month": "2026-05",
-          "credit": 1.08,
-          "cumulative": 1.08,
-          "resolved_calls": 3,
-          "calls_right": 2,
-          "hit_rate_pct": 66.67
-        },
-        {
-          "month": "2026-06",
-          "credit": 2.03,
-          "cumulative": 3.11,
-          "resolved_calls": 3,
-          "calls_right": 2,
-          "hit_rate_pct": 66.67
-        },
-        {
-          "month": "2026-07",
-          "credit": 1.63,
-          "cumulative": 4.74,
-          "resolved_calls": 4,
-          "calls_right": 2,
-          "hit_rate_pct": 60.0
-        },
-        {
-          "month": "2026-08",
-          "credit": 2.7,
-          "cumulative": 7.44,
-          "resolved_calls": 3,
-          "calls_right": 2,
-          "hit_rate_pct": 61.54
-        }
-      ]
-    },
-    {
-      "analyst": "smart_money",
-      "resolved_calls": 6,
-      "calls_right": 6,
-      "hit_rate_pct": 100.0,
-      "avg_win": 1.105,
-      "avg_loss": null,
-      "cumulative_credit": 6.63,
-      "peak": 6.63,
-      "below_best": 0.0,
-      "below_best_since": null,
-      "calls_since_peak": 0,
-      "cumulative": [
-        {
-          "resolved_at": "2026-06-12 20:00:00",
-          "cumulative": 1.5,
-          "peak": 1.5,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-07-02 20:00:00",
-          "cumulative": 2.46,
-          "peak": 2.46,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-07-19 20:00:00",
-          "cumulative": 3.66,
-          "peak": 3.66,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-07-24 20:00:00",
-          "cumulative": 4.02,
-          "peak": 4.02,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-08-05 20:00:00",
-          "cumulative": 5.19,
-          "peak": 5.19,
-          "below_best": 0.0
-        },
-        {
-          "resolved_at": "2026-08-24 20:00:00",
-          "cumulative": 6.63,
-          "peak": 6.63,
-          "below_best": 0.0
-        }
-      ],
-      "monthly": [
-        {
-          "month": "2026-06",
-          "credit": 1.5,
-          "cumulative": 1.5,
-          "resolved_calls": 1,
-          "calls_right": 1,
-          "hit_rate_pct": 100.0
-        },
-        {
-          "month": "2026-07",
-          "credit": 2.52,
-          "cumulative": 4.02,
+          "credit": 4.2,
+          "cumulative": 4.2,
           "resolved_calls": 3,
           "calls_right": 3,
           "hit_rate_pct": 100.0
         },
         {
+          "month": "2026-06",
+          "credit": 1.7,
+          "cumulative": 5.9,
+          "resolved_calls": 2,
+          "calls_right": 1,
+          "hit_rate_pct": 80.0
+        },
+        {
+          "month": "2026-07",
+          "credit": 1.7,
+          "cumulative": 7.6,
+          "resolved_calls": 2,
+          "calls_right": 1,
+          "hit_rate_pct": 71.43
+        },
+        {
           "month": "2026-08",
-          "credit": 2.61,
-          "cumulative": 6.63,
+          "credit": 2.0,
+          "cumulative": 9.6,
+          "resolved_calls": 3,
+          "calls_right": 2,
+          "hit_rate_pct": 70.0
+        }
+      ],
+      "by_confidence": [
+        {
+          "conviction": "high",
+          "resolved_calls": 5,
+          "calls_right": 5,
+          "hit_rate_pct": 100.0,
+          "avg_win": 1.94,
+          "avg_loss": null,
+          "cumulative_credit": 9.7
+        },
+        {
+          "conviction": "medium",
+          "resolved_calls": 4,
+          "calls_right": 2,
+          "hit_rate_pct": 50.0,
+          "avg_win": 1.15,
+          "avg_loss": -0.8,
+          "cumulative_credit": 0.7
+        },
+        {
+          "conviction": "low",
+          "resolved_calls": 1,
+          "calls_right": 0,
+          "hit_rate_pct": 0.0,
+          "avg_win": null,
+          "avg_loss": -0.8,
+          "cumulative_credit": -0.8
+        }
+      ]
+    },
+    {
+      "analyst": "smart_money",
+      "resolved_calls": 4,
+      "calls_right": 4,
+      "hit_rate_pct": 100.0,
+      "avg_win": 0.775,
+      "avg_loss": null,
+      "cumulative_credit": 3.1,
+      "peak": 3.1,
+      "below_best": 0.0,
+      "below_best_since": null,
+      "calls_since_peak": 0,
+      "cumulative": [
+        {
+          "resolved_at": "2026-07-02 20:00:00",
+          "cumulative": 1.2,
+          "peak": 1.2,
+          "below_best": 0.0
+        },
+        {
+          "resolved_at": "2026-07-16 20:00:00",
+          "cumulative": 2.0,
+          "peak": 2.0,
+          "below_best": 0.0
+        },
+        {
+          "resolved_at": "2026-08-11 20:00:00",
+          "cumulative": 2.8,
+          "peak": 2.8,
+          "below_best": 0.0
+        },
+        {
+          "resolved_at": "2026-08-25 20:00:00",
+          "cumulative": 3.1,
+          "peak": 3.1,
+          "below_best": 0.0
+        }
+      ],
+      "monthly": [
+        {
+          "month": "2026-07",
+          "credit": 2.0,
+          "cumulative": 2.0,
           "resolved_calls": 2,
           "calls_right": 2,
           "hit_rate_pct": 100.0
+        },
+        {
+          "month": "2026-08",
+          "credit": 1.1,
+          "cumulative": 3.1,
+          "resolved_calls": 2,
+          "calls_right": 2,
+          "hit_rate_pct": 100.0
+        }
+      ],
+      "by_confidence": [
+        {
+          "conviction": "high",
+          "resolved_calls": 3,
+          "calls_right": 3,
+          "hit_rate_pct": 100.0,
+          "avg_win": 0.7667,
+          "avg_loss": null,
+          "cumulative_credit": 2.3
+        },
+        {
+          "conviction": "medium",
+          "resolved_calls": 1,
+          "calls_right": 1,
+          "hit_rate_pct": 100.0,
+          "avg_win": 0.8,
+          "avg_loss": null,
+          "cumulative_credit": 0.8
         }
       ]
     },
     {
       "analyst": "earnings",
       "resolved_calls": 4,
-      "calls_right": 4,
-      "hit_rate_pct": 100.0,
-      "avg_win": 1.0175,
-      "avg_loss": null,
-      "cumulative_credit": 4.07,
-      "peak": 4.07,
-      "below_best": 0.0,
-      "below_best_since": null,
-      "calls_since_peak": 0,
+      "calls_right": 2,
+      "hit_rate_pct": 50.0,
+      "avg_win": 1.65,
+      "avg_loss": -0.55,
+      "cumulative_credit": 2.2,
+      "peak": 3.3,
+      "below_best": 1.1,
+      "below_best_since": "2026-06-11 20:00:00",
+      "calls_since_peak": 2,
       "cumulative": [
         {
           "resolved_at": "2026-06-03 20:00:00",
-          "cumulative": 1.44,
-          "peak": 1.44,
+          "cumulative": 2.5,
+          "peak": 2.5,
           "below_best": 0.0
         },
         {
-          "resolved_at": "2026-07-08 20:00:00",
-          "cumulative": 2.54,
-          "peak": 2.54,
+          "resolved_at": "2026-06-11 20:00:00",
+          "cumulative": 3.3,
+          "peak": 3.3,
           "below_best": 0.0
         },
         {
-          "resolved_at": "2026-07-29 20:00:00",
-          "cumulative": 2.81,
-          "peak": 2.81,
-          "below_best": 0.0
+          "resolved_at": "2026-07-23 20:00:00",
+          "cumulative": 3.0,
+          "peak": 3.3,
+          "below_best": 0.3
         },
         {
-          "resolved_at": "2026-08-13 20:00:00",
-          "cumulative": 4.07,
-          "peak": 4.07,
-          "below_best": 0.0
+          "resolved_at": "2026-08-11 20:00:00",
+          "cumulative": 2.2,
+          "peak": 3.3,
+          "below_best": 1.1
         }
       ],
       "monthly": [
         {
           "month": "2026-06",
-          "credit": 1.44,
-          "cumulative": 1.44,
-          "resolved_calls": 1,
-          "calls_right": 1,
-          "hit_rate_pct": 100.0
-        },
-        {
-          "month": "2026-07",
-          "credit": 1.37,
-          "cumulative": 2.81,
+          "credit": 3.3,
+          "cumulative": 3.3,
           "resolved_calls": 2,
           "calls_right": 2,
           "hit_rate_pct": 100.0
         },
         {
+          "month": "2026-07",
+          "credit": -0.3,
+          "cumulative": 3.0,
+          "resolved_calls": 1,
+          "calls_right": 0,
+          "hit_rate_pct": 66.67
+        },
+        {
           "month": "2026-08",
-          "credit": 1.26,
-          "cumulative": 4.07,
+          "credit": -0.8,
+          "cumulative": 2.2,
+          "resolved_calls": 1,
+          "calls_right": 0,
+          "hit_rate_pct": 50.0
+        }
+      ],
+      "by_confidence": [
+        {
+          "conviction": "high",
           "resolved_calls": 1,
           "calls_right": 1,
-          "hit_rate_pct": 100.0
+          "hit_rate_pct": 100.0,
+          "avg_win": 0.8,
+          "avg_loss": null,
+          "cumulative_credit": 0.8
+        },
+        {
+          "conviction": "medium",
+          "resolved_calls": 2,
+          "calls_right": 1,
+          "hit_rate_pct": 50.0,
+          "avg_win": 2.5,
+          "avg_loss": -0.3,
+          "cumulative_credit": 2.2
+        },
+        {
+          "conviction": "low",
+          "resolved_calls": 1,
+          "calls_right": 0,
+          "hit_rate_pct": 0.0,
+          "avg_win": null,
+          "avg_loss": -0.8,
+          "cumulative_credit": -0.8
         }
       ]
     },
     {
       "analyst": "macro",
-      "resolved_calls": 8,
-      "calls_right": 4,
-      "hit_rate_pct": 50.0,
-      "avg_win": 0.5062,
-      "avg_loss": -0.5363,
-      "cumulative_credit": -0.12,
-      "peak": 1.44,
-      "below_best": 1.56,
-      "below_best_since": "2026-06-12 20:00:00",
-      "calls_since_peak": 5,
+      "resolved_calls": 7,
+      "calls_right": 2,
+      "hit_rate_pct": 28.57,
+      "avg_win": 0.95,
+      "avg_loss": -1.34,
+      "cumulative_credit": -4.8,
+      "peak": 0.9,
+      "below_best": 5.7,
+      "below_best_since": "2026-06-24 20:00:00",
+      "calls_since_peak": 4,
       "cumulative": [
         {
           "resolved_at": "2026-05-06 20:00:00",
-          "cumulative": 0.27,
-          "peak": 0.27,
-          "below_best": 0.0
+          "cumulative": -1.0,
+          "peak": 0.0,
+          "below_best": 1.0
         },
         {
           "resolved_at": "2026-05-21 20:00:00",
-          "cumulative": 0.54,
-          "peak": 0.54,
+          "cumulative": 0.5,
+          "peak": 0.5,
           "below_best": 0.0
         },
         {
-          "resolved_at": "2026-06-12 20:00:00",
-          "cumulative": 1.44,
-          "peak": 1.44,
+          "resolved_at": "2026-06-24 20:00:00",
+          "cumulative": 0.9,
+          "peak": 0.9,
           "below_best": 0.0
         },
         {
-          "resolved_at": "2026-07-02 20:00:00",
-          "cumulative": 0.48,
-          "peak": 1.44,
-          "below_best": 0.96
+          "resolved_at": "2026-07-09 20:00:00",
+          "cumulative": -1.6,
+          "peak": 0.9,
+          "below_best": 2.5
         },
         {
-          "resolved_at": "2026-08-05 20:00:00",
-          "cumulative": 1.065,
-          "peak": 1.44,
-          "below_best": 0.375
+          "resolved_at": "2026-08-04 20:00:00",
+          "cumulative": -4.1,
+          "peak": 0.9,
+          "below_best": 5.0
         },
         {
-          "resolved_at": "2026-08-11 20:00:00",
-          "cumulative": 0.93,
-          "peak": 1.44,
-          "below_best": 0.51
+          "resolved_at": "2026-08-18 20:00:00",
+          "cumulative": -4.5,
+          "peak": 0.9,
+          "below_best": 5.4
         },
         {
-          "resolved_at": "2026-08-13 20:00:00",
-          "cumulative": 0.3,
-          "peak": 1.44,
-          "below_best": 1.14
-        },
-        {
-          "resolved_at": "2026-08-26 20:00:00",
-          "cumulative": -0.12,
-          "peak": 1.44,
-          "below_best": 1.56
+          "resolved_at": "2026-08-25 20:00:00",
+          "cumulative": -4.8,
+          "peak": 0.9,
+          "below_best": 5.7
         }
       ],
       "monthly": [
         {
           "month": "2026-05",
-          "credit": 0.54,
-          "cumulative": 0.54,
+          "credit": 0.5,
+          "cumulative": 0.5,
           "resolved_calls": 2,
-          "calls_right": 2,
-          "hit_rate_pct": 100.0
+          "calls_right": 1,
+          "hit_rate_pct": 50.0
         },
         {
           "month": "2026-06",
-          "credit": 0.9,
-          "cumulative": 1.44,
+          "credit": 0.4,
+          "cumulative": 0.9,
           "resolved_calls": 1,
           "calls_right": 1,
-          "hit_rate_pct": 100.0
+          "hit_rate_pct": 66.67
         },
         {
           "month": "2026-07",
-          "credit": -0.96,
-          "cumulative": 0.48,
+          "credit": -2.5,
+          "cumulative": -1.6,
           "resolved_calls": 1,
           "calls_right": 0,
-          "hit_rate_pct": 75.0
+          "hit_rate_pct": 50.0
         },
         {
           "month": "2026-08",
-          "credit": -0.6,
-          "cumulative": -0.12,
-          "resolved_calls": 4,
+          "credit": -3.2,
+          "cumulative": -4.8,
+          "resolved_calls": 3,
+          "calls_right": 0,
+          "hit_rate_pct": 28.57
+        }
+      ],
+      "by_confidence": [
+        {
+          "conviction": "high",
+          "resolved_calls": 3,
           "calls_right": 1,
-          "hit_rate_pct": 50.0
+          "hit_rate_pct": 33.33,
+          "avg_win": 0.4,
+          "avg_loss": -1.45,
+          "cumulative_credit": -2.5
+        },
+        {
+          "conviction": "medium",
+          "resolved_calls": 1,
+          "calls_right": 0,
+          "hit_rate_pct": 0.0,
+          "avg_win": null,
+          "avg_loss": -1.0,
+          "cumulative_credit": -1.0
+        },
+        {
+          "conviction": "low",
+          "resolved_calls": 3,
+          "calls_right": 1,
+          "hit_rate_pct": 33.33,
+          "avg_win": 1.5,
+          "avg_loss": -1.4,
+          "cumulative_credit": -1.3
         }
       ]
     },
     {
       "analyst": "news",
-      "resolved_calls": 16,
-      "calls_right": 9,
-      "hit_rate_pct": 56.25,
-      "avg_win": 0.4833,
-      "avg_loss": -1.4186,
-      "cumulative_credit": -5.58,
-      "peak": 0.54,
-      "below_best": 6.12,
-      "below_best_since": "2026-05-06 20:00:00",
-      "calls_since_peak": 15,
+      "resolved_calls": 9,
+      "calls_right": 5,
+      "hit_rate_pct": 55.56,
+      "avg_win": 0.34,
+      "avg_loss": -1.8,
+      "cumulative_credit": -5.5,
+      "peak": 0.0,
+      "below_best": 5.5,
+      "below_best_since": null,
+      "calls_since_peak": 9,
       "cumulative": [
         {
-          "resolved_at": "2026-05-06 20:00:00",
-          "cumulative": 0.54,
-          "peak": 0.54,
-          "below_best": 0.0
-        },
-        {
           "resolved_at": "2026-05-19 20:00:00",
-          "cumulative": -1.26,
-          "peak": 0.54,
-          "below_best": 1.8
+          "cumulative": -2.0,
+          "peak": 0.0,
+          "below_best": 2.0
         },
         {
-          "resolved_at": "2026-06-12 20:00:00",
-          "cumulative": -2.16,
-          "peak": 0.54,
-          "below_best": 2.7
+          "resolved_at": "2026-05-21 20:00:00",
+          "cumulative": -3.5,
+          "peak": 0.0,
+          "below_best": 3.5
         },
         {
-          "resolved_at": "2026-06-17 20:00:00",
-          "cumulative": -2.46,
-          "peak": 0.54,
-          "below_best": 3.0
+          "resolved_at": "2026-05-26 20:00:00",
+          "cumulative": -3.2,
+          "peak": 0.0,
+          "below_best": 3.2
         },
         {
-          "resolved_at": "2026-06-25 20:00:00",
-          "cumulative": -4.56,
-          "peak": 0.54,
-          "below_best": 5.1
+          "resolved_at": "2026-06-03 20:00:00",
+          "cumulative": -5.7,
+          "peak": 0.0,
+          "below_best": 5.7
         },
         {
-          "resolved_at": "2026-07-08 20:00:00",
-          "cumulative": -3.9,
-          "peak": 0.54,
-          "below_best": 4.44
+          "resolved_at": "2026-06-24 20:00:00",
+          "cumulative": -5.3,
+          "peak": 0.0,
+          "below_best": 5.3
         },
         {
-          "resolved_at": "2026-07-15 20:00:00",
-          "cumulative": -3.75,
-          "peak": 0.54,
-          "below_best": 4.29
+          "resolved_at": "2026-07-02 20:00:00",
+          "cumulative": -6.5,
+          "peak": 0.0,
+          "below_best": 6.5
         },
         {
-          "resolved_at": "2026-07-19 20:00:00",
-          "cumulative": -3.39,
-          "peak": 0.54,
-          "below_best": 3.93
+          "resolved_at": "2026-07-23 20:00:00",
+          "cumulative": -6.2,
+          "peak": 0.0,
+          "below_best": 6.2
         },
         {
-          "resolved_at": "2026-07-24 20:00:00",
-          "cumulative": -3.03,
-          "peak": 0.54,
-          "below_best": 3.57
+          "resolved_at": "2026-08-18 20:00:00",
+          "cumulative": -5.8,
+          "peak": 0.0,
+          "below_best": 5.8
         },
         {
-          "resolved_at": "2026-07-29 20:00:00",
-          "cumulative": -2.49,
-          "peak": 0.54,
-          "below_best": 3.03
-        },
-        {
-          "resolved_at": "2026-08-05 20:00:00",
-          "cumulative": -4.44,
-          "peak": 0.54,
-          "below_best": 4.98
-        },
-        {
-          "resolved_at": "2026-08-11 20:00:00",
-          "cumulative": -4.17,
-          "peak": 0.54,
-          "below_best": 4.71
-        },
-        {
-          "resolved_at": "2026-08-13 20:00:00",
-          "cumulative": -3.54,
-          "peak": 0.54,
-          "below_best": 4.08
-        },
-        {
-          "resolved_at": "2026-08-20 20:00:00",
-          "cumulative": -4.02,
-          "peak": 0.54,
-          "below_best": 4.56
-        },
-        {
-          "resolved_at": "2026-08-24 20:00:00",
-          "cumulative": -6.42,
-          "peak": 0.54,
-          "below_best": 6.96
-        },
-        {
-          "resolved_at": "2026-08-26 20:00:00",
-          "cumulative": -5.58,
-          "peak": 0.54,
-          "below_best": 6.12
+          "resolved_at": "2026-08-25 20:00:00",
+          "cumulative": -5.5,
+          "peak": 0.0,
+          "below_best": 5.5
         }
       ],
       "monthly": [
         {
           "month": "2026-05",
-          "credit": -1.26,
-          "cumulative": -1.26,
-          "resolved_calls": 2,
+          "credit": -3.2,
+          "cumulative": -3.2,
+          "resolved_calls": 3,
           "calls_right": 1,
-          "hit_rate_pct": 50.0
+          "hit_rate_pct": 33.33
         },
         {
           "month": "2026-06",
-          "credit": -3.3,
-          "cumulative": -4.56,
-          "resolved_calls": 3,
-          "calls_right": 0,
-          "hit_rate_pct": 20.0
+          "credit": -2.1,
+          "cumulative": -5.3,
+          "resolved_calls": 2,
+          "calls_right": 1,
+          "hit_rate_pct": 40.0
         },
         {
           "month": "2026-07",
-          "credit": 2.07,
-          "cumulative": -2.49,
-          "resolved_calls": 5,
-          "calls_right": 5,
-          "hit_rate_pct": 60.0
+          "credit": -0.9,
+          "cumulative": -6.2,
+          "resolved_calls": 2,
+          "calls_right": 1,
+          "hit_rate_pct": 42.86
         },
         {
           "month": "2026-08",
-          "credit": -3.09,
-          "cumulative": -5.58,
-          "resolved_calls": 6,
+          "credit": 0.7,
+          "cumulative": -5.5,
+          "resolved_calls": 2,
+          "calls_right": 2,
+          "hit_rate_pct": 55.56
+        }
+      ],
+      "by_confidence": [
+        {
+          "conviction": "high",
+          "resolved_calls": 3,
+          "calls_right": 0,
+          "hit_rate_pct": 0.0,
+          "avg_win": null,
+          "avg_loss": -1.5667,
+          "cumulative_credit": -4.7
+        },
+        {
+          "conviction": "medium",
+          "resolved_calls": 3,
           "calls_right": 3,
-          "hit_rate_pct": 56.25
+          "hit_rate_pct": 100.0,
+          "avg_win": 0.3667,
+          "avg_loss": null,
+          "cumulative_credit": 1.1
+        },
+        {
+          "conviction": "low",
+          "resolved_calls": 3,
+          "calls_right": 2,
+          "hit_rate_pct": 66.67,
+          "avg_win": 0.3,
+          "avg_loss": -2.5,
+          "cumulative_credit": -1.9
         }
       ]
     }
   ],
   "ideas": [
     {
-      "symbol": "UBER",
-      "direction": "long",
-      "position_id": "position-uber",
-      "decision_id": "decision-uber",
-      "resolved_at": "2026-08-26 20:00:00",
-      "r_multiple": 1.4,
+      "symbol": "NKE",
+      "direction": "short",
+      "position_id": "pos-16",
+      "decision_id": "dec-16",
+      "resolved_at": "2026-08-25 20:00:00",
+      "r_multiple": 0.3,
       "supported": [
+        {
+          "analyst": "smart_money",
+          "side": "supported",
+          "stance": "bearish",
+          "conviction": "high",
+          "credit": 0.3,
+          "nominated": true,
+          "reason": "Officers sold every rally for two quarters."
+        },
         {
           "analyst": "technical",
           "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": 1.4,
-          "nominated": true,
-          "reason": "New high on the weekly chart with no overhead supply."
+          "stance": "sell",
+          "conviction": "medium",
+          "credit": 0.3,
+          "nominated": false,
+          "reason": "Lower highs all summer, and the last one failed fast."
         },
         {
           "analyst": "news",
           "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.84,
+          "stance": "bearish",
+          "conviction": "low",
+          "credit": 0.3,
           "nominated": false,
-          "reason": "Take-rate commentary improved for the third quarter running."
+          "reason": "Back-to-school commentary read soft."
         }
       ],
       "opposed": [
         {
           "analyst": "macro",
           "side": "opposed",
-          "stance": "bearish",
+          "stance": "overweight",
           "conviction": "low",
-          "weight": 0.3,
-          "credit": -0.42,
+          "credit": -0.3,
           "nominated": false,
-          "reason": "Discretionary spending surveys are softening."
+          "reason": "Discretionary spend was recovering, not rolling over."
         }
       ]
     },
     {
-      "symbol": "PTON",
+      "symbol": "HD",
       "direction": "long",
-      "position_id": "position-pton",
-      "decision_id": "decision-pton",
-      "resolved_at": "2026-08-24 20:00:00",
-      "r_multiple": -2.4,
+      "position_id": "pos-15",
+      "decision_id": "dec-15",
+      "resolved_at": "2026-08-18 20:00:00",
+      "r_multiple": 0.4,
       "supported": [
         {
           "analyst": "news",
           "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": -2.4,
+          "stance": "positive",
+          "conviction": "medium",
+          "credit": 0.4,
           "nominated": true,
-          "reason": "Turnaround coverage has gone from sceptical to positive."
+          "reason": "Housing turnover picked up for the second month."
         }
       ],
       "opposed": [
         {
-          "analyst": "smart_money",
+          "analyst": "macro",
           "side": "opposed",
-          "stance": "bearish",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 1.44,
+          "stance": "underweight",
+          "conviction": "high",
+          "credit": -0.4,
           "nominated": false,
-          "reason": "Every insider trade this year has been a sale."
+          "reason": "Mortgage rates had not moved enough to matter."
         }
       ]
     },
     {
       "symbol": "DIS",
       "direction": "long",
-      "position_id": "position-dis",
-      "decision_id": "decision-dis",
-      "resolved_at": "2026-08-20 20:00:00",
+      "position_id": "pos-14",
+      "decision_id": "dec-14",
+      "resolved_at": "2026-08-11 20:00:00",
       "r_multiple": -0.8,
       "supported": [
         {
           "analyst": "technical",
           "side": "supported",
           "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
+          "conviction": "medium",
           "credit": -0.8,
           "nominated": true,
-          "reason": "Held the 200-day on the retest."
-        },
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": -0.48,
-          "nominated": false,
-          "reason": "Subscriber additions beat the low bar set in May."
-        }
-      ],
-      "opposed": []
-    },
-    {
-      "symbol": "AMD",
-      "direction": "long",
-      "position_id": "position-amd",
-      "decision_id": "decision-amd",
-      "resolved_at": "2026-08-13 20:00:00",
-      "r_multiple": 2.1,
-      "supported": [
-        {
-          "analyst": "technical",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": 2.1,
-          "nominated": true,
-          "reason": "Cup-and-handle completed with a wide-range day."
+          "reason": "Reclaimed its average after four weeks underneath it."
         },
         {
           "analyst": "earnings",
           "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 1.26,
-          "nominated": false,
-          "reason": "Data-centre segment margin inflected."
-        },
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
+          "stance": "positive",
           "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.63,
+          "credit": -0.8,
           "nominated": false,
-          "reason": "Two supply-chain notes turned positive."
+          "reason": "Streaming losses narrowed again."
         }
       ],
       "opposed": [
-        {
-          "analyst": "macro",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": -0.63,
-          "nominated": false,
-          "reason": "Semiconductor cycles turn faster than this rally assumes."
-        }
-      ]
-    },
-    {
-      "symbol": "BYND",
-      "direction": "long",
-      "position_id": "position-bynd",
-      "decision_id": "decision-bynd",
-      "resolved_at": "2026-08-11 20:00:00",
-      "r_multiple": 0.45,
-      "supported": [
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.27,
-          "nominated": true,
-          "reason": "Distribution win with a national grocer."
-        }
-      ],
-      "opposed": [
-        {
-          "analyst": "macro",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": -0.135,
-          "nominated": false,
-          "reason": "This is a discretionary purchase in a tightening consumer."
-        }
-      ]
-    },
-    {
-      "symbol": "TGT",
-      "direction": "long",
-      "position_id": "position-tgt",
-      "decision_id": "decision-tgt",
-      "resolved_at": "2026-08-05 20:00:00",
-      "r_multiple": -1.95,
-      "supported": [
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": -1.95,
-          "nominated": true,
-          "reason": "Back-to-school promotion coverage read strongly."
-        }
-      ],
-      "opposed": [
-        {
-          "analyst": "macro",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.585,
-          "nominated": false,
-          "reason": "Real income growth for this customer is flat."
-        },
         {
           "analyst": "smart_money",
           "side": "opposed",
           "stance": "bearish",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 1.17,
+          "conviction": "high",
+          "credit": 0.8,
           "nominated": false,
-          "reason": "No insider has bought at this level."
+          "reason": "Two officers sold the week the desk bought."
         }
       ]
     },
     {
-      "symbol": "MSFT",
+      "symbol": "WMT",
       "direction": "long",
-      "position_id": "position-msft",
-      "decision_id": "decision-msft",
-      "resolved_at": "2026-07-29 20:00:00",
-      "r_multiple": 0.9,
+      "position_id": "pos-13",
+      "decision_id": "dec-13",
+      "resolved_at": "2026-08-04 20:00:00",
+      "r_multiple": 2.5,
       "supported": [
         {
           "analyst": "technical",
           "side": "supported",
           "stance": "buy",
           "conviction": "high",
-          "weight": 1.0,
-          "credit": 0.9,
+          "credit": 2.5,
           "nominated": true,
-          "reason": "Trend intact; every dip has been bought at the 20-day."
-        },
+          "reason": "A third higher low, and the break came on the widest bar of the month."
+        }
+      ],
+      "opposed": [
+        {
+          "analyst": "macro",
+          "side": "opposed",
+          "stance": "underweight",
+          "conviction": "high",
+          "credit": -2.5,
+          "nominated": false,
+          "reason": "Household savings were still falling."
+        }
+      ]
+    },
+    {
+      "symbol": "CVX",
+      "direction": "long",
+      "position_id": "pos-12",
+      "decision_id": "dec-12",
+      "resolved_at": "2026-07-23 20:00:00",
+      "r_multiple": 0.3,
+      "supported": [
         {
           "analyst": "news",
           "side": "supported",
-          "stance": "buy",
+          "stance": "positive",
           "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.54,
+          "credit": 0.3,
           "nominated": false,
-          "reason": "Cloud backlog commentary was unusually specific."
-        },
+          "reason": "Refining margins held through the maintenance window."
+        }
+      ],
+      "opposed": [
         {
           "analyst": "earnings",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.27,
-          "nominated": false,
-          "reason": "Consensus estimates have drifted up for two quarters."
-        }
-      ],
-      "opposed": []
-    },
-    {
-      "symbol": "CHWY",
-      "direction": "long",
-      "position_id": "position-chwy",
-      "decision_id": "decision-chwy",
-      "resolved_at": "2026-07-24 20:00:00",
-      "r_multiple": 0.6,
-      "supported": [
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.36,
-          "nominated": true,
-          "reason": "Autoship penetration was called out twice on the call."
-        },
-        {
-          "analyst": "smart_money",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.36,
-          "nominated": false,
-          "reason": "The CFO bought at the open the next morning."
-        }
-      ],
-      "opposed": []
-    },
-    {
-      "symbol": "RIVN",
-      "direction": "long",
-      "position_id": "position-rivn",
-      "decision_id": "decision-rivn",
-      "resolved_at": "2026-07-19 20:00:00",
-      "r_multiple": -1.2,
-      "supported": [
-        {
-          "analyst": "technical",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": -0.72,
-          "nominated": true,
-          "reason": "Volume dried up on the pullback, which usually precedes a bounce."
-        }
-      ],
-      "opposed": [
-        {
-          "analyst": "smart_money",
           "side": "opposed",
           "stance": "bearish",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": 1.2,
+          "conviction": "medium",
+          "credit": -0.3,
           "nominated": false,
-          "reason": "Insider selling has continued every week this quarter."
-        },
-        {
-          "analyst": "news",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.36,
-          "nominated": false,
-          "reason": "Delivery numbers missed the whisper figure."
+          "reason": "The last two quarters were flattered by one-off items."
         }
       ]
     },
     {
-      "symbol": "ETSY",
-      "direction": "long",
-      "position_id": "position-etsy",
-      "decision_id": "decision-etsy",
-      "resolved_at": "2026-07-15 20:00:00",
-      "r_multiple": 0.5,
+      "symbol": "MRNA",
+      "direction": "short",
+      "position_id": "pos-11",
+      "decision_id": "dec-11",
+      "resolved_at": "2026-07-16 20:00:00",
+      "r_multiple": -0.8,
       "supported": [
         {
-          "analyst": "news",
+          "analyst": "technical",
           "side": "supported",
-          "stance": "buy",
+          "stance": "sell",
           "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.15,
+          "credit": -0.8,
           "nominated": true,
-          "reason": "Seller-count decline finally stopped."
+          "reason": "Failing rallies, taken small because the base was still intact."
         }
       ],
       "opposed": [
-        {
-          "analyst": "technical",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": -0.15,
-          "nominated": false,
-          "reason": "Still below every moving average that matters."
-        }
-      ]
-    },
-    {
-      "symbol": "LULU",
-      "direction": "long",
-      "position_id": "position-lulu",
-      "decision_id": "decision-lulu",
-      "resolved_at": "2026-07-08 20:00:00",
-      "r_multiple": 1.1,
-      "supported": [
-        {
-          "analyst": "earnings",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": 1.1,
-          "nominated": true,
-          "reason": "Margin recovery is running a quarter ahead of guidance."
-        },
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.66,
-          "nominated": false,
-          "reason": "Store traffic data turned positive in June."
-        }
-      ],
-      "opposed": []
-    },
-    {
-      "symbol": "NVDA",
-      "direction": "long",
-      "position_id": "position-nvda",
-      "decision_id": "decision-nvda",
-      "resolved_at": "2026-07-02 20:00:00",
-      "r_multiple": 1.6,
-      "supported": [
-        {
-          "analyst": "technical",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": 1.6,
-          "nominated": true,
-          "reason": "Consolidation resolved upward exactly at the prior high."
-        },
         {
           "analyst": "smart_money",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.96,
-          "nominated": false,
-          "reason": "Two directors bought in the open market."
-        }
-      ],
-      "opposed": [
-        {
-          "analyst": "macro",
           "side": "opposed",
-          "stance": "bearish",
+          "stance": "positive",
           "conviction": "medium",
-          "weight": 0.6,
-          "credit": -0.96,
+          "credit": 0.8,
           "nominated": false,
-          "reason": "This much of the index in one name is a crowding risk."
+          "reason": "Two officers had been buying the whole way down."
         }
       ]
     },
     {
       "symbol": "KO",
       "direction": "long",
-      "position_id": "position-ko",
-      "decision_id": "decision-ko",
-      "resolved_at": "2026-06-25 20:00:00",
-      "r_multiple": -2.1,
+      "position_id": "pos-10",
+      "decision_id": "dec-10",
+      "resolved_at": "2026-07-09 20:00:00",
+      "r_multiple": 2.5,
       "supported": [
         {
-          "analyst": "news",
+          "analyst": "technical",
           "side": "supported",
           "stance": "buy",
           "conviction": "high",
-          "weight": 1.0,
-          "credit": -2.1,
-          "nominated": true,
-          "reason": "Reformulation launch got unusually warm coverage."
+          "credit": 2.5,
+          "nominated": false,
+          "reason": "A quiet base, then a clean break with volume behind it."
         }
       ],
       "opposed": [
         {
-          "analyst": "technical",
+          "analyst": "macro",
           "side": "opposed",
-          "stance": "bearish",
+          "stance": "underweight",
           "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.63,
+          "credit": -2.5,
           "nominated": false,
-          "reason": "Momentum has been fading for two months."
+          "reason": "Defensives should lag a recovering tape."
         }
       ]
     },
     {
-      "symbol": "COIN",
+      "symbol": "BA",
       "direction": "long",
-      "position_id": "position-coin",
-      "decision_id": "decision-coin",
-      "resolved_at": "2026-06-17 20:00:00",
-      "r_multiple": -1.0,
+      "position_id": "pos-09",
+      "decision_id": "dec-09",
+      "resolved_at": "2026-07-02 20:00:00",
+      "r_multiple": -1.2,
       "supported": [
         {
-          "analyst": "technical",
+          "analyst": "news",
           "side": "supported",
-          "stance": "buy",
+          "stance": "positive",
           "conviction": "high",
-          "weight": 1.0,
-          "credit": -1.0,
+          "credit": -1.2,
           "nominated": true,
-          "reason": "Higher low held at 210."
-        },
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": -0.3,
-          "nominated": false,
-          "reason": "Exchange volumes ticked up week on week."
-        }
-      ],
-      "opposed": []
-    },
-    {
-      "symbol": "F",
-      "direction": "long",
-      "position_id": "position-f",
-      "decision_id": "decision-f",
-      "resolved_at": "2026-06-12 20:00:00",
-      "r_multiple": -1.5,
-      "supported": [
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": -0.9,
-          "nominated": true,
-          "reason": "Union deal removes a known overhang."
+          "reason": "The order book headlines looked like a genuine turn."
         }
       ],
       "opposed": [
@@ -1093,158 +874,239 @@ export const ANALYST_SCORECARD_EXAMPLE: AnalystScorecardResponse =
           "side": "opposed",
           "stance": "bearish",
           "conviction": "high",
-          "weight": 1.0,
-          "credit": 1.5,
+          "credit": 1.2,
           "nominated": false,
-          "reason": "Two insiders sold into the announcement."
-        },
-        {
-          "analyst": "macro",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.9,
-          "nominated": false,
-          "reason": "Auto credit delinquencies are still climbing."
+          "reason": "Insiders were selling into every one of those headlines."
         }
       ]
     },
     {
-      "symbol": "AVGO",
+      "symbol": "META",
       "direction": "long",
-      "position_id": "position-avgo",
-      "decision_id": "decision-avgo",
-      "resolved_at": "2026-06-03 20:00:00",
-      "r_multiple": 2.4,
+      "position_id": "pos-08",
+      "decision_id": "dec-08",
+      "resolved_at": "2026-06-24 20:00:00",
+      "r_multiple": 0.4,
+      "supported": [
+        {
+          "analyst": "news",
+          "side": "supported",
+          "stance": "positive",
+          "conviction": "medium",
+          "credit": 0.4,
+          "nominated": true,
+          "reason": "Advertising checks came back better than the quarter before."
+        },
+        {
+          "analyst": "macro",
+          "side": "supported",
+          "stance": "overweight",
+          "conviction": "high",
+          "credit": 0.4,
+          "nominated": false,
+          "reason": "Advertising spend turns first when rates ease."
+        }
+      ],
+      "opposed": []
+    },
+    {
+      "symbol": "PFE",
+      "direction": "long",
+      "position_id": "pos-07",
+      "decision_id": "dec-07",
+      "resolved_at": "2026-06-11 20:00:00",
+      "r_multiple": -0.8,
       "supported": [
         {
           "analyst": "technical",
           "side": "supported",
           "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": 2.4,
+          "conviction": "medium",
+          "credit": -0.8,
           "nominated": true,
-          "reason": "Broke a six-week base on the heaviest volume of the year."
+          "reason": "Reclaimed the level it lost in April."
+        }
+      ],
+      "opposed": [
+        {
+          "analyst": "earnings",
+          "side": "opposed",
+          "stance": "bearish",
+          "conviction": "high",
+          "credit": 0.8,
+          "nominated": false,
+          "reason": "Guidance was cut twice and never restored."
+        }
+      ]
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "short",
+      "position_id": "pos-06",
+      "decision_id": "dec-06",
+      "resolved_at": "2026-06-03 20:00:00",
+      "r_multiple": 2.5,
+      "supported": [
+        {
+          "analyst": "technical",
+          "side": "supported",
+          "stance": "sell",
+          "conviction": "high",
+          "credit": 2.5,
+          "nominated": true,
+          "reason": "Lower highs into a failing average, with delivery week ahead."
         },
         {
           "analyst": "earnings",
           "side": "supported",
-          "stance": "buy",
+          "stance": "bearish",
           "conviction": "medium",
-          "weight": 0.6,
-          "credit": 1.44,
+          "credit": 2.5,
           "nominated": false,
-          "reason": "Backlog grew faster than revenue for a third quarter."
+          "reason": "Margins had compressed for three quarters straight."
+        }
+      ],
+      "opposed": [
+        {
+          "analyst": "news",
+          "side": "opposed",
+          "stance": "positive",
+          "conviction": "low",
+          "credit": -2.5,
+          "nominated": false,
+          "reason": "Delivery chatter had been improving all month."
+        }
+      ]
+    },
+    {
+      "symbol": "GS",
+      "direction": "long",
+      "position_id": "pos-05",
+      "decision_id": "dec-05",
+      "resolved_at": "2026-05-26 20:00:00",
+      "r_multiple": 0.3,
+      "supported": [
+        {
+          "analyst": "news",
+          "side": "supported",
+          "stance": "positive",
+          "conviction": "low",
+          "credit": 0.3,
+          "nominated": false,
+          "reason": "Deal pipeline commentary picked up, but only slightly."
         }
       ],
       "opposed": []
+    },
+    {
+      "symbol": "T",
+      "direction": "long",
+      "position_id": "pos-04",
+      "decision_id": "dec-04",
+      "resolved_at": "2026-05-21 20:00:00",
+      "r_multiple": -1.5,
+      "supported": [
+        {
+          "analyst": "news",
+          "side": "supported",
+          "stance": "positive",
+          "conviction": "high",
+          "credit": -1.5,
+          "nominated": true,
+          "reason": "The dividend headlines read as a floor under the price."
+        }
+      ],
+      "opposed": [
+        {
+          "analyst": "macro",
+          "side": "opposed",
+          "stance": "underweight",
+          "conviction": "low",
+          "credit": 1.5,
+          "nominated": false,
+          "reason": "Refinancing at these rates eats the dividend it is bought for."
+        }
+      ]
     },
     {
       "symbol": "XOM",
       "direction": "long",
-      "position_id": "position-xom",
-      "decision_id": "decision-xom",
-      "resolved_at": "2026-05-21 20:00:00",
-      "r_multiple": -0.9,
-      "supported": [
-        {
-          "analyst": "technical",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "high",
-          "weight": 1.0,
-          "credit": -0.9,
-          "nominated": true,
-          "reason": "Clean base breakout above 118."
-        }
-      ],
-      "opposed": [
-        {
-          "analyst": "macro",
-          "side": "opposed",
-          "stance": "bearish",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.27,
-          "nominated": false,
-          "reason": "Crude inventories are building, not drawing."
-        }
-      ]
-    },
-    {
-      "symbol": "SNAP",
-      "direction": "long",
-      "position_id": "position-snap",
-      "decision_id": "decision-snap",
+      "position_id": "pos-03",
+      "decision_id": "dec-03",
       "resolved_at": "2026-05-19 20:00:00",
-      "r_multiple": -1.8,
+      "r_multiple": -2.0,
       "supported": [
         {
           "analyst": "news",
           "side": "supported",
-          "stance": "buy",
+          "stance": "positive",
           "conviction": "high",
-          "weight": 1.0,
-          "credit": -1.8,
+          "credit": -2.0,
           "nominated": true,
-          "reason": "Analyst day guidance sounded confident."
+          "reason": "Crude inventories were drawing three weeks running."
         }
       ],
       "opposed": [
         {
           "analyst": "technical",
           "side": "opposed",
-          "stance": "bearish",
+          "stance": "sell",
           "conviction": "medium",
-          "weight": 0.6,
-          "credit": 1.08,
+          "credit": 2.0,
           "nominated": false,
-          "reason": "Lower highs since March; the trend is still down."
+          "reason": "No base under it \u2014 this was extended before it was bought."
         }
       ]
     },
     {
-      "symbol": "PLTR",
+      "symbol": "MSFT",
       "direction": "long",
-      "position_id": "position-pltr",
-      "decision_id": "decision-pltr",
-      "resolved_at": "2026-05-06 20:00:00",
-      "r_multiple": 0.9,
+      "position_id": "pos-02",
+      "decision_id": "dec-02",
+      "resolved_at": "2026-05-12 20:00:00",
+      "r_multiple": 1.2,
       "supported": [
         {
           "analyst": "technical",
           "side": "supported",
           "stance": "buy",
           "conviction": "high",
-          "weight": 1.0,
-          "credit": 0.9,
+          "credit": 1.2,
           "nominated": true,
-          "reason": "Reclaimed the 50-day average on rising volume."
-        },
-        {
-          "analyst": "news",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "medium",
-          "weight": 0.6,
-          "credit": 0.54,
-          "nominated": false,
-          "reason": "Two new government contracts announced this week."
-        },
-        {
-          "analyst": "macro",
-          "side": "supported",
-          "stance": "buy",
-          "conviction": "low",
-          "weight": 0.3,
-          "credit": 0.27,
-          "nominated": false,
-          "reason": "Rate expectations easing; risk appetite improving."
+          "reason": "Held its rising average through three separate tests."
         }
       ],
       "opposed": []
+    },
+    {
+      "symbol": "AAPL",
+      "direction": "long",
+      "position_id": "pos-01",
+      "decision_id": "dec-01",
+      "resolved_at": "2026-05-06 20:00:00",
+      "r_multiple": 1.0,
+      "supported": [
+        {
+          "analyst": "technical",
+          "side": "supported",
+          "stance": "buy",
+          "conviction": "high",
+          "credit": 1.0,
+          "nominated": true,
+          "reason": "Broke out of a six-week base on heavy volume."
+        }
+      ],
+      "opposed": [
+        {
+          "analyst": "macro",
+          "side": "opposed",
+          "stance": "underweight",
+          "conviction": "medium",
+          "credit": -1.0,
+          "nominated": false,
+          "reason": "The rate path still points against consumer hardware."
+        }
+      ]
     }
   ]
 };

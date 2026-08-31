@@ -730,9 +730,11 @@ phases:
         - "The chart analyst is then brought in specifically to check whether there's a real tradeable setup for each nomination."
         - "If sources disagree on a symbol and that disagreement is never resolved, that specific trade idea is dropped rather than risking a bad call — the rest of the session's trades are unaffected."
         - "How much can be risked on an idea now scales automatically with how many independent sources agree on it — that scaling is deterministic, not a judgment call."
-        - "The desk now keeps a scorecard: which researcher raised each idea, which ones backed it, which ones argued against it, and — once the position closes — who was right. A researcher who correctly warned against a trade that lost money is credited for it, weighted by how strongly it said so."
+        - "The desk now keeps a scorecard: which researcher raised each idea, which ones backed it, which ones argued against it, and — once the position closes — who was right. A researcher who correctly warned against a trade that lost money is credited for it."
+        - "How strongly a researcher stated a view does not change what its call is worth (owner decision, 2026-08-31). Scaling the score by a researcher's own confidence would assume the answer to the question the scorecard exists to ask, and a confident view already gets a bigger position, so it already earns or loses more. Instead, each researcher's record is shown split by how confidently it spoke, so a reader can see for themselves whether its confident calls are worth more."
+        - "Bets on a share falling now count exactly like bets on a share rising (owner decision, 2026-08-31). If the bet made money it is a win and a positive amount; if it lost money it is a loss and a negative amount; the researcher that argued for a profitable one is credited and the one that argued against it is charged. Nothing is reversed or worded differently because the bet was on a fall. Previously these trades were not scored at all, because they were never grouped into positions the way ordinary buys are."
         - "That scorecard is a record only. It does not influence what gets traded or how much is risked, and a test enforces that by running the decision step with the scorecard on and off and requiring identical orders."
-      outstanding: "The scorecard is recorded but has no screen — nothing displays it to the operator yet. Still missing from the owner's full specification: separate scores for raising an idea versus judging someone else's, how often a researcher's ideas actually become trades, scoring an objection that blocked a trade against what that trade would have done, a rolling window so old calls fade, and tracking how a researcher's view of a symbol changes between sessions. Short trades are also not scored, because they are not grouped into positions the way ordinary buys are."
+      outstanding: "Still missing from the owner's full specification: separate scores for raising an idea versus judging someone else's, how often a researcher's ideas actually become trades, scoring an objection that blocked a trade against what that trade would have done, a rolling window so old calls fade, and tracking how a researcher's view of a symbol changes between sessions."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -829,11 +831,17 @@ phases:
       - kind: symbol_in_file
         path: "src/storage/db.py"
         symbol: "def resolve_conviction_ledger"
-        note: "§9.5 score on close: credits each seat +R aligned / -R opposed, conviction-weighted, via the existing r_multiple. Idempotent; run from evening housekeeping; skips any chain with no entry stop rather than guessing."
+        note: "§9.5 score on close: credits each seat +R aligned / -R opposed via the existing r_multiple. Raw and unweighted since 2026-08-31 — see the conviction-weighting note below. Long and short chains take the identical path. Idempotent; run from evening housekeeping; skips any chain with no entry stop rather than guessing."
       - kind: symbol_in_file
         path: "src/conviction_ledger.py"
         symbol: "def aggregate_seat_records"
-        note: "§9.5 per-analyst aggregate: resolved calls, calls right, avg win, avg loss, cumulative profit series, drawdown from the seat's own peak. No sample-size gate — owner-rejected."
+        note: "§9.5 per-analyst aggregate: resolved calls, calls right, avg win, avg loss, cumulative profit series, drawdown from the seat's own peak, and (since 2026-08-31) the same five figures again split by the confidence the seat declared. No sample-size gate anywhere — owner-rejected."
+      - kind: file_exists
+        path: "src/api/routes_scorecard.py"
+        note: "§9.5 item 9: GET /analysts/scorecard — read-only projection of the ledger, three typed states, no minimum-sample gate. Scores nothing; derives credit as ±r_multiple by side."
+      - kind: file_exists
+        path: "frontend/src/components/scorecard/AnalystScorecard.tsx"
+        note: "§9.5 item 9: the Mission Control panel. Plain language and colour-independence are enforced by AnalystScorecard.test.tsx."
       - kind: test_exists
         path: "tests/test_conviction_ledger.py"
         test: "test_a_nomination_can_be_traced_to_the_trade_it_produced"
@@ -843,7 +851,24 @@ phases:
         test: "test_dissenting_seat_is_credited_positively_when_the_trade_it_opposed_loses"
       - kind: test_exists
         path: "tests/test_conviction_ledger.py"
-        test: "test_conviction_weighting_scales_the_credit"
+        test: "test_declared_confidence_does_not_scale_the_credit"
+        note: "Owner decision 2026-08-31: three seats, three declared confidences, one identical credit. Replaces the test that asserted the opposite."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_aggregate_breaks_the_record_down_by_declared_confidence"
+        note: "What replaced the weight: the per-confidence split, on a hand-computed fixture, summing back to the seat's own totals."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_a_winning_short_scores_exactly_like_a_winning_long"
+        note: "A profitable short is a positive credit for its backer and a negative one for its objector, end to end through the database."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_a_short_entry_mints_a_position_chain_and_its_cover_closes_it"
+        note: "The chaining fix itself: a SHORT opens a chain and a COVER retires it, mirroring BUY/SELL."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_a_legacy_weighted_row_is_read_back_unweighted"
+        note: "Pre-2026-08-31 rows stored a weighted credit. Nothing migrates them; both read paths recompute from the stored unweighted r_multiple and side, so one series never mixes two scales."
       - kind: test_exists
         path: "tests/test_conviction_ledger.py"
         test: "test_aggregate_returns_correct_counts_averages_series_and_drawdown"
@@ -851,14 +876,18 @@ phases:
         path: "tests/test_conviction_ledger.py"
         test: "test_ledger_recording_does_not_change_a_single_trading_decision"
         note: "§9.5 safety: DecisionStage run with ledger recording enabled and disabled must produce byte-identical constructed orders. The ledger is advisory and must never move a trade."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_short_chaining_touches_no_trading_decision"
+        note: "The same safety assertion for the 2026-08-31 short-chaining change: DecisionStage produces byte-identical orders whether or not the database already holds a scored short round trip."
       - kind: manual
-        note: "§9.5 (conviction ledger per candidate) is specified in full and owner-ratified as scheduled work (docs/QAMC_REMEDIATION_SPEC.md §9.5, expanded 2026-08-31). It is now PARTIALLY BUILT: the recording and scoring data layer landed on feat/conviction-ledger-recording. §9.1-§9.4 remain as shipped in PR #153/#160."
+        note: "§9.5 (conviction ledger per candidate) is specified in full and owner-ratified as scheduled work (docs/QAMC_REMEDIATION_SPEC.md §9.5, expanded 2026-08-31). It is now PARTIALLY BUILT: the recording and scoring data layer landed on feat/conviction-ledger-recording (PR #196), the read-only GET /analysts/scorecard route and the Mission Control panel on feat/analyst-scorecard-panel (PR #198), and the owner's two amendments — raw unweighted credit with a per-confidence breakdown, and shorts scored identically to longs — on fix/ledger-unweighted-and-shorts. §9.1-§9.4 remain as shipped in PR #153/#160."
       - kind: manual
-        note: "§9.5 items BUILT: item 1 recording (seat, stance, declared conviction, originated-vs-responding, session date — per idea, per decision), item 3 scoring on close (+R aligned / -R opposed, conviction-weighted, via r_multiple), item 6 advisory-only (test-enforced byte-identical decisions), item 8 no sample gate (raw counts returned). Plus the join item 10 named as the central missing piece: nomination evidence rows are back-filled with decision_id, so nomination -> decision -> trade is now a real query."
+        note: "§9.5 items BUILT: item 1 recording (seat, stance, declared conviction, originated-vs-responding, session date — per idea, per decision), item 3 scoring on close (+R aligned / -R opposed via r_multiple), item 3a raw unweighted credit plus the per-declared-confidence breakdown that replaced the weight, item 3b shorts scored identically to longs, item 6 advisory-only (test-enforced byte-identical decisions), item 8 no sample gate (raw counts returned), and item 9's presentation layer. Plus the join item 10 named as the central missing piece: nomination evidence rows are back-filled with decision_id, so nomination -> decision -> trade is now a real query."
       - kind: manual
-        note: "§9.5 items NOT built: item 1's longitudinal cross-session view ('what changed since the previous session'); item 2's separate origination-vs-judgement scores (the `nominated` flag is persisted on every stance and credit row so the split is derivable, but aggregate_seat_records returns ONE record per seat); item 4's conversion-rate metric; item 5's shadowed objections; item 7's rolling-window decay (the record is lifetime); item 9's presentation layer — no API route, no Mission Control view, no frontend."
+        note: "§9.5 items NOT built: item 1's longitudinal cross-session view ('what changed since the previous session'); item 2's separate origination-vs-judgement scores (the `nominated` flag is persisted on every stance and credit row so the split is derivable, but aggregate_seat_records returns ONE record per seat, subdivided by declared confidence rather than by origination); item 4's conversion-rate metric; item 5's shadowed objections; item 7's rolling-window decay (the record is lifetime)."
       - kind: manual
-        note: "Short round trips are unscored because they carry no position_id: _assign_position_ids (§6.2a) opens a chain only on a BUY, so no SHORT is chained today. Pre-existing gap in the chaining, not introduced by §9.5; the ledger's arithmetic is already direction-aware and will score shorts unchanged once they receive chains."
+        note: "Short round trips are scored as of 2026-08-31 (owner decision). _assign_position_ids (§6.2a) previously opened a chain only on a BUY, so no SHORT was ever chained and no short round trip existed to score; a SHORT now mints a chain and the COVER family retires it, mirroring BUY/SELL, with stops and trails retiring either side. The sign convention is the point: a short that made money is a win and a positive number, one that lost money is a loss and a negative number, and nothing is inverted or specially worded for direction. This changed no trading behaviour — position_id is a forensic column read by nothing in the decision chain, and a test requires byte-identical constructed orders either way."
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
