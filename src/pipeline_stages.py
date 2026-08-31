@@ -43,6 +43,9 @@ from src.agents.base import agent_log_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro import MacroCoverage
+from src.data.event_calendar import (
+    EventCalendarCoverage, fetch_earnings_proximity, format_event_risk_block,
+)
 from src.data.technical import compute_indicators
 from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
 from src.nominations import select_nominations
@@ -57,6 +60,7 @@ if TYPE_CHECKING:
     from src.data.smart_money import SmartMoneySource
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
+    from src.data.event_calendar import MacroEventCalendarProvider
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
     from src.data.market import MarketDataProvider
@@ -732,11 +736,17 @@ class MorningResearchStage:
         smart_money_analyst: "SmartMoneyAnalystAgent | None" = None,
         admit_smart_money_candidates_fn=None,
         admit_nominated_candidates_fn=None,
+        event_calendar: "MacroEventCalendarProvider | None" = None,
     ):
         self.config = config
         self.db = db
         self.market = market
         self.macro = macro
+        # Optional so every existing construction site (tests, the
+        # commissioning verifier) keeps working; when absent, the macro seat is
+        # told the calendar was NOT FETCHED rather than being shown an empty
+        # one it would read as "no events scheduled".
+        self.event_calendar = event_calendar
         self.news_provider = news_provider
         self.news_store = news_store
         self.macro_store = macro_store
@@ -866,19 +876,43 @@ class MorningResearchStage:
                 macro_summary.get("inflation", {}).get("core_cpi_yoy"),
                 macro_summary.get("unemployment", {}).get("current"),
             )
+            # Forward calendar of scheduled macro releases. Fetched here, in
+            # the same background worker as the macro summary, so it shares the
+            # research fan-out's wall clock instead of adding to the critical
+            # path — and its own hard deadline (event_risk.calendar_deadline_s)
+            # bounds it independently. A failure NEVER propagates: the seat is
+            # shown the coverage line and told the calendar is impaired, which
+            # is the whole point of fetching it.
+            macro_events: list = []
+            event_coverage = None
+            if self.event_calendar is not None:
+                try:
+                    macro_events = self.event_calendar.get_upcoming_events(
+                        horizon_days=self.config.event_risk.horizon_days,
+                    )
+                    event_coverage = self.event_calendar.last_coverage
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Macro event calendar fetch failed: %s", e)
+                    macro_events, event_coverage = [], None
             analysis, result = self.macro_analyst.analyze(
                 macro_summary=macro_summary,
                 universe=effective_symbols,
                 last_state=prior_macro_state,
                 news_narrative=news_narrative,
                 macro_coverage=macro_coverage,
+                macro_events=macro_events,
+                event_coverage=event_coverage,
+                event_horizon_days=self.config.event_risk.horizon_days,
             )
             if analysis:
                 try:
                     self.macro_store.save_last_state(analysis.model_dump())
                 except Exception as e:
                     logger.warning("Failed to persist macro last state: %s", e)
-            return macro_summary, analysis, result, macro_coverage
+            return (
+                macro_summary, analysis, result, macro_coverage,
+                macro_events, event_coverage,
+            )
 
         def _run_news():
             # Per-symbol news selection (2026-08-30 owner decision): held
@@ -1105,7 +1139,10 @@ class MorningResearchStage:
         # Coverage failure dominates parse success below.
         macro_coverage: "MacroCoverage | None" = None
         try:
-            macro_summary, macro_analysis, ma_result, macro_coverage = macro_future.result()
+            (
+                macro_summary, macro_analysis, ma_result, macro_coverage,
+                macro_events, event_coverage,
+            ) = macro_future.result()
             # A test double / older caller may hand back something other
             # than a real MacroCoverage (e.g. a bare MagicMock attribute
             # off an unconfigured mock provider) — treat anything that
@@ -1121,6 +1158,29 @@ class MorningResearchStage:
             ctx.macro_summary = macro_summary
             ctx.macro_analysis = macro_analysis
             ctx.macro_coverage = macro_coverage
+            # Carried on ctx so RiskStage reuses this run's calendar instead of
+            # re-fetching it (one FRED sweep per session, not two). Same
+            # test-double guard as macro_coverage above: anything that is not
+            # the real dataclass reads as "not fetched", which the renderer
+            # states explicitly rather than showing as an empty calendar.
+            if not isinstance(event_coverage, EventCalendarCoverage):
+                event_coverage = None
+                macro_events = []
+            ctx.macro_events = list(macro_events or [])
+            ctx.macro_event_coverage = event_coverage
+            if event_coverage is not None and event_coverage.status != "ok":
+                # Deliberately NOT written into `data_status`. Every key in
+                # that dict feeds the `data_degraded` advisory's ">= 2 degraded
+                # sources" arithmetic (below), and a release whose next date the
+                # source agency has simply not published yet is a normal,
+                # recurring "partial" — adding it would move an existing gate's
+                # threshold as a side effect of this change. The seats are told
+                # through their own event-risk block, which is where the fact
+                # can actually be acted on; the operator gets this log line.
+                logger.warning(
+                    "Macro event calendar %s this run: %s",
+                    event_coverage.status.upper(), event_coverage.describe(),
+                )
             if macro_coverage is not None:
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="macro_provider",
@@ -1936,7 +1996,7 @@ class RiskStage:
     Reads:  ctx.portfolio_decision, ctx.positions, ctx.total_value,
             ctx.last_equity, ctx.earnings_results, ctx.macro_analysis,
             ctx.analyses, ctx.symbols_bars, ctx.data_status, ctx.news_intel,
-            ctx.macro_summary
+            ctx.macro_summary, ctx.macro_events, ctx.macro_event_coverage
 
     Writes: ctx.portfolio_decision.decisions (filtered/capped/scaled),
             ctx.correlation_matrix, ctx.daily_pnl, ctx.macro_target_pct
@@ -1947,6 +2007,69 @@ class RiskStage:
 
     def __init__(self, *, pipeline: "TradingPipeline"):
         self._pipeline = pipeline
+
+    @staticmethod
+    def _build_event_risk_block(pipeline, ctx: RunContext) -> str:
+        """The fetched Event Risk section handed to the Risk Manager.
+
+        `RiskVerdict.reasoning_chain.event_risk` is a REQUIRED narrative field
+        asking whether earnings or a macro release land in the next few
+        sessions. Nothing fetched either fact before this: the earnings-date
+        lookup (`MarketDataProvider.get_next_earnings_date`) had no callers
+        anywhere, and no macro calendar existed — so a mandatory risk check was
+        being answered from the model's recollection.
+
+        Earnings are looked up for exactly the symbols RM is judging (this
+        run's decisions), bounded per-symbol AND in aggregate so a stalled
+        yfinance call can never delay the session. The macro calendar is REUSED
+        from the research stage (`ctx.macro_events`) so one session issues one
+        FRED sweep; on a resume lane where research never ran, ctx carries its
+        "not fetched" defaults and the block says exactly that.
+
+        Never raises and never returns an empty string: on any failure the seat
+        is shown the NOT FETCHED form. A missing section reads as a calm
+        calendar, which is precisely the failure being fixed.
+        """
+        symbols = [
+            d.symbol for d in (
+                ctx.portfolio_decision.decisions if ctx.portfolio_decision else []
+            )
+        ]
+        # Every lookup below is a getattr with a default: this helper is called
+        # on partially-constructed pipelines (the resume lane, and several test
+        # doubles built with __new__), and an event-risk block is never worth
+        # aborting a risk review over. A missing dependency degrades to the
+        # labelled NOT FETCHED form, which is still an honest answer.
+        event_cfg = getattr(getattr(pipeline, "config", None), "event_risk", None)
+        horizon_days = getattr(event_cfg, "horizon_days", 10)
+        earnings = None
+        try:
+            if symbols and getattr(pipeline, "market", None) is not None:
+                earnings = fetch_earnings_proximity(
+                    pipeline.market, symbols,
+                    per_symbol_timeout_s=getattr(
+                        event_cfg, "earnings_symbol_timeout_s", 8.0,
+                    ),
+                    total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Earnings proximity sweep failed: %s", e)
+            earnings = None
+
+        coverage = ctx.macro_event_coverage
+        if not isinstance(coverage, EventCalendarCoverage):
+            coverage = None
+        events = list(ctx.macro_events or []) if coverage is not None else None
+        try:
+            return format_event_risk_block(
+                earnings=earnings, events=events, coverage=coverage,
+                horizon_days=horizon_days,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Event-risk block render failed: %s", e)
+            return format_event_risk_block(
+                earnings=None, events=None, coverage=None, horizon_days=0,
+            )
 
     def run(self, ctx: RunContext) -> dict | None:
         pipeline = self._pipeline
@@ -2196,6 +2319,8 @@ class RiskStage:
         if isinstance(sweeper, CashSweeper):
             rm_reserve_balance = sweeper.parked_value(ctx.positions)
 
+        rm_event_risk_block = self._build_event_risk_block(pipeline, ctx)
+
         verdict, rm_result = pipeline.risk_manager.review(
             portfolio_decision=portfolio_decision,
             positions=rm_positions,
@@ -2217,6 +2342,9 @@ class RiskStage:
             risk_ceiling_pct=(
                 getattr(ctx.facts, "risk_ceiling_pct", 25.0) if ctx.facts else 25.0
             ),
+            # The fetched answer to `reasoning_chain.event_risk` — see
+            # RiskStage._build_event_risk_block.
+            event_risk_block=rm_event_risk_block,
         )
 
         rm_log_kwargs = agent_log_kwargs(rm_result)

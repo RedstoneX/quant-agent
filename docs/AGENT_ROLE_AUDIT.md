@@ -67,7 +67,7 @@ This is the second independent confirmation of the EPD defect: on 2026-08-26 it 
 
 Largely addressed by Phase 1 / 1b. Before that work it received twenty daily bars — one month — and was asked to identify structural levels, with no relative strength, no range position, no volatility regime, no MA direction, no consolidation measure and no liquidity figure.
 
-**Still open:** `MarketDataProvider.get_next_earnings_date()` exists but nothing in the pipeline calls it.
+**Closed 2026-08-31:** `MarketDataProvider.get_next_earnings_date()` now has callers — `src/data/event_calendar.py::fetch_earnings_proximity` sweeps it for every symbol the Risk Manager is judging. **Still open for the Tech Analyst specifically:** nothing passes `days_to_earnings` into `TechAnalystAgent.build_user_message`.
 
 ### 2.2 News Analyst
 
@@ -88,7 +88,7 @@ Every value is presented as a bare current level with, at best, a 30-day delta. 
 
 ~~**Also:** FRED calls time out repeatedly in production, so the agent frequently runs on `None`.~~ **FIXED (2026-08-30, PR #162).** The single-retry/flat-backoff policy that let a three-minute outage on 2026-08-26 fail all nine series at once has been replaced with config-driven retries, exponential backoff with jitter, and a real wall-clock ceiling (`total_fetch_deadline_s`, 90s default) the old policy never had. When series still fail, coverage is no longer silent: it now feeds `data_status["macro"]` through the same ok/partial/failed path the news feed already used, and the macro analyst is shown its own coverage directly.
 
-**Still true, unrelated to this fix:** no historical percentile context exists for any of these series (the paragraph above), and there is still no macro event calendar — `event_risk` is answered from the model's own memory, not from fetched data. See `docs/phases.yaml`'s `open_defects` entry.
+**Still true, unrelated to this fix:** no historical percentile context exists for any of these series (the paragraph above). The macro event calendar was built on 2026-08-31 (`src/data/event_calendar.py`) — `event_risk` is now answered from FRED's free release-dates schedule plus a per-symbol earnings sweep, with every gap named rather than inferred. FOMC meeting dates remain uncovered by any free source and are declared as such to both seats.
 
 ### 2.4 Earnings Analyst
 
@@ -142,4 +142,4 @@ The uncomfortable part: its most safety-critical contribution is **covering for 
 | **Phase 2** (sizing and risk) | §1.1 drawdown gate · §1.2 correlation to PM · §1.3 portfolio heat · §1.4 R-multiple — **landed as Phase 2a, commit `c89e957`** |
 | **Phase 3** (exits) | §1.5 reviewer memory — **landed, commit `aea82ee` on branch `feat/exit-rework-pace-and-memory` (not yet merged)** |
 | **Right after Phase 2** | §2.5 routine/opportunistic filter — **finished, PR #133 opened against `main`, commit `f3aeba4`/`866e423` + 2026-08-28 finishing pass on branch `feat/insider-signal-filter` (not yet merged)** |
-| **Separate pass, needs owner decisions** | §2.2 news cascade · ~~§2.3 macro series~~ (fixed 2026-08-30, PR #162 — six series added, FRED resilience rebuilt; percentile context and a macro event calendar remain unbuilt) · §2.4 earnings trends — several need new data sources |
+| **Separate pass, needs owner decisions** | §2.2 news cascade · ~~§2.3 macro series~~ (fixed 2026-08-30, PR #162 — six series added, FRED resilience rebuilt; the macro event calendar followed on 2026-08-31, `src/data/event_calendar.py`; percentile context remains unbuilt) · §2.4 earnings trends — several need new data sources |

@@ -29,6 +29,9 @@ class MacroAnalystAgent(BaseAgent):
         last_state: dict | None = kwargs.get("last_state")
         news_narrative: dict | None = kwargs.get("news_narrative")
         macro_coverage = kwargs.get("macro_coverage")
+        macro_events = kwargs.get("macro_events")
+        event_coverage = kwargs.get("event_coverage")
+        event_horizon_days = int(kwargs.get("event_horizon_days") or 10)
 
         vix = macro_summary.get("vix", {}) or {}
         treasury = macro_summary.get("treasury", {}) or {}
@@ -98,7 +101,22 @@ class MacroAnalystAgent(BaseAgent):
         if macro_coverage is not None:
             coverage_section = f"## Macro Data Coverage\n{macro_coverage.describe()}"
 
+        # Scheduled macro releases, FETCHED (FRED release dates) rather than
+        # recalled. Rendered by the same helper the Risk Manager uses, so the
+        # two seats cannot end up reading differently-worded versions of the
+        # same calendar — and so neither of them can be handed silence.
+        from src.data.event_calendar import format_macro_events_section
+        events_section = format_macro_events_section(
+            macro_events, event_coverage, event_horizon_days,
+            heading=(
+                f"## Scheduled Macro Releases, next {event_horizon_days} "
+                f"calendar days — FETCHED (do NOT answer from memory)"
+            ),
+        )
+
         return f"""{coverage_section}
+
+{events_section}
 
 ## Current Macro Indicators
 
@@ -167,6 +185,9 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         last_state: dict | None = None,
         news_narrative: dict | None = None,
         macro_coverage=None,
+        macro_events=None,
+        event_coverage=None,
+        event_horizon_days: int = 10,
     ) -> tuple[MacroAnalysis | None, AgentResult]:
         """Run LLM, validate via Pydantic, return the typed object.
 
@@ -181,6 +202,14 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         exactly. Optional/untyped here (rather than importing
         MacroCoverage) to avoid a src.agents -> src.data import for a
         value only ever used for its .describe() string.
+
+        `macro_events` / `event_coverage` (src.data.event_calendar) are the
+        FETCHED forward calendar of scheduled macro releases and how much of it
+        came back. Both optional so every existing call site keeps working —
+        and when they are absent the prompt says the calendar was NOT FETCHED
+        rather than rendering an empty one, because an empty section reads as a
+        quiet calendar and this seat had no fetched release schedule at all
+        before this landed.
         """
         result = self.run(
             macro_summary=macro_summary,
@@ -188,6 +217,9 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
             last_state=last_state,
             news_narrative=news_narrative,
             macro_coverage=macro_coverage,
+            macro_events=macro_events,
+            event_coverage=event_coverage,
+            event_horizon_days=event_horizon_days,
         )
         parsed = result.parse_json()
         if parsed is None:
