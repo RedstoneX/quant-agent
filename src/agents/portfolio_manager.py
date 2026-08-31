@@ -597,6 +597,40 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 f"- **SELL discipline grade** (previous run): {sell_grade[:400]}"
                 if sell_grade else ""
             )
+
+            # Defect (d) fix: evening's structured "lesson categories" —
+            # thesis_updates / selection_rules / discipline_notes — were
+            # produced by the LLM every night and asked for in the evening
+            # prompt, but never made it past `save_evening_snapshot` into
+            # the DB, so Step 6 ("Yesterday's lessons: apply any relevant
+            # learnings") had nothing to read. Wired here the same way the
+            # rest of this section already is — date-labeled by `freshness`
+            # above, with a labelled absence (not silence, not a fabricated
+            # note) when evening didn't fill a category that day.
+            def _parse_str_list(raw) -> list[str]:
+                if isinstance(raw, str):
+                    try:
+                        parsed = json.loads(raw)
+                    except (json.JSONDecodeError, TypeError):
+                        return []
+                else:
+                    parsed = raw
+                return [str(x) for x in parsed] if isinstance(parsed, list) else []
+
+            def _lesson_bullets(items: list[str], empty_label: str) -> str:
+                if not items:
+                    return f"  ({empty_label})"
+                # Defensive per-item cap — evening's prompt already asks for
+                # 0-5/0-3 short items, this just bounds a runaway one.
+                return "\n".join(f"  - {item[:220]}" for item in items)
+
+            thesis_updates = _parse_str_list(yesterday_insights.get("thesis_updates_json", "[]"))
+            selection_rules = _parse_str_list(yesterday_insights.get("selection_rules_json", "[]"))
+            discipline_notes = _parse_str_list(yesterday_insights.get("discipline_notes_json", "[]"))
+            thesis_text = _lesson_bullets(thesis_updates, "no thesis updates carried from last night")
+            selection_text = _lesson_bullets(selection_rules, "no new selection rules carried from last night")
+            discipline_text = _lesson_bullets(discipline_notes, "no discipline notes carried from last night")
+
             insights_section = f"""## Prior Evening Insights{freshness}
 - **Tilt for today**: bias={bias}, conviction={conviction}
 - Outlook (prose): {yesterday_insights.get('tomorrow_outlook', 'N/A')}
@@ -606,9 +640,19 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 - Risk Rating: {yesterday_insights.get('risk_rating', 'N/A')}
 - Suggested Actions:
 {actions_text}
-{sell_line}"""
+{sell_line}
+- Thesis updates on held positions (apply at Step 6):
+{thesis_text}
+- New selection rules (apply when sizing new BUYs):
+{selection_text}
+- Discipline notes (apply at Step 6 holding discipline):
+{discipline_text}"""
         else:
-            insights_section = "## Yesterday's Evening Insights\nNo prior session insights available."
+            insights_section = (
+                "## Yesterday's Evening Insights\n"
+                "No prior session insights available "
+                "(no outlook, lessons, or thesis/selection/discipline notes from last night)."
+            )
 
         # L3 memory layers — past environment trajectory
         weekly_narrative: str = kwargs.get("weekly_narrative") or ""

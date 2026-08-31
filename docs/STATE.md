@@ -60,8 +60,13 @@ This file records what is accepted and true **now**. Git history preserves imple
   (`src/agents/tech_analyst.py`). `TechAnalystAgent.build_user_message` also accepts
   an optional `days_to_earnings` kwarg, and `MarketDataProvider.get_next_earnings_date()`
   (`src/data/market.py`, new) can supply an approximate trading-session count to a
-  symbol's next scheduled earnings — but **nothing in the pipeline calls it or
-  passes `days_to_earnings` today**; it is available but unwired.
+  symbol's next scheduled earnings. **That method now has real callers** (2026-08-31):
+  `src/data/event_calendar.py::fetch_earnings_proximity` sweeps it for every symbol
+  the Risk Manager is judging and renders the result — a session count, or one of
+  four NAMED absences — into RM's Event Risk block, so the mandatory
+  `reasoning_chain.event_risk` field is grounded in fetched data rather than the
+  model's recollection. **Still unwired for the Tech Analyst specifically**: nothing
+  passes `days_to_earnings` into `TechAnalystAgent.build_user_message` today.
 - **Phase 2a of the remediation spec is merged and deployed** — `c89e957`
   on branch `feat/risk-metrics-and-pm-correlation`. It folds in four
   `AGENT_ROLE_AUDIT.md` audit findings that preceded Phase 2's own sizing work:
@@ -528,8 +533,14 @@ backoff with jitter, a real wall-clock ceiling) and its coverage now surfaces to
 operator the same way news coverage already did. Repair is `docs/QAMC_REMEDIATION_SPEC.md`
 Phase 4.2 — see `docs/phases.yaml`'s `phase_4` entry for current mechanical evidence.
 Genuinely still open: full wire-service breadth needs a paid subscription and an
-owner decision, and there is no macro event calendar (see `docs/phases.yaml`'s
-`open_defects` entry).
+owner decision. The macro event calendar was built on 2026-08-31
+(`src/data/event_calendar.py`): FRED's free release-dates API supplies the forward
+schedule for CPI, Employment Situation (NFP), PPI, PCE, GDP, retail sales and
+jobless claims, threaded into both the macro analyst and the Risk Manager with a
+`MacroCoverage`-shaped coverage line. **FOMC meeting dates are NOT covered** — FRED
+carries no meeting schedule (release 101 reports as a daily release, so its date list
+is every calendar day) and paid sources are refused; the gap is stated to both seats
+explicitly rather than left for a model to fill from memory.
 
 `get_latest_price` returning `None` on a genuine market-data exception is an intentional fail-closed/degradation contract and is covered by existing tests. Do not change this trading-critical method merely because `feed` is omitted. Reopen it only on concrete production evidence of incorrect behavior.
 

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from src.config import AppConfig, RiskConfig
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroCoverage, MacroDataProvider
+from src.data.event_calendar import MacroEventCalendarProvider
 from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
@@ -308,6 +309,21 @@ class TradingPipeline:
             retry_backoff_jitter_s=config.macro.retry_backoff_jitter_s,
             breaker_after_failed_series=config.macro.breaker_after_failed_series,
             total_fetch_deadline_s=config.macro.total_fetch_deadline_s,
+        )
+        # Forward calendar of scheduled macro releases (FRED's free
+        # release-dates API). Same host and same failure mode as `self.macro`,
+        # so it reuses that feed's operator-set retry/backoff policy verbatim
+        # and carries only its own, much tighter, wall-clock ceiling — see
+        # src/config.py::EventRiskConfig.
+        self.event_calendar = MacroEventCalendarProvider(
+            api_key=config.api_keys.fred,
+            request_timeout_s=config.macro.request_timeout_s,
+            max_retries=config.macro.max_retries,
+            retry_backoff_base_s=config.macro.retry_backoff_base_s,
+            retry_backoff_max_s=config.macro.retry_backoff_max_s,
+            retry_backoff_jitter_s=config.macro.retry_backoff_jitter_s,
+            breaker_after_failed_releases=config.macro.breaker_after_failed_series,
+            total_fetch_deadline_s=config.event_risk.calendar_deadline_s,
         )
 
         def _key_for(model: str, explicit_provider: str | None = None) -> str:
@@ -620,6 +636,7 @@ class TradingPipeline:
             smart_money_analyst=self.smart_money_analyst,
             admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
             admit_nominated_candidates_fn=self._admit_nominated_external_symbols,
+            event_calendar=self.event_calendar,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
             run_news_update_fn=self._run_news_update,
             load_earnings_analyses_fn=self._load_earnings_analyses,
@@ -10220,6 +10237,15 @@ class TradingPipeline:
                 # memory next morning and the quarterly meta-reflector's
                 # theme_coverage_report.
                 missed_opportunities=analysis.missed_opportunities,
+                # Defect (d) fix: these four were produced by the LLM every
+                # night and declared on EveningReport, but had no parameter
+                # here — dropped before ever reaching disk.
+                # thesis_updates/selection_rules/discipline_notes feed
+                # tomorrow's portfolio_manager (see build_user_message).
+                thesis_updates=analysis.thesis_updates,
+                selection_rules=analysis.selection_rules,
+                discipline_notes=analysis.discipline_notes,
+                previous_outlook_assessment=analysis.previous_outlook_assessment,
             )
         else:
             # LLM failed — keep at least the P&L number for daily audit.
