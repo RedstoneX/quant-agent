@@ -849,26 +849,20 @@ phases:
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary:
-      verdict: "Thirteen problems were found in the last review. Ten are fixed and live, four turned out to be unused code and were deleted. Three small ones remain."
+      verdict: "Thirteen problems were found in the last review. Eleven are fixed and live, four turned out to be unused code and were deleted. Two small ones remain."
       points:
         - "Nothing left on this list affects trading decisions or risk. These are rough edges, not hazards."
-        - "A rehearsal tool always reports its price data as fresh, whether it is or not."
         - "A daily report job points at a folder left over from before this server existed, and an internal note links to a document that was never written."
-      outstanding: "Three items, ranked below. None is urgent."
+      outstanding: "Two items, ranked below. Neither is urgent."
     defects:
-      - id: "rehearsal-pricing-note-always-zero-grace"
-        title: "Rehearsal pricing-cache note always reports 0h grace"
-        rank: 1
-        status: "OPEN"
-        summary: "The rehearsal harness builds its pricing-cache grace-window note before the sandbox's own settings.yaml is written, so the lookup reads a file that does not exist yet, silently falls back, and always reports '0h grace' regardless of the real configured grace period. Cosmetic: it would misdescribe a rehearsal actually running inside the grace band, but does not affect anything the rehearsal proves."
       - id: "pnl-export-wrong-working-directory"
         title: "Daily P&L export's systemd unit points at the wrong path"
-        rank: 2
+        rank: 1
         status: "OPEN"
         summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
       - id: "rehearsal-readme-missing"
         title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 3
+        rank: 2
         status: "OPEN"
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
@@ -981,14 +975,17 @@ phases:
         note: "NEW (2) closed: the tracked-gap set is empty and the exhaustiveness test is self-cleaning in both directions — a new untracked gap fails, and an entry parked here that has since been fixed fails as stale. Re-check: this set being non-empty means a defect has been deferred in writing."
       - kind: symbol_in_file
         path: "ops/rehearsal/runner.py"
-        symbol: "notes.append(_pricing_cache_note(sandbox))"
-        note: "NEW (3): the pricing note is built here, before the sandbox's own config/settings.yaml exists."
+        symbol: "notes[pricing_note_index] = _pricing_cache_note(sandbox)"
+        note: "NEW (3) closed: the note's place in the ordering is reserved before build_rehearsal_config and filled in after it, so _pricing_grace_hours reads a settings.yaml that exists. Re-check: `grep -n '_pricing_cache_note(sandbox)\\|config = build_rehearsal_config(' ops/rehearsal/runner.py` — the note must now come SECOND."
+      - kind: test_exists
+        path: "tests/test_rehearsal_pricing_cache_age.py"
+        test: "test_run_rehearsal_builds_the_pricing_note_after_the_sandbox_config"
       - kind: symbol_in_file
         path: "ops/rehearsal/runner.py"
-        symbol: "config = build_rehearsal_config("
-        note: "NEW (3): the sandbox's config/settings.yaml is written here, after the pricing note above has already been built."
+        symbol: "does not exist yet — the pricing-cache note quotes"
+        note: "NEW (3) closed: the silent fallback that hid the defect is now a RuntimeError. A missing sandbox settings.yaml is the note being built too early, not a policy question with a safe default — reporting '0h' for it was the harness misstating the policy it ran under."
       - kind: manual
-        note: "NEW (3): because _pricing_cache_note runs before build_rehearsal_config writes the sandbox's settings.yaml, _pricing_grace_hours reads a file that does not exist yet, its except clause fires, and the note always reports '0h grace' regardless of the real configured grace period. Cosmetic — it would misdescribe a rehearsal actually running inside the grace band. Re-check: `grep -n '_pricing_cache_note(sandbox)\\|config = build_rehearsal_config(' ops/rehearsal/runner.py` and confirm which line number comes first."
+        note: "NEW (3) was recorded as cosmetic; it was not. Reproduced 2026-08-31 against the real helper with a 30h-old cache and the live 24h configured grace: the pre-fix note read 'past the 24h limit (24h fresh + 0h grace) ... will suspend paid analysis', the post-fix note reads 'inside the 24h grace window, so paid analysis proceeds'. The note stated the opposite verdict to the one the cost circuit would actually reach, not merely a wrong number."
       - kind: symbol_in_file
         path: "scripts/systemd/quant-agent-daily.service"
         symbol: "WorkingDirectory=/home/yebo/quant-agent"
