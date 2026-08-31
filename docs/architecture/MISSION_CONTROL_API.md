@@ -12,7 +12,7 @@ Status: **ACCEPTED / Checkpoint C — 2026-08-09**.
 - Typed responses must not expose credential-bearing configuration.
 - Mission Control cannot bypass deterministic risk/execution.
 
-Accepted endpoints: `/health`, `/account`, `/positions`, `/orders`, `/trades`, `/runs`, `/runs/{run_id}`, `/decisions/{decision_id}`, `/agents`, `/agents/{agent_name}`, `/reflections`, `/candidates`.
+Accepted endpoints: `/health`, `/account`, `/positions`, `/orders`, `/trades`, `/runs`, `/runs/{run_id}`, `/decisions/{decision_id}`, `/agents`, `/agents/{agent_name}`, `/reflections`, `/candidates`. (See the dated sections below for every additive endpoint since, including `/analysts/scorecard`.)
 
 Stage 4 additive endpoints: `/runs/{run_id}/candidates` (distinct symbols
 considered in a run — union of symbol-scoped `specialist_evidence` and
@@ -210,3 +210,59 @@ modal — collapsed by default and height-capped in place, since a stored PM
 prompt runs 13KB-190KB and must not reflow the modal on open. This is
 unrelated to, and does not change, the `ResearchDailyResponse` route above,
 which still deliberately excludes both fields from its own payload.
+
+## Analyst scorecard — the conviction ledger, read (2026-08-31)
+
+`GET /analysts/scorecard?idea_limit=25` (`AnalystScorecardResponse`) is an
+additive, read-only projection of the §9.5 conviction ledger. It creates no new
+state, adds no broker surface and introduces no new dependency.
+
+The ledger writes into the existing `specialist_evidence` table — `kind`
+`seat_stance` for the side each analyst took on an idea, `kind`
+`conviction_credit` for the scored outcome once the position closed. Both are
+read here through `db_reads.get_conviction_ledger()`, an independent SQLite
+`mode=ro` connection like every other read in this package. A database written
+before the ledger existed has no rows of these kinds and reads back empty —
+which is `state="empty"`, not an error.
+
+**The route scores nothing.** The signed, conviction-weighted `credit`, the
+realized `r_multiple`, the alignment decision and the conviction weight are all
+computed once by the ledger layer at close time and persisted; this route parses
+the stored JSON and sums it into per-analyst totals, a running series, a peak, a
+distance below that peak, and monthly buckets. No R is computed here, no stance
+is re-classified, no weight is applied. Malformed rows are skipped rather than
+defaulted to zero — a broken row is absence of evidence, not a break-even call.
+
+**Deliberate duplication, and why.** `src.conviction_ledger.aggregate_seat_records`
+produces the same per-analyst totals, and importing it would be the obvious
+move — but that module imports `src.risk.rules`, and `tests/test_api_safety.py`
+forbids any `src.risk` import from `src/api/`. Preserving the isolation contract
+wins, so the arithmetic is mirrored in `src/api/routes_scorecard.py`.
+`tests/test_api_scorecard.py::test_projection_matches_the_ledgers_own_aggregate_when_it_is_available`
+runs both implementations over identical input and asserts they agree on every
+shared field, so the two cannot silently diverge.
+
+Three states, all HTTP 200 — the same typed-degraded-envelope posture
+`/research/daily/{date}` uses, so the consumer can render an honest "this could
+not be read" rather than a blank page: `populated`, `empty`, and `error` (with a
+sanitized `read_error`). `idea_limit` is bounded 1..200 and rejected with 422
+outside it. Transport/server faults outside this known read condition remain
+ordinary 500s via the app's global handler.
+
+`risk_dollars_per_call` (100.0) is a labeled presentation convention, not a real
+position size: the ledger's numbers are in R, and this is the single figure the
+cockpit multiplies by so the API and the panel cannot disagree about how R is
+expressed in money.
+
+Advisory only, per spec §9.5 item 6: no score this endpoint serves feeds sizing,
+risk allocation or order construction. Per §9.5 item 8 there is no
+minimum-sample gate — raw counts are returned for every analyst, however few
+calls it has settled.
+
+Frontend: the cockpit gains an "Analyst Scorecard" top-level view
+(`frontend/src/components/scorecard/`), alongside Cockpit / Research Desk /
+Journal. When the endpoint returns no scored calls it renders a committed
+fixture (`frontend/src/fixtures/analystScorecard.ts`) behind a permanent
+"Example data — not real" banner and switches to the live record as soon as
+real rows arrive. The fixture lives only in the frontend; the API never
+fabricates a row.
