@@ -8,7 +8,16 @@ export function HealthPanel({ health, error }: { health: HealthResponse | null; 
   const circuitDegraded = Boolean(
     (circuit && !circuit.available) || circuit?.requires_operator_reset || circuit?.suspended || quotaHoldCount,
   );
-  const status = error ? "error" : !health ? "loading" : circuitDegraded ? "degraded" : "ok";
+  const channel = health?.alert_channel;
+  const channelStatus = channel?.status ?? "unknown";
+  const channelDegraded = channelStatus === "broken" || channelStatus === "stale";
+  const status = error
+    ? "error"
+    : !health
+    ? "loading"
+    : circuitDegraded || channelDegraded
+    ? "degraded"
+    : "ok";
   if (error) {
     return (
       <Panel title="System health" status="error">
@@ -42,8 +51,20 @@ export function HealthPanel({ health, error }: { health: HealthResponse | null; 
       {/* lg:, not sm: — this panel is half-width in the main 2-column
           layout; see LiquidityPanel.tsx for the full explanation of why a
           viewport-width breakpoint alone is wrong here. */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 text-[0.8rem]">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 text-[0.8rem]">
         <Field label="Database" value={health.db_reachable ? "reachable" : "unreachable"} />
+        <Field
+          label="Alert channel"
+          value={
+            channelStatus === "ok"
+              ? `verified ${channel?.last_ok_at ? fmtTime(channel.last_ok_at) : ""}`.trim()
+              : channelStatus === "broken"
+              ? "BROKEN"
+              : channelStatus === "stale"
+              ? "unverified · stale"
+              : "never verified"
+          }
+        />
         <Field
           label="Broker"
           value={health.broker_reachable === null ? "not configured" : health.broker_reachable ? "reachable" : "unreachable"}
@@ -55,6 +76,27 @@ export function HealthPanel({ health, error }: { health: HealthResponse | null; 
         />
         <Field label="Paid analysis" value={circuitValue} />
       </div>
+      {channelDegraded && (
+        <div className="state-message mt-2 text-neg">
+          {channelStatus === "broken"
+            ? `Alert channel BROKEN at stage "${channel?.last_stage ?? "unknown"}" — ${
+                channel?.last_detail || "no detail"
+              }. Every alarm on this desk goes out over Telegram, so until this is fixed silence means nothing. ${
+                channel?.consecutive_failures ?? 0
+              } consecutive failed check(s); last working ${
+                channel?.last_ok_at ? fmtTime(channel.last_ok_at) : "never"
+              }.`
+            : `Alert channel unverified — the last successful check is ${
+                channel?.age_hours != null ? `${channel.age_hours.toFixed(1)}h` : "an unknown time"
+              } old (stale past ${channel?.stale_after_hours ?? 26}h). The checks themselves have stopped; nothing here says the alarm works.`}
+        </div>
+      )}
+      {channelStatus === "unknown" && (
+        <div className="state-message mt-2 text-warn">
+          Alert channel never verified — no check has been recorded{channel?.error ? ` (${channel.error})` : ""}.
+          This is not the same as healthy.
+        </div>
+      )}
       {circuit?.trigger && circuitDegraded && (
         <div className={`state-message mt-2 ${circuit.requires_operator_reset ? "text-neg" : "text-warn"}`}>
           {circuit.trigger}

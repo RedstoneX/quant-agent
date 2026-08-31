@@ -4,6 +4,20 @@ import { AccountResponse, HealthResponse } from "../api/client";
 function healthColor(health: HealthResponse | null): { dot: string; label: string } {
   if (!health) return { dot: "bg-dim", label: "health unavailable" };
   if (!health.db_reachable) return { dot: "bg-neg", label: "database unreachable" };
+  // Ranked directly under "the database is gone" and above everything
+  // else on purpose: every other fault on this board is reported to the
+  // operator over Telegram, so a dead alert channel hides all of them.
+  // This banner is the only place a fully-dead channel can still say so.
+  const channel = health.alert_channel;
+  if (channel?.status === "broken") {
+    return { dot: "bg-neg", label: "ALERT CHANNEL BROKEN — alarms reach nobody" };
+  }
+  if (channel?.status === "stale") {
+    return { dot: "bg-neg", label: "alert channel unverified — no recent check" };
+  }
+  if (!channel || channel.status === "unknown") {
+    return { dot: "bg-warn", label: "alert channel never verified" };
+  }
   if (health.broker_reachable === false) return { dot: "bg-warn", label: "broker unreachable" };
   if (health.broker_reachable === null) return { dot: "bg-warn", label: "broker not configured" };
   const circuit = health.llm_circuit;

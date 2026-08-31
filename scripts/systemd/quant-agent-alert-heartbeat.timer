@@ -1,32 +1,38 @@
-# Proves the alert channel every day, before anything that might need it.
+# The seven-day-a-week floor under the alert-channel watchdog.
 [Unit]
 Description=quant-agent alerting-channel self-test — 06:15 ET, seven days a week
 
 [Timer]
-# SEVEN DAYS, not Mon-Fri. Alarms fire on days the market is closed: the
-# pricing-refresh timer runs 06:30 and 18:30 every day precisely because the
-# cache went stale over a weekend with nothing watching. A channel that is
-# only proved on weekdays leaves the desk's weekend alarms unbacked.
+# THIS IS NOT THE PRIMARY WATCHDOG. The sessions are: every session already
+# ends by pushing a Telegram message, so every session now exercises the
+# whole alert path end to end first and writes the verdict to SQLite
+# (src/alert_watchdog.py). On a weekday that is five to six checks plus the
+# ~14 intra_check ticks — the thing that depends on the alarm is the thing
+# that tests it, roughly every half hour while the market is open.
+#
+# This timer exists because sessions only run Mon-Fri. Without a check that
+# also runs on Saturday and Sunday, "no successful check in the last N
+# hours" could not be an alarm — it would fire every weekend — and the
+# staleness signal would have to be switched off entirely. One probe a day,
+# SEVEN days a week, makes the longest legal gap 24h plus timer slack, which
+# is what lets alert_watchdog.STALE_AFTER_HOURS (26h) be a real threshold.
+#
+# It also covers the case the sessions structurally cannot report: every
+# session failing to start at all. A session that never runs cannot tell
+# anyone it never ran; this unit can.
 #
 # 06:15 ET is ahead of the first scheduled job of the day (pricing refresh,
-# 06:30) and well ahead of the drift check (08:45) and the morning session
-# (09:30), so the channel is proved before anything that might need to
-# shout. It is outside every window in src/trading_calendar.py's
-# SESSION_WINDOWS, so it can never be confused with a trading run. systemd
-# resolves the IANA zone, so this stays 06:15 New York across DST.
-#
-# DAILY, not hourly. The alert path breaks for structural reasons — a
-# rotated credential, a deleted chat, a new egress rule — none of which
-# arrive on a minute scale. Hourly would multiply Bot API traffic 24x for no
-# gain in detecting a structural fault, and would turn every transient
-# network blip into a recorded failure. Daily bounds "how long can the alarm
-# be dead before the box knows" at 24h, which is shorter than the gap
-# between any two consequential alerts this desk raises.
+# 06:30) and well ahead of the earnings pre-process (08:00) and the morning
+# session (09:30), so on a Monday the channel is proved before the week's
+# first session needs it. systemd resolves the IANA zone, so this stays
+# 06:15 New York across DST.
 OnCalendar=*-*-* 06:15 America/New_York
-# Run a missed firing on boot (the box was down at 06:15).
+# Run a missed firing on boot (the box was down at 06:15). Matters more here
+# than on most timers: a missed check and a dead channel are indistinguishable
+# from the record alone, and the design depends on them not being.
 Persistent=true
 # The probe does not care about the exact minute; letting systemd batch this
-# with other timers is free.
+# with other timers is free. Well inside the 26h staleness margin.
 AccuracySec=1m
 
 [Install]

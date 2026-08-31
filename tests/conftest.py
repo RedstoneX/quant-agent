@@ -49,3 +49,15 @@ def _isolate_cwd(tmp_path, monkeypatch):
     # this flag to verify that boundary explicitly.
     from src.agents.base import BaseAgent
     monkeypatch.setattr(BaseAgent, "_allow_unmetered_for_tests", True)
+
+    # The alert-channel watchdog writes its durable check history to an
+    # ABSOLUTE path (project-root/data/quant_agent.db) — sessions are
+    # started by systemd from any working directory, so it cannot be
+    # relative and the chdir above does not contain it. Every session now
+    # calls it, so without this redirect an ordinary `main.main()` test
+    # would create and append to the developer's real database. Tests that
+    # care about the contents point it at their own file.
+    from src import alert_watchdog
+    monkeypatch.setattr(
+        alert_watchdog, "DB_PATH", tmp_path / "watchdog" / "quant_agent.db",
+    )

@@ -117,6 +117,15 @@ def get_health() -> HealthResponse:
             llm_health = None
             db_reachable = False
 
+        # Read separately from the block above: the alert channel's history
+        # living in a database that predates this feature is a perfectly
+        # ordinary state, and must not be reported as "database unreachable".
+        try:
+            from src.api.db_reads import get_alert_channel_health
+            alert_channel = get_alert_channel_health()
+        except Exception:
+            alert_channel = {"status": "unknown", "error": "health read failed"}
+
         broker_reachable = check_broker_reachable()
         recent_pm_status = (llm_health or {}).get("recent_pm_status")
         circuit_suspended = bool((llm_health or {}).get("suspended"))
@@ -155,10 +164,22 @@ def get_health() -> HealthResponse:
             decision_path_status = "degraded_recent_agent_failure:" + ",".join(failed_agents)
         else:
             decision_path_status = "ok"
+        # A desk that cannot raise an alarm is degraded whatever else is
+        # green: every other fault on this board is reported to the operator
+        # over the same Telegram path, so this one hides all the others.
+        # `unknown` (no check recorded yet — a fresh database, a deploy that
+        # has not run a session) is surfaced in the payload and rendered
+        # amber, but does not flip the whole board red: a missing
+        # measurement is not a detected fault, and a permanently-red board
+        # teaches the operator to ignore red.
+        alert_channel_degraded = str(
+            (alert_channel or {}).get("status") or "unknown"
+        ) in ("broken", "stale")
         overall_status = (
             "degraded"
             if (not db_reachable or broker_reachable is False
-                or decision_path_status != "ok")
+                or decision_path_status != "ok"
+                or alert_channel_degraded)
             else "ok"
         )
 
@@ -172,6 +193,7 @@ def get_health() -> HealthResponse:
             session_lock_active=_session_lock_active(),
             decision_path_status=decision_path_status,
             llm_circuit=llm_health,
+            alert_channel=alert_channel,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:
@@ -188,6 +210,7 @@ def get_health() -> HealthResponse:
             session_lock_active=None,
             decision_path_status="unknown_health_exception",
             llm_circuit=None,
+            alert_channel={"status": "unknown", "error": "health read failed"},
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 

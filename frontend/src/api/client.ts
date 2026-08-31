@@ -25,6 +25,20 @@ export interface HealthResponse {
   last_run_files: Record<string, string | null>;
   session_lock_active: boolean | null;
   decision_path_status: string;
+  // Can the desk still reach the operator? Written by every session
+  // (src/alert_watchdog.py). "unknown" means no check has ever been
+  // recorded — deliberately not the same as healthy.
+  alert_channel: {
+    status: "ok" | "broken" | "stale" | "unknown";
+    last_check_at: string | null;
+    last_ok_at: string | null;
+    last_stage: string | null;
+    last_detail: string | null;
+    consecutive_failures: number;
+    age_hours: number | null;
+    stale_after_hours: number;
+    error: string | null;
+  } | null;
   llm_circuit: {
     available: boolean;
     suspended: boolean | null;
