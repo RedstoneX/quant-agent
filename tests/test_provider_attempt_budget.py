@@ -122,8 +122,9 @@ def _load_settings_with(ceiling):
 def _keys(monkeypatch):
     for var in (
         "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
-        "OPENROUTER_API_KEY", "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
-        "FRED_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+        "OPENROUTER_API_KEY", "GOOGLE_API_KEY", "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY", "FRED_API_KEY", "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
     ):
         monkeypatch.setenv(var, "test-key")
 
@@ -163,10 +164,61 @@ def test_config_allows_a_ceiling_above_the_worst_case(_keys):
     assert config.llm_cost_circuit.max_provider_attempts_per_call == 9
 
 
+def test_config_failover_available_agrees_with_every_real_agents_own_gate(_keys):
+    """The two computations of "is failover reachable" — AppConfig's
+    (`_fallback_reachable_for_any_agent`/`_fallback_key_for_provider`, which
+    `_check_provider_attempt_budget` derives its required ceiling from) and
+    `BaseAgent`'s own runtime gate (`_failover_reachable`, computed
+    independently per agent instance from the SAME settings) — must never
+    disagree. Two independent computations of the identical fact drifting
+    apart, unnoticed, is exactly the shape of the 2026-08-31 incident (see
+    `provider_attempt_budget`'s docstring): this constructs a REAL BaseAgent
+    for every one of the ten production seats from the shipped
+    config/settings.yaml (no mocking — SDK client construction makes no
+    network call) and cross-checks each one's own verdict against config's.
+    """
+    from tests.test_base_agent import ConcreteAgent
+
+    config = _load_settings_with(None)
+    config_says_reachable = config._fallback_reachable_for_any_agent()
+
+    key_for = {
+        "openai": config.api_keys.openai,
+        "deepseek": config.api_keys.deepseek,
+        "openrouter": config.api_keys.openrouter,
+        "google": config.api_keys.google,
+    }
+    agent_names = (
+        "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+        "smart_money_analyst", "portfolio_manager", "risk_manager",
+        "position_reviewer", "evening_analyst", "meta_reflector",
+    )
+    any_agent_reachable = False
+    for name in agent_names:
+        model = getattr(config.llm, f"{name}_model")
+        provider = config.llm.get_provider(name)
+        from src.agents.base import resolve_provider
+        resolved = resolve_provider(model, provider)
+        agent = ConcreteAgent(
+            api_key=key_for.get(resolved, config.api_keys.anthropic) or "placeholder",
+            model=model, max_tokens=64, provider=provider,
+            fallback_api_key=key_for.get(config.llm.fallback_provider, config.api_keys.anthropic),
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
+        )
+        any_agent_reachable = any_agent_reachable or agent._failover_reachable
+
+    assert any_agent_reachable == config_says_reachable, (
+        "AppConfig and BaseAgent disagree on whether failover is reachable "
+        "for the shipped settings.yaml — exactly the drift the 2026-08-31 "
+        "incident was caused by"
+    )
+
+
 # ----------------------------------------------------------------- the trip
 
 
-def _reserve(circuit, *, agent="tech_analyst", model="google/gemini-2.5-flash-lite"):
+def _reserve(circuit, *, agent="tech_analyst", model="google/gemini-3.5-flash-lite"):
     return circuit.begin_call(
         agent_name=agent,
         model=model,
@@ -184,8 +236,8 @@ def test_failover_attempt_is_permitted_under_the_derived_ceiling(tmp_path):
     circuit.activate_session("run-failover", "morning")
     reservation = _reserve(circuit)
 
-    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
-    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-3.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-3.5-flash-lite")
     # The failover: a different provider and a dearer model, priced as such.
     circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
 
@@ -292,8 +344,16 @@ class _CircuitAgent:
 def _agent_with_circuit(circuit, **kwargs):
     from tests.test_base_agent import ConcreteAgent
 
+    # fallback_provider/fallback_model pinned to Anthropic by default so this
+    # helper's existing callers keep exercising the Anthropic-SDK failover
+    # path with a separately-mocked client, independent of whatever the
+    # process-wide DEFAULT fallback (openrouter + gemini-3.5) is — see
+    # test_google_primary_fails_over_to_openrouter_with_a_live_circuit below
+    # for a test of that default explicitly.
+    kwargs.setdefault("fallback_provider", "anthropic")
+    kwargs.setdefault("fallback_model", "claude-opus-4-7")
     agent = ConcreteAgent(
-        api_key="k", model="google/gemini-2.5-flash-lite", max_tokens=64,
+        api_key="k", model="google/gemini-3.5-flash-lite", max_tokens=64,
         fallback_api_key="fk", provider="openrouter", **kwargs
     )
     agent.set_cost_circuit(circuit)
@@ -370,6 +430,83 @@ def test_a_failover_that_also_fails_does_not_latch_the_desk(tmp_path, monkeypatc
             "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
         ).fetchone()[0]
     assert not latched
+
+
+def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, monkeypatch):
+    """The REAL production shape (2026-08-31 owner decision): eight seats run
+    Google AI Studio direct as PRIMARY, OpenRouter serving the SAME model as
+    BACKUP — same road difference this whole file exists to test, now with
+    the process-wide DEFAULT fallback (no explicit override) rather than the
+    Anthropic path pinned by `_agent_with_circuit` above.
+
+    Also proves governor attribution end to end: the two rate-limited
+    primary attempts must be paced against the GOOGLE token governor and the
+    single failover attempt against the OPENROUTER governor — charging a
+    failover to the wrong governor would let a failover storm slip past the
+    ceiling meant to bound it (see `_governor_domain_for` in
+    src/agents/base.py). Exercised WITH a live cost circuit attached, not the
+    stub/no-circuit shape most of tests/test_base_agent.py's failover
+    coverage uses — the exact seam left untested that let the 2026-08-31
+    incident through.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from src.agents import base as base_mod
+    from tests.test_base_agent import ConcreteAgent, _openai_stream_mock
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+    monkeypatch.setattr("src.agents.base.BaseAgent._allow_unmetered_for_tests", False)
+
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-google-failover", "morning")
+
+    # Primary and fallback both speak the OpenAI-wire shape, so both attempts
+    # go through the SAME mocked client (patch("openai.OpenAI") always
+    # returns this one object regardless of which base_url the real code
+    # would have used) — a side_effect LIST lets the first two calls fail and
+    # the third (the failover) succeed.
+    success_chunks = _openai_stream_mock().chat.completions.create.return_value
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        _Rate429("google free-tier rate-limited"),
+        _Rate429("google free-tier rate-limited"),
+        success_chunks,
+    ]
+
+    google_gov = base_mod._TOKEN_GOVERNORS["google"]
+    openrouter_gov = base_mod._TOKEN_GOVERNORS["openrouter"]
+    google_before = google_gov.snapshot()["tokens_in_window"]
+    openrouter_before = openrouter_gov.snapshot()["tokens_in_window"]
+
+    with patch("openai.OpenAI", return_value=client):
+        agent = ConcreteAgent(
+            api_key="k", model="gemini-3.5-flash-lite", max_tokens=64,
+            provider="google", fallback_api_key="fk",
+        )
+        assert agent._fallback_provider == "openrouter"
+        assert agent._fallback_model == "google/gemini-3.5-flash-lite"
+        agent.set_cost_circuit(circuit)
+        result = agent.run(data="x")
+
+    assert result.raw_text == '{"result": "ok"}'
+    assert result.model == "google/gemini-3.5-flash-lite"
+    assert result.actual_provider == "openrouter"
+    assert result.used_fallback is True
+    assert client.chat.completions.create.call_count == 3  # 2 primary + 1 failover
+
+    assert google_gov.snapshot()["tokens_in_window"] > google_before, (
+        "the two primary attempts must be charged to the GOOGLE governor"
+    )
+    assert openrouter_gov.snapshot()["tokens_in_window"] > openrouter_before, (
+        "the failover attempt must be charged to the OPENROUTER governor"
+    )
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        latched = conn.execute(
+            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
+        ).fetchone()[0]
+    assert not latched, "a transient rate-limit rescued by failover must not latch the desk"
 
 
 # ------------------------------------ an inexact day must stay recoverable
@@ -574,8 +711,8 @@ def test_the_refused_call_neither_charges_nor_latches_the_desk(tmp_path):
     circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
     circuit.activate_session("run-refused", "morning")
     reservation = _reserve(circuit, agent="news_analyst")
-    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
-    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-3.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-3.5-flash-lite")
     circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
 
     primary = _Status(429)
@@ -606,7 +743,7 @@ def test_an_ambiguous_failure_still_charges_and_still_latches(tmp_path):
     circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
     circuit.activate_session("run-ambiguous", "morning")
     reservation = _reserve(circuit, agent="news_analyst")
-    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-3.5-flash-lite")
 
     cut = LLMStreamInterruptedError("cut mid-generation")
     circuit.fail_call(reservation, cut, attempt_errors=[cut])

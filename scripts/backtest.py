@@ -68,6 +68,7 @@ _PLACEHOLDER_ENV = {
     "ALPACA_SECRET_KEY": "backtest-tool-unused",
     "FRED_API_KEY": "backtest-tool-unused",
     "OPENROUTER_API_KEY": "backtest-tool-unused",
+    "GOOGLE_API_KEY": "backtest-tool-unused",
 }
 
 

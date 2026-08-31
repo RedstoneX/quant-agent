@@ -96,7 +96,7 @@ _OPENROUTER_CACHE_PATH = Path("data/openrouter_pricing_cache.json")
 _PRICING_FALLBACK: dict[str, dict[str, float]] = {
     # Anthropic
     "claude-opus-4-8":     {"input":  5.00, "output": 25.00},  # verified LiteLLM 2026-06-05
-    "claude-opus-4-7":     {"input":  5.00, "output": 25.00},  # current failover model
+    "claude-opus-4-7":     {"input":  5.00, "output": 25.00},  # inherited failover model, retired 2026-08-31 (see llm.fallback_model)
     "claude-sonnet-4-7":   {"input":  3.00, "output": 15.00},
     "claude-sonnet-4-6":   {"input":  3.00, "output": 15.00},
     "claude-haiku-4-5":    {"input":  1.00, "output":  5.00},
@@ -128,6 +128,32 @@ _PRICING_PINNED: dict[str, dict[str, float]] = {
     "deepseek-v4-pro":     {"input": 0.435, "output": 0.87},
     "deepseek-chat":       {"input": 0.14,  "output": 0.28},   # legacy alias -> v4-flash
     "deepseek-reasoner":   {"input": 0.14,  "output": 0.28},   # legacy alias -> v4-flash
+
+    # Google AI Studio DIRECT, project qamc-gemini, FREE TIER (2026-08-31
+    # owner decision: gemini-3.5-flash-lite direct becomes the PRIMARY route
+    # for the eight specialist/review seats — see config/settings.yaml and
+    # llm.fallback_model). This is genuinely $0.00 for this project's free
+    # tier, NOT a placeholder and NOT "unpriced" — a bare 0.0/0.0 row is a
+    # deliberate, verified statement, not an omission. If billing is ever
+    # enabled on qamc-gemini this row becomes WRONG and MUST be updated.
+    #
+    # Verified safe downstream (src/cost_circuit.py, checked 2026-08-31):
+    # a non-empty PRICING entry — even an all-zero one — is never read as
+    # "unknown" (`_attempt_reserve` only returns None when `PRICING.get()`
+    # itself returns None; `{"input": 0.0, "output": 0.0}` is a truthy,
+    # non-None dict), `estimate_cost` returns a real `0.0` rather than
+    # `None` for a call with nonzero token counts (only an ALL-ZERO token
+    # response reads as unknown, via the separate 0-token guard in
+    # BaseAgent._execute — a property of the response, not of this rate),
+    # and nothing anywhere divides by a model's rate. `complete_call` then
+    # settles the reservation at the real $0.00 rather than latching the
+    # circuit's `unknown_actual_cost` trip.
+    #
+    # Pinned here, not in `_PRICING_FALLBACK`: `_apply_litellm_data` only
+    # ever iterates `_PRICING_FALLBACK` keys, so a scheduled LiteLLM refresh
+    # (which prices Google's PAID direct API) can never silently overwrite
+    # this deliberate $0 override with a nonzero "real" rate.
+    "gemini-3.5-flash-lite": {"input": 0.0, "output": 0.0},
 }
 
 # === OpenRouter-routed models — OpenRouter's OWN published rates ===
@@ -155,7 +181,28 @@ _PRICING_PINNED: dict[str, dict[str, float]] = {
 # unnoticed and make verify_pricing.py noisy; the on-demand catalog resolver
 # below covers anything an operator wants to experiment with.
 _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
-    # Seven specialist/review seats (docs/architecture/MODEL_ROUTING_POLICY.md).
+    # BACKUP route (2026-08-31 owner decision): OpenRouter serving the SAME
+    # model the eight specialist/review seats now run PRIMARY on Google AI
+    # Studio direct (see `gemini-3.5-flash-lite` in _PRICING_PINNED above) —
+    # also the process-wide `llm.fallback_model` every other seat fails over
+    # to. A failover changes the ROAD, not the REASONING, which was the
+    # owner's explicit objection to the inherited claude-opus-4-7 fallback.
+    #
+    # Verified against OpenRouter's live catalog 2026-08-31 18:50 UTC:
+    #     curl -s https://openrouter.ai/api/v1/models | python3 -c \
+    #       "import json,sys; [print(m['id'], m['pricing']['prompt'], \
+    #        m['pricing']['completion']) for m in json.load(sys.stdin)['data'] \
+    #        if 'gemini-3.5-flash-lite' in m['id']]"
+    # 3x the input / 6.25x the output of gemini-2.5-flash-lite (the model
+    # this replaces below) — expected of a paid BACKUP route behind a free
+    # PRIMARY, not a pricing error.
+    "google/gemini-3.5-flash-lite":    {"input": 0.300, "output":  2.500},
+    # Retained for the position_reviewer seat, which is held back from the
+    # Gemini-direct migration until it has a benchmark at its own scenario
+    # (see tests/test_model_routing_policy.py OPENROUTER_SEATS). Removing this
+    # row while a seat still routes to the model makes the call unpriceable,
+    # which reads to the cost circuit as unknown-cost and latches paid
+    # analysis — verified by test_every_routed_model_is_priceable_offline.
     "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
     # risk_manager only — held apart from PM's model for decision-chain
     # independence at measured-equal quality. Note the input rate is BELOW

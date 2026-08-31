@@ -171,7 +171,9 @@ def test_every_provider_domain_has_a_governor():
     this fails until it is given a ceiling."""
     from src.agents.base import _TOKEN_GOVERNORS
 
-    assert set(_TOKEN_GOVERNORS) == {"openrouter", "openai", "anthropic", "deepseek"}
+    assert set(_TOKEN_GOVERNORS) == {
+        "openrouter", "openai", "anthropic", "deepseek", "google",
+    }
     for governor in _TOKEN_GOVERNORS.values():
         assert governor.tokens_per_minute > 0
 
@@ -184,12 +186,48 @@ def test_the_ceiling_is_below_the_burst_that_was_being_refused():
     assert _TOKEN_GOVERNORS["openrouter"].tokens_per_minute < 252_000
 
 
-def test_a_failover_is_charged_to_the_provider_it_actually_spends():
-    """Keyed on the model being sent, not the agent's configured primary: a
-    failover spends the FALLBACK provider's rate limit, and charging it to
-    the primary's governor would let a failover storm past the ceiling."""
-    from src.agents.base import _FALLBACK_MODEL, _governor_domain_for
+def test_the_google_ceiling_is_80pct_of_the_measured_free_tier():
+    """200,000 TPM is 80% of the 250,000 TPM ceiling read off the owner's own
+    AI Studio dashboard (2026-08-31) — a measured margin, not a guessed one,
+    which was the owner's explicit objection to an earlier hand-picked
+    ceiling."""
+    from src.agents.base import _TOKEN_GOVERNORS
 
-    openrouter_agent = type("A", (), {"_use_openrouter": True, "_use_deepseek": False})()
-    assert _governor_domain_for("google/gemini-2.5-flash-lite", openrouter_agent) == "openrouter"
-    assert _governor_domain_for(_FALLBACK_MODEL, openrouter_agent) == "anthropic"
+    assert _TOKEN_GOVERNORS["google"].tokens_per_minute == pytest.approx(200_000)
+    assert _TOKEN_GOVERNORS["google"].tokens_per_minute == pytest.approx(250_000 * 0.8)
+
+
+def test_a_failover_is_charged_to_the_configured_fallback_providers_governor():
+    """Keyed on which PATH the attempt is taking (is_failover), not on
+    sniffing the model string: a failover spends the FALLBACK provider's
+    rate limit, and charging it to the primary's governor would let a
+    failover storm past the ceiling. The fallback (provider, model) pair is
+    now configurable, so a primary success must charge the PRIMARY's
+    governor and a failover attempt must charge the FALLBACK's governor,
+    regardless of what either model string looks like."""
+    from src.agents.base import _governor_domain_for
+
+    openrouter_agent = type(
+        "A", (), {"_provider": "openrouter", "_fallback_provider": "google"},
+    )()
+    # Primary success (is_failover=False, the default): charged to the
+    # agent's own configured provider.
+    assert _governor_domain_for("google/gemini-3.5-flash-lite", openrouter_agent) == "openrouter"
+    # A failover attempt: charged to the FALLBACK provider, even though nothing
+    # about the model string ("claude-opus-4-7", the old hardcoded fallback)
+    # says so any more.
+    assert _governor_domain_for(
+        "claude-opus-4-7", openrouter_agent, is_failover=True,
+    ) == "google"
+
+
+def test_governor_domain_falls_back_safely_for_an_unrecognized_provider():
+    """A malformed/missing agent attribute must not KeyError the governor
+    lookup — it degrades to a known-safe default rather than crashing the
+    request that was about to be paced."""
+    from src.agents.base import _governor_domain_for
+
+    weird_agent = type("A", (), {"_provider": "not-a-real-provider"})()
+    assert _governor_domain_for("x", weird_agent) == "openai"
+    no_fallback_agent = type("A", (), {"_provider": "openai"})()
+    assert _governor_domain_for("x", no_fallback_agent, is_failover=True) == "openrouter"

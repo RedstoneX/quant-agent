@@ -87,7 +87,7 @@ def test_the_count_is_spent_then_calls_pass_through():
     injector = ProviderFaultInjector.from_specs(["tech_analyst:rate_limit:2"])
     for attempt in (1, 2):
         with pytest.raises(InjectedProviderFault):
-            injector.check("tech_analyst", "google/gemini-2.5-flash-lite")
+            injector.check("tech_analyst", "google/gemini-3.5-flash-lite")
     injector.check("tech_analyst", "claude-opus-4-7")   # the failover gets through
     assert len(injector.injected) == 2
 
@@ -146,7 +146,7 @@ def test_each_fault_carries_its_own_report_record():
     from `injected[-1]` afterwards can pick up another thread's."""
     injector = ProviderFaultInjector.from_specs(["tech_analyst:auth:1"])
     with pytest.raises(InjectedProviderFault) as excinfo:
-        injector.check("tech_analyst", "google/gemini-2.5-flash-lite")
+        injector.check("tech_analyst", "google/gemini-3.5-flash-lite")
     record = excinfo.value.record
     assert record["kind"] == "injected_provider_fault"
     assert record["agent"] == "tech_analyst"

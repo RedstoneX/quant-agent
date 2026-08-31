@@ -2,6 +2,18 @@
 
 Status: **accepted — externally reviewed and merged via PR #30 on 2026-08-14**.
 
+> **2026-08-31 update:** the eight `google/gemini-2.5-flash-lite` seats below
+> moved off OpenRouter onto Google AI Studio DIRECT (`provider: google`,
+> bare id `gemini-3.5-flash-lite`, free tier) as PRIMARY, with OpenRouter +
+> the same 3.5 model as cross-provider BACKUP — see `docs/WORK.md` "NEXT UP"
+> for the ratified decision and its measured facts. This was a FORCED
+> migration (Google refuses 2.5 to new keys outright), not a re-benchmark:
+> the evidence tables below remain the real, unmodified measurements behind
+> the original 2.5 selection, and no equivalent measurement exists yet for
+> 3.5 at any seat. Portfolio Manager and Risk Manager were deliberately left
+> unchanged (see docs/WORK.md and `config/settings.yaml`) and still run
+> `provider: openrouter`.
+
 Supersedes the commissioning baseline recorded in `docs/STATE.md` ("every
 agent on `openai/gpt-5.5`"), which was a deliberate single-variable posture
 for proving the OpenRouter transport, never the intended production policy.
@@ -9,12 +21,13 @@ for proving the OpenRouter transport, never the intended production policy.
 Read alongside `MODEL_PROVIDER_ARCHITECTURE.md`, which owns the seam this
 policy is expressed through and is unchanged by it.
 
-## The policy
+## The policy (as accepted 2026-08-14 — see the 2026-08-31 update above for what changed since)
 
-Every agent seat runs `provider: openrouter`. The Portfolio Manager runs
+Every agent seat ran `provider: openrouter`. The Portfolio Manager runs
 **`openai/gpt-5.5`**, the AI Risk Manager runs
-**`qwen/qwen3-235b-a22b-2507`**, and the remaining seats run
-**`google/gemini-2.5-flash-lite`**.
+**`qwen/qwen3-235b-a22b-2507`**, and the remaining seats ran
+**`google/gemini-2.5-flash-lite`** (now `provider: google` /
+`gemini-3.5-flash-lite` — see the update note above).
 
 | Seat | Model | Basis |
 |---|---|---|

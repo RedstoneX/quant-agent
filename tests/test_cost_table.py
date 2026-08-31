@@ -861,14 +861,14 @@ def test_mandatory_openrouter_refresh_applies_live_catalog_rates(
     from src import cost_table
 
     live = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
-    live["google/gemini-2.5-flash-lite"] = {"input": 0.11, "output": 0.44}
+    live["google/gemini-3.5-flash-lite"] = {"input": 0.11, "output": 0.44}
     monkeypatch.setattr(
         cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json",
     )
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: live)
 
     assert cost_table.refresh_openrouter_pricing(force=True) is True
-    assert cost_table.PRICING["google/gemini-2.5-flash-lite"] == {
+    assert cost_table.PRICING["google/gemini-3.5-flash-lite"] == {
         "input": 0.11, "output": 0.44,
     }
 
