@@ -421,7 +421,11 @@ the risk budget.
 BUILT — the recording and scoring data layer landed on
 `feat/conviction-ledger-recording` (PR #196), and the read side (one read-only
 API route plus the Mission Control panel) landed on
-`feat/analyst-scorecard-panel`.** Items 2, 4, 5 and 7 remain unbuilt. The
+`feat/analyst-scorecard-panel`.** Items 2, 4, 5 and 7 remain unbuilt. Two
+owner amendments are recorded inline on 2026-08-31: **item 3a** (credit is raw
+signed R — the conviction weight in item 3's original wording was removed, and
+a per-declared-confidence breakdown replaced it) and **item 3b** (shorts are
+chained, scored, signed and worded identically to longs). The
 per-item implementation status is item 11 at the end of this section, and item
 10's "missing" list has been corrected to match. Everything between here and
 item 10 is the specification as ratified, unchanged.
@@ -468,17 +472,99 @@ an idea someone else already put on the table — are scored independently. A
 seat can be a sharp originator and a weak judge of others' ideas, or the
 reverse; collapsing the two into one number hides which skill is which.
 
-**3. Scoring.**
+**3. Scoring. (Amended by the owner, 2026-08-31 — see item 3a.)**
 
 On position close, the realized outcome in R
 (`src/risk/metrics.py::r_multiple`) is credited backwards to every seat that
 took a stance on that idea: seats whose stance aligned with the direction
 actually taken score **+R**, seats opposed score **−R**. A seat that argued
 against a trade that went on to lose therefore gains from having been right
-to dissent — the ledger scores the call, not the trade. Each seat's score is
-weighted by its own declared conviction on that call, so a loud wrong call
-costs more than a quiet one, and a loud right call earns more than a quiet
-one.
+to dissent — the ledger scores the call, not the trade.
+
+*The original wording of this item ended: "Each seat's score is weighted by
+its own declared conviction on that call, so a loud wrong call costs more than
+a quiet one, and a loud right call earns more than a quiet one." The owner
+reversed that on 2026-08-31. Struck here rather than deleted, because item 3a
+is only legible against what it replaced.*
+
+**3a. No conviction weighting. Credit is raw signed R. (Owner decision,
+2026-08-31 — reverses item 3's original last sentence.)**
+
+Credit is `+R` for a supporter and `−R` for an opposer, and nothing multiplies
+it. The declared conviction is still recorded on every credit row; it simply
+scales nothing.
+
+*Rationale (owner), both halves of which are recorded in
+`src/conviction_ledger.py` so nobody reinstates the weight from this document
+alone:*
+
+1. **It is circular.** The ledger exists to discover whether an analyst's
+   declared confidence predicts anything. Multiplying its credit by its own
+   confidence assumes that answer and bakes it into the measurement. This desk
+   has already observed high-conviction trades underperforming low-conviction
+   ones at small sample (see `_CONVICTION_OUTCOME_MIN_N` in
+   `src/storage/db.py` and §7.2); under weighting, that finding would have
+   been hidden inside the score.
+2. **It double-counts.** A confident call already earns a larger position
+   through the §9.4 agreement ceiling, and a larger position already produces
+   a proportionally larger R. Weighting the credit again charges confidence a
+   second time for the same fact.
+
+*What replaces it.* Each analyst's record is broken down **by the confidence
+it declared**: resolved calls, calls right, average win, average loss and
+cumulative total, separately for each level that analyst used
+(`SeatRecord.by_confidence`, `AnalystScorecardItem.by_confidence`, and the
+"When it said it was sure, and when it hedged" section of the panel). "Does
+this analyst's high confidence earn more?" becomes something a reader can see
+rather than something the code asserts.
+
+*Reinstating a weight later.* A confidence weight could legitimately be
+introduced, but **only one derived from an analyst's own measured history —
+never one chosen up front**. Deriving it requires this breakdown to exist and
+to have accumulated a real sample first, which is precisely why the breakdown
+is the replacement rather than a smaller multiplier.
+
+*Already-written rows.* Credit rows persisted before 2026-08-31 stored a
+weighted `credit`. Nothing migrates them. Both read paths
+(`Database.get_conviction_credits` and `db_reads.get_conviction_ledger`)
+recompute `credit` from the stored `r_multiple` and `side`, which is exact
+because `r_multiple` was always persisted unweighted — so old and new rows
+mean the same thing and no series ever mixes two scales. The stored `credit`
+and the historical `weight` key are ignored on read; `weight` is no longer
+written, and is gone from `SeatCredit` and from the API response.
+
+**3b. Shorts are scored identically to longs. (Owner decision, 2026-08-31.)**
+
+A trade that made money is a **win** and a **positive** number; one that lost
+money is a **loss** and a **negative** number — whichever direction it was
+taken in. An analyst that argued for a profitable short is credited; one that
+argued against it is charged. Exactly as for a long.
+
+**Nothing is inverted, negated or specially-cased for direction anywhere a
+human reads it.** Direction affects only how profit is computed from prices —
+`src/risk/metrics.py::r_multiple` takes the side from a signed `qty`, so a
+short arrives at the ledger already carrying the right sign — and never the
+sign convention, the wording, the colour, or which side of zero a figure lands
+on. The panel describes both directions in one sentence whose only difference
+is the verb ("the desk bet it would rise" / "…fall").
+
+*What actually had to change.* `_assign_position_ids` (§6.2a,
+`src/storage/db.py`) opened a chain only on a `BUY`, so no `SHORT` ever
+received a `position_id` and no short round trip existed for this ledger to
+score. A `SHORT` now mints a chain and the `COVER` family
+(`COVER`/`PARTIAL_COVER*`/`EMERGENCY_COVER`) retires it, mirroring
+`BUY`/`SELL`; stops, trails, take-profits and de-levers retire either side. A
+long-side exit against an open short chain (or the reverse) is left
+unattached rather than allowed to close the wrong position, and an entry on
+the opposite side of an already-open chain is passed through untouched — both
+are malformed histories this desk cannot produce, and neither is guessed at.
+
+**This changed no trading behaviour.** `position_id` is a forensic column: no
+module outside `src/storage/db.py` and the read-only `src/api/` package names
+it, and nothing in the decision chain reads it, the ledger, or any credit row.
+`tests/test_conviction_ledger.py::test_short_chaining_touches_no_trading_decision`
+runs `DecisionStage` against a database that does and does not already hold a
+scored short round trip and requires byte-identical constructed orders.
 
 **4. Unconverted nominations are not scored, but tracked.**
 
@@ -688,12 +774,15 @@ route, no frontend, and no change to sizing or to what gets traded.
 |---|---|---|
 | 1 — what is recorded | **Partial** — seat, stance, declared conviction, originated-vs-responding, stated reason and session date are recorded per idea per decision. The **longitudinal** half (cross-session trajectory) is not built. | `Database.record_seat_stances`, `seat_stance` evidence rows |
 | 2 — origination vs judgement scored separately | **Not built.** The `nominated` flag is persisted on every stance and credit row so the two can be separated later; nothing scores them apart today. | — |
-| 3 — scoring on close | **Built.** +R aligned / −R opposed, weighted by declared conviction, via the existing `r_multiple` against the stop the position was OPENED with. Idempotent; a chain with no entry stop is counted and skipped, never scored against a fabricated denominator. | `Database.resolve_conviction_ledger`, `src/conviction_ledger.py::score_position` |
+| 3 — scoring on close | **Built.** +R aligned / −R opposed via the existing `r_multiple` against the stop the position was OPENED with. Idempotent; a chain with no entry stop is counted and skipped, never scored against a fabricated denominator. | `Database.resolve_conviction_ledger`, `src/conviction_ledger.py::score_position` |
+| 3a — no conviction weighting | **Built (2026-08-31).** Credit is raw signed R; `conviction_weight()` and `CONVICTION_WEIGHT` are gone and `SeatCredit.weight` with them. Pre-2026-08-31 weighted rows are read back unweighted, recomputed from the stored `r_multiple` and `side` rather than migrated. | `src/conviction_ledger.py`, `Database.get_conviction_credits`, `src/api/db_reads.py::get_conviction_ledger` |
+| 3a — per-confidence breakdown | **Built (2026-08-31).** Each analyst's resolved calls, calls right, average win, average loss and cumulative total, split by the confidence it declared. Sums back to its own totals; only levels it actually used appear. | `SeatRecord.by_confidence`, `AnalystScorecardItem.by_confidence`, `AnalystDetail.tsx` |
+| 3b — shorts scored like longs | **Built (2026-08-31).** A SHORT mints a position chain and the COVER family retires it, mirroring BUY/SELL. A profitable short is a positive number and a win for its backers; nothing is inverted for direction anywhere a human reads it. | `_assign_position_ids` / `_exit_action_side` (`src/storage/db.py`) |
 | 4 — unconverted nominations tracked, conversion rate | **Not built.** The join now makes conversion rate computable (a nomination row either does or does not have a `trades` row on its `decision_id` + symbol); no function computes it. | — |
 | 5 — shadowed objections | **Not built.** | — |
 | 6 — advisory only | **Built and enforced.** Nothing in the trading chain reads any ledger row; every write is best-effort. `tests/test_conviction_ledger.py::test_ledger_recording_does_not_change_a_single_trading_decision` runs `DecisionStage` with recording live and disabled and requires the constructed orders to serialize byte-identically. | `src/pipeline_stages.py::_link_nominations_to_decision` / `_record_seat_stances` |
 | 7 — decay / rolling window | **Not built.** The record is lifetime. | — |
-| 8 — no arbitrary sample gate | **Built.** `aggregate_seat_records` returns raw `resolved_calls` and `calls_right` with no threshold anywhere. | `src/conviction_ledger.py` |
+| 8 — no arbitrary sample gate | **Built.** `aggregate_seat_records` returns raw `resolved_calls` and `calls_right` with no threshold anywhere, and so does every per-confidence row. | `src/conviction_ledger.py` |
 | 9 — presentation | **Built**, as a Mission Control view rather than the bullet graph item 9 recommended — see item 12. Raw counts always accompany any percentage, and no meaning rests on hue alone. | `GET /analysts/scorecard`, `frontend/src/components/scorecard/` |
 | 10 — the join | **Built.** See the corrected list above. | `Database.link_nominations_to_decision` |
 
@@ -713,10 +802,12 @@ to sizing, no change to what gets traded — item 6 holds unchanged.
   `conviction_credit` and `seat_stance` evidence rows through
   `db_reads.get_conviction_ledger()` — an independent SQLite `mode=ro`
   connection, like every other Mission Control read. It **scores nothing**:
-  no `r_multiple` is computed, no stance is re-classified as supporting or
-  opposing, and no conviction weight is applied. It sums stored `credit`
-  values into per-analyst totals, a running series, a peak, a distance below
-  that peak, and monthly buckets.
+  no `r_multiple` is computed and no stance is re-classified as supporting or
+  opposing. It sums into per-analyst totals, a running series, a peak, a
+  distance below that peak, monthly buckets and a per-declared-confidence
+  split. `credit` is the one value it derives — `±r_multiple` by `side` —
+  which is what lets a pre-2026-08-31 weighted row read back on the same
+  scale as a new one without a migration (item 3a).
 - **It does not import `src.conviction_ledger`**, even though
   `aggregate_seat_records` produces the same per-analyst totals, because that
   module imports `src.risk.rules` and `tests/test_api_safety.py` forbids any
@@ -729,9 +820,9 @@ to sizing, no change to what gets traded — item 6 holds unchanged.
   cockpit's top nav as "Analyst Scorecard"). Four sections: two slope panels
   comparing every analyst at the earliest and latest month on accuracy and on
   money; a ranked table; one analyst opened (running-profit chart, a strip
-  showing how far below its own best it has fallen and for how long, and a
-  month-by-month waterfall); and one closed idea traced back to everyone who
-  took a side on it. Drawn with `lightweight-charts`, `recharts` used
+  showing how far below its own best it has fallen and for how long, its
+  record split by how confidently it spoke, and a month-by-month waterfall);
+  and one closed idea traced back to everyone who took a side on it. Drawn with `lightweight-charts`, `recharts` used
   directly, plain SVG with `d3-scale`/`d3-shape`, and `@xyflow/react` — no new
   dependency, and deliberately not Tremor.
 - **Item 9's bullet-graph recommendation was not followed**, and the
@@ -743,8 +834,10 @@ to sizing, no change to what gets traded — item 6 holds unchanged.
   solid-versus-outlined shapes; colour only ever repeats one of those.
 - **Plain language is enforced by test.** The panel defines every term on the
   page before using it, states the $100-at-risk convention, that nothing
-  compounds and nothing expires, that no score changes how much money any
-  trade gets, and that no minimum call count hides anything.
+  compounds and nothing expires, that how confidently an analyst spoke does
+  not change what a call is worth, that a bet on a share falling counts
+  exactly the same way as any other trade, that no score changes how much
+  money any trade gets, and that no minimum call count hides anything.
   `frontend/src/components/scorecard/AnalystScorecard.test.tsx` asserts that
   "R-multiple", "seat", "payoff ratio", "expectancy", "drawdown" and
   "conviction-weighted" appear nowhere in what renders.
@@ -755,12 +848,13 @@ to sizing, no change to what gets traded — item 6 holds unchanged.
   the endpoint returns scored calls. The fixture is never merged into a live
   response, and the API never fabricates a row.
 
-**One gap worth naming separately:** short round trips are not scored, because
-they carry no `position_id` to chain on — `_assign_position_ids` (§6.2a) opens
-a chain only on a `BUY`, so no `SHORT` is chained today. That is a pre-existing
-gap in the §6.2a chaining, not one this work introduced. The ledger's
-arithmetic is already direction-aware and will score shorts unchanged once
-they receive chains.
+**That gap is now closed (2026-08-31).** Short round trips were previously
+unscored because they carried no `position_id` to chain on —
+`_assign_position_ids` (§6.2a) opened a chain only on a `BUY`. A `SHORT` now
+mints a chain and the `COVER` family retires it, and the ledger's arithmetic
+scored them unchanged the moment they had chains, exactly as this note
+predicted. See item 3b above for the sign convention, which is the part that
+mattered: a short is a win or a loss on the same side of zero as a long.
 
 ### Sequencing
 

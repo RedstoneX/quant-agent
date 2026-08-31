@@ -20,11 +20,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.conviction_ledger import (
-    CONVICTION_WEIGHT,
     SeatCredit,
     SeatStance,
     aggregate_seat_records,
-    conviction_weight,
+    normalize_conviction,
     normalize_seat,
     score_position,
     summarize_closed_position,
@@ -83,10 +82,15 @@ def test_dissenting_seat_is_credited_positively_when_the_trade_it_opposed_loses(
     assert on_winner["macro"].credit == pytest.approx(-1.0)
 
 
-def test_conviction_weighting_scales_the_credit():
-    """Same trade, same side, three declared convictions → three credits in
-    the ratio high : medium : low, with the unweighted R preserved on every
-    row so the scale can be revisited later."""
+def test_declared_confidence_does_not_scale_the_credit():
+    """Owner decision, 2026-08-31 — credit is RAW signed R.
+
+    Same trade, same side, three different declared confidences. All three
+    analysts get the identical number: weighting credit by an analyst's own
+    confidence would assume the answer to the question the ledger exists to
+    ask, and would charge confidence twice (a confident call already earns a
+    bigger position, and a bigger position already earns a bigger R).
+    """
     stances = [
         SeatStance(seat="news", symbol="MSFT", stance="buy", conviction="high"),
         SeatStance(seat="earnings", symbol="MSFT", stance="buy", conviction="medium"),
@@ -96,18 +100,21 @@ def test_conviction_weighting_scales_the_credit():
         symbol="MSFT", direction="long", r_multiple=2.0, stances=stances,
     )}
 
-    assert credits["news"].credit == pytest.approx(2.0 * CONVICTION_WEIGHT["high"])
-    assert credits["earnings"].credit == pytest.approx(2.0 * CONVICTION_WEIGHT["medium"])
-    assert credits["smart_money"].credit == pytest.approx(2.0 * CONVICTION_WEIGHT["low"])
-    assert (credits["news"].credit
-            > credits["earnings"].credit
-            > credits["smart_money"].credit)
-    # Unweighted R is identical across seats — it is the trade's outcome.
+    assert credits["news"].credit == pytest.approx(2.0)
+    assert credits["earnings"].credit == pytest.approx(2.0)
+    assert credits["smart_money"].credit == pytest.approx(2.0)
+    # ...and the declared confidence is still RECORDED on every row, because
+    # the per-confidence breakdown is what replaced the weight.
+    assert credits["news"].conviction == "high"
+    assert credits["smart_money"].conviction == "low"
+    # R is identical across seats — it is the trade's outcome.
     assert {c.r_multiple for c in credits.values()} == {2.0}
+    # The removed multiplier leaves nothing behind to reinstate by accident.
+    assert not hasattr(credits["news"], "weight")
 
 
-def test_conviction_weighting_also_scales_dissent():
-    """A high-conviction dissenter earns more for being right than a hedged one."""
+def test_declared_confidence_does_not_scale_dissent_either():
+    """A loud dissenter and a hedged one are paid the same for being right."""
     loud = score_position(
         symbol="X", direction="long", r_multiple=-2.0,
         stances=[SeatStance(seat="macro", symbol="X", stance="underweight",
@@ -118,7 +125,7 @@ def test_conviction_weighting_also_scales_dissent():
         stances=[SeatStance(seat="macro", symbol="X", stance="underweight",
                             conviction="low")],
     )[0]
-    assert loud.credit > quiet.credit > 0
+    assert loud.credit == pytest.approx(quiet.credit) == pytest.approx(2.0)
 
 
 def test_neutral_seat_takes_no_side_and_earns_no_credit():
@@ -146,9 +153,122 @@ def test_short_direction_flips_who_supported():
     assert credits["news"].side == "opposed"
 
 
-def test_unknown_conviction_gets_the_medium_weight_not_zero():
-    assert conviction_weight(None) == CONVICTION_WEIGHT["medium"]
-    assert conviction_weight("enormous") == CONVICTION_WEIGHT["medium"]
+# ---------------------------------------------------------------------------
+# Shorts are scored IDENTICALLY to longs (owner decision, 2026-08-31).
+# "Either it made money or lost money, either it was right or it was wrong."
+# Nothing is inverted, negated or special-cased for direction.
+# ---------------------------------------------------------------------------
+
+def test_a_profitable_short_pays_its_backer_exactly_like_a_profitable_long():
+    """Same R, same magnitude, same sign. The only difference in the two
+    calls below is the word "short"."""
+    short = score_position(
+        symbol="TSLA", direction="short", r_multiple=2.0,
+        stances=[SeatStance(seat="technical", symbol="TSLA", stance="sell",
+                            conviction="high")],
+    )[0]
+    long_ = score_position(
+        symbol="TSLA", direction="long", r_multiple=2.0,
+        stances=[SeatStance(seat="technical", symbol="TSLA", stance="buy",
+                            conviction="high")],
+    )[0]
+
+    assert short.side == "supported" and long_.side == "supported"
+    assert short.credit == pytest.approx(+2.0)
+    assert short.credit == pytest.approx(long_.credit)
+    assert short.r_multiple == pytest.approx(long_.r_multiple)
+    assert short.direction == "short" and long_.direction == "long"
+
+
+def test_a_losing_short_charges_its_backer_exactly_like_a_losing_long():
+    short = score_position(
+        symbol="TSLA", direction="short", r_multiple=-1.5,
+        stances=[SeatStance(seat="technical", symbol="TSLA", stance="sell")],
+    )[0]
+    long_ = score_position(
+        symbol="TSLA", direction="long", r_multiple=-1.5,
+        stances=[SeatStance(seat="technical", symbol="TSLA", stance="buy")],
+    )[0]
+    assert short.credit == pytest.approx(-1.5) == pytest.approx(long_.credit)
+
+
+def test_opposing_a_profitable_short_is_charged_and_opposing_a_losing_one_is_paid():
+    """The dissent asymmetry, on the short side, with no sign flipped."""
+    bull = SeatStance(seat="news", symbol="TSLA", stance="positive")
+
+    on_winner = score_position(
+        symbol="TSLA", direction="short", r_multiple=2.0, stances=[bull],
+    )[0]
+    assert on_winner.side == "opposed"
+    assert on_winner.credit == pytest.approx(-2.0), (
+        "arguing against a short that made money must cost, exactly as "
+        "arguing against a long that made money does"
+    )
+
+    on_loser = score_position(
+        symbol="TSLA", direction="short", r_multiple=-2.0, stances=[bull],
+    )[0]
+    assert on_loser.side == "opposed"
+    assert on_loser.credit == pytest.approx(+2.0)
+
+
+def test_short_and_long_credits_aggregate_into_one_undifferentiated_record():
+    """An analyst's record does not separate the two directions, and a short
+    win sits on the same side of zero as a long win."""
+    credits = [
+        SeatCredit(seat="macro", symbol="AAA", side="supported", stance="buy",
+                   conviction="high", r_multiple=1.0, credit=1.0,
+                   resolved_at="2026-01-01", position_id="pos-1", direction="long"),
+        SeatCredit(seat="macro", symbol="BBB", side="supported", stance="sell",
+                   conviction="high", r_multiple=1.0, credit=1.0,
+                   resolved_at="2026-01-02", position_id="pos-2", direction="short"),
+    ]
+    record = aggregate_seat_records(credits)["macro"]
+    assert record.resolved_calls == 2
+    assert record.calls_right == 2
+    assert record.cumulative_credit == pytest.approx(2.0)
+    assert record.current_drawdown == pytest.approx(0.0)
+
+
+def test_r_multiple_itself_makes_a_winning_short_positive():
+    """Read, not assumed: `src/risk/metrics.py::r_multiple` takes the SIDE
+    from a signed qty, so the ledger never has to negate anything."""
+    from src.risk.metrics import r_multiple as _r
+
+    # Short at 100, stop at 110 (above entry), covered at 90 → made money.
+    assert _r(90.0, 100.0, 110.0, -10.0) == pytest.approx(+1.0)
+    # ...and covered at 105 → lost money.
+    assert _r(105.0, 100.0, 110.0, -10.0) == pytest.approx(-0.5)
+    # The long mirror, for the same numbers reflected about entry.
+    assert _r(110.0, 100.0, 90.0, +10.0) == pytest.approx(+1.0)
+    assert _r(95.0, 100.0, 90.0, +10.0) == pytest.approx(-0.5)
+
+
+def test_summarize_reduces_a_short_round_trip_with_a_negative_qty():
+    """The one place direction is expressed: `qty` comes back NEGATIVE for a
+    short, which is what tells `r_multiple` which side it was."""
+    closed = summarize_closed_position([
+        _row("SHORT", 10, 100.0, stop_loss=110.0, decision_id="dec-s"),
+        _row("COVER", 10, 90.0, timestamp="2026-01-09 10:00:00"),
+    ])
+    assert closed is not None
+    assert closed.direction == "short"
+    assert closed.qty == pytest.approx(-10.0)
+    assert closed.entry_price == pytest.approx(100.0)
+    assert closed.exit_price == pytest.approx(90.0)
+    assert closed.initial_stop == pytest.approx(110.0)
+
+
+
+
+def test_undeclared_confidence_is_labelled_medium_and_an_odd_one_is_kept():
+    """The label decides which breakdown row a call is reported under and
+    nothing else. An unrecognized word keeps its own identity rather than
+    being folded into "medium", so a new vocabulary shows up instead of
+    hiding."""
+    assert normalize_conviction(None) == "medium"
+    assert normalize_conviction("  ") == "medium"
+    assert normalize_conviction("Enormous") == "enormous"
 
 
 def test_seat_aliases_collapse_to_one_identity():
@@ -164,10 +284,10 @@ def test_seat_aliases_collapse_to_one_identity():
 # Pure logic — aggregation
 # ============================================================================
 
-def _credit(seat, credit, at, symbol="AAA"):
+def _credit(seat, credit, at, symbol="AAA", conviction="medium"):
     return SeatCredit(
         seat=seat, symbol=symbol, side="supported" if credit >= 0 else "opposed",
-        stance="buy", conviction="medium", weight=1.0, r_multiple=credit,
+        stance="buy", conviction=conviction, r_multiple=credit,
         credit=credit, resolved_at=at, position_id=f"pos-{at}",
     )
 
@@ -225,6 +345,60 @@ def test_aggregate_applies_no_sample_size_gate():
 
 def test_aggregate_of_nothing_is_empty_not_zeroed():
     assert aggregate_seat_records([]) == {}
+
+
+def test_aggregate_breaks_the_record_down_by_declared_confidence():
+    """The reporting that replaced the conviction weight, on a known fixture.
+
+    macro, hand-computed:
+      high:   +3, -1, +2  → 3 calls, 2 right, avg_win +2.5, avg_loss -1.0,
+                            total +4.0
+      low:    -2          → 1 call,  0 right, avg_win None,  avg_loss -2.0,
+                            total -2.0
+    High first, then low. The split sums back to the seat's own totals.
+    """
+    credits = [
+        _credit("macro", 3.0, "2026-01-01", conviction="high"),
+        _credit("macro", -1.0, "2026-01-02", conviction="high"),
+        _credit("macro", -2.0, "2026-01-03", conviction="low"),
+        _credit("macro", 2.0, "2026-01-04", conviction="high"),
+    ]
+    record = aggregate_seat_records(credits)["macro"]
+
+    assert [b.conviction for b in record.by_confidence] == ["high", "low"]
+    high, low = record.by_confidence
+    assert (high.resolved_calls, high.calls_right) == (3, 2)
+    assert high.avg_win == pytest.approx(2.5)
+    assert high.avg_loss == pytest.approx(-1.0)
+    assert high.cumulative_credit == pytest.approx(4.0)
+    assert high.win_rate_pct == pytest.approx(66.67)
+
+    assert (low.resolved_calls, low.calls_right) == (1, 0)
+    assert low.avg_win is None
+    assert low.avg_loss == pytest.approx(-2.0)
+    assert low.cumulative_credit == pytest.approx(-2.0)
+
+    # The split is a partition of the same rows, not a second measurement.
+    assert sum(b.resolved_calls for b in record.by_confidence) == record.resolved_calls
+    assert sum(b.calls_right for b in record.by_confidence) == record.calls_right
+    assert (sum(b.cumulative_credit for b in record.by_confidence)
+            == pytest.approx(record.cumulative_credit))
+
+
+def test_breakdown_only_lists_levels_the_analyst_actually_used():
+    """An empty row for an unused level would read as a record of zero."""
+    record = aggregate_seat_records([
+        _credit("news", 1.0, "2026-01-01", conviction="medium"),
+    ])["news"]
+    assert [b.conviction for b in record.by_confidence] == ["medium"]
+
+
+def test_breakdown_keeps_an_unrecognized_confidence_under_its_own_name():
+    record = aggregate_seat_records([
+        _credit("news", 1.0, "2026-01-01", conviction="high"),
+        _credit("news", 1.0, "2026-01-02", conviction="enormous"),
+    ])["news"]
+    assert [b.conviction for b in record.by_confidence] == ["high", "enormous"]
 
 
 # ============================================================================
@@ -514,6 +688,215 @@ def test_persisted_credits_aggregate_without_recomputation(db):
 
 
 # ============================================================================
+# Shorts, end to end through the database (owner decision, 2026-08-31).
+# Before this, `_assign_position_ids` opened a chain only on a BUY, so a short
+# never received a position_id and no short round trip could ever be scored.
+# ============================================================================
+
+def test_a_short_entry_mints_a_position_chain_and_its_cover_closes_it(db):
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
+        run_id="run-1", stop_loss=110.0, fill_status="filled",
+        decision_id="dec-s", conviction="high",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="COVER", qty=10, price=90.0, reasoning="target",
+        run_id="run-2", fill_status="filled",
+    )
+    rows = db.execute(
+        "SELECT action, position_id FROM trades WHERE symbol='TSLA' ORDER BY id",
+    ).fetchall()
+    chain = {r["action"]: r["position_id"] for r in rows}
+
+    assert chain["SHORT"], "a SHORT must mint a chain, exactly as a BUY does"
+    assert chain["COVER"] == chain["SHORT"], "the cover must close that chain"
+
+    # ...and the next SHORT starts a NEW chain, the flat-then-reopen rule.
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=5, price=95.0, reasoning="again",
+        run_id="run-3", stop_loss=105.0, fill_status="filled",
+    )
+    reopened = db.execute(
+        "SELECT position_id FROM trades WHERE symbol='TSLA' ORDER BY id DESC LIMIT 1",
+    ).fetchone()["position_id"]
+    assert reopened and reopened != chain["SHORT"]
+
+
+def test_a_partial_cover_and_a_stop_both_belong_to_the_short_chain(db):
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
+        run_id="run-1", stop_loss=110.0, fill_status="filled", decision_id="dec-s",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="PARTIAL_COVER(50%)", qty=5, price=95.0,
+        reasoning="trim", run_id="run-2", fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="STOP_OUT", qty=5, price=98.0, reasoning="stopped out",
+        run_id="run-3", fill_status="filled",
+    )
+    ids = {
+        r["action"]: r["position_id"]
+        for r in db.execute(
+            "SELECT action, position_id FROM trades WHERE symbol='TSLA'",
+        ).fetchall()
+    }
+    assert len(set(ids.values())) == 1 and all(ids.values())
+
+
+def test_a_sell_never_retires_an_open_short_chain(db):
+    """A long-side exit against a short is not that chain's exit. Left
+    unattached rather than allowed to close the wrong position."""
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
+        run_id="run-1", stop_loss=110.0, fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="SELL", qty=10, price=90.0, reasoning="stray",
+        run_id="run-2", fill_status="filled",
+    )
+    rows = {
+        r["action"]: r["position_id"]
+        for r in db.execute(
+            "SELECT action, position_id FROM trades WHERE symbol='TSLA'",
+        ).fetchall()
+    }
+    assert rows["SHORT"]
+    assert rows["SELL"] is None
+
+
+def test_a_cover_never_retires_an_open_long_chain(db):
+    db.insert_trade(
+        symbol="AAPL", action="BUY", qty=10, price=100.0, reasoning="entry",
+        run_id="run-1", stop_loss=90.0, fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="AAPL", action="COVER", qty=10, price=110.0, reasoning="stray",
+        run_id="run-2", fill_status="filled",
+    )
+    rows = {
+        r["action"]: r["position_id"]
+        for r in db.execute(
+            "SELECT action, position_id FROM trades WHERE symbol='AAPL'",
+        ).fetchall()
+    }
+    assert rows["BUY"]
+    assert rows["COVER"] is None
+
+
+def _closed_winning_short(db, *, symbol="TSLA", decision_id="dec-s"):
+    """SHORT at 100 with a 110 stop, covered at 90 → +1.0R. It made money."""
+    db.insert_trade(
+        symbol=symbol, action="SHORT", qty=10, price=100.0, reasoning="entry",
+        run_id="run-1", stop_loss=110.0, fill_status="filled",
+        decision_id=decision_id, conviction="high",
+    )
+    db.insert_trade(
+        symbol=symbol, action="COVER", qty=10, price=90.0, reasoning="target",
+        run_id="run-2", fill_status="filled",
+    )
+
+
+def test_a_winning_short_scores_exactly_like_a_winning_long(db):
+    """The whole point of the change, asserted end to end: the analyst that
+    backed a profitable short is credited POSITIVELY and the one that argued
+    against it is charged — the same words, signs and magnitudes a long of
+    equal R would produce."""
+    _closed_winning_short(db)
+    db.record_seat_stances(run_id="run-1", decision_id="dec-s", stances=[
+        SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
+        SeatStance(seat="news", symbol="TSLA", stance="positive", conviction="low"),
+    ])
+
+    result = db.resolve_conviction_ledger()
+    assert result["closed_positions"] == 1
+    assert result["scored_positions"] == 1
+
+    credits = {c.seat: c for c in db.get_conviction_credits()}
+    assert credits["technical"].r_multiple == pytest.approx(+1.0)
+    assert credits["technical"].side == "supported"
+    assert credits["technical"].credit == pytest.approx(+1.0)
+    assert credits["technical"].direction == "short"
+    assert credits["news"].side == "opposed"
+    assert credits["news"].credit == pytest.approx(-1.0)
+
+    # And in the aggregate a short win is a win — nothing separates it out.
+    records = aggregate_seat_records(db.get_conviction_credits())
+    assert records["technical"].calls_right == 1
+    assert records["technical"].cumulative_credit == pytest.approx(+1.0)
+    assert records["news"].calls_right == 0
+    assert records["news"].current_drawdown == pytest.approx(1.0)
+
+
+def test_a_losing_short_scores_exactly_like_a_losing_long(db):
+    """SHORT at 100 with a 110 stop, covered at 105 → -0.5R. It lost money."""
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
+        run_id="run-1", stop_loss=110.0, fill_status="filled", decision_id="dec-s",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="COVER", qty=10, price=105.0, reasoning="thesis_invalid",
+        run_id="run-2", fill_status="filled",
+    )
+    db.record_seat_stances(run_id="run-1", decision_id="dec-s", stances=[
+        SeatStance(seat="technical", symbol="TSLA", stance="sell"),
+        SeatStance(seat="news", symbol="TSLA", stance="positive"),
+    ])
+    db.resolve_conviction_ledger()
+
+    credits = {c.seat: c for c in db.get_conviction_credits()}
+    assert credits["technical"].credit == pytest.approx(-0.5)
+    assert credits["news"].credit == pytest.approx(+0.5), (
+        "arguing against a short that lost money must pay, exactly as "
+        "arguing against a long that lost money does"
+    )
+
+
+def test_declared_confidence_changes_no_persisted_credit(db):
+    """Two identical outcomes, two different declared confidences, one
+    number. The weight is gone from the persistence path too."""
+    _closed_winning_short(db, symbol="TSLA", decision_id="dec-s")
+    db.record_seat_stances(run_id="run-1", decision_id="dec-s", stances=[
+        SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
+        SeatStance(seat="macro", symbol="TSLA", stance="bearish", conviction="low"),
+    ])
+    db.resolve_conviction_ledger()
+
+    credits = {c.seat: c for c in db.get_conviction_credits()}
+    assert credits["technical"].credit == pytest.approx(credits["macro"].credit)
+    assert credits["technical"].conviction == "high"
+    assert credits["macro"].conviction == "low"
+    # No `weight` key survives into a newly written row.
+    stored = json.loads(db.execute(
+        "SELECT evidence_json FROM specialist_evidence "
+        "WHERE kind='conviction_credit' LIMIT 1",
+    ).fetchone()["evidence_json"])
+    assert "weight" not in stored
+    assert stored["credit"] == pytest.approx(stored["r_multiple"])
+
+
+def test_a_legacy_weighted_row_is_read_back_unweighted(db):
+    """Rows written before 2026-08-31 stored a conviction-WEIGHTED credit.
+    Nothing is migrated; the read path recomputes from the stored unweighted
+    `r_multiple` and `side`, so one series never mixes two scales."""
+    db.insert_specialist_evidence(
+        run_id="run-old", decision_id="dec-old", agent_name="macro",
+        kind=db.CONVICTION_CREDIT_KIND, scope="symbol", symbol="AAPL",
+        evidence_json=json.dumps({
+            "seat": "macro", "symbol": "AAPL", "side": "supported",
+            "stance": "buy", "conviction": "low", "weight": 0.3,
+            "r_multiple": 2.0, "credit": 0.6,          # 2.0 x 0.3, the old scale
+            "resolved_at": "2026-01-01 15:00:00", "position_id": "pos-old",
+            "decision_id": "dec-old", "direction": "long", "nominated": False,
+        }, sort_keys=True),
+    )
+    credit = db.get_conviction_credits()[0]
+    assert credit.credit == pytest.approx(2.0), "the stored 0.6 is the old weighted scale"
+    assert credit.r_multiple == pytest.approx(2.0)
+    assert credit.conviction == "low", "what it declared is still reported"
+
+
+# ============================================================================
 # The invariant — ledger recording cannot move a trading decision
 # ============================================================================
 
@@ -654,6 +1037,58 @@ def test_ledger_recording_does_not_change_a_single_trading_decision(tmp_path, mo
     finally:
         db_on.close()
         db_off.close()
+
+
+def test_short_chaining_touches_no_trading_decision(tmp_path, monkeypatch):
+    """The bookkeeping half of the same assertion, for the SHORT change.
+
+    Chaining a short into a position_id is a write-side forensic column: no
+    module outside `src/storage/db.py` and the read-only `src/api/` package
+    even names `position_id`. This asserts the property that matters rather
+    than the grep — DecisionStage constructs identical orders whether or not
+    the database it writes into already holds a scored SHORT round trip whose
+    chain the change created.
+    """
+    def _seed_short_history(database):
+        database.insert_trade(
+            symbol="NVDA", action="SHORT", qty=10, price=100.0, reasoning="entry",
+            run_id="seed", stop_loss=110.0, fill_status="filled",
+            decision_id="seed-dec", conviction="high",
+        )
+        database.insert_trade(
+            symbol="NVDA", action="COVER", qty=10, price=90.0, reasoning="target",
+            run_id="seed", fill_status="filled",
+        )
+        database.record_seat_stances(
+            run_id="seed", decision_id="seed-dec",
+            stances=[SeatStance(seat="technical", symbol="NVDA", stance="sell")],
+        )
+        database.resolve_conviction_ledger()
+
+    db_seeded = Database(str(tmp_path / "seeded.db"))
+    db_seeded.initialize()
+    db_bare = Database(str(tmp_path / "bare.db"))
+    db_bare.initialize()
+    try:
+        _seed_short_history(db_seeded)
+        # The seeding really did produce a scored short chain, so the
+        # comparison below is not two empty ledgers agreeing.
+        assert [c.credit for c in db_seeded.get_conviction_credits()] == [1.0]
+
+        ctx_seeded = _run_decision_stage(db_seeded)
+        ctx_bare = _run_decision_stage(db_bare)
+
+        def _orders(ctx):
+            return [d.model_dump_json() for d in ctx.portfolio_decision.decisions]
+
+        assert _orders(ctx_bare), "the fixture must actually produce an order"
+        assert _orders(ctx_seeded) == _orders(ctx_bare), (
+            "a scored short round trip in the ledger changed the constructed "
+            "orders — the ledger is bookkeeping and must be inert"
+        )
+    finally:
+        db_seeded.close()
+        db_bare.close()
 
 
 def test_ledger_recording_failure_never_propagates(tmp_path):

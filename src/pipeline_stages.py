@@ -1613,8 +1613,11 @@ class MorningResearchStage:
                     observation=nomination.observation,
                 )
                 # §9.5: keep what the seat DECLARED so DecisionStage can
-                # weight its stance by it. Pure bookkeeping on the context —
-                # no stage below reads this field to decide anything.
+                # RECORD it on the stance. It is a label, not a multiplier —
+                # the conviction weight was removed on 2026-08-31 and the
+                # ledger now reports each analyst's record broken down BY the
+                # confidence it declared instead. Pure bookkeeping on the
+                # context — no stage below reads this field to decide anything.
                 ctx.nomination_convictions.setdefault(
                     nomination.symbol.strip().upper(), {},
                 )[_normalize_seat(seat)] = {

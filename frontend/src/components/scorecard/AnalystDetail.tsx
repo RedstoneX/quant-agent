@@ -1,6 +1,6 @@
 /* Section (c) — one analyst opened.
  *
- * Three stacked views of the same analyst, in the order a reader needs them:
+ * Four stacked views of the same analyst, in the order a reader needs them:
  *
  *   1. Running profit, full size — `lightweight-charts`, a baseline series
  *      split at zero so the part above the line and the part below it are
@@ -10,7 +10,13 @@
  *   2. How far below its own best — `recharts`, an area that hangs DOWNWARD
  *      from zero. Depth is the "how far"; the caption under it carries the
  *      "for how long".
- *   3. Month by month — `recharts`, a floating waterfall: each bar spans from
+ *   3. How sure it said it was — a plain table splitting the same settled
+ *      calls by the confidence the analyst declared on each. This is the
+ *      replacement for the conviction weight the ledger used to apply (owner
+ *      decision, 2026-08-31): credit is the same amount at every confidence
+ *      level, so whether confidence is worth anything is SHOWN here instead
+ *      of being asserted by a multiplier.
+ *   4. Month by month — `recharts`, a floating waterfall: each bar spans from
  *      last month's total to this month's, so its length is that month's own
  *      contribution and its position is the running total.
  *
@@ -268,6 +274,69 @@ function MonthlyWaterfall({
   );
 }
 
+/** How confidently the analyst spoke, and what each level was worth.
+ *
+ * This section is the replacement for the conviction weight the ledger used
+ * to apply (removed 2026-08-31 by owner decision). Credit is now the same
+ * amount whatever the analyst declared, so the question "is this one worth
+ * more when it sounds sure?" is answered by showing the records side by side
+ * rather than by a multiplier deciding it in advance. Nothing here ranks the
+ * levels against each other.
+ *
+ * Rendered as a list, not table markup — `componentPolicy.test.ts` bans
+ * hand-written tables outright, and the cockpit's `DataTable` is a
+ * virtualised component built for hundreds of rows, not for the two or three
+ * confidence levels one analyst has ever used.
+ */
+function ConfidenceBreakdown({
+  item,
+  dollarsPerCall,
+}: {
+  item: AnalystScorecardItem;
+  dollarsPerCall: number;
+}) {
+  if (item.by_confidence.length === 0) return null;
+  return (
+    <ul className="m-0 list-none space-y-2 p-0" data-testid="by-confidence">
+      {item.by_confidence.map((row) => {
+        const total = row.cumulative_credit * dollarsPerCall;
+        const win = toDollars(row.avg_win, dollarsPerCall);
+        const loss = toDollars(row.avg_loss, dollarsPerCall);
+        return (
+          <li
+            key={row.conviction}
+            className="rounded-lg border border-border bg-panel-alt px-3 py-2"
+          >
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-[length:var(--fs-body)] font-semibold text-ink">
+                {row.conviction} confidence
+              </span>
+              <span className="font-mono text-[length:var(--fs-meta)] text-dim">
+                {row.calls_right} of {row.resolved_calls} settled calls made money
+                {row.hit_rate_pct === null ? "" : ` (${Math.round(row.hit_rate_pct)}%)`}
+              </span>
+              <span className="ml-auto font-mono text-[length:var(--fs-body)] font-semibold text-ink">
+                <span aria-hidden="true">{trendGlyph(total)}</span> {signedMoney(total)}
+              </span>
+            </div>
+            <div className="mt-0.5 text-[length:var(--fs-meta)] text-dim">
+              Typical win{" "}
+              <span className="font-mono text-ink">
+                {win === null ? "no wins yet" : signedMoney(win)}
+              </span>
+              , typical loss{" "}
+              <span className="font-mono text-ink">
+                {loss === null ? "no losses yet" : signedMoney(loss)}
+              </span>
+              .
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function AnalystDetail({
   item,
   dollarsPerCall,
@@ -326,6 +395,21 @@ export function AnalystDetail({
           {spell === 1 ? "settled call" : "settled calls"}.
         </p>
         <BelowBestStrip item={item} dollarsPerCall={dollarsPerCall} />
+      </div>
+
+      <div>
+        <h4 className="m-0 mb-1 text-[length:var(--fs-body)] font-semibold text-ink">
+          When it said it was sure, and when it hedged
+        </h4>
+        <p className="m-0 mb-2 max-w-[75ch] text-[length:var(--fs-meta)] leading-snug text-dim">
+          This analyst says how strongly it holds each view. That does{" "}
+          <strong className="text-ink">not</strong> change what a call is worth: every settled call is
+          credited or charged the same amount whether it was stated confidently or hedged. Its record is
+          simply split up here by what it said, so you can judge for yourself whether this analyst is worth
+          more when it sounds sure. The counts are raw — a perfect record over two calls is not a perfect
+          record over fifty.
+        </p>
+        <ConfidenceBreakdown item={item} dollarsPerCall={dollarsPerCall} />
       </div>
 
       <div>

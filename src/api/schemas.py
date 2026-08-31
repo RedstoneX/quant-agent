@@ -795,6 +795,30 @@ class ScorecardMonthPoint(BaseModel):
     hit_rate_pct: float | None = None
 
 
+class ScorecardConfidenceBreakdown(BaseModel):
+    """One analyst's record over only the calls it made at ONE declared
+    confidence.
+
+    This replaced the conviction weight (owner decision, 2026-08-31). Credit
+    is raw and unweighted, so whether an analyst's confident calls are worth
+    more than its hedged ones is now shown as separate rows a reader can
+    compare, instead of being asserted by a multiplier in the scoring.
+    """
+
+    #: "high" / "medium" / "low", or whatever else the analyst declared.
+    conviction: str
+    resolved_calls: int
+    calls_right: int
+    hit_rate_pct: float | None = None
+    #: Mean of the positive credits at this confidence, in R. None when none.
+    avg_win: float | None = None
+    #: Mean of the negative credits at this confidence, in R — NEGATIVE.
+    avg_loss: float | None = None
+    #: Total credit from this confidence alone, in R. Sums across the rows to
+    #: the analyst's own `cumulative_credit`.
+    cumulative_credit: float
+
+
 class AnalystScorecardItem(BaseModel):
     analyst: str
     resolved_calls: int
@@ -815,15 +839,23 @@ class AnalystScorecardItem(BaseModel):
     calls_since_peak: int = 0
     cumulative: list[ScorecardPoint] = []
     monthly: list[ScorecardMonthPoint] = []
+    #: The same calls split by the confidence the analyst declared on each,
+    #: high first. Only levels it actually used appear — an empty row would
+    #: read as a record of zero rather than as no record.
+    by_confidence: list[ScorecardConfidenceBreakdown] = []
 
 
 class ScorecardIdeaAnalyst(BaseModel):
     analyst: str
     side: str  # "supported" | "opposed" — the side taken, not the outcome
     stance: str
+    #: What the analyst DECLARED. Reported, never applied — it multiplies
+    #: nothing (owner decision, 2026-08-31); there is no `weight` field.
     conviction: str
-    weight: float
-    #: This analyst's signed, conviction-weighted score for this idea, in R.
+    #: This analyst's raw signed score for this idea, in R: +R for a
+    #: supporter of a trade that made money, -R for a supporter of one that
+    #: lost, and the mirror of both for an opposer. Identical convention for
+    #: a short and a long — a profitable short is a positive number.
     credit: float
     #: True when this analyst is the one that first tabled the symbol.
     nominated: bool = False
@@ -836,11 +868,14 @@ class ScorecardIdea(BaseModel):
     """One resolved idea, traced back to everyone who took a side on it."""
 
     symbol: str
-    direction: str  # "long" | "short"
+    #: "long" | "short". Descriptive only: a short is scored, signed and
+    #: worded exactly as a long is, and nothing downstream inverts on it.
+    direction: str
     position_id: str | None = None
     decision_id: str | None = None
     resolved_at: str
-    #: The trade's own realized R — identical for every analyst on this idea.
+    #: The trade's own realized R — identical for every analyst on this idea,
+    #: and positive when the trade made money whichever way it was taken.
     r_multiple: float
     supported: list[ScorecardIdeaAnalyst] = []
     opposed: list[ScorecardIdeaAnalyst] = []

@@ -324,25 +324,28 @@ def get_trades(
             conn.close()
 
 
-#: Mirrors `_POSITION_EXIT_ACTIONS` / `_POSITION_EXIT_PREFIXES` in
-#: src/storage/db.py exactly — see that module for why each entry is here
-#: (EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL; SWEEP_BUY/
-#: SWEEP_SELL are deliberately absent, the cash-sweep vehicle has no thesis
-#: to chain a position around). Duplicated rather than imported: this file
-#: must never import the write-capable `Database` class (see module
-#: docstring and tests/test_api_safety.py) — position_id ITSELF is read
-#: straight off the row (already persisted by the writer), this vocabulary
-#: is only needed here to work out whether a chain has gone flat yet.
+#: Mirrors `_POSITION_OPEN_ACTIONS` / `_POSITION_EXIT_ACTIONS` /
+#: `_POSITION_EXIT_PREFIXES` in src/storage/db.py exactly — see that module
+#: for why each entry is here (SWEEP_BUY/SWEEP_SELL are deliberately absent,
+#: the cash-sweep vehicle has no thesis to chain a position around; the COVER
+#: family joined on 2026-08-31 when shorts started chaining exactly as longs
+#: do). Duplicated rather than imported: this file must never import the
+#: write-capable `Database` class (see module docstring and
+#: tests/test_api_safety.py) — position_id ITSELF is read straight off the
+#: row (already persisted by the writer), this vocabulary is only needed here
+#: to work out whether a chain has gone flat yet.
+_POSITION_OPEN_ACTIONS = frozenset({"BUY", "SHORT"})
 _POSITION_EXIT_ACTIONS = frozenset({
     "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER", "REDUCE",
     "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
 })
-_POSITION_EXIT_PREFIXES = ("SELL", "PARTIAL_SELL")
+_POSITION_EXIT_PREFIXES = ("SELL", "PARTIAL_SELL", "COVER", "PARTIAL_COVER")
 
 
 def get_position_history(position_id: str) -> dict | None:
     """Ordered chain of every trade sharing one `position_id`: the entry
-    (first row — a BUY, carrying the thesis reasoning and stop), each
+    (first row — a BUY or a SHORT, carrying the thesis reasoning and stop),
+    each
     interim review decision (everything between entry and exit — a
     TRAIL_STOP adjustment, a partial REDUCE/TAKE_PROFIT trim, each with its
     own `reasoning`), the exit (final row, only once the chain has actually
@@ -369,17 +372,18 @@ def get_position_history(position_id: str) -> dict | None:
         entry = rows[0]
 
         # Same net-qty accounting `_assign_position_ids` uses to decide when
-        # a chain closes (BUY adds executed qty, a recognized exit-family
-        # action subtracts it; a TRAIL_STOP only counts once actually
-        # FILLED) — reused here only to answer "is this chain flat yet",
-        # not to re-derive any id.
+        # a chain closes (an entry — BUY or SHORT — adds executed qty, a
+        # recognized exit-family action subtracts it; a TRAIL_STOP only
+        # counts once actually FILLED) — reused here only to answer "is this
+        # chain flat yet", not to re-derive any id. A short's qty counts up
+        # and down exactly as a long's does; direction is never negated here.
         net = 0.0
         for r in rows:
             if not is_executed_trade(r):
                 continue
             action = (r.get("action") or "").upper()
             qty = float(r.get("fill_qty") or r.get("qty") or 0)
-            if action == "BUY":
+            if action in _POSITION_OPEN_ACTIONS:
                 net += qty
                 continue
             if action not in _POSITION_EXIT_ACTIONS and not action.startswith(_POSITION_EXIT_PREFIXES):
@@ -397,7 +401,10 @@ def get_position_history(position_id: str) -> dict | None:
         exit_row = rows[-1] if (is_closed and len(rows) > 1) else None
         interim = rows[1:-1] if exit_row is not None else rows[1:]
 
-        exit_family_rows = [r for r in rows[1:] if (r.get("action") or "").upper() != "BUY"]
+        exit_family_rows = [
+            r for r in rows[1:]
+            if (r.get("action") or "").upper() not in _POSITION_OPEN_ACTIONS
+        ]
         priced = [r for r in exit_family_rows if r.get("realized_pnl") is not None]
         realized_total = sum(r["realized_pnl"] for r in priced) if priced else None
         unpriced_executed = any(
@@ -1092,10 +1099,11 @@ def list_meta_periods() -> list[dict]:
 # Both are read here through the same independent `mode=ro` connection every
 # other function in this module uses.
 #
-# NOTHING is scored here. The signed, conviction-weighted `credit` value, the
-# realized `r_multiple`, the alignment decision and the conviction weight are
-# all computed once by the ledger layer at close time and persisted; this
-# function only parses the stored JSON. `src/api` deliberately does not import
+# NOTHING is scored here. The realized `r_multiple` and the alignment
+# decision (`side`) are computed once by the ledger layer at close time and
+# persisted; this function only parses the stored JSON and signs the R by the
+# side that was already decided. There is no conviction weight to apply —
+# credit is raw signed R (owner decision, 2026-08-31). `src/api` deliberately does not import
 # `src.conviction_ledger`, because that module imports `src.risk.rules` and
 # `tests/test_api_safety.py` forbids any `src.risk` import from this package —
 # see docs/architecture/MISSION_CONTROL_API.md.
@@ -1125,8 +1133,17 @@ def get_conviction_ledger() -> dict:
     distinction `get_research_day` draws.
 
     Rows whose `evidence_json` will not parse, or that carry no numeric
-    `credit`, are skipped rather than defaulted to zero: a malformed row is
-    absence of evidence, not evidence of a break-even call.
+    `r_multiple`, are skipped rather than defaulted to zero: a malformed row
+    is absence of evidence, not evidence of a break-even call.
+
+    `credit` is DERIVED here — `+r_multiple` for a supporter, `-r_multiple`
+    for an opposer — rather than read from the stored `credit` field, and the
+    reason matters. Rows written before 2026-08-31 stored a
+    conviction-weighted credit; the weight was removed by owner decision that
+    day. Deriving from the stored unweighted `r_multiple` and `side` is exact,
+    so every row read here means the same thing regardless of when it was
+    written, with no migration and no mixing of two scales in one series.
+    Mirrors `Database.get_conviction_credits`, which derives it identically.
     """
     conn = None
     try:
@@ -1157,20 +1174,18 @@ def get_conviction_ledger() -> dict:
         if payload is None:
             continue
         try:
-            credit = float(payload["credit"])
-            r_multiple = float(payload.get("r_multiple", 0.0))
-            weight = float(payload.get("weight", 1.0))
+            r_multiple = float(payload["r_multiple"])
         except (KeyError, TypeError, ValueError):
             continue
+        side = str(payload.get("side") or "")
         credits.append({
             "analyst": str(payload.get("seat") or row["agent_name"] or ""),
             "symbol": str(payload.get("symbol") or row["symbol"] or ""),
-            "side": str(payload.get("side") or ""),
+            "side": side,
             "stance": str(payload.get("stance") or ""),
             "conviction": str(payload.get("conviction") or ""),
-            "weight": weight,
             "r_multiple": r_multiple,
-            "credit": credit,
+            "credit": round(r_multiple if side == "supported" else -r_multiple, 4),
             # The ledger stamps `resolved_at` from the closing trade; fall
             # back to the evidence row's own timestamp rather than dropping
             # a scored call out of the series for want of a date.
