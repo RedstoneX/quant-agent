@@ -849,32 +849,26 @@ phases:
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary:
-      verdict: "Thirteen problems were found in the last review. Nine are fixed and live, four turned out to be unused code and were deleted. Four small ones remain."
+      verdict: "Thirteen problems were found in the last review. Ten are fixed and live, four turned out to be unused code and were deleted. Three small ones remain."
       points:
         - "Nothing left on this list affects trading decisions or risk. These are rough edges, not hazards."
-        - "One rare failure would show a technical message instead of plain English if it ever happened."
         - "A rehearsal tool always reports its price data as fresh, whether it is or not."
         - "A daily report job points at a folder left over from before this server existed, and an internal note links to a document that was never written."
-      outstanding: "Four items, ranked below. None is urgent."
+      outstanding: "Three items, ranked below. None is urgent."
     defects:
-      - id: "intraday-analysis-error-unclassified"
-        title: "One reachable pipeline status has no plain-English message"
-        rank: 1
-        status: "OPEN"
-        summary: "'intraday_analysis_error', present in the pipeline since 2026-08-25, has no entry in the plain-English status vocabulary — if it ever fires, the account owner would see the generic fallback message instead of a real explanation. Tracked explicitly as a known gap by the exhaustiveness test added in PR #172, which is self-cleaning: it fails loudly once the gap is closed, or if any new untracked one appears."
       - id: "rehearsal-pricing-note-always-zero-grace"
         title: "Rehearsal pricing-cache note always reports 0h grace"
-        rank: 2
+        rank: 1
         status: "OPEN"
         summary: "The rehearsal harness builds its pricing-cache grace-window note before the sandbox's own settings.yaml is written, so the lookup reads a file that does not exist yet, silently falls back, and always reports '0h grace' regardless of the real configured grace period. Cosmetic: it would misdescribe a rehearsal actually running inside the grace band, but does not affect anything the rehearsal proves."
       - id: "pnl-export-wrong-working-directory"
         title: "Daily P&L export's systemd unit points at the wrong path"
-        rank: 3
+        rank: 2
         status: "OPEN"
         summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
       - id: "rehearsal-readme-missing"
         title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 4
+        rank: 3
         status: "OPEN"
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
@@ -978,15 +972,13 @@ phases:
       - kind: manual
         note: "NEW (1), HIGHEST CONSEQUENCE, awaiting an owner decision — not recorded as scheduled work: the deploy-drift alarm that exists specifically to tell the owner a merge never reached production cannot send its alert. quant-agent-drift-check.service declares no EnvironmentFile, scripts/check_deploy_drift.py has no dotenv loader, and the qamc systemd user environment carries zero TELEGRAM_* variables — verified live 2026-08-31 with `XDG_RUNTIME_DIR=/run/user/1001 systemctl --user show-environment | grep TELEGRAM` (empty). So TelegramNotifier silently disables itself and a drift alert reaches the journal and nowhere else. Never yet exercised, because every run so far has reported in sync. Re-check by re-running the same systemctl command on the box, and by checking whether an EnvironmentFile or wrapper has since been added."
       - kind: symbol_in_file
-        path: "src/pipeline.py"
-        symbol: "\"status\": \"intraday_analysis_error\","
-        note: "NEW (2): a real, reachable run_intra_check terminal status with no STATUS_PLAIN entry — present since 2026-08-25."
+        path: "ops/rehearsal/report.py"
+        symbol: "\"intraday_analysis_error\": ("
+        note: "NEW (2) closed: the intraday scan losing its Portfolio Manager now reads as an explanation instead of a raw status code. Deliberately absent from _verdict's healthy set — it is a failure, pinned by test_genuine_failure_statuses_are_still_fail."
       - kind: symbol_in_file
         path: "tests/test_rehearsal_report_verdict.py"
-        symbol: "_KNOWN_STATUS_PLAIN_GAPS = {"
-        note: "NEW (2): the gap is tracked explicitly here rather than silently passed over. This test is self-cleaning — it fails loudly once a STATUS_PLAIN entry is added for a tracked gap (now stale) or if any new untracked gap appears."
-      - kind: manual
-        note: "NEW (2) Re-check: read _KNOWN_STATUS_PLAIN_GAPS in tests/test_rehearsal_report_verdict.py — empty means intraday_analysis_error (or whatever it tracked) has been fixed."
+        symbol: "_KNOWN_STATUS_PLAIN_GAPS: set[str] = set()"
+        note: "NEW (2) closed: the tracked-gap set is empty and the exhaustiveness test is self-cleaning in both directions — a new untracked gap fails, and an entry parked here that has since been fixed fails as stale. Re-check: this set being non-empty means a defect has been deferred in writing."
       - kind: symbol_in_file
         path: "ops/rehearsal/runner.py"
         symbol: "notes.append(_pricing_cache_note(sandbox))"

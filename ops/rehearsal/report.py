@@ -146,6 +146,26 @@ STATUS_PLAIN = {
     "intraday_executed": (
         "The intra-session check ran and submitted orders."
     ),
+    # "intraday_analysis_error" (src/pipeline.py, _intraday_opportunity_
+    # scan_body's `if not ctx.portfolio_decision` branch) is
+    # "intraday_no_trades"'s failure twin, and has been reachable since
+    # 2026-08-25 with no entry here — so an intraday scan that lost its
+    # Portfolio Manager printed the generic "ended with status
+    # 'intraday_analysis_error'" fallback to the account owner instead of an
+    # explanation. Found by the AST-derived exhaustiveness test in
+    # tests/test_rehearsal_report_verdict.py, which tracked it as a known gap
+    # rather than passing over it silently; closing it here empties that set.
+    # Nested at result["intraday_scan"]["status"] like every other
+    # intraday_scan outcome, and deliberately NOT in `_verdict`'s healthy set
+    # below — the scan spent the money and got nothing back, which is exactly
+    # what production's own src/trader_feed.py says about it ("this was not a
+    # deliberate no-trade decision", line 594).
+    "intraday_analysis_error": (
+        "The intra-session check's opportunity scan ran its analysis, but "
+        "the portfolio manager's answer could not be used, so nothing was "
+        "proposed. This is a failure, not a deliberate decision to trade "
+        "nothing."
+    ),
     # "intraday_scan_crashed" (src/pipeline.py, run_intra_check's
     # `except Exception` around the `_run_intraday_opportunity_scan` call):
     # 2026-08-30 operator-honesty fix. Before this, a crash inside the

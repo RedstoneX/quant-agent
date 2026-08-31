@@ -284,20 +284,21 @@ def _derive_known_pipeline_statuses() -> set[str]:
 
 # STATUS_PLAIN entries this derivation has confirmed are genuinely missing,
 # tracked here rather than silently causing this test to fail on a defect
-# outside this change's scope: `intraday_analysis_error`
-# (src/pipeline.py:9713, present since 2026-08-25, well before this test's
-# fix) is a real, reachable run_intra_check terminal status -- the portfolio
-# manager failing during the intraday opportunity scan -- with no
-# STATUS_PLAIN entry, so it would print the generic "ended with status "
-# fallback instead of a plain explanation. Found by this derivation, not by
-# the hand list it replaces. NOT fixed here: STATUS_PLAIN's intraday-scan
-# entries are being extended on a separate, concurrent branch. Once that
-# lands, this set must go back to empty -- `test_status_plain_gaps_are_
-# tracked_accurately` below fails loudly if an entry here is stale (already
-# covered) or if a *new*, untracked gap appears.
-_KNOWN_STATUS_PLAIN_GAPS = {
-    "intraday_analysis_error",
-}
+# outside the scope of the change that found it.
+#
+# EMPTY, and that is the point. The one entry it ever held --
+# `intraday_analysis_error`, the portfolio manager failing inside the
+# intraday opportunity scan, reachable since 2026-08-25 and printing the
+# generic "ended with status " fallback to the account owner ever since --
+# was found by this derivation rather than by the hand list it replaced, and
+# has now been given a real STATUS_PLAIN entry. Nothing is deferred here any
+# more.
+#
+# Keep it empty. `test_every_known_pipeline_terminal_status_is_classified`
+# below fails loudly in both directions: a new, untracked gap fails, and an
+# entry parked here that has since been fixed also fails as stale. Adding to
+# this set is deferring a defect in writing, not fixing one.
+_KNOWN_STATUS_PLAIN_GAPS: set[str] = set()
 
 
 def _report(status: str) -> RehearsalReport:
@@ -357,6 +358,10 @@ def test_genuine_failure_statuses_are_still_fail():
     for status in (
         "position_review_parse_error", "evening_analysis_error",
         "evening_parse_error", "broker_error", "pm_agent_failure",
+        # Giving this one a plain-English entry must not smuggle it into the
+        # healthy set: the intraday scan paid for an analysis and got no
+        # usable decision back.
+        "intraday_analysis_error",
     ):
         assert _verdict(_report(status)) == "FAIL", status
 
@@ -365,6 +370,32 @@ def test_every_newly_recognized_status_has_a_plain_english_entry():
     for status in ("reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed"):
         assert status in STATUS_PLAIN
         assert STATUS_PLAIN[status]  # non-empty
+
+
+def test_intraday_analysis_error_reads_as_english_not_as_a_raw_status():
+    """Regression pin for the last tracked STATUS_PLAIN gap.
+
+    `intraday_analysis_error` has been reachable since 2026-08-25 --
+    `_intraday_opportunity_scan_body`'s `if not ctx.portfolio_decision`
+    branch, the intraday twin of `pm_agent_failure`. It had no STATUS_PLAIN
+    entry, so `RehearsalReport.render()` fell through to the generic "The
+    session ended with status 'X'." line and the account owner was handed the
+    identifier instead of an explanation.
+
+    Asserted through `render()` rather than against the dict, because the
+    fallback lives in `render()` and that is where the defect was visible.
+    """
+    report = _report("intraday_analysis_error")
+    report.verdict = _verdict(report)
+    rendered = report.render()
+    # `render()` hard-wraps the explanation, so compare on collapsed
+    # whitespace rather than asserting a sentence survives the line breaks.
+    flat = " ".join(rendered.split())
+
+    assert "ended with status" not in flat
+    assert " ".join(STATUS_PLAIN["intraday_analysis_error"].split()) in flat
+    # It is a failure, and the rendered verdict has to say so.
+    assert "VERDICT: FAIL" in rendered
 
 
 def test_every_known_pipeline_terminal_status_is_classified():
