@@ -29,6 +29,24 @@
 #   backtester), #153 (Phase 9 nominations).
 #
 # Status values: DONE AND LIVE | DONE, NOT DEPLOYED | PARTIAL | NOT STARTED | OVERTAKEN
+#
+# Writing plain_summary (relocated from AGENTS.md's "Writing for the owner"
+# section, 2026-08-31 — that file loads on every session, this only matters
+# when a phase entry here is actually being written):
+#
+# Every `plain_summary` renders directly onto the status board, which is the
+# only page the owner reads. He is not a developer.
+#
+# Write it for someone running the business, not building it: a one-line
+# verdict, a few short bullets, then what is still outstanding. No file
+# paths, ticket numbers, code identifiers or commit references — those
+# belong in `evidence`, where they are machine-checkable.
+#
+# The board flags summaries that read as engineering notes and says so on
+# the page (the detection logic is in scripts/status_board.py, "is this
+# summary written for HIM, or for a developer?"). If you see that flag on
+# an item, rewriting it is part of the work, not a separate errand for the
+# owner to request.
 
 generated_at: "2026-08-30"
 spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
@@ -43,7 +61,13 @@ phases:
 
   - id: mandate
     title: "The Mandate (§0)"
-    plain_summary: "The system exists to make money trading, not to run a research experiment on cheap models — that correction is written into the docs, and the money/risk limits it describes (paper-only, 0.5-5% per trade, 25% total at risk) are wired into the live trading config."
+    plain_summary:
+      verdict: "The desk's stated purpose is to make money trading, not to run a research experiment on cheap AI models — and the risk limits that follow from that are live in the trading settings."
+      points:
+        - "The founding document was rewritten to say plainly: this is a trading business, not an experiment."
+        - "Every trade is required to risk between half a percent and five percent of the account."
+        - "The whole book can never have more than a quarter of the account at risk at once."
+        - "Trading stays on the practice-money account, not real money."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -76,7 +100,12 @@ phases:
 
   - id: phase_0
     title: "Phase 0 — Gates"
-    plain_summary: "Before any trading-logic change could merge, the project needed a real CI test gate, a rule saying only the owner can accept changes to the governing documents, and the live server's secretly-hand-edited settings committed to git. All three are done."
+    plain_summary:
+      verdict: "The basic guardrails around changing the trading system are all in place."
+      points:
+        - "No change can reach the live system any more without passing an automatic test check first."
+        - "Only the owner can approve changes to the rules the trading desk itself must follow."
+        - "The live server used to have settings edited by hand directly on the machine, invisible to everyone else — those are now tracked like everything else."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -103,7 +132,12 @@ phases:
 
   - id: phase_1
     title: "Phase 1 — Tech Analyst returns real structure"
-    plain_summary: "The technical analyst used to invent its stop-loss and price target out of thin air. It now has to find real support/resistance levels from five years of price history, or the trade is refused. This is live in production."
+    plain_summary:
+      verdict: "The chart analyst can no longer invent its stop-loss or price target out of thin air."
+      points:
+        - "It now has to find real support and resistance levels in five years of price history before it can propose a trade."
+        - "If it can't find real structure to back a trade up, the trade is refused outright."
+        - "This is live and running for real trades today."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -148,7 +182,13 @@ phases:
 
   - id: phase_2
     title: "Phase 2 — Risk-based sizing and correlation-aware budgeting"
-    plain_summary: "Trade size used to be a raw percent of the portfolio with no regard for how far away the stop-loss was, and correlated bets (e.g. four different nuclear-power stocks) could each consume a full budget slot. Both are fixed: size is now derived from how much the idea could lose, and correlated names share one risk budget. This landed only after the exit-rework phase, on the owner's explicit reordering, and it is now live."
+    plain_summary:
+      verdict: "Position size is now driven by how much a trade could actually lose, not a flat percentage of the account."
+      points:
+        - "Old approach: a trade got a fixed slice of the portfolio regardless of how far away its stop-loss sat."
+        - "New approach: size is derived from the real dollar risk — how much the trade could lose before the stop triggers."
+        - "Correlated bets (e.g. four different nuclear-power stocks) used to each get a full budget slot on their own; now they share one combined risk budget."
+        - "This was deliberately built after the exit-rework phase, at the owner's request to reorder the plan."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -207,7 +247,14 @@ phases:
 
   - id: phase_3
     title: "Phase 3 — Exit rework"
-    plain_summary: "This is where most of the trading losses were traced to: a self-tightening 'the position looks stalled, sell it' feedback loop, a reviewer with no memory of its own past calls, exits that could sell on vague reasoning, exits that skipped risk review, and stops that fired on ordinary daily wiggle. All of it is fixed and live except one item (upgrading the exit reviewer's model), which the owner decided NOT to do because the evidence for it turned out to be wrong."
+    plain_summary:
+      verdict: "This is where most of the trading losses traced back to — and every cause found here is now fixed and live."
+      points:
+        - "A self-tightening feedback loop used to talk itself into selling positions as merely 'stalled' — that loop is broken."
+        - "The exit reviewer used to have no memory of its own past calls; it now does."
+        - "Exits used to be allowed to sell on vague reasoning and could skip risk review entirely — both now require a specific, named reason and always go through risk review."
+        - "Stops used to fire on ordinary daily price wiggle instead of a real trend break — fixed."
+        - "One further fix — swapping in a stronger model for the exit reviewer — was considered and deliberately turned down: the evidence originally used to justify it turned out to be wrong."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -261,7 +308,15 @@ phases:
 
   - id: phase_4
     title: "Phase 4 — Evidence symmetry and feed repair"
-    plain_summary: "The mid-day trading check used to make buy and sell decisions without the morning's macro and news context, even though that context already existed elsewhere in the system — that gap is now fixed and live. Several outside data feeds the desk depends on were also broken or missing proper retries. The news side of that is done: the free news sources the desk reads were widened from 8 to 11 feeds (adding Yahoo Finance, Seeking Alpha, Investing.com, Nasdaq and SEC press releases), and one feed that had silently stopped publishing over a year earlier while still answering as healthy was found and removed. Free per-company news was also added, scoped to held positions and candidate trades and capped to control cost. The macro side is also done: an earlier attempt at fixing the economic-data feed (FRED) had missed a real production failure where all nine data series failed within a single short window; that has now been replaced with proper retries, a real time limit, and six new data series, all verified live, with its health now visible the same way news health already is. Two things remain outstanding: full wire-service news coverage (Reuters/AP) needs a paid subscription and an owner decision, not more free-feed searching; and the desk still has no calendar of scheduled economic events, so it answers questions about upcoming Fed decisions or inflation data from the model's own memory rather than real data — that second gap is tracked separately in the known-defects list."
+    plain_summary:
+      verdict: "The mid-day trading check no longer flies blind, and the outside data feeds it depends on got a serious repair — though two real gaps remain."
+      points:
+        - "The mid-day check used to make buy and sell decisions without the morning's macro and news findings, even though that information already existed elsewhere in the system — fixed and live."
+        - "Several outside data feeds the desk depends on were broken or missing proper retries."
+        - "The free news sources the desk reads were widened from 8 to 11 feeds, adding several major financial outlets and regulatory press releases; one feed that had silently stopped publishing over a year earlier, while still reporting itself as healthy, was found and removed."
+        - "Free per-company news was also added, but only for stocks already held or being actively considered, and capped, to keep costs down."
+        - "The economic-data feed had a real reliability problem — all of its data series once failed within the same short window because of weak retry handling. That has been replaced with proper retries, a real time limit, and six new data series, all verified live."
+      outstanding: "Two things remain. Full wire-service news coverage (Reuters/AP) needs a paid subscription and an owner decision, not more free-feed searching. And there is still no calendar of scheduled economic events, so questions about upcoming Fed decisions or inflation data are answered from the model's memory rather than real data — tracked separately as its own open item."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -373,7 +428,15 @@ phases:
 
   - id: phase_5
     title: "Phase 5 — Short selling"
-    plain_summary: "Real short selling (not the inverse-ETF workaround, which the owner explicitly rejected) turned out to be a much bigger job than first estimated — around 50 places in the code assumed every position is a long. It was built in three stages: Stage 1 (a held short counts correctly in the risk math), Stage 2 (protective-stop geometry and trailing-stop direction are short-aware), and Stage 3 (the order-placement path that actually opens and covers a short, gated on the broker confirming the name is both shortable and easy to borrow, and capped by a tighter single-name limit, a book-wide gross-short limit, and a sizing haircut for a short's unbounded gap risk). All three stages are now merged (PR #150) AND deployed — production's HEAD matches origin/main (confirmed via `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`). The two rules that used to pin 'shorts are not tradeable yet' were false the moment Stage 3 landed and have been replaced below with rules pinning what is true now. One loose end outside this phase's own scope: the four inverse-ETF tickers (SH/SDS/PSQ/SQQQ) that stood in for a bearish view are still in the trading universe and have not yet been retired now that a real short is available — noted, not fixed here."
+    plain_summary:
+      verdict: "Real short selling is built, deployed, and live — genuine shorts, not the inverse-ETF workaround the owner had already rejected."
+      points:
+        - "This was a much bigger job than expected: roughly 50 places in the code assumed every position was a long bet."
+        - "The risk math now correctly counts a held short position."
+        - "Stop-losses and trailing stops now move in the right direction for a short."
+        - "Opening and closing a short is gated on the broker confirming the stock can actually be borrowed, and is capped more tightly than a long position because a short's potential loss is unlimited."
+        - "Confirmed live in production, matching what was merged."
+      outstanding: "The four inverse ETFs (SH, SDS, PSQ and SQQQ) that used to stand in for a bearish bet are still in the trading list even though real shorting now makes them redundant. Not a problem in itself, but a decision to retire them hasn't been made yet."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -476,7 +539,15 @@ phases:
 
   - id: phase_6
     title: "Phase 6 — Cost circuit and transparency"
-    plain_summary: "All three of the planned fixes are now built and confirmed live, though the first was fixed in two steps on two different days and the docs here did not catch up on the first step until now. §6.1 (spend capped in dollars, with an afternoon reserve): the operative per-mode limit has been a percentage of the daily dollar budget, not a session count, since PR #126 landed on 2026-08-28 — the session-count check that caused that day's outage was demoted to a backstop against an infinite retry loop only. As of PR #149 (2026-08-29) that backstop also counts only genuinely free-failed sessions (not every session that merely attempted a call) and cools off after a window instead of latching the whole mode for the rest of the ET day, and its setting was renamed to match what it now counts. An afternoon reserve walls off a slice of the daily budget from every mode until midday, so a quiet morning can't spend the afternoon's exit decisions out of budget. §6.2 (a dashboard that explains why a trade happened): every trade in a position's chain now carries a shared id linking a buy to the sell that closed it, a history endpoint reconstructs the full entry/interim/exit chain with realized P&L, exits carry a classified reason category, and the stored reasoning now renders in the trades table. The one sub-item not built is a deliberate owner reversal, not a gap: a position click charts the symbol in place rather than opening a modal. §6.3 (an accurate end-of-day P&L): the alert carries the true close-to-close figure and now also expresses it against risk capital, not just total equity. Separately, the four cost-circuit defects that caused the 2026-08-28 outage (an over-cautious spend estimate, a failed request billed as if it ran, an operator reset tool blocked by the fault it exists to clear, and the session-count cap) are all genuinely fixed now, not just stopgapped."
+    plain_summary:
+      verdict: "Every fix planned for spend control and trade transparency is built and confirmed live."
+      points:
+        - "Daily spending is now capped as a real dollar limit per trading-check type, not a raw count of sessions — the old session-count rule is now just a backup guard against a runaway retry loop, tightened since to count only genuine failures and to cool off instead of locking out for the rest of the day."
+        - "A slice of the daily budget is walled off and reserved for the afternoon, so a quiet morning can't spend the money the afternoon's exit decisions need."
+        - "Every trade can now be traced end to end: the buy that opened a position is linked to the sell that closed it, with the full history and realized profit/loss visible, and the reasoning behind each decision is shown."
+        - "The end-of-day profit/loss alert now reports the true figure and shows it against how much capital was actually at risk, not just against the whole account."
+        - "One planned feature — clicking a position to pop its details up in a separate window — was deliberately dropped by the owner in favor of charting the stock directly in place instead."
+        - "Four separate bugs that caused an outage on one trading day — a too-cautious spend estimate, a failed request billed as if it had succeeded, a stuck reset tool, and the old session cap — are all genuinely fixed, not just patched over."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -547,7 +618,14 @@ phases:
 
   - id: phase_7
     title: "Phase 7 — Measurement"
-    plain_summary: "A backtesting system now exists that replays real market history to measure the desk's mechanical rules — stop placement, position sizing, portfolio risk limits and trailing stops — entering trades the day after a signal so it can't see the future, and producing the same result every time it's run. It deliberately does not replay what the AI trading agents themselves decided in the past, because those historical decisions were never recorded for replay; it only measures the rules underneath their judgment, not the judgment itself. Separately, using real trading history rather than the backtester, the desk now reports its core performance numbers: win rate, the ratio of average win to average loss, expected profit per trade, and average holding time, with the short-selling side broken out on its own. Every trade also now has its conviction level, requested and allocated risk, and the deciding model pinned down at the moment it was placed, with each exit labelled against the trade that opened it. What is still missing is the analysis that would say whether stated conviction actually predicts results: there have only been 8 completed round-trip trades in the desk's entire live history, far too few to draw a statistical conclusion from, so that grading has not been done and cannot be done yet."
+    plain_summary:
+      verdict: "Can now measure whether the rules work. Can't yet measure whether the judgement does."
+      points:
+        - "A backtester replays real market history against the mechanical rules — where stops go, how big a position is, portfolio limits. It enters the day after a signal, so it can't cheat by seeing ahead."
+        - "It tests the rules, not the AI's decisions. Those were never recorded, so they can't be replayed."
+        - "Live results now tracked: win rate, average win vs average loss, profit per trade, holding time. Shorts reported separately."
+        - "Every trade now records how confident it was, what it risked, and which model decided."
+      outstanding: "Whether confidence predicts outcomes. Only 8 completed trades so far — too few to tell."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -617,7 +695,12 @@ phases:
 
   - id: phase_8
     title: "Phase 8 — Documentation correction"
-    plain_summary: "The one-off documentation fixes originally asked for — rewriting the mandate document, correcting specific wrong claims in the status document, adding a rule that a decision must be formally agreed before it's written down as settled fact, and tidying up stray branches — were all completed. The deeper problem is not solved, though: documentation keeps drifting out of date within a day or two, and that has kept happening since. That drift shows up in the very document this phase was meant to fix, which currently names a production version three merged code changes behind what is actually running."
+    plain_summary:
+      verdict: "The specific document fixes that were asked for are done, but the deeper problem — documentation going out of date within a day or two — has kept happening since."
+      points:
+        - "The mandate document was rewritten, specific wrong claims in the status document were corrected, and a new rule was added requiring a decision to be formally agreed before it's written down as settled fact."
+        - "Stray old branches were tidied up as part of the same pass."
+      outstanding: "The same staleness problem has recurred in the very document this phase was meant to fix: it currently names a production version that is three finished code changes behind what is actually running. The deeper cause — documentation drifting out of date within a day or two — is still not solved, only patched each time someone notices."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -640,7 +723,14 @@ phases:
 
   - id: phase_9
     title: "Phase 9 — The research desk actually deliberates"
-    plain_summary: "Previously, only the technical-chart analyst could originate a new trade idea; every other research seat could only react to ideas Technical had already found. That has changed: the news, earnings and macro research seats can now each nominate a symbol Technical hasn't already looked at, within a cap per seat and per trading run, with duplicate nominations across seats merged and the resulting list ranked by conviction. Technical is then brought in specifically to judge whether each nominated symbol actually has a tradeable setup — the reversal of who gets to propose ideas that the owner asked for. Two more pieces are also done: if a nominated symbol carries a conflict between sources that was never resolved, only that one symbol is dropped before sizing, not the whole trading run; and how much risk a trade gets sized to now scales automatically, in code, with how many independent research seats agree on the same direction. One piece was deliberately left out: a running ledger, per candidate, of who nominated it, who confirmed it and who dissented — that was a conscious decision, not an oversight."
+    plain_summary:
+      verdict: "Every research seat can now propose its own trade ideas, not just the chart analyst — the core architectural change the owner asked for."
+      points:
+        - "News, earnings, and macro research can each nominate a stock the chart analyst hadn't already flagged, within a bounded limit per seat and per run."
+        - "The chart analyst is then brought in specifically to check whether there's a real tradeable setup for each nomination."
+        - "If sources disagree on a symbol and that disagreement is never resolved, that specific trade idea is dropped rather than risking a bad call — the rest of the session's trades are unaffected."
+        - "How much can be risked on an idea now scales automatically with how many independent sources agree on it — that scaling is deterministic, not a judgment call."
+      outstanding: "A ledger tracking who nominated each idea, who confirmed it, and who disagreed was deliberately not built."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -728,7 +818,13 @@ phases:
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"
-    plain_summary: "The trading desk can now be run through an entire session end to end with no live broker connection, no real market data feed, and no paid AI model calls — it replays a saved copy of a real production day instead. A full run takes well under a minute and costs nothing. It exists so a change to the trading logic can be exercised and checked before it is ever allowed near real positions or real spending, which matters because the market itself is only open a small fraction of the week and waiting for it to test something is not realistic. Its acceptance test specifically replays the afternoon of 2026-08-28, the day the desk stopped trading entirely after tripping a spending limit on only seventeen cents of actual cost, so that exact failure can be reproduced on demand and checked against going forward instead of being argued about from memory."
+    plain_summary:
+      verdict: "A full trading session can now be replayed offline, end to end, in under a minute — with no real money, market connection, or AI cost involved."
+      points:
+        - "It replays a saved copy of a real trading day instead of touching the live broker, market data, or paid AI models."
+        - "A full run costs nothing and takes well under a minute, so a change to the trading logic can be checked before it's ever allowed near real positions or real spending."
+        - "This matters because the market is only open a small fraction of the week — waiting for it to test something isn't realistic."
+        - "It can reproduce, on demand, the exact day the desk stopped trading entirely after tripping a spending limit on only seventeen cents of real cost — so that failure can be checked against going forward instead of argued about from memory."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:
@@ -752,9 +848,14 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Thirteen defects (a)-(m) were recorded 2026-08-30; nine of them are now fixed and four more were deleted outright as confirmed dead code — all six PRs (#167-#172) merged and deployed to production at d62d5fe. Six items remain open, ranked below: the FOMC half of the macro-calendar gap (FRED has no free endpoint for the Fed's own meeting calendar; an owner decision on a second source is pending), the deploy-drift alarm's Telegram alert (silently disabled — no environment file wires the credentials into its systemd unit), one reachable pipeline status with no plain-English message, a rehearsal cosmetic bug that always reports 0h pricing-cache grace, one systemd unit whose WorkingDirectory still points at the upstream fork's path, and one module docstring pointing at a doc file that does not exist. See each record below for its own re-check command."
-    status: "OPEN"
-    confidence: "high"
+    plain_summary:
+      verdict: "Thirteen problems were found in the last review. Nine are fixed and live, four turned out to be unused code and were deleted. Four small ones remain."
+      points:
+        - "Nothing left on this list affects trading decisions or risk. These are rough edges, not hazards."
+        - "One rare failure would show a technical message instead of plain English if it ever happened."
+        - "A rehearsal tool always reports its price data as fresh, whether it is or not."
+        - "A daily report job points at a folder left over from before this server existed, and an internal note links to a document that was never written."
+      outstanding: "Four items, ranked below. None is urgent."
     defects:
       - id: "intraday-analysis-error-unclassified"
         title: "One reachable pipeline status has no plain-English message"
@@ -907,7 +1008,15 @@ phases:
 
   - id: invariants
     title: "Invariants (must hold at all times)"
-    plain_summary: "Eight rules that are supposed to never be violated — paper trading only, every position always has a hard stop, no single trade can lose more than 5% of the account, deterministic safety code has the final say over any AI decision, and only the owner can change the rulebook. All are currently true in the running code; none has an automated proof that runs continuously."
+    plain_summary:
+      verdict: "All eight rules that must never be broken hold true right now — but nothing checks that automatically, day after day."
+      points:
+        - "Trading only ever happens on the practice-money account, never with real money."
+        - "Every position always carries a hard stop — there is no such thing as an unprotected trade."
+        - "No single trade can be sized to lose more than 5% of the account."
+        - "Deterministic safety code, not the AI, always has the final word on whether a trade goes through."
+        - "Only the owner can change any of these rules."
+      outstanding: "None of the eight has an automated check that runs continuously to prove it's still true. This has been confirmed by reading the code once, not by a live watchdog."
     status: "DONE AND LIVE"
     confidence: "medium"
     evidence:
@@ -943,7 +1052,13 @@ phases:
 
   - id: execution_order
     title: "Execution order diagram"
-    plain_summary: "The plan's original build order (gates, then levels, then sizing, then exits) was explicitly overridden by the owner partway through — exits were rebuilt before the rest of the sizing work — and the spec's own diagram admits it was never redrawn to match what actually happened."
+    plain_summary:
+      verdict: "The order things were actually built in no longer matches the original plan, and the planning document hasn't caught up."
+      points:
+        - "The original plan was to build guardrails first, then price-level logic, then position sizing, then exits, in that order."
+        - "The owner explicitly overrode that order partway through the build."
+        - "Exit-handling was rebuilt ahead of schedule, before the rest of the position-sizing work was finished."
+      outstanding: "The build-order diagram in the planning document has not been redrawn to match what actually happened — the document itself says so."
     status: "OVERTAKEN"
     confidence: "high"
     evidence:
