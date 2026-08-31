@@ -752,38 +752,39 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Thirteen defects (a)-(m) were recorded 2026-08-30; nine of them are now fixed and four more were deleted outright as confirmed dead code — all six PRs (#167-#172) merged and deployed to production at d62d5fe. Six items remain open, ranked below: the FOMC half of the macro-calendar gap (FRED has no free endpoint for the Fed's own meeting calendar; an owner decision on a second source is pending), the deploy-drift alarm's Telegram alert (silently disabled — no environment file wires the credentials into its systemd unit), one reachable pipeline status with no plain-English message, a rehearsal cosmetic bug that always reports 0h pricing-cache grace, one systemd unit whose WorkingDirectory still points at the upstream fork's path, and one module docstring pointing at a doc file that does not exist. See each record below for its own re-check command."
+    plain_summary: "Thirteen defects (a)-(m) were recorded 2026-08-30; nine were fixed and four deleted outright as confirmed dead code (PRs #167-#172). Two of the items this entry then listed as open have since been fixed and deployed as well: the FOMC meeting-date gap is closed — the Federal Reserve publishes its own meeting calendar free, and the desk now reads it, with a second source covering the years the machine-readable feed does not reach (PR #177); and the deploy-drift alarm can now actually send its Telegram alert, which it never could before, together with a probe that proves the alert path still works rather than assuming it (PR #175). Four items remain open, ranked below: one reachable pipeline status with no plain-English message, a rehearsal cosmetic bug that always reports 0h pricing-cache grace, one systemd unit whose WorkingDirectory still points at the upstream fork's path, and one module docstring pointing at a doc file that does not exist. See each record below for its own re-check command."
     status: "OPEN"
     confidence: "high"
     defects:
-      - id: "fomc-dates-not-covered"
-        title: "FOMC meeting dates have no free source"
-        rank: 1
-        status: "OPEN"
-        summary: "The desk now fetches a real calendar for seven scheduled macro releases (CPI, payrolls, PPI, PCE, GDP, retail sales, jobless claims) from FRED, but no free FRED endpoint publishes the Federal Reserve's own meeting calendar — queried over an eight-month window, FRED's 'FOMC Press Release' series simply returns all 240 calendar days rather than a meeting schedule. Both the Risk Manager and the Macro Analyst prompts now state this gap outright instead of guessing from memory. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates specifically; that decision is not yet made."
       - id: "intraday-analysis-error-unclassified"
         title: "One reachable pipeline status has no plain-English message"
-        rank: 2
+        rank: 1
         status: "OPEN"
         summary: "'intraday_analysis_error', present in the pipeline since 2026-08-25, has no entry in the plain-English status vocabulary — if it ever fires, the account owner would see the generic fallback message instead of a real explanation. Tracked explicitly as a known gap by the exhaustiveness test added in PR #172, which is self-cleaning: it fails loudly once the gap is closed, or if any new untracked one appears."
       - id: "rehearsal-pricing-note-always-zero-grace"
         title: "Rehearsal pricing-cache note always reports 0h grace"
-        rank: 3
+        rank: 2
         status: "OPEN"
         summary: "The rehearsal harness builds its pricing-cache grace-window note before the sandbox's own settings.yaml is written, so the lookup reads a file that does not exist yet, silently falls back, and always reports '0h grace' regardless of the real configured grace period. Cosmetic: it would misdescribe a rehearsal actually running inside the grace band, but does not affect anything the rehearsal proves."
       - id: "pnl-export-wrong-working-directory"
         title: "Daily P&L export's systemd unit points at the wrong path"
-        rank: 4
+        rank: 3
         status: "OPEN"
         summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
       - id: "rehearsal-readme-missing"
         title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 5
+        rank: 4
         status: "OPEN"
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
       - kind: manual
         note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and five new items surfaced by the same audit remain open — see the ranked defects: list above for each item and this evidence block for its own re-check command."
+      - kind: pr_merged
+        number: 177
+        note: "feat/fomc-calendar — closes the FOMC half of (a). The Fed's own calendar.json is fetched (verified live: 57 FOMC Meeting entries, 2026 returning eight meetings as two-day blocks), with the published HTML calendar as a second source because the JSON feed's schedule stops at 2026-12 and would otherwise report 'no meeting' for a window it cannot see. 'No FOMC meeting is scheduled' now prints ONLY when a fetched schedule demonstrably spans the whole window; fetch failure, deadline exceeded, schedule stopping short and stale cache each render as a named absence instead."
+      - kind: pr_merged
+        number: 175
+        note: "fix/alerting-provably-alive — closes the drift-alarm item. The alert could not send at all: its unit sourced no environment file, the qamc systemd user environment carries no TELEGRAM_* variables, and TelegramNotifier silently disables itself without them. Now routed through an env-sourcing wrapper, with a probe that exercises the real send path end to end (raising transport, 401, wrong chat, blocked bot, 200-with-ok:false all caught) rather than checking that a variable is set. NOTE: the accompanying alert-heartbeat and alert-digest systemd units are shipped in scripts/systemd/ but were deliberately NOT installed on the box — the owner rejected the weekly-digest design, and the replacement (each trading session verifies the alert path as part of its own run) is unfinished on branch feat/dead-mans-switch, PR #179, draft, tests never run."
       - kind: pr_merged
         number: 167
         note: "feat/expose-trade-risk-fields — trade conviction/risk/model fields now reach the API and the cockpit"
@@ -802,21 +803,6 @@ phases:
       - kind: pr_merged
         number: 172
         note: "chore/dead-code-and-test-exhaustiveness — the status-completeness test is AST-derived, and five confirmed-dead code paths ((j)-(m)) are deleted"
-      - kind: symbol_in_file
-        path: "src/data/event_calendar.py"
-        symbol: "UNCOVERED_EVENTS: tuple[str, ...] = ("
-        note: "(a) partially closed: macro releases are fetched from FRED for seven scheduled series (MACRO_RELEASES — CPI/NFP/PPI/PCE/GDP/Retail Sales/Jobless Claims); UNCOVERED_EVENTS is where the FOMC gap is declared explicitly to the seats rather than left silent."
-      - kind: test_exists
-        path: "tests/test_event_risk_calendar.py"
-        test: "test_fomc_is_declared_uncovered_rather_than_left_to_memory"
-      - kind: symbol_in_file
-        path: "config/prompts/risk_manager.md"
-        symbol: "the honest answer about an FOMC date is that you do not have it."
-        note: "(a) the Risk Manager prompt states the FOMC gap outright rather than letting the model reason from memory."
-      - kind: symbol_in_file
-        path: "config/prompts/macro_analyst.md"
-        symbol: "currently FOMC meeting dates"
-        note: "(a) the Macro Analyst prompt names the same uncovered gap."
       - kind: manual
         note: "(a) STILL OPEN: no free FRED endpoint publishes the FOMC meeting calendar — verified live 2026-08-31, release 101 ('FOMC Press Release') returned all 240 calendar days over an eight-month probe window rather than a meeting schedule. The owner has been asked whether to add the Fed's own free calendar page as a second source for FOMC dates only; NOT yet decided — this is an open question, not scheduled work. Re-check by asking whether that decision has since been made, and by re-reading the live-evidence note in src/data/event_calendar.py's module docstring for whether a free FOMC source has been found."
       - kind: symbol_in_file
@@ -882,10 +868,6 @@ phases:
         note: "(l) closed (PR #172): models.NewsAnalysisResult and its nested NewsEvent/SectorImpact/SymbolAlert shapes, superseded by NewsIntelligenceReport, deleted along with the test fixtures that manufactured it. Re-check: `grep -n NewsAnalysisResult src/models.py` should return nothing."
       - kind: manual
         note: "(m) closed (PR #172): the four zero-caller helpers — cost_table._resolve_openrouter_model, news_dedup.deduplicate, news_store.get_report_path, ops/rehearsal/broker.default_snapshot_date — deleted. Re-check: `grep -rn '_resolve_openrouter_model(\\|def deduplicate(\\|def get_report_path(\\|def default_snapshot_date(' --include=*.py .` should return nothing besides this note."
-      - kind: symbol_in_file
-        path: "scripts/systemd/quant-agent-drift-check.service"
-        symbol: "ExecStart=/home/qamc/quant-agent/.venv/bin/python"
-        note: "NEW (1): the drift-check service invokes Python directly, not through an env-sourcing wrapper (contrast quant-agent-pricing-refresh.service, which runs run_pricing_refresh.sh — that wrapper sources .env specifically so its own Telegram alert can send)."
       - kind: symbol_in_file
         path: "src/notifier.py"
         symbol: "os.getenv(\"TELEGRAM_BOT_TOKEN\", \"\")"
