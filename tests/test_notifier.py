@@ -1640,3 +1640,76 @@ def test_balance_appears_on_morning_but_not_on_every_session(monkeypatch):
     midday = n.format_session_result("midday", result, 12.0) or ""
     assert "OpenRouter:" in morning
     assert "OpenRouter:" not in midday
+
+
+# ===========================================================================
+# Day-to-date against the self-imposed daily brake
+#
+# The per-session line answers "what did this session cost". It never
+# answered "how close am I to the brake" — that lived only on the dashboard.
+# On 2026-08-31 the desk hit that brake twice and no Telegram message ever
+# showed how near it was.
+# ===========================================================================
+
+def test_day_cost_line_shows_spend_against_the_limit(monkeypatch, tmp_path):
+    import sqlite3
+    import src.notifier as n
+    db = tmp_path / "quant_agent.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL,"
+                 " incremental_cost_usd REAL)")
+    from src.trading_calendar import et_now
+    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.1395)",
+                 (et_now().strftime("%Y-%m-%d"),))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(n, "_DB_PATH", db)
+    monkeypatch.setattr(n, "_daily_cost_limit", lambda: 2.75)
+    line = n._day_cost_line()
+    assert "$1.14 of $2.75 daily limit" in line
+    assert "(41%)" in line
+
+
+def test_day_cost_line_degrades_without_a_limit(monkeypatch, tmp_path):
+    import sqlite3
+    import src.notifier as n
+    db = tmp_path / "quant_agent.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL,"
+                 " incremental_cost_usd REAL)")
+    from src.trading_calendar import et_now
+    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,0.5)",
+                 (et_now().strftime("%Y-%m-%d"),))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(n, "_DB_PATH", db)
+    monkeypatch.setattr(n, "_daily_cost_limit", lambda: None)
+    assert n._day_cost_line() == "📅 today: $0.50 so far"
+
+
+def test_day_cost_line_never_breaks_the_alert(monkeypatch):
+    import src.notifier as n
+    from pathlib import Path
+    monkeypatch.setattr(n, "_DB_PATH", Path("/nonexistent/quant_agent.db"))
+    assert n._day_cost_line() is None
+
+
+def test_daily_brake_and_prepaid_balance_are_labelled_differently(monkeypatch, tmp_path):
+    """Conflating 'hit the self-imposed brake' (costs nothing, resets
+    tomorrow) with 'ran out of money' (needs a payment) would be expensive."""
+    import sqlite3
+    import src.notifier as n
+    db = tmp_path / "quant_agent.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL,"
+                 " incremental_cost_usd REAL)")
+    from src.trading_calendar import et_now
+    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.0)",
+                 (et_now().strftime("%Y-%m-%d"),))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(n, "_DB_PATH", db)
+    monkeypatch.setattr(n, "_daily_cost_limit", lambda: 2.75)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr("urllib.request.urlopen", _credits(50.0, 17.90))
+    day, bal = n._day_cost_line(), n._openrouter_balance_line()
+    assert "daily limit" in day and "left of" not in day
+    assert "left of" in bal and "daily limit" not in bal

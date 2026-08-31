@@ -575,6 +575,13 @@ def format_session_result(
     # days, and nothing in the system would have said so.
     # Morning only: it changes slowly, and repeating it on every session
     # would train the operator to skim past it.
+    # Day-to-date against the self-imposed brake. Shown on every session that
+    # spent money, because that is when "how close am I" is actually being
+    # asked. Distinct from the balance line below, which is real money.
+    day_line = _day_cost_line()
+    if day_line and cost_line:
+        lines.append(day_line)
+
     if mode in ("morning", "once"):
         balance_line = _openrouter_balance_line()
         if balance_line:
@@ -1081,6 +1088,62 @@ def _session_cost_line(run_id: str | None) -> str | None:
     if total < 0.01:
         return f"💵 cost: ${total:.4f} ({requests} provider requests)"
     return f"💵 cost: ${total:,.2f} ({requests} provider requests)"
+
+
+def _day_cost_line() -> str | None:
+    """'📅 today: $X.XX of $Y.YY daily limit (N%)', or None.
+
+    The per-session line above answers "what did THIS session cost". It does
+    not answer "how close am I to the brake", which is the question that
+    matters on a day with several sessions — and the answer lived only on the
+    dashboard. On 2026-08-31 the desk hit that brake twice and the Telegram
+    messages never once showed how near it was.
+
+    NOTE this is QAMC's OWN self-imposed daily cap, not money. Reaching it
+    stops paid analysis for the day but costs nothing; that is the point of
+    it. The separate balance line reports actual prepaid funds. Two different
+    numbers, deliberately labelled differently, because conflating them was
+    already possible and would be expensive.
+
+    Reads the same ledger the circuit enforces against, so it can never
+    disagree with the brake. Never raises.
+    """
+    try:
+        import sqlite3
+        if not _DB_PATH.exists():
+            return None
+        from src.trading_calendar import et_now
+        day = et_now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(str(_DB_PATH))
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(baseline_cost_usd,0) + COALESCE(incremental_cost_usd,0) "
+                "FROM llm_budget_days WHERE day = ?",
+                (day,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — never break the alert
+        logger.warning("daily cost lookup failed: %s", exc)
+        return None
+    if row is None or row[0] is None:
+        return None
+    spent = float(row[0])
+    limit = _daily_cost_limit()
+    if not limit:
+        return f"📅 today: ${spent:,.2f} so far"
+    pct = int(round(spent / limit * 100))
+    return f"📅 today: ${spent:,.2f} of ${limit:,.2f} daily limit ({pct}%)"
+
+
+def _daily_cost_limit() -> float | None:
+    """The configured daily cap, or None if it cannot be read."""
+    try:
+        from src.config import load_config
+        cfg = load_config("config/settings.yaml")
+        return float(cfg.llm_cost_circuit.daily_cost_limit_usd)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _openrouter_balance_line() -> str | None:
