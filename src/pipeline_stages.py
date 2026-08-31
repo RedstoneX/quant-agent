@@ -573,6 +573,103 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     )
 
 
+def _link_nominations_to_decision(pipeline, ctx) -> None:
+    """Spec §9.5 — close the nomination→decision join. NEVER raises.
+
+    Nominations are recorded during MorningResearchStage, where
+    `ctx.decision_id` is still None: the id is not minted until DecisionStage
+    mints it from a successful PM call. Every nomination row therefore landed
+    with decision_id NULL, and nothing connected a nomination to the trade it
+    became.
+
+    This back-fills the id onto those rows the moment it exists. It is an
+    UPDATE on the forensic evidence table and nothing more — no pipeline
+    input, no ordering change, no new state read by any later stage. The
+    alternative (deferring the nomination write until DecisionStage) would
+    move a forensic write into the decision path and reorder it relative to
+    the responder pass that acts on the same nominations; this does not.
+
+    Best-effort by the same rule every other evidence write here follows: a
+    persistence failure is a display gap, never a reason to alter or
+    interrupt a decision.
+    """
+    if not getattr(ctx, "decision_id", None):
+        return
+    try:
+        linked = pipeline.db.link_nominations_to_decision(
+            run_id=ctx.run_id, decision_id=ctx.decision_id,
+        )
+        if linked:
+            logger.info(
+                "Conviction ledger: joined %d nomination row(s) to decision %s",
+                linked, ctx.decision_id,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Conviction ledger: nomination join failed: %s", e)
+
+
+def _record_seat_stances(pipeline, ctx, evidence_registry, symbols) -> None:
+    """Spec §9.5 — record who ARGUED AGAINST, not only who proposed. NEVER raises.
+
+    §9.4 already computes each seat's stance per symbol into the canonical
+    evidence registry, and counts only the ALIGNED ones to earn size. The
+    opposing stances were computed and then discarded: nothing persisted
+    "macro was underweight this name and the desk bought it anyway" in a form
+    that could later be scored.
+
+    So one `seat_stance` row per (idea, seat) is written from that same
+    registry — support and dissent alike, no re-derivation, no second notion
+    of what a stance is. Conviction comes from what the seat actually
+    DECLARED: its nomination conviction where it nominated the symbol
+    (`ctx.nomination_convictions`), Technical's own `conviction` field for the
+    technical seat, and the neutral default where the schema offers none.
+
+    `symbols` is the PM's target set — the ideas the desk actually decided on
+    — not the whole registry, which would record a stance on every symbol
+    merely covered this run.
+
+    Purely additive: writes evidence rows, reads nothing back, returns
+    nothing. No caller consumes its effect within the run.
+    """
+    if not getattr(ctx, "decision_id", None) or not evidence_registry:
+        return
+    try:
+        from src.conviction_ledger import DEFAULT_CONVICTION, SeatStance, normalize_seat
+
+        wanted = {str(s).strip().upper() for s in (symbols or []) if str(s).strip()}
+        nominations = getattr(ctx, "nomination_convictions", None) or {}
+        tech_conviction = {
+            str(getattr(a, "symbol", "")).strip().upper():
+                str(getattr(a, "conviction", "") or DEFAULT_CONVICTION)
+            for a in (ctx.analyses or [])
+        }
+        stances: list[SeatStance] = []
+        for symbol in sorted(wanted):
+            for source, stance in sorted((evidence_registry.get(symbol) or {}).items()):
+                seat = normalize_seat(source)
+                declared = (nominations.get(symbol) or {}).get(seat) or {}
+                conviction = declared.get("conviction")
+                if not conviction and seat == "technical":
+                    conviction = tech_conviction.get(symbol)
+                stances.append(SeatStance(
+                    seat=seat, symbol=symbol, stance=stance,
+                    conviction=conviction or DEFAULT_CONVICTION,
+                    nominated=bool(declared),
+                    observation=str(declared.get("observation") or ""),
+                ))
+        if not stances:
+            return
+        pipeline.db.record_seat_stances(
+            run_id=ctx.run_id, decision_id=ctx.decision_id, stances=stances,
+        )
+        logger.info(
+            "Conviction ledger: recorded %d seat stance(s) across %d idea(s) "
+            "for decision %s", len(stances), len(wanted), ctx.decision_id,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Conviction ledger: seat-stance recording failed: %s", e)
+
+
 def _collect_seat_nominations(
     news_intel, macro_analysis, earnings_results,
 ) -> dict[str, list[Nomination]]:
@@ -1506,6 +1603,7 @@ class MorningResearchStage:
             ctx.news_intel, ctx.macro_analysis, ctx.earnings_results,
         )
         total_raw = sum(len(v) for v in nominations_by_seat.values())
+        from src.conviction_ledger import normalize_seat as _normalize_seat
         for seat, noms in nominations_by_seat.items():
             for nomination in noms:
                 _record_pipeline_event(
@@ -1514,6 +1612,15 @@ class MorningResearchStage:
                     conviction=nomination.conviction,
                     observation=nomination.observation,
                 )
+                # §9.5: keep what the seat DECLARED so DecisionStage can
+                # weight its stance by it. Pure bookkeeping on the context —
+                # no stage below reads this field to decide anything.
+                ctx.nomination_convictions.setdefault(
+                    nomination.symbol.strip().upper(), {},
+                )[_normalize_seat(seat)] = {
+                    "conviction": nomination.conviction,
+                    "observation": nomination.observation,
+                }
 
         nom_cfg = getattr(self.config, "nominations", None)
         max_per_seat = getattr(nom_cfg, "max_per_seat_per_run", 3) if nom_cfg else 3
@@ -1887,6 +1994,12 @@ class DecisionStage:
         # produced a valid decision — a failed/unparseable PM call still
         # carries no trades, so an unused decision_model is harmless.
         ctx.decision_model = pm_result.model
+        # Conviction ledger (spec §9.5): the nomination rows this run wrote
+        # during MorningResearchStage carry decision_id NULL because the id
+        # did not exist yet. Join them now — before the PM-failure early
+        # return below, so a run whose PM produced nothing still shows which
+        # seats had asked for what. Bookkeeping only; never raises.
+        _link_nominations_to_decision(pipeline, ctx)
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -1986,6 +2099,16 @@ class DecisionStage:
             macro_analysis=_macro_analysis_as_dict(macro_analysis),
             smart_money_findings=ctx.smart_money_findings,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+        )
+        # Conviction ledger (spec §9.5): persist every seat's side on every
+        # idea — dissent included — from that same registry, BEFORE the
+        # constructor runs so a construction failure cannot lose the record
+        # of what the desk believed. Writes evidence rows only; the
+        # `evidence_registry` handed to `construct_orders` below is the
+        # identical object, unread and unmutated by this call.
+        _record_seat_stances(
+            pipeline, ctx, evidence_registry,
+            [t.symbol for t in portfolio_decision.targets],
         )
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
             targets=portfolio_decision.targets,

@@ -334,7 +334,9 @@ The reasoning is already persisted; it is simply never shown.
 
 ## Phase 9 — The research desk actually deliberates
 
-**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is deliberately not built.
+**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is **owner-ratified scheduled work, PARTIALLY BUILT** — its recording and scoring layer landed on `feat/conviction-ledger-recording`; its operator-facing view has not been built. See §9.5 below for exactly which parts exist.
+
+*An earlier version of this note recorded §9.5 as "deliberately not built" with no attribution and no stated reason — an engineering scope decision written as though it were settled truth, the exact pattern AGENTS.md's Governance ratification section exists to prevent. The owner reopened it on 2026-08-31 and ratified the full specification below. Corrected here rather than carried forward.*
 
 **Owner-directed, 2026-08-27.** Rex, verbatim: *"We have agents doing research
 and analysis. If something has high conviction or strong candidacy it should
@@ -415,7 +417,12 @@ the risk budget.
 
 ### 9.5 — A conviction ledger per candidate
 
-**Status (owner-ratified 2026-08-31): specified, scheduled work. Not built.**
+**Status (owner-ratified 2026-08-31): specified, scheduled work. PARTIALLY
+BUILT — the recording and scoring data layer landed on
+`feat/conviction-ledger-recording`; nothing reads it back to a human.** The
+per-item implementation status is item 11 at the end of this section, and item
+10's "missing" list has been corrected to match. Everything between here and
+item 10 is the specification as ratified, unchanged.
 
 `docs/phases.yaml` had recorded this as "deliberately NOT built," with no
 attribution and no stated reason — the exact pattern `AGENTS.md`'s
@@ -639,28 +646,67 @@ Verified by reading the current code, not assumed:
 
 *Missing — has to be built:*
 
-- **Persistence of nominator/dissenter identity as a structured, joinable
-  record**, rather than a flat per-run event log. Concretely: the
-  nomination `pipeline_event` rows are written with `decision_id=None` —
-  `RunContext.decision_id` (`src/pipeline_context.py`) defaults to `None`
-  and is not assigned until `DecisionStage` runs
-  (`src/pipeline_stages.py`, ~line 1882), which is *after*
-  `_run_nomination_responder_pass` has already written its evidence rows.
-  So there is, today, no code path connecting a stored nomination event to
-  the decision it fed, and by extension none to that decision's eventual
-  trade.
-- **The join from ledger to trade outcome.** Nothing today walks from a
-  nomination or a seat's stance to the trade's realized R
-  (`r_multiple`) and writes a scored verdict back per seat. This is the
-  central piece items 2–5 depend on.
-- **The longitudinal per-idea view.** Everything currently persisted is
-  scoped to one run. Nothing aggregates a symbol's nomination/stance
-  history *across* sessions, which is what item 1's "what changed since the
-  previous session" requires.
-- **Origination vs. judgement scoring**, the conversion-rate metric, the
-  shadowed-objection tracking, the decay window, and the presentation layer
-  (item 9) — none of these exist in any form; they are new work, not
-  extensions of something partially built.
+*(Corrected against the tree after `feat/conviction-ledger-recording`. The
+first two bullets below were written before that branch and are now done;
+they are kept, struck through in prose, because the diagnosis they record is
+what the fix was built from.)*
+
+- ~~**Persistence of nominator/dissenter identity as a structured, joinable
+  record**~~ — **DONE.** The diagnosis stands and was verified against the
+  code: nomination `pipeline_event` rows were written with
+  `decision_id=None` because `RunContext.decision_id`
+  (`src/pipeline_context.py`) is not assigned until `DecisionStage`
+  (`src/pipeline_stages.py`), which runs *after*
+  `_run_nomination_responder_pass` has already written those rows.
+  `Database.link_nominations_to_decision` now back-fills the id onto them
+  once `DecisionStage` mints it, and `Database.record_seat_stances` writes
+  one `seat_stance` row per (idea, seat) — dissent as well as support.
+- ~~**The join from ledger to trade outcome.**~~ — **DONE.**
+  `Database.resolve_conviction_ledger` walks each closed position chain to
+  its realized R (`r_multiple`) and writes a scored verdict back per seat.
+- **The longitudinal per-idea view.** Still missing. Everything persisted is
+  scoped to one run/decision. Nothing aggregates a symbol's
+  nomination/stance history *across* sessions, which is what item 1's "what
+  changed since the previous session" requires.
+- **Origination vs. judgement scoring** (item 2), **the conversion-rate
+  metric** (item 4), **the shadowed-objection tracking** (item 5), **the
+  decay window** (item 7), and **the presentation layer** (item 9). Still
+  missing. One qualification on item 2: whether a seat originated an idea or
+  responded to one is now recorded on every stance and credit row
+  (`nominated`), so the split is derivable — but nothing computes the two
+  scores separately, and `aggregate_seat_records` returns one record per
+  seat.
+
+**11. Implementation status, per item (as of `feat/conviction-ledger-recording`).**
+
+The scope of that branch was deliberately the data layer only: no UI, no API
+route, no frontend, and no change to sizing or to what gets traded.
+
+| Item | Status | Where |
+|---|---|---|
+| 1 — what is recorded | **Partial** — seat, stance, declared conviction, originated-vs-responding, stated reason and session date are recorded per idea per decision. The **longitudinal** half (cross-session trajectory) is not built. | `Database.record_seat_stances`, `seat_stance` evidence rows |
+| 2 — origination vs judgement scored separately | **Not built.** The `nominated` flag is persisted on every stance and credit row so the two can be separated later; nothing scores them apart today. | — |
+| 3 — scoring on close | **Built.** +R aligned / −R opposed, weighted by declared conviction, via the existing `r_multiple` against the stop the position was OPENED with. Idempotent; a chain with no entry stop is counted and skipped, never scored against a fabricated denominator. | `Database.resolve_conviction_ledger`, `src/conviction_ledger.py::score_position` |
+| 4 — unconverted nominations tracked, conversion rate | **Not built.** The join now makes conversion rate computable (a nomination row either does or does not have a `trades` row on its `decision_id` + symbol); no function computes it. | — |
+| 5 — shadowed objections | **Not built.** | — |
+| 6 — advisory only | **Built and enforced.** Nothing in the trading chain reads any ledger row; every write is best-effort. `tests/test_conviction_ledger.py::test_ledger_recording_does_not_change_a_single_trading_decision` runs `DecisionStage` with recording live and disabled and requires the constructed orders to serialize byte-identically. | `src/pipeline_stages.py::_link_nominations_to_decision` / `_record_seat_stances` |
+| 7 — decay / rolling window | **Not built.** The record is lifetime. | — |
+| 8 — no arbitrary sample gate | **Built.** `aggregate_seat_records` returns raw `resolved_calls` and `calls_right` with no threshold anywhere. | `src/conviction_ledger.py` |
+| 9 — presentation | **Not built.** Out of scope for that branch. | — |
+| 10 — the join | **Built.** See the corrected list above. | `Database.link_nominations_to_decision` |
+
+Additionally built, as the read side items 2/4/9 will need: a per-analyst
+aggregate — `src/conviction_ledger.py::aggregate_seat_records` returns, per
+seat, resolved calls, calls right, average win, average loss, the cumulative
+profit series over time, and current drawdown from that seat's own peak. Pure
+logic, no I/O, same posture as `src/nominations.py`.
+
+**One gap worth naming separately:** short round trips are not scored, because
+they carry no `position_id` to chain on — `_assign_position_ids` (§6.2a) opens
+a chain only on a `BUY`, so no `SHORT` is chained today. That is a pre-existing
+gap in the §6.2a chaining, not one this work introduced. The ledger's
+arithmetic is already direction-aware and will score shorts unchanged once
+they receive chains.
 
 ### Sequencing
 
