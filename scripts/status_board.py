@@ -383,6 +383,15 @@ def _read_ledger() -> dict[str, Any]:
             "SELECT COUNT(*) AS n FROM llm_budget_sessions WHERE day=?", (today,)
         ).fetchone()
         out["sessions_today"] = int(n["n"]) if n else None
+        # A day with no sessions has no budget row, which is not the same thing
+        # as a budget that could not be read. Reporting "unknown" there is a
+        # lie of omission: the board sat next to "0 sessions ran today" and
+        # still claimed it could not tell what had been spent. If the ledger
+        # opened and nothing ran, the answer is exactly zero.
+        if out["spend_today"] is None and out["sessions_today"] == 0:
+            out["spend_today"] = 0.0
+            out["costs_exact"] = True
+            out["day"] = today
         conn.close()
     except Exception as exc:  # noqa: BLE001 - unknown beats a wrong number
         out["circuit"] = None
@@ -535,7 +544,9 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
                         '<span class="unk">unknown</span>')
     body = body.replace("{{SPEND_PCT}}", str(pct if pct is not None else 0))
     body = body.replace("{{SPEND_NOTE}}",
-                        f"of the ${limit:.2f} daily limit &mdash; {pct}% used"
+                        ("nothing has run today" if spend == 0
+                         and state.get("sessions_today") == 0
+                         else f"of the ${limit:.2f} daily limit &mdash; {pct}% used")
                         if pct is not None else "daily spend could not be read")
     body = body.replace("{{SESSIONS}}", _fmt(state.get("sessions_today")))
     body = body.replace("{{ROWS}}", rows)
