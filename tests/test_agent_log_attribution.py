@@ -3,12 +3,17 @@
 Every `insert_agent_log(...)` call site used to persist `agent_logs.model`
 from `config.llm.<agent>_model` — the *configured/requested* model — instead
 of `AgentResult.model` — the model that *actually answered*, including
-cross-provider failover (`base.py:run()` silently falls back to Anthropic's
-`_FALLBACK_MODEL` when a non-Anthropic primary exhausts retries). The two
-values only diverge in a failover, so every test here configures a primary
-model that differs from the model embedded in the mocked `AgentResult` (the
-realistic `claude-opus-4-7` fallback constant) and asserts the persisted row
-carries the *actual* value, not the configured one.
+cross-provider failover (`base.py:run()` falls back to the CONFIGURED
+fallback provider/model — `llm.fallback_provider`/`fallback_model`,
+2026-08-31 — when the primary exhausts retries and the fallback pair differs
+from the primary's; see `BaseAgent._failover_reachable`). The two values
+only diverge in a failover, so every test here configures a primary model
+that differs from the model embedded in the mocked `AgentResult` (a
+realistic stand-in for a failover result — the literal string used,
+`claude-opus-4-7`, no longer needs to match any live routing constant; it is
+just illustrative here, since these tests exercise pipeline.py's
+`insert_agent_log` persistence, not base.py's routing itself) and asserts
+the persisted row carries the *actual* value, not the configured one.
 
 One test per session type that reaches an `insert_agent_log` call, covering
 all nine call sites (audit `docs/STAGE0_BASELINE_AUDIT.md` §9A):
@@ -48,9 +53,12 @@ from src.models import (
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
 
-# The realistic cross-provider failover model (base.py:_FALLBACK_MODEL) —
-# always distinct from the "configured" model set on each test's mock_config
-# so a passing assertion actually proves attribution, not coincidence.
+# A stand-in "actually answered" model — always distinct from the
+# "configured" model set on each test's mock_config so a passing assertion
+# actually proves attribution, not coincidence. Not tied to any live routing
+# constant (base.py no longer hardcodes a failover model at all — see
+# llm.fallback_provider/fallback_model, 2026-08-31); these tests exercise
+# pipeline.py's persistence of AgentResult.model, not base.py's routing.
 _ACTUAL_FAILOVER_MODEL = "claude-opus-4-7"
 _CONFIGURED_PRIMARY_MODEL = "gpt-5.5"
 

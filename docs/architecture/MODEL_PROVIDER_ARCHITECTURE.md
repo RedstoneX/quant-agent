@@ -19,7 +19,17 @@ A fallback result must never be counted as though the requested model answered. 
 
 Known limitations:
 - technical-analyst multi-chunk work can be persisted as one logical call, so per-chunk attribution is incomplete;
-- an opaque external relay cannot be independently proven to have served the model it claims;
-- direct Google AI Studio/Gemini integration was evaluated and deferred; it is not required by current work.
+- an opaque external relay cannot be independently proven to have served the model it claims.
+
+Direct Google AI Studio/Gemini integration — evaluated and deferred at the
+time this doc was first written — was accepted 2026-08-31 (see
+`docs/WORK.md` "NEXT UP" and `MODEL_ROUTING_POLICY.md`'s update note):
+`google` is now a first-class provider (`VALID_PROVIDERS`, its own token
+governor and concurrency semaphore, reached through the same OpenAI-wire
+seam as OpenRouter/DeepSeek via Google's OpenAI-compatible endpoint — no
+native Gemini client was written). The cross-provider failover target
+(`_FALLBACK_MODEL`, hardcoded to `claude-opus-4-7`) is now configurable
+(`llm.fallback_provider`/`fallback_model`), defaulting to OpenRouter serving
+the same model the Google-direct primary uses.
 
 Detailed acceptance evidence remains in Git history. The last pre-ultra-lean working-tree snapshot is commit `02e20e6ac1c5c7e65b7f512f76c568328c990e3c`.

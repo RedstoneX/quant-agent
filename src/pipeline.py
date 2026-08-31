@@ -353,13 +353,24 @@ class TradingPipeline:
                 "deepseek": config.api_keys.deepseek,
                 "openai": config.api_keys.openai,
                 "openrouter": config.api_keys.openrouter,
+                "google": config.api_keys.google,
             }.get(provider, config.api_keys.anthropic)
+
+        # Cross-provider failover credential — resolved ONCE from the
+        # process-wide `config.llm.fallback_provider`/`fallback_model`
+        # (2026-08-31 owner decision) via the SAME `_key_for` closure every
+        # agent's primary key uses, so config.py's AppConfig._check_llm_
+        # provider_keys and this construction site can never pick different
+        # credentials for the same configured fallback.
+        _fallback_api_key = _key_for(config.llm.fallback_model, config.llm.fallback_provider)
 
         self.tech_analyst = TechAnalystAgent(
             api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
             model=config.llm.tech_analyst_model,
             max_tokens=config.llm.get_max_tokens("tech_analyst"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.tech_analyst_provider,
             provider_order=config.llm.get_provider_order("tech_analyst"),
         )
@@ -367,7 +378,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),
             model=config.llm.portfolio_manager_model,
             max_tokens=config.llm.get_max_tokens("portfolio_manager"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.portfolio_manager_provider,
             provider_order=config.llm.get_provider_order("portfolio_manager"),
         )
@@ -375,7 +388,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.risk_manager_model, config.llm.risk_manager_provider),
             model=config.llm.risk_manager_model,
             max_tokens=config.llm.get_max_tokens("risk_manager"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
         )
@@ -397,7 +412,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
             max_tokens=config.llm.get_max_tokens("position_reviewer"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.position_reviewer_provider,
             provider_order=config.llm.get_provider_order("position_reviewer"),
         )
@@ -405,7 +422,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.evening_analyst_model, config.llm.evening_analyst_provider),
             model=config.llm.evening_analyst_model,
             max_tokens=config.llm.get_max_tokens("evening_analyst"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.evening_analyst_provider,
             provider_order=config.llm.get_provider_order("evening_analyst"),
         )
@@ -413,7 +432,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.news_analyst_model, config.llm.news_analyst_provider),
             model=config.llm.news_analyst_model,
             max_tokens=config.llm.get_max_tokens("news_analyst"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.news_analyst_provider,
             provider_order=config.llm.get_provider_order("news_analyst"),
         )
@@ -421,7 +442,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.macro_analyst_model, config.llm.macro_analyst_provider),
             model=config.llm.macro_analyst_model,
             max_tokens=config.llm.get_max_tokens("macro_analyst"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
         )
@@ -446,7 +469,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.earnings_analyst_model, config.llm.earnings_analyst_provider),
             model=config.llm.earnings_analyst_model,
             max_tokens=config.llm.get_max_tokens("earnings_analyst"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.earnings_analyst_provider,
             provider_order=config.llm.get_provider_order("earnings_analyst"),
         )
@@ -454,7 +479,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.smart_money_analyst_model, config.llm.smart_money_analyst_provider),
             model=config.llm.smart_money_analyst_model,
             max_tokens=config.llm.get_max_tokens("smart_money_analyst"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.smart_money_analyst_provider,
             provider_order=config.llm.get_provider_order("smart_money_analyst"),
         )
@@ -487,7 +514,9 @@ class TradingPipeline:
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
             model=config.llm.meta_reflector_model,
             max_tokens=config.llm.get_max_tokens("meta_reflector"),
-            fallback_api_key=config.api_keys.anthropic,
+            fallback_api_key=_fallback_api_key,
+            fallback_provider=config.llm.fallback_provider,
+            fallback_model=config.llm.fallback_model,
             provider=config.llm.meta_reflector_provider,
             provider_order=config.llm.get_provider_order("meta_reflector"),
         )

@@ -36,6 +36,24 @@ AGENTS = (
 # price (see test_decision_seats_run_a_model_measured_at_that_seat).
 DECISION_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
 
+# 2026-08-31 owner decision (docs/WORK.md "NEXT UP"): the primary moved to
+# Gemini direct for eight specialist/review seats; PM and RM were
+# deliberately left on their existing (measured, decision-chain-independent)
+# models and stayed on OpenRouter. GOOGLE_SEATS | OPENROUTER_SEATS == AGENTS.
+GOOGLE_SEATS = (
+    "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+    "smart_money_analyst", "evening_analyst", "meta_reflector",
+)
+# position_reviewer is HELD BACK from the Gemini-direct migration on purpose.
+# It is a DECISION SEAT, and the gate directly below
+# (test_decision_seats_run_a_model_measured_at_that_seat) requires a model
+# measured at that seat. No benchmark exists for gemini-3.5-flash-lite at the
+# midday_exit scenario, and one cannot be produced against the 2.5 incumbent
+# because Google refuses 2.5 to new keys. Moving it would mean asserting
+# unmeasured quality on a seat that decides whether to exit a live position,
+# so it stays on OpenRouter until the benchmark is run and committed.
+OPENROUTER_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
+
 # Which benchmark scenario measures each decision seat.
 SEAT_SCENARIO = {
     "portfolio_manager": "pm_constrained",
@@ -86,26 +104,38 @@ def test_every_agent_pins_its_provider_explicitly(llm):
 
 def test_every_routed_model_is_priceable_offline(llm):
     """Cost telemetry must not depend on reaching a pricing catalog mid-
-    session. Every configured model resolves from the in-process table, so a
-    session run with no route to OpenRouter's catalog still logs real cost
-    instead of "$?.??"."""
+    session. Every configured model resolves from the in-process table
+    offline — via `_PRICING_OPENROUTER` for the OpenRouter-routed seats (PM,
+    RM) or `_PRICING_PINNED` for the Google-direct seats (2026-08-31:
+    `gemini-3.5-flash-lite`, the AI Studio free tier) — so a session run
+    with no route to any pricing catalog still logs real cost instead of
+    "$?.??". `estimate_cost` is provider-agnostic by design (it keys purely
+    on the model id), which is exactly what makes this assertion meaningful
+    without re-deriving which pricing dict backs which provider."""
     for agent in AGENTS:
         model = llm[f"{agent}_model"]
-        assert model in _PRICING_OPENROUTER, f"{agent}: {model} not pinned"
-        assert estimate_cost(model, 1000, 1000) is not None, model
+        assert estimate_cost(model, 1000, 1000) is not None, f"{agent}: {model} not pinned"
 
 
 def test_policy_is_cheaper_than_the_commissioning_baseline(llm):
     """The point of the tranche. Priced on a fixed synthetic workload so the
     assertion is about the POLICY, not about how chatty a model happened to
-    be on one run."""
+    be on one run.
+
+    Uses `estimate_cost` (provider-agnostic) rather than reaching into
+    `_PRICING_OPENROUTER` directly — after 2026-08-31 most seats route
+    through Google-direct (`_PRICING_PINNED`, genuinely $0.00 on the AI
+    Studio free tier), not OpenRouter, so a direct dict lookup would KeyError
+    on them. The free primary makes this comparison MORE lopsided than it
+    was when every seat paid OpenRouter's rate, which is the correct
+    direction, not a weakened assertion."""
     baseline_rate = _PRICING_OPENROUTER[BASELINE_MODEL]
     per_call_in, per_call_out = 40_000, 3_000
 
     def sweep(model_for_agent) -> float:
         return sum(
-            (per_call_in * r["input"] + per_call_out * r["output"]) / 1e6
-            for r in (_PRICING_OPENROUTER[model_for_agent(a)] for a in AGENTS)
+            estimate_cost(model_for_agent(a), per_call_in, per_call_out)
+            for a in AGENTS
         )
 
     policy_cost = sweep(lambda a: llm[f"{a}_model"])
@@ -194,11 +224,20 @@ def test_no_agent_exceeds_its_models_context(llm):
 
 
 def test_pinned_openrouter_table_has_no_unused_speculative_rows():
-    """Every pinned rate is either in the policy or is the baseline the cost
-    reduction is measured against. Rows for models nothing uses go stale
-    unnoticed and make `verify_pricing.py` noisy."""
+    """Every pinned rate is either in the policy, is the baseline the cost
+    reduction is measured against, or is the process-wide cross-provider
+    failover target (2026-08-31: `llm.fallback_model`, reachable from any
+    seat whose primary differs from it — which after the same-day Google
+    migration is every seat except PM/RM's specific model, since the
+    OpenRouter-routed seats among AGENTS are now only PM/RM themselves).
+    Rows for models nothing uses go stale unnoticed and make
+    `verify_pricing.py` noisy."""
     llm = (yaml.safe_load(SETTINGS.read_text()) or {}).get("llm") or {}
     used = {llm[f"{a}_model"] for a in AGENTS} | {BASELINE_MODEL}
+    fallback_provider = llm.get("fallback_provider")
+    fallback_model = llm.get("fallback_model")
+    if fallback_provider == "openrouter" and fallback_model:
+        used.add(fallback_model)
     unused = set(_PRICING_OPENROUTER) - used
     assert not unused, f"pinned but unused: {sorted(unused)}"
 
@@ -207,13 +246,16 @@ def test_pinned_openrouter_table_has_no_unused_speculative_rows():
 
 
 def test_openrouter_seat_fails_closed_rather_than_substituting_a_model():
-    """The policy has no fallback, deliberately (see MODEL_ROUTING_POLICY.md).
-
-    QAMC holds no Anthropic credential, so `_fallback_api_key` is empty and
-    an exhausted OpenRouter call re-raises. What must never happen is a
-    session quietly completing on a model the policy did not select for that
-    seat — that is the "unrecorded model choice" the authorization forbids,
-    and it would also mis-price the call.
+    """An agent instance built with NO fallback credential at all (as
+    opposed to the production pipeline.py wiring, which always passes one —
+    see llm.fallback_provider/fallback_model, 2026-08-31) must fail closed
+    rather than substitute an unrecorded model: `_fallback_api_key` empty
+    means `_failover_reachable` is False regardless of what the process-wide
+    fallback target is configured to, so an exhausted OpenRouter call
+    re-raises. What must never happen is a session quietly completing on a
+    model the policy did not select for that seat — that is the "unrecorded
+    model choice" the authorization forbids, and it would also mis-price the
+    call.
     """
     from unittest.mock import MagicMock, patch
 
@@ -238,10 +280,21 @@ def test_openrouter_seat_fails_closed_rather_than_substituting_a_model():
         anthropic_cls.assert_not_called()
 
 
-def test_every_seat_resolves_to_the_openrouter_client(llm):
+def test_every_seat_resolves_to_its_accepted_provider(llm):
     """A seat that resolved to any other provider would be reaching for a
-    credential OneCLI does not hold, and would fail on its first call."""
-    for agent in AGENTS:
+    credential OneCLI does not hold, and would fail on its first call.
+
+    Before 2026-08-31 this asserted a single provider ('openrouter') for
+    every seat. The primary migration split that: eight specialist/review
+    seats now resolve to 'google' (Google AI Studio direct, free tier); PM
+    and RM were deliberately left on OpenRouter (see GOOGLE_SEATS /
+    OPENROUTER_SEATS above and docs/WORK.md)."""
+    assert set(GOOGLE_SEATS) | set(OPENROUTER_SEATS) == set(AGENTS)
+    for agent in GOOGLE_SEATS:
+        assert resolve_provider(
+            llm[f"{agent}_model"], llm[f"{agent}_provider"]
+        ) == "google", agent
+    for agent in OPENROUTER_SEATS:
         assert resolve_provider(
             llm[f"{agent}_model"], llm[f"{agent}_provider"]
         ) == "openrouter", agent
