@@ -206,6 +206,43 @@ def _is_known_zero_cost_failure(error: BaseException) -> bool:
     return False
 
 
+def _all_attempts_provably_free(
+    error: BaseException, attempt_errors: list[BaseException] | None,
+) -> bool:
+    """True only when EVERY provider attempt on this call provably cost $0.
+
+    Callers that cannot enumerate their attempts pass nothing and get the
+    original single-exception behaviour, so this can only ever recognise more
+    genuinely-free failures — never fewer.
+
+    Ambiguity is contagious on purpose: one attempt that might have been
+    billed makes the whole reservation chargeable, because the reservation
+    covers the whole call and there is no per-attempt figure to fall back on.
+    """
+    if not attempt_errors:
+        return _is_known_zero_cost_failure(error)
+    free = all(_is_known_zero_cost_failure(exc) for exc in attempt_errors)
+    if not free:
+        # Which attempt made this chargeable, and what shape was it? A
+        # provider that rejects with an unclassified error costs the desk its
+        # conservative reserve every time, and there is no way to know that is
+        # happening without printing the shape. Cheap, and it turns the next
+        # occurrence into a measurement instead of another inference.
+        shapes = ", ".join(
+            f"{type(exc).__name__}"
+            f"(status={getattr(exc, 'status_code', None)!r})"
+            f"{'' if _is_known_zero_cost_failure(exc) else ' <-CHARGED'}"
+            for exc in attempt_errors
+        )
+        logger.warning(
+            "cost-circuit charging a failed call: not every attempt is "
+            "provably $0 — [%s]. An attempt marked CHARGED with a status the "
+            "zero-cost allow-list does not carry is worth investigating: it "
+            "may have billed nothing in reality.", shapes,
+        )
+    return free
+
+
 def _percentile(sorted_values: list[float], fraction: float) -> float:
     """Linear-interpolated percentile of an already-sorted, non-empty
     sequence (numpy's default 'linear' method). `fraction` is in [0, 1]."""
@@ -3342,7 +3379,12 @@ class LLMCostCircuitBreaker:
             conn.commit()
         self._notify_if_needed()
 
-    def fail_call(self, reservation: CallReservation, error: BaseException) -> None:
+    def fail_call(
+        self,
+        reservation: CallReservation,
+        error: BaseException,
+        attempt_errors: list[BaseException] | None = None,
+    ) -> None:
         """Conservatively account an unfinished paid request and fail closed
         -- except for the narrow set of failures PROVEN to have cost $0.
 
@@ -3365,6 +3407,24 @@ class LLMCostCircuitBreaker:
         hand. See `_is_known_zero_cost_failure` for the exact, deliberately
         narrow classification: fail closed, anything not explicitly proven
         $0 is accounted exactly as before.
+
+        `attempt_errors` is every provider attempt's failure, not just the one
+        the caller re-raised. A logical call can attempt several DIFFERENT
+        providers, and `BaseAgent.run()` re-raises the PRIMARY error while
+        discarding whatever the failover hit — so a failover rejected 401
+        (billed nothing, by definition) was invisible here, and the whole call
+        was charged its conservative reserve at the failover model's dearer
+        price. On 2026-08-31 that put $0.62 on the ledger for two upstream
+        refusals and a missing credential which together cost exactly $0, and
+        the resulting unexplained spend latched the desk for the rest of the
+        day. The rate limit did not stop trading; the phantom bill for it did.
+
+        The rule stays fail-closed and gets STRICTER, not looser: the call is
+        free only if EVERY attempt is provably free. One ambiguous attempt —
+        a cut stream, an unclassified error, a 5xx after generation may have
+        started — and the whole reservation is charged exactly as before. That
+        is the honest reading: a call is only known to have cost nothing when
+        nothing it did could have cost anything.
         """
 
         if not self.enabled or reservation.reservation_id == "disabled":
@@ -3373,7 +3433,7 @@ class LLMCostCircuitBreaker:
         with self._infrastructure_lock:
             if self._unavailable_sentinel is not None:
                 return
-        known_zero_cost = _is_known_zero_cost_failure(error)
+        known_zero_cost = _all_attempts_provably_free(error, attempt_errors)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(

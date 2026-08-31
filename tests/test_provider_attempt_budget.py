@@ -512,3 +512,108 @@ def test_reset_still_refuses_when_there_is_nothing_to_reset(tmp_path):
     circuit.activate_session("run-healthy", "morning")
     with pytest.raises(ValueError, match="accounting is exact"):
         circuit.reset("nothing is wrong")
+
+
+# ------------------------------------- charging for calls that cost nothing
+
+# Defect 7 (2026-08-31). A logical call can attempt several DIFFERENT
+# providers, and `run()` re-raises the PRIMARY error while discarding whatever
+# the failover hit. `fail_call` judged "did this cost anything" from that one
+# exception, so a failover rejected 401 — which by definition billed nothing —
+# was invisible, and the whole call was charged its conservative reserve at
+# the FAILOVER model's dearer price.
+#
+# Live on the desk that afternoon: two upstream refusals plus a missing
+# credential, real cost $0, charged $0.62, and the unexplained spend then
+# latched everything. The rate limit did not stop trading. The phantom bill
+# for it did.
+
+
+class _Status(Exception):
+    def __init__(self, status):
+        super().__init__(f"status {status}")
+        self.status_code = status
+
+
+def test_a_call_whose_every_attempt_was_refused_is_not_charged(tmp_path):
+    """429 upstream, 429 again, 401 on the failover. Nothing generated,
+    nothing billed, nothing to charge."""
+    from src.cost_circuit import _all_attempts_provably_free
+
+    primary = _Status(429)
+    assert _all_attempts_provably_free(
+        primary, [primary, _Status(429), _Status(401)]
+    )
+
+
+def test_one_ambiguous_attempt_makes_the_whole_call_chargeable(tmp_path):
+    """Ambiguity is contagious on purpose: the reservation covers the whole
+    call and there is no per-attempt figure to fall back on. A cut stream may
+    have been billed for tokens already generated."""
+    from src.agents.base import LLMStreamInterruptedError
+    from src.cost_circuit import _all_attempts_provably_free
+
+    primary = _Status(429)
+    assert not _all_attempts_provably_free(
+        primary, [primary, LLMStreamInterruptedError("cut mid-generation")]
+    )
+
+
+def test_a_caller_that_cannot_enumerate_attempts_keeps_the_old_behaviour(tmp_path):
+    """This may only ever recognise MORE genuinely-free failures, never
+    fewer."""
+    from src.cost_circuit import _all_attempts_provably_free
+
+    assert _all_attempts_provably_free(_Status(429), None)
+    assert not _all_attempts_provably_free(_Status(500), None)
+
+
+def test_the_refused_call_neither_charges_nor_latches_the_desk(tmp_path):
+    """End to end at the circuit: the exact 2026-08-31 shape must leave the
+    ledger and the desk untouched."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-refused", "morning")
+    reservation = _reserve(circuit, agent="news_analyst")
+    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+
+    primary = _Status(429)
+    circuit.fail_call(
+        reservation, primary,
+        attempt_errors=[primary, _Status(429), _Status(401)],
+    )
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        latched, = conn.execute(
+            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
+        ).fetchone()
+        spend, exact = conn.execute(
+            "SELECT incremental_cost_usd, costs_exact FROM llm_budget_days "
+            "WHERE day=?", (_current_day(),),
+        ).fetchone()
+    assert not latched, "a call that billed nothing must not latch the desk"
+    assert spend == pytest.approx(0.0), "and must not appear on the ledger"
+    assert exact, "nor make the day's accounting inexact"
+
+
+def test_an_ambiguous_failure_still_charges_and_still_latches(tmp_path):
+    """The guard is unchanged where it matters: a stream cut after generation
+    may really have been billed, so it is still charged and still stops the
+    desk for an operator to look at."""
+    from src.agents.base import LLMStreamInterruptedError
+
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-ambiguous", "morning")
+    reservation = _reserve(circuit, agent="news_analyst")
+    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+
+    cut = LLMStreamInterruptedError("cut mid-generation")
+    circuit.fail_call(reservation, cut, attempt_errors=[cut])
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        spend, = conn.execute(
+            "SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?",
+            (_current_day(),),
+        ).fetchone()
+    assert spend > 0, "an attempt that may have been billed is still charged"
