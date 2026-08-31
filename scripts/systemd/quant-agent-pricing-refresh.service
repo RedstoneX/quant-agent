@@ -1,0 +1,33 @@
+# LLM price-cache refresh — pairs with quant-agent-pricing-refresh.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-pricing-refresh.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-pricing-refresh.timer
+[Unit]
+Description=quant-agent LLM price-cache refresh (no LLM call, no trading)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Writes two files under data/ and nothing else. `data/` is gitignored, so a
+# refresh can never dirty the checkout and become deploy drift. Both writes
+# are tmp-file + os.replace, so a session reading the cache at the same
+# instant sees the old file or the new one, never a half-written one — which
+# is why this is safe to fire regardless of what else is running.
+#
+# --force, deliberately: without it the script only fetches once the cache has
+# ALREADY passed its 24h freshness window, which pins the file permanently at
+# the edge of staleness and keeps the circuit's reservation multiplier widened
+# for no reason. Forcing on a 12h cadence keeps the cache comfortably current
+# and still costs two unauthenticated GETs a day.
+ExecStart=/home/qamc/quant-agent/scripts/run_pricing_refresh.sh --force --quiet
+# Exit 1 means the cache did NOT land and the desk is burning its grace
+# window. That is a real failure, not a finding, so it is left to mark the
+# unit failed and show up in `systemctl --user status` — on top of the
+# Telegram alert the script itself sends.
+SuccessExitStatus=0
+# Above the wrapper's own 120+15s kill, so the wrapper kills Python before
+# systemd kills the wrapper.
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal

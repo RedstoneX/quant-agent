@@ -85,8 +85,37 @@ def build_parser() -> argparse.ArgumentParser:
             "(e.g. llm_cost_circuit.session_reserved_exposure_limit_usd=1.80)"
         ),
     )
+    parser.add_argument(
+        "--pricing-cache-age-hours", default=None, metavar="HOURS|inherit",
+        help=(
+            "age to stamp on the sandbox's OpenRouter pricing cache "
+            "(default: fresh). Pass a value past 24h + the configured grace "
+            "to rehearse the fail-closed staleness path on purpose, or "
+            "'inherit' to use production's real mtime"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON as well")
     return parser
+
+
+def _parse_pricing_age(text: str | None):
+    """Resolve --pricing-cache-age-hours into the runner's argument."""
+    from ops.rehearsal.runner import DEFAULT_PRICING_CACHE_AGE_HOURS
+
+    if text is None:
+        return DEFAULT_PRICING_CACHE_AGE_HOURS
+    if text.strip().lower() == "inherit":
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        raise SystemExit(
+            f"--pricing-cache-age-hours expects a number of hours or "
+            f"'inherit', got {text!r}"
+        )
+    if value < 0:
+        raise SystemExit("--pricing-cache-age-hours must not be negative")
+    return value
 
 
 def _parse_overrides(pairs: list[str]) -> dict:
@@ -145,6 +174,9 @@ def main(argv: list[str] | None = None) -> int:
             fill_model=args.fill_model,
             production_db=args.source_db,
             sudo_user=args.sudo_user,
+            pricing_cache_age_hours=_parse_pricing_age(
+                args.pricing_cache_age_hours
+            ),
         )
         print(report.render())
         if args.json:
