@@ -283,6 +283,25 @@ def test_intraday_scan_result_is_not_hidden_behind_outer_ok(tmp_path, monkeypatc
     assert "NO TRADE" in msg
 
 
+def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
+    """2026-08-31 visibility fix: disabled / lock-contended / no-opportunity
+    now attach a real `intraday_scan` dict (previously no key at all) so the
+    rehearsal rig and DB-backed evidence can tell them apart. The live
+    Telegram feed must stay exactly as quiet about them as it was when they
+    left no key — none of the three needs an operator's attention."""
+    _make_db(tmp_path, monkeypatch)
+    for status in (
+        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity",
+    ):
+        outer = {
+            "status": "ok", "run_id": "intra_check-quiet", "daily_pnl": 10.0,
+            "intraday_scan": {"status": status, "run_id": "intra_check-quiet"},
+        }
+        msg = trader_feed.format_session_result("intra_check", outer, 4.0)
+        assert msg is None, f"{status} must stay silent on the trader feed"
+
+
 def test_normal_intraday_ok_tick_remains_silent(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     msg = trader_feed.format_session_result(

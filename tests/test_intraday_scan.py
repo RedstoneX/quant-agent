@@ -99,7 +99,10 @@ def test_scan_is_inert_when_disabled():
     p = _intraday_pipeline(enabled=False)
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
-    assert result is None
+    # 2026-08-31 visibility fix: an explicit status, not a bare None — see
+    # tests/test_intraday_scan_crash_visibility.py for the full coverage of
+    # this and the other two "everyday, healthy, no new activity" statuses.
+    assert result == {"status": "intraday_scan_disabled", "run_id": ctx.run_id}
     p.broker.get_intraday_snapshots.assert_not_called()
 
 
@@ -191,7 +194,7 @@ def test_below_threshold_move_never_calls_tech_analyst(mock_compute_indicators):
     }
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
-    assert result is None
+    assert result == {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
     p.tech_analyst.analyze_batch.assert_not_called()
     p.decision_stage.run.assert_not_called()
 
@@ -204,15 +207,25 @@ def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators)
     the cooldown window must not be re-submitted to tech_analyst on the
     very next tick, even though it's still moved past threshold —
     otherwise a slow-developing move churns the same setup every 30 min."""
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     mock_compute_indicators.return_value = MagicMock()
-    recent_ts = datetime.now(timezone.utc).isoformat()
+    # Aged 30 min (not "now"): the fixture's `db.get_trades` mock backs BOTH
+    # `_another_session_recently_active`'s 15-min concurrency guard and
+    # `_recently_intraday_evaluated`'s legacy-fallback cooldown lookup — a
+    # "just now" timestamp would trip the concurrency guard FIRST and return
+    # "intraday_scan_lock_contended" without ever reaching the cooldown logic
+    # this test claims to isolate (2026-08-31 finding, surfaced only once the
+    # two outcomes got distinct statuses — same isolation pattern already
+    # used below by test_non_intra_check_trades_do_not_count_toward_cooldown).
+    # 30 min clears the 15-min concurrency window while staying well inside
+    # the 3h cooldown window under test.
+    aged_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     p = _intraday_pipeline(
         universe=["AAPL"], cooldown_hours=3.0,
         cooldown_rows=[{
             "symbol": "AAPL", "action": "HOLD", "run_id": "intra_check-abcd1234",
-            "timestamp": recent_ts, "reasoning": "prior intraday scan",
+            "timestamp": aged_ts, "reasoning": "prior intraday scan",
         }],
     )
     p.broker.get_intraday_snapshots.return_value = {
@@ -222,7 +235,7 @@ def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators)
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
 
-    assert result is None
+    assert result == {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
     p.tech_analyst.analyze_batch.assert_not_called()
 
 
@@ -439,7 +452,7 @@ def test_scan_skips_when_another_session_is_mid_flight(mock_compute_indicators):
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
 
-    assert result is None
+    assert result == {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
     p.broker.get_intraday_snapshots.assert_not_called()
     p.tech_analyst.analyze_batch.assert_not_called()
 
@@ -476,7 +489,9 @@ def test_concurrency_guard_fails_closed_on_query_error():
 
     ctx = RunContext.start("intra_check")
     assert p._another_session_recently_active(ctx.run_id) is True
-    assert p._run_intraday_opportunity_scan(ctx) is None
+    assert p._run_intraday_opportunity_scan(ctx) == {
+        "status": "intraday_scan_lock_contended", "run_id": ctx.run_id,
+    }
 
 
 def test_own_run_id_rows_do_not_trip_the_concurrency_guard():
@@ -523,7 +538,9 @@ def test_process_lock_excludes_a_second_concurrent_scan(mock_compute_indicators,
         with rival._intraday_scan_process_lock() as second:
             assert second is False
         # ...and the full scan entrypoint must therefore do nothing at all.
-        assert rival._run_intraday_opportunity_scan(ctx) is None
+        assert rival._run_intraday_opportunity_scan(ctx) == {
+            "status": "intraday_scan_lock_contended", "run_id": ctx.run_id,
+        }
         rival.broker.get_intraday_snapshots.assert_not_called()
         rival.tech_analyst.analyze_batch.assert_not_called()
 

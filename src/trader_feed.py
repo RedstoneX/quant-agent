@@ -29,6 +29,21 @@ _SWEEP_SYMBOLS = frozenset({"SGOV", "BIL"})
 _BASE_ONLY_STATUSES = frozenset(
     {"market_holiday", "early_close", "broker_error", "analysis_error", "fetch_error"}
 )
+# 2026-08-31 visibility fix (src/pipeline.py's `_run_intraday_opportunity_scan`
+# / `_intraday_opportunity_scan_body`): these three now attach an explicit
+# `result["intraday_scan"]["status"]` dict where a "never engaged a real
+# candidate" tick used to leave no `intraday_scan` key at all. They stay off
+# the Telegram feed on purpose — same as the old no-key ticks, per the
+# "ordinary ~30-minute OK ticks are silent" policy below — because nothing
+# about them needs an operator's attention: disabled-by-config and
+# lock-contention are routine scheduling noise, and "no opportunity" means
+# the scan ran and correctly found nothing. Only a real candidate engaged
+# (intraday_no_trades/intraday_executed) or a genuine problem (crashed/
+# suspended/analysis_error) is worth a message.
+_INTRADAY_SILENT_STATUSES = frozenset({
+    "intraday_scan_disabled", "intraday_scan_lock_contended",
+    "intraday_scan_no_opportunity",
+})
 
 
 def format_session_result(
@@ -53,6 +68,11 @@ def format_session_result(
         if mode == "intra_check":
             nested = result.get("intraday_scan")
             if isinstance(nested, dict):
+                nested_status = str(nested.get("status") or "")
+                if nested_status in _INTRADAY_SILENT_STATUSES:
+                    return _base_format_session_result(
+                        mode, result, elapsed_seconds, error=None,
+                    )
                 return _format_intraday(result, nested, elapsed_seconds)
             # Preserves the existing policy: ordinary ~30-minute OK ticks are silent.
             return _base_format_session_result(mode, result, elapsed_seconds, error=None)
