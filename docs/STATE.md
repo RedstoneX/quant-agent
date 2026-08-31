@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-27
+Updated: 2026-08-31
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 

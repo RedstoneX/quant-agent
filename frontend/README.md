@@ -10,8 +10,8 @@ Mission Control direction" / Workstream B) as a bounded, in-repo frontend replac
 Lightweight Charts (the original QAMC design direction, see the Stage 0
 donor inventory in Git history) rather than continuing the vanilla-JS
 prototype that preceded this build (preserved in Git history at commit
-`73c68bf`, and still visible under `docs/verification/stage-6/` as
-acceptance evidence — its information architecture carried over into
+`73c68bf`, with its Stage 6 acceptance evidence likewise preserved in
+Git history — its information architecture carried over into
 this rebuild, its vanilla-JS implementation did not).
 
 ## Deployment model — no new runtime dependency

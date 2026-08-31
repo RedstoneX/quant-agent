@@ -79,7 +79,8 @@ backend uses — see the module docstring and `_reconstruct_funnel`'s
 docstring in `branch_preview.py` for exactly what is reconstructed and
 from where. The decision funnel, directional bias, cash/liquidity
 breakdown, and position-direction panels now render real production data
-in this preview — see `docs/verification/stage-6e-preview-contract-fix/`.
+in this preview — recorded in the Stage 6e-preview-contract-fix
+acceptance pass, preserved in Git history.
 Reconstruction is self-obsoleting: once this branch merges and `qamc`
 production actually returns these fields/routes, the real upstream value
 passes straight through untouched.
@@ -89,11 +90,11 @@ which still shows an honest "could not load" state in this preview —
 real OHLCV bars require Alpaca market-data credentials this `dev`-account
 process deliberately does not have, so there is no real data to
 reconstruct from. The chart component's own correctness against real
-bars was already verified separately with seeded data — see
-`docs/verification/stage-6-react/` (and
-`docs/verification/stage-6b-deliberation-journal-bias/` /
-`docs/verification/stage-6c-directional-exposure-fix/` for the other
-panels' pre-existing seeded-data verification).
+bars was already verified separately with seeded data — recorded in
+the Stage 6-react acceptance pass (and Stage
+6b-deliberation-journal-bias / Stage 6c-directional-exposure-fix for
+the other panels' pre-existing seeded-data verification), all
+preserved in Git history.
 
 ## Safety boundaries (verified, not just asserted)
 

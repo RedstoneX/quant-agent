@@ -49,8 +49,8 @@ Stage 4–5 (specialist evidence, journal, forensic search) are externally
 accepted — full suite **1558 passed, 0 failed**. Per
 `.claude/rules/frontend-verification.md`, every cockpit UI acceptance pass
 must be browser/runtime verified and ships a representative screenshot
-set under `docs/verification/<stage>/`; see `docs/verification/stage-4-5/`
-for this tranche's evidence.
+set; this tranche's Stage 4-5 evidence was captured accordingly and is
+preserved in Git history.
 
 ## Stage 6 — liquidity breakdown, position direction, decision funnel
 

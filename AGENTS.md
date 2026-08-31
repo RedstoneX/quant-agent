@@ -80,9 +80,10 @@ Two tiers. Know which one you are reading before you trust it.
 2. `docs/STATE.md` — accepted current truth about the system.
 3. `docs/WORK.md` — active work, including the ordered backlog that a cold session resumes from.
 4. `docs/OUTCOME.md` — the product mandate and intended outcome.
-5. `docs/PROJECT_COMPASS.md` — human-facing compass. Human-only; agents do not rewrite it.
 
-No agent may add a sixth. Proposals to change any of these follow the ratification rule below.
+No agent may add a fifth. Proposals to change any of these follow the ratification rule below.
+
+*`docs/PROJECT_COMPASS.md` held a fifth slot here and was retired by the owner on 2026-08-31. It was human-only — agents could not correct it under this section — and it had drifted into contradicting `OUTCOME.md` about the project's core purpose: it still framed QAMC as a paper-only experiment asking whether cheap AI adds trading value, against `OUTCOME.md`'s owner-corrected mandate that QAMC is a systematic trading desk built to make money. It duplicated `OUTCOME.md`'s role rather than serving one `OUTCOME.md` couldn't. Do not recreate it.*
 
 **Tier 2 — reference documents. Subordinate, non-authoritative, consumable.**
 

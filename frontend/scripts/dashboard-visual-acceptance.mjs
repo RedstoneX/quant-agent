@@ -3,8 +3,11 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const baseUrl = process.env.QAMC_VISUAL_URL || "http://127.0.0.1:5173/cockpit/";
-const output = resolve(process.env.QAMC_VISUAL_OUTPUT || "../docs/verification/dashboard-finish-line");
-const researchOutput = resolve(process.env.QAMC_RESEARCH_VISUAL_OUTPUT || "../docs/verification/research-intelligence-desk");
+// The old docs/ point-in-time screenshot archive was retired; these
+// defaults now write to a local, gitignored (*.local) scratch
+// directory instead of resurrecting it.
+const output = resolve(process.env.QAMC_VISUAL_OUTPUT || "visual-acceptance.local/dashboard-finish-line");
+const researchOutput = resolve(process.env.QAMC_RESEARCH_VISUAL_OUTPUT || "visual-acceptance.local/research-intelligence-desk");
 await mkdir(output, { recursive: true });
 await mkdir(researchOutput, { recursive: true });
 
