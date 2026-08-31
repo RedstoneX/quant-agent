@@ -174,15 +174,23 @@ def test_every_timer_is_installable_and_scheduled(timer: Path):
 
 @pytest.mark.parametrize("service", SERVICES, ids=lambda p: p.name)
 def test_every_service_is_reachable(service: Path):
-    """A service is started either by its paired timer or by `[Install]`.
+    """A service is started by a paired activator unit or by `[Install]`.
     A service with neither is dead code that looks like infrastructure —
     which is worse than absent, because it reads as covered.
+
+    A `.path` unit activates its service exactly as a `.timer` does — it
+    watches a file instead of a clock. The status board is triggered that
+    way, so accepting only `.timer` here would fail a unit that is in fact
+    reachable.
     """
-    has_timer = (SYSTEMD_DIR / f"{service.stem}.timer").is_file()
+    activators = [
+        SYSTEMD_DIR / f"{service.stem}{ext}" for ext in (".timer", ".path")
+    ]
+    has_activator = any(a.is_file() for a in activators)
     declares_install = bool(parse_unit(service).get("Install.WantedBy"))
-    assert has_timer or declares_install, (
-        f"{service.name} has no paired timer and no [Install] WantedBy — "
-        f"nothing on the box would ever start it"
+    assert has_activator or declares_install, (
+        f"{service.name} has no paired .timer or .path activator and no "
+        f"[Install] WantedBy — nothing on the box would ever start it"
     )
 
 
