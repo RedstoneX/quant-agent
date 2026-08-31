@@ -108,7 +108,17 @@ function RunningProfitChart({
     const chart = createChart(el, {
       width: el.clientWidth || 720,
       height: 220,
-      layout: { background: { color: "transparent" }, textColor: rgb("--c-ink-dim"), fontSize: 11 },
+      layout: {
+        background: { color: "transparent" },
+        textColor: rgb("--c-ink-dim"),
+        fontSize: 11,
+        // The library's own logo is drawn INSIDE the plot at bottom-left,
+        // where it sat on top of the line at its origin — the first settled
+        // call, which is exactly the point a reader looks for. Turned off
+        // here and credited in the panel footer instead, which is what the
+        // option exists for.
+        attributionLogo: false,
+      },
       grid: {
         vertLines: { color: rgb("--c-border"), style: LineStyle.Dotted },
         horzLines: { color: rgb("--c-border"), style: LineStyle.Dotted },

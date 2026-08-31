@@ -145,6 +145,9 @@ function HowToRead({ dollarsPerCall }: { dollarsPerCall: number }) {
           </dd>
         </div>
       </dl>
+      <p className="m-0 mt-4 text-[length:var(--fs-micro)] text-faint">
+        Running-total charts drawn with lightweight-charts by TradingView.
+      </p>
     </section>
   );
 }
