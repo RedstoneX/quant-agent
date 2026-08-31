@@ -771,6 +771,22 @@ class PortfolioDecision(BaseModel):
     # `decisions` empty; the pipeline injects constructor output before
     # handing the object off to downstream stages.
     decisions: list[TradeDecision] = Field(default_factory=list)
+    #: Symbols the PM proposed that the deterministic constructor DROPPED
+    #: (reward:risk floor, no structural target, no valid stop, ...). Set by
+    #: the pipeline after `construct_orders`, never by the LLM.
+    #:
+    #: Exists because PM writes its `reasoning_chain` BEFORE the constructor
+    #: runs, and that narrative is rendered to the Risk Manager verbatim. When
+    #: the constructor silently removed a trade, the RM saw a story arguing for
+    #: symbols absent from the order list and — correctly, given what it was
+    #: shown — vetoed the WHOLE plan as incoherent. On 2026-08-31 that killed
+    #: two trades the RM had just called valid ("While COP and V are valid, the
+    #: plan as presented is not internally consistent"). Telling the RM what
+    #: was removed, and that removal was deterministic, is what makes the
+    #: remaining plan legible. Same reasoning as the constructor's existing
+    #: `cap_note` provenance, which solved this once already for allocation
+    #: caps (portfolio_constructor.py ~947).
+    constructor_dropped: list[str] = Field(default_factory=list)
     portfolio_view: str
 
 

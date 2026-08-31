@@ -517,3 +517,68 @@ def test_rm_prompt_omits_reward_risk_where_none_exists():
     )
     msg = _rm_message(portfolio_decision=decision)
     assert "R/R None" not in msg
+
+
+# ===========================================================================
+# The constructor must SAY what it removed, or the RM vetoes the survivors
+#
+# 2026-08-31, first forced session of the day. The constructor struck a BUY on
+# NVDA (reward:risk 1.42 against the 1.50 floor). PM's reasoning_chain, written
+# BEFORE the constructor ran, still argued for it. The RM saw a narrative about
+# a trade absent from the order list and rejected the ENTIRE plan:
+#
+#   "PM constructs a detailed narrative around a BUY NVDA trade that does not
+#    exist in the proposed orders. This undermines trust in the decision logic.
+#    While COP and V are valid, the plan as presented is not internally
+#    consistent and cannot be approved."
+#
+# Two trades it had just called valid died for a bookkeeping mismatch. The RM
+# was reasoning correctly from what it was shown; it was shown the wrong thing.
+# ===========================================================================
+
+def _pd_with(dropped, decisions=None):
+    from src.models import PortfolioDecision, ReasoningChain
+    return PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=decisions if decisions is not None else [_decision()],
+        constructor_dropped=dropped,
+        portfolio_view="constructive",
+    )
+
+
+def test_rm_is_told_which_symbols_the_constructor_removed():
+    msg = _rm_message(portfolio_decision=_pd_with(["NVDA", "VLO"]))
+    assert "Removed Before You Saw This" in msg
+    assert "NVDA" in msg and "VLO" in msg
+
+
+def test_rm_is_told_removal_was_deterministic_and_not_incoherence():
+    """The block must not merely list symbols — it must tell the RM that a
+    narrative mentioning them is EXPECTED, which is the part that stops the
+    full-plan veto."""
+    msg = _rm_message(portfolio_decision=_pd_with(["NVDA"]))
+    assert "EXPECTED" in msg
+    assert "do not veto the surviving trades" in msg
+
+
+def test_no_removal_block_when_the_constructor_dropped_nothing():
+    """A clean plan must not carry an empty scary heading."""
+    msg = _rm_message(portfolio_decision=_pd_with([]))
+    assert "Removed Before You Saw This" not in msg
+
+
+def test_constructor_dropped_defaults_empty_so_old_call_sites_are_unaffected():
+    from src.models import PortfolioDecision, ReasoningChain
+    pd = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="a", news_check="b", earnings_check="c",
+            signal_conflicts="d", sizing_logic="e", portfolio_balance="f",
+            cash_target="g",
+        ),
+        portfolio_view="x",
+    )
+    assert pd.constructor_dropped == []
