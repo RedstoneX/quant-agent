@@ -116,8 +116,19 @@ llm:
   # NOT a general promotion of this model: it scored 0.95 mean / 0.85 worst
   # across the full six-scenario sweep and is measured only at THIS seat.
   risk_manager_model: "qwen/qwen3-235b-a22b-2507"
-  position_reviewer_provider: "google"
-  position_reviewer_model: "gemini-3.5-flash-lite"
+  # HELD BACK from the 2026-08-31 Gemini-direct migration, deliberately.
+  # position_reviewer is a DECISION SEAT: docs/architecture/MODEL_ROUTING_POLICY.md
+  # requires a model measured AT THAT SEAT, enforced by
+  # tests/test_model_routing_policy.py::test_decision_seats_run_a_model_measured_at_that_seat.
+  # No benchmark exists for gemini-3.5-flash-lite at the midday_exit scenario,
+  # and none CAN be produced for the incumbent 2.5 as a comparison because
+  # Google refuses 2.5 to new keys. Migrating this seat would mean asserting
+  # quality that has not been measured, so it stays on the route where it has
+  # evidence until the benchmark is run and committed:
+  #   ops/model_policy/benchmark_models.py --scenario midday_exit --models gemini-3.5-flash-lite
+  # The other seven seats are NOT decision seats and moved as planned.
+  position_reviewer_provider: "openrouter"
+  position_reviewer_model: "google/gemini-2.5-flash-lite"
   evening_analyst_provider: "google"
   evening_analyst_model: "gemini-3.5-flash-lite"
   # Global fallback — any per-agent override below takes precedence.

@@ -197,6 +197,13 @@ _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
     # this replaces below) — expected of a paid BACKUP route behind a free
     # PRIMARY, not a pricing error.
     "google/gemini-3.5-flash-lite":    {"input": 0.300, "output":  2.500},
+    # Retained for the position_reviewer seat, which is held back from the
+    # Gemini-direct migration until it has a benchmark at its own scenario
+    # (see tests/test_model_routing_policy.py OPENROUTER_SEATS). Removing this
+    # row while a seat still routes to the model makes the call unpriceable,
+    # which reads to the cost circuit as unknown-cost and latches paid
+    # analysis — verified by test_every_routed_model_is_priceable_offline.
+    "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
     # risk_manager only — held apart from PM's model for decision-chain
     # independence at measured-equal quality. Note the input rate is BELOW
     # gemini's: independence here costs nothing.

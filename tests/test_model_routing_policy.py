@@ -42,10 +42,17 @@ DECISION_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
 # models and stayed on OpenRouter. GOOGLE_SEATS | OPENROUTER_SEATS == AGENTS.
 GOOGLE_SEATS = (
     "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
-    "smart_money_analyst", "position_reviewer", "evening_analyst",
-    "meta_reflector",
+    "smart_money_analyst", "evening_analyst", "meta_reflector",
 )
-OPENROUTER_SEATS = ("portfolio_manager", "risk_manager")
+# position_reviewer is HELD BACK from the Gemini-direct migration on purpose.
+# It is a DECISION SEAT, and the gate directly below
+# (test_decision_seats_run_a_model_measured_at_that_seat) requires a model
+# measured at that seat. No benchmark exists for gemini-3.5-flash-lite at the
+# midday_exit scenario, and one cannot be produced against the 2.5 incumbent
+# because Google refuses 2.5 to new keys. Moving it would mean asserting
+# unmeasured quality on a seat that decides whether to exit a live position,
+# so it stays on OpenRouter until the benchmark is run and committed.
+OPENROUTER_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
 
 # Which benchmark scenario measures each decision seat.
 SEAT_SCENARIO = {
