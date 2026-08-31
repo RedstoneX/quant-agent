@@ -68,33 +68,32 @@ def test_get_trades_today_only_uses_et_trading_day(db, monkeypatch):
     assert [t["symbol"] for t in trades] == ["LATE", "EARLY"]
 
 
-def test_upsert_position(db):
-    db.upsert_position(
-        symbol="SPY",
-        qty=10.0,
-        avg_entry=500.0,
-        current_price=510.0,
-        market_value=5100.0,
-        unrealized_pnl=100.0,
-        sector="ETF",
-    )
-    positions = db.get_positions()
-    assert len(positions) == 1
-    assert positions[0]["symbol"] == "SPY"
+def _seed_position(db, symbol, qty, avg_entry, current_price, market_value,
+                    unrealized_pnl, sector):
+    """Write one `positions` row directly via SQL.
 
-    # Update same symbol
-    db.upsert_position(
-        symbol="SPY",
-        qty=20.0,
-        avg_entry=505.0,
-        current_price=510.0,
-        market_value=10200.0,
-        unrealized_pnl=100.0,
-        sector="ETF",
+    Production never reads this table back (holdings come from the broker
+    exclusively) and only `sync_positions` still writes it, so the
+    `upsert_position`/`get_positions` read/write pair these tests used to
+    call was deleted as dead code. `sync_positions` itself is still real
+    and still tested below; these two helpers exist only so those tests can
+    seed/inspect the table without the deleted convenience methods.
+    """
+    db.execute(
+        """INSERT INTO positions (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(symbol) DO UPDATE SET
+             qty=excluded.qty, avg_entry=excluded.avg_entry,
+             current_price=excluded.current_price, market_value=excluded.market_value,
+             unrealized_pnl=excluded.unrealized_pnl, sector=excluded.sector,
+             updated_at=datetime('now')""",
+        (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector),
     )
-    positions = db.get_positions()
-    assert len(positions) == 1
-    assert positions[0]["qty"] == 20.0
+    db.conn.commit()
+
+
+def _read_positions(db):
+    return [dict(row) for row in db.execute("SELECT * FROM positions").fetchall()]
 
 
 def test_insert_agent_log(db):
@@ -178,21 +177,13 @@ def test_get_daily_pnl_before_date_excludes_current_day(db):
     assert pnl[0]["date"] == prev_day
 
 
-def test_get_open_positions(db):
-    db.upsert_position("SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
-    db.upsert_position("QQQ", 0.0, 400.0, 410.0, 0.0, 0.0, "ETF")
-    open_pos = db.get_positions(open_only=True)
-    assert len(open_pos) == 1
-    assert open_pos[0]["symbol"] == "SPY"
-
-
 def test_sync_positions_removes_closed_symbols(db):
     """sync_positions must drop rows for symbols no longer held."""
     from types import SimpleNamespace
 
-    db.upsert_position("SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
-    db.upsert_position("QQQ", 5.0, 400.0, 410.0, 2050.0, 50.0, "ETF")
-    assert len(db.get_positions()) == 2
+    _seed_position(db, "SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
+    _seed_position(db, "QQQ", 5.0, 400.0, 410.0, 2050.0, 50.0, "ETF")
+    assert len(_read_positions(db)) == 2
 
     # Broker now reports only SPY — QQQ should be purged.
     snapshot = [SimpleNamespace(
@@ -201,7 +192,7 @@ def test_sync_positions_removes_closed_symbols(db):
     )]
     db.sync_positions(snapshot)
 
-    remaining = db.get_positions()
+    remaining = _read_positions(db)
     assert len(remaining) == 1
     assert remaining[0]["symbol"] == "SPY"
     assert remaining[0]["qty"] == 12.0
@@ -210,9 +201,9 @@ def test_sync_positions_removes_closed_symbols(db):
 def test_sync_positions_empty_clears_table(db):
     from types import SimpleNamespace  # noqa: F401
 
-    db.upsert_position("SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
+    _seed_position(db, "SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
     db.sync_positions([])
-    assert db.get_positions() == []
+    assert _read_positions(db) == []
 
 
 def test_prune_trades_respects_ttl(db):

@@ -383,11 +383,3 @@ def cluster_news(
         rep = max(member_items, key=_representative_rank)
         out.append(NewsCluster(representative=rep, members=member_items))
     return out
-
-
-def deduplicate(
-    items: Iterable[object],
-    threshold: float = SIMILARITY_THRESHOLD,
-) -> list[NewsCluster]:
-    """Alias for :func:`cluster_news`, named for the caller's intent."""
-    return cluster_news(items, threshold=threshold)

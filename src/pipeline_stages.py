@@ -1317,7 +1317,6 @@ class MorningResearchStage:
             logger.error("News analyst failed: %s. Continuing without news.", e)
             data_status["news"] = "failed"
         ctx.news_intel = news_intel
-        ctx.news_coverage = news_coverage
 
         # Tech
         analyses: list[TechAnalysisResult] = []

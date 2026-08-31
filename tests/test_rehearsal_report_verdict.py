@@ -26,7 +26,278 @@ to avoid producing itself.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 from ops.rehearsal.report import RehearsalReport, STATUS_PLAIN, _verdict
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+# --------------------------------------------------------------------------
+# Derive, from source, every terminal status a SESSIONS-mapped session (plus
+# run_earnings_preprocess) can hand back as `report.status` -- see
+# test_every_known_pipeline_terminal_status_is_classified below for why this
+# exists instead of a hand-maintained list.
+#
+# A plain `ast.walk` over the whole of src/pipeline.py for every dict literal
+# keyed "status" was tried first and rejected: it also matches unrelated
+# "status" keys that are never a session's terminal status (an embedded
+# sub-report like `smart_money_refresh = {"status": "disabled"}`, or an
+# `agent_logs`-write kwargs dict) and it does not resolve indirection at all,
+# so it misses real statuses that are not literals at their `"status": ...`
+# site. Two kinds of indirection are structural, not incidental, so they are
+# bridged explicitly below rather than discovered generically:
+#
+#   1. A handful of statuses are decided by a ternary at the dict-literal
+#      site itself, e.g. `"status": "reviewed" if ... else
+#      "position_review_parse_error"` (run_position_review) or the doubly
+#      nested one in run_evening ("analyzed" / "evening_analysis_error" /
+#      "evening_parse_error"). `_status_literals` below walks into both
+#      branches of an `ast.IfExp`, recursively.
+#
+#   2. A few statuses are constructed in a *different* function/method than
+#      the one that returns them to the caller -- the value flows back as a
+#      bare `return NAME`, where NAME's dict literal lives elsewhere. Found
+#      by walking each scanned function for `return NAME` where NAME was
+#      last assigned from a *call* rather than a dict literal (see the
+#      `_BRIDGES` list below for exactly which four calls these are and
+#      where each one's real dict literal lives). This is the case the
+#      previous hand-list's docstring cited for `pm_agent_failure` and the
+#      four `pm_*` statuses (three call frames into
+#      src/agents/portfolio_manager.py's `_semantic_failure`) -- true, and
+#      handled below -- but the *same* shape also applies to
+#      `hard_risk_block` / `agent_failure` / `rejected` / `symbol_block`
+#      (RiskStage.run, a different file: src/pipeline_stages.py),
+#      `emergency_sold` (`_check_late_breach_and_emergency_liquidate`) and
+#      `paid_analysis_suspended` (`_paid_suspended_payload`) -- both in
+#      pipeline.py but in a shared helper, not at the `return` site.
+#
+# run_intra_check has its own nested-indirection wrinkle: the opportunity
+# scan's outcome is assigned to a local (`scan_result`) that is never itself
+# `return`-ed -- it is embedded as `result["intraday_scan"] = scan_result`
+# and *that* dict is returned. This mirrors exactly how
+# ops/rehearsal/report.py's own `collect()` reads it back (`result.get(
+# "intraday_scan")`), so `_names_of_interest` below extends "returned names"
+# to include the right-hand side of that one specific subscript assignment.
+#
+# What this does NOT attempt: a fully generic call graph (following an
+# arbitrary `self.foo(...)` to `foo`'s body, anywhere, unbounded). The four
+# bridges below were found by inspecting every `return NAME` in the scanned
+# functions whose NAME traces to a call rather than a literal (this file's
+# derivation script prints them; none were left unresolved as of 2026-08-31).
+# A fully generic resolver would also have to disambiguate same-named
+# methods on unrelated classes (pipeline_stages.py alone defines four
+# different `run` methods) -- attempting that generically risked silently
+# resolving to the *wrong* one, which would be a worse failure mode than the
+# hand list this replaces. If a future refactor adds a fifth bridge, this
+# derivation raises AssertionError (a bare `return NAME` this file's helpers
+# do not know how to resolve is *not* silently skipped -- see
+# `_assert_no_unresolved_bridges` below), rather than silently under-counting.
+def _str_const(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _all_str_consts(node: ast.AST) -> set[str]:
+    """Every string literal `node` could evaluate to, including through a
+    (possibly nested) ternary -- several real statuses are written as
+    `"a" if cond else "b"` at their dict-literal site."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        return _all_str_consts(node.body) | _all_str_consts(node.orelse)
+    return set()
+
+
+def _dict_status_values(node: ast.Dict) -> set[str]:
+    found: set[str] = set()
+    for key, value in zip(node.keys, node.values):
+        if _str_const(key) == "status":
+            found |= _all_str_consts(value)
+    return found
+
+
+def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef:
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    raise AssertionError(
+        f"{name!r} not found -- it moved or was renamed; update the function "
+        "name in this test's derivation"
+    )
+
+
+def _find_method(tree: ast.Module, class_name: str, method_name: str) -> ast.FunctionDef:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for item in node.body:
+                if (isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item.name == method_name):
+                    return item
+    raise AssertionError(
+        f"{class_name}.{method_name} not found -- it moved or was renamed; "
+        "update this test's derivation"
+    )
+
+
+def _returned_names(func: ast.FunctionDef) -> set[str]:
+    """Names X such that a bare `return X` appears in this function."""
+    return {
+        node.value.id for node in ast.walk(func)
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
+    }
+
+
+def _names_of_interest(func: ast.FunctionDef) -> set[str]:
+    interesting = _returned_names(func)
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                    and target.value.id in interesting
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value == "intraday_scan"
+                    and isinstance(node.value, ast.Name)):
+                interesting.add(node.value.id)
+    return interesting
+
+
+def _unresolved_bridges(func: ast.FunctionDef, known_bridge_calls: set[str]) -> list[str]:
+    """`return NAME` where NAME's assigned value is a call this derivation
+    does not already have an explicit bridge for."""
+    interesting = _names_of_interest(func)
+    unresolved = []
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in interesting:
+                    call_fn = node.value.func
+                    label = (
+                        call_fn.attr if isinstance(call_fn, ast.Attribute)
+                        else getattr(call_fn, "id", "?")
+                    )
+                    if label not in known_bridge_calls:
+                        unresolved.append(f"{target.id} = {label}(...) @ line {node.lineno}")
+    return unresolved
+
+
+def _status_literals(func: ast.FunctionDef) -> set[str]:
+    interesting = _names_of_interest(func)
+    found: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            found |= _dict_status_values(node.value)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Dict):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id in interesting:
+                    found |= _dict_status_values(node.value)
+        # The `ctx.analysis_failure_status or "pm_agent_failure"` fallback
+        # (src/pipeline.py) -- a literal, but not inside a dict at all: it
+        # is the right-hand side of an `or` whose left-hand side reads
+        # AgentResult.semantic_status by way of ctx.analysis_failure_status.
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            if any(isinstance(v, ast.Attribute) and v.attr == "analysis_failure_status"
+                   for v in node.values):
+                for v in node.values:
+                    s = _str_const(v)
+                    if s is not None:
+                        found.add(s)
+    return found
+
+
+# The functions/methods this derivation scans directly -- every SESSIONS-
+# mapped session entry point, plus run_earnings_preprocess (a real session
+# not yet wired into runner.SESSIONS, kept in scope for the same reason the
+# old hand list kept it: STATUS_PLAIN is already correct for it and should
+# stay that way).
+_PIPELINE_SESSION_FUNCTIONS = (
+    "run_morning", "run_position_review", "run_intra_check",
+    "_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body",
+    "run_evening", "run_earnings_preprocess",
+)
+
+# Explicit indirection bridges: (source file, lookup, resolved status set).
+# See the derivation's module comment above for why each of these needed a
+# named bridge rather than falling out of a generic walk.
+_BRIDGE_FUNCTION_NAMES = {
+    "_check_late_breach_and_emergency_liquidate", "_risk_stage", "run",
+    "_paid_suspended_payload",
+}
+
+
+def _derive_known_pipeline_statuses() -> set[str]:
+    pipeline_tree = ast.parse((REPO_ROOT / "src" / "pipeline.py").read_text())
+    stages_tree = ast.parse((REPO_ROOT / "src" / "pipeline_stages.py").read_text())
+    pm_tree = ast.parse((REPO_ROOT / "src" / "agents" / "portfolio_manager.py").read_text())
+
+    # A call to another _PIPELINE_SESSION_FUNCTIONS entry (e.g.
+    # run_intra_check calling _run_intraday_opportunity_scan) is not an
+    # unresolved bridge — its statuses are already picked up because that
+    # function is *also* scanned directly, below.
+    known_calls = _BRIDGE_FUNCTION_NAMES | set(_PIPELINE_SESSION_FUNCTIONS)
+
+    statuses: set[str] = set()
+    unresolved: list[str] = []
+    for fn_name in _PIPELINE_SESSION_FUNCTIONS:
+        func = _find_function(pipeline_tree, fn_name)
+        statuses |= _status_literals(func)
+        unresolved += [
+            f"{fn_name}: {u}"
+            for u in _unresolved_bridges(func, known_calls)
+        ]
+    assert not unresolved, (
+        "this derivation found a return of a name sourced from a call it "
+        f"has no bridge for: {unresolved} -- either it is a new terminal "
+        "status hiding behind an unresolved indirection (add a bridge "
+        "below) or it is unrelated to session status (narrow "
+        "_unresolved_bridges' caller instead)"
+    )
+
+    # Bridge 1: the PM's semantic failure statuses -- set on
+    # AgentResult.semantic_status three call frames from run_morning, by
+    # src/agents/portfolio_manager.py's `_semantic_failure(result, status,
+    # error)`. All 11 call sites pass a literal as the status argument.
+    for node in ast.walk(pm_tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_semantic_failure" and len(node.args) >= 2):
+            s = _str_const(node.args[1])
+            if s is not None:
+                statuses.add(s)
+
+    # Bridge 2: RiskStage.run (src/pipeline_stages.py) -- run_morning's and
+    # the intraday scan's own risk stage both `return early_exit` straight
+    # from this method's result.
+    statuses |= _status_literals(_find_method(stages_tree, "RiskStage", "run"))
+
+    # Bridge 3 & 4: shared helpers inside pipeline.py itself, called (and
+    # bare-returned) from several session functions.
+    statuses |= _status_literals(
+        _find_function(pipeline_tree, "_check_late_breach_and_emergency_liquidate")
+    )
+    statuses |= _status_literals(_find_function(pipeline_tree, "_paid_suspended_payload"))
+
+    return statuses
+
+
+# STATUS_PLAIN entries this derivation has confirmed are genuinely missing,
+# tracked here rather than silently causing this test to fail on a defect
+# outside this change's scope: `intraday_analysis_error`
+# (src/pipeline.py:9713, present since 2026-08-25, well before this test's
+# fix) is a real, reachable run_intra_check terminal status -- the portfolio
+# manager failing during the intraday opportunity scan -- with no
+# STATUS_PLAIN entry, so it would print the generic "ended with status "
+# fallback instead of a plain explanation. Found by this derivation, not by
+# the hand list it replaces. NOT fixed here: STATUS_PLAIN's intraday-scan
+# entries are being extended on a separate, concurrent branch. Once that
+# lands, this set must go back to empty -- `test_status_plain_gaps_are_
+# tracked_accurately` below fails loudly if an entry here is stale (already
+# covered) or if a *new*, untracked gap appears.
+_KNOWN_STATUS_PLAIN_GAPS = {
+    "intraday_analysis_error",
+}
 
 
 def _report(status: str) -> RehearsalReport:
@@ -104,67 +375,54 @@ def test_every_known_pipeline_terminal_status_is_classified():
     instead of the generic "The session ended with status 'X'." fallback in
     RehearsalReport.render().
 
-    Discovering these dynamically (walking src/pipeline.py's AST for every
-    dict literal keyed "status") was tried and rejected: several real
-    statuses are not string literals at their return site at all.
-    run_morning returns `{"status": failure_status, ...}` where
-    `failure_status = ctx.analysis_failure_status or "pm_agent_failure"`
-    (src/pipeline.py:7322) — the four "pm_*" values it can hold are set on
-    `AgentResult.semantic_status` three call frames away, inside
-    `src/agents/portfolio_manager.py`'s `_semantic_failure`. A naive
-    literal-string AST walk over src/pipeline.py alone would silently miss
-    exactly the kind of drift this test exists to catch, which would defeat
-    the point of having it. So: a hardcoded list below, built from a manual,
-    line-by-line read of every `run_*` session function in src/pipeline.py
-    on 2026-08-29 (see the file:line citations in this file's STATUS_PLAIN
-    comments). MUST be updated by hand whenever pipeline.py adds, renames or
-    removes a terminal status.
+    `known_statuses` used to be a hardcoded set built from a one-time manual
+    read of pipeline.py — which meant this test only ever checked that the
+    hand list agreed with itself, never that the hand list was actually
+    complete. Proof it wasn't: this file's own companion tests
+    (`test_intraday_no_trades_and_intraday_executed_are_not_failures` and the
+    two `test_nested_intraday_*_is_treated_as_healthy` tests above) already
+    exercised `intraday_no_trades` and `intraday_executed` as real,
+    already-classified run_intra_check outcomes, while the old
+    `known_statuses` below `# run_intra_check` listed only `"ok"`. The
+    assertion still passed, because nothing ever checked the list against
+    pipeline.py itself.
+
+    `known_statuses` is now derived from src/pipeline.py (plus the two other
+    files real statuses hide behind — see the module-level derivation
+    helpers and their comments above, `_derive_known_pipeline_statuses` in
+    particular) instead of hand-maintained, so a newly added pipeline status
+    cannot silently escape this guard the way `intraday_no_trades` /
+    `intraday_executed` did.
     """
     from ops.rehearsal import runner
 
-    # If runner.SESSIONS ever grows beyond these five, the list below needs
-    # a matching audit before this test can be trusted again.
+    # If runner.SESSIONS ever grows beyond these five, _PIPELINE_SESSION_
+    # FUNCTIONS above needs a matching audit before this test can be trusted
+    # again.
     unexpected_sessions = set(runner.SESSIONS) - {
         "morning", "midday", "close", "evening", "intra_check",
     }
     assert not unexpected_sessions, (
-        f"runner.SESSIONS grew {sorted(unexpected_sessions)} — audit its "
-        "terminal statuses in src/pipeline.py and extend known_statuses "
-        "in this test before trusting it again"
+        f"runner.SESSIONS grew {sorted(unexpected_sessions)} — audit "
+        "_PIPELINE_SESSION_FUNCTIONS above against src/pipeline.py before "
+        "trusting this test again"
     )
 
-    # Every terminal status actually reachable as `report.status` today
-    # (the top-level "status" key of a SESSIONS-mapped run_* function's
-    # return value, or the nested status from result["intraday_scan"]["status"]
-    # for intra_check sessions — this is exactly what ops/rehearsal/report.py's
-    # `collect()` reads), plus run_earnings_preprocess's (a real, scheduled,
-    # LLM-calling session with the same shape as the five supported modes,
-    # not yet wired into runner.SESSIONS — see the STATUS_PLAIN comment
-    # above "fetch_error"). Deliberately excludes run_quarterly_meta_
-    # reflection and run_daily (neither is a trading session: run_daily is
-    # a CSV export with no LLM calls and isn't in SESSIONS either).
-    known_statuses = {
-        # run_morning (src/pipeline.py:7094-7441)
-        "market_holiday", "broker_error", "emergency_sold",
-        "paid_analysis_suspended", "no_data", "pm_agent_failure",
-        "pm_parse_error", "pm_schema_error", "pm_grounding_error",
-        "pm_repair_changed_decision", "no_trades", "symbol_block",
-        "hard_risk_block", "agent_failure", "rejected", "buys_unfunded",
-        "no_orders", "executed",
-        # run_midday / run_close -> run_position_review (7757-8228)
-        "early_close", "reviewed", "position_review_parse_error",
-        # run_intra_check (8402-8594)
-        "ok",
-        # run_evening (9142-9641)
-        "analyzed", "evening_analysis_error", "evening_parse_error",
-        # run_earnings_preprocess (8229-8401) — not yet in runner.SESSIONS
-        "fetch_error", "nothing_new", "analysis_error", "preprocessed",
-    }
-    missing = sorted(s for s in known_statuses if s not in STATUS_PLAIN)
-    assert not missing, (
-        f"{missing} would print as a raw, unexplained status to the "
+    known_statuses = _derive_known_pipeline_statuses()
+    missing = {s for s in known_statuses if s not in STATUS_PLAIN}
+
+    # Pre-existing STATUS_PLAIN gaps this derivation confirmed are real but
+    # out of scope for this change (see _KNOWN_STATUS_PLAIN_GAPS above).
+    untracked_gaps = sorted(missing - _KNOWN_STATUS_PLAIN_GAPS)
+    assert not untracked_gaps, (
+        f"{untracked_gaps} would print as a raw, unexplained status to the "
         "account owner — add a STATUS_PLAIN entry (and, if it is a "
         "healthy completion, add it to _verdict's `healthy` set)"
+    )
+    stale_tracked_gaps = sorted(_KNOWN_STATUS_PLAIN_GAPS - missing)
+    assert not stale_tracked_gaps, (
+        f"{stale_tracked_gaps} now have STATUS_PLAIN entries — remove them "
+        "from _KNOWN_STATUS_PLAIN_GAPS above, they are no longer a gap"
     )
 
 

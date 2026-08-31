@@ -30,7 +30,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.models import (
-    NewsAnalysisResult, PortfolioDecision, RiskVerdict, TargetPosition,
+    PortfolioDecision, RiskVerdict, TargetPosition,
     TechAnalysisResult,
 )
 from src.pipeline import TradingPipeline
@@ -156,10 +156,10 @@ def _wire_happy_path(mocks, tmp_path, cfg):
     mock_maa_cls.return_value = mock_maa
 
     mock_na = MagicMock()
-    mock_na.analyze.return_value = (NewsAnalysisResult(
-        market_sentiment="bullish", confidence="medium", key_events=[],
-        sector_impacts=[], symbol_alerts=[], summary="Bullish news",
-    ), _mock_agent_result())
+    # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
+    # AgentResult]; None is a real, typed outcome, not a stand-in for a
+    # type nothing produces (mirrors tests/test_pipeline.py's fixtures).
+    mock_na.analyze.return_value = (None, _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage

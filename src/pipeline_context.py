@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from src.data.event_calendar import EventCalendarCoverage
     from src.data.macro import MacroCoverage
-    from src.data.news import NewsCoverage
     from src.models import NewsIntelligenceReport, PortfolioDecision, Position
     from src.risk.metrics import PortfolioHeat
 
@@ -78,11 +77,11 @@ class RunContext:
     macro_summary: dict = field(default_factory=dict)
     macro_analysis: dict | None = None  # Macro Analyst's LLM output (model_dump)
     # How many of the configured FRED series actually returned data this run
-    # (src.data.macro.MacroCoverage) — Phase 4.2 fix, mirroring news_coverage
-    # below exactly. Kept alongside macro_summary rather than folded into
-    # data_status because it carries the per-series detail (which series,
-    # why) that a single status word can't; data_status["macro"] is the
-    # summary, this is the evidence behind it.
+    # (src.data.macro.MacroCoverage) — Phase 4.2 fix. Kept alongside
+    # macro_summary rather than folded into data_status because it carries
+    # the per-series detail (which series, why) that a single status word
+    # can't; data_status["macro"] is the summary, this is the evidence
+    # behind it.
     macro_coverage: "MacroCoverage | None" = None
     # Scheduled macro releases landing inside this run's event horizon, and how
     # much of the configured release set actually returned a schedule
@@ -96,12 +95,6 @@ class RunContext:
     macro_events: list = field(default_factory=list)  # list[MacroEvent]
     macro_event_coverage: "EventCalendarCoverage | None" = None
     news_intel: "NewsIntelligenceReport | None" = None
-    # How many of the configured news wire feeds actually returned data this
-    # run (src.data.news.NewsCoverage) — 2026-08-28 fix. Kept alongside
-    # news_intel rather than folded into data_status because it carries the
-    # per-feed detail (which feed, why) that a single status word can't;
-    # data_status["news"] is the summary, this is the evidence behind it.
-    news_coverage: "NewsCoverage | None" = None
     analyses: list = field(default_factory=list)  # list[TechAnalysisResult]
     earnings_results: list[dict] = field(default_factory=list)
     smart_money_observations: list = field(default_factory=list)

@@ -722,15 +722,6 @@ def _resolve_openrouter_model_status(
     return None, False
 
 
-def _resolve_openrouter_model(model: str) -> dict[str, float] | None:
-    """Price a `vendor/model` id from OpenRouter's catalog.
-
-    Reached only for ids NOT in `_PRICING_OPENROUTER` — i.e. a model an
-    operator has configured but the accepted policy has not adopted.
-    """
-    return _resolve_openrouter_model_status(model)[0]
-
-
 def _resolve_unknown_model(model: str) -> dict[str, float] | None:
     """First-use pricing lookup for a model not already in PRICING.
 

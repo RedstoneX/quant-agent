@@ -1819,22 +1819,6 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def upsert_position(self, symbol: str, qty: float, avg_entry: float,
-                        current_price: float, market_value: float,
-                        unrealized_pnl: float, sector: str):
-        with self._lock:
-            self.conn.execute(
-                """INSERT INTO positions (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                   ON CONFLICT(symbol) DO UPDATE SET
-                     qty=excluded.qty, avg_entry=excluded.avg_entry,
-                     current_price=excluded.current_price, market_value=excluded.market_value,
-                     unrealized_pnl=excluded.unrealized_pnl, sector=excluded.sector,
-                     updated_at=datetime('now')""",
-                (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector),
-            )
-            self.conn.commit()
-
     def sync_positions(self, positions) -> None:
         """Replace positions table with a fresh broker snapshot.
 
@@ -1875,19 +1859,6 @@ class Database:
             except Exception:
                 self.conn.rollback()
                 raise
-
-    def get_positions(self, open_only: bool = False) -> list[dict]:
-        with self._lock:
-            if open_only:
-                # qty != 0, not qty > 0: a short carries a negative qty
-                # (Alpaca convention) and is an OPEN position. `qty > 0` hid
-                # every short from the operator's open-position view.
-                rows = self.conn.execute(
-                    "SELECT * FROM positions WHERE qty != 0"
-                ).fetchall()
-            else:
-                rows = self.conn.execute("SELECT * FROM positions").fetchall()
-        return [dict(row) for row in rows]
 
     def insert_agent_log(self, agent_name: str, run_id: str, input_summary: str,
                          output_summary: str, full_response: str, model: str,
