@@ -10,8 +10,9 @@ How it gets real data: every JSON API request (anything other than /ui/*
 or /cockpit/*) is proxied read-only, GET-only, to the already-running
 `qamc` production Mission Control API on 127.0.0.1:8800 (reachable over
 loopback regardless of account boundary — that is how this repo's own
-frontend-verification tooling already reads live data; see
-docs/verification/stage-6-react/README.md). This process never reads
+frontend-verification tooling already reads live data, as recorded in
+the Stage 6-react acceptance pass, preserved in Git history). This
+process never reads
 `qamc`'s SQLite database or credentials directly (it has no filesystem
 permission to — the `dev`/`qamc` account boundary is unaffected), never
 writes anything, and never starts, stops, or restarts any `qamc` service.

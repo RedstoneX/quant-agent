@@ -108,15 +108,11 @@ Long-lived, unlike Tier 2 — they are maintained rather than consumed, and **mu
 
 Outward-facing files following normal open-source convention. `README.md` describes the system to a newcomer; where it disagrees with `STATE.md`, `STATE.md` wins and the README is stale.
 
-**Acceptance evidence — `docs/verification/*`. Durable, point-in-time, never edited after the fact.**
-
-Screenshots and short write-ups recording that a rendered inspection actually happened, at the moment it happened — the proof the "Execution discipline" rule above requires when it says UI/frontend acceptance needs rendered desktop and iPad inspection, tests and builds alone being insufficient. Unlike Tier 2, it is not consumed or deleted once acted on: it is not a finding or a plan, so there is nothing to implement out from under it. Unlike Tier 3, it does not describe how a subsystem works and is never updated after it is written — it describes a moment, not a mechanism, so a later acceptance pass adds a new file rather than editing an old one.
-
 ---
 
 Status, current truth, and active work always live in Tier 1. If you are about to create a document to hold any of those, you are making a mistake.
 
-**Every documentation file in this repository belongs to exactly one of the six categories above.** If you cannot place a file, that is the signal not to create it.
+**Every documentation file in this repository belongs to exactly one of the five categories above.** If you cannot place a file, that is the signal not to create it.
 
 ## Governance ratification
 
