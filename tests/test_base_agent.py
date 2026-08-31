@@ -761,11 +761,16 @@ def test_openai_no_ca_bundle_uses_default_trust(monkeypatch):
 
 # === streamed OpenAI path + relay hardening (CF-524 / 429 storms / degenerate 200s) ===
 
-def _stream_chunk(piece=None, finish_reason=None, usage=None, chunk_id=None):
+def _stream_chunk(piece=None, finish_reason=None, usage=None, error=None, chunk_id=None):
     """One streamed chunk. A usage-only chunk (include_usage's final extra
     chunk) carries an empty choices list."""
     chunk = MagicMock()
     chunk.usage = usage  # explicit None — MagicMock auto-attrs would count as usage
+    # Same hazard for the mid-stream error field: an auto-attr MagicMock is
+    # truthy and would read as "the provider errored" on every healthy chunk.
+    # A real SDK chunk has no `error` attribute at all on the happy path.
+    chunk.error = error
+    chunk.model_extra = {}
     # Same hazard again for `id`: an auto-attr MagicMock is truthy but not a
     # str, so _call_openai's isinstance guard would ignore it anyway — but
     # setting it explicitly (default None) keeps every existing test's
@@ -1475,3 +1480,83 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
     statuses = [getattr(e, "status_code", None) for e in seen["attempts"]]
     assert 401 in statuses, "the failover's 401 must reach the circuit"
     assert statuses.count(429) == 2, "and both primary refusals"
+
+
+# ===========================================================================
+# Mid-stream provider errors must keep their status code
+#
+# OpenRouter cannot change the HTTP status once the first byte is written, so
+# a rate limit that lands mid-stream arrives as an SSE chunk carrying a
+# top-level `error` object (code/message/metadata.error_type) plus
+# finish_reason "error", on an HTTP 200.
+#
+# Before this, such a chunk fell through to the empty-content guard and raised
+# LLMEmptyResponseError, which carries NO status_code. The cost circuit's
+# zero-cost classifier keys on status_code, found none, failed closed, and
+# charged the full pre-call reservation for a call the provider refused and
+# never billed. On 2026-08-31 that consumed $1.92 of a $2.75 daily cap and
+# shut the desk down. Adding 429 to the allow-list did not help, because the
+# status never reached the classifier.
+# ===========================================================================
+
+def _mid_stream_error(code=429, error_type="rate_limit_exceeded", message="rate-limited upstream"):
+    oai = MagicMock()
+    oai.chat.completions.create.return_value = [
+        _stream_chunk(piece='{"partial"'),
+        _stream_chunk(error={"code": code, "message": message,
+                             "metadata": {"error_type": error_type}},
+                      finish_reason="error"),
+    ]
+    return oai
+
+
+def test_mid_stream_error_surfaces_the_providers_status_code():
+    from src.agents.base import LLMStreamErrorChunk
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _mid_stream_error()
+        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
+        with pytest.raises(LLMStreamErrorChunk) as exc:
+            agent._call_openai("x")
+    assert exc.value.status_code == 429
+    assert exc.value.error_type == "rate_limit_exceeded"
+
+
+def test_mid_stream_rate_limit_is_classified_provably_free():
+    """The whole point: a 429 the provider refused before billing must reach
+    the cost circuit AS a 429, so it settles at $0 instead of the full
+    reservation."""
+    from src.agents.base import LLMStreamErrorChunk
+    from src.cost_circuit import _is_known_zero_cost_failure
+    assert _is_known_zero_cost_failure(
+        LLMStreamErrorChunk("rate limited", status_code=429,
+                            error_type="rate_limit_exceeded")
+    ) is True
+
+
+def test_mid_stream_error_without_a_code_stays_ambiguous():
+    """Fail-closed is preserved. This change does not widen what counts as
+    free — it only stops discarding a status the provider did send."""
+    from src.agents.base import LLMStreamErrorChunk
+    from src.cost_circuit import _is_known_zero_cost_failure
+    assert _is_known_zero_cost_failure(
+        LLMStreamErrorChunk("something odd", status_code=None)
+    ) is False
+
+
+def test_mid_stream_429_retries_but_400_fast_fails():
+    """LLMStreamErrorChunk is deliberately NOT in _RETRYABLE_EXC_NAMES, which
+    is checked before status_code — so it is judged on the provider's own
+    code rather than blanket-retried."""
+    from src.agents.base import LLMStreamErrorChunk, _is_retryable
+    assert _is_retryable(LLMStreamErrorChunk("rl", status_code=429)) is True
+    assert _is_retryable(LLMStreamErrorChunk("bad", status_code=400)) is False
+    assert _is_retryable(LLMStreamErrorChunk("upstream", status_code=502)) is True
+
+
+def test_healthy_stream_is_unaffected_by_the_error_check():
+    """A normal chunk has no error field; the check must not fire on it."""
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
+        result = agent.run(data="x")
+    assert result.raw_text == '{"result": "ok"}'

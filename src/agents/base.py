@@ -290,6 +290,42 @@ class LLMStreamInterruptedError(RuntimeError):
     Retryable."""
 
 
+class LLMStreamErrorChunk(RuntimeError):
+    """OpenRouter reported a provider error INSIDE an already-started stream.
+
+    Once the first byte is written the HTTP status is committed as 200 and
+    cannot be changed, so OpenRouter documents a mid-stream error as an SSE
+    chunk carrying a top-level `error` object plus
+    `choices[0].finish_reason == "error"`:
+
+        error: {code: 429, message: ..., metadata: {error_type: "rate_limit_exceeded"}}
+
+    WHY THIS CLASS EXISTS. Before it, such a chunk produced an empty body with
+    a non-truncation finish_reason, so `_call_openai` raised a generic
+    `LLMEmptyResponseError` — which carries NO `status_code`. The cost
+    circuit's `_is_known_zero_cost_failure` keys on `status_code`, finds none,
+    fails closed, and charges the call its FULL pre-call reservation. A
+    provider refusal that billed nothing was therefore booked as real spend:
+    on 2026-08-31 that consumed $1.92 of a $2.75 daily cap and shut the desk
+    down. Adding 429 to the zero-cost allow-list did not help, because the
+    status never reached the classifier in the first place.
+
+    This preserves the fail-closed rule exactly — it does not widen what
+    counts as free. It stops DISCARDING the status code OpenRouter already
+    sends, so an error the provider explicitly labels 429 is judged as the 429
+    it is.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None,
+                 error_type: str | None = None):
+        super().__init__(message)
+        #: Read by `_is_retryable` and by the cost circuit's zero-cost
+        #: classifier, exactly as a provider SDK exception's own status is.
+        self.status_code = status_code
+        #: OpenRouter's stable typed code (e.g. "rate_limit_exceeded").
+        self.error_type = error_type
+
+
 def _max_retries() -> int:
     """Read at call time so tests can monkeypatch the env var per case
     without reloading the module."""
@@ -420,6 +456,12 @@ _RETRYABLE_EXC_NAMES = frozenset({
     # here so they stay retryable even if the unknown-exception fallback in
     # _is_retryable is ever tightened.
     "LLMEmptyResponseError", "LLMStreamInterruptedError",
+    # LLMStreamErrorChunk is DELIBERATELY absent. This set is checked BEFORE
+    # status_code below, so listing it would make a mid-stream 400/401 retry
+    # for the full backoff budget. It carries the provider's own status, so
+    # the status_code branch classifies it correctly: 429 and 5xx retry, other
+    # 4xx fast-fail to the failover — which is the whole point of surfacing
+    # that code instead of discarding it.
 })
 
 
@@ -1379,6 +1421,44 @@ class BaseAgent(ABC):
                 chunk_id = getattr(chunk, "id", None)
                 if isinstance(chunk_id, str) and chunk_id:
                     generation_id = chunk_id
+                # A mid-stream provider error. OpenRouter cannot change the
+                # HTTP status once the first byte is out, so it reports the
+                # failure as a top-level `error` object on a chunk (with
+                # finish_reason "error"). Checked BEFORE content/usage: this
+                # chunk carries no usable output, and letting it fall through
+                # produced an empty body whose exception had no status_code —
+                # which the cost circuit then charged in full. See
+                # LLMStreamErrorChunk. Read defensively via model_extra too,
+                # since the OpenAI SDK models the field as an extra.
+                chunk_error = getattr(chunk, "error", None)
+                if chunk_error is None:
+                    extra = getattr(chunk, "model_extra", None) or {}
+                    chunk_error = extra.get("error") if isinstance(extra, dict) else None
+                if chunk_error:
+                    if isinstance(chunk_error, dict):
+                        code = chunk_error.get("code")
+                        message = chunk_error.get("message") or ""
+                        meta = chunk_error.get("metadata") or {}
+                        etype = meta.get("error_type") if isinstance(meta, dict) else None
+                    else:
+                        code = getattr(chunk_error, "code", None)
+                        message = getattr(chunk_error, "message", "") or ""
+                        meta = getattr(chunk_error, "metadata", None)
+                        etype = getattr(meta, "error_type", None) if meta else None
+                    # `code` is documented as the HTTP status the response
+                    # would have carried had the headers not already gone.
+                    status = code if isinstance(code, int) and not isinstance(code, bool) else None
+                    logger.warning(
+                        "Agent %s: provider error INSIDE the stream "
+                        "(code=%s type=%s): %s — surfacing with its status so "
+                        "the cost circuit can judge whether it billed.",
+                        self.name, status, etype, message,
+                    )
+                    raise LLMStreamErrorChunk(
+                        f"provider error mid-stream (code={status}, "
+                        f"type={etype}): {message}",
+                        status_code=status, error_type=etype,
+                    )
                 # include_usage delivers usage on a final extra chunk whose
                 # choices list is empty.
                 chunk_usage = getattr(chunk, "usage", None)
