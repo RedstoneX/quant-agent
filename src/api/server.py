@@ -45,6 +45,7 @@ from src.api.routes_history import router as history_router
 from src.api.routes_journal import router as journal_router
 from src.api.routes_live import router as live_router
 from src.api.routes_research import router as research_router
+from src.api.routes_scorecard import router as scorecard_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
 # Stage 6 — the richer cockpit (docs/visual/MISSION_CONTROL_VISION_BOARD.png
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(evidence_router, tags=["evidence"])
     app.include_router(journal_router, tags=["journal"])
     app.include_router(research_router, tags=["research"])
+    app.include_router(scorecard_router, tags=["scorecard"])
 
     if _STATIC_DIR.is_dir():
         # Stage 3 cockpit — static assets only, no templating/server state.

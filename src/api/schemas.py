@@ -757,6 +757,115 @@ class SearchResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# /analysts/scorecard — the conviction ledger, per analyst (spec §9.5)
+#
+# Every number below is read back from persisted `conviction_credit` evidence
+# rows; the API scores nothing. `credit` and `r_multiple` are in R — profit as
+# a multiple of the risk the position was opened with — which the panel turns
+# into dollars using `risk_dollars_per_call` (a labeled display convention,
+# not a real position size).
+# ---------------------------------------------------------------------------
+
+class ScorecardPoint(BaseModel):
+    """One resolved call in an analyst's running-profit series."""
+
+    resolved_at: str
+    #: Running total of this analyst's credit after this call, in R.
+    cumulative: float
+    #: Highest that running total has reached so far, including the 0.0 it
+    #: starts from — so an analyst whose every call lost is below its own
+    #: best from the start rather than from its first (negative) point.
+    peak: float
+    #: `peak - cumulative`, never negative: how far below its own best.
+    below_best: float
+
+
+class ScorecardMonthPoint(BaseModel):
+    """One calendar month of an analyst's record (UTC month of `resolved_at`)."""
+
+    month: str  # "YYYY-MM"
+    #: Credit scored during this month alone, in R — the waterfall step.
+    credit: float
+    #: Running total at the end of this month, in R.
+    cumulative: float
+    resolved_calls: int
+    calls_right: int
+    #: Hit rate over every call resolved UP TO AND INCLUDING this month.
+    #: None only when no call had resolved yet.
+    hit_rate_pct: float | None = None
+
+
+class AnalystScorecardItem(BaseModel):
+    analyst: str
+    resolved_calls: int
+    calls_right: int
+    hit_rate_pct: float | None = None
+    #: Mean of the positive credits, in R. None when there are none.
+    avg_win: float | None = None
+    #: Mean of the negative credits, in R — returned NEGATIVE, not as a
+    #: magnitude, so the sign never has to be reconstructed by a consumer.
+    avg_loss: float | None = None
+    cumulative_credit: float
+    peak: float
+    #: How far the analyst currently sits below its own best, in R (>= 0).
+    below_best: float
+    #: When that best was last set, and how many calls have resolved since —
+    #: the "for how long" half of the same fact. None when never off its peak.
+    below_best_since: str | None = None
+    calls_since_peak: int = 0
+    cumulative: list[ScorecardPoint] = []
+    monthly: list[ScorecardMonthPoint] = []
+
+
+class ScorecardIdeaAnalyst(BaseModel):
+    analyst: str
+    side: str  # "supported" | "opposed" — the side taken, not the outcome
+    stance: str
+    conviction: str
+    weight: float
+    #: This analyst's signed, conviction-weighted score for this idea, in R.
+    credit: float
+    #: True when this analyst is the one that first tabled the symbol.
+    nominated: bool = False
+    #: The analyst's own stated reason, verbatim from its stance row. "" when
+    #: no stance row survives for it — never a Mission-Control-authored guess.
+    reason: str = ""
+
+
+class ScorecardIdea(BaseModel):
+    """One resolved idea, traced back to everyone who took a side on it."""
+
+    symbol: str
+    direction: str  # "long" | "short"
+    position_id: str | None = None
+    decision_id: str | None = None
+    resolved_at: str
+    #: The trade's own realized R — identical for every analyst on this idea.
+    r_multiple: float
+    supported: list[ScorecardIdeaAnalyst] = []
+    opposed: list[ScorecardIdeaAnalyst] = []
+
+
+class AnalystScorecardResponse(BaseModel):
+    as_of: str
+    #: "populated" — at least one scored call was read.
+    #: "empty" — the ledger is readable and holds nothing yet.
+    #: "error" — the read failed; `read_error` says so and nothing is inferred.
+    state: str = "empty"
+    read_error: str | None = None
+    #: The notional dollars treated as put at risk on EVERY call, used to
+    #: express R in money. A presentation convention stated in one place so
+    #: the API and the panel cannot disagree about it — not a real position
+    #: size, and nothing compounds it.
+    risk_dollars_per_call: float = 100.0
+    resolved_calls_total: int = 0
+    #: Every month that has at least one resolved call, oldest first.
+    months: list[str] = []
+    analysts: list[AnalystScorecardItem] = []
+    ideas: list[ScorecardIdea] = []
+
+
+# ---------------------------------------------------------------------------
 # Generic error envelope (used by exception handlers, not returned inline)
 # ---------------------------------------------------------------------------
 

@@ -20,7 +20,23 @@ import { NODE_TYPES } from "./nodes";
  * chart was: an explicit `ResizeObserver` on the wrapping element calls
  * `fitView()` again on every real size change, including the 0->nonzero
  * transition. */
-export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; edges: Edge[]; height?: number }) {
+export function AgentFlowGraph({
+  nodes,
+  edges,
+  height = 260,
+  nodeTypes = NODE_TYPES,
+}: {
+  nodes: Node[];
+  edges: Edge[];
+  height?: number;
+  /* Optional override so a second, unrelated graph (the analyst scorecard's
+   * idea trace) can reuse this mount's fitView/ResizeObserver handling with
+   * its own node vocabulary, instead of either duplicating this file or
+   * pushing scorecard-shaped nodes into the decision-chain node set that
+   * every existing caller shares. Defaults to the decision-chain types, so
+   * every existing call site is untouched. */
+  nodeTypes?: Record<string, React.ComponentType<any>>;
+}) {
   const instanceRef = useRef<ReactFlowInstance | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
@@ -53,7 +69,7 @@ export function AgentFlowGraph({ nodes, edges, height = 260 }: { nodes: Node[]; 
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        nodeTypes={NODE_TYPES}
+        nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.08 }}
         onInit={handleInit}

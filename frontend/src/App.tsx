@@ -37,8 +37,9 @@ import { Pill } from "./components/ui/Pill";
 import { bestPrimaryRunId } from "./components/funnelShared";
 import { todayEtDate } from "./lib/format";
 import { ResearchDesk } from "./components/research/ResearchDesk";
+import { AnalystScorecard } from "./components/scorecard/AnalystScorecard";
 
-type View = "cockpit" | "desk" | "journal";
+type View = "cockpit" | "desk" | "scorecard" | "journal";
 // "decision" removed (owner correction — the Decision Room panel is gone
 // from the cockpit entirely; see PositionHoldingStrip/DecisionSummaryLine
 // rendered inline under the chart pane instead, and PR description for
@@ -64,7 +65,7 @@ function ViewNav({
 }) {
   return (
     <nav className="flex flex-wrap items-center gap-1 px-4 border-b border-border bg-bg">
-      {(["cockpit", "desk", "journal"] as const).map((v) => (
+      {(["cockpit", "desk", "scorecard", "journal"] as const).map((v) => (
         <button
           key={v}
           type="button"
@@ -73,7 +74,13 @@ function ViewNav({
             view === v ? "border-accent text-accent" : "border-transparent text-dim hover:text-ink"
           }`}
         >
-          {v === "cockpit" ? "Cockpit" : v === "desk" ? "Research Desk" : "Journal"}
+          {v === "cockpit"
+            ? "Cockpit"
+            : v === "desk"
+            ? "Research Desk"
+            : v === "scorecard"
+            ? "Analyst Scorecard"
+            : "Journal"}
         </button>
       ))}
       {trailing && <div className="ml-auto">{trailing}</div>}
@@ -683,6 +690,13 @@ export default function App() {
       )}
 
       {view === "desk" && <ResearchDesk />}
+
+      {/* The conviction ledger, read (spec §9.5). Its own top-level view
+       * rather than another cockpit panel: it is a page of reading with a
+       * long explainer, and it would dilute "what is happening right now"
+       * if it shared scroll space with the live surface — the same reason
+       * Journal and the Research Desk are separate views. */}
+      {view === "scorecard" && <AnalystScorecard />}
 
       <footer className="text-center text-[0.7rem] text-dim py-4 px-3">
         QAMC Mission Control is a read-only view. It cannot place, cancel, or modify orders, and its failure has no
