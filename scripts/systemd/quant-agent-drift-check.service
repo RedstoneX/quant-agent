@@ -12,11 +12,20 @@ WorkingDirectory=/home/qamc/quant-agent
 # Read-only against the checkout: fetches the remote-tracking ref and compares
 # commits. Never checks out, resets, or touches the working tree, so it is safe
 # to fire regardless of what else is running.
-ExecStart=/home/qamc/quant-agent/.venv/bin/python \
-    /home/qamc/quant-agent/scripts/check_deploy_drift.py
+#
+# Through the wrapper, NOT the venv Python directly. Until 2026-08-31 this
+# unit invoked Python straight on the script with no EnvironmentFile and no
+# .env sourcing. The qamc systemd user environment carries zero TELEGRAM_*
+# variables, so the notifier built itself disabled and a drift alert would
+# have been printed to the journal and delivered to nobody — the alarm that
+# exists to say a merge never reached production could not speak. Every run
+# so far had reported "in sync", so that had never been exercised.
+ExecStart=/home/qamc/quant-agent/scripts/run_drift_check.sh
 # Exit 1 means "the box is behind" — that is a finding, not a unit failure.
 # Without this systemd would mark the service failed every time it works.
 SuccessExitStatus=0 1
+# Above the wrapper's own 60+15s kill, so the wrapper kills Python before
+# systemd kills the wrapper.
 TimeoutStartSec=120
 StandardOutput=journal
 StandardError=journal

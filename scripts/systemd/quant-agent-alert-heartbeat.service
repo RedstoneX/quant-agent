@@ -1,0 +1,32 @@
+# Alerting-channel self-test — pairs with quant-agent-alert-heartbeat.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-alert-heartbeat.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-alert-heartbeat.timer
+[Unit]
+Description=quant-agent alerting-channel self-test (no LLM, no trading)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Sends one real Telegram message with disable_notification and deletes it
+# again, so the channel is proved without spending the operator's attention.
+# The only thing it writes is data/alerting/heartbeat.json; `data/` is
+# gitignored, so the record can never dirty the checkout and become deploy
+# drift.
+#
+# Through the wrapper for .env: a heartbeat with no credentials would report
+# the channel broken every day and be measuring nothing but its own
+# misconfiguration — the defect it exists to catch, reproduced in the
+# detector.
+ExecStart=/home/qamc/quant-agent/scripts/run_alert_heartbeat.sh
+# Exit 1 means the desk currently has NO way to reach the operator. That is
+# a real failure, not a finding, and marking the unit failed is most of the
+# point: when the alert channel is down, `systemctl --user status` and the
+# journal are the only places the answer can still appear.
+SuccessExitStatus=0
+# Above the wrapper's own 60+15s kill, so the wrapper kills Python before
+# systemd kills the wrapper.
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal

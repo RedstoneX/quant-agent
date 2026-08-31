@@ -242,6 +242,10 @@ chmod 600 .env
   - `meta`: silent on `not_quarter_end`; notifies on actual reflection runs.
   - Any session that raises an exception: always notifies, regardless of mode policy.
 
+  **Proving the channel still works.** `scripts/telegram_test.py` answers this on demand; `scripts/alert_heartbeat.py` answers it on a schedule and records the answer — see [Proving the alert channel is alive](#proving-the-alert-channel-is-alive).
+
+- `ALERT_HEARTBEAT_HEALTHCHECK_URL` — optional out-of-band dead-man's switch for the alerting heartbeat. Point it at a healthchecks.io-style check (free tier) and the daily probe pings it on success and `<url>/fail` on failure, so a dead Telegram channel alerts from a host that is not this one. Unset by default and a no-op when absent. Deliberately separate from the sessions' `HEALTHCHECKS_URL`: sharing one check across many jobs pins it green and defeats it.
+
 ### Production deployment
 
 Either OS-level scheduler can drive the 6 sessions; both wrap `scripts/run_if_et_window.sh` so the actual ET-window / last-run / cross-mode-lock logic is shared.
@@ -325,6 +329,23 @@ The **daily P&L CSV export** (`--mode daily`) is scheduled separately — it is 
 The **LLM price-cache refresh** runs on its own timer at **06:30 and 18:30 ET, seven days a week** — `scripts/systemd/quant-agent-pricing-refresh.{service,timer}`, via `scripts/run_pricing_refresh.sh` (sources `.env`, 120s timeout, passes `--force`). Install the same way: `cp scripts/systemd/quant-agent-pricing-refresh.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-pricing-refresh.timer`.
 
 Seven days matters. `data/openrouter_pricing_cache.json` is an input to the mandatory cost circuit, not telemetry: past 24h freshness plus the configured grace window the circuit fails closed and suspends every paid call for the day. Until this timer existed the file was only ever refreshed by a paid session starting, so it aged precisely when no session was running to notice — over the weekend of 2026-08-30 it went stale unwatched, and only a manual refresh before Monday kept the desk from opening and trading nothing. The script checks its own work against the file rather than the return value, and pushes a Telegram alert (same `TelegramNotifier`, no new channel) the moment the cache passes its freshness window — while the whole grace window is still in hand, not after it runs out. Run it by hand with `python scripts/refresh_pricing.py --force`.
+
+The **deploy-drift check** runs Mon-Fri 08:45 ET — `scripts/systemd/quant-agent-drift-check.{service,timer}`, via `scripts/run_drift_check.sh` (sources `.env`, 60s timeout). It compares the deployed HEAD against `origin/main` and alerts when the box is behind. Until 2026-08-31 its unit invoked the venv Python directly with no `.env`: the process had no `TELEGRAM_*`, the notifier disabled itself, and a drift alert would have gone to the journal and nowhere else. Every unit whose script can raise an alert now goes through a wrapper that sources `.env`, and `tests/test_alert_heartbeat.py` fails CI if a new one does not.
+
+### Proving the alert channel is alive
+
+Every alarm here is a Telegram message. Nothing used to check that a Telegram message could still be sent, so **"no alert arrived" meant both "nothing is wrong" and "the alarm is broken"** — a present-but-revoked token, a wrong chat id, a blocked bot, or a new egress rule are all invisible to a credentials check and fatal to a send. Two timers close that:
+
+| Unit | When | What it does |
+|---|---|---|
+| `quant-agent-alert-heartbeat.timer` | 06:15 ET, **every day** | Sends a real message through the real notifier with `disable_notification`, then deletes it. Records the verdict in `data/alerting/heartbeat.json` (gitignored). Sends you **nothing** on success; exits non-zero on failure so the unit shows failed. |
+| `quant-agent-alert-digest.timer` | **Sundays 17:00 ET** | The one routine message this desk sends on purpose. Its content is the week's probe record; its arrival is the point. |
+
+Install both the same way: `cp scripts/systemd/quant-agent-alert-*.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-alert-heartbeat.timer quant-agent-alert-digest.timer`. Run by hand with `scripts/run_alert_heartbeat.sh`, `scripts/run_alert_heartbeat.sh --digest`, or `python scripts/alert_heartbeat.py --status` (prints the record, sends nothing).
+
+Daily rather than hourly because the alert path breaks for structural reasons — a rotated credential, a deleted chat, a firewall rule — none of which arrive on a minute scale; daily bounds "how long can the alarm be dead before the box knows" at 24h. Weekly rather than daily for the digest because a routine "still alive" every morning is a message you learn to swipe away, and a confirmation nobody reads is worth what no confirmation is worth.
+
+**The bootstrap limit, stated plainly:** if the channel is what is broken, no message over it can report that. So the weekly digest is a standing appointment and its *absence* is the alarm — the message says so in its own body every week. On the box, detection is same-day (the daily record plus a failed unit); to you, without an out-of-band channel, it is up to seven days. Setting `ALERT_HEARTBEAT_HEALTHCHECK_URL` in `.env` to a healthchecks.io-style check (free tier) closes that gap by alerting from a host that is not this one over a path that is not Telegram. It is supported and **not currently configured**. It is deliberately a separate variable from the sessions' `HEALTHCHECKS_URL`: sharing one dead-man's check across many jobs pins it green and defeats it.
 
 ## Trading Universe
 
