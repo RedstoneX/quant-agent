@@ -752,7 +752,7 @@ phases:
 
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
-    plain_summary: "Correction 2026-08-31: this entry previously tracked thirteen defects (a)-(m), recorded 2026-08-30. Nine of them are now fixed and four more were deleted outright as confirmed dead code — all six PRs (#167-#172) merged and deployed to production at d62d5fe. Six items remain open, ranked below: the FOMC half of the macro-calendar gap (FRED has no free endpoint for the Fed's own meeting calendar; an owner decision on a second source is pending), the deploy-drift alarm's Telegram alert (silently disabled — no environment file wires the credentials into its systemd unit), one reachable pipeline status with no plain-English message, a rehearsal cosmetic bug that always reports 0h pricing-cache grace, one systemd unit whose WorkingDirectory still points at the upstream fork's path, and one module docstring pointing at a doc file that does not exist. See each record below for its own re-check command."
+    plain_summary: "Thirteen defects (a)-(m) were recorded 2026-08-30; nine of them are now fixed and four more were deleted outright as confirmed dead code — all six PRs (#167-#172) merged and deployed to production at d62d5fe. Six items remain open, ranked below: the FOMC half of the macro-calendar gap (FRED has no free endpoint for the Fed's own meeting calendar; an owner decision on a second source is pending), the deploy-drift alarm's Telegram alert (silently disabled — no environment file wires the credentials into its systemd unit), one reachable pipeline status with no plain-English message, a rehearsal cosmetic bug that always reports 0h pricing-cache grace, one systemd unit whose WorkingDirectory still points at the upstream fork's path, and one module docstring pointing at a doc file that does not exist. See each record below for its own re-check command."
     status: "OPEN"
     confidence: "high"
     defects:
@@ -788,7 +788,7 @@ phases:
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
       - kind: manual
-        note: "Correction 2026-08-31: this entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and five new items surfaced by the same audit remain open — see the ranked defects: list above for each item and this evidence block for its own re-check command."
+        note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and five new items surfaced by the same audit remain open — see the ranked defects: list above for each item and this evidence block for its own re-check command."
       - kind: pr_merged
         number: 167
         note: "feat/expose-trade-risk-fields — trade conviction/risk/model fields now reach the API and the cockpit"
