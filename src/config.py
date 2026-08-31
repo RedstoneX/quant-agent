@@ -5,7 +5,11 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from src.agents.base import VALID_PROVIDERS, resolve_provider
+from src.agents.base import (
+    VALID_PROVIDERS,
+    provider_attempt_budget,
+    resolve_provider,
+)
 
 
 class ApiKeysConfig(BaseModel):
@@ -781,9 +785,22 @@ class LLMCostCircuitConfig(BaseModel):
     # ET hour (0-23, local wall clock) at which the reserve above releases
     # and the full daily_reserved_exposure_limit_usd becomes spendable again.
     afternoon_reserve_release_et_hour: int = Field(default=12, ge=0, le=23)
-    # Includes the initial request.  Two means one transient retry at most;
-    # a provider failover would be attempt three and is blocked/latches.
-    max_provider_attempts_per_call: int = Field(default=2, ge=1)
+    # Ceiling on provider attempts within ONE logical agent call, counting
+    # the initial request. NOT an independent number: it must cover what
+    # `BaseAgent.run()`'s retry loop can actually spend, or the circuit trips
+    # on the loop's own designed behaviour instead of on anything unsafe.
+    # Derived by default from `provider_attempt_budget()`, which owns that
+    # arithmetic; `AppConfig._check_provider_attempt_budget` rejects any
+    # explicit value below it at load time. See the 2026-08-31 incident
+    # recorded on `provider_attempt_budget`.
+    #
+    # Setting it HIGHER than the derived floor is allowed and does not grant
+    # extra attempts — the retry loop, not this ceiling, decides how many
+    # requests are made. This only decides when the circuit intervenes.
+    max_provider_attempts_per_call: int = Field(
+        default_factory=lambda: provider_attempt_budget(failover_available=True),
+        ge=1,
+    )
     # Aggregate retries across parallel specialist calls in one run.
     max_retry_attempts_per_session: int = Field(default=2, ge=0)
     reservation_ttl_minutes: int = Field(default=30, ge=5, le=180)
@@ -1407,6 +1424,57 @@ class AppConfig(BaseModel):
                 f"ANTHROPIC_API_KEY is required for selected Anthropic models: {selected}"
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def _check_provider_attempt_budget(self):
+        """Refuse to start if the circuit would trip on the retry loop itself.
+
+        The cost circuit stops a logical call once it exceeds
+        `llm_cost_circuit.max_provider_attempts_per_call` provider attempts.
+        `BaseAgent.run()` decides how many attempts actually happen. When the
+        ceiling is below what the loop can spend, the circuit fires on the
+        loop's normal, designed behaviour rather than on anything unsafe — and
+        because that stop is scoped to the session, a routine upstream
+        rate-limit costs the desk a trading session for pennies of spend.
+
+        That is not hypothetical: it is the 2026-08-31 09:32 ET incident
+        recorded on `provider_attempt_budget`, where a hand-pinned 2 sat
+        against a worst case of 3 and made cross-provider failover impossible
+        to ever complete.
+
+        The two numbers live in different worlds — one an env-overridable
+        module constant, the other a YAML setting — which is exactly how they
+        drifted apart unnoticed for six days across five separate trips. So
+        the agreement is enforced here, at load, rather than trusted to
+        whoever edits either one next. Failing to boot is the loud failure;
+        going dark two minutes after the opening bell is the quiet one.
+        """
+        failover_available = bool(self.api_keys.anthropic) and any(
+            resolve_provider(
+                getattr(self.llm, f"{agent_name}_model"),
+                self.llm.get_provider(agent_name),
+            ) != "anthropic"
+            for agent_name in AGENT_NAMES
+        )
+        required = provider_attempt_budget(failover_available=failover_available)
+        configured = int(self.llm_cost_circuit.max_provider_attempts_per_call)
+        if configured < required:
+            raise ValueError(
+                "llm_cost_circuit.max_provider_attempts_per_call is "
+                f"{configured}, below the {required} provider attempts one "
+                "agent call can make ("
+                f"{required - (1 if failover_available else 0)} primary "
+                + (
+                    "attempts plus one cross-provider failover"
+                    if failover_available
+                    else "attempts, no failover configured"
+                )
+                + "). The circuit would stop the session on the retry loop's "
+                "own designed behaviour — the failure this check exists to "
+                "prevent. Raise it to at least "
+                f"{required}, or remove it from settings.yaml to let it derive."
+            )
         return self
 
 

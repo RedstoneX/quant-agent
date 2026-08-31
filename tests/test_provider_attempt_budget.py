@@ -1,0 +1,514 @@
+"""The circuit's per-call attempt ceiling must cover the retry loop's worst case.
+
+THE INCIDENT THIS FILE EXISTS FOR (2026-08-31)
+----------------------------------------------
+`BaseAgent.run()` takes up to `_max_retries()` attempts at an agent's primary
+model and then, if the primary is not itself Anthropic and a fallback key is
+configured, ONE cross-provider failover. Worst case: three provider attempts.
+
+`llm_cost_circuit.max_provider_attempts_per_call` was pinned by hand at two.
+
+So every failover attempt was attempt three against a ceiling of two, and the
+circuit stopped it. Not sometimes — always, and only in the case failover
+exists to handle: a retryable primary failure (429/5xx/timeout) burns both
+permitted attempts before failover is even reached. Cross-provider failover
+could never once complete. On Monday 2026-08-31 an upstream rate-limit on the
+primary triggered it at 09:32 ET, two minutes after the open, and because
+`provider_attempt_limit` was also the one trip code wired to the durable
+operator-reset latch, paid analysis stayed off for the rest of the day over
+$0.05 of a $2.75 budget.
+
+The two numbers lived in different worlds — an env-overridable module
+constant in `src/agents/base.py`, a YAML setting read by `src/cost_circuit.py`
+— which is how they drifted apart for six days across five separate circuit
+trips without anyone noticing. These tests bind them together so they cannot
+drift again silently.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import yaml
+
+from src.agents.base import _max_retries, provider_attempt_budget
+from src.cost_circuit import (
+    LLMCostCircuitBreaker,
+    PaidAnalysisSuspended,
+    _trigger_scope,
+)
+from src.storage.db import Database
+
+SETTINGS = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
+
+
+class _Notifier:
+    def __init__(self):
+        self.messages: list[str] = []
+
+    def send(self, message: str) -> bool:
+        self.messages.append(message)
+        return True
+
+
+def _config(**overrides):
+    values = {
+        "enabled": True,
+        "session_cost_limit_usd": 10.0,
+        "daily_cost_limit_usd": 20.0,
+        "max_free_failure_sessions_per_mode": 8,
+        "max_provider_attempts_per_call": provider_attempt_budget(
+            failover_available=True
+        ),
+        "max_retry_attempts_per_session": 2,
+        "reservation_ttl_minutes": 30,
+        "input_chars_per_token": 3.5,
+        "reservation_multiplier": 1.05,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _db_path(tmp_path):
+    path = tmp_path / "circuit.db"
+    db = Database(str(path))
+    db.initialize()
+    db.conn.close()
+    return str(path)
+
+
+# --------------------------------------------------------------- arithmetic
+
+
+def test_budget_covers_primary_attempts_plus_one_failover():
+    assert provider_attempt_budget(failover_available=True) == _max_retries() + 1
+
+
+def test_budget_drops_the_failover_attempt_when_no_failover_is_possible():
+    """An Anthropic-primary agent never fails over (Claude to Claude is
+    pointless), so it cannot spend the extra attempt."""
+    assert provider_attempt_budget(failover_available=False) == _max_retries()
+
+
+@pytest.mark.parametrize("retries", [1, 2, 3, 7])
+def test_budget_tracks_the_env_override_the_retry_loop_actually_reads(
+    monkeypatch, retries
+):
+    """`.env` on the box carries a commented-out QUANT_AGENT_MAX_RETRIES=7.
+    Uncommenting it must move the circuit's ceiling too, not silently
+    recreate the 2026-08-31 mismatch three attempts wider."""
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", str(retries))
+    assert provider_attempt_budget(failover_available=True) == retries + 1
+
+
+# ------------------------------------------------------------ configuration
+
+
+def _load_settings_with(ceiling):
+    from src.config import AppConfig, _walk_and_substitute
+
+    raw = yaml.safe_load(SETTINGS.read_text())
+    if ceiling is None:
+        raw["llm_cost_circuit"].pop("max_provider_attempts_per_call", None)
+    else:
+        raw["llm_cost_circuit"]["max_provider_attempts_per_call"] = ceiling
+    return AppConfig(**_walk_and_substitute(raw))
+
+
+@pytest.fixture
+def _keys(monkeypatch):
+    for var in (
+        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY", "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
+        "FRED_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+    ):
+        monkeypatch.setenv(var, "test-key")
+
+
+def test_shipped_settings_ceiling_covers_the_retry_loop(_keys):
+    """The regression guard proper: whatever config/settings.yaml says today,
+    it must not be below what one call can spend."""
+    config = _load_settings_with(None)
+    assert (
+        config.llm_cost_circuit.max_provider_attempts_per_call
+        >= provider_attempt_budget(failover_available=True)
+    )
+
+
+def test_settings_does_not_re_pin_the_ceiling(_keys):
+    """Pinning it in YAML is what broke; the value belongs to the code that
+    spends the attempts."""
+    raw = yaml.safe_load(SETTINGS.read_text())
+    assert "max_provider_attempts_per_call" not in raw["llm_cost_circuit"]
+
+
+def test_config_refuses_a_ceiling_below_the_retry_loops_worst_case(_keys):
+    """The exact broken configuration must now fail at load rather than at
+    09:32 on a Monday."""
+    with pytest.raises(ValueError) as excinfo:
+        _load_settings_with(provider_attempt_budget(failover_available=True) - 1)
+    message = str(excinfo.value)
+    assert "max_provider_attempts_per_call" in message
+    assert "cross-provider failover" in message
+
+
+def test_config_allows_a_ceiling_above_the_worst_case(_keys):
+    """Raising it is a legitimate operator choice and grants no extra
+    attempts — the retry loop, not this ceiling, decides how many requests
+    happen."""
+    config = _load_settings_with(9)
+    assert config.llm_cost_circuit.max_provider_attempts_per_call == 9
+
+
+# ----------------------------------------------------------------- the trip
+
+
+def _reserve(circuit, *, agent="tech_analyst", model="google/gemini-2.5-flash-lite"):
+    return circuit.begin_call(
+        agent_name=agent,
+        model=model,
+        system_prompt="system",
+        user_message="input",
+        max_output_tokens=1_000,
+    )
+
+
+def test_failover_attempt_is_permitted_under_the_derived_ceiling(tmp_path):
+    """The 2026-08-31 sequence, end to end at the circuit boundary: two
+    primary attempts are rate-limited, and the third — the failover — must be
+    ALLOWED THROUGH rather than trip the circuit."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-failover", "morning")
+    reservation = _reserve(circuit)
+
+    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    circuit.before_provider_attempt(reservation, model="google/gemini-2.5-flash-lite")
+    # The failover: a different provider and a dearer model, priced as such.
+    circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+
+    assert circuit.status()["suspended"] in (0, False)
+
+
+def test_ceiling_still_stops_a_genuine_attempt_runaway(tmp_path):
+    """Raising the ceiling to cover failover must not remove the stop. One
+    attempt past the budget is still stopped — it is only no longer the
+    loop's own designed behaviour that trips it."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-runaway", "morning")
+    reservation = _reserve(circuit)
+
+    budget = provider_attempt_budget(failover_available=True)
+    for _ in range(budget):
+        circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+
+
+def test_attempt_limit_holds_the_session_instead_of_latching_the_desk(tmp_path):
+    """Defect 5: `provider_attempt_limit` was the only trip code of its family
+    left on the durable operator-reset latch, so a transient upstream fault
+    cost a whole trading day and needed a human to clear. It is now scoped to
+    the session that caused it, like its wider sibling
+    `session_retry_attempt_limit` — later sessions stay eligible."""
+    assert _trigger_scope("provider_attempt_limit") == "session"
+    assert _trigger_scope("session_retry_attempt_limit") == "session"
+
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), notifier)
+    circuit.activate_session("run-held", "morning")
+    reservation = _reserve(circuit)
+    for _ in range(provider_attempt_budget(failover_available=True)):
+        circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+
+    # `status()` reports the EFFECTIVE state for the calling session, which a
+    # session hold does suspend — that is the point of the hold. What must not
+    # be set is the durable singleton latch: the row that outlives the session,
+    # darkens every later one, and requires a human to clear.
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        latched = conn.execute(
+            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
+        ).fetchone()[0]
+    assert not latched
+
+    alert = "\n".join(notifier.messages)
+    assert "QUOTA HOLD" in alert
+    assert "no operator reset is required" in alert
+    assert "scope: run run-held only" in alert
+    assert "later independent sessions remain eligible" in alert
+
+
+def test_a_later_session_still_runs_after_an_attempt_limit_hold(tmp_path):
+    """The operative consequence: the next scheduled session is not collateral
+    damage. This is the difference between a degraded morning and a dark
+    trading day."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-held", "morning")
+    reservation = _reserve(circuit)
+    for _ in range(provider_attempt_budget(failover_available=True)):
+        circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.before_provider_attempt(reservation, model="claude-opus-4-7")
+
+    later = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    later.activate_session("run-next", "intra_check")
+    assert _reserve(later) is not None
+
+
+# ------------------------------------- failover WITH the circuit attached
+
+# WHY THIS SECTION IS THE POINT OF THE FILE
+#
+# `tests/test_base_agent.py` already covers cross-provider failover, and every
+# one of those tests passed throughout the six days this defect was live. They
+# could not have caught it: `tests/conftest.py` sets
+# `BaseAgent._allow_unmetered_for_tests = True` for the whole suite, so those
+# agents run with NO cost circuit attached at all. And `test_cost_circuit.py`
+# exercises the circuit with no failover.
+#
+# So the suite proved failover works without the circuit, and the circuit
+# works without failover, and nothing anywhere ran the two together — which is
+# precisely where they contradicted each other. These tests attach a real
+# breaker to a real agent and make the primary fail for real reasons.
+
+
+class _Rate429(Exception):
+    """Shaped like a provider rate-limit: `_is_retryable` reads `status_code`."""
+
+    status_code = 429
+
+
+class _CircuitAgent:
+    """Built in the test rather than imported so the agent under test is
+    unambiguously running the production `run()` with a live breaker."""
+
+
+def _agent_with_circuit(circuit, **kwargs):
+    from tests.test_base_agent import ConcreteAgent
+
+    agent = ConcreteAgent(
+        api_key="k", model="google/gemini-2.5-flash-lite", max_tokens=64,
+        fallback_api_key="fk", provider="openrouter", **kwargs
+    )
+    agent.set_cost_circuit(circuit)
+    return agent
+
+
+def test_rate_limited_primary_fails_over_with_a_live_circuit(tmp_path, monkeypatch):
+    """The whole incident, reproduced against the real breaker.
+
+    Two rate-limited primary attempts, then the failover — which under the old
+    ceiling of 2 was attempt 3 and tripped the circuit instead of rescuing the
+    session. It must now succeed, and the run must come back priced at the
+    model that actually answered.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from tests.test_base_agent import _good_anthropic_response
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+    monkeypatch.setattr("src.agents.base.BaseAgent._allow_unmetered_for_tests", False)
+
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-live-failover", "morning")
+
+    openrouter = MagicMock()
+    openrouter.chat.completions.create.side_effect = _Rate429("rate-limited upstream")
+    anthropic_client = MagicMock()
+    anthropic_client.messages.create.return_value = _good_anthropic_response()
+
+    with patch("openai.OpenAI", return_value=openrouter), \
+            patch("anthropic.Anthropic", return_value=anthropic_client):
+        agent = _agent_with_circuit(circuit)
+        result = agent.run(data="x")
+
+    assert result.raw_text == '{"result": "ok"}'
+    assert result.model == "claude-opus-4-7"
+    assert openrouter.chat.completions.create.call_count == 2   # primary exhausted
+    anthropic_client.messages.create.assert_called_once()       # single-shot failover
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        latched = conn.execute(
+            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
+        ).fetchone()[0]
+    assert not latched, "a transient rate-limit must not latch the desk"
+
+
+def test_a_failover_that_also_fails_does_not_latch_the_desk(tmp_path, monkeypatch):
+    """The worse case: both providers are down. The session cannot produce
+    analysis and must not pretend otherwise — but tomorrow's sessions, and the
+    next half-hour's, are not the outage's to take."""
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+    monkeypatch.setattr("src.agents.base.BaseAgent._allow_unmetered_for_tests", False)
+
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-both-down", "morning")
+
+    openrouter = MagicMock()
+    openrouter.chat.completions.create.side_effect = _Rate429("primary down")
+    anthropic_client = MagicMock()
+    anthropic_client.messages.create.side_effect = _Rate429("fallback down too")
+
+    with patch("openai.OpenAI", return_value=openrouter), \
+            patch("anthropic.Anthropic", return_value=anthropic_client):
+        agent = _agent_with_circuit(circuit)
+        with pytest.raises(Exception):
+            agent.run(data="x")
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        latched = conn.execute(
+            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
+        ).fetchone()[0]
+    assert not latched
+
+
+# ------------------------------------ an inexact day must stay recoverable
+
+# Found on 2026-08-31 by deploying the scope change above to production and
+# watching what happened next. `fail_call` stamps the ET day inexact when it
+# charges a conservative reserve for a request whose true cost it never
+# learned, and nothing clears that within the day. The reconciler refuses to
+# rearm over an inexact day, BUT returns early whenever a hard latch is set —
+# so for as long as `provider_attempt_limit` latched, the latch masked the
+# refusal. Scoping it to the session removed the mask, and the live desk went
+# from "suspended" to "every activate_session raises RuntimeError, with no
+# operator action able to clear it until ET rollover".
+#
+# A crash loop is a worse failure than the suspension it replaced. These pin
+# the recovery path.
+
+
+def _make_day_inexact(circuit, day):
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        conn.execute(
+            "UPDATE llm_budget_days SET costs_exact=0 WHERE day=?", (day,)
+        )
+        conn.commit()
+
+
+def _current_day():
+    from src.cost_circuit import _et_day_and_utc_bounds
+
+    return _et_day_and_utc_bounds()[0]
+
+
+def test_an_inexact_day_with_no_latch_is_operator_resettable(tmp_path):
+    """The exact live state after the deploy: no hard latch, inexact day."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-inexact", "morning")
+    _make_day_inexact(circuit, _current_day())
+
+    circuit.reset("operator reviewed the conservative figure and accepted it")
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        row = conn.execute(
+            "SELECT costs_exact, unknown_cost_rows FROM llm_budget_days WHERE day=?",
+            (_current_day(),),
+        ).fetchone()
+    assert row[0] == 1 and row[1] == 0
+
+
+def test_the_reset_does_not_erase_the_days_recorded_spend(tmp_path):
+    """`scripts/cost_circuit.py` promises reset "never erases settled spend".
+    Clearing the unprovable-figure flag must not become a way to zero the
+    ledger — the conservative amount OVER-states cost, which is the safe
+    direction, and it stays."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-keep", "morning")
+    day = _current_day()
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        conn.execute(
+            "UPDATE llm_budget_days SET incremental_cost_usd=0.0524, costs_exact=0 "
+            "WHERE day=?", (day,)
+        )
+        conn.commit()
+
+    circuit.reset("accepted the conservative figure")
+
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        spend = conn.execute(
+            "SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?", (day,)
+        ).fetchone()[0]
+    assert spend == pytest.approx(0.0524)
+
+
+def test_an_inexact_day_alone_does_not_stop_the_next_session(tmp_path):
+    """Defect 6 (2026-08-31, found on the live desk): the exactness
+    precondition guards ONE operation — releasing a hold carried over from an
+    earlier ET day. It used to be checked before the query that finds those
+    holds, so it fired when there were none, gating an operation that was not
+    being performed.
+
+    Because the reconciler runs on every `begin_call`, and `fail_call` stamps
+    the day inexact whenever it charges a conservative reserve, the FIRST
+    failed request in a day poisoned every paid call after it — the raise
+    reads as the circuit's own infrastructure failing, which writes the
+    emergency latch and stops the desk until an operator clears it.
+
+    One rate-limited request, and the trading day was over."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-first", "morning")
+    _make_day_inexact(circuit, _current_day())
+
+    later = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    later.activate_session("run-after", "intra_check")
+    assert _reserve(later, agent="news_analyst") is not None
+
+
+def test_an_inexact_day_still_refuses_to_rearm_a_cross_day_hold(tmp_path):
+    """The safety property itself is unchanged: releasing YESTERDAY's stop
+    while today's books are unproven is exactly what the precondition exists
+    to prevent, and it still does."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-first", "morning")
+    _make_day_inexact(circuit, _current_day())
+    with sqlite3.connect(circuit.db_path, uri=True) as conn:
+        conn.execute(
+            "INSERT INTO llm_quota_holds "
+            "(scope, scope_key, day, trigger_code, trigger_detail, run_id, mode, "
+            " agent_name, attempts, attempts_exact, costs_exact, session_cost_usd, "
+            " daily_cost_usd, session_limit_usd, daily_limit_usd, active) "
+            "VALUES ('mode_day','1999-01-01:morning','1999-01-01','daily_cost_limit',"
+            "'yesterday','run-old','morning','tech_analyst',0,1,1,0,0,0.9,2.75,1)"
+        )
+        conn.commit()
+
+    blocked = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    with pytest.raises(RuntimeError, match="accounting is not exact"):
+        blocked.activate_session("run-blocked", "intra_check")
+
+
+def test_a_later_session_activates_once_the_day_is_reconciled(tmp_path):
+    """And the operator reset still clears the day, so a cross-day rearm can
+    proceed after review."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-first", "morning")
+    _make_day_inexact(circuit, _current_day())
+
+    circuit.reset("operator accepted the conservative figure")
+
+    recovered = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    recovered.activate_session("run-after", "intra_check")
+    assert _reserve(recovered, agent="news_analyst") is not None
+
+
+def test_reset_still_refuses_when_there_is_nothing_to_reset(tmp_path):
+    """The guard must not become a no-op: a healthy circuit on an exact day
+    has nothing an operator reset should touch."""
+    circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
+    circuit.activate_session("run-healthy", "morning")
+    with pytest.raises(ValueError, match="accounting is exact"):
+        circuit.reset("nothing is wrong")

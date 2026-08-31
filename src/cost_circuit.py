@@ -53,6 +53,33 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
     "provider_projected_session_cost_limit",
     "outstanding_projected_session_cost_limit",
     "session_retry_attempt_limit",
+    # Defect 5 (2026-08-31): "provider_attempt_limit" moved here from the
+    # default hard latch. It bounds attempts within ONE call, which is
+    # strictly NARROWER than "session_retry_attempt_limit" directly above --
+    # yet it was the only one of the pair wired to the durable
+    # operator-reset latch, so the smaller problem produced the larger
+    # response. Nothing chose that; it was never added to a set, and
+    # `_trigger_scope` defaults the unrecognised to "hard".
+    #
+    # What that cost: on 2026-08-31 an upstream rate-limit on the primary
+    # model made the cross-provider failover attempt number 3 against a
+    # ceiling of 2 (see `provider_attempt_budget` for that arithmetic, now
+    # fixed). The circuit latched paid analysis off at 09:32 ET -- two
+    # minutes after the open -- having spent $0.05 of a $2.75 day, and every
+    # session after it no-opped until an operator reset it by hand. Same
+    # shape as the 2026-08-28 incident that Defect 2 and Defect 4.1 were
+    # each written to stop: a transient provider fault escalated into a lost
+    # trading day.
+    #
+    # Attempt counts are a PROXY for spend. Spend itself keeps its own
+    # guards, all unchanged and all still stricter than this one: the
+    # per-session and per-day dollar ceilings, the projected-cost checks
+    # re-run at every network boundary, and the conservative per-attempt
+    # reservation that prices a failover at the FAILOVER model's rate before
+    # it is allowed to proceed. An expensive failover is stopped by those on
+    # its cost, which is the honest reason to stop it. This limit no longer
+    # needs to hold the whole desk hostage to catch it.
+    "provider_attempt_limit",
 })
 
 # NOTE on "morning_spend_ceiling" (Defect 4, 2026-08-28): that trigger code
@@ -1622,16 +1649,45 @@ class LLMCostCircuitBreaker:
             raise RuntimeError(
                 f"cost-circuit day accounting row is missing for {current_day}"
             )
-        if int(day_row["unknown_cost_rows"] or 0) or not bool(day_row["costs_exact"]):
-            raise RuntimeError(
-                f"cost-circuit cannot rearm {current_day}: current-day accounting "
-                "is not exact"
-            )
 
         cross_day_holds = conn.execute(
             "SELECT * FROM llm_quota_holds WHERE active=1 AND day<>? ORDER BY id",
             (current_day,),
         ).fetchall()
+
+        # The exactness precondition guards ONE operation: releasing a hold
+        # carried over from an earlier ET day. Rearming yesterday's stop while
+        # today's books are unproven is what it exists to prevent, and it
+        # still does.
+        #
+        # It used to be checked before this query, so it fired even when there
+        # was no cross-day hold to rearm -- gating an operation that was not
+        # being performed. That made it a booby trap on the ordinary path,
+        # because this reconciler runs on EVERY `begin_call`, and `fail_call`
+        # stamps the day inexact whenever it charges a conservative reserve
+        # for a request whose true cost it never learned. So the FIRST such
+        # failure in a day poisoned every paid call after it: the raise is
+        # read as the circuit's own infrastructure failing, which writes the
+        # emergency latch and stops the desk until an operator clears it.
+        #
+        # One rate-limited request, and the trading day was over. That is the
+        # 2026-08-26/27/28/31 pattern, and it survived four rounds of fixing
+        # limits because nobody was looking at the reconciler -- the earlier
+        # hard latches masked it, since this function returns early whenever
+        # one is set. Removing the last of those masks (see the NOTE by
+        # _SESSION_QUOTA_TRIGGERS) is what finally showed it, on the live desk
+        # at 10:36 ET on 2026-08-31, as a crash instead of a suspension.
+        #
+        # Scope restored to what it protects: no cross-day hold, nothing to
+        # rearm, nothing to be exact about.
+        if cross_day_holds and (
+            int(day_row["unknown_cost_rows"] or 0)
+            or not bool(day_row["costs_exact"])
+        ):
+            raise RuntimeError(
+                f"cost-circuit cannot rearm {current_day}: current-day accounting "
+                "is not exact"
+            )
         holds = []
         for hold in cross_day_holds:
             try:
@@ -3462,7 +3518,34 @@ class LLMCostCircuitBreaker:
         return result
 
     def reset(self, reason: str) -> None:
-        """Operator-only manual reset. A reason is mandatory and audited."""
+        """Operator-only manual reset. A reason is mandatory and audited.
+
+        Also clears an INEXACT current ET day, which is the other fault only
+        an operator can resolve. `fail_call` stamps `costs_exact=0` when it
+        charges a conservative reserve for a request whose true cost it could
+        not learn, and nothing sets it back within the day -- the flag clears
+        only when the next ET day seeds a fresh row. Meanwhile
+        `_reconcile_quota_holds_locked` REFUSES to rearm over an inexact day,
+        by design.
+
+        Until 2026-08-31 those two facts never met, because an inexact day
+        was always accompanied by a hard latch, and the reconciler returns
+        early whenever one is set -- the latch was, in effect, masking the
+        refusal. Scoping `provider_attempt_limit` to the session removed that
+        latch and exposed the real shape of it: an inexact day with no latch
+        made every subsequent `activate_session` raise, with no operator
+        action able to clear it, until ET rollover. A crash loop is a worse
+        failure than the suspension it replaced.
+
+        What this does NOT do is erase settled spend. The day's recorded
+        amount is left exactly as it stands -- including the conservative
+        reserve charged for the unresolved request, which over-states cost
+        rather than under-stating it. Only the "we could not prove this
+        figure" flag is cleared, and only by a named operator giving a
+        reason. Deciding that a conservative figure is good enough to
+        continue on is precisely an operator's call; recomputing what the
+        provider really charged is not something this code can honestly do.
+        """
 
         reason = reason.strip()
         if not reason:
@@ -3479,9 +3562,24 @@ class LLMCostCircuitBreaker:
                     self._emergency_latch_path is not None
                     and self._emergency_latch_path.exists()
                 )
-                if not int(state.get("suspended") or 0) and not emergency_latched:
+                current_day, _, _ = _et_day_and_utc_bounds()
+                day_row = conn.execute(
+                    "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days "
+                    "WHERE day=?",
+                    (current_day,),
+                ).fetchone()
+                day_inexact = day_row is not None and (
+                    int(day_row["unknown_cost_rows"] or 0)
+                    or not bool(day_row["costs_exact"])
+                )
+                if (
+                    not int(state.get("suspended") or 0)
+                    and not emergency_latched
+                    and not day_inexact
+                ):
                     raise ValueError(
-                        "no operator-resettable hard circuit is active; scoped quota "
+                        "no operator-resettable hard circuit is active and the "
+                        "current ET day's accounting is exact; scoped quota "
                         "holds expire only with their budget window"
                     )
                 conn.execute(
@@ -3507,6 +3605,16 @@ class LLMCostCircuitBreaker:
                 )
                 if updated_state.rowcount != 1:
                     raise RuntimeError("cost-circuit singleton could not be reset")
+                if day_inexact:
+                    # The amount is untouched on purpose -- see the docstring.
+                    # Only the unprovable-figure flag is cleared, so the
+                    # reconciler can rearm and the desk can continue on a
+                    # conservative number the operator has accepted.
+                    conn.execute(
+                        "UPDATE llm_budget_days SET unknown_cost_rows=0, "
+                        "costs_exact=1, updated_at=datetime('now') WHERE day=?",
+                        (current_day,),
+                    )
                 conn.commit()
             # DB opens first while the marker still blocks every process; the
             # unlink is the final operator-authorized transition.
