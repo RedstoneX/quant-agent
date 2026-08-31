@@ -49,7 +49,7 @@ class AlpacaConfig(BaseModel):
         """Fail closed unless this is a paper account.
 
         "Alpaca **Paper only**; live trading is not authorized" is a hard
-        boundary in CLAUDE.md, docs/STATE.md and docs/WORK.md, but until now
+        boundary in CLAUDE.md, docs/STATE.md and AGENTS.md, but until now
         it lived entirely in prose: flipping `paper: false` in settings.yaml
         would have silently pointed the whole decision chain at a live
         brokerage account with no test, guard, or log to notice. A one-token

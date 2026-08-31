@@ -4,8 +4,8 @@ React + TypeScript + Vite + Tailwind, plus TradingView Lightweight Charts
 for the price panel. This is the source for the cockpit served by
 `src/api/server.py`'s `/cockpit` mount (`src/api/static_cockpit/`).
 
-Authorized in `docs/WORK.md` ("Final Mission Control direction" /
-Workstream B) as a bounded, in-repo frontend replacement for the legacy
+Authorized in `AGENTS.md`'s shipped-tranche acceptance contract ("Final
+Mission Control direction" / Workstream B) as a bounded, in-repo frontend replacement for the legacy
 `/ui` dashboard — evaluated against React+Vite+Tailwind+TradingView
 Lightweight Charts (the original QAMC design direction, see the Stage 0
 donor inventory in Git history) rather than continuing the vanilla-JS
