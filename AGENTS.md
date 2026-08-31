@@ -196,6 +196,20 @@ Status, current truth, and active work always live in Tier 1. If you are about t
 
 **Every documentation file in this repository belongs to exactly one of the five categories above.** If you cannot place a file, that is the signal not to create it.
 
+## Writing for the owner
+
+Every `plain_summary` in `docs/phases.yaml` renders directly onto the status
+board, which is the only page the owner reads. He is not a developer.
+
+Write it for someone running the business, not building it: a one-line verdict,
+a few short bullets, then what is still outstanding. No file paths, ticket
+numbers, code identifiers or commit references — those belong in `evidence`,
+where they are machine-checkable.
+
+The board flags summaries that read as engineering notes and says so on the
+page. If you see that flag on an item, rewriting it is part of the work, not a
+separate errand for the owner to request.
+
 ## Governance ratification
 
 `OUTCOME.md`, `STATE.md` and `WORK.md` define the mandate this system is built to. Agents may **propose** changes to them; only the **owner** may **accept** those changes.
