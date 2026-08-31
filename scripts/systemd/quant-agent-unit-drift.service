@@ -1,0 +1,37 @@
+# systemd unit-drift check — pairs with quant-agent-unit-drift.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-unit-drift.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-unit-drift.timer
+[Unit]
+Description=quant-agent systemd unit-drift check (no LLM, no trading, read-only)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Read-only, and unusually so: it reads two directories and compares bytes.
+# No git, no network, no working-tree write. Safe to fire regardless of what
+# else is running.
+#
+# The gap it closes is the one quant-agent-drift-check.service cannot see.
+# That unit compares COMMITS, so it is satisfied the moment the checkout is
+# on origin/main — while the units systemd actually loaded are whatever was
+# last copied into ~/.config/systemd/user by hand. Installing a unit is a
+# `cp`; git never sees it. Before 2026-08-31 seven of the eleven installed
+# services existed nowhere but on this box.
+#
+# Through the wrapper, NOT the venv Python directly: the script raises a
+# Telegram alert, and the qamc systemd user environment carries no
+# TELEGRAM_* variables. Same reason run_drift_check.sh exists.
+ExecStart=/home/qamc/quant-agent/scripts/run_unit_drift_check.sh
+# Exit 1 means "the box's units no longer match the repo" — that is a
+# finding, not a unit failure. Without this systemd would mark the service
+# failed every time the check does its job. Exit 3 (a missing directory) is
+# deliberately NOT listed: that is an operator problem and should show up as
+# a failed unit.
+SuccessExitStatus=0 1
+# Above the wrapper's own 60+15s kill, so the wrapper kills Python before
+# systemd kills the wrapper.
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal

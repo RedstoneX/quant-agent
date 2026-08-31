@@ -252,20 +252,26 @@ Either OS-level scheduler can drive the 6 sessions; both wrap `scripts/run_if_et
 
 **Linux (systemd, recommended for headless server / Tailscale-reachable hosts)**
 
-The repo ships with a template unit + timer at `~/.config/systemd/user/quant-agent@.service` / `quant-agent@.timer`. Enable all 6 instances and turn on user-lingering so they fire when the user isn't logged in:
+The repo ships **six discrete unit pairs**, one per session, at `scripts/systemd/quant-agent-<mode>.{service,timer}`. Install them, enable all six, and turn on user-lingering so they fire when the user isn't logged in:
 
 ```bash
+cp scripts/systemd/quant-agent-*.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
 systemctl --user enable --now \
-  quant-agent@earnings_preprocess.timer \
-  quant-agent@morning.timer \
-  quant-agent@intra_check.timer \
-  quant-agent@midday.timer \
-  quant-agent@close.timer \
-  quant-agent@evening.timer
+  quant-agent-earnings_preprocess.timer \
+  quant-agent-morning.timer \
+  quant-agent-intra_check.timer \
+  quant-agent-midday.timer \
+  quant-agent-close.timer \
+  quant-agent-evening.timer
 loginctl enable-linger "$USER"
 ```
 
-`TimeoutStartSec=1500` on the service is the systemd safety net above the wrapper's own `timeout --kill-after=30 1200` (so the wrapper kills Python before systemd kills the wrapper). The timer's `Persistent=true` catches up after reboots.
+> Until 2026-08-31 this section documented a templated `quant-agent@.service` / `quant-agent@.timer` pair and an install command built on it. **No such template ever existed** — not in the repo, not on the production box. The six session units had lived only in one machine's `~/.config/systemd/user` since 2026-08-10 and were never tracked, so the README described a mechanism nobody could install and nobody had noticed was fictional. They are now under version control, and `tests/test_systemd_units.py` fails CI if one goes missing again.
+
+Every session timer is identical — `OnCalendar=*:0/30`, `Persistent=true` — because the schedule does **not** live in systemd. The timer just ticks every 30 minutes and `run_if_et_window.sh <mode>` decides whether this tick falls inside that session's ET window, keeping `src/trading_calendar.py` the single source of truth. `TimeoutStartSec=1260` on each service is the systemd safety net above the wrapper's own `timeout --kill-after=30 1200` (so the wrapper kills Python before systemd kills the wrapper). `Persistent=true` catches up after reboots.
+
+**Mission Control** (`quant-agent-api.service`) is the one unit with no timer: it is a long-running daemon (`Type=simple`, `Restart=always`, bound to `127.0.0.1:8800`) enabled through `[Install] WantedBy=default.target`.
 
 For an exceptional same-day engineering verification, an operator can rerun
 the morning session inside its normal ET window with a recorded reason:
@@ -331,6 +337,21 @@ The **LLM price-cache refresh** runs on its own timer at **06:30 and 18:30 ET, s
 Seven days matters. `data/openrouter_pricing_cache.json` is an input to the mandatory cost circuit, not telemetry: past 24h freshness plus the configured grace window the circuit fails closed and suspends every paid call for the day. Until this timer existed the file was only ever refreshed by a paid session starting, so it aged precisely when no session was running to notice — over the weekend of 2026-08-30 it went stale unwatched, and only a manual refresh before Monday kept the desk from opening and trading nothing. The script checks its own work against the file rather than the return value, and pushes a Telegram alert (same `TelegramNotifier`, no new channel) the moment the cache passes its freshness window — while the whole grace window is still in hand, not after it runs out. Run it by hand with `python scripts/refresh_pricing.py --force`.
 
 The **deploy-drift check** runs Mon-Fri 08:45 ET — `scripts/systemd/quant-agent-drift-check.{service,timer}`, via `scripts/run_drift_check.sh` (sources `.env`, 60s timeout). It compares the deployed HEAD against `origin/main` and alerts when the box is behind. Until 2026-08-31 its unit invoked the venv Python directly with no `.env`: the process had no `TELEGRAM_*`, the notifier disabled itself, and a drift alert would have gone to the journal and nowhere else. Every unit whose script can raise an alert now goes through a wrapper that sources `.env`, and `tests/test_alert_heartbeat.py` fails CI if a new one does not.
+
+The **unit-drift check** runs **08:50 ET, seven days a week** — `scripts/systemd/quant-agent-unit-drift.{service,timer}`, via `scripts/run_unit_drift_check.sh` (sources `.env`, 60s timeout). It answers the half of the question the deploy-drift check cannot. That check compares **commits**, so it is satisfied the moment the checkout sits on `origin/main` — while the units systemd actually loaded are whatever was last `cp`'d into `~/.config/systemd/user`. Installing a unit is a copy; git never sees it. On 2026-08-31 the box ran 11 services and 10 timers while the repo tracked 6 services and 4 timers, and the one tracked copy anyone might have installed pointed at `/home/yebo/quant-agent` — the upstream fork's path, which exists on no QAMC machine.
+
+It compares the deployed checkout's `scripts/systemd/` against the installed units byte for byte (comments included — deploys here are a literal `cp`, so a box copy whose rationale no longer matches the repo is one nobody can reason about) and reports four things:
+
+| Bucket | Meaning |
+|---|---|
+| `untracked` | Installed on the box, absent from the repo. **The dangerous one** — a unit hand-added at 2am is invisible to every commit-based check, and unrebuildable if the box is lost. |
+| `modified` | Installed and tracked, bytes differ. Someone edited the box copy, or a deploy copied only some files. |
+| `undeployed` | Tracked but not installed — a new unit that never got its `cp`, or one deleted from the box by hand. |
+| `not_enabled` | Installed and correct, but no `.wants` symlink. The unit exists and never fires. |
+
+Compared against the **deployed checkout**, not `origin/main`, deliberately: that keeps the two checks disjoint so they never alarm twice for one condition. Right after a merge the deploy-drift check says "behind" and this one correctly says the installed units still match the checkout they came from. Exit 1 is a finding (`SuccessExitStatus=0 1`); exit 3 is an operator problem and is left to mark the unit failed. Install with `cp scripts/systemd/quant-agent-unit-drift.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-unit-drift.timer`. Run by hand with `scripts/run_unit_drift_check.sh --no-telegram`.
+
+The repository half is `tests/test_systemd_units.py`: CI cannot see the box, so it gates the units instead — no foreign `/home/*` path, `WorkingDirectory` at the deploy root, every `ExecStart` naming a script that exists, every timer paired with its service and installable, every service reachable, no inline credentials, and the six session units plus the API pinned by name. Neither half subsumes the other: CI stops the repo regressing, the timer stops the box diverging.
 
 ### Proving the alert channel is alive
 

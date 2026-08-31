@@ -1,0 +1,10 @@
+[Unit]
+Description=quant-agent midday trading session (fires only inside its ET window; self-gated no-op otherwise)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+ExecStart=/home/qamc/quant-agent/scripts/run_if_et_window.sh midday
+TimeoutStartSec=1260
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,9 @@
+[Unit]
+Description=quant-agent close — check every 30 min, script self-gates to its ET window
+
+[Timer]
+OnCalendar=*:0/30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
