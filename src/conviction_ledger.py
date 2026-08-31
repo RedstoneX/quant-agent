@@ -21,7 +21,7 @@ construction, and none of them may become so without a separate ratified
 decision — the spec is explicit that the ledger exists to make the desk
 legible to the operator, not to change what the desk trades.
 
-Three ideas:
+Five ideas:
 
 **A stance is a side taken.** A seat that rated a symbol bullish while the
 desk went long SUPPORTED the trade; one that rated it bearish OPPOSED it. A
@@ -32,12 +32,49 @@ agreement ceiling and `validate_grounding` already share; a second, divergent
 notion of "aligned" here would let the ledger and the sizing gate disagree
 about identical evidence.
 
-**Credit is signed R, weighted by declared conviction.** A supporter of a
-trade that made +2R scores +2R; an opposer of that same trade scores -2R. If
-the trade had instead lost 1R, the opposer would score +1R — being right to
-argue against a loser is the whole point of recording dissent. `r_multiple`
-(`src/risk/metrics.py`) is the measure, unchanged: profit in units of the
-risk originally taken, against the stop the position was OPENED with.
+**Credit is raw signed R. Nothing weights it.** A supporter of a trade that
+made +2R scores +2R; an opposer of that same trade scores -2R. If the trade
+had instead lost 1R, the opposer would score +1R — being right to argue
+against a loser is the whole point of recording dissent. `r_multiple`
+(`src/risk/metrics.py`) is the measure: profit in units of the risk originally
+taken, against the stop the position was OPENED with.
+
+This reverses an earlier design in which credit was multiplied by the seat's
+own declared conviction (high 1.0 / medium 0.6 / low 0.3). **Owner decision,
+2026-08-31**, for two reasons that live here so nobody reinstates the weight:
+
+1. **It is circular.** The ledger exists to discover whether an analyst's
+   declared confidence predicts anything. Multiplying its credit by its own
+   confidence assumes that answer and bakes it into the measurement. This desk
+   has already seen high-conviction trades underperform low-conviction ones at
+   small sample (see `_CONVICTION_OUTCOME_MIN_N` in `src/storage/db.py`);
+   under weighting that finding would have been hidden inside the score.
+2. **It double-counts.** A confident call already earns a larger position
+   through the §9.4 agreement ceiling, and a larger position already produces
+   a proportionally larger R. Weighting the credit again charges confidence a
+   second time for the same fact.
+
+A confidence weight could legitimately be introduced later — but only one
+DERIVED from an analyst's own measured history, never one chosen up front.
+Deriving it needs the breakdown below to exist first, which is the point of it.
+
+**Confidence is reported, not applied.** The declared conviction is still
+recorded on every credit row; it simply stops multiplying anything. Instead,
+`aggregate_seat_records` breaks each analyst's record down BY the confidence
+it declared (`SeatRecord.by_confidence`): resolved calls, calls right, average
+win, average loss and cumulative total, separately for each level that analyst
+used. "Does this analyst's high confidence earn more?" becomes something a
+reader can see, rather than something this module asserts.
+
+**Direction is arithmetic, never sign convention.** A short is scored exactly
+as a long is. A short that made money is a WIN and a POSITIVE number; a short
+that lost money is a LOSS and a NEGATIVE number; an analyst that argued FOR a
+profitable short is credited and one that argued AGAINST it is charged —
+identically to a long. Direction changes only how profit is computed from
+prices (`r_multiple` takes the side from a signed qty), never the sign of a
+credit, never the wording, never which side of zero anything lands on. Nothing
+here — or anywhere a human reads this output — inverts, negates or
+special-cases a short. **Owner decision, 2026-08-31.**
 
 **No thresholds.** `aggregate_seat_records` returns raw counts and raw
 averages with no minimum-sample gate, deliberately. Owner decision: return
@@ -54,33 +91,37 @@ from dataclasses import dataclass, field
 from src.risk.rules import stance_is_aligned
 
 __all__ = [
-    "CONVICTION_WEIGHT",
+    "CONFIDENCE_ORDER",
     "DEFAULT_CONVICTION",
     "SeatStance",
     "SeatCredit",
+    "ConfidenceRecord",
     "SeatRecord",
     "ClosedPosition",
     "normalize_seat",
-    "conviction_weight",
+    "normalize_conviction",
     "score_position",
     "aggregate_seat_records",
     "summarize_closed_position",
 ]
 
 
-#: Weight applied to a seat's R when it declared this conviction. A seat that
-#: said "high" and was wrong loses more than one that hedged at "low", which
-#: is the only way a self-declared confidence number ever becomes falsifiable.
-#: These numbers are a starting calibration, not a measured result — every
-#: credit row also persists the unweighted `r_multiple` and the declared
-#: conviction, so a reader who disagrees with this scale can re-weight the
-#: whole ledger from stored data without any recomputation of outcomes.
-CONVICTION_WEIGHT: dict[str, float] = {"high": 1.0, "medium": 0.6, "low": 0.3}
+#: There is deliberately NO weight table here. Credit is raw signed R and a
+#: declared conviction multiplies nothing — see the module docstring for the
+#: owner's two reasons (2026-08-31). Reinstating a weight would need a NEW
+#: owner decision AND a scale derived from measured history, not chosen.
 
-#: Used when a seat took a side but declared no conviction — every seat that
-#: did not NOMINATE the symbol is in this case, since a stance in the evidence
-#: registry carries a direction but no strength. Deliberately the middle
-#: weight: neither rewarding nor punishing a seat for the schema's silence.
+#: The declared-confidence levels `Nomination.conviction` uses, in the order a
+#: reader expects to see them. Only an ordering for display: an analyst that
+#: declares something outside this list still gets its own breakdown row,
+#: sorted after these, rather than being folded into one of them.
+CONFIDENCE_ORDER: tuple[str, ...] = ("high", "medium", "low")
+
+#: Recorded when a seat took a side but declared no conviction — every seat
+#: that did not NOMINATE the symbol is in this case, since a stance in the
+#: evidence registry carries a direction but no strength. It is a LABEL, not a
+#: multiplier: it decides which breakdown row the call is reported under and
+#: nothing else.
 DEFAULT_CONVICTION = "medium"
 
 #: Nomination seat names (`_collect_seat_nominations`) → evidence-registry
@@ -107,11 +148,14 @@ def normalize_seat(seat: str) -> str:
     return _SEAT_ALIASES.get(key, key)
 
 
-def conviction_weight(conviction: str | None) -> float:
-    """Weight for a declared conviction; the medium weight when absent or
-    unrecognized. Never zero — a seat that took a side is always scored."""
+def normalize_conviction(conviction: str | None) -> str:
+    """The declared confidence, lowercased, or `DEFAULT_CONVICTION` when the
+    seat declared none. Purely a label for the per-confidence breakdown — it
+    scales no number. An unrecognized word is kept as itself rather than
+    collapsed into a known level, so a new conviction vocabulary shows up in
+    the breakdown instead of silently landing in the "medium" bucket."""
     key = str(conviction or "").strip().lower()
-    return CONVICTION_WEIGHT.get(key, CONVICTION_WEIGHT[DEFAULT_CONVICTION])
+    return key or DEFAULT_CONVICTION
 
 
 @dataclass(frozen=True)
@@ -143,10 +187,19 @@ class SeatStance:
 class SeatCredit:
     """One seat's scored outcome on one resolved idea.
 
-    `credit` is the signed, conviction-weighted score. `r_multiple` is the
-    unweighted realized R of the trade itself (identical across every seat on
-    the same position) and `weight` the multiplier applied, both kept so the
-    scale can be revisited later without re-deriving outcomes.
+    `credit` is the raw signed score: `+r_multiple` for a supporter,
+    `-r_multiple` for an opposer, and nothing multiplies it. `r_multiple` is
+    the realized R of the trade itself, identical across every seat on the
+    same position and unsigned by side, so `credit` is always recoverable
+    from `(r_multiple, side)` alone.
+
+    `conviction` is what the seat DECLARED. It is carried for reporting — it
+    is what `aggregate_seat_records` breaks the record down BY — and it scales
+    nothing. There is no `weight` field: the one that used to sit here was
+    removed by owner decision on 2026-08-31 (module docstring).
+
+    `direction` records whether the desk went long or short. It is
+    descriptive: the sign of `credit` means the same thing either way.
     """
 
     seat: str
@@ -154,7 +207,6 @@ class SeatCredit:
     side: str            # "supported" | "opposed"
     stance: str
     conviction: str
-    weight: float
     r_multiple: float
     credit: float
     resolved_at: str = ""
@@ -162,6 +214,31 @@ class SeatCredit:
     decision_id: str | None = None
     direction: str = "long"
     nominated: bool = False
+
+
+@dataclass(frozen=True)
+class ConfidenceRecord:
+    """One seat's record over only the calls it made at ONE declared
+    confidence — the replacement for the conviction weight.
+
+    Same five figures as the seat's overall record, restricted to a single
+    declared level. Nothing here is compared, ranked or scored against
+    another level: the point is to SHOW whether an analyst's high-confidence
+    calls actually earn more than its low-confidence ones, not to decide it.
+    """
+
+    conviction: str
+    resolved_calls: int
+    calls_right: int
+    avg_win: float | None
+    avg_loss: float | None
+    cumulative_credit: float
+
+    @property
+    def win_rate_pct(self) -> float | None:
+        if self.resolved_calls <= 0:
+            return None
+        return round(self.calls_right / self.resolved_calls * 100, 2)
 
 
 @dataclass(frozen=True)
@@ -173,6 +250,11 @@ class SeatRecord:
     series §9.5 asks for. `peak` is the highest that series ever reached
     INCLUDING the zero it starts from, so a seat whose every call lost money
     is in drawdown from 0.0 rather than from its first (negative) point.
+
+    `by_confidence` splits the same calls by the confidence the seat DECLARED
+    on each one, ordered `CONFIDENCE_ORDER` first and anything else after.
+    Only levels this seat actually used appear — an empty row for a level it
+    never declared would read as a record of zero rather than as no record.
     """
 
     seat: str
@@ -184,6 +266,7 @@ class SeatRecord:
     cumulative: list[tuple[str, float]] = field(default_factory=list)
     peak: float = 0.0
     current_drawdown: float = 0.0
+    by_confidence: list[ConfidenceRecord] = field(default_factory=list)
 
     @property
     def win_rate_pct(self) -> float | None:
@@ -231,9 +314,18 @@ def score_position(
 ) -> list[SeatCredit]:
     """Credit every seat that took a side on `symbol`, given the realized R.
 
-    Supporters of the direction actually taken score `+weight * r_multiple`;
-    opposers score `-weight * r_multiple`. A trade that lost therefore pays
-    its dissenters, which is the asymmetry §9.5 exists to capture.
+    Supporters of the direction actually taken score `+r_multiple`; opposers
+    score `-r_multiple`. Raw and unweighted: the seat's declared conviction is
+    carried onto the row but multiplies nothing (module docstring, owner
+    decision 2026-08-31). A trade that lost therefore pays its dissenters,
+    which is the asymmetry §9.5 exists to capture.
+
+    `direction` selects which stances count as support and nothing else. A
+    short is scored identically to a long — `r_multiple` is already computed
+    with the position's own side, so a profitable short arrives here as a
+    POSITIVE R and its supporters are credited positively, exactly as they
+    would be on a profitable long. No sign is flipped for direction here or
+    anywhere downstream.
 
     Seats whose stance is neither bullish nor bearish (`neutral`, an empty
     string, an unrecognized word) took no side and produce no credit row.
@@ -255,17 +347,15 @@ def score_position(
             # Neither (neutral / unknown stance) or — impossible with the
             # current disjoint vocabularies — both. No side taken, no credit.
             continue
-        weight = conviction_weight(stance.conviction)
         signed_r = r_multiple if supported else -r_multiple
         out.append(SeatCredit(
             seat=stance.seat,
             symbol=str(symbol).strip().upper(),
             side="supported" if supported else "opposed",
             stance=stance.stance,
-            conviction=str(stance.conviction or DEFAULT_CONVICTION).strip().lower(),
-            weight=weight,
+            conviction=normalize_conviction(stance.conviction),
             r_multiple=round(float(r_multiple), 4),
-            credit=round(weight * signed_r, 4),
+            credit=round(signed_r, 4),
             resolved_at=resolved_at,
             position_id=position_id,
             decision_id=decision_id,
@@ -287,6 +377,11 @@ def aggregate_seat_records(credits: Iterable[SeatCredit]) -> dict[str, SeatRecor
     `symbol`), so it is stable and reproducible regardless of the order rows
     came back from storage. `avg_loss` is returned NEGATIVE (the mean of the
     losing credits as they were scored), not as a magnitude.
+
+    `by_confidence` carries the same five figures per declared confidence
+    level — the reporting that replaced the conviction weight. It is a split
+    of the same rows, so its `resolved_calls` sum to the seat's own and its
+    `cumulative_credit` sum to the seat's total.
     """
     by_seat: dict[str, list[SeatCredit]] = {}
     for credit in credits:
@@ -300,6 +395,11 @@ def aggregate_seat_records(credits: Iterable[SeatCredit]) -> dict[str, SeatRecor
         )
         wins = [c.credit for c in ordered if c.credit > 0]
         losses = [c.credit for c in ordered if c.credit < 0]
+        by_conviction: dict[str, list[SeatCredit]] = {}
+        for credit in ordered:
+            by_conviction.setdefault(
+                normalize_conviction(credit.conviction), [],
+            ).append(credit)
         running = 0.0
         peak = 0.0
         series: list[tuple[str, float]] = []
@@ -317,8 +417,33 @@ def aggregate_seat_records(credits: Iterable[SeatCredit]) -> dict[str, SeatRecor
             cumulative=series,
             peak=round(peak, 4),
             current_drawdown=round(max(0.0, peak - running), 4),
+            by_confidence=[
+                _confidence_record(level, by_conviction[level])
+                for level in sorted(by_conviction, key=_confidence_sort_key)
+            ],
         )
     return records
+
+
+def _confidence_sort_key(conviction: str) -> tuple[int, str]:
+    """`CONFIDENCE_ORDER` first, in that order; anything else after, by name."""
+    try:
+        return (CONFIDENCE_ORDER.index(conviction), "")
+    except ValueError:
+        return (len(CONFIDENCE_ORDER), conviction)
+
+
+def _confidence_record(conviction: str, rows: list[SeatCredit]) -> ConfidenceRecord:
+    wins = [c.credit for c in rows if c.credit > 0]
+    losses = [c.credit for c in rows if c.credit < 0]
+    return ConfidenceRecord(
+        conviction=conviction,
+        resolved_calls=len(rows),
+        calls_right=len(wins),
+        avg_win=round(sum(wins) / len(wins), 4) if wins else None,
+        avg_loss=round(sum(losses) / len(losses), 4) if losses else None,
+        cumulative_credit=round(sum(c.credit for c in rows), 4),
+    )
 
 
 def _executed_qty(row: dict) -> float:
@@ -349,12 +474,13 @@ def _executed_price(row: dict) -> float:
         return 0.0
 
 
-#: Opening actions, mapped to the direction the position carries. SHORT is
-#: listed because the ledger's arithmetic is direction-aware — NOT because
-#: short chains exist today: `_assign_position_ids` (src/storage/db.py) only
-#: opens a chain on a BUY, so no SHORT currently receives a position_id at
-#: all. That is a pre-existing gap in §6.2a's chaining, not something this
-#: module introduces or repairs; when it is closed, this side already works.
+#: Opening actions, mapped to the direction the position carries. Both sides
+#: are live: `_assign_position_ids` (src/storage/db.py) mints a chain on a
+#: SHORT exactly as it does on a BUY, and a COVER retires it exactly as a SELL
+#: retires a long (owner decision, 2026-08-31 — shorts count identically to
+#: longs). The `qty` this function returns is NEGATIVE for a short, which is
+#: the only place direction is expressed: it is what tells `r_multiple` which
+#: side the position was, so a profitable short comes back as a positive R.
 _OPEN_ACTIONS: dict[str, str] = {"BUY": "long", "SHORT": "short"}
 
 

@@ -36,6 +36,7 @@ function analyst(overrides: Partial<AnalystScorecardItem> = {}): AnalystScorecar
     calls_since_peak: 0,
     cumulative: [],
     monthly: [],
+    by_confidence: [],
     ...overrides,
   };
 }
@@ -268,6 +269,47 @@ describe("the committed example", () => {
         const previous = i === 0 ? 0 : item.cumulative[i - 1].cumulative;
         return item.cumulative[i].cumulative > previous;
       }).length);
+    }
+  });
+
+  it("splits every analyst by declared confidence, summing back to its total", () => {
+    for (const item of ANALYST_SCORECARD_EXAMPLE.analysts) {
+      expect(item.by_confidence.length).toBeGreaterThan(0);
+      const calls = item.by_confidence.reduce((sum, b) => sum + b.resolved_calls, 0);
+      const right = item.by_confidence.reduce((sum, b) => sum + b.calls_right, 0);
+      const total = item.by_confidence.reduce((sum, b) => sum + b.cumulative_credit, 0);
+      expect(calls).toBe(item.resolved_calls);
+      expect(right).toBe(item.calls_right);
+      expect(total).toBeCloseTo(item.cumulative_credit, 6);
+    }
+    // At least one analyst used more than one level, or the split shows nothing.
+    expect(
+      ANALYST_SCORECARD_EXAMPLE.analysts.some((a) => a.by_confidence.length > 1),
+    ).toBe(true);
+  });
+
+  it("scores a bet on a fall exactly like any other trade", () => {
+    const falling = ANALYST_SCORECARD_EXAMPLE.ideas.filter((i) => i.direction === "short");
+    expect(falling.length).toBeGreaterThan(0);
+    const winner = falling.find((i) => i.r_multiple > 0);
+    expect(winner).toBeDefined();
+    // Backers of a bet that made money are on the positive side of zero and
+    // objectors on the negative one — the same convention a rising bet uses.
+    for (const p of winner!.supported) expect(p.credit).toBeGreaterThan(0);
+    for (const p of winner!.opposed) expect(p.credit).toBeLessThan(0);
+    const loser = falling.find((i) => i.r_multiple < 0);
+    if (loser) {
+      for (const p of loser.supported) expect(p.credit).toBeLessThan(0);
+      for (const p of loser.opposed) expect(p.credit).toBeGreaterThan(0);
+    }
+  });
+
+  it("credits the same amount however confidently the analyst spoke", () => {
+    // Every participant on one idea is credited the trade's own result, signed
+    // by the side it took — never scaled by what it declared.
+    for (const idea of ANALYST_SCORECARD_EXAMPLE.ideas) {
+      for (const p of idea.supported) expect(p.credit).toBeCloseTo(idea.r_multiple, 6);
+      for (const p of idea.opposed) expect(p.credit).toBeCloseTo(-idea.r_multiple, 6);
     }
   });
 

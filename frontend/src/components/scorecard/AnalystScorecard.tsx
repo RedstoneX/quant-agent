@@ -94,16 +94,30 @@ function HowToRead({ dollarsPerCall }: { dollarsPerCall: number }) {
             twice what it risked, that is {signedMoney(2 * dollarsPerCall)} on the idea: everyone who
             backed it is credited that, and everyone who argued against it is charged it. When a trade
             loses, it runs the other way — an analyst who argued against a losing trade is{" "}
-            <em>paid</em> for having been right to object.
+            <em>paid</em> for having been right to object. Nothing scales those amounts up or down: the
+            figure is simply what the trade did, against the analyst&rsquo;s side of it.
           </dd>
         </div>
         <div>
           <dt className="font-semibold text-ink">How confidently the analyst spoke</dt>
           <dd className="m-0 text-[length:var(--fs-meta)] leading-relaxed text-dim">
-            An analyst states how strongly it holds each view, and that changes its share. A call made with
-            high confidence takes the full amount, a medium one about 60% of it, and a quietly hedged one
-            about 30%. So a loud wrong call costs more than a cautious one, and a loud right call earns
-            more.
+            An analyst states how strongly it holds each view, and that does{" "}
+            <strong className="text-ink">not</strong> change what the call is worth. A confident call and a
+            hedged one are credited or charged exactly the same amount. Scaling the score by an
+            analyst&rsquo;s own confidence would assume the very thing this page exists to find out — and a
+            confident view already gets a bigger position, so it already earns or loses more. Instead, each
+            analyst&rsquo;s record is split by what it said, further down the page, so you can see whether
+            its confident calls really are worth more.
+          </dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-ink">Betting on a share going down</dt>
+          <dd className="m-0 text-[length:var(--fs-meta)] leading-relaxed text-dim">
+            The desk can bet on a share falling as well as rising. It counts exactly the same way. If the
+            bet made money it is a win and a positive amount; if it lost money it is a loss and a negative
+            amount. An analyst who argued for a bet that made money is credited, and one who argued against
+            it is charged — the same as for any other trade. Nothing on this page is reversed, inverted or
+            written differently because a trade was a bet on a fall.
           </dd>
         </div>
         <div>
@@ -131,6 +145,9 @@ function HowToRead({ dollarsPerCall }: { dollarsPerCall: number }) {
           </dd>
         </div>
       </dl>
+      <p className="m-0 mt-4 text-[length:var(--fs-micro)] text-faint">
+        Running-total charts drawn with lightweight-charts by TradingView.
+      </p>
     </section>
   );
 }

@@ -124,24 +124,37 @@ export function IdeaTrace({
       analystNode(participant, dollarsPerCall, 0, index * 116),
     );
     const middle = ((everyone.length - 1) * 116) / 2;
+    // React Flow's fitView scales to whichever axis binds first. This stack of
+    // analyst cards is far taller than the three columns are wide, so fitView
+    // was fitting the HEIGHT and letterboxing the graph into the middle ~40%
+    // of the canvas with dead space either side. Spreading the columns in
+    // proportion to the stack's height keeps the drawn shape near the
+    // canvas's own ratio, so it fills the width at any number of analysts.
+    const stackHeight = (everyone.length - 1) * 116 + 96;
+    const span = Math.max(760, stackHeight * 3.4);
+    const tradeX = Math.round(span * 0.42);
+    const resultX = Math.round(span * 0.74);
     const outcome = idea.r_multiple * dollarsPerCall;
 
     nodes.push({
       id: "trade",
       type: "fact",
-      position: { x: 300, y: middle - 24 },
+      position: { x: tradeX, y: middle - 24 },
       data: {
         heading: "The trade",
         headline: idea.symbol,
-        detail: `The desk went ${idea.direction === "short" ? "short" : "long"}, closed ${dayLabel(
-          idea.resolved_at,
-        )}.`,
+        // Both directions get the same sentence in the same words — only the
+        // verb differs, because only the bet differs. Owner decision,
+        // 2026-08-31: nothing about a bet on a fall is worded specially.
+        detail: `The desk bet it would ${
+          idea.direction === "short" ? "fall" : "rise"
+        }, closed ${dayLabel(idea.resolved_at)}.`,
       } satisfies FactNodeData,
     });
     nodes.push({
       id: "result",
       type: "fact",
-      position: { x: 560, y: middle - 24 },
+      position: { x: resultX, y: middle - 24 },
       data: {
         heading: "What happened",
         headline: `${trendGlyph(outcome)} ${signedMoney(outcome)}`,
@@ -183,10 +196,11 @@ export function IdeaTrace({
       <p className="m-0 mb-2 text-[length:var(--fs-meta)] leading-snug text-dim">
         One closed trade, traced back to everyone who took a side on it. {idea.symbol} was proposed by{" "}
         {[...idea.supported, ...idea.opposed].find((p) => p.nominated)?.analyst ?? "an analyst"}, and the
-        desk went {idea.direction === "short" ? "short" : "long"}. It ended{" "}
+        desk bet it would {idea.direction === "short" ? "fall" : "rise"}. It ended{" "}
         <strong className="font-mono text-ink">{signedMoney(outcome)}</strong> against the $100 treated as
-        put at risk, and every analyst below was credited or charged that amount, scaled by how confidently
-        it spoke.
+        put at risk, and every analyst below was credited or charged that same amount — the ones that
+        backed it one way, the ones that argued against it the other. How confidently each spoke is shown
+        beside its name and changes none of the figures.
       </p>
       <AgentFlowGraph nodes={nodes} edges={edges} nodeTypes={IDEA_NODE_TYPES} height={300} />
       <ul className="mt-2 list-none space-y-1 p-0 text-[length:var(--fs-meta)]">

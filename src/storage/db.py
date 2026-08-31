@@ -43,30 +43,73 @@ def _new_position_id() -> str:
     return f"pos-{uuid.uuid4().hex[:12]}"
 
 
-#: Actions that (fully or partially) REDUCE a held position once executed.
-#: Mirrors the exit-family list `compute_trade_calibration` already uses
-#: below, plus EMERGENCY_COVER (the short-side twin of EMERGENCY_SELL —
-#: see src/pipeline.py's `_forced_close_side_and_qty` / `EMERGENCY_COVER`
-#: comments). SWEEP_BUY / SWEEP_SELL are deliberately absent: the cash-sweep
-#: vehicle is stopless and excluded from calibration for the same reason —
-#: it has no entry thesis or stop to chain a position around.
-_POSITION_EXIT_ACTIONS: frozenset[str] = frozenset({
-    "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER", "REDUCE",
-    "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
+#: Actions that (fully or partially) REDUCE a held position once executed,
+#: split by WHICH side they can retire. SWEEP_BUY / SWEEP_SELL are
+#: deliberately absent from all three: the cash-sweep vehicle is stopless and
+#: excluded from calibration for the same reason — it has no entry thesis or
+#: stop to chain a position around.
+#:
+#: The COVER family was added on 2026-08-31 (owner decision: short trades are
+#: recorded and scored exactly as longs are). Before that a short opened no
+#: chain and a cover retired nothing, so no short round trip existed to score.
+#: `EMERGENCY_COVER` was already recognized — the short-side twin of
+#: EMERGENCY_SELL, see src/pipeline.py's `_forced_close_side_and_qty` — but
+#: with no short chain to attach to it could never actually close one.
+_LONG_EXIT_ACTIONS: frozenset[str] = frozenset({"EMERGENCY_SELL"})
+_LONG_EXIT_PREFIXES: tuple[str, ...] = ("SELL", "PARTIAL_SELL")
+_SHORT_EXIT_ACTIONS: frozenset[str] = frozenset({"EMERGENCY_COVER"})
+_SHORT_EXIT_PREFIXES: tuple[str, ...] = ("COVER", "PARTIAL_COVER")
+#: Exits that can retire EITHER side: a stop, a trail, a take-profit, a
+#: deterministic de-lever or a reviewer REDUCE all fire against whatever
+#: position is open, and the trades row records no side of its own.
+_EITHER_SIDE_EXIT_ACTIONS: frozenset[str] = frozenset({
+    "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
 })
-_POSITION_EXIT_PREFIXES: tuple[str, ...] = ("SELL", "PARTIAL_SELL")
+
+#: Kept as the flat union for every caller that only asks "is this row on the
+#: exit side at all" (`backfill_position_ids`, `_categorize_exit_reason`).
+_POSITION_EXIT_ACTIONS: frozenset[str] = (
+    _LONG_EXIT_ACTIONS | _SHORT_EXIT_ACTIONS | _EITHER_SIDE_EXIT_ACTIONS
+)
+_POSITION_EXIT_PREFIXES: tuple[str, ...] = _LONG_EXIT_PREFIXES + _SHORT_EXIT_PREFIXES
 
 
 def _is_position_exit_action(action: str | None) -> bool:
     """True for any action that belongs to an open position's chain on the
-    exit side — SELL/PARTIAL_SELL* by prefix (PARTIAL_SELL(15%) etc. carry
-    the trim fraction in the action string itself) plus the fixed set above.
+    exit side — SELL/PARTIAL_SELL* and COVER/PARTIAL_COVER* by prefix (
+    PARTIAL_SELL(15%) etc. carry the trim fraction in the action string
+    itself) plus the fixed sets above.
     A TRAIL_STOP row is included even when it is only a stop *placement*
     (not yet filled) — Phase 6 spec: a chain inherits TRAIL_STOP rows
     unconditionally; only the qty math below cares whether one actually
     fired."""
     act = (action or "").upper()
     return act.startswith(_POSITION_EXIT_PREFIXES) or act in _POSITION_EXIT_ACTIONS
+
+
+def _exit_action_side(action: str | None) -> str | None:
+    """Which direction of chain this exit can retire — "long", "short", or
+    None for the either-side exits (stops, trails, take-profits, de-levers).
+
+    Used only by `_assign_position_ids`, so a SELL can never be mistaken for
+    the close of a short chain (or a COVER for the close of a long one). A
+    row whose side does not match the chain that is open is left unattached
+    rather than guessed at, exactly as an exit arriving with nothing open is.
+    """
+    act = (action or "").upper()
+    if act.startswith(_SHORT_EXIT_PREFIXES) or act in _SHORT_EXIT_ACTIONS:
+        return "short"
+    if act.startswith(_LONG_EXIT_PREFIXES) or act in _LONG_EXIT_ACTIONS:
+        return "long"
+    return None
+
+
+#: Actions that OPEN a position chain, mapped to the direction it carries.
+#: SHORT mints a chain exactly as BUY does — owner decision, 2026-08-31:
+#: "money made lost, decisions made lost, it's the same thing as everything
+#: else." Mirrors `src/conviction_ledger.py::_OPEN_ACTIONS`, which reduces
+#: the resulting chain to a round trip.
+_POSITION_OPEN_ACTIONS: dict[str, str] = {"BUY": "long", "SHORT": "short"}
 
 
 def _row_counts_as_executed(action: str | None, fill_status, fill_qty) -> bool:
@@ -90,14 +133,35 @@ def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
     and each dict needs at least id/action/qty/fill_qty/fill_status/
     position_id.
 
-    Rule: a BUY from flat mints a fresh id; every subsequent BUY (scale-in)
-    and every recognized exit-family action (see `_is_position_exit_action`)
-    inherits it until the running executed-qty net returns to ~0, at which
-    point the chain is closed and the next BUY mints a new one. A row with
-    no open chain to attach to (an exit that arrives while nothing is open —
-    typically the ledger's oldest record for a symbol whose real position
-    predates this system, or a stray SELL after the book already went flat)
-    is left unassigned rather than guessed, per spec.
+    Rule: a BUY (long) or a SHORT (short) from flat mints a fresh id; every
+    subsequent entry on the same side (scale-in) and every recognized
+    exit-family action for that side (see `_is_position_exit_action` and
+    `_exit_action_side`) inherits it until the running executed-qty net
+    returns to ~0, at which point the chain is closed and the next entry
+    mints a new one. A row with no open chain to attach to (an exit that
+    arrives while nothing is open — typically the ledger's oldest record for
+    a symbol whose real position predates this system, or a stray SELL after
+    the book already went flat) is left unassigned rather than guessed, per
+    spec.
+
+    **Shorts chain identically to longs** (owner decision, 2026-08-31). A
+    SHORT opens, a COVER/PARTIAL_COVER/EMERGENCY_COVER retires, and a stop or
+    trail retires either side. `qty` is the magnitude of shares moved on both
+    sides — a short's net counts UP as it is opened and DOWN as it is
+    covered, the same arithmetic as a long — so nothing here is negated or
+    special-cased for direction. Before this, `is_open` was `action == "BUY"`
+    alone: no SHORT ever received a position_id, so no short round trip
+    existed for §9.5's ledger to score. That was the whole of the gap.
+
+    Two guards keep the long side's existing chains untouched, both for
+    histories the desk does not currently produce:
+      - an entry on the OPPOSITE side while a chain is still open is passed
+        through untouched rather than flipping or closing that chain (you
+        cannot be long and short the same symbol at one broker, so this is a
+        malformed history, not a position);
+      - an exit whose side does not match the open chain (a SELL against a
+        short, a COVER against a long) is left unattached rather than
+        allowed to retire the wrong position.
 
     Rows that ALREADY carry a position_id are treated as ground truth. That
     is what makes this function safe to call from both the live per-insert
@@ -122,9 +186,11 @@ def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
     passthrough: dict[int, str | None] = {}
     current_group: list[dict] | None = None
     current_net = 0.0
+    current_direction: str | None = None
     for row in rows:
         action = (row.get("action") or "").upper()
-        is_open = action == "BUY"
+        open_direction = _POSITION_OPEN_ACTIONS.get(action)
+        is_open = open_direction is not None
         is_exit = _is_position_exit_action(action)
         if not is_open and not is_exit:
             # HOLD / SWEEP_BUY / SWEEP_SELL / anything unrecognized: never
@@ -138,10 +204,17 @@ def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
         chain_open = current_group is not None and current_net > 1e-6
 
         if is_open:
+            if chain_open and open_direction != current_direction:
+                # A SHORT while a long chain is still open (or the reverse).
+                # Not producible by this desk and not a position either way:
+                # passed through so the open chain is left exactly as it was.
+                passthrough[row["id"]] = row.get("position_id")
+                continue
             if not chain_open:
                 current_group = []
                 groups.append(current_group)
                 current_net = 0.0
+                current_direction = open_direction
             current_group.append(row)
             if executed:
                 current_net += qty
@@ -153,6 +226,14 @@ def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
                 # still never mint a NEW one for an unattached exit).
                 groups.append([row])
                 current_group = None
+                current_direction = None
+                continue
+            exit_side = _exit_action_side(action)
+            if exit_side is not None and exit_side != current_direction:
+                # A SELL against an open short, or a COVER against an open
+                # long. It cannot be this chain's exit; unattached, and the
+                # chain it does not belong to is left running.
+                groups.append([row])
                 continue
             current_group.append(row)
             if action == "TRAIL_STOP":
@@ -163,16 +244,20 @@ def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
             if current_net <= 1e-6:
                 current_group = None
                 current_net = 0.0
+                current_direction = None
 
     # Pass 2 — resolve one id per group. An id already present ANYWHERE in
     # the group wins (ground truth, whichever row in the chain happened to
     # carry it first); otherwise mint one fresh id for the whole group, but
-    # only for a group that actually opened with a BUY — a lone unattached
-    # exit (no BUY, no existing id) stays unassigned rather than guessed.
+    # only for a group that actually opened with a BUY or a SHORT — a lone
+    # unattached exit (no entry, no existing id) stays unassigned rather
+    # than guessed.
     assignments: dict[int, str | None] = dict(passthrough)
     for group in groups:
         existing_ids = [r.get("position_id") for r in group if r.get("position_id")]
-        opened = any((r.get("action") or "").upper() == "BUY" for r in group)
+        opened = any(
+            (r.get("action") or "").upper() in _POSITION_OPEN_ACTIONS for r in group
+        )
         if existing_ids:
             resolved = existing_ids[0]
         elif opened:
@@ -285,14 +370,13 @@ def _categorize_exit_reason(
 # does not apply to them at all (mirrors `_categorize_exit_reason`
 # returning None for the same non-exit rows).
 #
-# Deliberately a BROADER predicate than `_is_position_exit_action`: that
-# function excludes plain COVER/PARTIAL_COVER (Stage 3's ordinary short
-# close is not yet part of the position_id/exit_reason_category chain —
-# see `_assign_position_ids`'s `is_open = action == "BUY"`, a pre-existing
-# gap this task does not touch), but an ordinary COVER absolutely CAN carry
-# a real decision_id (ExecutionStage's cover_decisions loop passes one) and
-# must be labelled 'linked' when it does. Using `_is_position_exit_action`
-# here would silently return None for every COVER row instead.
+# Still a BROADER predicate than `_is_position_exit_action`, though the gap
+# it was written for has closed: COVER/PARTIAL_COVER now DO belong to the
+# position_id / exit_reason_category chain (2026-08-31 — shorts are chained
+# and scored exactly as longs are). What remains is the set difference for
+# anything outside both lists: this predicate labels every non-entry,
+# non-HOLD, non-sweep row, so a future exit action is labelled 'linked' from
+# the day it exists rather than silently returning None.
 _NON_POSITIONAL_ACTIONS: frozenset[str] = frozenset({
     "BUY", "SHORT", "HOLD", "SWEEP_BUY", "SWEEP_SELL",
 })
@@ -2092,6 +2176,17 @@ class Database:
         when a position closes, and the aggregate
         (`src.conviction_ledger.aggregate_seat_records`) is pure arithmetic
         over these rows.
+
+        **The one thing that IS derived here, and why.** Credit rows written
+        before 2026-08-31 stored a conviction-WEIGHTED `credit` (R x 1.0/0.6/
+        0.3 by declared confidence); rows written after store raw signed R,
+        the weight having been removed by owner decision. Rather than migrate
+        or mix the two, `credit` is recomputed on every read from the stored
+        `r_multiple` and `side`, which is exact and lossless: `r_multiple` was
+        always persisted unweighted and `side` says which way to sign it. Old
+        and new rows therefore mean the same thing, no stored row is rewritten
+        and no reader ever sees a weighted figure. The stored `credit` and the
+        historical `weight` key are deliberately ignored.
         """
         from src.conviction_ledger import SeatCredit
         sql = (
@@ -2112,13 +2207,13 @@ class Database:
         for row in rows:
             try:
                 data = _json.loads(row["evidence_json"])
+                r = float(data["r_multiple"])
                 out.append(SeatCredit(
                     seat=data["seat"], symbol=data["symbol"], side=data["side"],
                     stance=data.get("stance", ""),
                     conviction=data.get("conviction", "medium"),
-                    weight=float(data.get("weight", 1.0)),
-                    r_multiple=float(data.get("r_multiple", 0.0)),
-                    credit=float(data["credit"]),
+                    r_multiple=r,
+                    credit=round(r if data["side"] == "supported" else -r, 4),
                     resolved_at=data.get("resolved_at", ""),
                     position_id=data.get("position_id"),
                     decision_id=data.get("decision_id"),
@@ -2150,8 +2245,14 @@ class Database:
              SAME function the heat block and PMFacts already use, against
              the stop the position was OPENED with,
           3. credit every seat that took a side at decision time
-             (`score_position`), conviction-weighted,
+             (`score_position`) — raw signed R, unweighted,
           4. persist one `conviction_credit` evidence row per seat.
+
+        Long and short chains are handled by exactly the same path. A
+        profitable short arrives from `r_multiple` as a POSITIVE R (the
+        round trip carries a negative qty, which is the only place direction
+        appears) and its supporters are credited positively, identically to a
+        profitable long. Nothing is inverted for direction.
 
         Idempotent by construction: a position whose id already appears in a
         credit row is skipped, so this is safe to run every evening.
@@ -2231,7 +2332,9 @@ class Database:
                     evidence_json=_json.dumps({
                         "seat": credit.seat, "symbol": credit.symbol,
                         "side": credit.side, "stance": credit.stance,
-                        "conviction": credit.conviction, "weight": credit.weight,
+                        # `conviction` is recorded, never applied — no
+                        # `weight` key is written any more (2026-08-31).
+                        "conviction": credit.conviction,
                         "r_multiple": credit.r_multiple, "credit": credit.credit,
                         "resolved_at": credit.resolved_at,
                         "position_id": credit.position_id,
@@ -2540,10 +2643,13 @@ class Database:
         written before this column existed (Phase 6, §6.2a).
 
         Uses the exact same FIFO logic `_assign_position_ids` derives
-        (matched by symbol, oldest-first, a BUY opens/adds, a recognized
-        exit-family action reduces — mirroring the accounting
-        `compute_trade_calibration` already trusts for win-rate / avg-hold-
-        days) so the backfilled chains never disagree with those numbers.
+        (matched by symbol, oldest-first, a BUY or a SHORT opens/adds, a
+        recognized exit-family action for that side reduces — mirroring the
+        accounting `compute_trade_calibration` already trusts for win-rate /
+        avg-hold-days) so the backfilled chains never disagree with those
+        numbers. Re-running this after 2026-08-31 assigns chains to short
+        history that could not receive one before; a row that already carries
+        an id is still never reassigned.
 
         Never guesses: a row this can't confidently attach to an open chain
         — typically the ledger's very first record for a symbol whose real
@@ -2593,7 +2699,10 @@ class Database:
                     if r.get("position_id"):
                         continue  # ground truth — never reassigned
                     action = (r.get("action") or "").upper()
-                    is_positionable = action == "BUY" or _is_position_exit_action(action)
+                    is_positionable = (
+                        action in _POSITION_OPEN_ACTIONS
+                        or _is_position_exit_action(action)
+                    )
                     new_id = new_assignments.get(r["id"])
                     if new_id:
                         assigned += 1

@@ -225,13 +225,43 @@ read here through `db_reads.get_conviction_ledger()`, an independent SQLite
 before the ledger existed has no rows of these kinds and reads back empty —
 which is `state="empty"`, not an error.
 
-**The route scores nothing.** The signed, conviction-weighted `credit`, the
-realized `r_multiple`, the alignment decision and the conviction weight are all
-computed once by the ledger layer at close time and persisted; this route parses
-the stored JSON and sums it into per-analyst totals, a running series, a peak, a
-distance below that peak, and monthly buckets. No R is computed here, no stance
-is re-classified, no weight is applied. Malformed rows are skipped rather than
-defaulted to zero — a broken row is absence of evidence, not a break-even call.
+**The route scores nothing.** The realized `r_multiple` and the alignment
+decision (`side`) are computed once by the ledger layer at close time and
+persisted; this route parses the stored JSON and sums it into per-analyst
+totals, a running series, a peak, a distance below that peak, monthly buckets
+and a per-declared-confidence split. No R is computed here and no stance is
+re-classified. Malformed rows are skipped rather than defaulted to zero — a
+broken row is absence of evidence, not a break-even call.
+
+**Credit is raw signed R, unweighted (owner decision, 2026-08-31).** An
+earlier design multiplied each analyst's credit by its own declared conviction
+(high 1.0 / medium 0.6 / low 0.3). That was removed: it is circular (the ledger
+exists to find out whether declared confidence predicts anything, and weighting
+by it assumes the answer) and it double-counts (a confident call already earns a
+larger position through the §9.4 agreement ceiling, and a larger position
+already produces a proportionally larger R). `ScorecardIdeaAnalyst.weight` is
+gone from the response.
+
+What replaced it is `AnalystScorecardItem.by_confidence`
+(`ScorecardConfidenceBreakdown`): the same settled calls split by the confidence
+the analyst declared on each, high first, only for levels it actually used. The
+rows sum back to the analyst's own `resolved_calls`, `calls_right` and
+`cumulative_credit`.
+
+**`credit` is derived on read, and this is the migration story.** Credit rows
+written before 2026-08-31 stored a weighted `credit`. Nothing rewrites them:
+`db_reads.get_conviction_ledger()` recomputes `credit` as `+r_multiple` for a
+supporter and `-r_multiple` for an opposer, which is exact because `r_multiple`
+was always persisted unweighted. Old and new rows therefore mean the same thing
+and no series ever mixes two scales. `Database.get_conviction_credits` derives
+it identically on the trading side.
+
+**A short reads exactly like a long (owner decision, 2026-08-31).** `direction`
+on an idea is descriptive. A trade that made money is a positive number and a
+win whichever way it was taken; the analyst that argued for it is credited and
+the one that argued against it is charged. No field is inverted, negated or
+specially worded for direction anywhere in this response or the panel that
+renders it.
 
 **Deliberate duplication, and why.** `src.conviction_ledger.aggregate_seat_records`
 produces the same per-analyst totals, and importing it would be the obvious
@@ -240,7 +270,8 @@ forbids any `src.risk` import from `src/api/`. Preserving the isolation contract
 wins, so the arithmetic is mirrored in `src/api/routes_scorecard.py`.
 `tests/test_api_scorecard.py::test_projection_matches_the_ledgers_own_aggregate_when_it_is_available`
 runs both implementations over identical input and asserts they agree on every
-shared field, so the two cannot silently diverge.
+shared field — including the per-confidence split — so the two cannot silently
+diverge.
 
 Three states, all HTTP 200 — the same typed-degraded-envelope posture
 `/research/daily/{date}` uses, so the consumer can render an honest "this could
