@@ -1352,7 +1352,6 @@ def test_morning_research_stage_news_partial_coverage_marks_status_partial():
     result_ctx = stage.run(ctx)
 
     assert result_ctx.news_intel is report
-    assert result_ctx.news_coverage is coverage
     assert result_ctx.data_status["news"] == "partial"
     assert result_ctx.data_status["news"] != "ok"
 

@@ -6,7 +6,7 @@ from src.agents.base import AgentResult
 from src.cost_circuit import PaidAnalysisSuspended
 from src.models import (
     TechAnalysisResult, PortfolioDecision, TradeDecision, RiskVerdict, Position,
-    NewsAnalysisResult, TargetPosition,
+    TargetPosition,
     MacroAnalysis, MacroReasoningChain, MacroPositionGuidance,
     PositionReview, PositionReasoningChain, PositionAction,
     ReasoningChain, RiskReasoningChain, TechReasoningChain,
@@ -115,6 +115,7 @@ def _macro_stub(regime="risk-on", outlook="bullish", confidence="medium",
         ),
         summary="stub macro analysis",
     )
+
 
 def _mock_agent_result(raw_text="{}"):
     return AgentResult(raw_text=raw_text, tokens_used=100, model="test", user_message="test input")
@@ -237,11 +238,12 @@ def test_pipeline_morning_run_buy(
 
     # News
     mock_na = MagicMock()
-    mock_na.analyze.return_value = (NewsAnalysisResult(
-        market_sentiment="bullish", confidence="medium",
-        key_events=[], sector_impacts=[], symbol_alerts=[],
-        summary="Bullish news",
-    ), _mock_agent_result())
+    # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
+    # AgentResult]; None is a real, typed outcome (a parse/analysis
+    # failure), not a stand-in for a type nothing produces. PM/RM are both
+    # mocked in this fixture, so no production code ever reads news
+    # content — only that the pipeline tolerates a newsless run.
+    mock_na.analyze.return_value = (None, _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -354,11 +356,12 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_maa_cls.return_value = mock_maa
 
     mock_na = MagicMock()
-    mock_na.analyze.return_value = (NewsAnalysisResult(
-        market_sentiment="bullish", confidence="medium",
-        key_events=[], sector_impacts=[], symbol_alerts=[],
-        summary="Bullish news",
-    ), _mock_agent_result())
+    # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
+    # AgentResult]; None is a real, typed outcome (a parse/analysis
+    # failure), not a stand-in for a type nothing produces. PM/RM are both
+    # mocked in this fixture, so no production code ever reads news
+    # content — only that the pipeline tolerates a newsless run.
+    mock_na.analyze.return_value = (None, _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -397,12 +400,12 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     assert tech_row["decision_id"] is None
     assert json.loads(tech_row["evidence_json"])["rating"] == "buy"
 
-    # Note: this fixture's `mock_na.analyze` stub returns a NewsAnalysisResult
-    # (not the NewsIntelligenceReport the real news pipeline validates), so
-    # news_intel parses as None here — same as the pre-existing
-    # test_pipeline_morning_run_buy fixture, which doesn't assert on news
-    # either. News evidence persistence (run-scoped, same code path as
-    # macro) is covered directly in tests/test_pipeline_stages.py.
+    # Note: this fixture's `mock_na.analyze` stub returns (None, ...) — see
+    # its comment above — so news_intel is None here and no news row is
+    # written, same as the pre-existing test_pipeline_morning_run_buy
+    # fixture, which doesn't assert on news either. News evidence
+    # persistence (run-scoped, same code path as macro) is covered directly
+    # in tests/test_pipeline_stages.py.
 
     # Decision-phase evidence: correlated to the SAME decision_id the PM/RM
     # agent_logs rows and the resulting `trades` row carry.
@@ -521,11 +524,12 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     mock_maa_cls.return_value = mock_maa
 
     mock_na = MagicMock()
-    mock_na.analyze.return_value = (NewsAnalysisResult(
-        market_sentiment="bullish", confidence="medium",
-        key_events=[], sector_impacts=[], symbol_alerts=[],
-        summary="Bullish news",
-    ), _mock_agent_result())
+    # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
+    # AgentResult]; None is a real, typed outcome (a parse/analysis
+    # failure), not a stand-in for a type nothing produces. PM/RM are both
+    # mocked in this fixture, so no production code ever reads news
+    # content — only that the pipeline tolerates a newsless run.
+    mock_na.analyze.return_value = (None, _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -633,11 +637,9 @@ def test_pipeline_risk_rejected(
 
     # News
     mock_na = MagicMock()
-    mock_na.analyze.return_value = (NewsAnalysisResult(
-        market_sentiment="bearish", confidence="high",
-        key_events=[], sector_impacts=[], symbol_alerts=[],
-        summary="Bearish news",
-    ), _mock_agent_result())
+    # See the sibling fixtures' comment above: None is analyze()'s own real
+    # Optional return, not a stand-in for a type nothing produces.
+    mock_na.analyze.return_value = (None, _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -2816,11 +2818,12 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_maa_cls.return_value = mock_maa
 
     mock_na = MagicMock()
-    mock_na.analyze.return_value = (NewsAnalysisResult(
-        market_sentiment="bullish", confidence="medium",
-        key_events=[], sector_impacts=[], symbol_alerts=[],
-        summary="Bullish news",
-    ), _mock_agent_result())
+    # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
+    # AgentResult]; None is a real, typed outcome (a parse/analysis
+    # failure), not a stand-in for a type nothing produces. PM/RM are both
+    # mocked in this fixture, so no production code ever reads news
+    # content — only that the pipeline tolerates a newsless run.
+    mock_na.analyze.return_value = (None, _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage

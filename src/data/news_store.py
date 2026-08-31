@@ -108,9 +108,6 @@ class NewsStore:
         path = self._today_dir() / "raw_headlines.json"
         _atomic_write(path, json.dumps(headlines, indent=2, ensure_ascii=False))
 
-    def get_report_path(self) -> str:
-        return str(self._today_dir())
-
     def recent_state_changes(self, lookback_days: int = 14, limit: int = 8) -> list[dict]:
         """Scan the last N dated reports for HIGH-conviction state_changes.
 

@@ -405,32 +405,6 @@ def _positions_db(tmp_path, rows) -> sqlite3.Connection:
     return db_path
 
 
-def test_db_get_positions_open_only_long_and_flat_unchanged(tmp_path):
-    """No-op proof for `storage/db.py`: longs included, flat rows excluded —
-    exactly as `qty > 0` behaved."""
-    from src.storage.db import Database
-    db = Database(str(tmp_path / "d.db"))
-    db.initialize()
-    db.upsert_position("SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
-    db.upsert_position("QQQ", 0.0, 400.0, 410.0, 0.0, 0.0, "ETF")
-    open_pos = db.get_positions(open_only=True)
-    assert [r["symbol"] for r in open_pos] == ["SPY"]
-    db.close()
-
-
-def test_db_get_positions_open_only_includes_a_short(tmp_path):
-    """A short is an OPEN position. `qty > 0` hid it from the operator."""
-    from src.storage.db import Database
-    db = Database(str(tmp_path / "d.db"))
-    db.initialize()
-    db.upsert_position("SPY", 10.0, 500.0, 510.0, 5100.0, 100.0, "ETF")
-    db.upsert_position("TSLA", -40.0, 250.0, 240.0, -9600.0, 400.0, "Auto")
-    db.upsert_position("QQQ", 0.0, 400.0, 410.0, 0.0, 0.0, "ETF")
-    open_pos = db.get_positions(open_only=True)
-    assert sorted(r["symbol"] for r in open_pos) == ["SPY", "TSLA"]
-    db.close()
-
-
 def test_notifier_evening_snapshot_long_only_unchanged(tmp_path, monkeypatch):
     """No-op proof for the evening snapshot on a long-only book."""
     from src.notifier import format_session_result

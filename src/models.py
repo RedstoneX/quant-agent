@@ -957,41 +957,6 @@ class MacroAnalysis(BaseModel):
         return values
 
 
-class NewsEvent(BaseModel):
-    headline: str
-    impact: str  # "high" | "medium" | "low"
-    affected_sectors: list[str] = []
-    affected_symbols: list[str] = []
-    sentiment: str  # "bullish" | "bearish" | "neutral"
-    explanation: str
-
-
-class SectorImpact(BaseModel):
-    sector: str
-    sentiment: str  # "bullish" | "bearish" | "neutral"
-    reason: str
-
-
-class SymbolAlert(BaseModel):
-    symbol: str
-    sentiment: str  # "bullish" | "bearish" | "neutral"
-    reason: str
-
-    @field_validator("symbol")
-    @classmethod
-    def normalize_symbol(cls, value: str) -> str:
-        return _normalize_symbol(value)
-
-
-class NewsAnalysisResult(BaseModel):
-    market_sentiment: str  # "bullish" | "bearish" | "neutral"
-    confidence: str  # "high" | "medium" | "low"
-    key_events: list[NewsEvent] = []
-    sector_impacts: list[SectorImpact] = []
-    symbol_alerts: list[SymbolAlert] = []
-    summary: str
-
-
 class MacroNarrative(BaseModel):
     last_updated: str
     era_themes: list[str] = Field(min_length=1)

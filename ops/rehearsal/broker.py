@@ -64,7 +64,7 @@ import logging
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timezone
 from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
@@ -611,8 +611,3 @@ def blocked_market_data(record: list[str]):
             return {}
 
     return RehearsalMarketData()
-
-
-def default_snapshot_date(now: datetime) -> date:
-    """The account date a rehearsal of `now` should read."""
-    return (now - timedelta(days=0)).date()
