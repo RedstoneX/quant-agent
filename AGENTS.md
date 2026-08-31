@@ -51,7 +51,7 @@ Parallelism is an efficiency tool, not an agent-count target.
 - Prefer outcome-driven work over micro-prompts.
 - Run the narrowest decisive test first; broaden only when evidence requires it.
 - Do not re-read unchanged authority or re-prove settled facts.
-- UI/frontend acceptance requires rendered desktop and iPad inspection; tests/builds alone are insufficient.
+- UI/frontend acceptance requires rendered desktop and iPad inspection; tests/builds alone are insufficient. The instrument is `npm run visual:acceptance` in `frontend/` — it drives a real browser across desktop and iPad (landscape and portrait) in populated, empty and error states. It writes to a gitignored `visual-acceptance.local/`; look at the shots, do not commit them. Named here because the rule is worthless if the only tool that satisfies it has to be remembered.
 - Stop when the result is proven. Re-validation without new evidence is waste.
 - Keep handoffs short: **changed / verified / preview if relevant / unresolved blocker / production state**.
 - Do not infer current defects from historical notes. Reopen a resolved area only from current operator or production evidence.
