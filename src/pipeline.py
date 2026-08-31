@@ -10274,6 +10274,29 @@ class TradingPipeline:
                 equity_close=equity_close,
             )
 
+        # Conviction ledger (spec §9.5) — score on close. Every position
+        # chain that went flat today is credited to the seats that took a
+        # side on it: aligned with the direction taken scores +R, opposed
+        # scores -R, weighted by the conviction that seat declared. Runs
+        # HERE, in evening housekeeping, deliberately: it reads closed
+        # `trades` rows and writes forensic evidence rows, touches no broker
+        # and no open position, and is idempotent (a position already scored
+        # is skipped), so it can never influence or delay an execution path.
+        # Advisory only — nothing in the trading chain reads what it writes.
+        try:
+            ledger = self.db.resolve_conviction_ledger()
+            if ledger.get("scored_positions"):
+                logger.info(
+                    "Conviction ledger: scored %d newly closed position(s) into "
+                    "%d seat credit(s) (%d already scored, %d unscorable without "
+                    "an entry stop, %d with no recorded stances)",
+                    ledger["scored_positions"], ledger["credits_written"],
+                    ledger["skipped_already_scored"], ledger["skipped_no_r"],
+                    ledger["skipped_no_stances"],
+                )
+        except Exception as e:
+            logger.warning("Conviction ledger resolution failed: %s", e)
+
         # Housekeeping: drop agent_logs older than 2 years (full_response bloats the DB
         # but 730 days supports quarter-over-quarter learning), and trades older than
         # 5 years (keep a long audit tail but bound it).

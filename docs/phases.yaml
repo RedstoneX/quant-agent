@@ -730,7 +730,9 @@ phases:
         - "The chart analyst is then brought in specifically to check whether there's a real tradeable setup for each nomination."
         - "If sources disagree on a symbol and that disagreement is never resolved, that specific trade idea is dropped rather than risking a bad call — the rest of the session's trades are unaffected."
         - "How much can be risked on an idea now scales automatically with how many independent sources agree on it — that scaling is deterministic, not a judgment call."
-      outstanding: "A ledger tracking who nominated each idea, who confirmed it, and who disagreed was deliberately not built."
+        - "The desk now keeps a scorecard: which researcher raised each idea, which ones backed it, which ones argued against it, and — once the position closes — who was right. A researcher who correctly warned against a trade that lost money is credited for it."
+        - "That scorecard is a record only. It does not influence what gets traded or how much is risked, and a test enforces that."
+      outstanding: "The scorecard has no screen yet — the numbers are recorded but nothing displays them to the operator. Trades taken on the short side are also not scored yet, because they are not chained into positions the way ordinary buys are."
     status: "PARTIAL"
     confidence: "high"
     evidence:
@@ -813,8 +815,48 @@ phases:
         note: "§9.4: three-source agreement test case for the ceiling"
       - kind: manual
         note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing, and in turn §9.3/§9.4."
+      - kind: file_exists
+        path: "src/conviction_ledger.py"
+        note: "§9.5: pure-logic scoring + aggregation module — no I/O, same posture as src/nominations.py."
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "def link_nominations_to_decision"
+        note: "§9.5 the join: back-fills decision_id onto nomination evidence rows once DecisionStage mints one. Nomination rows were always written with decision_id NULL because the id does not exist until after the responder pass."
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "def record_seat_stances"
+        note: "§9.5 dissent: one seat_stance evidence row per (idea, seat) from the canonical evidence registry — opposing stances persisted, not just the aligned ones §9.4 counts."
+      - kind: symbol_in_file
+        path: "src/storage/db.py"
+        symbol: "def resolve_conviction_ledger"
+        note: "§9.5 score on close: credits each seat +R aligned / -R opposed, conviction-weighted, via the existing r_multiple. Idempotent; run from evening housekeeping; skips any chain with no entry stop rather than guessing."
+      - kind: symbol_in_file
+        path: "src/conviction_ledger.py"
+        symbol: "def aggregate_seat_records"
+        note: "§9.5 per-analyst aggregate: resolved calls, calls right, avg win, avg loss, cumulative profit series, drawdown from the seat's own peak. No sample-size gate — owner-rejected."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_a_nomination_can_be_traced_to_the_trade_it_produced"
+        note: "§9.5: the join asserted end to end — nomination → decision → trade."
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_dissenting_seat_is_credited_positively_when_the_trade_it_opposed_loses"
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_conviction_weighting_scales_the_credit"
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_aggregate_returns_correct_counts_averages_series_and_drawdown"
+      - kind: test_exists
+        path: "tests/test_conviction_ledger.py"
+        test: "test_ledger_recording_does_not_change_a_single_trading_decision"
+        note: "§9.5 safety: DecisionStage run with ledger recording enabled and disabled must produce byte-identical constructed orders. The ledger is advisory and must never move a trade."
       - kind: manual
-        note: "§9.5 (conviction ledger per candidate — who nominated, who confirmed, who dissented) is deliberately NOT built. Only §9.1, §9.2, §9.3, §9.4 are in PR #160."
+        note: "§9.5 is PARTIALLY BUILT as of the feat/conviction-ledger-recording branch: the recording and scoring layer (join, dissent, score-on-close, per-analyst aggregate) exists and is tested. NOT built: any operator-facing view (no API route, no Mission Control research view), the 'what changed since the previous session' diff, and scoring of short round trips."
+      - kind: manual
+        note: "Short round trips are unscored because they carry no position_id: _assign_position_ids (§6.2a) opens a chain only on a BUY, so no SHORT is chained today. Pre-existing gap in the chaining, not introduced by §9.5; the ledger's arithmetic is already direction-aware."
+      - kind: manual
+        note: "An earlier revision of this entry recorded §9.5 as 'deliberately NOT built' — an unattributed engineering scope decision stated as settled truth. Corrected 2026-08-31 per AGENTS.md's Governance ratification rule."
 
   - id: rehearsal_rig
     title: "Rehearsal rig — a full session, offline, in under a minute"

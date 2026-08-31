@@ -334,7 +334,9 @@ The reasoning is already persisted; it is simply never shown.
 
 ## Phase 9 — The research desk actually deliberates
 
-**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is deliberately not built.
+**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is **owner-ratified scheduled work, PARTIALLY BUILT** — its recording and scoring layer landed on `feat/conviction-ledger-recording`; its operator-facing view has not been built. See §9.5 below for exactly which parts exist.
+
+*An earlier version of this note recorded §9.5 as "deliberately not built" with no attribution and no stated reason. That was an engineering scope decision written as though it were settled truth — the exact pattern AGENTS.md's Governance ratification section exists to prevent. It is corrected here rather than carried forward.*
 
 **Owner-directed, 2026-08-27.** Rex, verbatim: *"We have agents doing research
 and analysis. If something has high conviction or strong candidacy it should
@@ -419,6 +421,58 @@ Who nominated it, who confirmed, who dissented and on what grounds, and what
 changed since the previous session. This is the artifact that makes the desk
 legible to the operator without reading logs, and it is the natural input to
 Mission Control's research view.
+
+**Status: PARTIALLY BUILT.** The recording and scoring layer exists; nothing
+reads it back to a human yet.
+
+**Built — the data layer.**
+
+- *The join.* Every raw nomination was already persisted as a
+  `pipeline_event` evidence row (seat, conviction, observation), but with
+  `decision_id` NULL — `RunContext.decision_id` is not minted until
+  `DecisionStage`, which runs after the nomination responder pass. Nothing
+  connected a nomination to the trade it became.
+  `Database.link_nominations_to_decision` now back-fills that id onto the
+  run's nomination rows the moment `DecisionStage` mints it, so
+  `trades.decision_id` + `trades.symbol` join straight through to the seat
+  that raised the symbol. It is an UPDATE on the forensic evidence table:
+  no pipeline input, no ordering change, nothing a later stage reads.
+- *Dissent, not only support.* §9.4 computed each seat's stance per symbol
+  into the canonical evidence registry and counted only the ALIGNED ones to
+  earn size; the opposing stances were discarded. One `seat_stance` evidence
+  row per (idea, seat) is now written from that same registry — support and
+  dissent alike — carrying the conviction the seat actually declared.
+- *Score on close.* `Database.resolve_conviction_ledger`, run from evening
+  housekeeping, credits every seat that took a side on a position that has
+  gone flat: aligned with the direction taken scores +R, opposed scores −R,
+  weighted by declared conviction, using the existing `r_multiple` against
+  the stop the position was OPENED with. Idempotent; skips any chain with no
+  entry stop rather than fabricating a denominator. Results persist as
+  `conviction_credit` evidence rows and are read back without recomputation.
+- *Per-analyst aggregate.* `src/conviction_ledger.py::aggregate_seat_records`
+  returns, per seat: resolved calls, calls right, average win, average loss,
+  the cumulative profit series over time, and current drawdown from that
+  seat's own peak. Pure logic, no I/O, same posture as `src/nominations.py`.
+  **No sample-size gate** — owner-rejected; raw counts are returned and the
+  reader judges.
+
+**Not built.**
+
+- The operator-facing view. No API route, no Mission Control research view,
+  nothing that renders any of this to a human. A later change consumes it.
+- "What changed since the previous session" — the session-over-session diff
+  in the paragraph above is not implemented.
+- Short round trips are not scored, because they carry no `position_id` to
+  chain on: `_assign_position_ids` (§6.2a) opens a chain only on a `BUY`.
+  That is a pre-existing gap in the chaining, not one this work introduced;
+  the ledger's arithmetic is already direction-aware and will score shorts
+  unchanged once they receive chains.
+
+**Advisory only, by construction.** Nothing in the ledger is read by sizing,
+risk allocation, or order construction, and every write is best-effort.
+`tests/test_conviction_ledger.py::test_ledger_recording_does_not_change_a_single_trading_decision`
+runs `DecisionStage` with the recording live and with it disabled and requires
+the constructed orders to serialize byte-identically.
 
 ### Sequencing
 
