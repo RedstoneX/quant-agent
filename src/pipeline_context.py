@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from src.data.event_calendar import EventCalendarCoverage
+    from src.data.event_calendar import EventCalendarCoverage, FOMCCoverage
     from src.data.macro import MacroCoverage
     from src.models import NewsIntelligenceReport, PortfolioDecision, Position
     from src.risk.metrics import PortfolioHeat
@@ -94,6 +94,15 @@ class RunContext:
     # this run" state for every session that never populates them.
     macro_events: list = field(default_factory=list)  # list[MacroEvent]
     macro_event_coverage: "EventCalendarCoverage | None" = None
+    # The forward FOMC meeting schedule and where it came from
+    # (src.data.event_calendar.FOMCCalendarProvider). Same pairing rule and
+    # same reason as the two fields above: an empty `fomc_meetings` means "no
+    # meeting scheduled" ONLY when `fomc_coverage` says a published schedule
+    # actually spans the horizon; with coverage None or degraded it means NOT
+    # FETCHED. Fetched once by the research stage and read again by RiskStage
+    # so one session issues one Fed calendar fetch, not two.
+    fomc_meetings: list = field(default_factory=list)  # list[FOMCMeeting]
+    fomc_coverage: "FOMCCoverage | None" = None
     news_intel: "NewsIntelligenceReport | None" = None
     analyses: list = field(default_factory=list)  # list[TechAnalysisResult]
     earnings_results: list[dict] = field(default_factory=list)

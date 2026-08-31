@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from src.config import AppConfig, RiskConfig
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroCoverage, MacroDataProvider
-from src.data.event_calendar import MacroEventCalendarProvider
+from src.data.event_calendar import FOMCCalendarProvider, MacroEventCalendarProvider
 from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
@@ -324,6 +324,22 @@ class TradingPipeline:
             retry_backoff_jitter_s=config.macro.retry_backoff_jitter_s,
             breaker_after_failed_releases=config.macro.breaker_after_failed_series,
             total_fetch_deadline_s=config.event_risk.calendar_deadline_s,
+        )
+        # FOMC meeting dates, from the Federal Reserve's own free calendar.
+        # A separate provider from the one above because it is a different host
+        # (federalreserve.gov, not FRED) with its own timeout, its own deadline
+        # and a disk cache — see src/data/event_calendar.py's docstring for the
+        # live evidence behind the source choice. The backoff CURVE is still
+        # the macro feed's: that is a generic retry policy, not a host fact.
+        self.fomc_calendar = FOMCCalendarProvider(
+            request_timeout_s=config.event_risk.fomc_request_timeout_s,
+            max_retries=config.event_risk.fomc_max_retries,
+            retry_backoff_base_s=config.macro.retry_backoff_base_s,
+            retry_backoff_max_s=config.macro.retry_backoff_max_s,
+            retry_backoff_jitter_s=config.macro.retry_backoff_jitter_s,
+            total_fetch_deadline_s=config.event_risk.fomc_deadline_s,
+            cache_path=config.event_risk.fomc_cache_path,
+            cache_ttl_days=config.event_risk.fomc_cache_ttl_days,
         )
 
         def _key_for(model: str, explicit_provider: str | None = None) -> str:
@@ -637,6 +653,7 @@ class TradingPipeline:
             admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
             admit_nominated_candidates_fn=self._admit_nominated_external_symbols,
             event_calendar=self.event_calendar,
+            fomc_calendar=self.fomc_calendar,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
             run_news_update_fn=self._run_news_update,
             load_earnings_analyses_fn=self._load_earnings_analyses,

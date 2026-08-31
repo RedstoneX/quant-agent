@@ -352,6 +352,18 @@ event_risk:
   calendar_deadline_s: 20.0
   earnings_deadline_s: 20.0
   earnings_symbol_timeout_s: 8.0
+  # FOMC meeting dates come from the Federal Reserve's own free calendar
+  # (structured JSON first, the rendered calendar page only as a fallback when
+  # that feed's schedule stops short of the horizon — it ends with the calendar
+  # year). Different host from FRED, so its own timeout and retry count; the
+  # backoff curve is still the `macro:` one. The cache exists because FOMC
+  # dates change roughly twice a year, and a stale cache is served labelled,
+  # never silently.
+  fomc_request_timeout_s: 10.0
+  fomc_max_retries: 2
+  fomc_deadline_s: 15.0
+  fomc_cache_ttl_days: 7.0
+  fomc_cache_path: "data/fomc_calendar.json"
 
 trading:
   universe:

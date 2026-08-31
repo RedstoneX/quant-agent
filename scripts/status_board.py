@@ -237,6 +237,98 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
 
 
 # --------------------------------------------------------------------------
+# is this summary written for HIM, or for a developer?
+# --------------------------------------------------------------------------
+#
+# `plain_summary` exists so the owner — who reads this board and nothing
+# else, and is not a developer — can tell what happened without opening the
+# code. It lives inside docs/phases.yaml, an engineering document maintained
+# by engineering agents, so left unwatched it fills back up with PR numbers,
+# file paths and function names the moment the next agent writes one. That
+# already happened: several summaries below carry exactly that.
+#
+# Rejecting jargon outright — refusing to accept a summary that contains it —
+# was tried and rejected, correctly. Blocking "bad words" produces
+# jargon-free prose that is still useless to him; it does not produce good
+# writing. What this board can do honestly is detect the MECHANICAL SHAPE of
+# engineering text — a path, a PR number, a hash, a code identifier — and
+# show it to him, the one person who can actually judge whether a summary
+# reads like it was written for him. It never blocks and never rewrites: a
+# bad description still renders, because an unreadable description is more
+# useful than no description at all.
+#
+# Deliberately absent: a wordlist of "technical-sounding" words. That would
+# flag ordinary sentences as readily as real jargon and teach him to ignore
+# the marker — the exact failure mode blocking on it was rejected for.
+
+_JARGON_PATH_EXT = re.compile(
+    r"\b[\w-]+\.(?:py|ya?ml|md|html|json|db|sh|toml|cfg|ini|log|txt)\b", re.I)
+#: A leading "/" not glued onto a digit, so "3/15/2026" (a date) and "1/3" (a
+#: fraction) don't read as `/home/qamc/quant-agent` does.
+_JARGON_ABS_PATH = re.compile(r"(?<!\w)/[\w.-]+(?:/[\w.-]+)+")
+#: A directory this repo actually has, one more path segment deep, with no
+#: extension required — catches a bare directory mention like `src/backtest/`
+#: that `_JARGON_PATH_EXT` would miss. Anchored to real top-level directory
+#: names (not e.g. bare "data/") so an ordinary slash pairing in prose —
+#: "cost/benefit", "buy/sell", "his/her" — never matches: none of those
+#: words is followed by a second "/segment".
+_JARGON_DIR_ONLY = re.compile(r"\b(?:docs|src|scripts|tests|config|data)/[\w.-]+/[\w.-]*")
+_JARGON_PR_REF = re.compile(r"#\d+\b")
+_JARGON_HEX_TOKEN = re.compile(r"\b[0-9a-fA-F]{7,40}\b")
+_JARGON_BACKTICK = re.compile(r"`[^`]+`")
+_JARGON_SNAKE_CASE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+#: `word(...)`, but not `word(s)` / `word(es)` — ordinary English pluralises
+#: that way ("trade(s)") and it must not read as a function call.
+_JARGON_FUNC_CALL = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\((?!s\)|es\))[^()]*\)")
+
+
+def _is_commit_hash_token(token: str) -> bool:
+    """7+ hex characters is also a plain 7-digit number — a dollar figure, a
+    count, a year. A decimal number can't contain a-f, so require at least
+    one of those letters before calling it a hash; otherwise an ordinary
+    big number sitting in the text would read as a commit reference."""
+    return any(c in "abcdefABCDEF" for c in token)
+
+
+def summary_engineering_markers(summary: str) -> list[str]:
+    """The mechanical, engineer-facing markers found in `summary` — empty if
+    none. Each one is a SHAPE (a path, a reference number, a hash, a code
+    token), never a word choice, so this cannot flag a summary for sounding
+    technical — only for literally containing developer syntax. See the
+    section comment above for why that line is drawn there.
+    """
+    found: list[str] = []
+    if (_JARGON_PATH_EXT.search(summary) or _JARGON_ABS_PATH.search(summary)
+            or _JARGON_DIR_ONLY.search(summary)):
+        found.append("a file path")
+    if _JARGON_PR_REF.search(summary):
+        found.append("a PR or issue number")
+    if any(_is_commit_hash_token(t) for t in _JARGON_HEX_TOKEN.findall(summary)):
+        found.append("a commit hash")
+    if (_JARGON_BACKTICK.search(summary) or _JARGON_SNAKE_CASE.search(summary)
+            or _JARGON_FUNC_CALL.search(summary)):
+        found.append("a code identifier")
+    return found
+
+
+def summary_is_engineer_facing(summary: str) -> tuple[bool, str]:
+    """Whether `summary` reads as written for an engineer instead of the
+    owner, and, in his own words, why — the reason is what actually renders
+    on the board, so he never has to take the flag on faith.
+
+    A missing or empty summary is flagged too, with its own reason: silence
+    is not neutral here, it is a plain-English description nobody wrote.
+    """
+    text = (summary or "").strip()
+    if not text:
+        return True, "no plain-English description was written for this item"
+    markers = summary_engineering_markers(text)
+    if not markers:
+        return False, ""
+    return True, "reads like engineering notes — it contains " + ", ".join(markers)
+
+
+# --------------------------------------------------------------------------
 # phases
 # --------------------------------------------------------------------------
 
@@ -244,7 +336,14 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
 class PhaseView:
     id: str
     title: str
-    summary: str
+    # `plain_summary` in the manifest is either a plain string (legacy shape,
+    # rendered exactly as it always has been) or a structured dict with
+    # `verdict`, `points`, and an optional `outstanding` (see
+    # `_render_summary`). Kept as `Any` and passed through unconverted so
+    # both shapes survive to render time — coercing to `str` here would
+    # flatten a dict into Python's `repr`, which is the bug this comment is
+    # here to stop someone reintroducing.
+    summary: Any
     recorded: str
     confidence: str
     results: list[RuleResult] = field(default_factory=list)
@@ -264,6 +363,19 @@ class PhaseView:
     @property
     def checkable(self) -> int:
         return self.passed + self.failed
+
+    @property
+    def summary_flagged(self) -> bool:
+        """True when `summary` reads as written for an engineer, not him —
+        see `summary_is_engineer_facing` for what that checks and why."""
+        flagged, _ = summary_is_engineer_facing(_summary_text(self.summary))
+        return flagged
+
+    @property
+    def summary_flag_reason(self) -> str:
+        """Plain-English reason `summary_flagged` is True; "" when it isn't."""
+        _, reason = summary_is_engineer_facing(_summary_text(self.summary))
+        return reason
 
     @property
     def verdict(self) -> str:
@@ -288,7 +400,7 @@ def load_phases(manifest: Path, cfg: dict) -> list[PhaseView]:
         v = PhaseView(
             id=str(e.get("id", "?")),
             title=str(e.get("title", "?")),
-            summary=str(e.get("plain_summary", "")),
+            summary=e.get("plain_summary", ""),
             recorded=str(e.get("status", "?")),
             confidence=str(e.get("confidence", "?")),
         )
@@ -310,7 +422,12 @@ def live_state() -> dict[str, Any]:
     s["main_sha"] = main_sha[:9] if rc == 0 else None
 
     ok, box_sha = _prod_git("rev-parse", "HEAD")
-    s["box_sha"] = box_sha.strip()[:9] if ok else None
+    # The full, untruncated SHA is what gets stamped into the page for the
+    # serve-time freshness check (src/api/server.py) to compare against a
+    # freshly-read live SHA — a 9-char prefix is fine for a human footer but
+    # is a needless (if tiny) collision risk for a machine equality check.
+    s["box_sha_full"] = box_sha.strip() if ok else None
+    s["box_sha"] = s["box_sha_full"][:9] if s["box_sha_full"] else None
 
     if s["main_sha"] and s["box_sha"]:
         rc, out = _run(
@@ -378,6 +495,15 @@ def _read_ledger() -> dict[str, Any]:
             "SELECT COUNT(*) AS n FROM llm_budget_sessions WHERE day=?", (today,)
         ).fetchone()
         out["sessions_today"] = int(n["n"]) if n else None
+        # A day with no sessions has no budget row, which is not the same thing
+        # as a budget that could not be read. Reporting "unknown" there is a
+        # lie of omission: the board sat next to "0 sessions ran today" and
+        # still claimed it could not tell what had been spent. If the ledger
+        # opened and nothing ran, the answer is exactly zero.
+        if out["spend_today"] is None and out["sessions_today"] == 0:
+            out["spend_today"] = 0.0
+            out["costs_exact"] = True
+            out["day"] = today
         conn.close()
     except Exception as exc:  # noqa: BLE001 - unknown beats a wrong number
         out["circuit"] = None
@@ -419,11 +545,99 @@ def _fmt(value: Any, unit: str = "") -> str:
     return f"{_esc(value)}{unit}"
 
 
+def _summary_text(summary: Any) -> str:
+    """Flatten a `plain_summary` (either shape) to plain text for the jargon
+    detector, which only ever reasons about a string. The legacy shape is
+    already a string; the structured shape concatenates `verdict`, every
+    `points` entry, and `outstanding` (if present) into one string — the
+    detector runs on the words actually shown to him, in either shape."""
+    if not isinstance(summary, dict):
+        return str(summary or "")
+    parts = [str(summary.get("verdict", ""))]
+    parts.extend(str(pt) for pt in (summary.get("points") or []))
+    outstanding = summary.get("outstanding")
+    if outstanding:
+        parts.append(str(outstanding))
+    return " ".join(p for p in parts if p)
+
+
+def _render_summary(summary: Any) -> str:
+    """Render a phase's `plain_summary`, in either shape the manifest may use.
+
+    Legacy shape: a plain string, rendered exactly as it always has been (one
+    escaped italic block) — entries that have not been migrated must keep
+    looking the same.
+
+    Structured shape: a dict with `verdict` (one line, rendered prominently),
+    `points` (a real bulleted list), and an optional `outstanding` line
+    (rendered visually distinct, in the warning colour). Every field is
+    escaped individually — this function must never emit a manifest value as
+    raw HTML.
+    """
+    if not isinstance(summary, dict):
+        return f"<i>{_esc(summary)}</i>"
+
+    parts = [f'<p class="ps-verdict">{_esc(summary.get("verdict", ""))}</p>']
+
+    points = summary.get("points") or []
+    if points:
+        items = "".join(f"<li>{_esc(pt)}</li>" for pt in points)
+        parts.append(f'<ul class="ps-points">{items}</ul>')
+
+    outstanding = summary.get("outstanding")
+    if outstanding:
+        parts.append(
+            f'<p class="ps-outstanding"><span class="ps-label">Still outstanding'
+            f'&nbsp;&mdash;</span> {_esc(outstanding)}</p>'
+        )
+
+    return f'<div class="ps">{"".join(parts)}</div>'
+
+
 VERDICT_PILL = {
     "CONFIRMED": ("p-done", "Verified"),
     "CONTRADICTED": ("p-urgent", "Proof failed"),
     "UNVERIFIED": ("p-none", "Not checkable"),
 }
+
+#: The one recorded status that means "nothing left to do, and the board's
+#: own re-check agrees." Everything else -- PARTIAL, NOT STARTED, OPEN,
+#: OVERTAKEN, or a status the board can't confirm -- stays in the visible,
+#: uncollapsed list. This governs presentation only; it reads fields the
+#: renderer already computes and changes no evidence rule.
+_SETTLED_STATUSES = {"done and live"}
+
+
+def _is_settled(p: PhaseView) -> bool:
+    """Fully verified AND finished: the manifest claims the canonical done
+    state, and the board's live re-check still confirms it. A phase that is
+    merely CONFIRMED but recorded as PARTIAL/OPEN/etc. still has open work
+    and must stay visible, not tucked into the collapsed section."""
+    return p.verdict == "CONFIRMED" and p.recorded.strip().lower() in _SETTLED_STATUSES
+
+
+def _row(p: PhaseView) -> str:
+    cls, label = VERDICT_PILL[p.verdict]
+    detail = f"{p.passed} of {p.checkable} checks pass"
+    if p.unknown:
+        detail += f" &middot; {p.unknown} need a human"
+    # The flag renders ABOVE the summary, never instead of it — the original
+    # text still shows underneath even when it's flagged, because an
+    # unreadable description is more useful to him than no description.
+    jargon = ""
+    if p.summary_flagged:
+        jargon = (
+            '<div class="jargon-flag">Not written for you &mdash; this reads '
+            'like a note for a developer. Needs a plain-English rewrite.'
+            f'<span class="jargon-why">{_esc(p.summary_flag_reason)}</span></div>'
+        )
+    return (
+        f'<tr><td><span class="pill {cls}">{_esc(label)}</span></td>'
+        f'<td><b>{_esc(p.title)}</b>'
+        f'{jargon}'
+        f'{_render_summary(p.summary)}'
+        f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
+    )
 
 
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> str:
@@ -433,18 +647,27 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
     total_fail = sum(p.failed for p in phases)
     total_unknown = sum(p.unknown for p in phases)
     contradicted = [p for p in phases if p.verdict == "CONTRADICTED"]
+    jargon_flagged = [p for p in phases if p.summary_flagged]
 
-    rows = []
-    for p in phases:
-        cls, label = VERDICT_PILL[p.verdict]
-        detail = f"{p.passed} of {p.checkable} checks pass"
-        if p.unknown:
-            detail += f" &middot; {p.unknown} need a human"
-        rows.append(
-            f'<tr><td><span class="pill {cls}">{_esc(label)}</span></td>'
-            f'<td><b>{_esc(p.title)}</b>'
-            f'<i>{_esc(p.summary)}</i>'
-            f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
+    # Relevance ordering: anything CONTRADICTED first (loud, never
+    # collapsed), then everything else still open or unverified, then --
+    # only at the very bottom, and only inside a closed <details> -- the
+    # phases that are both fully verified and recorded as finished. This
+    # changes how phases are grouped and displayed, not which rule kind
+    # produced which verdict.
+    settled = [p for p in phases if _is_settled(p)]
+    attention = contradicted + [p for p in phases if p not in contradicted and not _is_settled(p)]
+
+    if attention:
+        rows = f'<table class="plan">{"".join(_row(p) for p in attention)}</table>'
+    else:
+        rows = '<p class="lede">Nothing needs attention right now &mdash; every open item has settled.</p>'
+    if settled:
+        rows += (
+            '<details class="finished">'
+            f'<summary>{len(settled)} finished and verified &mdash; expand to review</summary>'
+            f'<table class="plan">{"".join(_row(p) for p in settled)}</table>'
+            '</details>'
         )
 
     alarm = ""
@@ -465,6 +688,23 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
             'holding.</p></div>'
         )
 
+    # Reports, never gates: a flagged summary still renders in full further
+    # down (see `_row`). This is only the count, placed where the freshness
+    # banner already lives — right at the top, before he has to scroll past
+    # anything else — so he does not have to hunt through the list to find
+    # out how many descriptions were written for a developer instead of him.
+    jargon_banner = ""
+    if jargon_flagged:
+        n = len(jargon_flagged)
+        jargon_banner = (
+            '<div class="jargon-banner"><b>'
+            f'{n} description{"s" if n != 1 else ""} below {"are" if n != 1 else "is"} '
+            'written for a developer, not for you.</b> They are marked where they '
+            'appear so you can tell them apart from the ones already in plain '
+            'English &mdash; nothing is hidden, they still say what they say.'
+            '</div>'
+        )
+
     if state.get("in_sync") is True:
         deploy = ('<span class="dot ok"></span> The machine is running the latest '
                   'finished work.')
@@ -480,17 +720,27 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
     pct = int(round(100 * spend / limit)) if isinstance(spend, (int, float)) else None
 
     body = template.read_text()
+    body = body.replace("{{JARGON_BANNER}}", jargon_banner)
     body = body.replace("{{STAMP}}", now.strftime("%A %-d %B %Y &middot; %H:%M ET"))
+    # The full commit this page was built against, stamped into a
+    # machine-readable <meta> tag. src/api/server.py reads it back out at
+    # serve time and compares it to a freshly-read live SHA — that comparison
+    # (fact vs. fact), not page age, is what decides whether a freshness
+    # banner is shown. Empty when the box's SHA could not be read, which the
+    # server-side check treats as UNKNOWN, never as "fine".
+    body = body.replace("{{BUILT_SHA}}", _esc(state.get("box_sha_full") or ""))
     body = body.replace("{{DEPLOY}}", deploy)
     body = body.replace("{{CIRCUIT}}", _fmt(state.get("circuit")))
     body = body.replace("{{SPEND}}", f"${spend:.2f}" if spend is not None else
                         '<span class="unk">unknown</span>')
     body = body.replace("{{SPEND_PCT}}", str(pct if pct is not None else 0))
     body = body.replace("{{SPEND_NOTE}}",
-                        f"of the ${limit:.2f} daily limit &mdash; {pct}% used"
+                        ("nothing has run today" if spend == 0
+                         and state.get("sessions_today") == 0
+                         else f"of the ${limit:.2f} daily limit &mdash; {pct}% used")
                         if pct is not None else "daily spend could not be read")
     body = body.replace("{{SESSIONS}}", _fmt(state.get("sessions_today")))
-    body = body.replace("{{ROWS}}", "\n".join(rows))
+    body = body.replace("{{ROWS}}", rows)
     body = body.replace("{{ALARM}}", alarm)
     body = body.replace("{{RULES_TOTAL}}", str(total_rules))
     body = body.replace("{{RULES_PASS}}", str(total_pass))

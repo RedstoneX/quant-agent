@@ -49,7 +49,7 @@ class AlpacaConfig(BaseModel):
         """Fail closed unless this is a paper account.
 
         "Alpaca **Paper only**; live trading is not authorized" is a hard
-        boundary in CLAUDE.md, docs/STATE.md and docs/WORK.md, but until now
+        boundary in CLAUDE.md, docs/STATE.md and AGENTS.md, but until now
         it lived entirely in prose: flipping `paper: false` in settings.yaml
         would have silently pointed the whole decision chain at a live
         brokerage account with no test, guard, or log to notice. A one-token
@@ -1260,6 +1260,36 @@ class EventRiskConfig(BaseModel):
     call has no timeout of its own — the same hang risk `get_ohlcv` /
     `get_valuation_metrics` are already `ThreadPoolExecutor`-bounded against."""
 
+    fomc_request_timeout_s: float = Field(default=10.0, ge=1.0, le=60.0)
+    """Per-request timeout for the Federal Reserve's own FOMC calendar. Its own
+    setting rather than a reuse of `macro.request_timeout_s` because this is a
+    different host with a different failure mode — federalreserve.gov, not
+    FRED. The backoff CURVE is still taken from `macro.*`: that is a generic
+    retry policy, not a fact about either host."""
+
+    fomc_max_retries: int = Field(default=2, ge=0, le=5)
+    """Retries per Fed calendar URL before that source is given up on."""
+
+    fomc_deadline_s: float = Field(default=15.0, ge=1.0, le=120.0)
+    """Hard wall-clock ceiling for one `FOMCCalendarProvider.get_meetings()`
+    call, covering BOTH the JSON feed and the fallback page. Same enforcement
+    as the macro calendar: every request timeout and every backoff sleep is
+    clipped to what remains, and a source not reached inside the budget is
+    reported as a named absence rather than silently skipped."""
+
+    fomc_cache_ttl_days: float = Field(default=7.0, ge=0.0, le=90.0)
+    """How long a cached FOMC schedule is trusted without a refetch. FOMC dates
+    are published a year ahead and change perhaps twice a year, so a weekly
+    refresh is generous. Freshness alone is never sufficient: a cache is used
+    without fetching only if it ALSO spans `horizon_days`, and an expired cache
+    is still served — clearly labelled `measured_from_stale_cache`, with its
+    age — when the live sources are unreachable."""
+
+    fomc_cache_path: str = Field(default="data/fomc_calendar.json")
+    """Where that cache lives. Relative by design, like the other on-disk
+    caches (`data/company_profiles.json`, `data/news`, ...), so the rehearsal
+    rig's chdir-based filesystem wall redirects it into the sandbox."""
+
     @model_validator(mode="after")
     def _deadlines_are_well_formed(self):
         if self.earnings_deadline_s < self.earnings_symbol_timeout_s:
@@ -1269,6 +1299,13 @@ class EventRiskConfig(BaseModel):
                 "symbol's own timeout would abandon every symbol before it "
                 f"could answer; got {self.earnings_deadline_s} < "
                 f"{self.earnings_symbol_timeout_s}"
+            )
+        if self.fomc_deadline_s < self.fomc_request_timeout_s:
+            raise ValueError(
+                "event_risk.fomc_deadline_s must be >= fomc_request_timeout_s "
+                "— a deadline shorter than one request's own timeout would "
+                "abort every fetch immediately without ever really trying; got "
+                f"{self.fomc_deadline_s} < {self.fomc_request_timeout_s}"
             )
         return self
 
