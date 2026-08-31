@@ -1550,3 +1550,93 @@ def test_alerts_are_delivered_when_not_rehearsing(monkeypatch):
     notifier = notifier_module.TelegramNotifier(token="fake", chat_id="1")
     assert notifier.send("real alert") is True
     assert sent["text"] == "real alert"
+
+
+# ===========================================================================
+# OpenRouter balance on the morning message
+#
+# Owner request 2026-08-31. OpenRouter is PREPAID: when the credit runs out
+# the desk does not degrade, it stops at whatever point in a session the
+# money ends. On 2026-08-31 the balance was $7.10 — about seven clean trading
+# days — and nothing in the system surfaced that anywhere.
+# ===========================================================================
+
+def _credits(purchased, used):
+    """Patch the urlopen used by _openrouter_balance_line."""
+    import json, io
+    from contextlib import contextmanager
+    body = json.dumps({"data": {"total_credits": purchased, "total_usage": used}}).encode()
+
+    @contextmanager
+    def fake_urlopen(req, timeout=None):
+        yield io.BytesIO(body)
+    return fake_urlopen
+
+
+def test_balance_line_reports_remaining_and_trading_days(monkeypatch):
+    import src.notifier as n
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr("urllib.request.urlopen", _credits(50.0, 17.90))
+    line = n._openrouter_balance_line()
+    assert "$32.10 left of $50.00" in line
+    # 32.10 / 1.02 = 31 clean trading days
+    assert "~31 trading days" in line
+    assert "top up" not in line
+
+
+def test_balance_line_warns_when_a_week_or_less_remains(monkeypatch):
+    """The state the owner was actually in on 2026-08-31, and did not know."""
+    import src.notifier as n
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr("urllib.request.urlopen", _credits(25.0, 17.90))
+    line = n._openrouter_balance_line()
+    assert "$7.10 left" in line
+    assert "top up" in line
+
+
+def test_balance_line_never_breaks_the_alert(monkeypatch):
+    """A balance lookup must not be able to stop a trading alert going out."""
+    import src.notifier as n
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+
+    def boom(*a, **kw):
+        raise OSError("network down")
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    assert n._openrouter_balance_line() is None
+
+
+def test_balance_line_silent_without_a_key(monkeypatch):
+    import src.notifier as n
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    assert n._openrouter_balance_line() is None
+
+
+def test_balance_line_suppressed_in_rehearsal(monkeypatch):
+    """A rehearsal is offline by construction — it must not reach the network
+    even for a nicety."""
+    import src.notifier as n
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", True)
+
+    def boom(*a, **kw):
+        raise AssertionError("rehearsal made an outbound call")
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    assert n._openrouter_balance_line() is None
+
+
+def test_balance_appears_on_morning_but_not_on_every_session(monkeypatch):
+    """Morning only — repeating a slow-moving number on every session trains
+    the operator to skim past it."""
+    import src.notifier as n
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr("urllib.request.urlopen", _credits(50.0, 17.90))
+    result = {"status": "executed", "orders": [], "run_id": "r1"}
+    morning = n.format_session_result("morning", result, 12.0) or ""
+    midday = n.format_session_result("midday", result, 12.0) or ""
+    assert "OpenRouter:" in morning
+    assert "OpenRouter:" not in midday
