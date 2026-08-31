@@ -1,6 +1,8 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
+from types import SimpleNamespace
+
 from src.agents.base import BaseAgent
 
 
@@ -1224,3 +1226,64 @@ def test_agent_log_kwargs_helper_maps_fallback_status():
     fallback = AgentResult(raw_text="", tokens_used=0, model="m", used_fallback=True)
     assert agent_log_kwargs(success)["status"] == "success"
     assert agent_log_kwargs(fallback)["status"] == "fallback"
+
+
+# ---------------------------------- every attempt's failure reaches the circuit
+
+def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
+    """`run()` re-raises the PRIMARY error, so the failover's error used to be
+    thrown away — and with it the proof that the failover billed nothing.
+
+    On 2026-08-31 that meant a call refused 429/429 upstream and then rejected
+    401 by a failover with no credential was charged $0.62 at the failover
+    model's price, for work that cost exactly $0. The unexplained spend then
+    latched the desk. Both errors must now reach the circuit.
+    """
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+
+    class _Status(Exception):
+        def __init__(self, status):
+            super().__init__(f"status {status}")
+            self.status_code = status
+
+    seen = {}
+
+    class _Circuit:
+        db_path = ":memory:"
+
+        def begin_call(self, **kw):
+            return SimpleNamespace(
+                reservation_id="r", run_id="run", mode="morning",
+                agent_name="test_agent", model=kw.get("model"),
+                input_tokens_estimate=10, max_output_tokens=10,
+            )
+
+        def before_provider_attempt(self, reservation, *, model):
+            return 1
+
+        def fail_call(self, reservation, error, attempt_errors=None):
+            seen["error"] = error
+            seen["attempts"] = list(attempt_errors or [])
+
+        def complete_call(self, *a, **k):
+            return None
+
+    oai = MagicMock()
+    oai.chat.completions.create.side_effect = _Status(429)
+    anth = MagicMock()
+    anth.messages.create.side_effect = _Status(401)
+
+    with patch("openai.OpenAI", return_value=oai), \
+            patch("anthropic.Anthropic", return_value=anth):
+        agent = ConcreteAgent(
+            api_key="k", model="google/gemini-2.5-flash-lite", max_tokens=64,
+            fallback_api_key="fk", provider="openrouter",
+        )
+        agent.set_cost_circuit(_Circuit())
+        with pytest.raises(_Status):
+            agent.run(data="x")
+
+    statuses = [getattr(e, "status_code", None) for e in seen["attempts"]]
+    assert 401 in statuses, "the failover's 401 must reach the circuit"
+    assert statuses.count(429) == 2, "and both primary refusals"

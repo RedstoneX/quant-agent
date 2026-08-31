@@ -293,6 +293,40 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
+### 2026-08-31, afternoon — charged $0.62 for calls that cost nothing
+
+**The rate limit did not stop trading. The phantom bill for it did.**
+
+A logical call can attempt several DIFFERENT providers, and `BaseAgent.run()`
+re-raises the PRIMARY error while discarding whatever the failover hit. The
+cost circuit judged "did this cost anything" from that single exception — so a
+failover rejected **401** (which by definition billed nothing, and which the
+zero-cost allow-list already covers) was invisible to it, and the whole call
+was charged its conservative reserve at the **failover model's** dearer price.
+
+Observed live at 12:36 ET: `news_analyst` refused 429 upstream, refused again,
+then 401 from the failover for want of an Anthropic credential. Real cost
+**$0.00**. Charged **$0.6159**. The unexplained spend tripped
+`failed_call_unknown_cost` and latched the desk — for the third time that day,
+and on the same underlying pattern as the 09:32 shutdown.
+
+**Fixed:** every attempt's failure is now carried to the circuit, and a call
+is treated as free only when **every** attempt is provably free. The rule gets
+STRICTER, not looser — one ambiguous attempt (a cut stream, an unclassified
+error, a 5xx after generation may have started) and the whole reservation is
+charged exactly as before. A call is only known to have cost nothing when
+nothing it did could have cost anything. Callers that cannot enumerate their
+attempts keep the old single-exception behaviour, so this can only ever
+recognise more genuinely-free failures, never fewer.
+
+**And an unknown turned into a measurement.** When a call IS charged, the
+shapes of every attempt are now logged — exception type, status code, and
+which one made it chargeable. The remaining open question is whether
+OpenRouter's "temporarily rate-limited upstream" arrives with a status the
+allow-list carries; it could not be settled by reasoning and deliberately was
+not settled by hammering the provider to reproduce it. The next occurrence
+will say.
+
 ### 2026-08-31, afternoon — why the provider was refusing us, and the fix
 
 **The owner's framing, and it was the right one: never discover a limit by
