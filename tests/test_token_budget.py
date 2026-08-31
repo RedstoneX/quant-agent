@@ -187,3 +187,50 @@ def test_the_hard_item_cap_still_applies():
 
 def test_an_empty_batch_packs_to_nothing():
     assert pack_to_budget([], lambda i: i, budget_tokens=1000, model=_MODEL) == []
+
+
+# ------------------------------------------- names as they are really logged
+
+
+def _db_named(rows):
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE agent_logs (agent_name TEXT, model TEXT, "
+        "input_message TEXT, input_tokens INTEGER)"
+    )
+    conn.executemany("INSERT INTO agent_logs VALUES (?,?,?,?)", rows)
+    return conn
+
+
+def test_history_logged_under_a_session_suffixed_name_is_still_found():
+    """Some call sites write `news_analyst_morning` while `BaseAgent.name` is
+    always `news_analyst`. An exact match found nothing for exactly those
+    seats and fell back to the guess — safe, but it threw away the history
+    that makes this measured rather than guessed."""
+    rows = [
+        ("news_analyst_morning", "m", "x" * b, int(4200 + 0.23 * b))
+        for b in range(10_000, 120_000, 8_000)
+    ]
+    model = size_model(_db_named(rows), "news_analyst", "m")
+    assert model.measured
+    assert model.fixed_tokens == pytest.approx(4200, rel=0.05)
+
+
+def test_a_shorter_agent_name_does_not_absorb_a_longer_ones_history():
+    """Matched against an explicit suffix list, not a `name_%` wildcard. No
+    two current agent names collide that way, but a rule that is only safe
+    because of today's naming is a trap for whoever adds the next agent."""
+    rows = [
+        ("news_analyst_morning", "m", "x" * b, int(4200 + 0.23 * b))
+        for b in range(10_000, 120_000, 8_000)
+    ]
+    assert not size_model(_db_named(rows), "news", "m").measured
+
+
+def test_the_suffix_list_matches_the_one_replay_uses():
+    """Two modules need the same list for the same reason; drifting apart
+    would make one of them quietly wrong."""
+    from ops.rehearsal.replay import _SESSION_SUFFIXES as replay_suffixes
+    from src.token_budget import _SESSION_SUFFIXES as budget_suffixes
+
+    assert set(budget_suffixes) == set(replay_suffixes)
