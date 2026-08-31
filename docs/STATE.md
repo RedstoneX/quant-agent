@@ -335,6 +335,47 @@ Mon-Fri 08:45 ET. It exists because PR #111 sat merged-but-undeployed for
 eight hours with nothing catching it (`docs/WORK.md` records that incident).
 Merged and deployed as part of `32c174b`; verified firing.
 
+**Correction (2026-08-31): the drift alarm could not actually send.** The unit
+installed on 2026-08-27 declared no `EnvironmentFile` and invoked the venv
+Python directly on the script, unlike the session units which go through an
+env-sourcing wrapper. Verified on the box: the qamc systemd user environment
+contains zero `TELEGRAM_*` variables, `.env` does carry them, and
+`TelegramNotifier` disables itself when they are absent — so a drift alert
+would have been printed to the journal and delivered to nobody. Every run
+since installation had reported "in sync", so the alerting path had never
+been exercised; "verified firing" above meant the timer fired, not that the
+alarm could speak. Fixed by routing the unit through
+`scripts/run_drift_check.sh`, matching `run_daily_export.sh` /
+`run_pricing_refresh.sh`. `tests/test_alert_heartbeat.py` now fails CI for
+any unit in `scripts/systemd/` whose script can raise a Telegram alert but
+whose `ExecStart` does not go through an `.env`-sourcing wrapper.
+
+**Alerting heartbeat (2026-08-31).** Every alarm on this desk is a Telegram
+message, and nothing checked that a Telegram message can still be sent — so
+"no alert arrived" meant both "nothing is wrong" and "the alarm is broken",
+with nothing able to separate them. `scripts/alert_heartbeat.py` closes that:
+
+- **Daily probe, 06:15 ET, seven days a week**
+  (`quant-agent-alert-heartbeat.timer`). Sends a real message through the
+  real notifier with `disable_notification` and deletes it again, so it
+  exercises the whole path — token, chat id, egress, message shape — without
+  spending the operator's attention. A present-but-revoked token, a wrong
+  chat id, a blocked bot and a dropped egress route all pass a variable
+  check and fail this. The verdict is written to
+  `data/alerting/heartbeat.json` (gitignored, so it can never become deploy
+  drift) and a failure exits non-zero so the unit shows failed.
+- **Weekly digest, Sundays 17:00 ET** (`quant-agent-alert-digest.timer`).
+  The one routine message the desk sends on purpose. Its content is the
+  week's probe record; its arrival is the point.
+- **The bootstrap limit, stated plainly.** If the channel is what is broken,
+  no message over it can say so. The weekly digest is therefore a standing
+  appointment whose absence is the signal, and the message body says so every
+  week. On-box detection latency is 24h (the daily record and the failed
+  unit); operator-visible latency without an out-of-band channel is up to
+  seven days. `ALERT_HEARTBEAT_HEALTHCHECK_URL` in `.env` closes that gap
+  with a free healthchecks.io-style dead-man's switch — supported, and **not
+  currently configured**.
+
 ## Mandatory paid-analysis cost circuit
 
 Paid model requests share one persistent SQLite authority across systemd
