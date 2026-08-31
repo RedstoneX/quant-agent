@@ -849,25 +849,20 @@ phases:
   - id: open_defects
     title: "Known defects — found, recorded, not yet fixed"
     plain_summary:
-      verdict: "Thirteen problems were found in the last review. Eleven are fixed and live, four turned out to be unused code and were deleted. Two small ones remain."
+      verdict: "The 2026-08-30 review recorded thirteen problems, and the audit that worked through them turned up five more. All thirteen originals are closed — nine fixed and live, four found to be unused code and deleted. Of the five later ones, three are now fixed, one is a question put to the owner rather than scheduled work, and one small one remains."
       points:
-        - "Nothing left on this list affects trading decisions or risk. These are rough edges, not hazards."
-        - "A daily report job points at a folder left over from before this server existed, and an internal note links to a document that was never written."
-      outstanding: "Two items, ranked below. Neither is urgent."
+        - "Nothing left on the ranked list affects trading decisions or risk. It is a rough edge, not a hazard."
+        - "An internal note links to a setup document that was never written."
+      outstanding: "One item, described below. It is not urgent."
     defects:
-      - id: "pnl-export-wrong-working-directory"
-        title: "Daily P&L export's systemd unit points at the wrong path"
-        rank: 1
-        status: "OPEN"
-        summary: "The daily P&L export's systemd unit still carries WorkingDirectory=/home/yebo/quant-agent, the upstream fork's path, instead of /home/qamc/quant-agent where this box actually runs."
       - id: "rehearsal-readme-missing"
         title: "Rehearsal module points readers at a README that doesn't exist"
-        rank: 2
+        rank: 1
         status: "OPEN"
         summary: "ops/rehearsal/run.py's own docstring points readers to ops/rehearsal/README.md, which does not exist."
     evidence:
       - kind: manual
-        note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. Only (a)'s FOMC half and five new items surfaced by the same audit remain open — see the ranked defects: list above for each item and this evidence block for its own re-check command."
+        note: "This entry previously named thirteen open defects (a)-(m). Nine are now fixed and deployed (PRs #167-#172) and four more were deleted outright as confirmed dead code by the same audit. That audit surfaced five further items, tracked as NEW (1)-(5) in this evidence block: NEW (2), (3) and (4) are now closed (PRs #183, #185 and #178 respectively); NEW (1) is an open question for the owner rather than scheduled work; NEW (5) is the single entry left in the defects: list above. Each carries its own re-check command below."
       - kind: pr_merged
         number: 167
         note: "feat/expose-trade-risk-fields — trade conviction/risk/model fields now reach the API and the cockpit"
@@ -988,8 +983,13 @@ phases:
         note: "NEW (3) was recorded as cosmetic; it was not. Reproduced 2026-08-31 against the real helper with a 30h-old cache and the live 24h configured grace: the pre-fix note read 'past the 24h limit (24h fresh + 0h grace) ... will suspend paid analysis', the post-fix note reads 'inside the 24h grace window, so paid analysis proceeds'. The note stated the opposite verdict to the one the cost circuit would actually reach, not merely a wrong number."
       - kind: symbol_in_file
         path: "scripts/systemd/quant-agent-daily.service"
-        symbol: "WorkingDirectory=/home/yebo/quant-agent"
-        note: "NEW (4): inherited from the upstream fork — this box is /home/qamc, not /home/yebo."
+        symbol: "WorkingDirectory=/home/qamc/quant-agent"
+        note: "NEW (4) closed by PR #178 (commit 83c9c1f), which put the production units under version control and corrected this path in the same change. The defect was always in the TRACKED copy, never on the box: installing the repository's own copy would have broken the export on contact."
+      - kind: test_exists
+        path: "tests/test_systemd_units.py"
+        test: "test_the_daily_export_no_longer_points_at_the_upstream_fork"
+      - kind: manual
+        note: "NEW (4) verified live 2026-08-31 rather than taken from the merge: `sudo -n -u qamc cat /home/qamc/.config/systemd/user/quant-agent-daily.service` shows WorkingDirectory=/home/qamc/quant-agent, and the service's last run (Fri 2026-08-28 13:00 UTC) exited 0 having sent 14 rows as pnl_history_2026-08-28.csv. Re-check: `grep -rn /home/yebo scripts/systemd/` should return nothing, and tests/test_systemd_units.py pins it by name for every unit, not only this one."
       - kind: symbol_in_file
         path: "ops/rehearsal/run.py"
         symbol: "ops/rehearsal/README.md"
