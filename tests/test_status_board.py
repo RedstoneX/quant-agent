@@ -394,3 +394,117 @@ def test_an_unmerged_pr_is_not_reported_as_merged_from_git_alone():
     r = sb.check_rule({"kind": "pr_merged", "number": 999999}, {})
     assert r.verdict in (sb.FAIL, sb.UNKNOWN)
     assert r.verdict != sb.PASS
+
+
+# --------------------------------------------------------------------------
+# documentation-hygiene guards
+#
+# `docs/WORK.md` and `docs/phases.yaml` are the two documents a session reads
+# before doing anything else. Both went stale the same way every other
+# status document in this repo went stale: not through one dramatic error,
+# but through years of small, individually-reasonable additions that nobody
+# ever removed. A 2026-08-31 pass cut the append-only "Correction 20XX:"
+# notes, split a 6,405-character wall of prose into a ranked, enumerable
+# defects list, and cut WORK.md down to only its genuinely open sections.
+# These four checks exist so that pass has to be re-done by hand, one commit
+# at a time, if it is ever eroded again — the same rot this file's other
+# tests already guard against, applied to the documents instead of the code.
+# --------------------------------------------------------------------------
+
+def test_phases_manifest_carries_no_correction_clauses():
+    """`docs/phases.yaml` used to correct itself in place: a later editor
+    would leave the wrong sentence standing and prepend "Correction 20XX:
+    this previously said X; that is now false; Y" rather than just writing
+    Y. Eighteen of these had accumulated in one file by 2026-08-30, each one
+    forcing a reader to hold a claim, its correction, and sometimes a second
+    correction of the correction, all at once just to find out what is true
+    today. Git history is the append-only record; the manifest itself only
+    needs to say what is true now. If this ever fires, the fix is to fold
+    the correction into the sentence it corrects and delete the note — not
+    to add a nineteenth one.
+    """
+    import re
+
+    manifest = Path(__file__).resolve().parents[1] / "docs" / "phases.yaml"
+    text = manifest.read_text()
+    hits = re.findall(r"Correction 20\d\d", text)
+    assert not hits, (
+        f"{len(hits)} correction clause(s) still in docs/phases.yaml — fold "
+        "each into the sentence it corrects instead of layering a new note "
+        "on top"
+    )
+
+
+def test_no_plain_summary_exceeds_a_thousand_characters():
+    """Every `plain_summary` renders verbatim onto the owner's status board —
+    he reads the board, not this file. One entry had grown to 6,405
+    characters, a single paragraph burying roughly a dozen distinct defects
+    that a reader had to excavate by hand. A thousand characters is still
+    generous — several short paragraphs — but it is short enough that a
+    summary this long is a signal something needs to be broken into its own
+    list (as `open_defects` now is, in its `defects:` field) rather than
+    written as one more sentence.
+    """
+    import yaml
+
+    manifest = Path(__file__).resolve().parents[1] / "docs" / "phases.yaml"
+    raw = yaml.safe_load(manifest.read_text())
+    phases = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
+    too_long = [
+        (e.get("id"), len(e.get("plain_summary", "")))
+        for e in phases
+        if len(e.get("plain_summary", "")) > 1000
+    ]
+    assert not too_long, f"plain_summary over 1000 characters: {too_long}"
+
+
+def test_open_defects_is_a_ranked_list_not_a_paragraph():
+    """`open_defects` used to be a single plain_summary paragraph with the
+    individual defects buried inside it as parenthetical letters — (a), (b),
+    (c) — readable only by reading the whole paragraph start to finish. A
+    session that needed to know the single highest-priority open defect had
+    no way to get that answer without reading all of them. `defects:` is a
+    real list precisely so a session (or a script) can read `rank: 1` and
+    stop, instead of parsing prose to reconstruct an order that was never
+    machine-readable in the first place.
+    """
+    import yaml
+
+    manifest = Path(__file__).resolve().parents[1] / "docs" / "phases.yaml"
+    raw = yaml.safe_load(manifest.read_text())
+    phases = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
+    hit = [e for e in phases if str(e.get("id")) == "open_defects"]
+    assert hit, "no open_defects entry in the manifest"
+    defects = hit[0].get("defects")
+    assert isinstance(defects, list) and defects, (
+        "open_defects carries no defects: list"
+    )
+    for d in defects:
+        for field in ("id", "title", "rank", "status"):
+            assert d.get(field) not in (None, ""), (
+                f"defect {d.get('id', d)!r} is missing required field {field!r}"
+            )
+
+
+def test_work_md_stays_under_twenty_thousand_bytes():
+    """`docs/WORK.md` used to be 132,932 bytes — a session had to read the
+    whole thing to find the two or three items it actually needed, because
+    finished work, ratified decisions and genuinely open items had all been
+    appended to the same file for months and nothing was ever removed. The
+    2026-08-31 pass cut it down to only its open (and a few still-unsure)
+    sections; finished work was deleted (git history keeps it) and standing
+    rules/decisions moved into `AGENTS.md`, which does not carry this cap
+    because it is a curated contract, not an append-only log. Twenty
+    thousand bytes is not a target to fill — it is a tripwire: if WORK.md
+    ever creeps back past it, closed or decided material has crept back in
+    and needs the same treatment again, not a bigger cap.
+    """
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    size = work_md.stat().st_size
+    assert size <= 20_000, (
+        f"docs/WORK.md is {size} bytes, over the 20,000-byte cap — finished "
+        "or decided content has likely crept back in; cut or move it rather "
+        "than raising this number"
+    )
