@@ -853,7 +853,7 @@ def test_check_llm_provider_keys_uses_resolve_provider_not_prefix_alone(tmp_path
 # --- Alpaca paper-only guard ---------------------------------------------
 #
 # "Alpaca Paper only; live trading is not authorized" is a hard boundary in
-# CLAUDE.md / docs/STATE.md / docs/WORK.md. Before this guard existed it was
+# CLAUDE.md / docs/STATE.md / AGENTS.md. Before this guard existed it was
 # prose only: `paper: false` in settings.yaml would have pointed the whole
 # decision chain at a live brokerage account with nothing to notice. These
 # tests are the enforcement's regression net — if one of them ever has to be

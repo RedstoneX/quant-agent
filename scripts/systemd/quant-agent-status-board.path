@@ -1,0 +1,53 @@
+# Human status board — pairs with quant-agent-status-board.service
+# (unmodified). Replaces quant-agent-status-board.timer: the board now
+# rebuilds when something that changes what it SAYS actually changes,
+# instead of on an hourly clock that fired whether or not anything moved.
+#
+# Install:
+#   cp scripts/systemd/quant-agent-status-board.path ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user disable --now quant-agent-status-board.timer  # if present
+#   rm -f ~/.config/systemd/user/quant-agent-status-board.timer
+#   systemctl --user enable --now quant-agent-status-board.path
+#
+# Uninstall:
+#   systemctl --user disable --now quant-agent-status-board.path
+#   rm ~/.config/systemd/user/quant-agent-status-board.path
+#   systemctl --user daemon-reload
+[Unit]
+Description=quant-agent status board — rebuild on phases.yaml edit or deploy (no schedule)
+
+[Path]
+# docs/phases.yaml is the plan the board evaluates: every phase's evidence
+# rule is checked against the tree relative to what this file claims. An
+# edit changes what the board SHOULD say, so it must trigger a rebuild.
+# PathChanged (not PathModified) so a single edit fires once, on close, not
+# once per byte written.
+PathChanged=/home/qamc/quant-agent/docs/phases.yaml
+
+# The board reports the running commit via `git -C PROD_CHECKOUT rev-parse
+# HEAD` (scripts/status_board.py: _prod_git("rev-parse", "HEAD") -> box_sha).
+# QAMC is deployed by hand to a DETACHED-HEAD checkout at this same path
+# (see scripts/check_deploy_drift.py's module docstring: "QAMC is deployed
+# by hand to a detached-HEAD git checkout"). In detached HEAD, .git/HEAD
+# does not hold a symbolic ref like "ref: refs/heads/main" — it holds the
+# raw 40-character SHA directly, and `git checkout <sha>` rewrites that file
+# (via a lock-and-rename, same as any git ref update) exactly when a deploy
+# happens. That makes .git/HEAD the one file that changes on deploy on this
+# box. refs/heads/* would NOT change here, because the checkout is never on
+# a branch.
+PathChanged=/home/qamc/quant-agent/.git/HEAD
+
+# Deliberately NOT watched: data/quant_agent.db (the trade ledger). It is
+# written continuously through every market-hours trade. Watching it would
+# rebuild on every fill — a rebuild storm, which is the exact waste this
+# path unit exists to remove, not a substitute schedule for it. The board
+# already reads the ledger fresh on every rebuild it DOES do, so the
+# tradeoff is a ledger view that can lag the last phases.yaml edit or
+# deploy — never a stale plan or a stale deployed-version claim, which are
+# the two things this unit watches for.
+#
+# Do not re-add data/quant_agent.db here without re-solving that storm.
+
+[Install]
+WantedBy=paths.target

@@ -1,108 +1,5 @@
 # QAMC Current Work
 
-Status: **STALE — this file does not track a live production pointer. Check
-reality: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.**
-
-## Current integration truth — historical (2026-08-26, PR #93), superseded
-
-The block below was accurate for the SHA it names but that SHA is no longer
-production. Production has since moved through PR #109/#110 (Phase 3,
-`058273f1`), PR #111/#112 (execution fix, `e6ada88`), PR #114 (deploy-drift
-alarm, `32c174b`), and PR #113 (Phase 2b sizing + stop-width fix, `46b2029`).
-That chain is itself now historical, not current — this section has recorded
-five different "current" production SHAs in two days, which was the actual
-bug. For what production has and what is still pending, read
-"Session start" under "Active finish line" below, and use the command above
-rather than trusting any SHA written in this file; this section is kept only
-because the PR #92/#93 forensic narrative isn't duplicated elsewhere.
-
-- Production was deployed and verified at
-  `a25a723f70a4e0f1548b3389c93c96d9b5ced6d7` (2026-08-26); recorded rollback SHA
-  was `7fe6e4babbf3cf0209d8f93536f8150de70fea37`. Both are stale — do not use
-  either against current production without re-verifying the gap.
-- Production remained Alpaca Paper. Mission Control was private/read-only, all
-  seven existing timers were intact, and the only tracked production delta was
-  `config/settings.yaml: intraday_scan.enabled: true`.
-- The Aug 25 ET-day quota hold rearmed automatically on Aug 26 with exact
-  accounting. No manual reset or spend deletion occurred.
-- The first Aug 26 morning run admitted RSG, AMR and PAM, then safely stopped on
-  a Tech recovery/session-limit mismatch before PM, Risk or broker submission.
-- PR #92 fixed that contract with one bounded consolidated recovery, retained
-  primary results, a narrower prefilter and compact Smart Money input. The
-  controlled rerun completed all 54 selected Technical analyses and produced
-  seven directional PM targets.
-- That rerun exposed two independent data-shaping defects before Risk: valid
-  fenced Smart Money JSON lost its wrapper, and missing queued earnings became
-  a false `none` stance. PR #93 fixed both at their source without weakening PM
-  grounding. The exact saved response replays with all eight findings.
-- Run-scoped SEC Form 4 admission remains active for qualifying symbols outside
-  the configured 101-stock universe. The lane is capped at three names and
-  remains behind broker eligibility, price, history, liquidity, sector,
-  Technical, PM, AI Risk and deterministic gates.
-- The audited operator-rerun switch can bypass only a same-day morning marker.
-  It requires a reason and still enforces the ET window, weekday, session lock,
-  Paper mode, paid-session/cost circuit and the full decision/safety chain.
-- The complete hermetic suite passed **2,181 tests** at that point (see
-  "Session start" below for the current count).
-- Alpaca held EPD 12 and SGOV 89 as of 2026-08-26. EPD was protected for all 12
-  shares by the broker stop-limit at stop $38.00 / limit $36.86. No trade was
-  forced.
-
-## Stabilization account model — HARD RULE
-
-Use two active accounts until QAMC is stable:
-
-### `ubuntu` — engineering/operator
-
-Use `ubuntu` for Codex sessions, engineering checkout/worktrees outside `/home/qamc`, Git/GitHub, development tooling, tests/builds, private Tailscale Vite/browser work, Docker/sudo engineering tasks, and deployment orchestration.
-
-### `qamc` — runtime only
-
-`qamc` owns `/home/qamc/quant-agent`, runtime `.env`/OneCLI wiring, user services/timers, and QAMC Paper execution. Do not run Codex as `qamc` or turn it into a general engineering account.
-
-### `dev` — parked
-
-Do not use `dev` in the normal workflow or expand its permissions during stabilization.
-
-## Standing Paper-beta delivery workflow — HARD RULE
-
-While QAMC remains Alpaca Paper, engineering inside already-authorized work is autonomous under `ubuntu` through the full lifecycle:
-
-**diagnose → implement → test → preview/inspect → PR → merge → deploy → production verify → rollback if needed.**
-
-There is **no mandatory external code-review, merge or deployment gate during Paper beta**. Independent review may be used when useful, but it is evidence, not permission. Keep a dedicated PR for substantive work so the result remains reviewable and reversible in Git.
-
-Live-capital activation, paid dependencies, secrets/credential redesign, destructive infrastructure replacement and material architecture outside current authority still require explicit operator authorization.
-
-## Friction-reduction rules
-
-1. No normal use of `dev` and no manual account ping-pong.
-2. Private DEV preview/browser verification is standing-authorized for relevant engineering work.
-3. For bounded fixes, read only current authority plus relevant code and run the shortest decisive verification.
-4. Use parallelism/subagents when independent work can safely run together and doing so reduces wall-clock time. Do not fan out duplicate work merely to use more agents.
-5. Targeted tests first. Broaden only when failures, risk or acceptance evidence justify it.
-6. Stop when the requested result is proven; repeated re-validation without new evidence is not diligence.
-7. Keep handoffs concise: changed / verified / preview if relevant / unresolved blocker / production state.
-8. Preserve the `ubuntu` engineering vs `qamc` runtime boundary; do not add new lockdown/security infrastructure during stabilization without a real need.
-9. Do not infer current defects from historical notes. Reopen a resolved area only from current operator or production evidence.
-10. Bundle production preflight/deploy/restart/acceptance into the shortest safe intervention.
-
-## Parallelism and engineering-agent policy
-
-Parallel work is encouraged when tasks are genuinely independent. The lead agent owns integration.
-
-- Good parallel targets: independent code surfaces, investigation questions, targeted tests, log/evidence collection, browser/visual verification and documentation checks.
-- Bad parallelism: multiple workers rediscovering the same facts, editing the same files without coordination, or duplicating validation already proven.
-- Multiple worktrees are allowed when they materially simplify independent work.
-
-Match intelligence to the task:
-
-- **Strongest available reasoning model:** architecture, trading logic, safety-sensitive changes, complex debugging, hard code review, ambiguous UX/product judgment and cross-system integration.
-- **Cheaper/faster workers:** bounded tests, searches, inventory, log parsing, evidence collection and other mechanical work.
-- Escalate a cheap worker when the task becomes reasoning-heavy instead of burning turns.
-
-Parallelism is an efficiency tool, not an agent-count target.
-
 ## Active finish line
 
 ### Session start — read this first
@@ -403,14 +300,44 @@ Tonight's audit worked through the thirteen open defects recorded below on 2026-
 - Three previously-identical "nothing happened" outcomes inside the mid-day quick check (feature off, already running, nothing found) now report distinctly, so they can be told apart after the fact. All three are and remain harmless.
 - Four pieces of dead code confirmed to have zero callers anywhere, including tests, were deleted: an unused local copy of the holdings list, a write-only bookkeeping field, a superseded internal data shape, and four small orphaned helper functions.
 
-**New, found by the same audit, not fixed — ranked by consequence:**
+**Landed (2026-08-31, later) — two of the items below were fixed the same night**
 
-1. **Highest consequence:** the alarm that is supposed to tell the owner a code change never actually reached the live server cannot send its alert — a missing piece of wiring means the notification credentials never reach it. It has never actually needed to fire yet, so this has gone unnoticed. Awaiting an owner decision on how to wire it; not scheduled work.
-2. One mid-day failure outcome still has no plain-English explanation and would show a raw internal code instead. Low frequency, tracked, self-flagging if it's missed again.
-3. A cosmetic bug in the rehearsal tool: a note about how much slack the price-list safeguard has always reads as "none," regardless of the real setting, because it's checked before that setting is available.
-4. A leftover scheduled job still points at a folder from the project's original owner instead of this one.
-5. A setup guide referenced by one internal file doesn't exist.
-6. Unchanged: full wire-service news coverage still needs a paid subscription the owner has already declined. Not a defect — a closed question.
+- Fed meeting dates are no longer a gap. The Federal Reserve publishes its own
+  meeting calendar free and the desk now reads it. A second source covers the
+  years the machine-readable feed does not reach — without it the desk would
+  have confidently reported "no meeting" for dates it simply could not see.
+  "No meeting is scheduled" now prints only when a real schedule genuinely
+  covers the window asked about; every other case says so in words.
+- The alarm that tells the owner a change never reached the live server can
+  now actually send. It never could: the credentials were never wired into it,
+  so an alert would have gone to a log file and nobody. It has a probe that
+  proves the channel still works rather than assuming it.
+  **Not finished:** the accompanying scheduled jobs are written but were
+  deliberately NOT switched on. They implement a weekly confirmation the owner
+  rejected — a week of undetected silence is not monitoring. The replacement,
+  where every trading session proves the alert path as part of its own run, is
+  unfinished on an open draft pull request.
+
+**Still open, ranked by consequence:**
+
+1. One mid-day failure outcome still has no plain-English explanation and would
+   show a raw internal code instead. Low frequency, tracked, self-flagging if
+   it is ever missed again.
+2. A cosmetic bug in the rehearsal tool: a note about how much slack the
+   price-list safeguard has always reads as "none," regardless of the real
+   setting, because it is checked before that setting is available.
+3. A leftover scheduled job still points at a folder from the project's original
+   owner instead of this one. A fix is written and passing on an open pull
+   request, not yet merged.
+4. A setup guide referenced by one internal file does not exist.
+5. Unchanged: full wire-service news coverage still needs a paid subscription
+   the owner has already declined. Not a defect — a closed question.
+
+**Open pull requests carrying unfinished work:** bringing every one of the
+server's startup files under version control, with an automatic daily check
+that reports any difference between the server and the repository (ready, needs
+a refresh before merging); and the alert-path rework described above (draft,
+tests never run).
 
 **Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
 
@@ -1126,87 +1053,6 @@ Two facts worth acting on:
 
 **Identified 2026-08-28, not yet fixed**
 
-#### THE FOUR COST-CIRCUIT DEFECTS
-A full trading day (2026-08-28) was lost to these. Fix them together and prove them with the rehearsal harness before deploying.
-
-**Corrected 2026-08-28 against `llm_circuit_events` on the live box.** The
-earlier version of this section blamed defect 2 for the outage. The ledger
-says defect 1 did, an hour and a half earlier. What actually happened:
-
-| ET time | what tripped | agent | spend at that moment |
-|---|---|---|---|
-| 09:32 | defect 1 — projected session cost | portfolio_manager | session $0.0461 / day $0.0476 |
-| 11:15 | operator reset by hand | — | — |
-| 11:30 | defect 4 — paid-session count cap | tech_analyst | day $0.1765 |
-
-1. **The estimator predicts nothing — and it is what stopped the desk.** It
-   bounds a prompt by treating every UTF-8 byte as a token and reserves the
-   full `max_output_tokens` at list price. At 09:32 ET it reserved **$1.8657**
-   for one Portfolio Manager call and refused to proceed, on a day that had
-   spent 4.6 cents. Decomposed exactly: **$0.504 of that is the output half**
-   (`1.05 x 16,000 tokens x $30/1M`, the same regardless of prompt) and
-   **$1.3617 is the input half**. Measured over 37 recorded PM calls: average
-   actual cost **$0.1718**, worst ever **$0.5783**, output never above 11,034
-   of the 16,000 tokens reserved, and roughly **3.6 UTF-8 bytes per input
-   token** on the large prompts. So the reservation runs ~3.2x the worst call
-   ever recorded and ~11x the average.
-   **The fix previously proposed here targeted only the output half — 27% of
-   the error.** Input is the other 73% and must be fixed too. Reserve from
-   measured per-(agent, model) history in `agent_logs`: divide prompt bytes by
-   a measured bytes-per-token ratio at a conservative low percentile, and
-   reserve observed maximum output times a safety margin, capped at
-   `max_output_tokens`. Fall back to today's worst-case bound whenever history
-   is thin. Percentile, margin and minimum sample count are settings — no
-   hardcoded numbers.
-2. **A failed request is charged as if it ran.** A provider 429 returns
-   nothing and bills nothing, but is recorded as unknown cost, which makes the
-   day unreconcilable and hard-stops the desk. Real, and it contributed to the
-   11:15 ET manual reset — but it is the second cause, not the first. Fix:
-   classify the failure. Known-zero-cost rejections (429, 400, 401, 403, 404,
-   pre-send transport failures) release the reservation and charge nothing;
-   genuinely ambiguous failures (timeout after send, 5xx, truncated stream)
-   keep today's conservative behaviour. Fail closed — anything unclassified is
-   ambiguous.
-3. **The operator reset tool is blocked by the emergency it exists to reset.**
-   `scripts/cost_circuit.py` calls `activate_session()` unconditionally before
-   dispatching the command; that runs `_seed_today` ->
-   `_validate_accounting_invariants`, which raises on exactly the fault being
-   cleared, so `reset` is never reached. (The earlier note said `status()` was
-   the blocker — same effect, wrong function.) Had to be worked around by hand.
-4. **A separate cap of 2 paid sessions per mode per day** — unrelated to the
-   estimator. It stopped the desk again at **11:30 ET** on 17 cents of actual
-   spend, under trigger `session_retry_limit`. Raised to 8 on the live box as a
-   stopgap and now committed. Proper fix is dollar-based with an afternoon
-   reserve so a runaway morning cannot consume the day, keeping a deliberately
-   high count only as an infinite-loop backstop. Partial prior work on branch
-   `fix/dollar-based-session-cap`.
-
-#### LIVE-BOX CONFIG DRIFT — RECONCILED (PR #119, live `224722e`)
-Closed 2026-08-28. It was **five** settings, not three, and two of the recorded
-baselines were wrong. `config/settings.yaml` in git is now byte-identical to the
-production box and the box's working tree is clean.
-
-| setting | was in git | now (and live) |
-| --- | --- | --- |
-| `intraday_scan.enabled` | `false` | `true` |
-| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
-| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
-| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
-| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
-
-Corrections to the original note: the git baseline for
-`daily_reserved_exposure_limit_usd` was `1.90`, not `3.20` (`3.20` was itself an
-earlier uncommitted box value), and `daily_cost_limit_usd` was also a git delta
-— the box had been running `2.75` against a committed `1.50` — and was not on
-the list at all. Hard spend caps unchanged at $0.90/session and $2.75/day.
-
-The 8-session cap and the 5.50 ceiling are STOPGAPS the four fixes above should
-supersede. They were committed anyway so git describes the running system.
-
-Also on 2026-08-28: the circuit was reset, two quota holds released, and the
-day's `costs_exact` flag settled without refunding any charge. DB backed up
-first.
-
 #### THE REHEARSAL HARNESS — built, acceptance test PASSING (corrected 2026-08-29)
 Merged to `main` as PR #122 (`feat/session-rehearsal`). Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
 
@@ -1245,186 +1091,11 @@ New guard test `tests/test_rehearsal_report_verdict.py::test_every_known_pipelin
 
 Full suite: 2900 passed (2899 after the first hardening pass + this test).
 
-#### COCKPIT PASS 3 — chart axis, two-row default layout, Directional Bias donuts
-Branch `feat/cockpit-pass-3`, merged as PR #137 and deployed. Three owner requests, all from
-using the cockpit live:
-
-1. **Price-axis rescale bug (priority).** Clicking a symbol after manually
-   dragging the chart's price axis left the axis pinned to the old symbol's
-   range — lightweight-charts permanently disables its own `autoScale` the
-   moment the operator drags the price axis by hand, and nothing in this repo
-   ever re-enabled it. Fixed in `PriceChartPanel.tsx` by re-asserting
-   `priceScale().applyOptions({ autoScale: true })` in the effect keyed on
-   `[symbol, timeframe]`, so a symbol or timeframe switch always starts from a
-   clean fit while a manual zoom on the *same* symbol/timeframe still survives
-   the 20s quote poll. Demonstrated live against the running paper-trading
-   backend (MSFT ~$513 -> CMCSA ~$27 and back, plus a timeframe switch),
-   not just read from the code.
-2. **Two-row default workspace.** `DesktopCockpitWorkspace.tsx`'s default
-   layout changed from one row of three columns (Positions | Chart | Orders)
-   to a full-width Chart row on top and a Positions / free workspace slot /
-   Orders three-column row underneath — a real second grid row via dockview's
-   own `direction: "below"`, so it gets a genuine independent resize handle,
-   not more tabs folded into an existing group. The workspace container is now
-   deliberately taller than one viewport (chart row keeps its old full-height
-   budget, the new row adds ~480px on top) so the page scrolls vertically
-   instead of every panel fighting for room inside one fixed-height box. Every
-   panel remains exactly as movable/dockable as before — this only changes the
-   starting point. Layout key bumped `qamc.dockview.cockpit.v4` ->
-   `.v5` so a stale saved layout never hides the new default.
-3. **Directional Bias panel re-engineered onto Tremor primitives.** The old
-   panel was five bordered sections of hand-drawn ratio bars and paragraphs —
-   "instrument signal direction, effective market exposure" as dense text.
-   Replaced with a Tremor `BadgeDelta` "net lean" chip plus one Tremor
-   `DonutChart` (long/short/neutral share of exposure-corrected candidate
-   direction, the number the panel's own logic says actually answers "is QAMC
-   structurally long-only" — see `exposureDirection()`), a one-line hedge
-   footnote, and a compact PM-proposals summary. **Dropped, not reformatted:**
-   the inverse-ETF stat-card grid and the AI Risk Manager verdict section (3
-   of 25 runs and 4 of 25 runs respectively on live data — too thin a sample
-   for an at-a-glance panel) and the decision-state outcome histogram (not a
-   directional read at all, and it duplicates the sibling Runs tab one click
-   away in the same workspace group).
-
-99 frontend tests pass (up from 84 at PR #120's baseline via #130's pass-2
-additions), `tsc -b` clean, `npm run build` clean, rebuilt bundle committed
-alongside source (see PR #120's discovery below — still true: production
-serves `src/api/static_cockpit/` from disk and never runs `npm run build`).
-
-**Found and left alone, pre-existing:** at phone width (~390px) the mobile
-`SupportTabs` Trades table overflows the page horizontally — a wide Tremor
-`<table>` with no containing horizontal scroll at that breakpoint. Reproduced
-with this branch's changes backed out too, so it predates this pass and is
-unrelated to any of the three items above; not fixed here per the standing
-rule to report pre-existing breakage rather than self-authorize an unrelated
-fix.
-
-**Update (branch `fix/mobile-table-overflow`) — fixed, and the diagnosis above
-was wrong.** The Trades `<table>` was never the leak: `Panel`'s `Card` already
-has `overflow-hidden`, `DataTable.tsx`'s wrapper already has `overflow-x-auto`,
-and Tailwind's `grid-cols-1` already keeps the Orders/Trades grid track at
-viewport width — all three DataTable consumers on the mobile path (Positions,
-Orders, Trades, plus Runs/Missed-Opportunities in the other SupportTabs tabs)
-measured fully contained at 390px, before any fix. Proof: with a Playwright
-repro on the exact mocked dataset the project's own
-`scripts/dashboard-visual-acceptance.mjs` uses, hiding only the page's
-`<header>` took `document.documentElement.scrollWidth` from 468px to exactly
-390px (`clientWidth`) — across every SupportTabs tab and every data scenario
-(populated/error/empty) tested, at 320/371/390px. The real, sole cause was
-`TopStrip.tsx`'s status row (`ml-auto flex items-center gap-3 flex-shrink-0`):
-rigid, non-shrinking, non-wrapping content ("all systems reachable" + "updated
-HH:MM:SS" + "legacy view") that doesn't fit the header's own `flex-wrap` line
-at phone width. Fixed by dropping `flex-shrink-0` and adding `flex-wrap` to
-that one row, matching every other status row in this codebase (`HeroBand`,
-`LiquidityPanel`, `PositionHoldingStrip`, `DirectionalBiasPanel` already use
-`flex flex-wrap`). Left as-is above rather than rewritten, since the original
-misdiagnosis is itself a useful record.
-
-**Second verification, against live production data — and why two repros disagreed.**
-The fix was re-verified independently against the running production cockpit with
-real account data, not the mocked dataset: viewports 320px, 371px and 390px, across
-all five mobile SupportTabs tabs (Orders & Trades, Runs, Directional Bias, Missed
-Opportunities, Diagnostics).
-
-In every one of those 15 combinations the only element leaking at page level was the
-`TopStrip` status row and its `legacy view` link. No table leaked at page level in
-any tab at any width — `DataTable`'s wrapper carries `max-w-full overflow-x-auto`,
-`Panel`'s `Card` carries `overflow-hidden` and `.panel-body` carries
-`overflow-x-auto`, so a wide table is contained by construction, independent of how
-wide its data is.
-
-**The overflow is state-dependent, which is why the original report and the mocked
-repro disagreed on the numbers.** The header's health label is variable-length. With
-the healthy label "all systems reachable" there is no overflow at 390px at all. With
-the longest label the code can emit — "scoped paid-analysis quota hold — other
-sessions eligible" from `healthColor()` — the same page measures `scrollWidth` 571px
-against a 390px viewport. That is within 9px of the 562px originally recorded, and
-the original observation was made while paid analysis was degraded. So both repros
-were the same defect seen in two different system states, and neither measurement was
-wrong.
-
-Measured effect of the fix: 571px to 390px at a 390px viewport under the
-worst-case label, and 45px of overflow to zero at 320px under today's healthy label.
-Desktop is unaffected.
-
-Note explicitly that a phone-width check of this page is only meaningful when the
-status text is at its longest, since the healthy state hides the defect.
-
-PR #138 merged and deployed to production on 2026-08-28, and the fix was
-confirmed live at the production URL.
-
-#### COCKPIT — DELIVERED (PR #120)
-All five owner requests are implemented, built and tested on branch
-`feat/cockpit-trader-view`: chart vertical space, a holdings + P&L strip visible
-on arrival, the average-entry line drawn on the chart with live P&L, PREV CLOSE
-dropped on the 1D view only, and Positions/Liquidity split into two dockable
-panels. The Dockview layout key is bumped to `qamc.dockview.cockpit.v2` so a
-stale saved layout cannot break on load. 84 frontend tests pass, up from 71.
-
-**Discovered while shipping it:** this repo commits its built frontend bundle to
-`src/api/static_cockpit/` and the API serves that directory from disk —
-production never runs `npm run build`. A frontend source change therefore does
-not reach the screen until the rebuilt bundle is committed. The refreshed bundle
-is included in PR #120. Anyone changing frontend source must do the same.
-
-Mission Control is read-only, so this ships without affecting trading.
-
-#### NEWS FEEDS — RESOLVED (branch `fix/news-feeds-and-coverage`, 2026-08-28)
-The coverage-honesty half — the part that "must land regardless" — is done:
-`NewsCoverage` (`src/data/news.py`) tracks configured/succeeded/failed feeds
-on every fetch and threads it into both the analyst's own prompt ("News
-Coverage" section) and `data_status["news"]` (`ok`/`partial`/`failed`), which
-`trader_feed.py`/`notifier.py` already render to the operator. A dead feed can
-no longer vanish behind a log line.
-
-The UA hypothesis was tested and was WRONG for both feeds: Reuters killed
-public RSS in June 2020 (`reutersagency.com` now 200s but is a HubSpot
-marketing page for paid Reuters Connect licensing, no feed link left);
-`reuters.com` itself 401s behind a DataDome JS/CAPTCHA wall. AP's own feed
-(`apnews.com/index.rss`, found via `<link rel="alternate">` autodiscovery)
-answers 401 "Invalid client credentials" — gated behind AP's paid
-Content/Breaking News API (OAuth2) — and the free third-party proxy previously
-used is now behind a Cloudflare managed JS challenge no User-Agent can pass.
-Neither is fixable for free. Per the standing no-paid-dependency rule, both
-were removed from `RSS_FEEDS` rather than left permanently red, and Yahoo
-Finance News (verified live, free, publisher-hosted, ~49 same-day items) was
-added as a partial substitute — net 8 feeds, down from 9. Dedicated Reuters/AP
-wire access is an owner decision (Reuters Connect or the AP Content API, both
-paid) if it's wanted.
-
 #### SMALLER, RECORDED
 - `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
 - After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
 - OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
 - OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
-
-#### OPEN PRs — none, as of 2026-08-29
-
-No open pull requests. Landed on 2026-08-28/29:
-
-- #144 — bounded entry re-peg; ships with the behaviour switched off,
-  so nothing changes until it is deliberately enabled
-- #145 — repaired the dashboard visual-acceptance harness and
-  regenerated its reference screenshots
-- #142 — this document, the board manifest and the defects log
-  reconciled against what the code actually does today
-
-- #138 — mobile horizontal overflow at phone width; the cause was
-  the header status row, not the Trades table
-- #139 — corrected the Mission Control URL and recorded the stale
-  preview server
-- #140 — cockpit default layout: full-width chart over a two-column
-  Positions | Orders row; dockview key bumped to v6
-- #141 — clicking a symbol in Orders/Trades now selects it on the
-  chart instead of opening a modal
-- #136 — Telegram alerts stop clipping mid-word; tap-through link to
-  Mission Control
-- #127 — status board resolves merged-PR evidence from git, adds a
-  `setting_present` rule kind, retires the stale Phase 6 session-cap
-  rule
-- #133 — insider Form 4 routine/opportunistic filter
-- #135 — emergency force-close for short positions (buy-to-cover),
-  plus the position-reviewer and crash-recovery gaps closed
 
 #### BRANCHES READY, NO PR YET
 
@@ -1446,110 +1117,6 @@ No open pull requests. Landed on 2026-08-28/29:
 - `feat/bounded-repeg` — PR #144 opened 2026-08-29. Agent decision: merge it
   rather than leave it to rot, shipping the re-peg disabled by default. Check
   `gh pr list` for current status before treating this as landed.
-
-#### STILL OPEN — 2026-08-29
-
-**Correction 2026-08-29 (later the same day): mostly superseded — see
-"Landed (2026-08-29)" at the top of this backlog.** Items 1 and 2 (the two
-cockpit click affordances) were fixed on `fix/cockpit-click-consistency`.
-Item 3 (short-blind trade calibration) was fixed in Stage 3. Item 4 (the
-pinned dollar-ceiling board rule) was converted to a presence-only check.
-Item 6 (the news-sources audit) was done via `feat/news-sources-widen`. Item
-5 needed no further action — it already correctly said the afternoon
-reserve was merged. Left as-is below for the forensic trail; do not treat
-these six as open.
-
-1. **Missed Opportunities panel opens a modal unpredictably.** Clicking
-   a symbol there opens a Candidate Detail modal only when that symbol
-   happens to appear in whichever session is currently selected in the
-   Sessions strip — same click, different outcome, with nothing on screen
-   to explain which case you are in. Cause: it is wired to
-   `inspectSymbol` in `App.tsx`, which conditionally opens a modal,
-   instead of the modal-free `chartPositionSymbol` that Positions uses.
-   The owner has seen and reported this.
-2. **Diagnostics → Search opens a Run Detail modal on any row click**,
-   including plain unstyled cells. PR #141 added the clickable styling
-   but deliberately did not change the row behaviour, because the
-   agent-call-hit table has no symbol column and splitting
-   cell-versus-row there needs a design decision.
-3. **`compute_trade_calibration` (`src/storage/db.py`) has no concept of
-   a short lot.** It FIFO-matches BUY lots to sell-family exits, so a
-   covered short creates no lot and closes nothing and is invisible to
-   win rate, average return and hold days — figures that reach the
-   Portfolio Manager as facts. Dormant while shorts cannot be opened; a
-   live accounting hole the day they can. Note the precedent already
-   recorded in that function's comments: omitting filled TRAIL_STOP
-   exits once moved win_rate 22.2% → 30.0% and avg_return −2.79% →
-   −2.18% on the real ledger.
-4. **`docs/phases.yaml`'s `daily_cost_limit_usd: 2.75` evidence rule**
-   pins a value that is expected to be re-tuned, the same latent flaw
-   that made the Phase 6 session-cap rule false-alarm. Convert it to
-   `setting_present` when it next fires.
-5. **Phase 6.1 afternoon reserve — re-verify; this note looks stale.** It
-   previously read "unfinished — see Edit 2" (a dangling cross-reference;
-   no "Edit 2" exists in this file). This pass found `_morning_spend_ceiling`
-   defined **and called** from `begin_call` (`src/cost_circuit.py`),
-   `afternoon_reserve_pct`/`afternoon_reserve_release_et_hour` already at
-   their intended 40/12 in `config/settings.yaml`, and passing dedicated
-   tests in `tests/test_cost_circuit.py` — all via PR #126 and PR #131,
-   both already merged into `main`. See the corrected
-   `fix/dollar-based-session-cap` note under "BRANCHES READY" above, which
-   described only that branch's superseded first commit. Not fixed further
-   here — a session should confirm this against a live run before closing
-   the item outright.
-6. **The news-sources audit** the owner asked for — widen what the news
-   seat reads, free sources only — is still untouched.
-
-#### EXECUTION ORDER FOR THE NEXT SESSION — 2026-08-29 (agent decision, not owner instruction)
-**Correction 2026-08-29 (later the same day): executed — see "Landed
-(2026-08-29)" at the top of this backlog.** Steps 2 through 6 below all
-landed (spending controls, measurement, shorts stages 2-3, Phase 9
-nominations, and the Phase 4 news-source remainder). Step 1's items 1/2/4
-also landed via the STILL OPEN correction above. Left as-is below for the
-forensic trail.
-
-Recorded because AGENTS.md's ratification rule requires it: this sequence and
-its reasoning are the outgoing session's call, not something the owner
-specified. Overrule it if a fresh read of the board disagrees.
-
-1. The quick user-visible defects in "STILL OPEN — 2026-08-29" above (items
-   1, 2 and 4).
-2. Phase 6 spending controls. Reasoning: while the desk benches itself on
-   session *counts* rather than dollars, every downstream number is measured
-   on a crippled sample. **Check item 5 above first** — this pass found
-   evidence the dollar-based cap and afternoon reserve are already merged and
-   tested, which would make this step a re-verification, not new
-   implementation.
-3. Phase 7 measurement. Reasoning: `compute_trade_calibration` is
-   structurally short-blind (item 3 above), so shorts could not be judged on
-   real numbers even once built.
-4. Phase 5 shorts, stages 2-3. Ship complete and enabled, not behind a flag —
-   see "Owner decisions, 2026-08-29" under "Session start" above.
-5. Phase 9 — the research desk deliberates. Land a coherent first slice
-   (seats able to originate) rather than a half-wired everything if time runs
-   short.
-6. The Phase 4 remainder (item 6 above) and Phase 8 documentation.
-
-**Two decisions the outgoing session made, not the owner:** merge
-`feat/bounded-repeg` rather than leave it to rot as an abandoned branch — PR
-#144, opened 2026-08-29, ships the re-peg disabled by default (see
-"BRANCHES READY" above). Separately, rescue the VPS security-hardening PLAN
-document so `docs/FUTURE_SECURITY_OBSERVATORY.md`'s reference resolves — PR
-#143, opened 2026-08-29, acting on the rescue note in "Set aside — small,
-easily forgotten" below — while deliberately leaving its executable
-`harden.sh` unmerged and unapplied. The plan was spot-checked against the
-live box rather than imported on trust: finding 1 was already partly stale
-(`ufw`/`fail2ban` active where the 2026-08-12 audit found neither). Check
-`gh pr list` for current merge status on both before treating either as
-landed.
-
-#### DECISIONS RATIFIED 2026-08-28
-- Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
-- Real short selling, not inverse ETFs. Three stages: countable, safe, live.
-- No dev/prod mirror. Production is paper and resets, so the case for enterprise staging collapses. Build the rehearsal harness instead.
-- The system already sends marketable limit orders, which is a market order with a bounded worst case. No change needed.
-- Documentation is the source of truth. Wrong documentation is corrected on sight without asking.
-- Rehearsal alerts are suppressed rather than routed to a second Telegram bot.
 
 #### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — measure before changing
 On 2026-08-28, the reward:risk floor added the previous day rejected four candidates outright. Recorded reward:risk after the stop was widened past the noise band: CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30, against a 1.50 minimum.
@@ -1589,139 +1156,6 @@ Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts pric
 - Re-examine whether the LLM Risk Manager seat is additive once the drawdown gate
   is deterministic — see `docs/AGENT_ROLE_AUDIT.md`.
 
-
-### QAMC Remediation Spec — what Phase 1 delivered
-
-Kept as a record of the Phase 1 tranche's contents. **Status lives in the
-ordered backlog above, not here** — this section had drifted into a second,
-contradictory account of the same work (it still described Phase 1 as sitting
-on an unmerged branch after it had merged) and is now scoped to substance only.
-
-- `TechAnalysisResult` (`src/models.py`) requires `support_levels`,
-  `resistance_levels`, `setup_type` (`"range"` / `"breakout"`),
-  `expected_horizon_sessions` and `reference_target` for every actionable rating.
-- `src/data/levels.py` deterministically finds support/resistance from the full
-  OHLCV history; `src/agents/tech_analyst.py` feeds a formatted levels block into
-  the prompt, computed over `trading.lookback_days: 1800` (~5 years).
-- `src/portfolio_constructor.py`'s synthesized stop (`entry − 2×ATR` / `entry ×
-  0.95`) and target (`entry × (1 + 2×stop_gap_pct)`) are deleted, along with their
-  config fields. A candidate with no structural stop or target is now rejected
-  rather than traded.
-- `src/data/context.py` adds deterministic market context per symbol — relative
-  strength vs a same-batch benchmark (SPY/QQQ/IWM), 1w/1m/3m/6m/12m returns,
-  52-week range position, ATR percentage-of-price with a 1y percentile and
-  volatility state, MA slopes, consolidation detection, dollar volume, up/down
-  volume ratio, unfilled gaps — rendered via `format_context_block()`.
-- `src/data/market.py` adds `MarketDataProvider.get_next_earnings_date()` and the
-  Tech Analyst accepts a `days_to_earnings` kwarg, but **nothing in the pipeline
-  wires them together** — tested, unused end to end. Still true; still listed in
-  the backlog's "set aside" items.
-
-### Mission Control / existing cockpit utility
-
-Complete. PRs #76 and #77 are merged and deployed with the backend recovery from PRs #74 and #75. Preserve the accepted live cockpit unless current evidence or the research-intelligence outcome below requires a coherent extension.
-
-### Research Intelligence Desk + Smart Money Analyst — COMPLETE / DEPLOYED / SEC SOURCE COMMISSIONED
-
-The accepted Research Intelligence Desk tranche is complete in production at
-PR #87. The acceptance criteria below remain the product contract; they are no
-longer an unfinished implementation queue. Natural market validation continues
-separately and does not reopen the completed read-side tranche without new
-production evidence.
-
-Build one coherent intelligence experience, not a sequence of small dashboard tweaks.
-
-The operator should be able to open Mission Control and quickly understand what every research agent learned, where agents agree/disagree, what the Portfolio Manager decided, what AI Risk changed, what deterministic Python allowed/blocked, what actually happened, and what the system learned afterward — **without reading logs or raw JSON**.
-
-The experience is for one private operator, not customers. It should feel like a sharp internal trading desk: useful, candid, visually interesting, occasionally dry or irreverent, and never corporate. **Say everything useful. Nothing merely decorative.**
-
-Cover the existing research/review seats where their output is relevant — Technical, News, Macro, Earnings, Portfolio Manager, AI Risk Manager, Position Reviewer, Evening Review and Meta-Reflection — and add one new **Smart Money Analyst** specialist seat.
-
-#### Smart Money Analyst outcome
-
-Use first-party, credentialless SEC data for v1. Phase A is broad Form 4
-discovery of exact non-derivative open-market purchase/sale codes `P` and `S`,
-with accession-level provenance, transaction time, SEC acceptance time, lag,
-owner identity/role, amendment and 10b5-1 context where present. Python owns
-parsing, direction, recency, materiality, independent-owner clustering,
-deduplication and admission eligibility. Quiet or unchanged evidence must use
-zero model tokens; the LLM sees only compact surviving evidence and may
-synthesize meaning but cannot author source facts or admission.
-
-The permanent configured universe remains unchanged. A fresh external `P`
-purchase that clears the higher external materiality threshold may be admitted
-for the current run only after deterministic Alpaca common-US-equity/tradable
-eligibility, supported-exchange, minimum-price, minimum-history, minimum
-20-session dollar-liquidity and known-sector checks. At most three external
-symbols may be admitted per run. Admission only adds the symbol to that run's
-research/PM allowlist; it must still receive current Technical analysis and
-pass Portfolio Manager grounding, AI Risk, every deterministic risk/funding
-rule and broker protection. It is never written into the permanent universe.
-
-Schedule 13D/13G and curated-manager 13F deltas remain possible later phases,
-not v1 admission inputs. Alpha Vantage may be considered only as an optional
-cross-check/fallback; Bargo may be reconsidered if access arrives. Neither is
-a current dependency. Paid alternative-data dependencies remain unauthorized.
-
-The Smart Money Analyst should identify **viable present-tense trading evidence**, not merely summarize disclosure feeds. It must distinguish evidence by freshness and economic meaning. Congressional trades can be disclosed up to roughly 45 days after the transaction and 13F holdings can be filed up to 45 days after quarter-end, so those streams are primarily thematic/confirmatory context. SEC Form 4 insider transactions are generally filed within two business days and are materially more timely. Any genuinely real-time/near-real-time stream made available under the accepted free source may be treated according to its actual timestamp and provenance.
-
-The seat should intelligently suppress noise and surface only material patterns: clustered or repeated activity; unusual size/direction relative to the available disclosure; multiple independent smart-money streams aligning; activity that confirms or contradicts current News/Macro/Earnings/Technical evidence; and fresh evidence that changes the current thesis. A lone stale politician transaction is not a trade signal. Every surfaced finding must state what happened, when it happened, when it became knowable, why it matters now, and whether it is actionable, confirmatory, contradictory or merely historical.
-
-If other genuinely free, reliable, source-backed smart-money streams are available under acceptable terms, Codex may incorporate them into this same seat rather than proliferating agents. Provider/API details should remain replaceable rather than becoming trading architecture.
-
-The new seat may inform the Portfolio Manager through the existing specialist-evidence path. It must not bypass PM, AI Risk, deterministic Python or broker protections and must not create a new execution path.
-
-#### Research/reading experience outcome
-
-Desktop should have a strong designed default composition, then let the operator rearrange it. Reuse Dockview so panels can move, resize, tab, maximize and persist their layout. iPad should be composed for reading, not squeezed from desktop.
-
-The writing should be **compact but substantive**. Short sentences. Strong editing. No filler, repeated conclusions, forced jokes, fake quotes or generic AI throat-clearing. Wit should come from judgment, not punchlines. Quiet days should stay quiet.
-
-Use visual structure where it genuinely helps:
-- **signal stack** — quick agreement/conflict across relevant agents;
-- **what changed** — the new information since the prior useful read;
-- **tension** — the most important disagreement or contradiction;
-- **why now** — why the item deserves attention today;
-- **evidence strip** — compact factual chips instead of prose where possible;
-- **mini chart/sparkline** — only when it adds immediate market context;
-- **Read / PM / Risk** — clearly separated judgment, portfolio implication and risk consequence;
-- **dry annotation** — occasional, restrained, evidence-based commentary when the situation earns it.
-
-Do not force every device onto every card. The point is rhythm and hierarchy, not decoration. One important story may be visually dominant while supporting research is smaller. Balance matters more than symmetry.
-
-Favor useful editorial synthesis such as daily market thesis, agent findings, disagreement, Smart Money evidence, PM ruling, Risk response, proposed-versus-executed delta, position review, after-the-bell lessons and tomorrow watch. Raw structured evidence remains secondary drill-down.
-
-No fabricated confidence, quotes, history or facts. Sparse, stale, partial, no-news, no-trade and provider-error states must look intentional and remain truthful.
-
-#### Acceptance
-
-This tranche is complete when real stored QAMC data demonstrates that:
-
-1. An operator can read a coherent daily story without opening logs or JSON.
-2. Every relevant agent has a useful, visually balanced representation of its findings, strongest evidence, meaningful changes and disagreement where supported.
-3. The writing is substantive without being verbose, visually scannable, and has a restrained private-desk personality rather than corporate/LLM prose.
-4. Signal stacks, change markers, tension, why-now context, evidence strips, mini-chart context, Read/PM/Risk separation and occasional dry annotations are used where they improve comprehension rather than mechanically everywhere.
-5. PM/Risk/execution are understandable as deltas: what PM wanted, what Risk changed, what deterministic code allowed/blocked, and what actually executed.
-6. Desktop research panels are genuinely movable/resizable/tabbable/maximizable with persisted layout and a sensible default workspace.
-7. iPad has a deliberately designed reading/navigation experience with no horizontal overflow or micro-text.
-8. Smart Money Analyst is SEC-source-backed, accession/timestamp/lag-aware,
-   attributable, direction-validated, noise-suppressing, and reaches PM only
-   through the accepted specialist path. Any external symbol is run-scoped,
-   visibly admitted by deterministic evidence, and still traverses the full
-   Technical → PM → AI Risk → deterministic gate → broker chain.
-9. Empty, stale, partial and provider-error states are truthful and visually composed.
-10. Targeted tests/build pass and rendered desktop+iPad visual acceptance passes with zero console/page errors and no horizontal overflow.
-
-#### Engineering posture
-
-This is outcome-driven work. Codex has autonomy to inspect the current repository, choose the simplest implementation consistent with accepted architecture, make routine engineering/design decisions, implement, test, visually inspect, commit, push, merge, deploy and verify production under the standing Paper-beta workflow.
-
-Use parallel subagents where they genuinely accelerate independent work. Assign strong reasoning models to difficult architecture/trading/product problems and cheaper workers to bounded mechanical work. Do not split the product tranche into micro-PRs, repeatedly ask the operator routine questions, or over-specify implementation from this handoff.
-
-Preserve the `ubuntu` engineering/operator versus `qamc` runtime-only boundary. Do not alter secrets architecture, add unrelated infrastructure, force trades, weaken safety or broaden broker authorization. If deployment verification fails, stop further mutation and preserve/restore the last known-good production state.
-
-Stop for the operator only on a genuine unresolved product/safety/architecture conflict, a paid dependency, a live-capital boundary, or an external credential/authorization requirement that cannot be satisfied from existing project resources.
-
 ### Natural Alpaca Paper validation
 
 Natural validation continues in parallel. The substantive acceptance item remains evidence that QAMC behaves coherently in ordinary Alpaca Paper markets:
@@ -1750,29 +1184,3 @@ Do not interrupt natural validation for these unless current evidence shows they
 
 `get_latest_price` is **not** on this list solely because its request omits `feed`; that concern has been reconciled. Reopen only on concrete production evidence.
 
-## Hard boundaries
-
-- **Current execution authorization is Alpaca Paper only.**
-- Options/theta strategies remain outside accepted architecture. Direct stock
-  shorting and margin were authorized 2026-08-27 (`docs/STATE.md`) and are
-  pending implementation, not yet in production — see the Phase 5 backlog
-  entry above for status.
-- Deterministic Python/broker protections remain final safety authority.
-- Do not force/manufacture trades or weaken safeguards to increase activity.
-- Do not create paper-only trading semantics.
-- No new daemon/service/database/proxy/security/credential/orchestration architecture without separate explicit approval.
-- No paid alternative-data dependency without separate explicit approval.
-- Keep `qamc` runtime-only and preserve OneCLI secret handling.
-- Do not expand `dev` privileges during stabilization.
-- Mission Control remains private/read-only; Telegram remains output-only.
-- No public exposure of QAMC or OneCLI.
-
-**Active work:** natural Alpaca Paper observation continues. *(The rest of this
-paragraph is 2026-08-26 history — PR #93 and "today"'s session limit are
-stale; see "Session start" above for how to check current production
-state.)* The
-remaining acceptance item is a future eligible session traversing PM, AI Risk,
-deterministic gate and broker execution when warranted, followed by
-management/exit and measured outcome. No trade may be forced or manufactured;
-repeated no-trade results must have a specific decision or risk reason, not a
-mechanical pipeline failure.
