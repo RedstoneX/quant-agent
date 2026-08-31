@@ -161,6 +161,46 @@ def test_trades_filters_by_run_id_and_decision_id(client, seeded_db):
     assert client.get("/trades", params={"decision_id": DECISION_ID}).json()["count"] == 1
 
 
+def test_trades_serves_conviction_ledger_fields(client, seeded_db):
+    """Defect (f): `conviction`/`requested_risk_pct`/`allocated_risk_pct`/
+    `decision_model` (conviction ledger, spec §7.2, PR #159) are persisted
+    on every entry row but were dropped silently by `TradeItem` — SELECT *
+    populated them, the response model just never declared them. Proves
+    the API-level fix: a trade written WITH ledger values actually serves
+    all four, not just that the DB column exists."""
+    db = Database(str(seeded_db))
+    db.initialize()
+    db.insert_trade(
+        symbol="MSFT", action="BUY", qty=5, price=300.0,
+        reasoning="high-conviction breakout", run_id=RUN_ID, stop_loss=280.0,
+        take_profit=330.0, decision_id=DECISION_ID,
+        conviction="high", requested_risk_pct=1.5, allocated_risk_pct=1.2,
+        decision_model="gpt-5.5",
+    )
+    db.close()
+
+    r = client.get("/trades", params={"symbol": "MSFT"})
+    assert r.status_code == 200
+    trade = r.json()["trades"][0]
+    assert trade["conviction"] == "high"
+    assert trade["requested_risk_pct"] == pytest.approx(1.5)
+    assert trade["allocated_risk_pct"] == pytest.approx(1.2)
+    assert trade["decision_model"] == "gpt-5.5"
+
+
+def test_trades_conviction_ledger_fields_absent_render_as_none(client, seeded_db):
+    """The seeded AAPL row (this fixture's bare `insert_trade` call) never
+    passes ledger kwargs — same shape as a row written before PR #159, or
+    any interim/exit row. Must come back as None, never 0 or a fabricated
+    default."""
+    r = client.get("/trades", params={"symbol": "AAPL"})
+    trade = r.json()["trades"][0]
+    assert trade["conviction"] is None
+    assert trade["requested_risk_pct"] is None
+    assert trade["allocated_risk_pct"] is None
+    assert trade["decision_model"] is None
+
+
 # ---------------------------------------------------------------------------
 # /positions/{position_id}/history (Phase 6, §6.2b)
 # ---------------------------------------------------------------------------

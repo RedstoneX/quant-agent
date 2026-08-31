@@ -243,6 +243,17 @@ class TradeItem(BaseModel):
     # system can't confidently attach to a chain — never fabricated.
     position_id: str | None = None
     exit_reason_category: str | None = None
+    # Conviction ledger (spec §7.2, PR #159) — pinned at ENTRY only in
+    # `Database.insert_trade`; every interim/exit row and every row written
+    # before PR #159 carries None here, never a fabricated 0/default. Kept
+    # OUT of every agent prompt deliberately (the outcome-grouped-by-
+    # conviction stats these could feed are gated below 20 samples/bucket
+    # and reach the human operator only) — this is read-only surfacing for
+    # a human reviewing a trade, not a new input to any agent.
+    conviction: str | None = None
+    requested_risk_pct: float | None = None
+    allocated_risk_pct: float | None = None
+    decision_model: str | None = None
 
 
 class TradesResponse(BaseModel):
