@@ -565,6 +565,33 @@ modes this system has actually produced: a deterioration claim contradicted by
 its own improving metrics, a target citing provenance that does not exist, a
 macro conflict that must be adjudicated rather than logged.
 
+#### `pm_selection` — built 2026-09-01, NOT YET RUN against any model
+
+The scenario this section asks for now exists, from exactly the material this
+section recommends: a failure the system actually produced. It replays
+production run `run-64290730` — 59 technical reads, 38 actionable signals,
+zero trades placed, `bearish_hedge_considered=false` on a day fifteen
+validated bearish candidates were on the table. See
+`ops/model_policy/README.md` for the design and the run command.
+
+It measures WHICH candidates a model picks, which `pm_constrained` and
+`pm_production_scale` cannot: `_PM_PRODUCTION_ANALYSES` builds all 30
+candidates by looping over a ticker list and handing every one an identical
+`buy`/`medium` analysis at entry 100 / stop 94 / target 112, so any five of
+them score identically and the choice between them is unmeasured. The
+committed results bear that out — the `pm_production_scale` rows record a
+target COUNT and never which symbols were chosen, so nothing in `results/`
+can distinguish a considered selection from an arbitrary one.
+
+**No model has been benchmarked against it yet**, so no claim in this document
+rests on it and no seat assignment changes because of it. The grader itself is
+covered by `tests/test_pm_selection_scenario.py`, which drives it with
+hand-built decisions and spends nothing.
+
+It grades quality of selection. It does **not** grade profitability — nobody
+has measured that for this system, and this scenario must not be cited as if
+it had.
+
 ### 3. Then the challengers, against the strict contract
 
 The 2026-08-25 strict PM grounding rerun covers `gpt-5.5`, `gemini-2.5-flash`

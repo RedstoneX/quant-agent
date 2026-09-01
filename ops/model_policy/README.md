@@ -19,8 +19,9 @@ The resulting policy and its evidence live in
 ```
 
 This drives the **real** agent classes (`src/agents/*`) with the **real**
-prompts (`config/prompts/*.md`) over frozen synthetic inputs, and grades
-each result with deterministic Python assertions in `scenarios.py`.
+prompts (`config/prompts/*.md`) over frozen inputs — synthetic for every
+scenario except `pm_selection`, which replays a real recorded session — and
+grades each result with deterministic Python assertions in `scenarios.py`.
 
 That choice is the point of the harness. The question is not "can this
 model write JSON" — it is "does its output survive `analyze_batch` /
@@ -58,6 +59,64 @@ suite rather than drifting unnoticed.
 
 `risk_drawdown_discipline` is `default=False` — it informs the risk seat
 only and would otherwise be paid for on every candidate in a full sweep.
+
+### `pm_selection` — the one scenario built from real data
+
+Every other scenario asks whether a model applies a rule. `pm_selection`
+asks a different question: **given a real day's evidence, does it pick the
+candidates the evidence supports, or the tickers it already knows?**
+
+```bash
+.venv/bin/python ops/model_policy/benchmark_models.py --from-onecli \
+  --scenario pm_selection --models openai/gpt-5.5 --repeats 2 \
+  --out results/pm-selection-<date>.json
+```
+
+`pm_production_scale` cannot answer that, and it was never meant to:
+`_PM_PRODUCTION_ANALYSES` loops over a ticker list and hands every one of
+its 30 candidates the same `buy`/`medium` analysis at entry 100 / stop 94 /
+target 112, so any five of them score identically. Its checks count targets
+and never record which symbols were chosen, so the committed results cannot
+tell a considered selection from an arbitrary one. That scenario is a valid
+robustness test and is left untouched; this is the missing measurement, not
+a replacement.
+
+The fixture (`fixtures/run_64290730_pm_input.json`) is a verbatim pull of
+production run `run-64290730` from the read-only Mission Control API: 59
+technical reads, 5 held positions, the session's macro, news and earnings
+evidence, and the real BUY-eligibility universe. Nothing is rounded or
+tidied, and the candidates are in the run's own presentation order rather
+than sorted. Its `_provenance.fidelity` block is measured, not asserted:
+rendering the fixture through `build_user_message` and diffing it against
+the recorded prompt gives 18 of 22 shared sections byte-identical. It lists
+what is absent (PMFacts, portfolio heat, company profiles — all computed
+live from the production DB; the smart-money findings, which would have
+required inventing SEC source URLs) and what that changes for a model —
+notably that Energy reads as macro-bullish here where the live session had
+it macro-neutral.
+
+That day is the desk's own documented failure — 38 actionable signals, zero
+trades, `bearish_hedge_considered=false` — which is why matching what the
+live PM did is graded as failure, not success. The evidence-versus-
+familiarity contrast is in the real numbers and was not planted: the day's
+two highest-conviction calls are unglamorous and both below the reward/risk
+floor (SLB `strong_buy` at 1.28, AGX `sell` at 0.84), five of the eight
+candidates clearing the floor are shorts, and every mega-cap that got a
+read is weak (NVDA 1.03, AAPL 1.02, MSFT 0.85, GOOGL 0.59).
+
+**It measures quality of selection. It does not measure profitability** —
+nobody knows which of these picks would have made money, and no check here
+pretends otherwise. `familiarity_bias` reports the share of picks that are
+famous-and-weak as a number on every run, passing or failing; read it as a
+rate across models and repeats, not as a verdict on one run.
+
+`default=False`: the rendered prompt is 194,173 characters, 91.4% of the
+live session's, which billed 61,557 input tokens and cost $0.24 on
+`openai/gpt-5.5` — so budget roughly that per call. Opt-in like
+`pm_production_scale`.
+
+`tests/test_pm_selection_scenario.py` drives the grader with hand-built
+decisions and keeps it honest without spending anything.
 
 Useful flags:
 
