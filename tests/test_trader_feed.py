@@ -1,7 +1,11 @@
+import html
 import json
 import sqlite3
+from unittest.mock import patch
 
 from src import trader_feed
+from src.data.company import CompanyProfile, CompanyProfileStore
+from src.notifier import TelegramNotifier
 
 
 def _make_db(tmp_path, monkeypatch):
@@ -516,3 +520,219 @@ def test_extract_alert_symbols_handles_missing_run_and_result(tmp_path, monkeypa
     _make_db(tmp_path, monkeypatch)
     assert trader_feed.extract_alert_symbols(None, None) == []
     assert trader_feed.extract_alert_symbols("no-such-run", {}) == []
+
+
+# === Company identities in the real alerts the operator receives ===
+#
+# The dead-code defect (2026-09-01): `src/notifier.py::_append_company_identities`
+# was only ever wired into the BASE formatter's `_append_trade_session_body`,
+# which real trading sessions never reach — `run_morning`/`run_position_review`
+# emit "executed"/"no_trades"/"reviewed", none of which are in
+# `_BASE_ONLY_STATUSES`, start with "pm_", or equal "paid_analysis_suspended",
+# so `format_session_result` above always routed to the richer
+# `_format_decision_session` / `_format_position_review` / `_format_intraday`
+# formatters instead — and none of those ever called `CompanyProfileStore`.
+# A test that only calls `_append_company_identities` (or
+# `_append_trade_session_body`) directly — see tests/test_company_profiles.py
+# — would pass while this bug shipped for good; every test below goes through
+# `trader_feed.format_session_result`, the exact function `src/scheduler.py`
+# calls to build a live alert.
+
+CAMECO = CompanyProfile(symbol="CCJ", name="Cameco Corporation", industry="Uranium")
+
+
+def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-morning"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
+         "reasoning": "Uranium demand tailwind"},
+        symbol="CCJ",
+    )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert "who:" in msg
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+    # Identities render after the real decision content, not instead of it.
+    assert msg.index("who:") > msg.index("BUY CCJ")
+
+
+def test_midday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-midday"
+    _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [{"symbol": "CCJ"}],
+        "review": {"actions": [{"action": "REDUCE", "symbol": "CCJ",
+                                 "reason": "trim the winner"}]},
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("midday", result, 9.0)
+
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+
+
+def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-close"
+    _trade(db, run, "CCJ", "SELL", qty=10, price=61.0)
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 0,
+        "orders": [{"symbol": "CCJ"}], "review": None,
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("close", result, 7.0)
+
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+
+
+def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-intra"
+    _trade(db, run, "CCJ", "BUY", qty=15, price=59.0)
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": -5.0, "daily_return_pct": -0.05,
+        "intraday_scan": {
+            "status": "intraday_executed", "run_id": run,
+            "candidates": ["CCJ"], "orders": [{"symbol": "CCJ"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("intra_check", outer, 4.0)
+
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+
+
+def test_missing_profile_degrades_cleanly_through_the_real_formatter(tmp_path, monkeypatch):
+    """A symbol the cache has never seen must not break, blank, or shrink
+    the rest of the alert — it is simply absent from a `who:` section that
+    itself may not appear at all."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-unknown"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "ZZZZ", "allocation_pct": 5,
+         "reasoning": "Speculative small-cap entry"},
+        symbol="ZZZZ",
+    )
+    _trade(db, run, "ZZZZ", "BUY", qty=100, price=2.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "ZZZZ"}]}
+
+    # Cold cache: get_many still returns an entry per requested symbol (real
+    # CompanyProfileStore.get_many behaviour with allow_fetch=False) but with
+    # every field None — the identity-worthy `bits` list ends up empty.
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {
+            s: CompanyProfile(symbol=s) for s in symbols
+        },
+    ):
+        msg = trader_feed.format_session_result("morning", result, 11.0)
+
+    assert "who:" not in msg
+    assert "BUY ZZZZ" in msg
+
+
+def test_missing_profile_lookup_exception_still_ships_the_alert(tmp_path, monkeypatch):
+    """Mirrors the existing `_append_company_identities` failure posture
+    (see its try/except) end-to-end: a broken profile store must not cost
+    the operator the whole rich alert, and must not fall back to the old,
+    plainer base formatter either — only the `who:` garnish is lost."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-explode"
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    def _explode(self, symbols, allow_fetch=True):
+        raise RuntimeError("cache exploded")
+
+    with patch.object(CompanyProfileStore, "get_many", _explode):
+        msg = trader_feed.format_session_result("morning", result, 5.0)
+
+    assert "who:" not in msg
+    assert "Cameco" not in msg
+    # Still the rich trader-feed formatter, not the old base fallback.
+    assert "MORNING" in msg
+    assert "BUY CCJ" in msg
+
+
+def test_length_pressure_drops_identities_before_decision_content(tmp_path, monkeypatch):
+    """Telegram's real length budget (`TelegramNotifier.MAX_MESSAGE_CHARS`,
+    `_build_payload`'s tail truncation) is exercised for real here — not
+    reimplemented. `_append_identities` in src/trader_feed.py appends the
+    `who:` block LAST in every formatter, after the footer, specifically so
+    that when the aggregate message must be cut, the existing tail-cut in
+    `_build_payload` removes identities first. Shrinking
+    `MAX_MESSAGE_CHARS` down to exactly the length of everything BEFORE the
+    `who:` section proves that: the cut must land at or before the `who:`
+    boundary, never inside the PM/risk decision content that precedes it."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-tight-budget"
+    _evidence(
+        db, run, "portfolio_manager", "reasoning",
+        {"portfolio_view": "Only one clean setup survives the morning screen"},
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
+         "reasoning": "Uranium demand tailwind, clean breakout"},
+        symbol="CCJ",
+    )
+    _evidence(
+        db, run, "risk_manager", "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
+         "reasoning": "Sizing acceptable given current exposure"},
+    )
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    # Sanity: with a generous budget, identities really are in the message —
+    # otherwise the truncation test below would trivially pass for the
+    # wrong reason (nothing to drop).
+    assert "Cameco" in msg
+    core_text, _, _ = msg.partition("\nwho:")
+    assert core_text != msg
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    # Exactly the escaped length of everything before "who:" — no slack for
+    # even one character of the identity section to survive.
+    monkeypatch.setattr(
+        TelegramNotifier, "MAX_MESSAGE_CHARS", len(html.escape(core_text)),
+    )
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    payload = notifier._build_payload(msg, symbols=symbols)
+    final_text = payload["text"]
+
+    assert "who:" not in final_text
+    assert "Cameco" not in final_text
+    # Real decision content — PM section, risk rationale — survives even
+    # though the message as a whole had to be cut.
+    assert "🧠 PM/Constructor" in final_text
+    assert "Sizing acceptable" in final_text

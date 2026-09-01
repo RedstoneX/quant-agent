@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from src.notifier import (
+    _append_company_identities,
     _clip_text,
     _DB_PATH as _NOTIFIER_DB_PATH,
     format_session_result as _base_format_session_result,
@@ -298,6 +299,30 @@ def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
     return symbols[:10]
 
 
+def _append_identities(lines: list[str], run_id: str | None, result: dict | None) -> None:
+    """`who:` block for the rich trader-feed formatters below — the same
+    `extract_alert_symbols` source already used to decide which tickers get
+    a tap-through link, fed into `src.notifier._append_company_identities`
+    (the ONE place that turns symbols into identity text; see its
+    docstring). Deliberately called LAST by every formatter below, after
+    the footer: `TelegramNotifier._build_payload`'s length-budget fallback
+    truncates from the tail of the message when it must, so whatever is
+    appended last is the first thing a length-pressured alert drops — and
+    identity lines are the least important content here, never the order
+    list, the PM/risk rationale, or the footer.
+
+    Wrapped locally (not left to the `format_session_result` dispatcher's
+    own try/except) because that outer handler's fallback on any exception
+    is the OLD, plainer base formatter for the WHOLE message — losing every
+    section this module adds, not just the identity garnish. A failure here
+    must cost only the `who:` block.
+    """
+    try:
+        _append_company_identities(lines, extract_alert_symbols(run_id, result))
+    except Exception as exc:  # noqa: BLE001 — identities are a garnish, never worth the alert
+        logger.warning("trader-feed: company identities failed: %s", exc)
+
+
 def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     macro = snap.get("macro")
     if not isinstance(macro, dict):
@@ -554,6 +579,7 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     _append_risk(lines, snap)
     _append_gate_and_execution(lines, result, snap)
     _append_footer(lines, run_id, snap, elapsed)
+    _append_identities(lines, run_id, result)
     return "\n".join(lines)
 
 
@@ -621,6 +647,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
             lines.append("⏸️ NO ACTION — review completed with no broker action")
 
     _append_footer(lines, run_id, snap, elapsed)
+    _append_identities(lines, run_id, result)
     return "\n".join(lines)
 
 
@@ -671,4 +698,8 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     _append_risk(lines, snap)
     _append_gate_and_execution(lines, nested, snap)
     _append_footer(lines, run_id, snap, elapsed)
+    # `nested`, not `outer`: on the intraday path the traded-order evidence
+    # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict —
+    # same source `_append_gate_and_execution` above already reads.
+    _append_identities(lines, run_id, nested)
     return "\n".join(lines)
