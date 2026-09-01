@@ -365,6 +365,32 @@ defect log is append-only and is never trimmed.
 
 ### Ordered backlog — RESUME POINT
 
+**Margin interest tracker — REQUIRED before Phase 11.2's margin goes on.**
+Owner asked for this directly on 2026-09-01: he wants to see, cumulatively,
+what leverage actually costs, "to see if it's worth it".
+
+The problem it solves: **paper will not teach this lesson by itself.** Alpaca's
+own docs confirm paper does NOT simulate short borrow fees (their comparison
+table lists it "Coming Soon"), and whether paper simulates MARGIN INTEREST is
+not documented either way. So a paper account run at 2x may show all of
+leverage's upside and none of its cost — the single most misleading thing this
+project could learn.
+
+Build our own, from the broker's own numbers:
+- Alpaca live rate **6.25%** non-elite / 4.75% elite, charged as
+  `(settlement-date overnight debit balance x rate) / 360`, **on the end-of-day
+  balance only — intraday leverage is free.**
+- Accrue daily, store it, and report it cumulatively. At a sustained 2x on
+  ~$9,800 equity that is ~$1.71/day, ~$614/yr — **6.25% of equity the book must
+  out-earn before leverage contributes anything.**
+- **Settle the open question empirically on the first night a debit balance is
+  carried:** check the account's `INT` activities. If Alpaca posts a real
+  charge, use theirs and stop estimating. If nothing appears, keep our estimate
+  and LABEL IT AS AN ESTIMATE everywhere it is shown.
+- Surface in the morning Telegram alert and on the dashboard, alongside
+  overnight gross exposure.
+
+
 
 **Next, in order (set 2026-08-30) — start here**
 
