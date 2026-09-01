@@ -31,6 +31,15 @@ settled. Restored:**
   stays until that re-run exists. Re-running is a re-run, not a rebuild — the
   rig reads the prompt from disk.
 
+- [ ] DECIDE BY 2026-09-02 — Level quality bar for Phase 12.1. A stop is now
+  honoured if it sits on a computed structural level, but a level currently
+  qualifies on **two touches ever, anywhere in ~3 years** — so two old swing
+  points can justify a very tight stop. **The 3x ATR floor used to hide this
+  by widening such stops; 12.1 honours them instead, which makes the bar for
+  "is this a real level" load-bearing in a way it never was before.** Needs a
+  recency and/or touch-count requirement. Risk judgement, owner's call, NOT an
+  agent decision — no agent may pick a threshold here.
+
 **START HERE — 2026-09-01 handoff. Everything below is a POINTER; the detail
 lives in the files named and is not repeated.**
 
