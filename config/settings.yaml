@@ -197,6 +197,23 @@ execution:
   repeg_enabled: false
   repeg_max_attempts: 2
   repeg_poll_seconds: 5
+  # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
+  # count the risk math produced is used as-is instead of being floored to a
+  # whole number. Whole-share rounding is a silent, constant tax — V wanted
+  # 6% of the book and got 3.84%.
+  #
+  # ON by default. A symbol is still sized fractionally ONLY when Alpaca
+  # confirms `fractionable` for it; an unknown or failed lookup falls back to
+  # whole shares (fail closed, never fractional-by-assumption). Shorts are
+  # always whole-share — a borrowed share cannot be fractional.
+  #
+  # Set to false to turn exact sizing off without a code change. That is the
+  # lever to pull if the open question in §11.1 resolves badly: whether
+  # Alpaca accepts a fractional-qty GTC stop-limit is NOT established, and a
+  # fractional position whose stop the broker refuses is the one state this
+  # feature must never produce.
+  fractional_enabled: true
+  fractional_share_decimals: 4
 
 risk:
   max_position_pct: 20

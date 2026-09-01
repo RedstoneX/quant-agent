@@ -1107,6 +1107,80 @@ before acting.** Recording the overclaim rather than quietly correcting it,
 because it is exactly the failure mode this project keeps hitting: a single
 verified fact generalised into a standing one.
 
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-ab445cf7c4b9aa358`).
+Fractional sizing exists for the first time — it was implemented nowhere, on
+any branch, before this. **No risk threshold or limit moved.**
+
+**The switch: `execution.fractional_enabled`, default `true`**, with
+`execution.fractional_share_decimals` (default 4) setting the resolution. The
+share count is FLOORED to that many places, never rounded up: rounding up
+would spend more risk budget than the sizing math allowed, and a budget that
+can be exceeded is not a budget.
+
+**Eligibility fails closed, twice over.** The flag says what the desk wants;
+only `AlpacaBroker.get_fractionability` — the same asset-directory lookup and
+the same per-run cache `get_shortability` already uses — says what the broker
+will accept. `fractionable` absent, unreadable, or the lookup raising all
+mean **whole shares**. A SHORT is always whole-share and the broker is not
+even asked: a borrowed share cannot be fractional.
+
+**The premise that made the 2026-08-27 objection moot, and it is worth
+stating because it changes the argument.** The protective stop has NOT been
+an OTO bracket leg since the 2026-07-16 audit — an OTO child inherits the
+parent's DAY tif and Alpaca expired it at 16:00 ET, leaving positions naked
+overnight. It has been a separate GTC order placed after the fill ever since.
+**So the fill→stop window fractional was said to introduce already existed on
+every entry this desk has ever placed.** The reversal did not accept a new
+risk; it noticed an old one and put guards on it.
+
+**Guard 1 — retries, immediately and hard.**
+`_submit_protective_stop_retrying` in `src/execution/broker.py`: **three
+attempts over ~2 seconds** (0.5s then 1.5s), inside the same call, at the
+point of failure. Three because every failure worth retrying is transient (a
+429, a 5xx, a dropped connection) and clears in under a second, while a
+failure that survives three attempts is a rejection that retrying will never
+fix. ~2 seconds because the owner's own standard is that the gap is *brief* —
+a retry loop long enough to matter becomes the exposure it was added to
+close, and escalating to a human beats a fourth doomed attempt.
+
+**Guard 2 — the owner is alerted, not the log.** `notifier.send_owner_alert`
+raises it out-of-band the moment it happens, mirroring `src/cost_circuit.py`'s
+established escalation shape (log CRITICAL first so a Telegram outage cannot
+hide it, then send, never raise). The end-of-session message was the wrong
+vehicle: an `intra_check` tick sends nothing unless it liquidates, and a
+session that crashes after the failure sends nothing at all. It fires on a
+stop that never landed and on a stop that covers fewer shares than are held —
+and deliberately **not** on an entry that filled zero, which produces the same
+`None` and is a non-event. Waking a human for a BUY that did not fill is how
+a guard gets switched off.
+
+**Guard 3 — NO STOP AT ALL is now a separate condition from MIS-SIZED.**
+`_reconcile_stop_coverage` stamps `coverage: none | partial`, logs the first
+at CRITICAL in those words, and both Telegram formatters render two banners
+instead of one merged count. Only `none` escalates to the owner; a mis-sized
+stop rides the session banner, because alerting on both is how a channel gets
+tuned out. Two defects were found and fixed alongside it: the 30-minute
+sweep **discarded** the reconciler's return value, so the tightest-cadence
+caller was the one whose findings never reached the operator at all; and an
+`intra_check` tick is silent by policy, so a gap found at 12:30 went to a log
+file and nowhere else. The tick now breaks its own silence when, and only
+when, the sweep found a gap.
+
+**OPEN QUESTION, NOT SETTLED — and the reason the flag exists.** Whether
+Alpaca accepts a **fractional-qty GTC stop-limit** is unverified. The
+alpaca-py request docstrings say fractional quantities are for market orders
+only; that was not confirmed against the live paper account, and no order was
+submitted to find out. If it is false, every fractional entry would leave a
+sub-share remainder the broker refuses to stop. **Contained, not ignored:**
+when the exact quantity is refused through all retries, the stop is re-placed
+for `floor(qty)` — covering 12 of 12.3456 shares beats covering none — and
+the remainder is reported to the owner with `uncovered_qty`. **Settle this
+empirically on the paper account before trusting fractional in production.**
+If it resolves badly, set `execution.fractional_enabled: false`; that is what
+the switch is for.
+
+### 11.2 Margin is ON, capped at 2.0x gross exposure
+
 ### 11.2 Margin is ON, capped at 2.0x gross exposure — IMPLEMENTED (the cap, the ladder and the liquidation guard)
 
 **Owner ratified 1.5x, then raised it to 2.0x on 2026-09-01**, against my

@@ -572,16 +572,39 @@ def _append_footer(lines: list[str], run_id: str | None, snap: dict[str, Any], e
     lines.append("🧾 " + " · ".join(bits))
 
 
+def _append_coverage_gaps(lines: list[str], result: dict) -> None:
+    """Spec §11.1 guard 3 — two banners, never one merged count.
+
+    A position with NO stop at all and a position whose stop is present but
+    mis-sized are different conditions: the first has nothing standing watch,
+    the second has an order covering most of it. Reporting them as a single
+    "N gaps" line buried the worse condition inside the milder one. Shares
+    `notifier._gap_is_uncovered` so the two feeds can never disagree about
+    which bucket a gap is in.
+    """
+    from src.notifier import _gap_is_uncovered
+
+    gaps = result.get("stop_coverage_gaps")
+    if not isinstance(gaps, list) or not gaps:
+        return
+    rows = [row for row in gaps if isinstance(row, dict)]
+    uncovered = [row for row in rows if _gap_is_uncovered(row)]
+    partial = [row for row in rows if not _gap_is_uncovered(row)]
+    if uncovered:
+        names = ", ".join(str(row.get("symbol", "?")) for row in uncovered[:6])
+        lines.append(f"🚨 NO STOP AT ALL: {len(uncovered)} · {names}")
+    if partial:
+        names = ", ".join(str(row.get("symbol", "?")) for row in partial[:6])
+        lines.append(f"🚨 STOP MIS-SIZED: {len(partial)} · {names}")
+
+
 def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
     status = str(result.get("status", "unknown"))
     lines = [f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
 
-    gaps = result.get("stop_coverage_gaps")
-    if isinstance(gaps, list) and gaps:
-        symbols = ", ".join(str(row.get("symbol", "?")) for row in gaps[:6] if isinstance(row, dict))
-        lines.append(f"🚨 STOP-COVERAGE GAP: {len(gaps)} · {symbols}")
+    _append_coverage_gaps(lines, result)
 
     data_status = result.get("data_status") or {}
     if isinstance(data_status, dict):
@@ -610,10 +633,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     if status == "emergency_sold":
         lines.append("🚨 DAILY-LOSS CIRCUIT BREAKER — autonomous liquidation triggered")
 
-    gaps = result.get("stop_coverage_gaps")
-    if isinstance(gaps, list) and gaps:
-        symbols = ", ".join(str(row.get("symbol", "?")) for row in gaps[:6] if isinstance(row, dict))
-        lines.append(f"🚨 STOP-COVERAGE GAP: {len(gaps)} · {symbols}")
+    _append_coverage_gaps(lines, result)
 
     positions = result.get("positions")
     risk_level = review.get("risk_level")

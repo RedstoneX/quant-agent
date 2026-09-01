@@ -378,6 +378,30 @@ class ExecutionConfig(BaseModel):
     `repeg_max_attempts * repeg_poll_seconds`, and lands BEFORE
     `place_entry_protection`'s own fill wait."""
 
+    # Spec §11.1 (owner-ratified 2026-09-01), reversing the 2026-08-27
+    # decision to keep fractional off.
+    fractional_enabled: bool = True
+    """Master switch for exact (fractional) entry sizing. ON by default —
+    whole-share rounding is a silent, constant tax on every position the
+    desk opens (V wanted 6% of the book and got 3.84%), and the reasoning
+    that kept it off no longer holds: the protective stop has been a
+    SEPARATE post-fill order since the 2026-07-16 OTO/DAY-tif fix, so the
+    fill→stop window this was meant to avoid already exists on every entry.
+
+    Turning this OFF restores whole-share flooring everywhere without a code
+    change — the escape hatch for the one unsettled question in §11.1 (see
+    `fractional_share_decimals`): whether Alpaca accepts a fractional-qty
+    GTC stop-limit at all. A symbol is still only sized fractionally when
+    the broker confirms `fractionable` for it (`get_fractionability`, which
+    fails CLOSED), so this flag widens nothing on its own."""
+
+    fractional_share_decimals: int = Field(default=4, ge=1, le=9)
+    """Decimal places an exact share count is FLOORED to (never rounded up —
+    rounding up would spend more risk budget than the sizing math allowed).
+    4dp is under a tenth of a cent of notional on any price this desk
+    trades, so the residual rounding tax is immaterial while the number
+    stays short enough to read in a log line and in a Telegram alert."""
+
 
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)

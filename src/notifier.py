@@ -584,6 +584,38 @@ class TelegramNotifier:
             return False
 
 
+# === Out-of-band owner alert ===
+
+def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
+    """Push an alert to the owner NOW, outside the session-result message.
+
+    Spec §11.1 guard 2. Some conditions cannot wait for a session to finish
+    and be summarised: a position that is open at the broker with no
+    protective stop on it is the canonical one. The end-of-session Telegram
+    message is the wrong vehicle — an `intra_check` tick is silent unless it
+    liquidates, so a naked position found at 12:30 would produce no message
+    at all, and a session that crashes after the failure never sends one.
+
+    Deliberately mirrors `src/cost_circuit.py`'s escalation shape, which is
+    this desk's established owner-alert path: log at CRITICAL first so a
+    Telegram outage cannot hide the event from the journal or Mission
+    Control, then send. Returns whether the send succeeded; callers treat
+    that as information, never as a reason to abort.
+
+    Never raises. An alerting bug must not be able to break the trading path
+    it is reporting on — see `alert_watchdog`'s "a watchdog that can break
+    the thing it watches is worse than no watchdog".
+    """
+    if not text:
+        return False
+    logger.critical("OWNER ALERT\n%s", text)
+    try:
+        return bool(TelegramNotifier().send(text, symbols=symbols))
+    except Exception:  # noqa: BLE001
+        logger.exception("owner alert delivery failed")
+        return False
+
+
 # === Session result formatting ===
 # Built as a free function (not a TelegramNotifier method) so it's
 # easy to unit-test without the network stub and so main.py can
@@ -633,7 +665,14 @@ def format_session_result(
 
     # === Per-mode noise policy ===
     if mode == "intra_check" and status in ("ok", "market_holiday"):
-        return None  # silent — would otherwise be 14 pings/day
+        # Silent — would otherwise be 14 pings/day. UNLESS the 30-minute
+        # sweep found a stop-coverage gap (spec §11.1 guard 3): "no
+        # deterministic breach fired" is not the same as "nothing is wrong",
+        # and an unprotected position found at 12:30 was previously reported
+        # to a log file and nowhere else, because this is the one mode whose
+        # normal tick sends no message.
+        if not result.get("stop_coverage_gaps"):
+            return None
     if mode == "earnings_preprocess" and status in (
         "market_holiday", "nothing_new", "fetch_error",
     ):
@@ -718,26 +757,62 @@ def format_session_result(
     return "\n".join(lines)
 
 
+def _gap_is_uncovered(gap: dict) -> bool:
+    """Spec §11.1 guard 3 — is this coverage gap "NO STOP AT ALL"?
+
+    `_reconcile_stop_coverage` stamps `coverage` ('none' | 'partial') and
+    that is the authority when present. Derived from `covered_qty` when it
+    is absent, so a gap dict from an older run snapshot (or any caller that
+    predates the field) is still classified rather than silently demoted to
+    the milder banner.
+    """
+    coverage = gap.get("coverage")
+    if coverage:
+        return str(coverage).strip().lower() == "none"
+    try:
+        return float(gap.get("covered_qty") or 0) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
-    """Render the broker-truth stop-coverage gap banner (🔴) when the session-
-    entry reconciler found held longs with less open protective-stop coverage
+    """Render the broker-truth stop-coverage gap banner (🔴) when the
+    reconciler found held positions with less open protective-stop coverage
     than held qty — a (partially) naked position the WAL queue didn't know
-    about. This is operator-actionable: a stop needs manual re-protection."""
+    about. This is operator-actionable: a stop needs manual re-protection.
+
+    Spec §11.1 guard 3: NO STOP AT ALL and STOP PRESENT BUT MIS-SIZED are
+    rendered as two separate banners, never merged into one count. They are
+    different conditions with different urgency — a position stopped at the
+    wrong size still has a broker order standing watch over most of it; a
+    position with no stop has nothing. A single "N under-protected" line
+    made the worse of the two invisible inside the milder one.
+    """
     gaps = result.get("stop_coverage_gaps")
     if not isinstance(gaps, list) or not gaps:
         return
-    parts = []
-    for g in gaps[:6]:
-        if not isinstance(g, dict):
-            continue
-        parts.append(
+
+    def _describe(rows: list[dict]) -> str:
+        return ", ".join(
             f"{g.get('symbol', '?')}"
-            f"({_fmt_qty(g.get('covered_qty', 0) or 0)}/{_fmt_qty(g.get('held_qty', 0) or 0)})"
+            f"({_fmt_qty(g.get('covered_qty', 0) or 0)}/"
+            f"{_fmt_qty(g.get('held_qty', 0) or 0)})"
+            for g in rows[:6]
         )
-    lines.append(
-        f"🔴 STOP-COVERAGE GAP: {len(gaps)} long(s) under-protected "
-        f"(covered/held): {', '.join(parts)}"
-    )
+
+    rows = [g for g in gaps if isinstance(g, dict)]
+    uncovered = [g for g in rows if _gap_is_uncovered(g)]
+    partial = [g for g in rows if not _gap_is_uncovered(g)]
+    if uncovered:
+        lines.append(
+            f"🔴 NO STOP AT ALL: {len(uncovered)} position(s) with ZERO "
+            f"protective-stop coverage (covered/held): {_describe(uncovered)}"
+        )
+    if partial:
+        lines.append(
+            f"🔴 STOP MIS-SIZED: {len(partial)} position(s) partially "
+            f"under-protected (covered/held): {_describe(partial)}"
+        )
 
 
 def _append_leverage_line(lines: list[str], result: dict) -> None:
@@ -1517,8 +1592,12 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
 
 
 def _append_intra_check_body(lines: list[str], result: dict) -> None:
-    # Only reaches here when status != ok/market_holiday — operator
-    # wants the details of whatever triggered.
+    # Reaches here when a deterministic breach fired, OR (spec §11.1 guard 3)
+    # when an otherwise-OK 30-minute tick found a stop-coverage gap — the
+    # sweep's finding is the whole reason that tick broke silence, so it is
+    # the first thing on the message.
+    _append_coverage_gap_banner(lines, result)
+    # Operator wants the details of whatever triggered.
     emergency = result.get("orders") or result.get("emergency_orders") or []
     if emergency:
         lines.append(f"⚠️ EMERGENCY orders: {len(emergency)}")

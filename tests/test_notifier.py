@@ -1459,22 +1459,29 @@ def test_format_evening_suggested_actions_render_high_in_message():
 
 
 def test_format_morning_renders_stop_coverage_gap_banner():
+    """Spec §11.1 guard 3: a stop that IS present but covers too few shares
+    reads as MIS-SIZED, never as the harsher no-stop banner."""
     result = {
         "status": "executed", "run_id": "r", "orders": [],
         "stop_coverage_gaps": [{"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0}],
     }
     msg = format_session_result("morning", result, 5.0)
-    assert "🔴 STOP-COVERAGE GAP" in msg
+    assert "🔴 STOP MIS-SIZED" in msg
+    assert "NO STOP AT ALL" not in msg
     assert "NVDA" in msg
 
 
 def test_format_evening_renders_stop_coverage_gap_banner():
+    """...and zero coverage reads as NO STOP AT ALL. The two conditions were
+    a single "STOP-COVERAGE GAP" line before §11.1, which hid the worse of
+    them inside the milder one."""
     result = {
         "status": "analyzed", "run_id": "r", "daily_pnl": 10.0, "total_value": 100_000.0,
         "stop_coverage_gaps": [{"symbol": "AAPL", "held_qty": 5.0, "covered_qty": 0.0}],
     }
     msg = format_session_result("evening", result, 5.0)
-    assert "🔴 STOP-COVERAGE GAP" in msg
+    assert "🔴 NO STOP AT ALL" in msg
+    assert "STOP MIS-SIZED" not in msg
     assert "AAPL" in msg
 
 
