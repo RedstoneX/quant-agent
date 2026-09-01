@@ -527,8 +527,50 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
     size = work_md.stat().st_size
     assert size <= 100_000, (
         f"docs/WORK.md is {size} bytes, over the 100,000-byte cap — finished "
-        "or decided content has likely crept back in; cut or move it rather "
-        "than raising this number"
+        "or decided content has likely crept back in; MOVE it to "
+        "docs/DEFECT_LOG.md rather than deleting it, and never raise this "
+        "number to make room"
+    )
+
+
+def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
+    """The cap above used to be satisfied by DELETING finished work, on the
+    grounds that git history keeps it. The owner is not a developer and does
+    not read git, so in practice that erased the record of what had gone
+    wrong at exactly the point it became history — and it erased it on a
+    schedule, every time the backlog filled up.
+
+    `docs/DEFECT_LOG.md` is the destination: append-only, never trimmed, one
+    plain-language line per entry stating what actually broke. This test is
+    the mechanical half of that rule. A prose instruction telling future
+    sessions to prune into the log is exactly the kind of thing that gets
+    followed twice and then forgotten; the pointer being load-bearing on a
+    passing test is not.
+
+    Asserted here rather than trusted: the log exists, WORK.md tells a
+    session where to put finished work, and the log has not been quietly
+    emptied to keep some other budget happy.
+    """
+    root = Path(__file__).resolve().parents[1]
+    work_md = root / "docs" / "WORK.md"
+    defect_log = root / "docs" / "DEFECT_LOG.md"
+    if not work_md.exists():
+        return
+
+    assert defect_log.exists(), (
+        "docs/DEFECT_LOG.md is missing. WORK.md is capped and its finished "
+        "content has to go somewhere other than /dev/null — recreate the log "
+        "rather than resuming deletion."
+    )
+    assert defect_log.stat().st_size > 2_000, (
+        "docs/DEFECT_LOG.md is suspiciously small — it is append-only and is "
+        "never trimmed, so it should only ever grow."
+    )
+    assert "DEFECT_LOG.md" in work_md.read_text(), (
+        "docs/WORK.md no longer points at docs/DEFECT_LOG.md. A session "
+        "pruning the backlog will not find the destination and will fall "
+        "back to deleting, which is the behaviour this pair of tests exists "
+        "to stop."
     )
 # relevance ordering: unfinished on top, finished collapsed, rot never hidden
 # --------------------------------------------------------------------------

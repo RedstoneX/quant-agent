@@ -4,6 +4,27 @@
 
 ### Session start — read this first
 
+**Where finished work goes: `docs/DEFECT_LOG.md`. Move it there. Do not
+delete it.** This file is capped at 100,000 bytes and is loaded into context
+every session, so it must hold ONLY work still to be done. When it fills up,
+the temptation is to delete completed sections because git history keeps
+them — that was the previous rule and it was wrong. Rex is not a developer
+and does not read git, so deleting erased the record of what had broken at
+exactly the moment it became history, on a schedule, every time the backlog
+grew.
+
+The log is append-only and is never trimmed. Every entry leads with one
+plain-language line saying what actually broke, in ordinary words, because
+the person who most needs to read it is not a developer; technical detail
+goes underneath. Two tests in `tests/test_status_board.py` enforce the cap
+and the pointer — `test_work_md_stays_under_a_hundred_thousand_bytes` and
+`test_finished_work_has_somewhere_to_go_that_is_not_deletion`. Owner
+instruction, 2026-09-01.
+
+Ratified architecture decisions do NOT go in either file — they go in
+`docs/QAMC_REMEDIATION_SPEC.md` as a numbered phase (most recent: Phase 10).
+
+
 **Run the rehearsal rig before you touch anything that trades — owner
 instruction, 2026-08-29, not an agent decision.** His words: it exists so we
 do not wait for Monday's market open to find bugs, shutdowns and errors, he

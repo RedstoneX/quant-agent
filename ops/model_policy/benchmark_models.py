@@ -164,6 +164,11 @@ class Trial:
     # must not be read as evidence about `model`.
     actual_model: str = ""
     used_fallback: bool = False
+    # WHICH symbols this run proposed, as "ACTION:SYMBOL", sorted.
+    # quality says whether a run was VALID; this says whether two runs
+    # AGREED. A seat that scores 1.00 twice while naming disjoint books is
+    # not a stable seat, and the score alone cannot show that.
+    picks: list[str] = field(default_factory=list)
 
 
 def _load_agent_cls(path: str):
@@ -244,6 +249,34 @@ class _Meter:
         )
 
 
+def _extract_picks(output) -> list[str]:
+    """The book a trial proposed, flattened to sorted "ACTION:SYMBOL" strings.
+
+    Deliberately duck-typed over the parsed agent output rather than keyed to
+    one agent class: `decisions` (constructed orders) is preferred over
+    `targets` (pre-construction intent) because it is what would reach the
+    broker. Any shape it does not recognise yields [], never an exception —
+    a benchmark must not fail because it could not summarise a result.
+    """
+    if output is None:
+        return []
+    try:
+        decisions = getattr(output, "decisions", None)
+        if decisions:
+            return sorted(
+                f"{getattr(d, 'action', '?')}:{str(getattr(d, 'symbol', '?')).upper()}"
+                for d in decisions
+            )
+        targets = getattr(output, "targets", None)
+        if targets:
+            return sorted(
+                f"TARGET:{str(getattr(x, 'symbol', '?')).upper()}" for x in targets
+            )
+    except Exception:
+        return []
+    return []
+
+
 def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) -> Trial:
     agent_cls = _load_agent_cls(scenario.agent_path)
     agent = agent_cls(
@@ -318,6 +351,7 @@ def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) 
         sample_output=meter.sample_output,
         actual_model=meter.actual_model,
         used_fallback=meter.used_fallback,
+        picks=_extract_picks(output),
     )
 
 
@@ -371,9 +405,28 @@ def aggregate(trials: list[Trial]) -> dict:
         m["quality_mean"] = round(statistics.fmean(m["quality"]), 4) if m["quality"] else 0.0
         m["quality_worst"] = round(min(m["quality"]), 4) if m["quality"] else 0.0
         m["quality_worst_run"] = round(worst_trial.get(model, 0.0), 4)
-        m["cost_total"] = round(sum(m["cost"]), 6) if m["cost"] else None
-        if m["cost_total"]:
-            m["quality_per_dollar"] = round(m["quality_mean"] / m["cost_total"], 2)
+        # `m["cost"]` holds one PER-RUN MEAN per scenario, not per trial, so
+        # summing it never produced a total. It was published as
+        # `cost_total` anyway, and `quality_per_dollar` was derived from it
+        # — which read correctly at one scenario x one repeat and was wrong
+        # by a factor of `repeats` everywhere else. Found 2026-09-01 when a
+        # 10-repeat run reported a $0.06 "total" for $0.69 of real spend.
+        #
+        # Both numbers are now published under names that say what they are.
+        # quality_per_dollar stays keyed to the PER-RUN cost: the decision
+        # it informs is "what does one session cost at this seat", which a
+        # sweep total does not answer.
+        m["cost_per_run_mean"] = (
+            round(statistics.fmean(m["cost"]), 6) if m["cost"] else None
+        )
+        m["cost_total_usd"] = round(
+            sum(t.cost_usd for t in trials
+                if t.model == model and t.cost_usd is not None), 6
+        ) or None
+        if m["cost_per_run_mean"]:
+            m["quality_per_dollar"] = round(
+                m["quality_mean"] / m["cost_per_run_mean"], 2
+            )
         else:
             m["quality_per_dollar"] = None
         del m["quality"], m["cost"]
@@ -398,14 +451,15 @@ def render_markdown(report: dict) -> str:
     ordered = sorted(
         models.items(),
         key=lambda kv: (-kv[1]["quality_mean"], -kv[1]["quality_worst"],
-                        kv[1]["cost_total"] if kv[1]["cost_total"] is not None else 1e9),
+                        kv[1]["cost_per_run_mean"]
+                        if kv[1]["cost_per_run_mean"] is not None else 1e9),
     )
     for model, m in ordered:
         cells = []
         for key in scen_keys:
             e = m["scenarios"].get(key)
             cells.append("—" if e is None else f"{e['quality_mean']:.2f}")
-        cost = m["cost_total"]
+        cost = m["cost_per_run_mean"]
         lines.append(
             f"| `{model}` | " + " | ".join(cells)
             + f" | {m['quality_mean']:.2f} | {m['quality_worst_run']:.2f} | "
