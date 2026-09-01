@@ -1454,15 +1454,58 @@ under the target, crowding costs a trade nothing (`sector_size_scale` returns
 that sector is shrunk, which is exactly what the PM needs to know before it
 writes decisions.
 
-**Explicitly NOT changed, and it is a real exposure.** A held position whose
-sector resolves to `"Unknown"` contributes to no sector bucket, and an incoming
-`"Unknown"` symbol is cap-exempt entirely. **80 of the 101 universe symbols
-depend on a live yfinance `.info` lookup with no static fallback** (the other
-21 are ETFs covered by `_ETF_SECTORS` / `_INDEX_ETFS` in
+**Explicitly NOT changed here, and it was a real exposure.** A held position
+whose sector resolves to `"Unknown"` contributed to no sector bucket, and an
+incoming `"Unknown"` symbol was cap-exempt entirely. **80 of the 101 universe
+symbols depend on a live yfinance `.info` lookup with no static fallback**
+(the other 21 are ETFs covered by `_ETF_SECTORS` / `_INDEX_ETFS` in
 `src/execution/broker.py`). `_get_sector` deliberately does not cache
 `"Unknown"`, so an outage does not permanently exempt a symbol — but for the
-duration of the outage the sector cap is OFF for any of those 80. Reported,
+duration of the outage the sector cap was OFF for any of those 80. Reported,
 not fixed, under this task's scope.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-af17eb92755512448`,
+same night — this was the gate the 75%/90%/margin-2.0x combination above was
+shipping behind). `RiskRuleEngine.check` rule 5 now calls
+`sector_side_gross(positions, include_unknown=True)` and no longer skips the
+block when `_get_sector` returns `"Unknown"`; `accumulate_pending_sector`
+pools it the same way for the in-batch accumulator. "Unknown" is treated as
+its own `(sector, side)` bucket, checked against the same soft target / hard
+ceiling as any real sector — conservative, not exempt — so a held or
+incoming unresolved-sector position no longer disappears from exposure or
+skips the cap. Deliberately narrow: `PortfolioConstructor`'s sizing pass
+(`_apply_sector_dial`, site (d) above) still does not pre-shrink for
+`"Unknown"` — that is unrelated, out of scope here, and safe left alone
+because the gate's hard wall is what actually enforces the ceiling
+regardless of whether sizing pre-shrank the order. A resolution failure now
+also raises a `sector_unresolved_lookup_failed` / `sector_unresolved_no_sector`
+advisory (distinguishing a transient lookup miss from a symbol that
+genuinely has no sector) that reaches the Risk Manager via `rule_violations`
+and surfaces as `data_status["sector"]` — the same "degraded" line the news
+and macro feeds already use in the session output and the owner's Telegram
+alert. No offline sector table was built for the 80 uncovered names — see
+`docs/INCIDENT_HISTORY.md` (2026-09-01, "a network blip could silently
+switch off the sector concentration cap") for why that was judged out of
+scope. Pinned by `tests/test_sector_cap_unresolved.py`.
+
+**Independently verified 2026-09-01** against the real production config
+(`max_sector_pct` 75 / `max_sector_hard_pct` 90, not a test sandbox number),
+in `tests/test_sector_cap_unresolved_independent_verification.py` — a
+separately-authored suite that does not import the fixtures above, to avoid
+rubber-stamping a bug shared between the fix and its own tests. Confirms:
+a pooled-Unknown book past the 90% ceiling is REFUSED, not merely logged; a
+small isolated unresolved order well under the ceiling is warned but not
+refused (same treatment a real sector gets at that size); the long/short
+split (§12.2) applies to the Unknown pool exactly as it does to a real
+sector, so an unresolved SHORT is judged against its own empty budget, not
+an unrelated 85%-full unresolved LONG pool; and a broad-market index ETF
+(SPY) resolves deterministically to `"Broad"` via the pre-existing
+`_INDEX_ETFS` table and never enters the unresolved-sector path at all —
+cash-park buys (SGOV/BIL) go further and never reach `RiskRuleEngine.check`
+in the first place (`CashSweeper.split_positions` removes the parked
+vehicle from `positions` before the sector block runs; `park_excess` calls
+only `check_daily_loss`), so neither is at risk of the new hard block
+freezing them.
 
 **Pinned by tests**, in `tests/test_sector_dial.py` unless noted: a held short
 no longer shrinks its sector's measured long exposure; each side is measured

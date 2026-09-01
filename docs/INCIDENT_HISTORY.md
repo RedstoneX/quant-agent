@@ -22,6 +22,53 @@ what would catch it next time.
 
 ---
 
+### 2026-09-01 — a network blip could silently switch off the sector concentration cap
+
+**In plain words:** when the system couldn't figure out which industry a
+stock belongs to, it treated that stock as if the sector limit didn't apply
+to it at all. A position already held with the same problem also stopped
+counting toward its sector's total. Neither of those showed up anywhere, so
+an ordinary network hiccup could switch the concentration cap off for most
+of the tradeable list, and nobody would have known.
+
+**The real cause.** A stock's sector comes from a live network lookup; only
+the ~21 sector ETFs have an offline backup table. The other 80 of 101
+tradeable names have no fallback. When the lookup fails, times out, or a
+stock genuinely has no listed sector, it comes back "Unknown" — and the risk
+check's sector rule read "Unknown" as "skip this stock entirely," in both
+directions: a new trade in an unresolved sector was never measured against
+the limit, and a HELD position with an unresolved sector was invisible to
+every sector's exposure total. This was a known, deliberately-deferred gap
+from the same-day work that raised the sector target to 75% with a hard 90%
+wall and split it by long/short side — the code that shipped that change
+said so directly in a comment. With margin arriving the same night at up to
+2x, an unresolved sector meant, in practice, no concentration limit at all
+on a leveraged book.
+
+**What was done.** An unresolved sector is no longer exempt. It is pooled
+into its own "Unknown" bucket and checked against the exact same 75%
+target / 90% hard wall every real sector gets, for new trades and for
+positions already held. Hitting this condition now raises a visible flag:
+a plain "degraded: sector" line appears in every session's summary (the
+same line already used when the news or macro feed is having a bad day),
+and it reaches the AI Risk Manager's review directly. A lookup that timed
+out or failed reads differently from a stock that genuinely has no listed
+sector — the first should fix itself on the next check, the second likely
+won't — and the message says which one happened rather than reading the
+same. The 75%/90% numbers themselves were not touched, and an ordinary,
+successfully-resolved sector behaves exactly as it did before.
+
+**Not done, and why.** No offline sector table was built for the 80
+uncovered names — one that stays correct is its own project, and the point
+of this fix is that the cap no longer depends on the lookup succeeding. The
+order-sizing pass that pre-shrinks a trade for a crowded sector before it
+ever reaches the risk check still does not count an unresolved sector
+either — that is separate, unrelated code (fractional order sizing) another
+effort owns tonight. Nothing is silently unenforced as a result: the risk
+check's hard wall is what actually stops a trade from over-concentrating
+regardless of whether it was pre-shrunk, and that wall now sees an
+unresolved sector correctly.
+
 ### 2026-09-01 morning — the desk judged every trade by dividing a measurement by a guess
 
 **What broke, plainly.** The desk looked at 38 tradeable ideas and placed

@@ -104,11 +104,19 @@ def sector_side_gross(
     That difference is about NAMING a sector, not about MEASURING one, and is
     deliberately left to the caller.
 
-    `include_unknown=False` matches the gate, which skips the sector cap
-    entirely for an unclassified symbol: counting "Unknown" here would ration
-    against exposure the gate does not measure. (That exemption is a known,
-    separate exposure — see the yfinance coverage note in the §12.2 spec
-    entry — and is deliberately NOT changed here.)
+    `include_unknown=False` is the default the constructor's SIZING pass
+    uses — it pre-shrinks an order for crowding it can actually measure, and
+    leaves "Unknown" out of that measurement (a separate, unrelated design
+    choice, unchanged here).
+
+    2026-09-01 audit: this default used to ALSO describe the deterministic
+    gate (`RiskRuleEngine.check` rule 5), which skipped the sector cap
+    entirely for an unclassified symbol — counting "Unknown" here would have
+    rationed against exposure the gate did not measure, so a network lookup
+    failure silently switched the cap off. The gate now calls this with
+    `include_unknown=True` instead, so a held "Unknown" position is counted
+    (see rule 5's comment for the full defect and fix). This default stays
+    `False` only for the sizing consumer described above.
     """
     out: dict[tuple[str, str], float] = {}
     for p in positions:
@@ -137,8 +145,14 @@ def accumulate_pending_sector(
     the bare sector string silently misses every lookup — the accumulator
     would appear to work and enforce nothing, which is the whole failure mode
     §12.2 is cleaning up.
+
+    2026-09-01 audit: "Unknown" used to be excluded here too, the batch-level
+    twin of the same defect `RiskRuleEngine.check`'s rule 5 had — two
+    unresolved-sector orders in the same run never saw each other's
+    exposure. "Unknown" is now pooled into its own `(sector, side)` bucket
+    like any other name, so it is checked, not skipped.
     """
-    if not sector or sector == "Unknown":
+    if not sector:
         return
     key = (sector, decision_side(action))
     pending[key] = pending.get(key, 0.0) + gross_amount
@@ -793,11 +807,36 @@ class RiskRuleEngine:
         # SIGNED `market_value`, so a held short made its sector look smaller
         # and a long book could over-concentrate behind it. `sector_side_gross`
         # is the single definition; the constructor sizes against the same one.
-        from src.execution.broker import _get_sector
+        #
+        # THE DEFECT (2026-09-01 audit): "Unknown" used to mean EXEMPT here —
+        # `new_sector != "Unknown"` skipped this entire block, so a symbol
+        # whose sector lookup failed (or timed out) paid NEITHER the soft
+        # advisory NOR the 90%-hard-ceiling that borrowed money now sits
+        # behind. 80 of 101 universe symbols depend on a live network lookup
+        # with no offline fallback (only ~21 ETFs have a static table — see
+        # `_ETF_SECTORS`), so a network blip silently switched the sector
+        # cap OFF for most of the book — on a leveraged (2.0x) book, in
+        # effect no concentration limit at all. Symmetrically, a HELD
+        # position stamped sector="Unknown" the same way was invisible to
+        # `sector_side_gross`'s default (`include_unknown=False`, "matches
+        # the gate" — see its docstring) and vanished from every sector's
+        # exposure.
+        #
+        # FIX: pass `include_unknown=True` so a held "Unknown" position
+        # counts, pool "Unknown" as its own `(sector, side)` bucket exactly
+        # like a real sector name, and run the SAME soft-advisory /
+        # hard-block pair against it — conservative (every unresolved
+        # symbol, new or held, competes for one shared budget), not exempt.
+        # This deliberately does NOT touch `sector_side_gross`'s DEFAULT
+        # (still `include_unknown=False` for the constructor's sizing pass
+        # — a separate, unrelated design choice about how orders are
+        # pre-shrunk, not about whether the gate can be silently switched
+        # off) — only this call site, the deterministic gate, is changed.
+        from src.execution.broker import _get_sector, _sector_resolution_status_for
         new_sector = _get_sector(decision.symbol)
-        if new_sector and new_sector != "Unknown":
+        if new_sector:
             side = decision_side(decision.action)
-            held_by_side = sector_side_gross(positions)
+            held_by_side = sector_side_gross(positions, include_unknown=True)
             sector_value = held_by_side.get((new_sector, side), 0.0)
             sector_value += (pending_sector_investment or {}).get(
                 (new_sector, side), 0.0,
@@ -805,6 +844,9 @@ class RiskRuleEngine:
             sector_value += gross_new
             sector_pct = sector_value / total_value * 100
             side_label = "long" if side == SECTOR_SIDE_LONG else "short"
+            sector_display = new_sector
+            if new_sector == "Unknown":
+                sector_display = "Unknown (pooled — unresolved symbols are constrained, not exempt)"
             # Spec §10.3. `max_sector_pct` is now the concentration TARGET,
             # and breaching it is ADVISORY — it is reported to the AI Risk
             # Manager and the audit trail, but it no longer drops the trade.
@@ -815,7 +857,7 @@ class RiskRuleEngine:
                 violations.append(RiskViolation(
                     rule="max_sector_pct",
                     message=(
-                        f"Sector '{new_sector}' {side_label} exposure would be "
+                        f"Sector '{sector_display}' {side_label} exposure would be "
                         f"{sector_pct:.1f}%, over the "
                         f"{self.config.max_sector_pct}% concentration target "
                         f"(advisory — size was scaled for crowding, not refused; "
@@ -833,7 +875,11 @@ class RiskRuleEngine:
             # reached the engine WITHOUT that sizing (a legacy notional
             # target, an agent-authored modification, any future caller), and
             # the absolute ceiling past which no conviction buys more
-            # concentration.
+            # concentration. Post-fix this is also what actually stops an
+            # unresolved-sector order from concentrating without limit — the
+            # constructor's sizing pass does not shrink for "Unknown"
+            # (unchanged, out of scope here), so this hard wall is the only
+            # thing standing between a lookup failure and an unbounded add.
             prior_sector_pct = (sector_value - gross_new) / total_value * 100
             gross_new_pct = gross_new / total_value * 100
             allowance_pct = sector_allowance_pct(
@@ -850,13 +896,59 @@ class RiskRuleEngine:
                     rule="max_sector_hard_pct",
                     message=(
                         f"{decision.symbol} would add {gross_new_pct:.1f}% gross to "
-                        f"the {side_label} side of sector '{new_sector}', already at "
+                        f"the {side_label} side of sector '{sector_display}', already at "
                         f"{prior_sector_pct:.1f}%. Crowding permits at most "
                         f"{allowance_pct:.2f}% more "
                         f"(hard ceiling {self.config.sector_hard_ceiling_pct:.0f}%)"
                     ),
                     value=gross_new_pct,
                     limit=allowance_pct,
+                ))
+
+            # Loud-failure requirement (2026-09-01): a symbol resolving to
+            # "Unknown" must never pass silently. Advisory (never in
+            # HARD_BLOCK_RULES on its own) — mirrors the non-blocking seam
+            # `data_degraded` / `correlation_coverage_gap` /
+            # `pm_audit_step_missing` already use elsewhere in this
+            # pipeline: it reaches the Risk Manager's prompt via
+            # `rule_violations` and (src/pipeline_stages.py) sets
+            # `data_status["sector"]`, which is what puts the plain
+            # "degraded" line in the session output and the owner's
+            # Telegram alert. A transient lookup failure and a genuinely
+            # sector-less instrument are DIFFERENT conditions — one
+            # self-heals on the next call, the other won't — so they get
+            # different rule names and different wording rather than
+            # reading the same.
+            if new_sector == "Unknown":
+                status = _sector_resolution_status_for(decision.symbol)
+                if status == "no_sector":
+                    alert_rule = "sector_unresolved_no_sector"
+                    reason = (
+                        f"{decision.symbol}: sector lookup succeeded but returned "
+                        f"no sector — this instrument may genuinely be unclassified "
+                        f"(e.g. an ETF outside the static table)."
+                    )
+                elif status == "lookup_failed":
+                    alert_rule = "sector_unresolved_lookup_failed"
+                    reason = (
+                        f"{decision.symbol}: sector lookup failed or timed out "
+                        f"(transient — not cached, will self-heal once the "
+                        f"lookup succeeds again)."
+                    )
+                else:
+                    alert_rule = "sector_unresolved"
+                    reason = f"{decision.symbol}: sector did not resolve."
+                violations.append(RiskViolation(
+                    rule=alert_rule,
+                    message=(
+                        f"{reason} Treated as constrained in the pooled 'Unknown' "
+                        f"sector bucket ({sector_pct:.1f}% {side_label} of book) and "
+                        f"checked against both max_sector_pct and "
+                        f"max_sector_hard_pct — NOT exempt. This is the failure "
+                        f"mode that used to switch the sector cap off silently."
+                    ),
+                    value=sector_pct,
+                    limit=self.config.max_sector_pct,
                 ))
 
         return violations

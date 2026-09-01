@@ -1252,8 +1252,14 @@ class PortfolioConstructor:
 
         sector = _get_sector(symbol)
         if not sector or sector == "Unknown":
-            # No sector, no concentration question — matches the engine,
-            # which skips the cap outright for an unknown sector.
+            # Sizing (this pass) still skips the dial for an unresolved
+            # sector — a deliberate, unrelated design choice, not a gap.
+            # 2026-09-01 audit: the ENGINE (RiskRuleEngine.check, rule 5)
+            # no longer matches this — it now pools "Unknown" as its own
+            # bucket and gates it, so an order this pass declines to shrink
+            # still cannot silently over-concentrate; the engine's hard wall
+            # catches what this pass does not pre-shrink. See
+            # src/risk/rules.py rule 5's comment for the full defect.
             return allocation_pct, ""
 
         side = decision_side(action)

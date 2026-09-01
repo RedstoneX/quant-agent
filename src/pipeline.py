@@ -1359,6 +1359,16 @@ class TradingPipeline:
                 messages = [v.message for v in hard_violations]
                 blocked_reasons.extend(messages)
                 logger.warning("Hard risk block for %s %s: %s", decision.action, decision.symbol, "; ".join(messages))
+                # sector_unresolved_* is advisory (never in HARD_BLOCK_RULES)
+                # but must stay visible even when THIS decision is blocked
+                # for a different reason (e.g. the pooled "Unknown" bucket
+                # itself tripping max_sector_hard_pct) — the whole point is
+                # that an unresolved sector must never go quiet, and the
+                # loop `continue`s past the ordinary remaining_violations
+                # .extend below for a blocked decision.
+                remaining_violations.extend(
+                    v for v in violations if v.rule.startswith("sector_unresolved")
+                )
                 continue
 
             remaining_violations.extend(violations)
