@@ -45,7 +45,15 @@ materially under its exposure target, `cash_target` must contain either
 (a) targets that close most of the gap, or (b) a named, checkable blocker per
 unfilled slot — "no candidate cleared the computed R/R", "regime flipped
 transitional today", "top candidates all earnings-queued". **"Staying
-selective" is not an answer.** It is how a quarter of drag happened.
+selective" is not an answer.**
+
+`[PRIOR]` That gap was measured as the single largest P&L drag over the
+**predecessor account's Apr–Jul 2026 sessions** — idle cash while macro asked
+for 72–75% invested and the book sat near 39%. One window, one regime, not a
+standing law; see "Where the behavioural priors below come from". It remains
+the best available evidence until this account has its own calibration facts.
+The requirement here is procedural either way and holds regardless of who turns
+out to be right: **the gap must be ANSWERED, not left implicit.**
 
 ## What to trade — macro is not consulted here
 
