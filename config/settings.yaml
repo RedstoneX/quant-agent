@@ -342,6 +342,15 @@ risk:
   # any BUY that would drive cash negative, and the PM + midday prompts get
   # a mandatory de-lever directive when cash is already negative.
   allow_margin: false
+  # --- Margin interest tracker (spec §11.2, 2026-09-01) ------------------
+  # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
+  # is 4.75%); kept here so it can be corrected without a code change.
+  # Charged ONLY on the overnight debit balance, (balance x rate) / 360 —
+  # intraday leverage is free. See src/margin_interest.py for the
+  # formula and the still-open question of whether paper trading charges
+  # this at all — every figure surfaced from this rate is a labelled
+  # ESTIMATE until the broker's own INT activity confirms or denies it.
+  margin_interest_rate_pct: 6.25
   # --- Stage 3 (shorts) -------------------------------------------------
   # Deliberately half of max_position_pct: a short's loss is unbounded
   # while a long's is capped at -100%, so one short's concentration budget

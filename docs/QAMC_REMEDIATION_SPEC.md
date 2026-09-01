@@ -1202,6 +1202,54 @@ this is trusted:**
    account's INT activities or it does not. Until then, report it as a clearly
    labelled ESTIMATE so paper trading does not teach the lesson with its
    largest recurring cost silently removed.
+
+   **Margin interest tracker IMPLEMENTED 2026-09-01**, in
+   `src/margin_interest.py` — this piece only; the gross-exposure cap
+   and de-levering ladder above remain unbuilt. `overnight_debit_balance()`
+   takes ONLY an end-of-day cash figure as its argument (no intraday
+   variant exists), so intraday leverage with a flat close is zero interest
+   by construction, not by convention — the design lever the owner's
+   reasoning depends on is pinned in the function signature, not left to a
+   caller's discipline. Formula `(debit x rate) / 360` at `risk.
+   margin_interest_rate_pct` (config default 6.25, so a rate change needs
+   no deploy); reproduces the spec's own $9,839-equity example exactly
+   ($1.71/day, $614.94/yr). Every rendering carries `ESTIMATE_LABEL`
+   verbatim — the dataclass field itself, not just the formatted string, so
+   a consumer cannot drop the framing by reformatting. Surfaces on the
+   morning Telegram alert only (silent, zero broker calls, whenever
+   `allow_margin` is `False` — today's actual state) and on `GET /account`'s
+   new `margin_interest` field (`src/api/schemas.py`,
+   `src/api/broker_reads.py::read_margin_interest`) alongside the existing
+   `risk_limits`/`liquidity` figures. The open empirical question is read
+   via a new broker method, `AlpacaBroker.get_margin_interest_activities()`
+   (Alpaca's `/v2/account/activities/INT`, via the SDK's untyped REST
+   passthrough — alpaca-py 0.44.0 has no typed wrapper for this endpoint),
+   compared against the estimate by `compare_estimate_to_broker_activity()`.
+   It does not pre-judge the answer: no `INT` rows reports "not confirmed",
+   not "confirmed absent". **Still unobserved** — `allow_margin` has not
+   been flipped on, so no night has yet carried a real debit balance to
+   check this against.
+
+   **Verified 2026-09-01, one defect found and fixed.** Both wrappers
+   (`read_margin_interest` and the Telegram `_margin_interest_lines`)
+   originally fast-exited to "nothing to report" whenever `allow_margin`
+   was `False`, without ever looking at `cash` — reasoning that cash-only
+   keeps cash non-negative. It does not, in general: `cash_only` hard-
+   blocks a plain BUY, but D10 deliberately exempts COVER from it, and the
+   PM's own DE-LEVER MANDATE already treats "cash negative, `allow_margin`
+   False" as a real state a session can reach. That gate could have
+   silently under-reported exactly the debit balance this tracker exists
+   to catch. Fixed to key off `cash` alone, matching
+   `overnight_debit_balance()`'s own contract; regression tests added
+   (`tests/test_margin_interest.py`, §6-7). Formula and $9,839-example
+   reproduction independently re-derived by hand, not just re-read from
+   the module's own tests — both match. Two spec items above remain
+   short of "done": the estimate is a live read-time snapshot, not
+   accrued daily into storage and reported cumulatively; and it reaches
+   the Telegram alert and `GET /account` only — no dashboard UI panel
+   renders `margin_interest` yet (the frontend's `AccountResponse` type in
+   `frontend/src/api/client.ts` doesn't declare the field). See
+   `docs/WORK.md`'s margin-interest status note for the fuller account.
 2. **Forced liquidation.** Below maintenance margin the broker sells, at the
    worst moment, without asking. Nothing currently watches the distance to
    that threshold or alerts on it.

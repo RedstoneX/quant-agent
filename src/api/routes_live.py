@@ -32,6 +32,7 @@ from src.api.broker_reads import (
     check_broker_reachable,
     read_account,
     read_live_quotes,
+    read_margin_interest,
     read_orders,
     read_positions,
     read_price_bars,
@@ -50,6 +51,7 @@ from src.api.schemas import (
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
+    MarginInterestEstimate,
     OrderItem,
     OrdersResponse,
     PositionItem,
@@ -285,6 +287,27 @@ def _compute_risk_limits() -> RiskLimits:
     )
 
 
+def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
+    """Degrades to an honest all-`None` `MarginInterestEstimate()` on any
+    read failure — mirrors `_compute_liquidity`/`_compute_risk_limits`'s
+    fail-closed-to-empty posture, and is also the correct rendering of
+    today's actual state (no debit balance, `allow_margin` is `False`)."""
+    try:
+        data = read_margin_interest(cash)
+    except Exception as exc:
+        logger.warning("routes_live._compute_margin_interest failed: %s", exc)
+        return MarginInterestEstimate(error=str(exc))
+    return MarginInterestEstimate(
+        debit_balance=data.get("debit_balance"),
+        rate_pct=data.get("rate_pct"),
+        daily_usd=data.get("daily_usd"),
+        annual_usd=data.get("annual_usd"),
+        label=data.get("label"),
+        broker_check_note=data.get("broker_check_note"),
+        error=data.get("error"),
+    )
+
+
 @router.get("/account", response_model=AccountResponse)
 def get_account() -> AccountResponse:
     try:
@@ -316,6 +339,9 @@ def get_account() -> AccountResponse:
 
         liquidity = _compute_liquidity(cash, portfolio_value) if acct.get("error") is None else None
         risk_limits = _compute_risk_limits()
+        margin_interest = (
+            _compute_margin_interest(cash) if acct.get("error") is None else None
+        )
 
         return AccountResponse(
             cash=cash,
@@ -327,6 +353,7 @@ def get_account() -> AccountResponse:
             history=history,
             liquidity=liquidity,
             risk_limits=risk_limits,
+            margin_interest=margin_interest,
             error=acct.get("error"),
         )
     except Exception as exc:

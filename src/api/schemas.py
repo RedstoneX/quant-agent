@@ -101,6 +101,29 @@ class RiskLimits(BaseModel):
     max_sector_pct: float | None = None
 
 
+class MarginInterestEstimate(BaseModel):
+    """Margin interest ESTIMATE (spec §11.2) — MEASURES only, never a risk
+    decision. Every field is `None` when there is nothing to report: a
+    zero/no overnight debit balance (today's actual state — `allow_margin`
+    is `False`, so this is always empty in production right now), or a
+    read failure. `label` carries the ESTIMATE framing verbatim so no
+    consumer of this response can render the figure without it — paper
+    trading's own handling of margin interest is unconfirmed either way,
+    see `src.margin_interest`."""
+    debit_balance: float | None = None
+    rate_pct: float | None = None
+    daily_usd: float | None = None
+    annual_usd: float | None = None
+    label: str | None = None
+    #: Result of comparing the estimate against the broker's own `INT`
+    #: account-activity records — plain-language, e.g. "broker confirmed
+    #: a margin interest charge of $X..." or "no INT activity ... not
+    #: confirmed". `None` until a debit balance has actually been carried
+    #: overnight at least once.
+    broker_check_note: str | None = None
+    error: str | None = None
+
+
 class AccountResponse(BaseModel):
     cash: float | None = None
     portfolio_value: float | None = None
@@ -112,6 +135,7 @@ class AccountResponse(BaseModel):
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
     liquidity: LiquidityBreakdown | None = None
     risk_limits: RiskLimits | None = None
+    margin_interest: MarginInterestEstimate | None = None
     error: str | None = None             # set (fields above null) when the broker read failed
 
 

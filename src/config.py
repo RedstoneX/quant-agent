@@ -503,6 +503,19 @@ class RiskConfig(BaseModel):
     # conservative choice — margin leverage amplifies drawdowns and is not
     # the bot's intended mode unless explicitly opted in.
     allow_margin: bool = False
+    # --- Margin interest tracker (spec §11.2, 2026-09-01) ----------------
+    # MEASURES, does not gate — this field feeds an estimate/alert only,
+    # never a risk check. Alpaca's live non-elite margin rate (elite is
+    # 4.75%); a config value rather than a code constant so the desk can
+    # correct it without a deploy if Alpaca's rate moves. Interest accrues
+    # ONLY on the END-OF-DAY (overnight) debit balance — intraday leverage
+    # is free — per `(overnight debit balance x rate) / 360`. See
+    # src/margin_interest.py: whether PAPER trading actually charges
+    # this is UNCONFIRMED (Alpaca's own comparison lists short-borrow fees
+    # as "Coming Soon" and is silent on margin interest either way), so
+    # every figure this produces is a labelled ESTIMATE until the broker's
+    # own `INT` account activity settles it empirically.
+    margin_interest_rate_pct: float = Field(default=6.25, ge=0, le=100)
     # --- Stage 3 (shorts) -----------------------------------------------
     # The single-short ceiling is deliberately HALF of `max_position_pct`:
     # a long's loss is bounded at -100% of the position, a short's is not,

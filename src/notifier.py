@@ -690,6 +690,7 @@ def format_session_result(
         balance_line = _openrouter_balance_line()
         if balance_line:
             lines.append(balance_line)
+        lines.extend(_margin_interest_lines())
 
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
@@ -1309,6 +1310,81 @@ def _openrouter_balance_line() -> str | None:
         f"🔋 OpenRouter: ${remaining:,.2f} left of ${purchased:,.2f} "
         f"(~{days} trading days){warn}"
     )
+
+
+def _margin_interest_lines() -> list[str]:
+    """['💳 margin interest: $X/day ... — ESTIMATE ...', '   broker check: ...']
+    or `[]` — spec §11.2.
+
+    Morning-only, like the balance/day-cost lines above: interest accrues
+    on the OVERNIGHT debit balance, so the morning snapshot — taken before
+    any new trading — is the one honest read of what was actually carried
+    across the close.
+
+    Reads the account's actual cash regardless of `allow_margin` — that
+    flag is QAMC's own risk toggle, not a broker-side guarantee that cash
+    stays non-negative. `cash_only` (src/risk/rules.py) hard-blocks a
+    plain BUY from taking cash negative when `allow_margin` is `False`,
+    but a COVER is exempt from that rule by design (D10), and
+    `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
+    "cash negative AND allow_margin False" as a real, live state — so a
+    debit balance can exist even with margin disabled, and a short-circuit
+    on `allow_margin` alone would silently miss it. On today's actual
+    zero-debit-balance day this still costs one broker round-trip (spent
+    on `overnight_debit_balance()` returning `0.0`) but produces no line —
+    no noise, correctness over the saved call.
+
+    When a debit balance IS present, this also reads the broker's own
+    `INT` account activity and reports whether it confirms, denies, or has
+    not yet settled the question of whether paper trading actually charges
+    this — see `src.margin_interest` for why that is deliberately
+    left open rather than assumed either way.
+
+    Never raises: a broker-read failure here must not be able to block the
+    alert — it degrades to `[]`, same as every other line in this module.
+    Suppressed under QAMC_REHEARSAL, same as every other line here that
+    touches the network.
+    """
+    if _REHEARSAL_MODE:
+        return []
+    try:
+        from src.config import load_config
+        cfg = load_config("config/settings.yaml")
+        rate_pct = cfg.risk.margin_interest_rate_pct
+    except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
+        logger.warning("margin interest config read failed: %s", exc)
+        return []
+
+    try:
+        from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+        from src.execution.broker import AlpacaBroker
+        from src.margin_interest import (
+            build_estimate, compare_estimate_to_broker_activity,
+            format_alert_line, overnight_debit_balance,
+        )
+        key, secret = get_alpaca_credentials()
+        broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+        account = broker.get_account()
+        debit_balance = overnight_debit_balance(account.get("cash"))
+        estimate = build_estimate(debit_balance, rate_pct)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest estimate failed: %s", exc)
+        return []
+
+    estimate_line = format_alert_line(estimate)
+    if not estimate_line:
+        return []  # None/zero debit balance — silent, per spec's noise policy
+    lines = [estimate_line]
+
+    try:
+        activities = broker.get_margin_interest_activities()
+        comparison = compare_estimate_to_broker_activity(estimate, activities)
+        if comparison is not None:
+            lines.append(f"   broker check: {comparison.note}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest INT-activity check failed: %s", exc)
+
+    return lines
 
 
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:

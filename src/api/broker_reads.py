@@ -29,6 +29,7 @@ from src.api.deps import (
     get_alpaca_credentials,
     get_alpaca_paper,
     get_cash_sweep_symbol,
+    get_risk_limits,
 )
 from src.execution.broker import AlpacaBroker
 
@@ -119,6 +120,78 @@ def read_positions() -> dict:
     except Exception as exc:
         logger.warning("broker_reads.read_positions failed: %s", exc)
         return {"positions": [], "error": str(exc)}
+
+
+def read_margin_interest(cash: float | None) -> dict:
+    """Margin interest ESTIMATE (spec §11.2) — MEASURES only, never a risk
+    decision, and never gates anything in this read-only module.
+
+    Takes the account's already-read `cash` figure (the caller — `/account`
+    — has just fetched it via `read_account()`; this avoids a second broker
+    round-trip for the same number). Returns
+    `{"debit_balance", "rate_pct", "daily_usd", "annual_usd", "label",
+    "broker_check_note", "error"}`, every numeric field `None` when there
+    is nothing to report — a zero/no debit balance (today's actual state:
+    the account has never carried a negative cash balance) degrades to an
+    all-`None` dict, never a fabricated zero-cost line. Never raises.
+
+    Deliberately does NOT gate on `limits.allow_margin` before looking at
+    `cash` — interest is a broker-side fact about the account's actual
+    overnight cash balance, not a consequence of QAMC's own risk toggle.
+    `cash_only` (src/risk/rules.py) hard-blocks a plain BUY from taking
+    cash negative when `allow_margin` is `False`, but a COVER is exempt
+    from that rule by design (D10 — a COVER can never be hard-blocked;
+    see `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE, which
+    already handles "cash is negative AND allow_margin is False" as a
+    real, live state). `overnight_debit_balance()` reads `cash` alone and
+    already degrades cleanly to `0.0` when nothing was borrowed, so it is
+    always safe — and now correct in the COVER-driven case too — to call
+    unconditionally.
+    """
+    empty = {
+        "debit_balance": None, "rate_pct": None, "daily_usd": None,
+        "annual_usd": None, "label": None, "broker_check_note": None,
+        "error": None,
+    }
+    try:
+        rate_pct = get_risk_limits().margin_interest_rate_pct
+    except Exception as exc:
+        logger.warning("broker_reads.read_margin_interest: config read failed: %s", exc)
+        return {**empty, "error": str(exc)}
+
+    try:
+        from src.margin_interest import build_estimate, overnight_debit_balance
+        debit_balance = overnight_debit_balance(cash)
+        estimate = build_estimate(debit_balance, rate_pct)
+    except Exception as exc:
+        logger.warning("broker_reads.read_margin_interest: estimate failed: %s", exc)
+        return {**empty, "error": str(exc)}
+
+    if estimate is None:
+        return empty  # below the noise floor — silent, per spec's noise policy
+
+    broker_check_note = None
+    try:
+        from src.margin_interest import compare_estimate_to_broker_activity
+        broker = _get_broker()
+        activities = broker.get_margin_interest_activities()
+        comparison = compare_estimate_to_broker_activity(estimate, activities)
+        if comparison is not None:
+            broker_check_note = comparison.note
+    except Exception as exc:
+        # The INT-activity check is a nicety layered on top of the
+        # ESTIMATE — its failure must never hide the estimate itself.
+        logger.warning("broker_reads.read_margin_interest: INT-activity check failed: %s", exc)
+
+    return {
+        "debit_balance": estimate.debit_balance,
+        "rate_pct": estimate.rate_pct,
+        "daily_usd": estimate.daily_usd,
+        "annual_usd": estimate.annual_usd,
+        "label": estimate.label,
+        "broker_check_note": broker_check_note,
+        "error": None,
+    }
 
 
 _STATUS_MAP_NAMES = {"open": "OPEN", "closed": "CLOSED", "all": "ALL"}

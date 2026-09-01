@@ -217,7 +217,8 @@ Untested risk: the free tier is rate-limited and a much wider scan may hit it.
 **Still to build (nothing exists yet):** **ALL of Phase 11** — fractional
 sizing, its three required stop-placement guards, the 2.0x gross-exposure cap,
 the de-levering ladder, and distance-to-forced-liquidation monitoring — plus
-the margin interest tracker and the wider universe with pruning.
+the wider universe with pruning. (The margin interest tracker below shipped
+2026-09-01, in part — see its status note.)
 
 **Phase 11 was MISSING from this line until 2026-09-01 and that caused a real
 scope error.** A session read this list, built Phase 12 and the branch merges,
@@ -641,6 +642,17 @@ Build our own, from the broker's own numbers:
   and LABEL IT AS AN ESTIMATE everywhere it is shown.
 - Surface in the morning Telegram alert and on the dashboard, alongside
   overnight gross exposure.
+
+**Status 2026-09-01: PARTIALLY SHIPPED.** `src/margin_interest.py` +
+wiring gives a live, read-time ESTIMATE — correct formula, correct
+end-of-day-debit-only balance, labelled `ESTIMATE` on every surface it
+reaches, plus the broker-`INT`-activity empirical check. Two spec bullets
+above are NOT done: it is not accrued daily into storage and reported as a
+**cumulative** total (every number is today's snapshot, recomputed fresh,
+nothing persisted); and it reaches the morning Telegram alert and
+`GET /account` only — no dashboard UI surfaces it yet, so "on the
+dashboard" is still open. Both remain before this item can be called
+complete.
 
 
 
