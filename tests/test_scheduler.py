@@ -145,7 +145,10 @@ def test_run_safe_notifies_on_completed_session(mock_pipeline_cls, mock_fmt):
     scheduler._run_safe(pipeline.run_morning, "morning")
 
     mock_fmt.assert_called_once()
-    scheduler.notifier.send.assert_called_once_with("MSG")
+    # symbols=[] — extract_alert_symbols runs for real here (not mocked);
+    # {"status": "executed"} has no run_id/orders/gaps to pull a symbol
+    # from, so it legitimately comes back empty.
+    scheduler.notifier.send.assert_called_once_with("MSG", symbols=[])
 
 
 @patch("src.scheduler.format_session_result", return_value="FAILED morning")
@@ -165,7 +168,9 @@ def test_run_safe_notifies_on_raised_session(mock_pipeline_cls, mock_fmt):
 
     # format_session_result was called with the captured error.
     assert mock_fmt.call_args.kwargs.get("error") is not None
-    scheduler.notifier.send.assert_called_once_with("FAILED morning")
+    # symbols=[] — a raised session has no `result` dict to pull a symbol
+    # from (extract_alert_symbols runs for real here, not mocked).
+    scheduler.notifier.send.assert_called_once_with("FAILED morning", symbols=[])
 
 
 @patch("src.scheduler.format_session_result")

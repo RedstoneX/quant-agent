@@ -195,7 +195,19 @@ class TradingScheduler:
                             "[%s] alert watchdog failed in _run_safe: %s", name, exc,
                         )
                     if message:
-                        self.notifier.send(message)
+                        symbols = None
+                        try:
+                            from src.trader_feed import extract_alert_symbols
+
+                            run_id = result.get("run_id") if isinstance(result, dict) else None
+                            symbols = extract_alert_symbols(
+                                run_id, result if isinstance(result, dict) else None,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "[%s] extract_alert_symbols failed in _run_safe: %s", name, exc,
+                            )
+                        self.notifier.send(message, symbols=symbols)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "[%s] notifier failed in _run_safe: %s", name, exc,

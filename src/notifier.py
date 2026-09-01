@@ -40,12 +40,21 @@ whole message ("can't parse entities"); HTML requires exactly three
 src/config.py::NotificationsConfig) and appends it as a real `<a href>` tap-
 through link. An empty/unset URL means no link is appended, ever — never a
 broken one.
+
+`send()` also accepts an optional `symbols` list — each ticker it names
+that also appears in the message text gets wrapped in its own `<a href>`
+link (see `_linkify_symbols`), pointing at a public quote page (an
+EXTERNAL FALLBACK: the cockpit has no URL routing yet to link a symbol, or
+a run, to our own data — see the comment above `_SYMBOL_QUOTE_URL_TEMPLATE`).
+Symbol linking is best-effort and silently drops rather than risk
+truncating an `<a>` tag mid-markup.
 """
 from __future__ import annotations
 
 import html
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -162,6 +171,79 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
     return window.rstrip() + marker
 
 
+# === Per-symbol tap-through links ===
+#
+# EXTERNAL FALLBACK, not a Mission Control deep link. As of this writing the
+# cockpit (frontend/src/) has no URL routing at all — no react-router, no
+# query-string or #hash parsing, nothing that reads window.location. A
+# per-symbol view already exists INSIDE the running app (App.tsx's
+# chartSymbol / onSelectSymbol wires SearchPanel/TradesPanel clicks to
+# PriceChartPanel), but nothing outside the page can open it directly — the
+# same gap that blocks a per-run deep link (see `mission_control_url`
+# above). Until the cockpit grows real routing, this points at a public
+# quote page instead. That leaves our own evidence behind; it is a
+# deliberate, named trade-off, not a design goal.
+_SYMBOL_QUOTE_URL_TEMPLATE = "https://finance.yahoo.com/quote/{symbol}"
+# Ticker shape only (e.g. "CCJ", "BRK.B") — guards against linkifying
+# something that was never meant to be a symbol if an upstream caller ever
+# passes free text by mistake.
+_SYMBOL_TOKEN_RE = re.compile(r"^[A-Z]{1,6}(?:\.[A-Z]{1,2})?$")
+# Bounds worst-case message growth from linkification (each wrapped mention
+# costs the ~40-50 chars of `<a href="https://finance.yahoo.com/quote/...">`
+# on top of the bare ticker) and keeps the compiled regex small.
+_MAX_LINKED_SYMBOLS = 10
+
+
+def _symbol_quote_url(symbol: str) -> str:
+    return _SYMBOL_QUOTE_URL_TEMPLATE.format(symbol=symbol)
+
+
+def _linkify_symbols(escaped_text: str, symbols: list[str] | None) -> str:
+    """Wrap every mention of a known ticker in `escaped_text` with a
+    tap-through `<a href>` link, so the operator can tap a symbol in an
+    alert the same way he taps the Mission Control link.
+
+    MUST be called on text that has already been through `html.escape()`
+    and BEFORE `link_html`/truncation are applied — see `_build_payload`.
+    Calling it earlier would have the anchor markup itself escaped into
+    literal `&lt;a href...&gt;` text; calling it after truncation risks a
+    ticker mention landing right at the cut.
+
+    Deliberately narrow matching: only symbols the CALLER already knows are
+    real (`symbols`, sourced from structured order/trade/skip data — see
+    `src/trader_feed.py::extract_alert_symbols`) are ever linked, matched
+    whole-word and case-sensitive. This never scans free LLM prose for
+    uppercase words — PM/risk rationale routinely contains words like
+    "ALL", "GO", "GDP" that would false-positive as tickers if it did.
+    """
+    if not symbols or not escaped_text:
+        return escaped_text
+
+    seen: list[str] = []
+    for raw in symbols:
+        sym = str(raw or "").strip().upper()
+        if sym and _SYMBOL_TOKEN_RE.match(sym) and sym not in seen:
+            seen.append(sym)
+        if len(seen) >= _MAX_LINKED_SYMBOLS:
+            break
+    if not seen:
+        return escaped_text
+
+    # Longest-first so a short ticker that happens to be a prefix of a
+    # longer one (rare, but e.g. "A" vs "AA") can't win the alternation
+    # before the longer, more specific match is tried.
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(s) for s in sorted(seen, key=len, reverse=True)) + r")\b"
+    )
+
+    def _wrap(match: "re.Match[str]") -> str:
+        sym = match.group(0)
+        url = html.escape(_symbol_quote_url(sym), quote=True)
+        return f'<a href="{url}">{sym}</a>'
+
+    return pattern.sub(_wrap, escaped_text)
+
+
 class TelegramNotifier:
     """Best-effort Telegram Bot API notifier.
 
@@ -248,6 +330,7 @@ class TelegramNotifier:
         text: str,
         link_url: str | None = None,
         link_label: str | None = None,
+        symbols: list[str] | None = None,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
 
@@ -258,6 +341,10 @@ class TelegramNotifier:
         - Appends a tap-through `<a href>` link when one is available:
           `link_url` if given, else `self.mission_control_url` (from
           config). Neither set → no link, ever — never a broken one.
+        - `symbols`, when given, wraps each matching ticker mentioned in
+          `text` with its own tap-through link (see `_linkify_symbols`) —
+          best-effort: if adding links would push the message over budget,
+          it degrades to plain text rather than risk truncating markup.
         - Auto-truncates messages over MAX_MESSAGE_CHARS on a sentence/word
           boundary (see `_clip_text`) rather than mid-word.
         - Any HTTP / network / Telegram-side error is logged and
@@ -286,7 +373,7 @@ class TelegramNotifier:
             )
             return False
 
-        payload = self._build_payload(text, link_url, link_label)
+        payload = self._build_payload(text, link_url, link_label, symbols)
 
         try:
             response = requests.post(
@@ -313,6 +400,7 @@ class TelegramNotifier:
         text: str,
         link_url: str | None = None,
         link_label: str | None = None,
+        symbols: list[str] | None = None,
     ) -> dict[str, Any]:
         """The exact JSON body `send()` puts on the wire.
 
@@ -343,7 +431,21 @@ class TelegramNotifier:
             link_html = f'\n\n<a href="{safe_url}">{safe_label}</a>'
 
         budget = max(0, self.MAX_MESSAGE_CHARS - len(link_html))
-        if len(escaped) > budget:
+
+        # Symbol links are strictly best-effort. `_clip_text` only
+        # guarantees it never splits an HTML *entity* (`&amp;` has no
+        # whitespace inside it); an anchor tag does (`<a href="...">` has a
+        # space right after "a"), so clipping *linked* text risks shipping
+        # `<a hre` — broken markup Telegram then rejects outright ("can't
+        # parse entities"), losing the whole alert over a ticker link. So:
+        # try the linked text first, but if it doesn't fit budget, fall
+        # back to the plain (safely truncatable) escaped text instead of
+        # truncating the linked one — symbol links disappear, the alert
+        # still ships.
+        linked = _linkify_symbols(escaped, symbols) if symbols else escaped
+        if len(linked) <= budget:
+            body = linked
+        elif len(escaped) > budget:
             # `_clip_text` never splits an HTML entity: it only ever cuts on
             # whitespace, and an entity like '&amp;' has none inside it — so
             # the boundary search always lands on a word start/end, keeping
@@ -351,8 +453,10 @@ class TelegramNotifier:
             # safety net for the rare aggregate message still oversized
             # after every field-level clip below already ran — not the
             # primary fix, which is raising those per-field limits.
-            escaped = _clip_text(escaped, budget, marker="\n[...truncated]")
-        final_text = escaped + link_html
+            body = _clip_text(escaped, budget, marker="\n[...truncated]")
+        else:
+            body = escaped
+        final_text = body + link_html
 
         return {
             "chat_id": self.chat_id,

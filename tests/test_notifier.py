@@ -353,6 +353,119 @@ def test_notifier_failure_still_swallowed_with_link_and_escaping_active(monkeypa
         assert result is False
 
 
+# === Per-symbol tap-through links (`symbols=` on send()) ===
+
+def test_notifier_send_linkifies_known_symbols(monkeypatch):
+    """Every symbol named in `symbols` that also appears in the text gets
+    wrapped in its own tap-through link, alongside the existing Mission
+    Control link."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("BUY CCJ qty=40 @$58.10; HOLD MSFT", symbols=["CCJ", "MSFT"])
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert '<a href="https://finance.yahoo.com/quote/CCJ">CCJ</a>' in sent
+    assert '<a href="https://finance.yahoo.com/quote/MSFT">MSFT</a>' in sent
+
+
+def test_notifier_send_symbol_links_only_wrap_known_symbols(monkeypatch):
+    """`symbols` is the whitelist — a capitalized prose word that is NOT in
+    it (however ticker-shaped) must never be linkified. Free LLM rationale
+    is full of words like ALL/GO/PASS that would false-positive."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("PASS on ALL names except CCJ", symbols=["CCJ"])
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert '<a href="https://finance.yahoo.com/quote/CCJ">CCJ</a>' in sent
+    assert "<a href" not in sent.replace(
+        '<a href="https://finance.yahoo.com/quote/CCJ">CCJ</a>', "",
+    )
+    assert "PASS on ALL names" in sent
+
+
+def test_notifier_send_symbol_links_respect_word_boundaries(monkeypatch):
+    """A known symbol that is also a prefix of a longer word in the text
+    (e.g. ticker "CAT" inside the word "CATEGORY") must not be linked —
+    only whole-word mentions count."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("new CATEGORY leader, no CAT trade today", symbols=["CAT"])
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "CATEGORY" in sent
+    assert "<a href=\"https://finance.yahoo.com/quote/CAT\">CAT</a> trade" in sent
+    assert 'CATEGORY</a>' not in sent
+    assert '<a href="https://finance.yahoo.com/quote/CAT">CAT</a>EGORY' not in sent
+
+
+def test_notifier_send_symbol_links_ignore_non_ticker_shaped_values(monkeypatch):
+    """`symbols` is caller-controlled data (ultimately DB rows); anything
+    that isn't a plain ticker token must never end up inside an href."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send(
+            "weird token TOOLONGSYM here",
+            symbols=["<script>alert(1)</script>", "TOOLONGSYM", ""],
+        )
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "<a href" not in sent
+    assert "<script>" not in sent  # still HTML-escaped as ordinary text
+
+
+def test_notifier_send_no_symbols_leaves_text_plain(monkeypatch):
+    """Omitting `symbols` (the default) must reproduce today's behavior
+    exactly — tickers stay plain text, no anchors are added."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send("BUY CCJ qty=40")
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "<a href" not in sent
+    assert "BUY CCJ qty=40" in sent
+
+
+def test_notifier_send_symbol_links_degrade_to_plain_text_over_budget(monkeypatch):
+    """If wrapping every mention in `<a href>` would push the message over
+    the length budget, the send must NOT risk truncating mid-tag (which
+    would ship broken HTML and get the whole alert rejected by Telegram).
+    It must fall back to the plain, safely-truncatable text instead —
+    symbol links disappear, the alert still ships intact."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()  # no mission_control_url -> link_html is empty
+    # Well under MAX_MESSAGE_CHARS (4000) as plain text...
+    text = "CCJ " * 995  # 3980 chars
+    assert len(text) < TelegramNotifier.MAX_MESSAGE_CHARS
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(raise_for_status=MagicMock())
+        n.send(text, symbols=["CCJ"])
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    # ...but linkifying ~995 mentions would blow far past budget, so it
+    # must degrade to plain text rather than truncate the linked version.
+    assert "<a href" not in sent
+    assert "[...truncated]" not in sent
+    assert sent.strip() == text.strip()
+    assert len(sent) <= TelegramNotifier.MAX_MESSAGE_CHARS
+
+
 # === _clip_text (shared boundary-aware truncation) ===
 
 def test_clip_text_returns_text_unchanged_when_it_fits():

@@ -252,6 +252,52 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
     return snapshot
 
 
+def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
+    """Every symbol worth making tappable in this alert, first-seen order,
+    capped (see `TelegramNotifier._MAX_LINKED_SYMBOLS` in src/notifier.py).
+
+    Deliberately narrow: pulled only from the SAME structured fields the
+    renderers above already iterate for a `symbol` key (PM proposed orders,
+    executed trades, execution skips, stop-coverage gaps, and the
+    top-level `result["orders"]` the base formatter's own
+    `_append_company_identities` uses) — never a scan of the free-text PM/
+    risk rationale, which routinely contains capitalized words ("ALL",
+    "GO", "PASS") that would false-positive as tickers.
+
+    Read-only and fail-soft like the rest of this module: a symbol that
+    can't be determined is just not linked — see
+    `TelegramNotifier._linkify_symbols` for why a bad/missing symbol must
+    never be able to break message delivery.
+    """
+    symbols: list[str] = []
+
+    def _add(raw: Any) -> None:
+        sym = str(raw or "").strip().upper()
+        if sym and sym not in symbols:
+            symbols.append(sym)
+
+    if isinstance(result, dict):
+        for row in result.get("orders") or []:
+            if isinstance(row, dict):
+                _add(row.get("symbol"))
+        for row in result.get("stop_coverage_gaps") or []:
+            if isinstance(row, dict):
+                _add(row.get("symbol"))
+
+    try:
+        snap = _read_run(run_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("extract_alert_symbols: run read failed for %s: %s", run_id, exc)
+        snap = _empty_snapshot()
+
+    for key in ("pm_orders", "trades", "skips"):
+        for row in snap.get(key) or []:
+            if isinstance(row, dict):
+                _add(row.get("symbol"))
+
+    return symbols[:10]
+
+
 def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     macro = snap.get("macro")
     if not isinstance(macro, dict):

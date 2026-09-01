@@ -461,3 +461,58 @@ def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
     after = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
     conn.close()
     assert after == before
+
+
+# === extract_alert_symbols (feeds TelegramNotifier's per-symbol links) ===
+
+def test_extract_alert_symbols_collects_pm_orders_trades_and_skips(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-symbols"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8}, symbol="SQQQ",
+    )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "MSFT", "reason": "no_cash"}, symbol="MSFT",
+    )
+
+    symbols = trader_feed.extract_alert_symbols(run, {"status": "executed", "run_id": run})
+
+    assert symbols == ["SQQQ", "CCJ", "MSFT"]
+
+
+def test_extract_alert_symbols_includes_result_level_orders_and_gaps(tmp_path, monkeypatch):
+    """The `result` dict itself (not just the DB) is a source: covers the
+    base formatter's own `orders` list and stop-coverage-gap alerts, which
+    don't necessarily have a run_id worth reading from the DB."""
+    _make_db(tmp_path, monkeypatch)  # empty DB is fine; run_id is None below
+    symbols = trader_feed.extract_alert_symbols(
+        None,
+        {
+            "orders": [{"symbol": "AAPL"}],
+            "stop_coverage_gaps": [{"symbol": "TSLA", "covered_qty": 0, "held_qty": 10}],
+        },
+    )
+    assert symbols == ["AAPL", "TSLA"]
+
+
+def test_extract_alert_symbols_dedupes_and_caps_at_ten(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-many"
+    for i in range(12):
+        _trade(db, run, f"SYM{i}", "BUY", qty=1, price=10)
+    # A repeat of an already-seen symbol must not create a second entry.
+    _trade(db, run, "SYM0", "BUY", qty=1, price=10)
+
+    symbols = trader_feed.extract_alert_symbols(run, {"status": "executed", "run_id": run})
+
+    assert len(symbols) == 10
+    assert len(symbols) == len(set(symbols))
+
+
+def test_extract_alert_symbols_handles_missing_run_and_result(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    assert trader_feed.extract_alert_symbols(None, None) == []
+    assert trader_feed.extract_alert_symbols("no-such-run", {}) == []

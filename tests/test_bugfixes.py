@@ -1711,7 +1711,7 @@ def test_main_pushes_failed_notification_when_config_load_crashes(monkeypatch):
 
     sent = []
     fake_notifier = MagicMock()
-    fake_notifier.send = lambda msg: sent.append(msg) or True
+    fake_notifier.send = lambda msg, **kwargs: sent.append(msg) or True
     monkeypatch.setattr(main_mod, "TelegramNotifier", lambda: fake_notifier)
     monkeypatch.setattr(
         main_mod, "load_config",
@@ -1732,7 +1732,7 @@ def test_main_missing_config_file_push_carries_the_path(monkeypatch, tmp_path):
 
     sent = []
     fake_notifier = MagicMock()
-    fake_notifier.send = lambda msg: sent.append(msg) or True
+    fake_notifier.send = lambda msg, **kwargs: sent.append(msg) or True
     monkeypatch.setattr(main_mod, "TelegramNotifier", lambda: fake_notifier)
     missing = str(tmp_path / "nope.yaml")
     monkeypatch.setattr("sys.argv", ["main.py", "--mode", "morning", "--config", missing])
@@ -1751,7 +1751,7 @@ def test_main_live_mode_graceful_scheduler_exit_notifies_clearly(monkeypatch):
 
     sent = []
     fake_notifier = MagicMock()
-    fake_notifier.send = lambda msg: sent.append(msg) or True
+    fake_notifier.send = lambda msg, **kwargs: sent.append(msg) or True
     monkeypatch.setattr(main_mod, "TelegramNotifier", lambda: fake_notifier)
     monkeypatch.setattr(main_mod, "load_config", lambda _p: MagicMock())
     monkeypatch.setattr(main_mod, "refresh_pricing", lambda: None)
