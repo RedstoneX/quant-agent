@@ -1321,11 +1321,18 @@ def _margin_interest_lines() -> list[str]:
     any new trading — is the one honest read of what was actually carried
     across the close.
 
-    Fast-exits with ZERO broker calls whenever `allow_margin` is `False`,
-    which is today's actual configuration (cash never goes negative under
-    the cash-only hard block in `src/risk/rules.py`). That is also what
-    keeps this silent on the zero-debit-balance day that is every day
-    right now — no noise, no wasted broker round-trip, per spec.
+    Reads the account's actual cash regardless of `allow_margin` — that
+    flag is QAMC's own risk toggle, not a broker-side guarantee that cash
+    stays non-negative. `cash_only` (src/risk/rules.py) hard-blocks a
+    plain BUY from taking cash negative when `allow_margin` is `False`,
+    but a COVER is exempt from that rule by design (D10), and
+    `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
+    "cash negative AND allow_margin False" as a real, live state — so a
+    debit balance can exist even with margin disabled, and a short-circuit
+    on `allow_margin` alone would silently miss it. On today's actual
+    zero-debit-balance day this still costs one broker round-trip (spent
+    on `overnight_debit_balance()` returning `0.0`) but produces no line —
+    no noise, correctness over the saved call.
 
     When a debit balance IS present, this also reads the broker's own
     `INT` account activity and reports whether it confirms, denies, or has
@@ -1343,8 +1350,6 @@ def _margin_interest_lines() -> list[str]:
     try:
         from src.config import load_config
         cfg = load_config("config/settings.yaml")
-        if not cfg.risk.allow_margin:
-            return []  # cash-only — no debit balance is possible; nothing to fetch
         rate_pct = cfg.risk.margin_interest_rate_pct
     except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
         logger.warning("margin interest config read failed: %s", exc)

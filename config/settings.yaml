@@ -346,7 +346,7 @@ risk:
   # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
   # is 4.75%); kept here so it can be corrected without a code change.
   # Charged ONLY on the overnight debit balance, (balance x rate) / 360 —
-  # intraday leverage is free. See src/risk/margin_interest.py for the
+  # intraday leverage is free. See src/margin_interest.py for the
   # formula and the still-open question of whether paper trading charges
   # this at all — every figure surfaced from this rate is a labelled
   # ESTIMATE until the broker's own INT activity confirms or denies it.

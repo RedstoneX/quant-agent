@@ -30,13 +30,23 @@ open question empirically: on the first morning after a debit balance is
 carried overnight, the account's own `INT` activity records either show a
 charge or they do not. This module does not pre-judge which.
 
-**Today's actual state.** `allow_margin` is `False` — cash never goes
-negative (see the `cash_only` hard-block rule in `src/risk/rules.py`), so
-`overnight_debit_balance()` is always `0.0` in production until 11.2 (the
-gross-exposure cap + de-levering ladder, built separately) ships and
-margin is deliberately turned on. Every function below is written to be
-silent and side-effect-free at that zero, per the spec's requirement that
-this tracker not add noise to a book that owes nothing.
+**Today's actual state.** `allow_margin` is `False`, and the account has
+never actually carried a negative cash balance, so `overnight_debit_balance()`
+is `0.0` in production right now. That is NOT a guarantee `cash_only`
+provides in general, though — it hard-blocks a plain BUY from taking cash
+negative, but a COVER is deliberately exempt (D10, `src/risk/rules.py`;
+`src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
+"cash negative with `allow_margin` False" as a real state a session can
+reach). Callers of this module must therefore key off `cash` itself, never
+off `allow_margin`, to decide whether there is anything to report — see
+`src/api/broker_reads.py::read_margin_interest` and
+`src/notifier.py::_margin_interest_lines`, both of which read `cash`
+unconditionally for exactly this reason. Every function below is written
+to be silent and side-effect-free at an actual zero (or non-negative)
+balance, per the spec's requirement that this tracker not add noise to a
+book that owes nothing — 11.2's gross-exposure cap and de-levering ladder,
+built separately, are what will keep balances bounded once margin is
+deliberately turned on.
 """
 
 from __future__ import annotations

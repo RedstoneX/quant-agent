@@ -131,9 +131,22 @@ def read_margin_interest(cash: float | None) -> dict:
     round-trip for the same number). Returns
     `{"debit_balance", "rate_pct", "daily_usd", "annual_usd", "label",
     "broker_check_note", "error"}`, every numeric field `None` when there
-    is nothing to report — a zero/no debit balance (today's actual state,
-    `allow_margin` is `False`) degrades to an all-`None` dict, never a
-    fabricated zero-cost line. Never raises.
+    is nothing to report — a zero/no debit balance (today's actual state:
+    the account has never carried a negative cash balance) degrades to an
+    all-`None` dict, never a fabricated zero-cost line. Never raises.
+
+    Deliberately does NOT gate on `limits.allow_margin` before looking at
+    `cash` — interest is a broker-side fact about the account's actual
+    overnight cash balance, not a consequence of QAMC's own risk toggle.
+    `cash_only` (src/risk/rules.py) hard-blocks a plain BUY from taking
+    cash negative when `allow_margin` is `False`, but a COVER is exempt
+    from that rule by design (D10 — a COVER can never be hard-blocked;
+    see `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE, which
+    already handles "cash is negative AND allow_margin is False" as a
+    real, live state). `overnight_debit_balance()` reads `cash` alone and
+    already degrades cleanly to `0.0` when nothing was borrowed, so it is
+    always safe — and now correct in the COVER-driven case too — to call
+    unconditionally.
     """
     empty = {
         "debit_balance": None, "rate_pct": None, "daily_usd": None,
@@ -141,10 +154,7 @@ def read_margin_interest(cash: float | None) -> dict:
         "error": None,
     }
     try:
-        limits = get_risk_limits()
-        if not limits.allow_margin:
-            return empty  # cash-only — no debit balance is possible
-        rate_pct = limits.margin_interest_rate_pct
+        rate_pct = get_risk_limits().margin_interest_rate_pct
     except Exception as exc:
         logger.warning("broker_reads.read_margin_interest: config read failed: %s", exc)
         return {**empty, "error": str(exc)}

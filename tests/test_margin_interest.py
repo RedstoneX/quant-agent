@@ -320,3 +320,179 @@ def test_end_to_end_broker_shows_no_charge(MockTradingClient):
         estimate, broker.get_margin_interest_activities(),
     )
     assert comparison.charge_confirmed is False
+
+
+# ---------------------------------------------------------------------------
+# 6. src/api/broker_reads.py::read_margin_interest — the /account wiring.
+#
+# Added on verification: the module above had 28 passing tests and zero of
+# them touched either place the estimate actually reaches a human (this
+# API field, and the Telegram lines in section 7 below). That gap is what
+# let a real bug ship: both wrappers originally fast-exited to "nothing to
+# report" whenever `allow_margin` was `False`, without ever looking at
+# `cash`. But `cash_only` (src/risk/rules.py) does not protect a COVER —
+# D10 exempts it deliberately — and `src/agents/portfolio_manager.py`'s
+# own DE-LEVER MANDATE already treats "cash negative, allow_margin False"
+# as a real state a session can reach. So the original gate could report
+# nothing for exactly the case this tracker exists to catch. Fixed to key
+# off `cash` alone; the tests below pin that a negative cash balance is
+# reported regardless of `allow_margin`.
+# ---------------------------------------------------------------------------
+
+import src.api.broker_reads as broker_reads  # noqa: E402
+
+
+def test_read_margin_interest_no_debit_balance_is_all_none(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
+    )
+    out = broker_reads.read_margin_interest(1_000.0)
+    assert out == {
+        "debit_balance": None, "rate_pct": None, "daily_usd": None,
+        "annual_usd": None, "label": None, "broker_check_note": None,
+        "error": None,
+    }
+
+
+def test_read_margin_interest_reports_a_debit_balance_even_with_margin_disabled(monkeypatch):
+    """Regression: a COVER can push cash negative with `allow_margin`
+    False (D10 exempts COVER from cash_only); the estimate must still
+    surface rather than silently reporting nothing."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=6.25),  # allow_margin intentionally absent
+    )
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: SimpleNamespace(get_margin_interest_activities=lambda: []),
+    )
+    out = broker_reads.read_margin_interest(-9_839.0)
+    assert out["debit_balance"] == pytest.approx(9_839.0)
+    assert out["daily_usd"] == pytest.approx(1.71, abs=0.01)
+    assert out["error"] is None
+    assert "ESTIMATE" in out["label"]
+
+
+def test_read_margin_interest_config_read_failure_reports_error(monkeypatch):
+    def boom():
+        raise RuntimeError("config unreadable")
+    monkeypatch.setattr(broker_reads, "get_risk_limits", boom)
+    out = broker_reads.read_margin_interest(-5_000.0)
+    assert out["error"] == "config unreadable"
+    assert out["debit_balance"] is None
+
+
+def test_read_margin_interest_includes_broker_check_note(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
+    )
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: SimpleNamespace(
+            get_margin_interest_activities=lambda: [{"net_amount": -1.71}],
+        ),
+    )
+    out = broker_reads.read_margin_interest(-9_839.0)
+    assert out["broker_check_note"] is not None
+    assert "confirmed" in out["broker_check_note"].lower()
+
+
+def test_read_margin_interest_int_activity_failure_does_not_hide_the_estimate(monkeypatch):
+    """The INT-activity check is a nicety layered on the estimate — its
+    failure must not take the estimate itself down."""
+    from types import SimpleNamespace
+
+    def boom():
+        raise RuntimeError("broker down")
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
+    )
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: SimpleNamespace(get_margin_interest_activities=boom),
+    )
+    out = broker_reads.read_margin_interest(-9_839.0)
+    assert out["error"] is None
+    assert out["daily_usd"] == pytest.approx(1.71, abs=0.01)
+    assert out["broker_check_note"] is None
+
+
+# ---------------------------------------------------------------------------
+# 7. src/notifier.py::_margin_interest_lines — the morning Telegram wiring.
+# ---------------------------------------------------------------------------
+
+def test_margin_interest_lines_empty_without_a_debit_balance(monkeypatch):
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(
+        "src.config.load_config",
+        lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
+    )
+    monkeypatch.setattr(
+        "src.api.deps.get_alpaca_credentials", lambda: ("k", "s"),
+    )
+    monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
+    monkeypatch.setattr(
+        "src.execution.broker.AlpacaBroker",
+        lambda **kw: MagicMock(
+            get_account=lambda: {"cash": 1_000.0},
+            get_margin_interest_activities=lambda: [],
+        ),
+    )
+    assert n._margin_interest_lines() == []
+
+
+def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(monkeypatch):
+    """Regression, same bug as the broker_reads test above: a debit
+    balance carried with `allow_margin` False must still produce a line,
+    not silence — the Telegram alert is where the desk actually sees it."""
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(
+        "src.config.load_config",
+        lambda *a, **kw: MagicMock(
+            risk=MagicMock(allow_margin=False, margin_interest_rate_pct=6.25),
+        ),
+    )
+    monkeypatch.setattr(
+        "src.api.deps.get_alpaca_credentials", lambda: ("k", "s"),
+    )
+    monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
+    monkeypatch.setattr(
+        "src.execution.broker.AlpacaBroker",
+        lambda **kw: MagicMock(
+            get_account=lambda: {"cash": -9_839.0},
+            get_margin_interest_activities=lambda: [],
+        ),
+    )
+    lines = n._margin_interest_lines()
+    assert len(lines) >= 1
+    assert "margin interest" in lines[0].lower()
+    assert "ESTIMATE" in lines[0]
+    assert "1.71" in lines[0]
+
+
+def test_margin_interest_lines_suppressed_in_rehearsal(monkeypatch):
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", True)
+    assert n._margin_interest_lines() == []
+
+
+def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch):
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(
+        "src.config.load_config",
+        lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
+    )
+
+    def boom():
+        raise RuntimeError("credentials gateway down")
+    monkeypatch.setattr("src.api.deps.get_alpaca_credentials", boom)
+    assert n._margin_interest_lines() == []

@@ -510,7 +510,7 @@ class RiskConfig(BaseModel):
     # correct it without a deploy if Alpaca's rate moves. Interest accrues
     # ONLY on the END-OF-DAY (overnight) debit balance — intraday leverage
     # is free — per `(overnight debit balance x rate) / 360`. See
-    # src/risk/margin_interest.py: whether PAPER trading actually charges
+    # src/margin_interest.py: whether PAPER trading actually charges
     # this is UNCONFIRMED (Alpaca's own comparison lists short-borrow fees
     # as "Coming Soon" and is silent on margin interest either way), so
     # every figure this produces is a labelled ESTIMATE until the broker's
