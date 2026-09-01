@@ -40,6 +40,74 @@ settled. Restored:**
   recency and/or touch-count requirement. Risk judgement, owner's call, NOT an
   agent decision — no agent may pick a threshold here.
 
+**STATE AT 2026-09-01 END OF SESSION — read this before the older handoff below.**
+
+**SHIPPED AND VERIFIED, on `integration/ship-2026-09-01` (tip `af266de`), pushed:**
+Phase 12.1, 12.2, 12.3, all five open branches merged, and four corrections to
+the rewritten PM prompt. Full suite green: **3,961 passing**, only the two known
+`test_rehearsal_reproduces_cost_ceiling.py` failures that read live production
+state. **NOT DEPLOYED.**
+
+**PHASE 11 IS HALF-BUILT AND NONE OF IT IS MERGED.** Four agents were dispatched;
+the process exited before three of them finished. Their work is committed on
+their own branches and pushed, labelled WIP UNVERIFIED. **It is untested and
+unreviewed — do not merge any of it without running the suite.**
+
+| branch | what it holds | state |
+|---|---|---|
+| `worktree-agent-a133d12fa507af335` | margin interest tracker | committed by the agent, suite result never reported |
+| `worktree-agent-a68a5aa21271ccbea` | 11.2 gross cap + de-levering ladder | WIP, interrupted, UNVERIFIED |
+| `worktree-agent-ab445cf7c4b9aa358` | 11.1 fractional sizing + stop guards | WIP, interrupted, UNVERIFIED |
+| `worktree-agent-af17eb92755512448` | sector cap fails loudly on unresolved sector | WIP, interrupted, UNVERIFIED |
+
+**`allow_margin` is still `false`. It must STAY false** until the gross cap and
+the ladder are merged and verified. The PM prompt's exposure table is at 1.0x
+cash-only and moves to 2.0x **at the same moment as that flip, never before.**
+
+**THE GATE ON THE 90% SECTOR CEILING.** The owner ratified 90% conditional on
+the de-levering ladder being *proven to step*: "The 90% works if you've got the
+ladder, so ensure the ladder works." A test must assert the ceiling CHANGES at
+each of the four drawdown thresholds, that new exposure is blocked BEFORE any
+trimming, and that the ladder is applied EXACTLY ONCE. **That test has not been
+confirmed to pass. If it cannot pass, revert the sector ceiling — do not weaken
+the test.**
+
+**THE LADDER MUST NOT DEPEND ON THE PM RETURNING ANYTHING.** One candidate model
+returns an empty book 1 run in 10. At 1.0x that is a lost day; at 2.0x during a
+drawdown it means the desk stays levered exactly when it should be shedding. The
+ceiling must come from account state, and the TRIMMING path must be engine-driven,
+never driven by the PM proposing SELLs. **Unverified — check it in the code before
+enabling margin.**
+
+**WHAT VALIDATES WHAT — learned the hard way tonight.** The rehearsal rig
+**cannot validate a prompt change**. It replays recorded answers into a changed
+prompt; measured 23-53% overlap, 23 candidates died before sizing, and the
+changed code was never reached. It will pass a broken prompt and tell you
+nothing. **Rig validates CODE. The model benchmark validates PROMPT.** Moving the
+exposure table to 2.0x is a prompt change and the rig cannot clear it.
+
+**The deploy gate PASSED on the current prompt text** (sha
+`96856424b02888879b24a99f25f801faaeb090a8057991840a7d5b4fde154862`, 895 lines).
+gpt-5.5 scored 1.000 on all 5 runs against 0.850 on every run of the old prompt,
+and the two-position collapse is gone, 0 of 5. **Read that narrowly:** three of
+the four checks did no discriminating work, only `actionable_book` separated
+anything at 15% weight, and a 1.000 means well-formed and grounded, NOT
+profitable. The scenario feeds 30 byte-identical candidates, so it cannot measure
+stock-picking and must never be quoted as if it could.
+
+**An uncomfortable finding from the same run:** pick identity there is pure model
+prior. gpt-5.5 put 10 of 18 picks into index ETFs where chance is about 2; qwen
+picked zero index ETFs in 20. **Which model runs the seat partly decides what the
+desk buys before any analysis happens.** An earlier claim that the rewrite cut
+index reliance was WRONG — the habit moved from one index to two, it did not go
+away.
+
+**Still unbuilt after tonight:** Phase 10.2 (deterministic analyst weighting in
+Python), the universe pruning design recorded above, and whatever of Phase 11
+does not survive verification.
+
+---
+
 **START HERE — 2026-09-01 handoff. Everything below is a POINTER; the detail
 lives in the files named and is not repeated.**
 
