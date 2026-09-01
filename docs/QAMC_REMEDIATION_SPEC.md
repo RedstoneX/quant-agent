@@ -1060,6 +1060,8 @@ the whole-share friction that has been accidentally holding deployment down.
 - **The cash-park does not count as exposure.** SGOV is parked cash, not a
   position; counting it would consume the entire allowance doing nothing.
 - Never draw on the 4x intraday allowance — it forces a flat close.
+- **2.0x applies overnight too.** No separate intraday ceiling; see the
+  de-levering ladder below for where the cushion actually comes from.
 
 **Two exposures the current risk envelope does not model, and must before
 this is trusted:**
@@ -1067,12 +1069,42 @@ this is trusted:**
    open 15% lower, and levered that gap comes out of a thinner cushion. A
    separate, tighter ceiling on overnight gross exposure is required.
 
-   **The arithmetic moved when 1.5x became 2.0x, and this is the reason the
-   guard is now mandatory rather than nice to have.** At 1.5x, positions had
-   to fall ~55% before forced liquidation. At 2.0x — equity ~$9,825, gross
-   ~$19,650, borrowed ~$9,825, ~25% maintenance — the threshold is **~33%**.
-   Still far outside any single overnight gap, but it is no longer an
-   unreachable number: a 33% drawdown is a bad quarter, not an impossibility.
+   **2.0x is the standing cap, day AND night. There is no lower overnight
+   ceiling, deliberately.** An intraday-only allowance would force a trim into
+   every close — selling on a clock rather than on merit, dumping whatever is
+   easiest to sell rather than whatever deserves to go. That is a worse risk
+   than the one it removes, and it is doubly pointless here because QAMC holds
+   for days: it would almost never USE an intraday-only allowance, so the
+   overnight number was always the real number. Owner's decision, 2026-09-01:
+   *"I want to go 2x, so you just have to adjust at the 2x to give me enough
+   cushion so we don't have forced selling. And 2x is the actual number then."*
+
+   **The arithmetic.** At 2.0x — equity ~$9,825, gross ~$19,650, borrowed
+   ~$9,825, ~25% maintenance — positions must fall **~33%** before forced
+   liquidation. (At 1.5x it was ~55%.) A 33% drawdown is a bad quarter, not an
+   impossibility, so the cushion cannot be left to chance.
+
+   **The cushion comes from de-levering on drawdown, not from a lower cap.**
+   The ceiling scales DOWN automatically as losses accumulate, so the 33%
+   threshold is never approached, let alone tested:
+
+   | peak-to-trough drawdown | gross exposure ceiling |
+   | --- | --- |
+   | 0% to -8% | 2.0x |
+   | -8% to -15% | 1.5x |
+   | -15% to -20% | 1.0x |
+   | worse than -20% | 0.5x, and alert the owner |
+
+   Enforced deterministically in Python, never as an instruction to an agent.
+   De-levering REDUCES rather than liquidates — it blocks new exposure first
+   and trims only if still over ceiling after that, so a drawdown does not
+   trigger the panic-selling it exists to prevent. A drawdown-scaling mechanism
+   already exists (`src/risk/rules.py::apply_drawdown_scale`); wire the ceiling
+   to it rather than building a second one.
+
+   **Distance-to-forced-liquidation is monitored and reported** in the morning
+   alert and on the dashboard, as a percentage the book could fall before the
+   broker sells. At 2.0x undrawn that reads ~33%.
 
    **Margin interest is charged ONLY on the end-of-day (overnight) debit
    balance** — Alpaca's live rate is 6.25% non-elite, 4.75% elite, computed as
@@ -1080,7 +1112,11 @@ this is trusted:**
    is a live design lever, not a footnote: a desk that runs leveraged intraday
    and trims into the close pays nothing and carries no overnight gap risk.
    At a sustained 2.0x the cost is ~$1.71/day, ~$614/yr, **6.25% of equity that
-   the book must out-earn before leverage contributes a cent.**
+   the book must out-earn before leverage contributes a cent.** Holding 2.0x
+   overnight rather than trimming into the close is what makes that cost real
+   — it is the accepted price of not force-selling on a clock, and the owner
+   accepted it explicitly on the basis that the desk should be clearing well
+   above 7% for the project to be worth doing at all.
 
    **Paper does NOT simulate short borrow fees** — Alpaca's own paper-trading
    comparison lists them as "Coming Soon". Whether paper simulates MARGIN

@@ -656,6 +656,41 @@ Use the existing Mission Control, journal and Telegram read-side evidence to det
 
 When QAMC does not trade, the reason should be specific and defensible rather than an unexplained absence of activity.
 
+### Future — portfolio hedging (not scheduled, do not start yet)
+
+Owner asked on 2026-09-01 for this to be written down so it is not lost. It is
+NOT approved work.
+
+**Prerequisite: the desk must be stable and actually trading first.** On
+2026-09-01 it found 38 actionable signals and placed zero orders. Hedging a
+book that will not trade is the wrong problem in the wrong order.
+
+**No hedging logic exists anywhere in QAMC.** Verified 2026-09-01 — every
+occurrence of "hedge" in `src/` and `config/prompts/` is incidental prose or
+the `is_bearish_hedge` flag, which labels a bearish idea and sizes nothing.
+
+**Why the inverse ETFs stay** (owner reconfirmed 2026-09-01, "that could be
+utilized as a hedge"): none of `SH`/`SDS`/`PSQ`/`SQQQ` is shortable at the
+broker, so they are only usable as longs — exactly what a hedge sleeve wants —
+and shorting has never once executed (45 trades in the ledger, zero
+`SHORT`/`COVER`). They are the only bearish tool that has ever worked. Revisit
+removing them only after a real short fills and exits cleanly.
+
+**Options, cheapest first, none decided:** an index hedge sleeve sized off
+measured book beta; net long-minus-short as an explicit sized output of the
+macro read (the natural continuation of spec Phase 10.2); hedging the dominant
+correlation cluster using the measurement `src/data/correlation.py` already
+computes for the cluster risk budget; bounded protection into a known binary
+event (FOMC/CPI/earnings), whose calendars already exist.
+
+**Traps to design around:** a hedge is a position, not an exemption — it
+carries a stop and appears in exposure maths like anything else. Inverse and
+leveraged ETFs decay through daily rebalancing, so any sleeve needs a maximum
+holding period. Under spec Phase 11.2's margin cap a hedge consumes gross
+exposure, competing with what it protects — decide deliberately whether it
+counts. And do not let a hedge become a way to avoid selling a loser; that is
+the failure mode this invites.
+
 ## Evidence-only follow-ups
 
 - news-narrative factual drift;
