@@ -146,8 +146,22 @@ candidates reach the PM**, the same way `NominationConfig` already caps
 nominations, so the bill is a number that is set rather than one that emerges.
 Untested risk: the free tier is rate-limited and a much wider scan may hit it.
 
-**Still to build (nothing exists yet):** all four Phase 12 items, the margin
-interest tracker, the wider universe with pruning.
+**Still to build (nothing exists yet):** **ALL of Phase 11** — fractional
+sizing, its three required stop-placement guards, the 2.0x gross-exposure cap,
+the de-levering ladder, and distance-to-forced-liquidation monitoring — plus
+the margin interest tracker and the wider universe with pruning.
+
+**Phase 11 was MISSING from this line until 2026-09-01 and that caused a real
+scope error.** A session read this list, built Phase 12 and the branch merges,
+and correctly believed Phase 11 was out of scope. Verified by search across
+every branch: no fractional sizing anywhere, and **no gross-exposure cap of any
+kind exists** — `max_portfolio_risk_pct` bounds AT-RISK capital, not gross. So
+11.2 ADDS a ceiling where none exists; it is a tightening, not a loosening, and
+it must land before `allow_margin` is turned on.
+
+**Phase 12.1/12.2/12.3 are now IMPLEMENTED** (2026-09-01) along with the five
+open branches. Phase 10.2 — computing analyst weighting in Python so no seat
+dominates by prompt position — is also still unbuilt.
 
 **Baseline:** `pytest tests/ -q` gives 2 pre-existing failures in
 `tests/test_rehearsal_reproduces_cost_ceiling.py` — they read live production
