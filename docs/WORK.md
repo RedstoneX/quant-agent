@@ -6,15 +6,26 @@
 
 **STATE AT 2026-09-01 END OF SESSION — read this before anything else.**
 
-**The deepest finding of the day, and the thing to fix first.** Stops widen to
-a minimum 3x ATR while reward:risk must clear 1.5. Over a ~15-session hold a
-stock travels ~3.9 ATR, so the **best achievable ratio is ~1.29** and no trade
-can ever pass. SLB scored 1.28 against a geometric max of 1.29 — the analyst
-produced the best number arithmetic allows and the system refused it. That is
-the whole explanation for 30 of 38 signals (79%) being rejected on 2026-09-01
-and zero trades being placed. `config/settings.yaml` documents the mechanism
-beside the setting. **One of three must move: the 3x stop widening, the 1.5
-floor, or the holding horizon. Owner leans toward the stop. NOT YET DECIDED.**
+**THE FIRST THING TO FIX, and state it correctly.** Stops are derived from
+STRUCTURAL LEVELS. `min_stop_atr_multiple: 3.0` is a **FLOOR**: when the
+level-based stop sits closer than 3x ATR it is pushed out to 3x ATR and no
+longer sits at anything real. `min_reward_risk_after_widening: 1.5` is then
+judged against that arbitrary number. Over a ~15-session hold a stock travels
+~3.9 ATR, so against a 3.0 ATR stop the best achievable ratio is **~1.29 <
+1.5** — **no trade can pass, before anyone looks at a chart.**
+
+Proof, run `run-64290730`: SLB `strong_buy`/`high`, entry 60.10, stop 55.50
+(= 4.60, almost exactly 3.0x ATR — the floor bound and overwrote the level),
+horizon 15, analyst R/R **1.28** against a geometric maximum of **1.29**. The
+model produced the best number arithmetic allows and the system refused it.
+30 of 38 signals (79%) failed; zero trades placed.
+
+**Do NOT "fix" this by tuning 3.0 -> 2.0.** The owner rejected that framing
+explicitly. The real question is whether an arbitrary floor should overwrite a
+real level and then have the trade judged on the result. **Answer: no.** If the
+level is the honest stop, judge the trade on the level; when a level sits
+inside the noise band the correct response is **a smaller position, not a fake
+wider stop.** NOT YET IMPLEMENTED OR RATIFIED.
 
 **Read `docs/OUTCOME.md`'s "This is a trading desk, not a retirement
 portfolio" section before touching any risk rule.** Owner correction,
