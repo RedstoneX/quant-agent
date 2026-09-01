@@ -365,6 +365,31 @@ defect log is append-only and is never trimmed.
 
 ### Ordered backlog — RESUME POINT
 
+**A held SHORT makes its sector look SMALLER to the risk engine — owner
+decision needed.** Found 2026-09-01 while implementing spec Phase 10.3, by the
+agent doing that work; it predates that task and was deliberately NOT fixed
+there.
+
+The risk engine sums sector exposure using **signed** `market_value`, so a
+short position SUBTRACTS from its sector's measured weight. The code comment
+directly above that sum says the opposite — "gross ... unsigned magnitude".
+Code and comment disagree, and the code is what runs.
+
+Concretely: a book long $4k of Technology and short $2k of Technology measures
+as 2k of sector exposure, not 6k. It can then add more Technology than the cap
+intends. This has never bitten because **no short has ever executed** (45
+trades in the ledger, zero SHORT/COVER) — but Phase 10.3 turns the sector cap
+into a sizing dial that will be consulted far more often, and Phase 11 raises
+gross exposure to 2.0x. Both make this matter more, not less.
+
+**Why it is a decision and not a fix:** correcting it TIGHTENS the sector cap
+on any book holding shorts, which is a live behaviour change on a risk path.
+There is also a real argument for the current behaviour — a long and a short in
+the same sector genuinely are partly hedged. The question is whether the sector
+cap is measuring *concentration* (gross, unsigned) or *net directional
+exposure* (signed). It should measure one deliberately, and say which.
+
+
 **Margin interest tracker — REQUIRED before Phase 11.2's margin goes on.**
 Owner asked for this directly on 2026-09-01: he wants to see, cumulatively,
 what leverage actually costs, "to see if it's worth it".
