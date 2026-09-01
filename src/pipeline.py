@@ -79,12 +79,43 @@ _WAL_SELL_SENTINEL = "__WAL_PENDING__"
 #: identity block into the longest step of the morning session.
 _PM_PROFILE_SYMBOL_CAP = 40
 
+def _optional_risk_number(value) -> float | None:
+    """Read an OPTIONAL numeric risk setting, or None.
+
+    Same defensive posture as `_risk_setting` inside `TradingPipeline.__init__`
+    (many tests build the pipeline against a MagicMock config, where attribute
+    access auto-creates a child mock that pydantic coerces to 1.0), but for a
+    setting whose absence is meaningful rather than an error — `None` lets
+    `RiskConfig` apply its own documented default instead of a number nobody
+    configured.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value > 0 else None
+
+
+def _risk_number(value, default: float) -> float:
+    """`_optional_risk_number` with a documented fallback, for settings that
+    always need a concrete number (§10.3's minimum order size)."""
+    resolved = _optional_risk_number(value)
+    return default if resolved is None else resolved
+
+
 HARD_BLOCK_RULES = {
     "max_daily_loss_pct",
     "max_total_position_pct",
     "max_position_pct",
     "require_stop_loss",
-    "max_sector_pct",
+    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
+    # a hard block and is deliberately absent from this set. It is now the
+    # diversification TARGET — breaching it emits an ADVISORY violation the
+    # AI Risk Manager and the audit trail see, while the constructor shrinks
+    # the order for crowding instead of the pipeline dropping it. The hard
+    # gate moved to `max_sector_hard_pct` below, which fires only past the
+    # absolute ceiling or on an order that never went through that sizing.
+    # Removing it from here is the whole of "concentration is a dial, not a
+    # gate" at the pipeline level; putting it back reinstates the veto.
+    "max_sector_hard_pct",
     "cash_only",
     # Audit §1.1: the drawdown-halve rule used to live only in the PM and RM
     # prompts, where "no deterministic code enforces this" was stated outright.
@@ -399,6 +430,15 @@ class TradingPipeline:
             max_total_position_pct=config.risk.max_total_position_pct,
             max_daily_loss_pct=config.risk.max_daily_loss_pct,
             max_sector_pct=config.risk.max_sector_pct,
+            # Spec §10.3 — the absolute ceiling behind the sector dial.
+            # Read through the same MagicMock guard `_risk_setting` applies
+            # below (many tests build the pipeline against a mock config, and
+            # a child mock coerces to 1.0, which would trip the "ceiling must
+            # sit above the target" validator with a number nobody chose).
+            # `None` means "derive 1.5x the target", which RiskConfig does.
+            max_sector_hard_pct=_optional_risk_number(
+                getattr(getattr(config, "risk", None), "max_sector_hard_pct", None),
+            ),
             require_stop_loss=config.risk.require_stop_loss,
             # Codex r11 P2: previously omitted, defaulting to False even
             # when settings.yaml said True. Prompts + force_delever read
@@ -649,6 +689,22 @@ class TradingPipeline:
             # constructor sizes under the ceiling rather than proposing orders
             # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
             max_position_pct=_risk_setting("max_position_pct", 20.0),
+            # Spec §10.3 "concentration scales size". Read back off the risk
+            # ENGINE's own resolved config rather than re-derived from
+            # settings, so the number the constructor shrinks against is
+            # provably the identical number the engine will enforce — the
+            # drift `max_position_pct`'s "keep in sync" comment can only ask
+            # for, this one gets structurally.
+            max_sector_pct=self.risk_engine.config.max_sector_pct,
+            max_sector_hard_pct=self.risk_engine.config.sector_hard_ceiling_pct,
+            # §10.3's floor — reuses the existing $500 threshold rather than
+            # inventing a second notion of "too small to bother". It lives
+            # under `cash_sweep` because that is where it was first needed;
+            # the number, not the section, is what is being reused.
+            min_order_usd=_risk_number(
+                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
+                500.0,
+            ),
             # Stage 3 (shorts) — same "size under the hard block" pattern as
             # max_position_pct just above, mirrored for the short-specific
             # ceiling and its sizing haircut.

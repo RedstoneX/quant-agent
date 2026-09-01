@@ -34,6 +34,90 @@ def _gross_multiplier(symbol: str) -> float:
     return abs(_ETF_LEVERAGE.get(symbol, 1.0))
 
 
+# --- Spec §10.3 "concentration scales size, it does not veto" -------------
+#
+# `max_sector_pct` used to be a HARD BLOCK: a sector at the cap refused the
+# next trade outright, however good it was. The owner's ratified framing
+# (2026-09-01) is that this inverts the question — "each trade opportunity is
+# an opportunity on its own, and it should be based on the merits of that
+# opportunity." A high-conviction idea in an already-crowded sector should be
+# TAKEN, SMALLER. Concentration is a dial, not a gate.
+#
+# The dial is deterministic Python, deliberately. Same principle as the
+# reward:risk fix (PR #202) and §10.2: the number comes from code, the agent
+# brings judgement. No seat is asked "how much should we shave off for
+# crowding?" — the answer is arithmetic on the live book.
+#
+# TWO knobs, and they mean different things:
+#
+#   `soft` (`risk.max_sector_pct`, 40) — the diversification TARGET. At or
+#       below it, crowding costs a trade nothing. Above it, every additional
+#       trade in that sector is progressively shrunk.
+#
+#   `hard` (`risk.max_sector_hard_pct`, 60) — the ABSOLUTE ceiling, past
+#       which the answer is still no. A dial with no end is not a dial: a
+#       sector could otherwise grow without limit through an infinite series
+#       of ever-smaller additions. 60 is 1.5x the diversification target, and
+#       the reasoning is the loss it implies rather than the roundness of the
+#       number — at 60% of equity in one sector, an ordinary 20% sector-wide
+#       drawdown costs 12% of equity, four times the 3% daily-loss circuit
+#       breaker (`max_daily_loss_pct`). Past that the book has stopped being a
+#       portfolio with a tilt and become a single-sector bet, and no amount of
+#       single-name conviction is worth buying more of it. Configurable
+#       precisely because it is a judgement about how far a tilt may run.
+#
+# Both functions are pure, and both are used by BOTH consumers on purpose:
+# `PortfolioConstructor` calls them to SIZE an order down before it is ever
+# proposed, and `RiskRuleEngine.check` calls them to BLOCK anything that
+# arrives above the allowance anyway. One definition, two consumers — a
+# second, divergent notion of "how crowded is too crowded" here would let the
+# constructor and the deterministic gate disagree about an identical book,
+# which is exactly the failure `max_position_pct` already documents.
+
+
+def sector_size_scale(
+    current_sector_pct: float, *, soft_cap_pct: float, hard_cap_pct: float,
+) -> float:
+    """The dial itself: the fraction of its requested size a trade keeps,
+    given how crowded its sector ALREADY is (before this trade).
+
+    Returns 1.0 at or below the soft cap, tapering linearly to 0.0 at the
+    hard ceiling. Monotonically non-increasing in `current_sector_pct`, and
+    never negative — a heavier sector can only ever mean a smaller trade.
+    """
+    if hard_cap_pct <= soft_cap_pct:
+        # Degenerate config (hard not above soft): behave like the old gate
+        # rather than inventing headroom the operator never granted.
+        return 1.0 if current_sector_pct <= soft_cap_pct else 0.0
+    if current_sector_pct <= soft_cap_pct:
+        return 1.0
+    if current_sector_pct >= hard_cap_pct:
+        return 0.0
+    return (hard_cap_pct - current_sector_pct) / (hard_cap_pct - soft_cap_pct)
+
+
+def sector_allowance_pct(
+    current_sector_pct: float, *, soft_cap_pct: float, hard_cap_pct: float,
+) -> float:
+    """The most GROSS exposure (as % of equity) this sector may still take on.
+
+    This is the wall behind the dial. `sector_size_scale` shrinks what a trade
+    asks for; this bounds what it may receive no matter what it asked for, so
+    the sector can never be pushed PAST the hard ceiling in a single step.
+
+    Also monotonically non-increasing and never negative: it is
+    `(hard - current)` scaled by the dial, which is `(hard - current)` below
+    the soft cap and `(hard - current)^2 / (hard - soft)` between the caps.
+    Continuous at the soft cap (both branches give `hard - soft` there), so
+    there is no crowding level at which a heavier sector is granted MORE room
+    than a lighter one.
+    """
+    headroom = max(0.0, hard_cap_pct - current_sector_pct)
+    return headroom * sector_size_scale(
+        current_sector_pct, soft_cap_pct=soft_cap_pct, hard_cap_pct=hard_cap_pct,
+    )
+
+
 # --- Spec §9.4 "agreement earns size" -------------------------------------
 #
 # Shared polarity vocabulary. `PortfolioManagerAgent.validate_grounding`
@@ -563,12 +647,54 @@ class RiskRuleEngine:
             sector_value += (pending_sector_investment or {}).get(new_sector, 0.0)
             sector_value += gross_new
             sector_pct = sector_value / total_value * 100
+            # Spec §10.3. `max_sector_pct` is now the diversification TARGET,
+            # and breaching it is ADVISORY — it is reported to the AI Risk
+            # Manager and the audit trail, but it no longer drops the trade.
+            # The constructor has already shrunk the order for crowding
+            # (`sector_size_scale`); a sector over its target is information
+            # about the book, not a verdict on this idea.
             if sector_pct > self.config.max_sector_pct:
                 violations.append(RiskViolation(
                     rule="max_sector_pct",
-                    message=f"Sector '{new_sector}' would be {sector_pct:.1f}%, exceeds max {self.config.max_sector_pct}%",
+                    message=(
+                        f"Sector '{new_sector}' would be {sector_pct:.1f}%, over the "
+                        f"{self.config.max_sector_pct}% diversification target "
+                        f"(advisory — size was scaled for crowding, not refused; "
+                        f"the hard ceiling is {self.config.sector_hard_ceiling_pct:.0f}%)"
+                    ),
                     value=sector_pct,
                     limit=self.config.max_sector_pct,
+                ))
+            # The HARD BLOCK. Same allowance function the constructor sized
+            # against, so an order built by the constructor never trips this
+            # — exactly the relationship `max_position_pct` already has with
+            # its constructor clamp. What this catches is an order that
+            # reached the engine WITHOUT that sizing (a legacy notional
+            # target, an agent-authored modification, any future caller), and
+            # the absolute ceiling past which no conviction buys more
+            # concentration.
+            prior_sector_pct = (sector_value - gross_new) / total_value * 100
+            gross_new_pct = gross_new / total_value * 100
+            allowance_pct = sector_allowance_pct(
+                prior_sector_pct,
+                soft_cap_pct=self.config.max_sector_pct,
+                hard_cap_pct=self.config.sector_hard_ceiling_pct,
+            )
+            # Tolerance: the constructor rounds `allocation_pct` to 2dp, so an
+            # order sized to exactly the allowance can land a hair above it
+            # here. Blocking on float dust would resurrect the veto this
+            # section exists to remove.
+            if gross_new_pct > allowance_pct + 1e-6:
+                violations.append(RiskViolation(
+                    rule="max_sector_hard_pct",
+                    message=(
+                        f"{decision.symbol} would add {gross_new_pct:.1f}% gross to "
+                        f"sector '{new_sector}', already at {prior_sector_pct:.1f}%. "
+                        f"Crowding permits at most {allowance_pct:.2f}% more "
+                        f"(hard ceiling {self.config.sector_hard_ceiling_pct:.0f}%)"
+                    ),
+                    value=gross_new_pct,
+                    limit=allowance_pct,
                 ))
 
         return violations

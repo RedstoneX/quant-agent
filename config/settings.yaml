@@ -202,7 +202,21 @@ risk:
   max_position_pct: 20
   max_total_position_pct: 90
   max_daily_loss_pct: 3
+  # Spec §10.3 (owner-ratified 2026-09-01) — this is now the diversification
+  # TARGET, not a veto. A sector at or over 40% no longer refuses the next
+  # trade in it; the constructor SHRINKS that trade instead, progressively,
+  # so a high-conviction idea in a crowded sector is taken smaller rather
+  # than dropped. "Each trade opportunity is an opportunity on its own."
   max_sector_pct: 40
+  # ...and this is where the shrinking stops and the answer is still no.
+  # Without an absolute ceiling a sector could grow without limit through an
+  # infinite series of ever-smaller additions. 60 is 1.5x the target: at 60%
+  # of equity in one sector an ordinary 20% sector drawdown costs 12% of
+  # equity, four times the 3% daily-loss circuit breaker below — past that
+  # the book is a single-sector bet, not a portfolio with a tilt.
+  # A trade shrunk below cash_sweep.min_order_usd is refused outright rather
+  # than placed as a token position (see portfolio_constructor).
+  max_sector_hard_pct: 60
   # Owner-ratified total at-risk ceiling: sum of (shares x distance from entry
   # to stop) across the book, as a % of equity. NOT a notional cap — full
   # deployment is intended; risk is what gets rationed. ENFORCED as of

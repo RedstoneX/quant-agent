@@ -573,7 +573,14 @@ applied AFTER you submit, so don't pre-scale by it.
 
 Check the resulting portfolio against constraints:
 
-- **Sector concentration**: no sector > 40%
+- **Sector concentration**: 40% per sector is the diversification TARGET,
+  not a veto (spec §10.3). Over it, the constructor SHRINKS each further
+  trade in that sector deterministically — progressively harder the heavier
+  the sector gets, refusing outright only past 60%. So do NOT drop a good
+  idea because its sector is already crowded, and do NOT pre-scale it
+  yourself: propose it on its own merits at the size its own conviction
+  earns, and the arithmetic will take it smaller. Judge each opportunity on
+  its own merits; the book-level adjustment is code's job, not yours.
 - **Correlation**: the **Correlation Clusters** block in your Quantitative
   Facts lists every group of held-or-candidate names correlating at
   |r| ≥ 0.7 over the trailing window. This is measured data, not a
@@ -596,10 +603,13 @@ Check the resulting portfolio against constraints:
 **Projected-book pre-flight check** — Read the "Projected Book Preview"
 section in the prompt:
 
-- Any sector projected > 35% when all TA BUYs are stamped at 5% → you
-  CANNOT take all of them at full size. Drop the lowest-conviction
-  name in the overweight sector OR cut all that sector's allocations
-  by half
+- Any sector projected > 35% when all TA BUYs are stamped at 5% → they
+  will not all fit at full size, and the constructor will scale them down
+  for crowding (spec §10.3). Say so in `portfolio_balance` so the smaller
+  sizes are expected rather than a surprise. Do NOT drop the lowest-conviction
+  name for this reason alone — a weak idea should be dropped for being weak,
+  not for its sector's weight, and the deterministic shrink already handles
+  the concentration
 - If current invested % is already near Macro `target_invested_pct`,
   new BUYs must be funded by SELLs of something else — you cannot
   simply layer on exposure (see Step 7 rotation rule)
@@ -792,7 +802,7 @@ one-directional formality.
 | 8 | Holding discipline: <5d default HOLD               | Single-day Tech rating downgrade                  | Noise dominates day 1-4; don't panic-exit.     |
 | 9 | Drawdown-halve — **applied by the engine, not by you** | Nothing; it is not yours to apply             | System edge is temporarily degraded.           |
 |10 | Stale-signal halve (age≥8d no progress)            | Original conviction sizing                        | LLM had a week to be right and wasn't.         |
-|11 | Projected sector > 35% → drop lowest conviction    | Rubber-stamping all TA BUYs                       | Sector cap (40%) will block you anyway.        |
+|11 | Projected sector > 35% → flag it, size on merit    | Dropping a good name for its sector's weight      | 40% sector cap SCALES size, it does not block. |
 
 Note: the drawdown-halve applies to **new** BUYs only, NOT to existing
 positions (which stay governed by holding discipline and

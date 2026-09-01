@@ -81,6 +81,25 @@ class ConstructorConfig:
     # and the session trades nothing. Keep in sync with
     # `risk.max_position_pct` — pipeline.py wires them from the same setting.
     max_position_pct: float = 20.0
+    # Spec §10.3 "concentration scales size, it does not veto". The sector
+    # diversification target and the absolute ceiling behind it. Unlike every
+    # other ceiling in this dataclass these do not merely make the constructor
+    # size UNDER a hard block — between the two the block no longer exists at
+    # all, and this is the only place the shrinking happens. See
+    # `src/risk/rules.py::sector_size_scale` for the dial and the reasoning
+    # behind the 1.5x ceiling. Kept in sync with `risk.max_sector_pct` /
+    # `risk.max_sector_hard_pct` — pipeline.py wires them from the same
+    # settings the risk engine reads.
+    max_sector_pct: float = 40.0
+    max_sector_hard_pct: float = 60.0
+    # Spec §10.3's floor. A position shrunk to near-nothing by sector crowding
+    # still pays commission, still consumes a slot, still needs a stop and
+    # still needs watching — it cannot pay for its own risk. Below this the
+    # honest answer is no trade, not a token trade. Deliberately the SAME
+    # $500 threshold `cash_sweep.min_order_usd` already uses rather than a
+    # second, divergent notion of "too small to bother"; pipeline.py wires it
+    # from that setting.
+    min_order_usd: float = 500.0
     # Stage 3 (shorts). Mirrors `max_position_pct` for a short's single-name
     # ceiling — deliberately HALF of it (see src/config.py for why) — so
     # `_build_short` sizes UNDER the risk engine's hard block instead of
@@ -222,6 +241,12 @@ class PortfolioConstructor:
             evidence_registry=evidence_registry,
         )
 
+        # Spec §10.3. Held GROSS exposure per sector, carried through the
+        # loop and updated as each entry is built, so the second and third
+        # targets in one crowded sector are sized against a book that already
+        # contains the first.
+        sector_weights = self._current_sector_weights(positions, total_value)
+
         sells: list[TradeDecision] = []
         buys: list[TradeDecision] = []
 
@@ -302,8 +327,10 @@ class PortfolioConstructor:
                         total_value=total_value,
                         market_price=price_map.get(sym),
                         regime=regime,
+                        sector_weights=sector_weights,
                     )
                     if short_decision is not None:
+                        self._accrue_sector(sector_weights, short_decision)
                         sells.append(short_decision)
             else:
                 if current_pct < 0:
@@ -324,8 +351,10 @@ class PortfolioConstructor:
                         total_value=total_value,
                         market_price=price_map.get(sym),
                         regime=regime,
+                        sector_weights=sector_weights,
                     )
                     if buy_decision is not None:
+                        self._accrue_sector(sector_weights, buy_decision)
                         buys.append(buy_decision)
 
         # Canonical ordering: SELLs first (free up cash), then BUYs.
@@ -751,6 +780,174 @@ class PortfolioConstructor:
         }
 
     @staticmethod
+    def _current_sector_weights(
+        positions: list[Position], total_value: float,
+    ) -> dict[str, float]:
+        """Held GROSS exposure per sector, as % of equity (spec §10.3).
+
+        Deliberately mirrors `RiskRuleEngine.check`'s sector arithmetic
+        term for term, because the constructor sizing against a different
+        book than the gate measures is how a scaled order gets blocked
+        anyway. Specifically: `market_value * _gross_multiplier(symbol)`,
+        and the sector read off the POSITION's own `sector` field rather
+        than `_get_sector(symbol)` — the engine sums held positions the
+        first way and resolves only the CANDIDATE symbol the second way, so
+        `_apply_sector_dial` does the same.
+
+        NOTE, and it is the engine's behaviour being copied rather than a
+        choice made here: `market_value` is used SIGNED, not as a magnitude.
+        Alpaca reports a short's market_value negative, so a held short
+        currently REDUCES its sector's measured weight even though the
+        engine's own comment on that block says "gross ... unsigned
+        magnitude". That mismatch predates §10.3 and is left exactly as it
+        is — matching it keeps the two consumers in agreement, and changing
+        it would silently tighten the sector cap on any book holding shorts,
+        which is not this change's business.
+        """
+        if total_value <= 0:
+            return {}
+        from src.risk.rules import _gross_multiplier
+        weights: dict[str, float] = {}
+        for p in positions:
+            sector = (p.sector or "").strip()
+            if not sector or sector == "Unknown":
+                # The engine skips the sector cap entirely for an unknown
+                # sector; counting it here would ration against exposure the
+                # gate does not measure.
+                continue
+            weights[sector] = weights.get(sector, 0.0) + (
+                p.market_value * _gross_multiplier(p.symbol) / total_value * 100
+            )
+        return weights
+
+    def _apply_sector_dial(
+        self,
+        symbol: str,
+        allocation_pct: float,
+        *,
+        sector_weights: dict[str, float],
+        total_value: float,
+    ) -> tuple[float, str]:
+        """Spec §10.3. Shrink a crowded sector's next trade instead of vetoing it.
+
+        Returns `(allocation_pct, note)`. `allocation_pct` is RAW notional
+        percent (the units every downstream consumer spends); the sector
+        budget is GROSS, so the conversion happens here exactly once, the
+        same way the single-name clamp above does it.
+
+        Returns a NEGATIVE allocation to mean "refuse" — either the sector is
+        at its absolute ceiling, or what crowding leaves is too small to be
+        worth trading. The callers already treat `<= 0` as no order.
+        """
+        from src.risk.rules import (
+            _gross_multiplier, sector_allowance_pct, sector_size_scale,
+        )
+        from src.execution.broker import _get_sector
+
+        sector = _get_sector(symbol)
+        if not sector or sector == "Unknown":
+            # No sector, no concentration question — matches the engine,
+            # which skips the cap outright for an unknown sector.
+            return allocation_pct, ""
+
+        current_pct = sector_weights.get(sector, 0.0)
+        scale = sector_size_scale(
+            current_pct,
+            soft_cap_pct=self.cfg.max_sector_pct,
+            hard_cap_pct=self.cfg.max_sector_hard_pct,
+        )
+        allowance_gross = sector_allowance_pct(
+            current_pct,
+            soft_cap_pct=self.cfg.max_sector_pct,
+            hard_cap_pct=self.cfg.max_sector_hard_pct,
+        )
+        gross_mul = _gross_multiplier(symbol)
+        # Below the diversification target the dial is inert (scale == 1.0)
+        # and the allowance is wider than any single name may take anyway —
+        # say nothing, change nothing, so an uncrowded trade's audit trail
+        # is not cluttered with a cap that never bound.
+        scaled = allocation_pct * scale
+        allowance_raw = allowance_gross / gross_mul
+        final = min(scaled, allowance_raw)
+        if final >= allocation_pct:
+            return allocation_pct, ""
+
+        if scale <= 0.0 or allowance_raw <= 0.0:
+            logger.info(
+                "Constructor: %s refused — sector '%s' is at %.1f%% gross, at "
+                "or past the %.0f%% absolute ceiling; no size is available.",
+                symbol, sector, current_pct, self.cfg.max_sector_hard_pct,
+            )
+            return -1.0, (
+                f" [constructor: REFUSED — sector '{sector}' is at "
+                f"{current_pct:.1f}% of equity, at or past the "
+                f"{self.cfg.max_sector_hard_pct:.0f}% absolute ceiling. "
+                f"Concentration scales size, but not without end]"
+            )
+
+        # The floor. A position this small cannot pay for its own risk.
+        notional = total_value * final / 100
+        if notional < self.cfg.min_order_usd:
+            logger.info(
+                "Constructor: %s refused — sector '%s' at %.1f%% leaves only "
+                "%.2f%% (~$%.0f), under the $%.0f minimum order.",
+                symbol, sector, current_pct, final, notional,
+                self.cfg.min_order_usd,
+            )
+            return -1.0, (
+                f" [constructor: REFUSED — sector '{sector}' is at "
+                f"{current_pct:.1f}% of equity, so crowding leaves only "
+                f"{final:.2f}% (~${notional:,.0f}). That is under the "
+                f"${self.cfg.min_order_usd:,.0f} minimum order: a position "
+                f"this small pays full commission and full attention for an "
+                f"immaterial payoff, so it is not taken at all]"
+            )
+
+        logger.info(
+            "Constructor: %s size scaled for sector crowding "
+            "(%.2f%% → %.2f%%; sector '%s' at %.1f%% gross, target %.0f%%, "
+            "ceiling %.0f%%, dial %.2f)",
+            symbol, allocation_pct, final, sector, current_pct,
+            self.cfg.max_sector_pct, self.cfg.max_sector_hard_pct, scale,
+        )
+        # Provenance for the AI Risk Manager and the owner. A smaller position
+        # than the PM asked for must never be silently applied — someone
+        # seeing an unexpectedly small position has to be able to find out
+        # why, and this is the string that tells them.
+        return final, (
+            f" [constructor: size scaled {allocation_pct:.2f}% → {final:.2f}% "
+            f"because sector '{sector}' is already {current_pct:.1f}% of "
+            f"equity, over the {self.cfg.max_sector_pct:.0f}% diversification "
+            f"target. The idea was judged on its own merits and taken, just "
+            f"smaller; it is refused only past {self.cfg.max_sector_hard_pct:.0f}%. "
+            f"Deterministic, not PM inconsistency]"
+        )
+
+    def _accrue_sector(
+        self,
+        sector_weights: dict[str, float],
+        decision: TradeDecision,
+    ) -> None:
+        """Book an order's GROSS sector consumption so the NEXT order in the
+        same batch sees a book that already contains it.
+
+        Without this, three targets in one crowded sector would each be sized
+        against the same stale starting weight and collectively breach the
+        ceiling — the identical accumulator the pipeline's risk filter keeps
+        in `pending_sector_investment`, for the identical reason.
+        """
+        from src.risk.rules import _gross_multiplier
+        from src.execution.broker import _get_sector
+        if decision.action not in ("BUY", "SHORT"):
+            return
+        sector = _get_sector(decision.symbol)
+        if not sector or sector == "Unknown":
+            return
+        sector_weights[sector] = sector_weights.get(sector, 0.0) + (
+            decision.allocation_pct * _gross_multiplier(decision.symbol)
+        )
+
+    @staticmethod
     def _hold_decision(target: TargetPosition) -> TradeDecision:
         """Record PM's explicit 'keep' intent as a HOLD for audit trail."""
         return TradeDecision(
@@ -867,6 +1064,7 @@ class PortfolioConstructor:
         market_price: float | None,
         plan: RiskPlan | None = None,
         regime: str | None = None,
+        sector_weights: dict[str, float] | None = None,
     ) -> TradeDecision | None:
         # A risk-based target already resolved its entry and stop in
         # _plan_risk_targets — reusing them keeps the size the budget granted
@@ -985,6 +1183,20 @@ class PortfolioConstructor:
             )
             allocation_pct = name_headroom_pct
 
+        # Spec §10.3. Sector crowding scales the size; it does not veto the
+        # trade. Applied LAST, after the risk budget and the single-name
+        # ceiling, because it operates on what this order would actually
+        # deploy — scaling a number the clamps below would then have cut
+        # anyway would understate the position twice.
+        if sector_weights is not None:
+            allocation_pct, sector_note = self._apply_sector_dial(
+                target.symbol, allocation_pct,
+                sector_weights=sector_weights, total_value=total_value,
+            )
+            cap_note += sector_note
+            if allocation_pct < 0:
+                return None
+
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:
             return None
@@ -1029,6 +1241,7 @@ class PortfolioConstructor:
         market_price: float | None,
         plan: RiskPlan | None = None,
         regime: str | None = None,
+        sector_weights: dict[str, float] | None = None,
     ) -> TradeDecision | None:
         """The BUY-side mirror (Stage 3, D1): open or add to a short.
 
@@ -1123,6 +1336,18 @@ class PortfolioConstructor:
                 f"Deterministic, not PM inconsistency]"
             )
             allocation_pct = name_headroom_pct
+
+        # Spec §10.3, identical to `_build_buy`. The sector budget is GROSS —
+        # direction-agnostic — so a short crowds its sector exactly as a long
+        # does, and gets scaled for crowding exactly as a long does.
+        if sector_weights is not None:
+            allocation_pct, sector_note = self._apply_sector_dial(
+                target.symbol, allocation_pct,
+                sector_weights=sector_weights, total_value=total_value,
+            )
+            cap_note += sector_note
+            if allocation_pct < 0:
+                return None
 
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:

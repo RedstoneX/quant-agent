@@ -1,6 +1,7 @@
 import os
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -383,6 +384,20 @@ class RiskConfig(BaseModel):
     max_total_position_pct: float = Field(gt=0)
     max_daily_loss_pct: float = Field(gt=0, le=100)
     max_sector_pct: float = Field(gt=0, le=100)
+    # Spec §10.3 (owner-ratified 2026-09-01). `max_sector_pct` above is no
+    # longer a veto — it is the diversification TARGET, past which further
+    # trades in that sector are progressively SHRUNK rather than refused
+    # (`src/risk/rules.py::sector_size_scale`). This is the absolute ceiling
+    # the shrinking runs into, past which the answer is still no. Without it
+    # a sector could grow without limit through ever-smaller additions.
+    #
+    # Default is 1.5x the diversification target, deriving from
+    # `max_sector_pct` rather than hard-coding 60 so that an operator who
+    # tightens or loosens the target moves the ceiling with it instead of
+    # silently leaving the two inconsistent. See `sector_allowance_pct` for
+    # why 1.5x: at 60% of equity in one sector an ordinary 20% sector
+    # drawdown costs 12% of equity, four times `max_daily_loss_pct`.
+    max_sector_hard_pct: float | None = Field(default=None, gt=0, le=100)
     require_stop_loss: bool
     # Owner-ratified total at-risk ceiling (2026-08-27): the sum of every
     # position's loss-if-stopped, measured against cost basis, may not exceed
@@ -483,6 +498,41 @@ class RiskConfig(BaseModel):
     agreement_ceiling_pct: list[float] = Field(
         default_factory=lambda: [3.0, 4.0, 5.0, 5.0, 5.0],
     )
+
+    #: Spec §10.3. Multiple of `max_sector_pct` used as the absolute sector
+    #: ceiling when `max_sector_hard_pct` is not set explicitly. ClassVar, so
+    #: pydantic treats it as a constant rather than a settable field.
+    SECTOR_HARD_MULTIPLE: ClassVar[float] = 1.5
+
+    @property
+    def sector_hard_ceiling_pct(self) -> float:
+        """The absolute sector ceiling, explicit or derived.
+
+        Every consumer reads this rather than `max_sector_hard_pct` directly,
+        so the "unset means 1.5x the target" rule lives in exactly one place.
+        """
+        if self.max_sector_hard_pct is not None:
+            return self.max_sector_hard_pct
+        return min(100.0, self.max_sector_pct * self.SECTOR_HARD_MULTIPLE)
+
+    @model_validator(mode="after")
+    def _sector_hard_ceiling_is_above_the_target(self):
+        # A hard ceiling below the diversification target would mean the
+        # scaling band runs backwards, and `sector_size_scale` would fall
+        # back to gate behaviour silently. That is a config error worth
+        # failing on rather than absorbing: the operator asked for something
+        # incoherent and would otherwise never find out.
+        if (
+            self.max_sector_hard_pct is not None
+            and self.max_sector_hard_pct < self.max_sector_pct
+        ):
+            raise ValueError(
+                "risk.max_sector_hard_pct "
+                f"({self.max_sector_hard_pct}) must be >= risk.max_sector_pct "
+                f"({self.max_sector_pct}) — the absolute ceiling cannot sit "
+                "below the diversification target it backstops"
+            )
+        return self
 
     @model_validator(mode="after")
     def _agreement_ceiling_is_well_formed(self):

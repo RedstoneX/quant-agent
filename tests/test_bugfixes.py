@@ -318,12 +318,65 @@ def test_pipeline_hard_risk_filter_blocks_missing_stop_loss():
 
 
 def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
+    """The pipeline filter accumulates pending sector exposure across a batch.
+
+    AMENDED for spec §10.3 (owner-ratified 2026-09-01). The accumulation this
+    test exists to prove is unchanged — the second BUY is still measured
+    against a sector the first one already filled. What moved is the boundary
+    it is measured against: `max_sector_pct` is now the diversification
+    TARGET, breaching it is advisory, and the hard block sits at
+    `max_sector_hard_pct` (the absolute ceiling). Two 35% BUYs are used
+    instead of two 25% BUYs so the second one crosses the boundary that now
+    blocks. The companion test below pins the other half of §10.3: at the OLD
+    40% boundary nothing is blocked any more.
+    """
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
+        max_position_pct=40,
+        max_total_position_pct=90,
+        max_daily_loss_pct=3,
+        max_sector_pct=40,
+        max_sector_hard_pct=60,
+        require_stop_loss=True,
+    ))
+    decisions = [
+        TradeDecision(
+            action="BUY", symbol="AAPL", allocation_pct=35,
+            entry_price=200, stop_loss=190, take_profit=220, reasoning="test",
+        ),
+        TradeDecision(
+            action="BUY", symbol="MSFT", allocation_pct=35,
+            entry_price=400, stop_loss=380, take_profit=430, reasoning="test",
+        ),
+    ]
+
+    with patch("src.pipeline._get_sector", return_value="Technology"), patch(
+        "src.execution.broker._get_sector", return_value="Technology"
+    ):
+        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+            decisions, positions=[], total_value=100000, daily_pnl=0,
+        )
+
+    assert [d.symbol for d in allowed] == ["AAPL"]
+    assert any("Technology" in reason for reason in blocked)
+
+
+def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
+    """Spec §10.3: concentration scales size, it does not veto.
+
+    The exact scenario the test above used to assert a BLOCK on — two 25%
+    same-sector BUYs, taking Technology to 50% against a 40% target. Both
+    must now pass the deterministic gate (the constructor is what shrinks
+    them), with the target breach reported as an advisory violation rather
+    than swallowing the trade.
+    """
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=30,
         max_total_position_pct=90,
         max_daily_loss_pct=3,
         max_sector_pct=40,
+        max_sector_hard_pct=60,
         require_stop_loss=True,
     ))
     decisions = [
@@ -344,9 +397,11 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
             decisions, positions=[], total_value=100000, daily_pnl=0,
         )
 
-    assert [d.symbol for d in allowed] == ["AAPL"]
-    assert violations == []
-    assert any("Technology" in reason for reason in blocked)
+    assert [d.symbol for d in allowed] == ["AAPL", "MSFT"]
+    assert blocked == []
+    # Reported, not silent: the book being over its target is real information
+    # for the AI Risk Manager even though it no longer kills the trade.
+    assert "max_sector_pct" in [v.rule for v in violations]
 
 
 def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
