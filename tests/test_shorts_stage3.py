@@ -84,12 +84,21 @@ def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
 
 
 def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
-                     atr_14=None, horizon=60) -> TechAnalysisResult:
+                     atr_14=None, horizon=60, computed=None) -> TechAnalysisResult:
+    """`computed_levels` deliberately carries the TARGET and not the stop.
+
+    Since spec §12.1 that field also decides whether the ATR noise band
+    applies: a stop sitting at a level the system COMPUTED is honoured
+    rather than widened. Listing the stop would quietly convert the
+    widening tests below into level-backed tests. Here the stop is the
+    analyst's own number with nothing computed under it — the case the band
+    exists for. `computed` is available for tests that want the other case.
+    """
     return TechAnalysisResult(
         symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[target], resistance_levels=[stop],
-        computed_levels=[target, stop],
+        computed_levels=[target] if computed is None else computed,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
@@ -339,6 +348,167 @@ def test_short_widened_stop_failing_reward_risk_floor_is_rejected():
         entry_price=250.0, stop_loss=252.0, direction="short",
     )
     assert widened is None
+
+
+# ==========================================================================
+# 4b. §12.1 — a short's stop at a VERIFIED level is honoured, however tight
+# ==========================================================================
+#
+# Fully mirrored from the long side (see the matching block in
+# tests/test_risk_based_sizing.py). Nothing about §12.1 is long-only: the
+# comparison operators and the direction of the floor are the whole of the
+# difference. A long is held up by structure at or BELOW its entry; a short
+# is capped by structure at or ABOVE its entry.
+#
+# Shared geometry: entry $250.00, ATR $5.00, a "range" setup (3.0 base x 1.15
+# = 3.45 ATRs), so the noise band sits at 250 + 3.45 x 5 = $267.25 and the 1x
+# ATR absolute floor at $255.00. Match tolerance is 0.25 x ATR = $1.25. The
+# computed support at $220.00 becomes the derived target.
+
+_S_ENTRY = 250.0
+_S_ATR = 5.0
+_S_BAND_EDGE = 267.25     # 3.45 x ATR above entry — the OLD unconditional stop
+_S_HARD_FLOOR = 255.0     # 1.00 x ATR above entry — the new deterministic floor
+_S_TARGET_LEVEL = 220.0   # computed support below entry; the derived target
+
+
+def test_short_level_backed_tight_stop_is_honoured_not_widened():
+    """§12.1, short side. A stop 1.7 ATRs above entry sits well inside the
+    3.45 ATR band and would have been overwritten. A COMPUTED resistance
+    level at that price means it is real, so it survives."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_short_target()], positions=[],
+        analyses=[_short_analysis(
+            entry=_S_ENTRY, stop=258.5, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+            computed=[_S_TARGET_LEVEL, 258.5],
+        )],
+        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == 258.5
+    assert decisions[0].stop_loss != _S_BAND_EDGE
+
+
+def test_short_unbacked_tight_stop_is_still_widened_to_the_band():
+    """The old behaviour, intact. Same trade, but nothing computed sits above
+    the $258.50 stop — the analyst simply placed it there — so the band
+    applies exactly as it always did and the stop ships at $267.25."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_short_target()], positions=[],
+        analyses=[_short_analysis(
+            entry=_S_ENTRY, stop=258.5, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+            computed=[_S_TARGET_LEVEL],     # the stop is NOT a computed level
+        )],
+        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == _S_BAND_EDGE
+
+
+def test_short_reward_risk_is_measured_against_the_stop_that_will_ship():
+    """The point of §12.1 on the short side. Reward $30.00 is fixed by the
+    computed target; the risk is whichever stop actually ships. Honoured:
+    30.00 / 8.50 = 3.53. Widened: 30.00 / 17.25 = 1.74. Both clear the floor
+    here, and the honoured one is worth more than twice as much — which is
+    also what lets it carry a bigger position for the same risk budget."""
+    constructor = PortfolioConstructor()
+
+    def stop_for(computed):
+        return constructor._widen_stop_past_noise(
+            "TSLA",
+            _short_analysis(entry=_S_ENTRY, stop=258.5,
+                            target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+                            computed=computed),
+            entry_price=_S_ENTRY, stop_loss=258.5, direction="short",
+            target_price=_S_TARGET_LEVEL,
+        )
+
+    honoured = stop_for([_S_TARGET_LEVEL, 258.5])
+    assert honoured == 258.5
+    assert round((_S_ENTRY - _S_TARGET_LEVEL) / (honoured - _S_ENTRY), 2) == 3.53
+
+    widened = stop_for([_S_TARGET_LEVEL])
+    assert widened == _S_BAND_EDGE
+    assert round((_S_ENTRY - _S_TARGET_LEVEL) / (widened - _S_ENTRY), 2) == 1.74
+
+
+def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
+    """The deterministic backstop, mirrored. §12.1's safety argument rests on
+    a rule written in `config/prompts/tech_analyst.md`, and Invariant 2
+    requires the deterministic layer to be the final authority. A real
+    resistance level $2.00 above entry is genuine structure AND a guaranteed
+    whipsaw, so the stop moves out to exactly 1x ATR — not to the 3.45x
+    band."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_short_target()], positions=[],
+        analyses=[_short_analysis(
+            entry=_S_ENTRY, stop=252.0, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+            computed=[_S_TARGET_LEVEL, 252.0],
+        )],
+        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == _S_HARD_FLOOR
+    assert decisions[0].stop_loss != _S_BAND_EDGE
+
+
+def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
+    """0.25 x ATR = $1.25 from the computed level at $258.50. $259.50 is
+    sitting on it; $260.00 is not, and gets the band like any unbacked
+    stop."""
+    constructor = PortfolioConstructor()
+
+    def stop_for(stop):
+        return constructor._widen_stop_past_noise(
+            "TSLA",
+            _short_analysis(entry=_S_ENTRY, stop=stop,
+                            target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+                            computed=[_S_TARGET_LEVEL, 258.5]),
+            entry_price=_S_ENTRY, stop_loss=stop, direction="short",
+            target_price=_S_TARGET_LEVEL,
+        )
+
+    assert stop_for(259.5) == 259.5              # gap $1.00, inside tolerance
+    assert stop_for(260.0) == _S_BAND_EDGE       # gap $1.50, outside it
+
+
+def test_short_level_the_model_asserted_does_not_earn_the_exemption():
+    """`resistance_levels` is the LLM's own output and names the stop price
+    exactly. `computed_levels`, which only Python writes, does not. The band
+    applies — a model must not be able to buy an exemption from the noise
+    floor by asserting a level beside its stop."""
+    constructor = PortfolioConstructor()
+    analysis = _short_analysis(
+        entry=_S_ENTRY, stop=258.5, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+        computed=[_S_TARGET_LEVEL],
+    )
+    assert analysis.resistance_levels == [258.5]       # the model said so
+    assert 258.5 not in analysis.computed_levels       # the chart did not
+    assert constructor._widen_stop_past_noise(
+        "TSLA", analysis, entry_price=_S_ENTRY, stop_loss=258.5,
+        direction="short", target_price=_S_TARGET_LEVEL,
+    ) == _S_BAND_EDGE
+
+
+def test_short_a_level_below_entry_cannot_back_a_shorts_stop():
+    """Side discipline, mirrored. A short's stop sits above entry, so only
+    structure at or above entry can be what it rests on. The $220.00 computed
+    support is a target, not a backstop."""
+    constructor = PortfolioConstructor()
+    analysis = _short_analysis(
+        entry=_S_ENTRY, stop=258.5, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+        computed=[_S_TARGET_LEVEL, 258.5],
+    )
+    assert constructor._level_backing_stop(
+        analysis, _S_ENTRY, 258.5, _S_ATR, is_short=True,
+    ) == 258.5
+    # The support below entry is never eligible, at any distance.
+    assert constructor._level_backing_stop(
+        analysis, _S_ENTRY, _S_TARGET_LEVEL, _S_ATR, is_short=True,
+    ) is None
 
 
 # ==========================================================================

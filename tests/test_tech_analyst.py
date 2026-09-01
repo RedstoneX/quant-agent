@@ -1,6 +1,7 @@
 import json
+import pathlib
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
@@ -8,6 +9,7 @@ import pytest
 
 from src.agents.tech_analyst import TechAnalystAgent, _CHUNK_SIZE
 from src.cost_circuit import LLMCostCircuitBreaker
+from src.data.levels import find_structural_levels
 from src.models import OHLCV, TechnicalIndicators
 from src.storage.db import Database
 
@@ -765,3 +767,107 @@ def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
             ("run-tech-spent-retries",),
         ).fetchone()
     assert row == (3, 3, 2, "active")
+
+
+# ==========================================================================
+# §12.1 — `computed_levels` is PYTHON's field. The model cannot write it.
+# ==========================================================================
+#
+# Since spec §12.1 this field decides whether a tight stop is honoured or
+# widened to the ATR noise band. If a language model could set it, the
+# verification would be worthless: a model would only have to assert a level
+# beside its stop to buy itself an exemption from the noise floor. Two things
+# have to hold, and both are pinned here — the field is not in the schema the
+# model is shown, and whatever the model sends is overwritten in code after
+# parsing.
+
+PROMPT_DIR = pathlib.Path(__file__).resolve().parent.parent / "config" / "prompts"
+
+
+def _structured_bars() -> list[OHLCV]:
+    """A chart that repeatedly turns at $90 and $110 — enough clean history
+    for `find_structural_levels` to report real levels."""
+    path: list[float] = []
+    for _ in range(20):
+        path += [90.0 + 20.0 * i / 6 for i in range(6)]
+        path += [110.0 - 20.0 * i / 6 for i in range(6)]
+    start = date(2024, 1, 1)
+    return [
+        OHLCV(date=start + timedelta(days=i), open=c, high=c + 0.4,
+              low=c - 0.4, close=c, volume=1_000_000)
+        for i, c in enumerate(path)
+    ]
+
+
+def _response_asserting_levels(symbol: str, claimed: list[float]) -> str:
+    """The full valid schema, plus a `computed_levels` the model made up."""
+    payload = json.loads(_valid_response_for(symbol))
+    payload[0]["computed_levels"] = claimed
+    return json.dumps(payload)
+
+
+def test_the_prompt_never_shows_the_model_the_computed_levels_field():
+    """Half of the guarantee: it is not in the schema the model is given, so
+    a well-behaved model has no reason to emit it at all."""
+    prompt = (PROMPT_DIR / "tech_analyst.md").read_text()
+    assert "computed_levels" not in prompt
+
+
+@patch("anthropic.Anthropic")
+def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
+    mock_cls, sample_indicators,
+):
+    """The other half, and the one that matters: a MISbehaving model emits
+    the field anyway, and code overwrites it unconditionally with what
+    `find_structural_levels` actually found in the bars. The model's numbers
+    reach nothing downstream. Without this, §12.1's 'verified level' check
+    could be satisfied by a model simply saying so."""
+    bars = _structured_bars()
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(
+        text=_response_asserting_levels("SPY", [999.0, 1000.0]),
+    )]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 200
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_sym_data("SPY", bars, sample_indicators))
+
+    supports, resistances = find_structural_levels(bars)
+    expected = sorted(lv.price for lv in (*supports, *resistances))
+    assert expected, "fixture must produce real structure for this to mean anything"
+
+    spy = results["SPY"]
+    assert spy.computed_levels == expected
+    assert 999.0 not in spy.computed_levels
+    assert 1000.0 not in spy.computed_levels
+
+
+@patch("anthropic.Anthropic")
+def test_asserted_levels_are_wiped_even_when_the_chart_yields_none(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """Fails closed. One bar is not enough history for any level, and
+    `find_structural_levels` says so by returning nothing. The model's
+    invented levels must not survive into that gap — an empty list means
+    'no structure was computed', which denies the §12.1 exemption rather
+    than granting it on the model's say-so."""
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(
+        text=_response_asserting_levels("SPY", [494.0, 530.0]),
+    )]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 200
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_sym_data("SPY", sample_bars, sample_indicators))
+
+    # The model named its own stop ($494) as a computed level. It is gone.
+    assert results["SPY"].stop_loss == 494.0
+    assert results["SPY"].computed_levels == []

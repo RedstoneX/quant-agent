@@ -714,6 +714,16 @@ class TradingPipeline:
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
             ),
+            # Spec §12.1 — a stop sitting at a level the system COMPUTED is
+            # honoured whatever the band says, down to a deterministic 1x ATR
+            # floor. Same "wire from the ratified setting, not the
+            # constructor's own default" pattern as every ceiling above.
+            level_match_atr_tolerance=_risk_setting(
+                "level_match_atr_tolerance", 0.25,
+            ),
+            absolute_min_stop_atr_multiple=_risk_setting(
+                "absolute_min_stop_atr_multiple", 1.0,
+            ),
             # Target derivation (2026-09-01) — the numerator of the ratio
             # above, computed from bars instead of guessed by the analyst.
             # Wired from the ratified settings, same pattern as every

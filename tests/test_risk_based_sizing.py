@@ -541,18 +541,30 @@ def test_the_ceiling_flattens_conviction_at_realistic_stop_distances():
 # Stop width — the root cause behind both the sizing squeeze and noise exits
 # --------------------------------------------------------------------------
 
-def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60):
+def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
+                  computed=None):
+    """A widening fixture: the stop is NOT at a computed structural level.
+
+    `computed_levels` defaults to the target alone, and that default is
+    load-bearing. Since 2026-09-01 the take-profit is derived from these
+    rather than from `reference_target`, and the reward:risk check inside
+    `_widen_stop_past_noise` measures against the DERIVED number — so the
+    fixture has to supply the structure the derivation reads. But since
+    spec §12.1 the same field also decides whether the ATR band applies at
+    all: a stop sitting at a computed level is honoured instead of widened.
+    Listing the stop here would therefore silently turn every widening test
+    below into a level-backed test. The stop is the ANALYST's number, with
+    nothing computed under it, which is precisely the case the band exists
+    for. `computed` is available for the level-backed tests, which say so
+    in their own names.
+    """
     from src.models import TechReasoningChain
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test", support_levels=[stop],
         resistance_levels=[target], setup_type=setup,
         expected_horizon_sessions=horizon, atr_14=atr,
-        # Since 2026-09-01 the take-profit is derived from these, not from
-        # `reference_target`. The reward:risk check inside
-        # `_widen_stop_past_noise` measures against the DERIVED number, so a
-        # widening fixture has to supply the structure the derivation reads.
-        computed_levels=[stop, target],
+        computed_levels=[target] if computed is None else computed,
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x"),
@@ -662,3 +674,285 @@ def test_wider_stops_give_conviction_room_to_change_the_size():
         return d[0].allocation_pct
 
     assert alloc(0.5) < alloc(1.0) < alloc(1.5)
+
+
+# --------------------------------------------------------------------------
+# §12.1 — a stop at a VERIFIED structural level is honoured, however tight
+# --------------------------------------------------------------------------
+#
+# The defect: `min_stop_atr_multiple` OVERWROTE the level-derived stop
+# whenever the level sat closer to entry than the band. The stop then pointed
+# at nothing real, and `min_reward_risk_after_widening` was judged against
+# that fabricated number. Over a ~15-session hold a stock travels ~3.9 ATR,
+# so against a 3.0-ATR stop the best achievable ratio is ~1.29 against a 1.5
+# floor — essentially no trade could pass. On 2026-09-01 the desk reviewed 38
+# qualified signals and placed ZERO trades.
+#
+# "Verified" means the price came out of `find_structural_levels` and was
+# attached to the analysis IN PYTHON (`computed_levels`). A level the MODEL
+# asserts earns nothing — otherwise a model could buy itself an exemption
+# from the noise floor by naming a number beside its stop.
+#
+# Shared geometry for the block below: entry $100.00, ATR $2.35, a "range"
+# setup (3.0 base x 1.15 = 3.45 ATRs), so the noise band sits at
+# 100 - 3.45 x 2.35 = $91.89 and the 1x ATR absolute floor at $97.65.
+# Match tolerance is 0.25 x ATR = $0.5875.
+
+_ENTRY = 100.0
+_ATR = 2.35
+_BAND_EDGE = 91.89        # 3.45 x ATR below entry — the OLD unconditional stop
+_HARD_FLOOR = 97.65       # 1.00 x ATR below entry — the new deterministic floor
+_UPPER_LEVEL = 112.0      # computed resistance; becomes the derived target
+
+
+def test_a_level_backed_tight_stop_is_honoured_not_widened():
+    """The whole point of §12.1. A stop 1.7 ATRs out — the median this book
+    was actually placing, measured 2026-08-27 — sits well inside the 3.45 ATR
+    band. Because a COMPUTED support level sits under it, it survives."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis(
+            "MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+            computed=[96.0, _UPPER_LEVEL],
+        )],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == 96.0
+    # And emphatically NOT the band edge, which is what shipped before.
+    assert decisions[0].stop_loss != _BAND_EDGE
+
+
+def test_an_unbacked_tight_stop_is_still_widened_to_the_band():
+    """The other half, and the part that must not regress. Identical trade,
+    except nothing computed sits under the $96.00 stop — the analyst simply
+    placed it there. The band applies exactly as it always did, and here it
+    is fatal: risk 8.11 against reward 12.00 is R/R 1.48, under the floor."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis(
+            "MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+            computed=[_UPPER_LEVEL],       # the stop is NOT a computed level
+        )],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert decisions == []
+
+
+def test_reward_risk_is_measured_against_the_stop_that_will_actually_ship():
+    """The pair above IS the fix, stated as arithmetic.
+
+    Same entry, same stop, same computed target $112.00. Against the
+    fabricated band stop the ratio is 12.00 / 8.11 = 1.48 and the trade dies;
+    against the stop the desk will actually place it is 12.00 / 4.00 = 3.00
+    and it trades. Nothing about the trade changed — only which stop the
+    division was performed on, which is the defect §12.1 removes."""
+    constructor = PortfolioConstructor()
+
+    def stop_for(computed):
+        return constructor._widen_stop_past_noise(
+            "MSFT",
+            _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+                          computed=computed),
+            entry_price=_ENTRY, stop_loss=96.0, target_price=_UPPER_LEVEL,
+        )
+
+    honoured = stop_for([96.0, _UPPER_LEVEL])
+    assert honoured == 96.0
+    assert (_UPPER_LEVEL - _ENTRY) / (_ENTRY - honoured) == 3.0
+
+    # Unbacked: widened, and the ratio against the widened stop is under 1.5,
+    # so the function refuses rather than returning a worse trade.
+    assert stop_for([_UPPER_LEVEL]) is None
+    assert round((_UPPER_LEVEL - _ENTRY) / (_ENTRY - _BAND_EDGE), 2) == 1.48
+
+
+def test_a_level_backed_stop_inside_one_atr_is_floored_at_one_atr_not_the_band():
+    """Beyond the literal §12.1 wording, and deliberately so.
+
+    §12.1 argues the exemption is safe because `config/prompts/tech_analyst.md`
+    forbids a stop inside 1*ATR. That is a PROMPT; Invariant 2 requires the
+    deterministic layer to be the final authority and to fail closed. A real
+    support level $1.00 under entry is genuine structure AND a guaranteed
+    whipsaw. So it is pushed out to exactly 1x ATR — NOT to the 3.45x band,
+    which is the behaviour §12.1 removed."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis(
+            "MSFT", _ENTRY, 99.0, _UPPER_LEVEL, atr=_ATR,
+            computed=[99.0, _UPPER_LEVEL],
+        )],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == _HARD_FLOOR
+    assert decisions[0].stop_loss != _BAND_EDGE
+    # The floor is configurable and is the only thing that moved the stop.
+    assert _HARD_FLOOR == round(_ENTRY - 1.0 * _ATR, 2)
+
+
+def test_the_absolute_floor_is_configurable_and_can_be_switched_off():
+    """It is an owner-reversible addition, so it must be reachable from
+    config rather than baked in. At 0 the ratified §12.1 wording applies
+    literally: the level-backed stop is honoured however tight."""
+    constructor = PortfolioConstructor(ConstructorConfig(
+        absolute_min_stop_atr_multiple=0.0,
+    ))
+    assert constructor._widen_stop_past_noise(
+        "MSFT",
+        _vol_analysis("MSFT", _ENTRY, 99.0, _UPPER_LEVEL, atr=_ATR,
+                      computed=[99.0, _UPPER_LEVEL]),
+        entry_price=_ENTRY, stop_loss=99.0, target_price=_UPPER_LEVEL,
+    ) == 99.0
+
+
+def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
+    """The tolerance is a boundary, not a suggestion. 0.25 x ATR = $0.5875
+    from the computed level at $96.00: $96.50 is sitting on it, $96.70 is
+    not, and the second one gets the band like any unbacked stop."""
+    constructor = PortfolioConstructor()
+
+    def stop_for(stop):
+        return constructor._widen_stop_past_noise(
+            "MSFT",
+            _vol_analysis("MSFT", _ENTRY, stop, 130.0, atr=_ATR,
+                          computed=[96.0, 130.0]),
+            entry_price=_ENTRY, stop_loss=stop, target_price=130.0,
+        )
+
+    assert stop_for(96.5) == 96.5                      # gap $0.50, inside
+    assert round(stop_for(96.7), 2) == _BAND_EDGE      # gap $0.70, outside
+
+
+def test_a_level_the_model_asserted_does_not_earn_the_exemption():
+    """The verification would be worthless if the model could write to it.
+
+    Here `support_levels` — which the LLM emits — names $96.00 exactly, and
+    the stop sits on it. `computed_levels`, which only Python writes, does
+    not. The band applies, because the analyst asserting a level is not the
+    system having computed one."""
+    constructor = PortfolioConstructor()
+    analysis = _vol_analysis("MSFT", _ENTRY, 96.0, 130.0, atr=_ATR,
+                             computed=[130.0])
+    assert analysis.support_levels == [96.0]           # the model said so
+    assert 96.0 not in analysis.computed_levels        # the chart did not
+    assert round(constructor._widen_stop_past_noise(
+        "MSFT", analysis, entry_price=_ENTRY, stop_loss=96.0,
+        target_price=130.0,
+    ), 2) == _BAND_EDGE
+
+
+def test_a_level_on_the_wrong_side_of_entry_cannot_back_a_stop():
+    """Side discipline. A long is held up by structure at or BELOW its entry;
+    a short is capped by structure at or ABOVE its entry. The same level
+    cannot serve both, and the check is made against THIS ENTRY rather than
+    against the last close — the same re-partition `derive_structural_target`
+    performs, for the same reason."""
+    constructor = PortfolioConstructor()
+    analysis = _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+                             computed=[96.0, _UPPER_LEVEL])
+    assert constructor._level_backing_stop(
+        analysis, _ENTRY, 96.0, _ATR, is_short=False,
+    ) == 96.0
+    # The identical level read as a SHORT's backing: it is below entry, so it
+    # cannot be what a short's stop above entry is resting on.
+    assert constructor._level_backing_stop(
+        analysis, _ENTRY, 96.0, _ATR, is_short=True,
+    ) is None
+
+
+# --------------------------------------------------------------------------
+# §12.1 — SLB, the 2026-09-01 refusal, reproduced
+# --------------------------------------------------------------------------
+
+class TestSLBStopIsHonoured:
+    """SLB, 2026-09-01 morning run: `strong_buy` / `high` conviction, entry
+    $60.10, and a shipped stop of $55.50 — 7.7% — that scored reward:risk
+    1.28 against a geometric maximum of ~1.29, so it was refused before
+    anyone judged the trade.
+
+    **The level data here is SYNTHETIC**, exactly as
+    `tests/test_target_derivation.py::TestSLB` states for its own fixtures.
+    The production bars for that session are not in this repository. These
+    assert what the RULE does with a plausible chart, not what SLB's actual
+    chart contained, and no claim is made about a live outcome.
+
+    The arithmetic is pinned to that other reproduction so the two agree: the
+    shipped $55.50 stop is exactly 3.45 ATRs out (the 3.0 base x 1.15 for a
+    range setup), which back-solves ATR = $1.3333. The analyst's own stop is
+    placed at 1.7 ATRs — the median this book's stops actually sat at,
+    measured 2026-08-27 and quoted in §12.1.
+    """
+
+    ENTRY = 60.10
+    ATR = 4.60 / 3.45                  # ~$1.3333, back-solved from the 7.7% stop
+    BAND_STOP = 55.50                  # 3.45 x ATR — what the old rule shipped
+    LEVEL_STOP = 57.83                 # 1.70 x ATR — at a computed support shelf
+    SHELF = 65.99                      # computed resistance; the derived target
+    HORIZON = 15                       # the ~15-session hold §12.1 reasons about
+    FLOOR = 1.5
+
+    def _analysis(self, computed):
+        return _vol_analysis(
+            "SLB", self.ENTRY, self.LEVEL_STOP, self.SHELF, atr=self.ATR,
+            horizon=self.HORIZON, computed=computed,
+        )
+
+    def test_the_band_stop_reproduces_the_1_28_that_was_refused(self):
+        """Anchor the reproduction against the number the run produced."""
+        rr = (self.SHELF - self.ENTRY) / (self.ENTRY - self.BAND_STOP)
+        assert round(rr, 2) == 1.28
+        assert rr < self.FLOOR
+        # And the band stop is the 3.45 x ATR edge, not a chosen number.
+        assert round(self.ENTRY - 3.45 * self.ATR, 2) == self.BAND_STOP
+
+    def test_unbacked_slb_is_refused_exactly_as_it_was_on_2026_09_01(self):
+        """With nothing computed under the analyst's stop the band applies,
+        and the trade dies on the fabricated number. This is the behaviour
+        that turned 38 qualified signals into zero trades."""
+        constructor = PortfolioConstructor()
+        decisions = constructor.construct_orders(
+            targets=[_risk_target("SLB", 1.0)], positions=[],
+            analyses=[self._analysis([self.SHELF])],
+            total_value=EQUITY, price_map={"SLB": self.ENTRY},
+        )
+        assert decisions == []
+
+    def test_a_level_backed_slb_stop_is_honoured_and_the_trade_passes(self):
+        """The same trade with a computed support shelf under the stop. The
+        stop is honoured at 1.7 ATRs, reward:risk is measured against it, and
+        SLB becomes tradeable — the outcome §12.1 exists to produce."""
+        constructor = PortfolioConstructor()
+        decisions = constructor.construct_orders(
+            targets=[_risk_target("SLB", 1.0)], positions=[],
+            analyses=[self._analysis([self.LEVEL_STOP, self.SHELF])],
+            total_value=EQUITY, price_map={"SLB": self.ENTRY},
+        )
+        assert len(decisions) == 1
+        assert decisions[0].stop_loss == self.LEVEL_STOP
+        rr = (self.SHELF - self.ENTRY) / (self.ENTRY - self.LEVEL_STOP)
+        assert rr >= self.FLOOR
+        # Recorded so the number is visible when the test is read, not only
+        # when it fails: 1.28 refused, 2.59 taken, same chart.
+        assert round(rr, 2) == 2.59
+
+    def test_the_floor_does_not_move_to_accommodate_slb(self):
+        """The honest other half, mirroring TestSLB in test_target_derivation.
+        If the computed shelf is nearer, the honoured stop does not rescue the
+        trade — 1.5 still binds. §12.1 changed which stop is divided by, not
+        what the answer has to clear."""
+        constructor = PortfolioConstructor()
+        near_shelf = 62.50            # reward $2.40 against risk $2.27 = 1.06
+        decisions = constructor.construct_orders(
+            targets=[_risk_target("SLB", 1.0)], positions=[],
+            analyses=[_vol_analysis(
+                "SLB", self.ENTRY, self.LEVEL_STOP, near_shelf, atr=self.ATR,
+                horizon=self.HORIZON,
+                computed=[self.LEVEL_STOP, near_shelf],
+            )],
+            total_value=EQUITY, price_map={"SLB": self.ENTRY},
+        )
+        assert decisions == []

@@ -33,6 +33,24 @@ from src.models import Position, TargetPosition, TechAnalysisResult, TradeDecisi
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Named outcomes for the stop rule (spec §12.1, 2026-09-01)
+# ---------------------------------------------------------------------------
+# Same discipline `src/data/levels.py::derive_structural_target` established
+# in §10.4: every path that MOVES or REFUSES a stop says which rule fired, by
+# name. "No trade" without a reason is what let the original defect — the ATR
+# floor silently overwriting a real structural level — survive unnoticed
+# through 38 signals and zero trades on 2026-09-01. The codes are for logs and
+# tests; the message beside each one is written for a reader who does not know
+# the code.
+STOP_RULE_LEVEL_HONOURED = "stop_honoured_at_computed_level"
+STOP_RULE_ABSOLUTE_FLOOR = "stop_widened_to_absolute_atr_floor"
+STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
+STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
+STOP_REFUSAL_GEOMETRY_AT_BAND = "reward_risk_below_floor_at_widened_stop"
+STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
+
+
 @dataclass(frozen=True)
 class RiskPlan:
     """A risk-based target resolved into the units the order path speaks.
@@ -160,6 +178,35 @@ class ConstructorConfig:
     # Below this the trade only ever looked good on a stop too tight to
     # survive, so it is rejected rather than taken at a worse payoff.
     min_reward_risk_after_widening: float = 1.5
+    # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
+    # How close the stop must sit to a level `find_structural_levels`
+    # actually COMPUTED before `_widen_stop_past_noise` treats it as sitting
+    # AT that level and honours it whatever the band says.
+    #
+    # ATR-relative rather than a percentage, deliberately. The question is
+    # "did the analyst place this stop at that level?", which is a question
+    # about the name's own price noise — and ATR is the unit every other
+    # stop rule in this file already speaks (`min_stop_atr_multiple`,
+    # `min_target_atr_multiple`, Phase 3's trailing band). A flat percentage
+    # would be too tight to ever match on a 9%-ATR small cap and loose
+    # enough on a 1.5%-ATR utility to match a level the stop is nowhere
+    # near, so the SAME tolerance would mean two different things. A
+    # computed level is also a ZONE, not a number — `find_structural_levels`
+    # clusters pivots within `CLUSTER_TOLERANCE_PCT` (1%) into one level —
+    # so the tolerance has to be at least as wide as that zone.
+    # Kept in sync with `risk.level_match_atr_tolerance`.
+    level_match_atr_tolerance: float = 0.25
+    # The deterministic floor UNDER the exemption above, applying to
+    # level-backed stops too. See `_widen_stop_past_noise` for the reasoning;
+    # in short, §12.1 argues the exemption is safe because
+    # `config/prompts/tech_analyst.md` forbids a sub-1-ATR stop, but that is
+    # a prompt and Invariant 2 requires the deterministic layer to be the
+    # final authority and to fail closed. A level-backed stop is honoured
+    # however tight down to this many ATRs; inside it, it is widened to
+    # exactly this floor — NOT to the `min_stop_atr_multiple` band.
+    # 0 disables the floor entirely. Kept in sync with
+    # `risk.absolute_min_stop_atr_multiple`.
+    absolute_min_stop_atr_multiple: float = 1.0
     # --- Target derivation (2026-09-01) ---------------------------------
     # The stop has been computed from measured volatility since 2026-08-27;
     # the target was still the language model's `reference_target`, so the
@@ -757,6 +804,93 @@ class PortfolioConstructor:
                 break
         return multiple
 
+    def _level_backing_stop(
+        self,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        stop_loss: float,
+        atr: float,
+        is_short: bool,
+    ) -> float | None:
+        """The computed structural level this stop sits at, or None.
+
+        Spec §12.1. "Verified" means the price came out of
+        `src/data/levels.py::find_structural_levels` and was attached to the
+        analysis IN PYTHON (`TechAnalysisResult.computed_levels`, set by
+        `TechAnalystAgent` after parsing and never emitted by the model). A
+        model asserting a level in `support_levels` / `resistance_levels`
+        earns nothing here — if it could, it would only have to name a level
+        beside its stop to buy itself an exemption from the noise floor,
+        and the verification would be worthless.
+
+        Side is judged against THIS ENTRY, not against the last close.
+        `find_structural_levels` labels a level support or resistance
+        relative to the last close, and its own docstring says a ceiling
+        price has broken through becomes a floor. The trade is entered at a
+        live price that may sit on the other side of a level, so what
+        matters is only whether the level is below entry (it can hold a
+        long up) or above it (it can cap a short). This is the same
+        re-partition `derive_structural_target` performs for the target,
+        for the same reason — see the `levels` note in its docstring.
+
+        Returns the CLOSEST matching level so the log names the one the
+        stop is actually sitting on.
+        """
+        raw_levels = getattr(analysis, "computed_levels", None) or []
+        tolerance = self.cfg.level_match_atr_tolerance * atr
+        if tolerance <= 0:
+            return None
+
+        best: float | None = None
+        best_gap = float("inf")
+        for raw in raw_levels:
+            try:
+                price = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(price) or price <= 0:
+                continue
+            # A long is held up by structure at or below its entry; a short
+            # is capped by structure at or above its entry. A "support"
+            # above a long's entry cannot be what its stop is resting on.
+            if is_short and price < entry_price:
+                continue
+            if not is_short and price > entry_price:
+                continue
+            gap = abs(stop_loss - price)
+            if gap <= tolerance and gap < best_gap:
+                best, best_gap = price, gap
+        return best
+
+    def _reward_risk_at(
+        self,
+        entry_price: float,
+        stop_price: float,
+        target_price: float | None,
+        is_short: bool,
+    ) -> float | None:
+        """Reward:risk measured against the stop that will actually ship.
+
+        None when the target is missing or points the wrong way, which is
+        the existing "cannot judge it, do not invent a judgement" posture —
+        callers treat that as "no opinion", not as a failure.
+        """
+        if not target_price or stop_price <= 0 or entry_price <= 0:
+            return None
+        if is_short:
+            if target_price >= entry_price:
+                return None
+            risk = stop_price - entry_price
+            reward = entry_price - target_price
+        else:
+            if target_price <= entry_price:
+                return None
+            risk = entry_price - stop_price
+            reward = target_price - entry_price
+        if risk <= 0:
+            return None
+        return reward / risk
+
     def _widen_stop_past_noise(
         self,
         symbol: str,
@@ -767,15 +901,53 @@ class PortfolioConstructor:
         direction: str = "long",
         target_price: float | None = None,
     ) -> float | None:
-        """Push a stop out to `min_stop_atr_multiple` ATRs when structure put
-        it inside ordinary volatility.
+        """Decide the stop that will actually ship, and say which rule did it.
 
-        The stop still comes from structure — this never invents one where
-        none exists, and never pulls a wide stop tighter. It only corrects the
-        case the evidence says was routine: stops a median 1.7 ATRs from
-        entry, which is a coin flip on a normal day's range rather than a
-        thesis invalidation, and which then forced enormous positions to reach
-        any meaningful risk.
+        Spec §12.1 (2026-09-01). **A stop sitting at a level the system
+        COMPUTED is honoured however tight; the ATR band applies only when
+        nothing computed backs it.**
+
+        What this replaced, and why. `min_stop_atr_multiple` used to
+        overwrite the structural stop unconditionally whenever the level sat
+        closer to entry than the band. After that the stop was not at
+        anything real — and `min_reward_risk_after_widening` was then judged
+        against that fabricated number, so the reward was being divided by a
+        risk nobody would ever take. The arithmetic is unforgiving: over a
+        ~15-session hold a stock travels ~3.9 ATR, so against a 3.0-ATR stop
+        the best achievable ratio is ~1.29 against a 1.5 floor. Essentially
+        no trade could pass, and on 2026-09-01 the desk reviewed 38 qualified
+        signals and placed ZERO trades. Tuning the multiple down to 2.0 was
+        considered and explicitly REJECTED by the owner: it keeps a floor
+        that still cannot tell a level-backed tight stop from an arbitrary
+        one. Neither threshold moved. What changed is WHICH stop the
+        arithmetic is performed on.
+
+        "Verified" is doing real work here — see `_level_backing_stop`. The
+        level must have come out of `find_structural_levels` and been
+        attached in Python. A stop the analyst merely placed close, with
+        nothing computed under it, still gets the full band.
+
+        **The 1x ATR floor below is an addition beyond the ratified §12.1
+        wording, and it is deliberate.** §12.1 argues the exemption is safe
+        because `config/prompts/tech_analyst.md` already forbids a stop
+        inside 1*ATR of entry. That is a PROMPT — an instruction to a
+        language model — and Invariant 2 of the spec requires deterministic
+        Python protections to be the final authority and to fail closed. A
+        prompt is not a deterministic guarantee. Meanwhile a genuine support
+        level sitting 0.2 ATR under entry is real structure AND a guaranteed
+        whipsaw; both things are true at once. So a level-backed stop is
+        honoured however tight DOWN TO `absolute_min_stop_atr_multiple`
+        ATRs, and inside that it is widened to exactly that floor — never to
+        the full `min_stop_atr_multiple` band, which is the behaviour being
+        removed.
+
+        For an unbacked stop nothing has changed: it is pushed out to
+        `min_stop_atr_multiple` ATRs, exactly as before. That corrects the
+        case the evidence says was routine — stops a median 1.7 ATRs from
+        entry, a coin flip on a normal day's range rather than a thesis
+        invalidation, which then forced enormous positions to reach any
+        meaningful risk. This never invents a stop where none exists, and
+        never pulls a wide stop tighter.
 
         D5 (Stage 3): direction-aware. A long's stop is pushed DOWN, away
         from entry; a short's stop is pushed UP, away from entry, by the
@@ -814,16 +986,18 @@ class PortfolioConstructor:
         # that is too CLOSE; it must not invent one that is on the wrong side.
         if is_short and stop_loss <= entry_price:
             logger.warning(
-                "Constructor: SHORT %s — stop $%.2f is at or below entry "
-                "$%.2f. Refusing rather than widening it into validity.",
-                symbol, stop_loss, entry_price,
+                "Constructor: SHORT %s refused [%s] — the stop $%.2f is at or "
+                "below the entry $%.2f, so it protects nothing. Refusing "
+                "rather than widening it into validity.",
+                symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
             )
             return None
         if not is_short and stop_loss >= entry_price:
             logger.warning(
-                "Constructor: BUY %s — stop $%.2f is at or above entry $%.2f. "
-                "Refusing rather than widening it into validity.",
-                symbol, stop_loss, entry_price,
+                "Constructor: BUY %s refused [%s] — the stop $%.2f is at or "
+                "above the entry $%.2f, so it protects nothing. Refusing "
+                "rather than widening it into validity.",
+                symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
             )
             return None
 
@@ -851,51 +1025,117 @@ class PortfolioConstructor:
             target_price = float(target_price) if target_price else None
         except (TypeError, ValueError):
             target_price = None
-        # The refusal below is now about GEOMETRY, and says so. Both sides of
+
+        floor = self.cfg.min_reward_risk_after_widening
+        side_word = "above" if is_short else "below"
+
+        # -------------------------------------------------------------
+        # §12.1 — is this stop sitting on something the system computed?
+        # -------------------------------------------------------------
+        level = self._level_backing_stop(
+            analysis, entry_price, stop_loss, atr, is_short,
+        )
+        if level is not None:
+            honoured = stop_loss
+            floor_multiple = self.cfg.absolute_min_stop_atr_multiple
+            hard_floor = (
+                entry_price + floor_multiple * atr if is_short
+                else entry_price - floor_multiple * atr
+            )
+            inside_hard_floor = (
+                floor_multiple > 0
+                and hard_floor > 0
+                and (stop_loss < hard_floor if is_short else stop_loss > hard_floor)
+            )
+            if inside_hard_floor:
+                # Real structure, still too close to survive one ordinary
+                # session. Pushed out to the 1x floor and NOT to the full
+                # band — the band is what §12.1 removed. See the docstring
+                # for why this floor exists in code rather than in a prompt.
+                honoured = hard_floor
+                logger.info(
+                    "Constructor: %s %s stop $%.2f → $%.2f [%s] — it sits at "
+                    "the computed structural level $%.2f, which is real, but "
+                    "only %.2f ATRs from the $%.2f entry. A stop inside one "
+                    "ordinary day's range is a coin flip, so it is moved out "
+                    "to the %.2f x ATR floor — not to the %.2f x ATR noise "
+                    "band, which the level exempts it from.",
+                    "SHORT" if is_short else "BUY", symbol, stop_loss,
+                    honoured, STOP_RULE_ABSOLUTE_FLOOR, level,
+                    abs(entry_price - stop_loss) / atr, entry_price,
+                    floor_multiple, multiple,
+                )
+            else:
+                logger.info(
+                    "Constructor: %s %s stop $%.2f kept [%s] — it sits at the "
+                    "computed structural level $%.2f (%.2f ATRs %s the $%.2f "
+                    "entry). The %.2f x ATR noise band would have moved it to "
+                    "$%.2f, which is not a level anyone is defending, so the "
+                    "band does not apply.",
+                    "SHORT" if is_short else "BUY", symbol, stop_loss,
+                    STOP_RULE_LEVEL_HONOURED, level,
+                    abs(entry_price - stop_loss) / atr, side_word, entry_price,
+                    multiple, band_edge,
+                )
+
+            # The whole point of §12.1: reward:risk is measured against the
+            # stop that will ACTUALLY ship. Judging it against a stop nobody
+            # will ever use is the defect being removed. The floor itself is
+            # untouched at 1.5 — a level-backed trade whose real geometry
+            # still does not work is still refused.
+            reward_risk = self._reward_risk_at(
+                entry_price, honoured, target_price, is_short,
+            )
+            if reward_risk is not None and reward_risk < floor:
+                logger.info(
+                    "Constructor: %s %s refused [%s] — against the stop it "
+                    "will actually use ($%.2f, at the computed level $%.2f) "
+                    "the computed target $%.2f is reward:risk %.2f, under "
+                    "the %.2f minimum. Both numbers are measured, and this "
+                    "is the real geometry of the trade, not a widened one — "
+                    "the entry does not support it.",
+                    "SHORT" if is_short else "BUY", symbol,
+                    STOP_REFUSAL_GEOMETRY_AT_LEVEL, honoured, level,
+                    target_price, reward_risk, floor,
+                )
+                return None
+            return honoured
+
+        # -------------------------------------------------------------
+        # Nothing computed backs this stop — unchanged behaviour.
+        # -------------------------------------------------------------
+        # The refusal below is about GEOMETRY, and says so. Both sides of
         # the ratio are computed from measured volatility: the stop is
         # `min_stop_atr_multiple` ATRs out, the target is where structure or
         # the horizon says price travels. When those two cannot clear the
         # floor together, the trade is refused because its shape does not
         # work at this entry — NOT because a model guessed a poor target,
         # which is what this message used to mean and no longer does.
-        if is_short:
-            if target_price and target_price < entry_price:
-                risk = band_edge - entry_price
-                reward = entry_price - target_price
-                reward_risk = reward / risk if risk > 0 else 0.0
-                if risk <= 0 or reward_risk < self.cfg.min_reward_risk_after_widening:
-                    logger.info(
-                        "Constructor: SHORT %s rejected on geometry — the "
-                        "computed target $%.2f against a stop %.2f x ATR out "
-                        "($%.2f) is reward:risk %.2f, under the %.2f minimum. "
-                        "Both numbers are measured; this entry does not "
-                        "support the trade.",
-                        symbol, target_price, multiple, band_edge, reward_risk,
-                        self.cfg.min_reward_risk_after_widening,
-                    )
-                    return None
-        else:
-            if target_price and target_price > entry_price:
-                reward_risk = (target_price - entry_price) / (entry_price - band_edge)
-                if reward_risk < self.cfg.min_reward_risk_after_widening:
-                    logger.info(
-                        "Constructor: %s rejected on geometry — the computed "
-                        "target $%.2f against a stop %.2f x ATR out ($%.2f) is "
-                        "reward:risk %.2f, under the %.2f minimum. Both "
-                        "numbers are measured; this entry does not support "
-                        "the trade.",
-                        symbol, target_price, multiple, band_edge, reward_risk,
-                        self.cfg.min_reward_risk_after_widening,
-                    )
-                    return None
+        reward_risk = self._reward_risk_at(
+            entry_price, band_edge, target_price, is_short,
+        )
+        if reward_risk is not None and reward_risk < floor:
+            logger.info(
+                "Constructor: %s %s refused [%s] — no computed structural "
+                "level sits at the $%.2f stop, so it is widened to the "
+                "%.2f x ATR noise band at $%.2f. Against that the computed "
+                "target $%.2f is reward:risk %.2f, under the %.2f minimum. "
+                "Both numbers are measured; this entry does not support the "
+                "trade.",
+                "SHORT" if is_short else "BUY", symbol,
+                STOP_REFUSAL_GEOMETRY_AT_BAND, stop_loss, multiple, band_edge,
+                target_price, reward_risk, floor,
+            )
+            return None
 
         logger.info(
-            "Constructor: %s stop widened $%.2f → $%.2f (%.1f%% %s entry) — "
-            "structure placed it inside %.2f x ATR of $%.2f (%s setup, %s tape)",
-            symbol, stop_loss, band_edge,
-            100 * abs(entry_price - band_edge) / entry_price,
-            "above" if is_short else "below",
-            multiple, atr,
+            "Constructor: %s %s stop widened $%.2f → $%.2f (%.1f%% %s entry) "
+            "[%s] — no computed structural level sits at it, and it was "
+            "placed inside %.2f x ATR of $%.2f (%s setup, %s tape). A stop "
+            "nothing on the chart defends does not earn the §12.1 exemption.",
+            "SHORT" if is_short else "BUY", symbol, stop_loss, band_edge,
+            100 * abs(entry_price - band_edge) / entry_price, side_word,
+            STOP_RULE_ATR_BAND, multiple, atr,
             getattr(analysis, "setup_type", None) or "unknown",
             regime or "unknown",
         )
