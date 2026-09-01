@@ -63,6 +63,27 @@ _SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _g
 # not a blind per-order sleep added to every order.
 _ENTRY_FILL_TIMEOUT_S = 30.0
 
+# Spec §11.1, guard 1: "stop placement retries immediately and hard on
+# failure". IMMEDIATELY — at the point of failure, inside the same call,
+# not queued for the next sweep. The position is already open by the time
+# this runs; a retry that waits for the 30-minute reconcile is exactly the
+# indefinite gap the guard exists to prevent.
+#
+# THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
+#
+#   * Three, because every failure worth retrying is transient — a 429 rate
+#     limit, a 5xx, a dropped connection, an eventual-consistency blip
+#     between the fill and the order being placeable. Those clear in under a
+#     second. A failure that survives three attempts is a REJECTION (a bad
+#     price, an unsupported qty, a closed venue), and retrying a rejection
+#     forever just delays the owner alert that is the real remedy.
+#   * ~2 seconds, because the owner's own standard for this feature is that
+#     "the gap is brief upon entry". A retry loop long enough to matter
+#     would itself become the exposure it was added to close. Escalating to
+#     a human inside two seconds beats a fourth doomed attempt.
+_STOP_PLACEMENT_MAX_ATTEMPTS = 3
+_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
+
 
 def _alpaca_symbol(symbol: str) -> str:
     """Translate the universe's yfinance class-share spelling at Alpaca's edge.
@@ -241,6 +262,10 @@ class AlpacaBroker:
         # flags don't change intra-session, so one asset-directory lookup
         # per symbol per process is enough.
         self._shortable_cache: dict[str, dict] = {}
+        # Spec §11.1. Same shape/lifetime and same reasoning as
+        # `_shortable_cache`: `fractionable` is an asset-directory fact that
+        # does not change intra-session.
+        self._fractionable_cache: dict[str, dict] = {}
 
     def get_account(self) -> dict:
         acct = self.client.get_account()
@@ -388,6 +413,70 @@ class AlpacaBroker:
             "reason": reason, "symbol": canonical,
         }
         self._shortable_cache[canonical] = result
+        return result
+
+    def get_fractionability(self, symbol: str) -> dict:
+        """Spec §11.1: is this symbol tradeable in fractional quantities?
+
+        Alpaca publishes a per-asset `fractionable` flag in the same
+        asset-directory record `get_shortability` reads, and it is cached the
+        same way for the same reason — it does not change intra-session.
+
+        **Fails CLOSED, and that is the whole point.** An API error, an
+        unknown symbol, an asset record with no `fractionable` field at all —
+        every one of those reports `fractionable=False`, and the caller sizes
+        in whole shares. Fractional-by-assumption is the failure this guard
+        exists to prevent: a fractional order on a non-fractionable name is
+        rejected outright by the broker, which turns an approved trade into
+        no trade at all and hides the reason in an order-rejection log.
+
+        `reason` distinguishes the three ways the answer can be no, so the
+        caller can log which one fired rather than a bare False.
+        """
+        canonical = _internal_symbol(_alpaca_symbol(symbol))
+        cached = self._fractionable_cache.get(canonical)
+        if cached is not None:
+            return cached
+
+        alpaca_symbol = _alpaca_symbol(canonical)
+        try:
+            asset = self.client.get_asset(alpaca_symbol)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "fractionability lookup failed for %s: %s — sizing in WHOLE "
+                "shares (fail closed)", canonical, exc,
+            )
+            result = {
+                "fractionable": False, "reason": "asset_lookup_failed",
+                "symbol": canonical,
+            }
+            self._fractionable_cache[canonical] = result
+            return result
+
+        def _field(name, default=None):
+            if isinstance(asset, dict):
+                return asset.get(name, default)
+            return getattr(asset, name, default)
+
+        raw = _field("fractionable", None)
+        if raw is None:
+            # The record came back but carries no flag — an older API shape,
+            # a stub, a mock. "Absent" is not "true".
+            result = {
+                "fractionable": False, "reason": "fractionable_unknown",
+                "symbol": canonical,
+            }
+        elif bool(raw):
+            result = {
+                "fractionable": True, "reason": "fractionable",
+                "symbol": canonical,
+            }
+        else:
+            result = {
+                "fractionable": False, "reason": "not_fractionable",
+                "symbol": canonical,
+            }
+        self._fractionable_cache[canonical] = result
         return result
 
     def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
@@ -1857,6 +1946,26 @@ class AlpacaBroker:
             )
             return {"id": None, "status": "replace_invalid_price"}
 
+        # Spec §11.1: a FRACTIONAL entry cannot be re-pegged. Alpaca's
+        # ReplaceOrderRequest types `qty` as an int, and the two ways out of
+        # that are both worse than refusing: truncating 1.5625 to 1 silently
+        # SHRINKS a position the risk math already sized, and omitting qty
+        # reintroduces exactly the "how does the endpoint read an omitted qty"
+        # ambiguity this wrapper documents itself as removing. Refusing means
+        # the original order stays authoritative and simply does not chase —
+        # the caller's existing `id=None` path, and the safe direction.
+        try:
+            is_fractional = qty is not None and not float(qty).is_integer()
+        except (TypeError, ValueError):
+            is_fractional = False
+        if is_fractional:
+            logger.info(
+                "replace_entry_limit refused for %s: fractional qty %s cannot "
+                "be re-pegged — the original order remains authoritative",
+                order_id, qty,
+            )
+            return {"id": None, "status": "replace_unsupported_fractional_qty"}
+
         kwargs: dict = {"limit_price": price}
         if qty is not None:
             try:
@@ -1935,8 +2044,14 @@ class AlpacaBroker:
 
         Returns the stop order dict, or None when nothing was placed (entry
         filled 0 / stop submit failed). Never raises — a failure here must not
-        abort the session, but it DOES leave the position naked, so it logs
-        at ERROR and relies on the coverage-reconcile auto-repair belt.
+        abort the session.
+
+        Spec §11.1 guard 1: the stop submission now RETRIES immediately and
+        hard before giving up (`_submit_protective_stop_retrying`). A None
+        return therefore means the retries were exhausted, and the position is
+        naked — the CALLER owes an owner alert on it (guard 2); the
+        coverage-reconcile auto-repair belt remains the backstop, not the
+        first line.
         """
         # Fail closed on a side we do not recognise, BEFORE touching the
         # broker. `"sell" if side == "buy" else "buy"` reads harmlessly but is
@@ -2037,23 +2152,116 @@ class AlpacaBroker:
             (1 - self.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell"
             else (1 + self.STOP_LIMIT_BUFFER_PCT)
         )
-        try:
-            stop_order = self._submit_stop_limit_order(
-                symbol=symbol, qty=filled_qty, stop_price=stop_price,
-                limit_price=stop_price * buffer_mult, side=protective_side,
-            )
-            logger.info(
-                "entry protection: GTC %s stop-limit placed for %s qty=%.4f @ stop $%.2f",
-                protective_side, symbol, filled_qty, stop_price,
-            )
-            return stop_order
-        except Exception as exc:  # noqa: BLE001
+        stop_order = self._submit_protective_stop_retrying(
+            symbol=symbol, qty=filled_qty, stop_price=stop_price,
+            limit_price=stop_price * buffer_mult, side=protective_side,
+        )
+        if stop_order is None:
             logger.error(
-                "entry protection FAILED for %s (%.4f shares held, stop $%.2f): %s "
-                "— position is UNPROTECTED; next session's coverage reconcile "
-                "must repair it", symbol, filled_qty, stop_price, exc,
+                "entry protection FAILED for %s (%.4f shares held, stop $%.2f) "
+                "after %d attempt(s) — position is UNPROTECTED; the caller must "
+                "raise an OWNER alert (spec §11.1 guard 2) and the coverage "
+                "reconcile must repair it",
+                symbol, filled_qty, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
             )
             return None
+        return stop_order
+
+    def _submit_protective_stop_retrying(
+        self, *, symbol: str, qty: float, stop_price: float,
+        limit_price: float | None, side: str,
+    ) -> dict | None:
+        """Spec §11.1 guard 1 — submit a protective stop, retrying immediately
+        and hard on failure. Returns the stop order dict, or None when every
+        attempt failed.
+
+        The retry happens HERE, in the same call, milliseconds after the
+        failure — not queued, not deferred to the next 30-minute sweep. The
+        position is already open; a deferred retry is an open position with
+        no stop for however long the defer lasts, which is the exact failure
+        mode §11.1 was required to bound. See `_STOP_PLACEMENT_MAX_ATTEMPTS`
+        for why the budget is three attempts over ~2 seconds and not more.
+
+        Never raises. Returning None is the signal the CALLER must escalate
+        on — a naked position that nobody is told about is strictly worse
+        than one that fails loudly.
+
+        On a fractional fill whose exact qty the broker refuses (see the
+        §11.1 open question about whether Alpaca carries a stop for a
+        fractional quantity at all), the final attempt drops to the
+        WHOLE-SHARE floor of the fill: a stop over `floor(qty)` shares leaves
+        a sub-share residual uncovered, which is a far smaller and strictly
+        bounded exposure than leaving the entire position naked. ONLY in that
+        fallback does the returned dict carry `covered_qty`/`uncovered_qty` —
+        the ordinary success path returns the broker's response untouched, so
+        nothing downstream sees a new shape on the common path. The caller
+        alerts the owner on a non-zero `uncovered_qty` exactly as it would on
+        an outright failure.
+        """
+        attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
+        for attempt in range(1, attempts + 1):
+            try:
+                order = self._submit_stop_limit_order(
+                    symbol=symbol, qty=qty, stop_price=stop_price,
+                    limit_price=limit_price, side=side,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protective stop attempt %d/%d FAILED for %s (qty=%.4f, "
+                    "stop $%.2f): %s", attempt, attempts, symbol, qty,
+                    stop_price, exc,
+                )
+                if attempt < attempts:
+                    delay = _STOP_PLACEMENT_BACKOFF_S[
+                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
+                    ]
+                    time.sleep(delay)
+                continue
+            if attempt > 1:
+                logger.warning(
+                    "protective stop placed for %s on attempt %d/%d — the "
+                    "position was briefly unprotected and is now covered",
+                    symbol, attempt, attempts,
+                )
+            else:
+                logger.info(
+                    "entry protection: GTC %s stop-limit placed for %s "
+                    "qty=%.4f @ stop $%.2f", side, symbol, qty, stop_price,
+                )
+            return order
+
+        # Every attempt at the exact quantity failed. If that quantity was
+        # FRACTIONAL, one cause is a broker that will not carry a stop for a
+        # fractional qty at all — in which case the whole-share floor is a
+        # request it can accept, and covering floor(qty) beats covering none.
+        whole = float(int(qty))
+        if whole >= 1 and whole < qty:
+            logger.critical(
+                "protective stop: %s exhausted %d attempt(s) at the exact "
+                "fractional qty %.4f — falling back to a WHOLE-SHARE stop for "
+                "%.0f share(s). If this succeeds, %.4f share(s) remain "
+                "UNCOVERED and the owner is alerted.",
+                symbol, attempts, qty, whole, qty - whole,
+            )
+            try:
+                order = self._submit_stop_limit_order(
+                    symbol=symbol, qty=whole, stop_price=stop_price,
+                    limit_price=limit_price, side=side,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protective stop: whole-share fallback ALSO failed for %s "
+                    "(qty=%.0f, stop $%.2f): %s", symbol, whole, stop_price, exc,
+                )
+                return None
+            if isinstance(order, dict):
+                # A COPY — never annotate the broker's own response object in
+                # place; a caller holding that dict must not have its shape
+                # changed underneath it.
+                order = {**order, "covered_qty": whole,
+                         "uncovered_qty": qty - whole}
+            return order
+        return None
 
     def close_position(self, symbol: str) -> dict:
         order = self.client.close_position(_alpaca_symbol(symbol))

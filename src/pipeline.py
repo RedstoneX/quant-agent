@@ -1742,13 +1742,33 @@ class TradingPipeline:
             covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
             held = abs(qty)
             if covered + 1e-6 < held:
-                gap = {"symbol": symbol, "held_qty": qty, "covered_qty": covered}
-                logger.warning(
-                    "STOP-COVERAGE GAP: %s held=%.4f but only %.4f covered by "
-                    "open protective %s-stops — (partially) unprotected with "
-                    "no WAL recovery row.", symbol, qty, covered,
-                    "buy" if is_short else "sell",
-                )
+                # Spec §11.1 guard 3. NO STOP AT ALL and STOP PRESENT BUT
+                # MIS-SIZED were previously one condition with one message.
+                # They are not the same thing and must never read as if they
+                # were: a position stopped at the wrong size still has a
+                # broker order standing watch over most of it, while a
+                # position with zero coverage has nothing between it and the
+                # tape. The second is the state that ends a desk, and it was
+                # being reported in the same sentence as the first.
+                coverage = "none" if covered <= 1e-6 else "partial"
+                gap = {
+                    "symbol": symbol, "held_qty": qty, "covered_qty": covered,
+                    "coverage": coverage,
+                }
+                if coverage == "none":
+                    logger.critical(
+                        "NO STOP AT ALL: %s held=%.4f with ZERO open "
+                        "protective %s-stops — the position is COMPLETELY "
+                        "unprotected and has no WAL recovery row.",
+                        symbol, qty, "buy" if is_short else "sell",
+                    )
+                else:
+                    logger.warning(
+                        "STOP MIS-SIZED: %s held=%.4f but only %.4f covered by "
+                        "open protective %s-stops — partially unprotected with "
+                        "no WAL recovery row.", symbol, qty, covered,
+                        "buy" if is_short else "sell",
+                    )
                 if is_short:
                     # No order path can open a short yet, so there is no BUY
                     # trade row to reconstruct its original stop level from
@@ -1765,7 +1785,46 @@ class TradingPipeline:
                 "Stop-coverage reconcile: all %d long / %d short position(s) "
                 "adequately stop-covered", longs_checked, shorts_checked,
             )
+        # Spec §11.1 guard 3, escalation half. A gap the auto-repair CLOSED
+        # needs no interruption — the belt did its job. A position still
+        # carrying NO stop at all after the repair attempt is a live naked
+        # position, and the sweep runs on a 30-minute cadence whose
+        # `intra_check` message is silent unless it liquidates: without this,
+        # the worst state this reconciler can find would be reported only in
+        # a log file. Mis-sized gaps stay in the session banner rather than
+        # interrupting the owner — they are real but bounded, and alerting on
+        # both is how a channel gets tuned out.
+        naked = [
+            g for g in gaps
+            if g.get("coverage") == "none" and not g.get("repaired")
+        ]
+        if naked:
+            self._alert_owner_no_stop(naked)
         return gaps
+
+    @staticmethod
+    def _alert_owner_no_stop(naked: list[dict]) -> None:
+        """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
+        try:
+            from src import notifier as _notifier
+
+            detail = "\n".join(
+                f"  {g.get('symbol', '?')}: held {g.get('held_qty')}, "
+                f"covered {g.get('covered_qty')}"
+                for g in naked
+            )
+            _notifier.send_owner_alert(
+                "🔴 NO STOP AT ALL\n"
+                f"{len(naked)} position(s) are open at the broker with ZERO "
+                "protective-stop coverage, and the automatic repair could not "
+                "restore one. This is not a mis-sized stop — there is nothing "
+                "standing watch.\n"
+                f"{detail}\n"
+                "Place a protective stop manually or flatten the position.",
+                symbols=[str(g.get("symbol")) for g in naked if g.get("symbol")],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("no-stop owner alert failed: %s", exc)
 
     def _repair_stop_coverage(self, symbol: str, uncovered_qty: float) -> bool:
         """Best-effort: re-place a GTC protective stop on an uncovered long
@@ -9259,8 +9318,14 @@ class TradingPipeline:
         # repair that failed once, otherwise stayed naked until the NEXT
         # session — hours. On the intra cadence the naked window is ≤30 min.
         # Read-only when coverage is fine; ~1 broker call per held long.
+        # Spec §11.1 guard 3: the return value used to be DISCARDED here, so
+        # the 30-minute sweep — the tightest cadence this audit runs on, and
+        # the one the fractional decision leans on — was the one caller whose
+        # findings never reached the operator's feed at all. Carried into the
+        # result dict now, exactly as every other session already does.
+        coverage_gaps: list[dict] = []
         try:
-            self._reconcile_stop_coverage()
+            coverage_gaps = self._reconcile_stop_coverage()
         except Exception as exc:  # noqa: BLE001
             logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
         self._reconcile_orphan_pending_submits()  # audit F4
@@ -9279,7 +9344,8 @@ class TradingPipeline:
             positions = self.broker.get_positions()
         except Exception as e:
             logger.error("Intra check: broker query failed: %s", e)
-            return {"status": "broker_error", "run_id": run_id, "error": str(e)}
+            return {"status": "broker_error", "run_id": run_id, "error": str(e),
+                    "stop_coverage_gaps": coverage_gaps}
 
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
@@ -9305,6 +9371,7 @@ class TradingPipeline:
                 "daily_return_pct": daily_return_pct,
                 "positions": len(positions),
                 "run_id": run_id,
+                "stop_coverage_gaps": coverage_gaps,
             }
             # 2026-08-19 intraday opportunity-discovery fix: bounded new-
             # opportunity scan, gated additionally on `not loss_violation`
@@ -9439,6 +9506,7 @@ class TradingPipeline:
             "daily_return_pct": daily_return_pct,
             "orders": orders,
             "run_id": run_id,
+            "stop_coverage_gaps": coverage_gaps,
         }
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:

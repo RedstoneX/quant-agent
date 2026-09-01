@@ -33,6 +33,7 @@ helpers are the right extraction boundary for a later phase.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -530,6 +531,180 @@ def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str
             "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s "
             "scope=%s symbol=%s): %s", agent_name, kind, scope, symbol, e,
         )
+
+
+def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool:
+    """Spec §11.1 — may THIS symbol be sized in fractional shares right now?
+
+    Two independent gates, both of which must say yes:
+
+    1. `execution.fractional_enabled` (default True). The owner's switch, so
+       the feature can be turned off without a code change.
+    2. The BROKER confirms `fractionable` for the symbol. A config flag says
+       what the desk wants; only the asset directory says what Alpaca will
+       accept. An unknown or failed lookup is a NO — fail closed, never
+       fractional-by-assumption.
+
+    A SHORT is always whole-share regardless: a fractional share cannot be
+    borrowed, so this is not a policy choice to expose.
+
+    Any unexpected failure in here returns False. The fallback (whole shares)
+    is the behaviour that shipped for months; there is no failure mode of
+    this function that should be allowed to stop a trade.
+    """
+    if is_short:
+        return False
+    try:
+        execution_cfg = getattr(pipeline.config, "execution", None)
+        if not bool(getattr(execution_cfg, "fractional_enabled", False)):
+            return False
+        info = pipeline.broker.get_fractionability(symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "fractional eligibility check failed for %s (%s) — sizing in "
+            "WHOLE shares (fail closed)", symbol, exc,
+        )
+        return False
+    if not isinstance(info, dict) or not info.get("fractionable"):
+        reason = (
+            info.get("reason", "unknown") if isinstance(info, dict) else "unknown"
+        )
+        logger.info(
+            "fractional sizing NOT available for %s (%s) — whole shares",
+            symbol, reason,
+        )
+        return False
+    return True
+
+
+def _size_shares(pipeline, raw_qty: float, *, fractional: bool) -> float:
+    """Turn a raw, real-valued share count into an ORDERABLE quantity.
+
+    Whole-share mode floors to an integer — the behaviour this desk has
+    always had, and the silent constant tax §11.1 exists to remove (a request
+    for 6% of the book delivered 3.84%).
+
+    Fractional mode floors to `execution.fractional_share_decimals` places.
+    FLOORS, never rounds: rounding up would spend a sliver more risk budget
+    than the sizing math actually allowed, and a sizing rule that can exceed
+    its own budget by any amount is not a budget. The residual left on the
+    table is under a tenth of a cent of notional.
+    """
+    try:
+        value = float(raw_qty)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(value) or value <= 0:
+        return 0.0
+    if not fractional:
+        return float(int(value))
+    try:
+        decimals = int(getattr(
+            getattr(pipeline.config, "execution", None),
+            "fractional_share_decimals", 4,
+        ))
+    except (TypeError, ValueError):
+        decimals = 4
+    decimals = min(max(decimals, 1), 9)
+    scale = 10 ** decimals
+    return math.floor(value * scale) / scale
+
+
+def _fmt_shares(qty: float) -> str:
+    """Render a share count for a human without a spurious `.0` on a whole
+    number or a wall of trailing zeros on a fractional one."""
+    try:
+        value = float(qty)
+    except (TypeError, ValueError):
+        return str(qty)
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.9f}".rstrip("0").rstrip(".")
+
+
+def _alert_owner_protection_failed(pipeline, spec: dict, protection,
+                                   entry_order_id: str) -> None:
+    """Spec §11.1 guard 2 — a stop that did not land ALERTS THE OWNER.
+
+    Fires on two states, and says which:
+
+      * no stop at all — `place_entry_protection` exhausted its retries
+        (guard 1) and returned nothing;
+      * a partial cover — the broker took a stop for fewer shares than are
+        held (today: the whole-share fallback for a fractional fill whose
+        exact quantity the broker refused).
+
+    Silent on the third state — protection placed, nothing uncovered — which
+    is the overwhelmingly common one. An alert channel that fires on success
+    is a channel the owner learns to swipe away.
+
+    Deliberately does NOT fire when the entry filled zero shares: there is no
+    position, so there is nothing to protect, and `place_entry_protection`
+    returns None for that too. Waking a human for a BUY that simply did not
+    fill is exactly how guard 2 gets turned off.
+
+    Never raises.
+    """
+    try:
+        symbol = spec.get("symbol", "?")
+        stop_price = spec.get("stop_price")
+        uncovered = 0.0
+        if isinstance(protection, dict):
+            try:
+                uncovered = float(protection.get("uncovered_qty") or 0)
+            except (TypeError, ValueError):
+                uncovered = 0.0
+            if uncovered <= 0:
+                return
+        if protection is None:
+            # Distinguish "no stop" from "no fill". Only the first is an
+            # emergency; the second is a normal, uneventful non-event.
+            filled = None
+            try:
+                info = pipeline.broker.get_order_fill_info(entry_order_id) or {}
+                filled = float(info.get("filled_qty") or 0)
+            except Exception:  # noqa: BLE001
+                filled = None
+            if filled is not None and filled <= 0:
+                return
+            held = _fmt_shares(filled) if filled is not None else "an unknown number of"
+            is_short = str(spec.get("side", "buy")).lower() != "buy"
+            remedy = (
+                "An IMMEDIATE market cover is being submitted — a naked short "
+                "has unbounded loss and is not left to a sweep. Confirm it "
+                "landed."
+                if is_short else
+                "Place a stop manually or flatten the position. The 30-minute "
+                "coverage sweep will also attempt an automatic repair."
+            )
+            body = (
+                "🔴 NO STOP AT ALL\n"
+                f"{symbol}: the entry filled ({held} share(s)) but the "
+                "protective stop could not be placed after every immediate "
+                "retry. The position is open at the broker with NOTHING "
+                "standing watch.\n"
+                f"Intended stop: {stop_price}\n"
+                f"Entry order: {entry_order_id}\n"
+                f"{remedy}"
+            )
+        else:
+            covered = protection.get("covered_qty")
+            body = (
+                "🟠 STOP PARTIALLY COVERS THE POSITION\n"
+                f"{symbol}: a protective stop was placed for "
+                f"{_fmt_shares(covered)} share(s), but {_fmt_shares(uncovered)} "
+                "share(s) of the fill are NOT covered by it — the broker "
+                "refused a stop for the exact filled quantity.\n"
+                f"Stop: {stop_price}\n"
+                f"Entry order: {entry_order_id}\n"
+                "The uncovered remainder is under one share. If this recurs, "
+                "turn `execution.fractional_enabled` off."
+            )
+        from src import notifier as _notifier
+
+        _notifier.send_owner_alert(body, symbols=[str(symbol)])
+    except Exception as exc:  # noqa: BLE001
+        logger.error("protection-failure owner alert failed: %s", exc)
 
 
 def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
@@ -3038,7 +3213,7 @@ class ExecutionStage:
         # guaranteed to die moments later on stale-entry / no-price / qty-zero
         # checks, creating avoidable sell/re-park churn. The full checks remain
         # in the submit loop below; this preflight only removes names whose
-        # failure is already knowable and computes the actual whole-share
+        # failure is already knowable and computes the actual quantized
         # notional that funding should cover.
         fundable_notional: dict[str, float] = {}
         preflight_survivors = []
@@ -3073,8 +3248,20 @@ class ExecutionStage:
                     )
                     continue
             preflight_price = max(market_price, decision.entry_price or 0)
-            preflight_qty = int(
-                (total_value * decision.allocation_pct / 100) / preflight_price
+            # Spec §11.1: quantized the SAME way the submit loop below will,
+            # or the sweep funds a whole-share notional for an order that is
+            # about to be placed fractionally — under-funding it, and letting
+            # the cash gate re-impose the rounding tax this phase removes.
+            # It is also the difference between skipping a sub-one-share
+            # position as `qty_zero` and taking it, which under exact sizing
+            # is a legitimate position rather than nothing.
+            preflight_qty = _size_shares(
+                pipeline,
+                (total_value * decision.allocation_pct / 100) / preflight_price,
+                fractional=_fractional_sizing_allowed(
+                    pipeline, decision.symbol,
+                    is_short=(decision.action == "SHORT"),
+                ),
             )
             if preflight_qty <= 0:
                 _record_execution_skip(
@@ -3481,7 +3668,21 @@ class ExecutionStage:
                         )
                         continue
 
-                qty_by_alloc = int((total_value * decision.allocation_pct / 100) / sizing_price)
+                # Spec §11.1. Exact sizing when the flag is on AND the broker
+                # confirms the symbol is fractionable; whole shares otherwise.
+                # Resolved ONCE per symbol here so every share count below —
+                # allocation, risk budget, cash re-size — is quantized the
+                # same way. Two different roundings inside one sizing decision
+                # is how a stop ends up covering a different number of shares
+                # than the entry bought.
+                fractional = _fractional_sizing_allowed(
+                    pipeline, decision.symbol, is_short=is_short,
+                )
+                qty_by_alloc = _size_shares(
+                    pipeline,
+                    (total_value * decision.allocation_pct / 100) / sizing_price,
+                    fractional=fractional,
+                )
                 qty_by_risk = None
                 RISK_BUDGET_PCT = 0.5
                 # D4: geometry validity is direction-aware — a long's stop
@@ -3511,12 +3712,16 @@ class ExecutionStage:
                         risk_per_share *= gap_multiple
                     if risk_per_share > 0:
                         risk_dollars = total_value * RISK_BUDGET_PCT / 100
-                        qty_by_risk = int(risk_dollars / risk_per_share)
+                        qty_by_risk = _size_shares(
+                            pipeline, risk_dollars / risk_per_share,
+                            fractional=fractional,
+                        )
                 if qty_by_risk is not None and qty_by_risk < qty_by_alloc:
                     logger.info(
-                        "Vol-adjusted sizing for %s: qty_by_alloc=%d → qty_by_risk=%d "
+                        "Vol-adjusted sizing for %s: qty_by_alloc=%s → qty_by_risk=%s "
                         "(risk %.2f/share, budget $%.0f = %.1f%% of equity)",
-                        decision.symbol, qty_by_alloc, qty_by_risk,
+                        decision.symbol, _fmt_shares(qty_by_alloc),
+                        _fmt_shares(qty_by_risk),
                         abs(sizing_price - stop_price),
                         total_value * RISK_BUDGET_PCT / 100, RISK_BUDGET_PCT,
                     )
@@ -3539,7 +3744,10 @@ class ExecutionStage:
                 # (D9) plus the borrow gate (D6) are the sole control
                 # surface for a short, not a cash re-size here.
                 if not is_short and estimated_cost > available_cash:
-                    affordable_qty = int(available_cash / sizing_price)
+                    affordable_qty = _size_shares(
+                        pipeline, available_cash / sizing_price,
+                        fractional=fractional,
+                    )
                     if affordable_qty <= 0:
                         logger.warning(
                             "Skipping BUY %s: estimated cost $%.2f exceeds available cash $%.2f after sell phase",
@@ -3552,9 +3760,10 @@ class ExecutionStage:
                         )
                         continue
                     logger.warning(
-                        "Resizing BUY %s from %d to %d share(s): confirmed cash "
+                        "Resizing BUY %s from %s to %s share(s): confirmed cash "
                         "$%.2f only partially covers the approved order",
-                        decision.symbol, qty, affordable_qty, available_cash,
+                        decision.symbol, _fmt_shares(qty),
+                        _fmt_shares(affordable_qty), available_cash,
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
@@ -3652,7 +3861,8 @@ class ExecutionStage:
                     )
                     _record_execution_skip(
                         pipeline, ctx, decision.symbol, "broker_rejected",
-                        f"broker rejected {decision.action.lower()} {qty} @ "
+                        f"broker rejected {decision.action.lower()} "
+                        f"{_fmt_shares(qty)} @ "
                         f"{'limit $%.2f' % limit_price if limit_price else 'market'}",
                     )
                     continue
@@ -3676,8 +3886,9 @@ class ExecutionStage:
                     available_cash -= estimated_cost
                 order_type = "limit" if limit_price is not None else "market"
                 logger.info(
-                    "Executed: %s %d %s @ %s $%.2f",
-                    decision.action.lower(), qty, decision.symbol, order_type, executed_price,
+                    "Executed: %s %s %s @ %s $%.2f",
+                    decision.action.lower(), _fmt_shares(qty), decision.symbol,
+                    order_type, executed_price,
                 )
                 # The entry still owes a protective stop: it is placed as a
                 # separate GTC order AFTER the fill, because an OTO leg would
@@ -3744,6 +3955,19 @@ class ExecutionStage:
                     "protective_stop_result",
                     entry_order_id=entry_order_id, stop_price=spec["stop_price"],
                     protective_order_id=(protection or {}).get("id") if isinstance(protection, dict) else None,
+                )
+                # Spec §11.1 guard 2. The broker has already retried hard and
+                # immediately (guard 1) by the time this is reached, so a
+                # falsy `protection` means a position is open at the broker
+                # with NO stop on it, and a non-zero `uncovered_qty` means
+                # part of one is. Neither may be reported as a log line: a log
+                # line is read after the fact, and the whole reason fractional
+                # sizing is acceptable is that the unprotected window is brief
+                # — which is only true if a HUMAN is told the moment it stops
+                # being brief. Never lets an alerting failure abort the
+                # session.
+                _alert_owner_protection_failed(
+                    pipeline, spec, protection, entry_order_id,
                 )
                 # D7 (Stage 3): MANDATORY escalation for a SHORT. A long's
                 # loss is bounded at -100%; a naked short's is not, so

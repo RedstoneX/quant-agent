@@ -125,8 +125,8 @@ corrections:
 - **NO earnings-date requirement.** Considered and REJECTED by the owner: ETFs
   have no earnings and ~20 of the universe are ETFs. Reducing their size for a
   missing date is equally wrong. Dropped entirely.
-- **No maximum price** — Phase 11.1 turns fractional sizing on, so a $500
-  share is no longer unsizeable.
+- **No maximum price** — Phase 11.1 turned fractional sizing on (built
+  2026-09-01), so a $500 share is no longer unsizeable.
 
 *Pruning.* Nothing does this today.
 - **Re-screen weekly.** Fail once -> flagged. Fail twice consecutively ->
@@ -146,10 +146,12 @@ candidates reach the PM**, the same way `NominationConfig` already caps
 nominations, so the bill is a number that is set rather than one that emerges.
 Untested risk: the free tier is rate-limited and a much wider scan may hit it.
 
-**Still to build (nothing exists yet):** **ALL of Phase 11** — fractional
-sizing, its three required stop-placement guards, the 2.0x gross-exposure cap,
+**Still to build:** the rest of **Phase 11** — the 2.0x gross-exposure cap,
 the de-levering ladder, and distance-to-forced-liquidation monitoring — plus
-the margin interest tracker and the wider universe with pruning.
+the margin interest tracker and the wider universe with pruning. **11.1
+(fractional sizing and its three stop-placement guards) is BUILT** as of
+2026-09-01; see the IMPLEMENTED note under §11.1, including the one open
+question it did not settle.
 
 **Phase 11 was MISSING from this line until 2026-09-01 and that caused a real
 scope error.** A session read this list, built Phase 12 and the branch merges,
@@ -646,11 +648,15 @@ decisions from that day are live, not finished, and stay below.
   move to real money that's something to look at again."* **Revisit before any
   live-capital activation** — execution-quality numbers measured under IEX are
   not trustworthy.
-- **Fractional shares are OUT.** Alpaca supports fractional on simple orders
-  but not combined with bracket/OCO. QAMC attaches the protective stop as an
-  OTO bracket at entry (`AGENTS.md` invariant 3), so fractional would mean a
-  window where a position exists unprotected. Not worth recovering whole-share
-  rounding loss (V wanted 6%, got 3.84%).
+- **Fractional shares are IN — this decision was REVERSED on 2026-09-01**
+  (spec §11.1) and BUILT the same day. The original reasoning rested on the
+  stop being an OTO bracket leg; it has not been one since 2026-07-16, so the
+  fill→stop window fractional was said to introduce already existed on every
+  entry. Owner: *"if the gap is brief upon entry, then it's irrelevant to
+  eliminate that option."* Behind `execution.fractional_enabled` (default on),
+  gated on a broker-confirmed `fractionable` flag that fails closed, with the
+  three required stop-placement guards. Recovers the whole-share rounding tax
+  (V wanted 6%, got 3.84%).
 - **The desk must deliberate, not just filter** — see `Phase 9` in
   `docs/QAMC_REMEDIATION_SPEC.md`. Rex: *"We have agents doing research and
   analysis. If something has high conviction or strong candidacy it should be
