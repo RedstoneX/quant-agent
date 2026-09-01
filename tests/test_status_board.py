@@ -528,7 +528,7 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
     assert size <= 100_000, (
         f"docs/WORK.md is {size} bytes, over the 100,000-byte cap — finished "
         "or decided content has likely crept back in; MOVE it to "
-        "docs/DEFECT_LOG.md rather than deleting it, and never raise this "
+        "docs/INCIDENT_HISTORY.md rather than deleting it, and never raise this "
         "number to make room"
     )
 
@@ -540,7 +540,7 @@ def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
     wrong at exactly the point it became history — and it erased it on a
     schedule, every time the backlog filled up.
 
-    `docs/DEFECT_LOG.md` is the destination: append-only, never trimmed, one
+    `docs/INCIDENT_HISTORY.md` is the destination: append-only, never trimmed, one
     plain-language line per entry stating what actually broke. This test is
     the mechanical half of that rule. A prose instruction telling future
     sessions to prune into the log is exactly the kind of thing that gets
@@ -553,21 +553,21 @@ def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
     """
     root = Path(__file__).resolve().parents[1]
     work_md = root / "docs" / "WORK.md"
-    defect_log = root / "docs" / "DEFECT_LOG.md"
+    defect_log = root / "docs" / "INCIDENT_HISTORY.md"
     if not work_md.exists():
         return
 
     assert defect_log.exists(), (
-        "docs/DEFECT_LOG.md is missing. WORK.md is capped and its finished "
+        "docs/INCIDENT_HISTORY.md is missing. WORK.md is capped and its finished "
         "content has to go somewhere other than /dev/null — recreate the log "
         "rather than resuming deletion."
     )
     assert defect_log.stat().st_size > 2_000, (
-        "docs/DEFECT_LOG.md is suspiciously small — it is append-only and is "
+        "docs/INCIDENT_HISTORY.md is suspiciously small — it is append-only and is "
         "never trimmed, so it should only ever grow."
     )
-    assert "DEFECT_LOG.md" in work_md.read_text(), (
-        "docs/WORK.md no longer points at docs/DEFECT_LOG.md. A session "
+    assert "INCIDENT_HISTORY.md" in work_md.read_text(), (
+        "docs/WORK.md no longer points at docs/INCIDENT_HISTORY.md. A session "
         "pruning the backlog will not find the destination and will fall "
         "back to deleting, which is the behaviour this pair of tests exists "
         "to stop."

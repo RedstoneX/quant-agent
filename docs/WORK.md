@@ -4,7 +4,7 @@
 
 ### Session start — read this first
 
-**Where finished work goes: `docs/DEFECT_LOG.md`. Move it there. Do not
+**Where finished work goes: `docs/INCIDENT_HISTORY.md`. Move it there. Do not
 delete it.** This file is capped at 100,000 bytes and is loaded into context
 every session, so it must hold ONLY work still to be done. When it fills up,
 the temptation is to delete completed sections because git history keeps
@@ -318,7 +318,7 @@ that X actually produces the symptom.
 
 Six incident and deployment records from 2026-08-31 (the desk going dark at the
 open, the provider refusals, the phantom charges, the reward:risk gate, the
-Gemini routing move, and the deploy itself) now live in `docs/DEFECT_LOG.md`.
+Gemini routing move, and the deploy itself) now live in `docs/INCIDENT_HISTORY.md`.
 
 They were moved rather than trimmed. WORK.md has a hard 100,000-byte cap, so
 finished incidents were being deleted to make room for new work — which meant

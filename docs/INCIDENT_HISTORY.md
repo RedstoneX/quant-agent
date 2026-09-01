@@ -1,4 +1,4 @@
-# QAMC Defect Log
+# QAMC Incident History
 
 **What this file is:** a permanent, plain-language record of things that broke
 and what was done about them. Newest first.
