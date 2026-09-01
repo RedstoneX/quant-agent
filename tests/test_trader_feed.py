@@ -539,6 +539,7 @@ def test_extract_alert_symbols_handles_missing_run_and_result(tmp_path, monkeypa
 # calls to build a live alert.
 
 CAMECO = CompanyProfile(symbol="CCJ", name="Cameco Corporation", industry="Uranium")
+NVIDIA = CompanyProfile(symbol="NVDA", name="NVIDIA Corporation", industry="Semiconductors")
 
 
 def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
@@ -736,3 +737,157 @@ def test_length_pressure_drops_identities_before_decision_content(tmp_path, monk
     # though the message as a whole had to be cut.
     assert "🧠 PM/Constructor" in final_text
     assert "Sizing acceptable" in final_text
+
+
+# === Review-only symbols (2026-09-01 gap fix) ===
+#
+# `extract_alert_symbols` used to pull only from `result["orders"]`,
+# `result["stop_coverage_gaps"]`, and the run snapshot's `pm_orders`/
+# `trades`/`skips` — never `result["review"]["actions"]`. On a midday/close
+# alert that meant a HOLD, or a decided-but-unexecuted SELL, showed up in
+# the `_format_position_review` decision list as bare text: no company
+# identity line, no tap-through link — while symbols that did trade got
+# both. Every test below goes through `trader_feed.format_session_result`
+# for the identity line, and separately through `extract_alert_symbols` fed
+# into `TelegramNotifier._build_payload` for the real link — the exact two
+# consumers `src/scheduler.py`/`main.py` wire together for a live alert.
+
+def test_midday_hold_only_symbol_gets_linked_and_identified(tmp_path, monkeypatch):
+    """The reported gap, reproduced: a HOLD that never became a broker
+    trade must still surface in extract_alert_symbols — same identity and
+    tap-through link treatment as a symbol that did trade."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-hold-only"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [],
+        "review": {
+            "risk_level": "low",
+            "overall_assessment": "Thesis intact, no action needed.",
+            "actions": [{"action": "HOLD", "symbol": "NVDA", "reason": "Thesis intact"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"NVDA": NVIDIA},
+    ):
+        msg = trader_feed.format_session_result("midday", result, 9.0)
+
+    assert "HOLD NVDA" in msg
+    assert "NVDA — NVIDIA Corporation · Semiconductors" in msg
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    assert symbols == ["NVDA"]
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=symbols)
+    assert '<a href="https://finance.yahoo.com/quote/NVDA">NVDA</a>' in payload["text"]
+
+
+def test_close_decided_but_unexecuted_sell_gets_linked_and_identified(tmp_path, monkeypatch):
+    """A close-review SELL the reviewer decided on, where execution never
+    completed (no broker order), must still be linked and identified —
+    it is often the one the operator most wants to look up."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-sell-unexecuted"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [],
+        "review": {
+            "risk_level": "elevated",
+            "overall_assessment": "Thesis broken, exit recommended.",
+            "actions": [{"action": "SELL", "symbol": "NVDA", "reason": "Thesis broken"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"NVDA": NVIDIA},
+    ):
+        msg = trader_feed.format_session_result("close", result, 9.0)
+
+    assert "SELL NVDA" in msg
+    assert "NVDA — NVIDIA Corporation · Semiconductors" in msg
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    assert symbols == ["NVDA"]
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=symbols)
+    assert '<a href="https://finance.yahoo.com/quote/NVDA">NVDA</a>' in payload["text"]
+
+
+def test_traded_symbol_named_in_both_orders_and_review_appears_once(tmp_path, monkeypatch):
+    """A symbol that DID trade is present in both `result["orders"]` and
+    `review["actions"]` (the reviewer's REDUCE led to the broker order) —
+    it must appear once in the symbol list, not twice, and once in the
+    identity block, not twice."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-dedupe"
+    _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [{"symbol": "CCJ"}],
+        "review": {
+            "actions": [{"action": "REDUCE", "symbol": "CCJ", "reason": "trim the winner"}],
+        },
+    }
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    assert symbols == ["CCJ"]
+    assert symbols.count("CCJ") == 1
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("midday", result, 9.0)
+
+    assert msg.count("CCJ — Cameco Corporation · Uranium") == 1
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=symbols)
+    assert "<a href" in payload["text"]
+
+
+def test_symbol_order_is_stable_across_repeated_calls(tmp_path, monkeypatch):
+    """Same alert, called repeatedly, must produce the same symbol list in
+    the same order every time — a set/dict-iteration reorder would make
+    both the tests and the live messages flaky."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-order-stable"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 3,
+        "orders": [{"symbol": "AAPL"}],
+        "review": {
+            "actions": [
+                {"action": "HOLD", "symbol": "MSFT", "reason": "steady"},
+                {"action": "SELL", "symbol": "NVDA", "reason": "thesis broken"},
+            ],
+        },
+    }
+
+    first = trader_feed.extract_alert_symbols(run, result)
+    second = trader_feed.extract_alert_symbols(run, result)
+    third = trader_feed.extract_alert_symbols(run, result)
+
+    assert first == ["AAPL", "MSFT", "NVDA"]
+    assert first == second == third
+
+
+def test_extract_alert_symbols_direct_call_includes_review_actions(tmp_path, monkeypatch):
+    """Direct unit test as a supplement — NOT the proof on its own (see the
+    end-to-end tests above), because a direct-call-only test is exactly how
+    this gap shipped unnoticed the first time."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-direct"
+    result = {
+        "status": "reviewed", "run_id": run,
+        "orders": [{"symbol": "aapl"}],
+        "review": {"actions": [
+            {"action": "hold", "symbol": "msft"},
+            {"action": "SELL", "symbol": "nvda"},
+        ]},
+    }
+    assert trader_feed.extract_alert_symbols(run, result) == ["AAPL", "MSFT", "NVDA"]

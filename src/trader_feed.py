@@ -259,7 +259,9 @@ def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
 
     Deliberately narrow: pulled only from the SAME structured fields the
     renderers above already iterate for a `symbol` key (PM proposed orders,
-    executed trades, execution skips, stop-coverage gaps, and the
+    executed trades, execution skips, stop-coverage gaps, the midday/close
+    reviewer's `result["review"]["actions"]` — including a HOLD or a
+    decided-but-unexecuted action that never became a broker trade — and the
     top-level `result["orders"]` the base formatter's own
     `_append_company_identities` uses) — never a scan of the free-text PM/
     risk rationale, which routinely contains capitalized words ("ALL",
@@ -284,6 +286,11 @@ def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
         for row in result.get("stop_coverage_gaps") or []:
             if isinstance(row, dict):
                 _add(row.get("symbol"))
+        review = result.get("review")
+        if isinstance(review, dict):
+            for row in review.get("actions") or []:
+                if isinstance(row, dict):
+                    _add(row.get("symbol"))
 
     try:
         snap = _read_run(run_id)
