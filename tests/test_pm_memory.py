@@ -986,10 +986,17 @@ def test_clamp_queued_earnings_noop_when_nothing_queued():
     assert out[0].allocation_pct == 12.0
 
 
-def test_projected_portfolio_flags_sector_overweight(tmp_path):
-    """With 3 Tech BUYs at 5% each on top of 30% held Tech, projection → 45%."""
+def _projection_pipeline(target_pct: float | None = None):
+    """A bare pipeline for `_build_projected_portfolio`.
+
+    Spec §12.2/§12.3: the overweight threshold is read from the risk engine's
+    `max_sector_pct` instead of the hardcoded `35` this preview used to carry
+    — a fourth sector number, unrelated to config and already stale against
+    the 40 it was shadowing. Passing `target_pct=None` leaves no risk engine
+    at all, which is how the fallback is exercised.
+    """
+    from types import SimpleNamespace
     from src.pipeline import TradingPipeline
-    from src.models import TechAnalysisResult
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline._last_symbol_sectors = {
@@ -997,18 +1004,20 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
         "AMD": "Technology",
         "AAPL": "Technology",
     }
-    # Existing 30% Tech position
-    positions = [
-        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
-                 market_value=3000, unrealized_pnl=0, sector="Technology"),
-    ]
-    # Three Tech BUY candidates
-    from src.models import TechReasoningChain
+    if target_pct is not None:
+        pipeline.risk_engine = SimpleNamespace(
+            config=SimpleNamespace(max_sector_pct=target_pct),
+        )
+    return pipeline
+
+
+def _tech_buy_analyses():
+    from src.models import TechAnalysisResult, TechReasoningChain
     _trc = TechReasoningChain(
         trend="x", momentum="x", volatility="x",
         volume="x", support_resistance="x",
     )
-    analyses = [
+    return [
         TechAnalysisResult(
             symbol=sym, rating="buy", conviction="high",
             entry_price=100, stop_loss=95, reference_target=110,
@@ -1018,15 +1027,77 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
         )
         for sym in ("NVDA", "AMD", "AAPL")
     ]
+
+
+def test_projected_portfolio_flags_sector_overweight(tmp_path):
+    """With 3 Tech BUYs at 5% each on top of 30% held Tech, projection → 45%.
+
+    The warning threshold now comes from `risk.max_sector_pct` (spec §12.3
+    put it at 75) rather than the hardcoded 35 this preview carried. Set to
+    40 here so the same book still trips it, and asserted through the config
+    so the two cannot drift apart again.
+    """
+    pipeline = _projection_pipeline(target_pct=40.0)
+    # Existing 30% Tech position
+    positions = [
+        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
+                 market_value=3000, unrealized_pnl=0, sector="Technology"),
+    ]
     with patch("src.execution.broker._get_sector") as mock_get_sector:
         out = pipeline._build_projected_portfolio(
-            positions, analyses, total_value=10000, default_buy_pct=5.0,
+            positions, _tech_buy_analyses(), total_value=10000,
+            default_buy_pct=5.0,
         )
     assert "Current: 30% net invested" in out
-    # 30 + 3*5 = 45% Tech
-    assert "Technology 45%" in out
-    assert "Sectors near/over 35% cap: Technology" in out
+    # 30 + 3*5 = 45% Tech, all long-side (spec §12.2 labels the side).
+    assert "Technology long 45%" in out
+    assert "over the 40% concentration target" in out
+    assert "Technology (long)" in out
     mock_get_sector.assert_not_called()
+
+
+def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path):
+    """The same book, with the production §12.3 target of 75, is not flagged
+    — the preview must draw the line the rest of the system draws, not one of
+    its own."""
+    pipeline = _projection_pipeline(target_pct=75.0)
+    positions = [
+        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
+                 market_value=3000, unrealized_pnl=0, sector="Technology"),
+    ]
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            positions, _tech_buy_analyses(), total_value=10000,
+            default_buy_pct=5.0,
+        )
+    assert "Technology long 45%" in out
+    assert "concentration target" not in out
+
+
+def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
+    """Spec §12.2. A held SHORT used to be summed SIGNED into its sector, so
+    it made the LONG side look smaller in the very preview whose job is to
+    surface concentration.
+
+    Here 30% held Tech LONG and 20% held Tech SHORT: the long line must still
+    read 30 (projecting to 45 with the three BUYs), and the short must appear
+    as its own 20, not as -20 netted off the long.
+    """
+    pipeline = _projection_pipeline(target_pct=40.0)
+    positions = [
+        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
+                 market_value=3000, unrealized_pnl=0, sector="Technology"),
+        Position(symbol="INTC", qty=-20, avg_entry=100, current_price=100,
+                 market_value=-2000, unrealized_pnl=0, sector="Technology"),
+    ]
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            positions, _tech_buy_analyses(), total_value=10000,
+            default_buy_pct=5.0,
+        )
+    assert "Technology long 45%" in out, "the short must not net off the longs"
+    assert "Technology short 20%" in out
+    assert "Technology -" not in out
 
 
 # === MacroStore history ===

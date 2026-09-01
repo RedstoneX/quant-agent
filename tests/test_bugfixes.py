@@ -147,7 +147,10 @@ def test_sector_cap_counts_pending_same_sector_buys():
             positions=[],
             total_value=100000,
             daily_pnl=0,
-            pending_sector_investment={"Technology": 25000},
+            # Spec §12.2 — the accumulator is keyed by `(sector, side)`. A
+            # bare-sector key here would silently miss every lookup and the
+            # test would pass while enforcing nothing.
+            pending_sector_investment={("Technology", "long"): 25000},
         )
 
     rules = [v.rule for v in violations]

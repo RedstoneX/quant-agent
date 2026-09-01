@@ -226,7 +226,18 @@ class PMFacts:
     invested_pct: float = 0.0
     cash_pct: float = 100.0
     position_count: int = 0
-    sector_weights: dict[str, float] = field(default_factory=dict)  # {sector: % of equity}
+    # Spec §12.2 (owner-ratified 2026-09-01) — SEPARATE long and short sector
+    # budgets, each `{sector: % of equity}` as an UNSIGNED gross magnitude.
+    #
+    # This reverses the earlier, deliberate netting (a long 15% and a short
+    # -5% in Technology used to render as one line, 10%). Owner's reasoning:
+    # *"A long and a short in the same sector is not a hedge... We are
+    # trading opportunities."* The PM must see the two sides separately or it
+    # will reason about concentration differently from the engine that
+    # enforces it — the same PM-sees-one-thing / gate-enforces-another defect
+    # class as Phase 10.
+    sector_weights_long: dict[str, float] = field(default_factory=dict)
+    sector_weights_short: dict[str, float] = field(default_factory=dict)
     positions_under_5d: int = 0
     positions_5_to_15d: int = 0
     positions_over_15d: int = 0
@@ -294,10 +305,17 @@ class PMFacts:
         def _num(v: float | int | None) -> str:
             return f"{v}" if v is not None else "n/a"
 
-        sector_lines = "\n".join(
-            f"  - {s}: {w:.1f}%"
-            for s, w in sorted(self.sector_weights.items(), key=lambda kv: -kv[1])[:8]
-        ) or "  (none)"
+        # Spec §12.2 — the two sides are rendered as two lists, never summed.
+        # Netting them here would show the PM a smaller number than the gate
+        # enforces against, which is precisely the defect being removed.
+        def _sector_lines(weights: dict[str, float]) -> str:
+            return "\n".join(
+                f"  - {s}: {w:.1f}%"
+                for s, w in sorted(weights.items(), key=lambda kv: -kv[1])[:8]
+            ) or "  (none)"
+
+        long_sector_lines = _sector_lines(self.sector_weights_long)
+        short_sector_lines = _sector_lines(self.sector_weights_short)
 
         # audit round 2 #35: the denominator is rm_verdicts_seen (the query
         # is limit=5 but can return 0-5 rows), not a hardcoded 5 — a fresh
@@ -325,8 +343,13 @@ class PMFacts:
 - invested={self.invested_pct:.1f}% · cash={self.cash_pct:.1f}% · positions={self.position_count}
 - age buckets: <5d={self.positions_under_5d} · 5-15d={self.positions_5_to_15d} · >15d={self.positions_over_15d}
 - drift-flagged (weight>12% + P&L>10%): {self.positions_drift_flagged}
-- sector weights (top 8):
-{sector_lines}
+- sector weights — LONG side (top 8, gross % of equity):
+{long_sector_lines}
+- sector weights — SHORT side (top 8, gross % of equity):
+{short_sector_lines}
+- (§12.2) the two sides carry SEPARATE budgets against the same sector
+  limit and are NOT netted. A long and a short in the same sector is not a
+  hedge — it is two opportunities that share a label.
 
 ### Signal Freshness (TA output this session)
 - signals={self.tech_signals_count} · median_age={_num(self.tech_signals_median_age_days)}d · stale(≥8d)={self.tech_signals_stale_count}

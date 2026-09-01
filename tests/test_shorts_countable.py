@@ -491,37 +491,67 @@ def _pm_facts(pipeline, positions):
 
 
 def test_pm_facts_sector_weights_long_only_unchanged():
-    """No-op proof: a long-only book's sector table is what it always was."""
+    """No-op proof: a long-only book's sector table is what it always was.
+
+    The field is now `sector_weights_long` (spec §12.2 split the table by
+    side); the NUMBERS a long-only book produces are unchanged, which is what
+    this test exists to pin.
+    """
     pipeline = _mk_pipeline()
     f = _pm_facts(pipeline, [
         _pos("NVDA", qty=150, entry=100, price=100, sector="Technology"),
         _pos("XOM", qty=100, entry=100, price=100, sector="Energy"),
     ])
-    assert f.sector_weights["Technology"] == 15.0
-    assert f.sector_weights["Energy"] == 10.0
+    assert f.sector_weights_long["Technology"] == 15.0
+    assert f.sector_weights_long["Energy"] == 10.0
+    assert f.sector_weights_short == {}
 
 
-def test_pm_facts_sector_weights_short_is_a_negative_exposure():
-    """A short is real sector exposure — a negative one. `qty <= 0` erased it,
-    so a short hedge left PM believing it had no exposure at all."""
+def test_pm_facts_sector_weights_short_is_its_own_positive_exposure():
+    """DELIBERATE REVERSAL under spec §12.2 (owner-ratified 2026-09-01).
+
+    This test previously asserted a short rendered as a NEGATIVE weight in
+    the single sector table (`Consumer Cyclical == -10.0`). Under §12.2 a
+    short is its own exposure on its own side, measured as an UNSIGNED gross
+    magnitude against the same limit the long side is measured against.
+
+    What has NOT changed, and what this test still guards, is the original
+    defect: `qty <= 0` used to erase a short from the sector table entirely,
+    so the PM believed it had no exposure at all. A short must still show up.
+    """
     pipeline = _mk_pipeline()
     f = _pm_facts(pipeline, [
         _pos("TSLA", qty=-40, entry=250, price=250, sector="Consumer Cyclical"),
     ])
-    assert f.sector_weights["Consumer Cyclical"] == -10.0
+    assert f.sector_weights_short["Consumer Cyclical"] == 10.0
+    assert "Consumer Cyclical" not in f.sector_weights_long
 
 
-def test_pm_facts_sector_weights_mixed_book_nets():
-    """A short against a long in the same sector nets down, and other sectors
-    are untouched."""
+def test_pm_facts_sector_weights_mixed_book_does_not_net():
+    """DELIBERATE REVERSAL under spec §12.2 (owner-ratified 2026-09-01).
+
+    This test previously pinned NETTING as intended behaviour: a long 15% and
+    a short 5% in Technology rendered as one 10% line. §12.2 reverses that
+    decision. Owner's reasoning, which governs: *"A long and a short in the
+    same sector is not a hedge... We are trading opportunities."*
+
+    The reversal matters beyond taste. `RiskRuleEngine.check` now measures
+    each side against the limit independently, so a netted PM table would
+    show the Portfolio Manager a smaller number than the gate enforces
+    against — it would reason about concentration on one book while being
+    refused on another. That is the same PM-sees-one-thing / engine-enforces
+    -another defect class as Phase 10.
+    """
     pipeline = _mk_pipeline()
     f = _pm_facts(pipeline, [
         _pos("NVDA", qty=150, entry=100, price=100, sector="Technology"),
         _pos("INTC", qty=-50, entry=100, price=100, sector="Technology"),
         _pos("XOM", qty=100, entry=100, price=100, sector="Energy"),
     ])
-    assert f.sector_weights["Technology"] == 10.0   # 15 - 5
-    assert f.sector_weights["Energy"] == 10.0       # unchanged by the short
+    assert f.sector_weights_long["Technology"] == 15.0    # NOT 15 - 5
+    assert f.sector_weights_short["Technology"] == 5.0    # its own budget
+    assert f.sector_weights_long["Energy"] == 10.0        # untouched
+    assert "Energy" not in f.sector_weights_short
 
 
 def _today_ts() -> str:

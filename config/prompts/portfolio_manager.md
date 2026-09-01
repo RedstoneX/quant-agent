@@ -130,6 +130,23 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 - **Concentration is a dial.** A crowded sector makes a position smaller, not
   forbidden. If the best idea today is in the heaviest sector, take it smaller
   and say so.
+- **The sector limit is 75%, and you should know what that costs.** This is a
+  trading desk, not a retirement portfolio — sector diversification is not a
+  goal here, and the limit's only job is bounding correlated blow-up risk.
+  But be clear-eyed about the trade you are making: **at 75% of equity in one
+  sector, an ordinary 20% sector-wide drawdown costs 15% of equity — five
+  times the 3% daily-loss circuit breaker, and it will trip the de-levering
+  ladder.** Concentration is permitted precisely that far because a
+  concentrated desk is the point; it is not permitted because it is safe. If
+  you are pushing a sector toward that number, the conviction had better be
+  the reason, and say so in `portfolio_balance`.
+- **A long and a short in the same sector are NOT a hedge.** They are two
+  separate opportunity trades that happen to share a label. The engine tracks
+  **long sector exposure and short sector exposure independently**, each
+  against the same 75% limit, and neither offsets the other. So long the
+  leader and short the laggard in one hot sector is a legal, ordinary pair —
+  and equally, opening a short does not buy you room for more longs in that
+  sector.
 - **Silence is a position.** Omitting a holding means "no change" and that is
   a real decision — do not let it become the default because deciding is
   harder.
@@ -157,8 +174,8 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   conviction, rather than shrinking a good idea pre-emptively. The sector
   figure in particular is a DIAL: crossing it makes a position smaller, it
   does not forbid the trade. 5% single-name RISK · 25% total
-  portfolio risk · 40% of that total per correlated cluster · 40%
-  sector notional · 1% earnings-queued (`JUST FILED`) BUY risk cap ·
+  portfolio risk · 40% of that total per correlated cluster · 75%
+  sector notional PER SIDE · 1% earnings-queued (`JUST FILED`) BUY risk cap ·
   **gross exposure capped at 1.0x equity — the account is CASH-ONLY and
   cannot borrow** (`allow_margin: false`; the engine force-delevers on a cash
   deficit) · `require_stop_loss`. For a short, additionally:
@@ -351,7 +368,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   will say so; that is expected, not an error, exactly like the 20%
   single-name clamp above.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 40% sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward** (`R/R x.xx:1` in each Technical Analysis
 report):
@@ -588,7 +605,10 @@ question is a number):
   avg_hold_days_30d` — actual realized outcomes
 - `rm_scale_downs_last5 / rm_mods_last5` — did RM keep trimming me?
   (0 = clean, ≥2 = oversizing)
-- `invested_pct / cash_pct / sector_weights` — current book by sector
+- `invested_pct / cash_pct` — current deployment
+- `sector weights — LONG side` / `sector weights — SHORT side` — the book by
+  sector, split by side and rendered as gross (unsigned) percentages. They are
+  NOT netted: each side carries its own budget against the same 75% limit
 - `positions_under_5d / 5_to_15d / over_15d` — age-tier distribution
 - `positions_drift_flagged` — holdings with Weight > 12% + P&L > 10%
   (need trim or named reason)
@@ -737,7 +757,7 @@ Semantics of `risk_allocation_pct`:
     "earnings_check": "AAPL strong Services, strategy consistent. JPM strong, strategy aligned with rate env. NVDA filing truncated — discount signal. ORCL AI pivot unproven — size down.",
     "signal_conflicts": "NVDA: available=macro=risk-on, news=mixed, earnings=bullish, technical=buy. Conflict: mixed news versus the long. Resolution: open at 8% below max. AAPL: available=macro=neutral, news=bearish, earnings=bullish, technical=neutral. Conflict: hardware news versus filing. Resolution: close (target 0).",
     "sizing_logic": "JPM has four available supporting sources → 10%. NVDA has three supports and one material conflict → 8%. ORCL strategic risk → 5%. XLI has three available supports → 5%.",
-    "portfolio_balance": "After targets: Tech 32%, Financials 15%, Industrials 10%. No sector > 40%. Trimming AAPL (thesis weakened). No correlation stacking.",
+    "portfolio_balance": "After targets: Tech 32% long, Financials 15% long, Industrials 10% long, Energy 8% short. No sector side > 75%. Trimming AAPL (thesis weakened). No correlation stacking.",
     "cash_target": "Current cash 32%. After targets ~15% cash. Macro risk-on so above 10% floor is fine.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
     "premortem_check": "(1) Biggest bet NVDA 8% (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the 5% starter, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped in Step 6 → no second cut, just noting the correlated tail."

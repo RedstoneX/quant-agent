@@ -1274,6 +1274,63 @@ not a hedge... We are trading opportunities."* Gross summing was rejected
 because it would block a legitimate pair trade — long the leader, short the
 laggard in the same hot sector.
 
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-aa9554aa2b76e1b3f`).
+Exposure is keyed by `(sector, side)` and summed as an UNSIGNED magnitude.
+`side` is the POSITION SIDE (long vs short), not the bullish/bearish thesis —
+an inverse-ETF LONG is long-side exposure in its sector, and the separate
+`max_gross_bearish_pct` cap answers the directional question. Both sides are
+measured against the SAME `max_sector_pct`; no second config key was added.
+
+**Reconnaissance found THREE implementations of "how much is this sector
+holding", and a fourth.** All four had the same signed bug and all four now
+call one definition — `src/risk/rules.py::sector_side_gross` /
+`sector_side_weights`:
+
+| # | site | what it drives | what changed |
+|---|---|---|---|
+| a | `RiskRuleEngine.check` | the enforcement gate | signed sum → `(sector, side)` unsigned; the lying "gross ... unsigned" comment is now true |
+| b | `PMFacts.sector_weights` | what the PM reads | **deliberate reversal** — `sector_weights_long` / `sector_weights_short`, rendered as two lists and never netted |
+| c | `_build_projected_portfolio` | the pre-decision preview | signed sum → side-split; its hardcoded overweight threshold of `35` now reads `risk.max_sector_pct` |
+| d | `PortfolioConstructor._current_sector_weights` | order sizing | a FOURTH site, found during the build; its §10.3 docstring had explicitly deferred this fix ("not this change's business"). Left alone it would have sized orders against a different book than the gate measures |
+
+Both in-batch accumulators are keyed `(sector, side)` for the same reason — a
+pending SHORT must not consume the next BUY's sector budget:
+`pending_sector_investment` in the pipeline's risk filter, and
+`PortfolioConstructor._accrue_sector` in the sizing loop.
+
+**(b) is a reversal of a previously deliberate decision.**
+`tests/test_shorts_countable.py` pinned NETTING as intended (long 15% + short
+-5% in Technology → one 10% line). It now pins the opposite, and its docstring
+records why. The reason is not taste: the gate enforces per side, so a netted
+PM table showed the Portfolio Manager a *smaller* number than the engine
+refuses on — the same PM-sees-one-thing / engine-enforces-another defect class
+as Phase 10.
+
+**The threshold in (c) was wired to config rather than replaced with a fourth
+number.** It warns at `max_sector_pct` itself, not at some band below it: at or
+under the target, crowding costs a trade nothing (`sector_size_scale` returns
+1.0), so there is nothing actionable to say; above it every further trade in
+that sector is shrunk, which is exactly what the PM needs to know before it
+writes decisions.
+
+**Explicitly NOT changed, and it is a real exposure.** A held position whose
+sector resolves to `"Unknown"` contributes to no sector bucket, and an incoming
+`"Unknown"` symbol is cap-exempt entirely. **80 of the 101 universe symbols
+depend on a live yfinance `.info` lookup with no static fallback** (the other
+21 are ETFs covered by `_ETF_SECTORS` / `_INDEX_ETFS` in
+`src/execution/broker.py`). `_get_sector` deliberately does not cache
+`"Unknown"`, so an outage does not permanently exempt a symbol — but for the
+duration of the outage the sector cap is OFF for any of those 80. Reported,
+not fixed, under this task's scope.
+
+**Pinned by tests**, in `tests/test_sector_dial.py` unless noted: a held short
+no longer shrinks its sector's measured long exposure; each side is measured
+independently; a pending short does not consume the long budget; the pair
+trade is legal at both the constructor and the gate; an inverse-ETF long is
+long-side; and one test holds a single book against the gate, the constructor,
+`PMFacts` and the projection at once — three implementations drifting apart is
+how this defect survived.
+
 ### 12.3 The sector limit rises from 40% to 75%
 
 Owner chose 75% over the recommended 60%. The 40% figure is a
@@ -1290,6 +1347,64 @@ daily-loss breaker, and it will trip the Phase 11.2 de-levering ladder. That is
 the accepted cost of a concentrated trading desk, not an oversight. Phase
 10.3's scaling still applies underneath: crossing the target shrinks each
 further position rather than refusing it.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-aa9554aa2b76e1b3f`).
+`risk.max_sector_pct: 40 → 75` in `config/settings.yaml`, and moved everywhere
+it was written down: three sites in `config/prompts/portfolio_manager.md` (the
+caps-summary line, the momentum-sleeve clause, the example JSON), one line of
+static prose in `config/prompts/risk_manager.md`, the text anchor in
+`tests/test_prompts_anchors.py`, `docs/AGENT_ROLE_AUDIT.md`, and the sector
+paragraph in `README.md`.
+
+**Confirmed false positives, deliberately left alone:** the "40%-per-cluster
+risk budget" in the PM prompt (that is `src/risk/budget.py`'s correlated
+-cluster cap, a different mechanism), the "1.5 needs 40%, 2.0 needs 33%"
+hit-rate arithmetic in both the PM and RM prompts, and `_PM_PROFILE_SYMBOL_CAP
+= 40` in `src/pipeline.py`. Most `max_sector_pct=40` occurrences in tests are
+self-contained fixture values passed straight into `RiskConfig(...)`; they do
+not read production config and were left as they are.
+
+**The prompt anchor was re-pointed, not retargeted.** The old anchor was the
+bare string `"40%"`, which still appears in the PM prompt twice for those
+unrelated mechanisms — so a naive `40% → 75%` swap would have left a green test
+guarding nothing. The anchor is now `"75%"` plus a second anchor on
+`"sector notional PER SIDE"`, so §12.2's split is guarded too.
+
+**THE DIAL'S UPPER BOUND — NOT IN THIS RATIFIED TEXT, CHOSEN AT BUILD TIME AND
+OPEN FOR THE OWNER TO MOVE.** §10.3 derived the absolute ceiling as 1.5x the
+target (40 → 60). At a target of 75 that gives **112.5%, which is not a ceiling
+at all**, and a dial with no terminal bound bounds nothing. Shipped:
+**scaling begins at 75, hard refusal at 90** (`risk.max_sector_hard_pct: 90`,
+with the derived default now capped at 90 by
+`RiskConfig.SECTOR_HARD_CEILING_MAX` and never allowed below the target). 90
+keeps a real ceiling while leaving 15 points of scaling range. The 40 → 60
+relationship is unchanged below the cap. **The owner has not ratified 90.**
+
+**The cost is stated where the decision is made, not only here.** The 75%/20%/
+15%-of-equity/five-times-the-breaker arithmetic is written in plain language
+into `config/prompts/portfolio_manager.md` (under "What good judgement looks
+like here"), `config/settings.yaml` next to the setting, `src/risk/rules.py`
+above the dial, and `README.md`. A consequence recorded only in a spec nobody
+reads at decision time is not stated; a test asserts it is present in the PM
+prompt.
+
+**Pinned by tests** in `tests/test_sector_dial.py`: the shipped `risk:` block
+really is 75/90 (parsed from `config/settings.yaml`, not a fixture); the
+derived ceiling is capped at 90 rather than 1.5x; a position crossing 75 is
+SCALED and one past 90 is REFUSED, at both the constructor and the gate.
+
+**Pre-existing breakage repaired alongside, cause recorded because it is a
+merge lesson.** 11 tests in `tests/test_sector_dial.py` were already failing on
+`integration/ship-2026-09-01` before any §12.2/§12.3 work. Cause: that file's
+analyst fixtures carry no `atr_14` / `computed_levels`, which was fine when
+§10.3 was written because the constructor then used the model's
+`reference_target`. §10.4 — merged the same day, from a different branch — made
+the constructor DERIVE the target from structure and REFUSE without an ATR, so
+every order those tests build was refused at `no_volatility_reading` before the
+sector dial was ever reached. The dial was not broken; it was unreachable.
+Neither branch's suite caught it because each passed in isolation. Fixtures
+corrected to the post-§10.4 shape (matching
+`tests/test_portfolio_constructor.py::_analysis`); no assertion was weakened.
 
 ### 12.4 Everything ships together, tonight
 

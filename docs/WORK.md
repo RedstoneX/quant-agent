@@ -428,29 +428,24 @@ defect log is append-only and is never trimmed.
 
 ### Ordered backlog — RESUME POINT
 
-**A held SHORT makes its sector look SMALLER to the risk engine — owner
-decision needed.** Found 2026-09-01 while implementing spec Phase 10.3, by the
-agent doing that work; it predates that task and was deliberately NOT fixed
-there.
+**~~A held SHORT makes its sector look SMALLER to the risk engine~~ — DECIDED
+AND BUILT 2026-09-01.** The owner answered the question this item was raised
+to ask: the sector cap measures **concentration, per side**, not net
+directional exposure. Long sector exposure and short sector exposure are now
+tracked independently, each against the same limit, and neither offsets the
+other — *"A long and a short in the same sector is not a hedge... We are
+trading opportunities."*
 
-The risk engine sums sector exposure using **signed** `market_value`, so a
-short position SUBTRACTS from its sector's measured weight. The code comment
-directly above that sum says the opposite — "gross ... unsigned magnitude".
-Code and comment disagree, and the code is what runs.
+Gross summing was considered and REJECTED, because it would block a legitimate
+pair trade (long the leader, short the laggard in one hot sector). Ratified as
+spec §12.2 and implemented the same day; the build record, the four
+implementations it reconciled, and the yfinance sector-coverage exposure it
+did NOT fix are all in `docs/QAMC_REMEDIATION_SPEC.md` §12.2.
 
-Concretely: a book long $4k of Technology and short $2k of Technology measures
-as 2k of sector exposure, not 6k. It can then add more Technology than the cap
-intends. This has never bitten because **no short has ever executed** (45
-trades in the ledger, zero SHORT/COVER) — but Phase 10.3 turns the sector cap
-into a sizing dial that will be consulted far more often, and Phase 11 raises
-gross exposure to 2.0x. Both make this matter more, not less.
-
-**Why it is a decision and not a fix:** correcting it TIGHTENS the sector cap
-on any book holding shorts, which is a live behaviour change on a risk path.
-There is also a real argument for the current behaviour — a long and a short in
-the same sector genuinely are partly hedged. The question is whether the sector
-cap is measuring *concentration* (gross, unsigned) or *net directional
-exposure* (signed). It should measure one deliberately, and say which.
+Shipped alongside it, spec §12.3: the sector limit moved **40% → 75%**, with
+the absolute ceiling at 90%. **The 90 is not owner-ratified** — it was chosen
+at build time because 1.5x a 75 target gives a meaningless 112.5 — and is open
+for the owner to move.
 
 
 **Margin interest tracker — REQUIRED before Phase 11.2's margin goes on.**
