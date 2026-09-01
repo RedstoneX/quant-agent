@@ -4,6 +4,47 @@
 
 ### Session start — read this first
 
+**STATE AT 2026-09-01 END OF SESSION — read this before anything else.**
+
+**The deepest finding of the day, and the thing to fix first.** Stops widen to
+a minimum 3x ATR while reward:risk must clear 1.5. Over a ~15-session hold a
+stock travels ~3.9 ATR, so the **best achievable ratio is ~1.29** and no trade
+can ever pass. SLB scored 1.28 against a geometric max of 1.29 — the analyst
+produced the best number arithmetic allows and the system refused it. That is
+the whole explanation for 30 of 38 signals (79%) being rejected on 2026-09-01
+and zero trades being placed. `config/settings.yaml` documents the mechanism
+beside the setting. **One of three must move: the 3x stop widening, the 1.5
+floor, or the holding horizon. Owner leans toward the stop. NOT YET DECIDED.**
+
+**Read `docs/OUTCOME.md`'s "This is a trading desk, not a retirement
+portfolio" section before touching any risk rule.** Owner correction,
+2026-09-01: rules justified by DIVERSIFICATION rather than SURVIVAL must
+re-earn their place. Sector diversification is not a goal here; holding period
+is an output, not a setting; a long and a short in the same sector are not a
+hedge.
+
+**Six branches are open and unmerged, all pushed, none deployed:**
+| branch | what | state |
+|---|---|---|
+| `fix/risk-verdict-per-trade` | spec 10.1, per-symbol refusal | done, 3853 tests pass |
+| `fix/concentration-scales-size` | spec 10.3, sector scales size | done, 3848 pass |
+| `fix/target-from-structure` | spec 10.4, target from levels | done, 3850 pass |
+| `feat/telegram-run-deeplink` | symbol links + company names in alerts | done, ready to deploy |
+| `feat/golden-pm-prompt` | PM prompt rewrite | **WIP, 13 guard tests failing, do not merge** |
+| `rescue/price-provenance` | rescued 11-day-old work | parked, NOT mergeable, reference only |
+
+**Merge hazard:** spec Phase 10 and 11 exist only on `feat/golden-pm-prompt`'s
+ancestry, not on main. Two fix agents could not see them and each wrote their
+own Phase 10 section into the spec. **Expect conflicts in
+`docs/QAMC_REMEDIATION_SPEC.md`; reconcile deliberately — the owner-ratified
+text is the one written in this session, not the reconstructions.**
+
+**Open owner decisions:** which of the three geometry levers to move; whether
+to move the PM seat to `qwen/qwen3.7-max` (better AND ~4x cheaper, measured);
+sector concentration measurement (recommend separate long/short budgets);
+whether to revisit the 40% sector target on trading-desk grounds.
+
+
 **READY TO DEPLOY, WAITING ONLY ON THE MARKET CLOSING — do this first.**
 Branch `feat/telegram-run-deeplink` (pushed 2026-09-01, not merged). Makes
 every ticker in a Telegram alert tappable through to that company's quote
