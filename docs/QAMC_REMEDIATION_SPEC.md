@@ -1026,9 +1026,15 @@ tax: V wanted 6% of the book and got 3.84%.
 lost again:** `BRK-B` returns `asset not found` at the broker on every run.
 The correct symbol is `BRK.B`. The universe carries the wrong one.
 
-### 11.2 Margin is ON, capped at 1.5x gross exposure
+### 11.2 Margin is ON, capped at 2.0x gross exposure
 
-**Owner ratified 1.5x on 2026-09-01**, against my recommendation to defer.
+**Owner ratified 1.5x, then raised it to 2.0x on 2026-09-01**, against my
+recommendation to defer. His reasoning, recorded because it is the reason the
+higher number is acceptable: it is a PAPER account, leverage amplifies gains as
+well as losses, and there are lessons to be learned that cannot be learned at
+1x. **The 2.0x figure is therefore a deliberate learning setting on paper, NOT
+a number to carry into live capital unexamined** — see
+[[qamc-live-capital-checklist]] and re-derive it before real money.
 My argument was that the desk is 78% cash and refusing to deploy, so leverage
 raises the stakes on the few trades it does take rather than producing more
 of them. He considered it and decided; recorded here so the disagreement is
@@ -1049,7 +1055,7 @@ the whole-share friction that has been accidentally holding deployment down.
 
 **The rule:**
 - Gross exposure (long market value + absolute short market value) may not
-  exceed **1.5x equity**. Enforced deterministically in Python at the sizing
+  exceed **2.0x equity**. Enforced deterministically in Python at the sizing
   and execution gates, not by asking an agent to respect it.
 - **The cash-park does not count as exposure.** SGOV is parked cash, not a
   position; counting it would consume the entire allowance doing nothing.
@@ -1060,6 +1066,30 @@ this is trusted:**
 1. **Overnight gap.** Stops protect intraday. They do not protect against an
    open 15% lower, and levered that gap comes out of a thinner cushion. A
    separate, tighter ceiling on overnight gross exposure is required.
+
+   **The arithmetic moved when 1.5x became 2.0x, and this is the reason the
+   guard is now mandatory rather than nice to have.** At 1.5x, positions had
+   to fall ~55% before forced liquidation. At 2.0x — equity ~$9,825, gross
+   ~$19,650, borrowed ~$9,825, ~25% maintenance — the threshold is **~33%**.
+   Still far outside any single overnight gap, but it is no longer an
+   unreachable number: a 33% drawdown is a bad quarter, not an impossibility.
+
+   **Margin interest is charged ONLY on the end-of-day (overnight) debit
+   balance** — Alpaca's live rate is 6.25% non-elite, 4.75% elite, computed as
+   `(overnight debit balance x rate) / 360`. Intraday leverage is FREE. That
+   is a live design lever, not a footnote: a desk that runs leveraged intraday
+   and trims into the close pays nothing and carries no overnight gap risk.
+   At a sustained 2.0x the cost is ~$1.71/day, ~$614/yr, **6.25% of equity that
+   the book must out-earn before leverage contributes a cent.**
+
+   **Paper does NOT simulate short borrow fees** — Alpaca's own paper-trading
+   comparison lists them as "Coming Soon". Whether paper simulates MARGIN
+   INTEREST is not documented either way; secondary sources say it does not,
+   and Alpaca's docs neither confirm nor deny. **Settle this empirically on the
+   first night a debit balance is carried** — the charge either appears in the
+   account's INT activities or it does not. Until then, report it as a clearly
+   labelled ESTIMATE so paper trading does not teach the lesson with its
+   largest recurring cost silently removed.
 2. **Forced liquidation.** Below maintenance margin the broker sells, at the
    worst moment, without asking. Nothing currently watches the distance to
    that threshold or alerts on it.
