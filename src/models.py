@@ -798,6 +798,106 @@ class RiskModification(BaseModel):
     reason: str
 
 
+def _normalize_rejected_symbols_field(values):
+    """Coerce the container shapes an LLM emits for `rejected_symbols` into
+    the list of objects the schema declares.
+
+    Same fail-open logic as `SymbolRejection._coerce_shorthand`: losing a
+    refusal to a container-shape slip means a name the risk manager refused
+    goes on to trade, so the shapes that unambiguously carry the same
+    information are accepted —
+
+        "XLE"                        -> [{"symbol": "XLE"}]
+        "XLE, CHPX"                  -> [{"symbol": "XLE"}, {"symbol": "CHPX"}]
+        {"symbol": "XLE", ...}       -> [ {"symbol": "XLE", ...} ]
+        {"XLE": "R/R 1.18 < 1.5"}    -> [{"symbol": "XLE", "reason": "..."}]
+
+    Any other shape (a number, a bool) is left exactly as-is so Pydantic
+    raises on it — `rejected_symbols` is decision-bearing, so that failure
+    correctly fails the whole verdict closed rather than silently trading a
+    refused name.
+    """
+    if not isinstance(values, dict):
+        return values
+    raw = values.get("rejected_symbols")
+    if raw is None or isinstance(raw, list):
+        return values
+    values = dict(values)
+    if isinstance(raw, str):
+        values["rejected_symbols"] = [
+            {"symbol": part} for part in raw.split(",") if part.strip()
+        ]
+    elif isinstance(raw, dict):
+        if "symbol" in raw:
+            values["rejected_symbols"] = [raw]
+        else:
+            values["rejected_symbols"] = [
+                {"symbol": sym, "reason": reason if isinstance(reason, str) else None}
+                for sym, reason in raw.items()
+            ]
+    return values
+
+
+class SymbolRejection(BaseModel):
+    """One symbol refused on its own merits, without touching the rest of
+    the plan. The per-TRADE lane of the risk verdict.
+
+    Why this exists (spec Phase 10.1). `RiskVerdict.approved` is one bool
+    for the whole plan, and `RiskModification` can retune a symbol's fields
+    but cannot refuse one. So a single failing leg killed every other leg:
+    on run `run-64290730` (2026-09-01 morning) the risk manager rejected the
+    whole plan citing XLE alone — constructed R/R 1.18, under the 1.5 floor —
+    and CHPX died with it at R/R 3.03, different sector, unrelated thesis.
+    Zero trades.
+
+    The governing principle, in the owner's words: *"The batch is arbitrary —
+    it is whatever happened to be proposed in one run. Judging a trade against
+    its accidental co-passengers makes no sense. Judge it against what the
+    account actually holds."* A per-SYMBOL failure (an R/R breach on one name,
+    an event-risk flag on one name) refuses that name and nothing else. A
+    BOOK-level failure (a correlation cluster, total exposure, drawdown state)
+    is a property of the whole account and still refuses everything, via
+    `approved=false` — see the field comment on `RiskVerdict.rejected_symbols`.
+
+    `reason` is not optional prose: it is the per-symbol audit trail, written
+    to `specialist_evidence` (kind=`rejection`, scope=`symbol`) and to the
+    symbol's `pipeline_event`, so "why was this name refused" is answerable
+    per name rather than only per run.
+    """
+    symbol: str
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_shorthand(cls, values):
+        """Accept the two shorthands an LLM actually emits, and NEVER lose a
+        refusal to a formatting slip.
+
+        A dropped rejection is fail-OPEN — a name the risk manager refused
+        would trade — so this normalizes rather than discards: a bare
+        `"XLE"` string becomes a rejection with a stated absent reason, and
+        a missing/blank `reason` on an otherwise well-formed entry becomes
+        the same. An entry naming NO recoverable symbol is deliberately left
+        to fail validation: the verdict then fails closed as a whole (see
+        `RiskManagerAgent._DECISION_FIELDS`), because we know a refusal was
+        intended and cannot tell which name it was for.
+        """
+        _absent = "risk manager refused this symbol without stating a reason"
+        if isinstance(values, str):
+            return {"symbol": values, "reason": _absent}
+        if isinstance(values, dict):
+            values = dict(values)
+            reason = values.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                values["reason"] = _absent
+        return values
+
+    @field_validator("symbol")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        return _normalize_symbol(v)
+
+
 class RiskReasoningChain(BaseModel):
     """6-step CoT for the risk manager — forces audit trail on the last gate.
     Every field has `min_length=1` so the LLM can't skip a step by sending
@@ -812,9 +912,33 @@ class RiskReasoningChain(BaseModel):
 
 
 class RiskVerdict(BaseModel):
+    # BOOK-level verdict. `approved=False` still refuses the ENTIRE plan and
+    # always will: correlation clusters, total exposure and drawdown state are
+    # properties of the whole account, so when the BOOK is what fails, killing
+    # every leg is the correct answer. What changed in Phase 10.1 is only the
+    # GRANULARITY available for the other kind of failure — see
+    # `rejected_symbols`. No threshold moved.
     approved: bool
     reasoning_chain: RiskReasoningChain
     modifications: list[RiskModification] = []
+    # PER-SYMBOL refusal. Each entry kills exactly one leg and leaves every
+    # other leg standing; the survivors then go through `modifications`,
+    # `scale_all_buys` and the deterministic hard-risk gate unchanged.
+    #
+    # This is the third rung of a four-rung ladder, narrowest first:
+    #   modifications    — retune one symbol's fields (size, stop, target)
+    #   rejected_symbols — refuse one symbol outright, book unaffected
+    #   scale_all_buys   — size the whole entry side down, refuse nothing
+    #   approved=False   — the book itself is unsound; nothing trades
+    #
+    # Book-level always wins: `approved=False` is evaluated first, so a
+    # verdict carrying both refuses everything regardless of what this list
+    # says. An entry naming a symbol not in the plan is a no-op, logged.
+    #
+    # Default-empty by design — every historical verdict, and every verdict
+    # from a model that never emits the field, replays with byte-identical
+    # behaviour.
+    rejected_symbols: list[SymbolRejection] = []
     # Portfolio-level size control. Multiplies every BUY decision's allocation_pct after
     # per-symbol modifications are applied. 1.0 = no change; 0.5 = half all buys; 0.0
     # effectively kills BUY side while leaving SELL/HOLD/TRAIL intact.
@@ -840,7 +964,20 @@ class RiskVerdict(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_enum_case(cls, values):
+        values = _normalize_rejected_symbols_field(values)
         return _normalize_enum_case_fields(values, lower_fields=("reason_category",))
+
+    def rejections_by_symbol(self) -> dict[str, str]:
+        """`{SYMBOL: reason}` for every per-symbol refusal in this verdict.
+
+        First entry wins on a duplicated symbol — two reasons for refusing
+        the same name still refuse it once, and the first is the one the
+        audit trail carries.
+        """
+        out: dict[str, str] = {}
+        for rejection in self.rejected_symbols:
+            out.setdefault(rejection.symbol, rejection.reason)
+        return out
 
 
 class MacroObservation(BaseModel):

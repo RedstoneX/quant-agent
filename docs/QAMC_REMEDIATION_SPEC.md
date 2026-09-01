@@ -863,6 +863,84 @@ until size is expressed as risk. Build 2b first.
 
 ---
 
+## Phase 10 — One voice must never veto the book
+
+**Owner-ratified 2026-09-01.** Recorded here after the fact: the section was
+ratified and dispatched but had not been written into this document, so §10.1
+below was implemented from the ratified brief. If any wording here differs
+from what the owner ratified, the owner's version wins.
+
+### 10.1 — A failing trade dies alone
+
+**The defect.** `RiskVerdict.approved` (`src/models.py`) was a single `bool`
+for the entire plan. `RiskModification` could retune one symbol's fields but
+could not refuse one. So the only way the risk manager could say "not this
+trade" was to say "not any trade", and one failing leg killed every other leg.
+
+**Evidence.** Run `run-64290730`, 2026-09-01 morning. The risk manager
+rejected the whole plan citing XLE alone — constructed R/R 1.18, below the 1.5
+floor. CHPX died with it: R/R 3.03, comfortably passing, a different sector,
+an unrelated technical thesis, nothing said against it. Zero trades that
+morning. CHPX was never judged; it was standing next to XLE.
+
+**The governing principle, owner's words:** *"The batch is arbitrary — it is
+whatever happened to be proposed in one run. Judging a trade against its
+accidental co-passengers makes no sense. Judge it against what the account
+actually holds."* A trade is assessed against the LIVE PORTFOLIO — existing
+holdings, live exposure, live concentration — never against the other trades
+that happen to share its run.
+
+**What was built.** `RiskVerdict` gains `rejected_symbols`, a list of
+`{symbol, reason}`. The verdict now has four levers, narrowest first:
+
+| Lever | Scope | Fires when |
+|---|---|---|
+| `modifications` | one symbol's fields | the trade is sound, sized or stopped wrong |
+| `rejected_symbols` | one symbol, refused | *that name* fails — R/R breach, event risk, thesis fails |
+| `scale_all_buys` | every new BUY/SHORT | the entry side is too big for the regime |
+| `approved: false` | the whole plan | the BOOK is what fails |
+
+**What deliberately did NOT change.**
+
+- **Book-level risk still refuses broadly.** Correlation clusters, total
+  exposure and drawdown state are properties of the whole account.
+  `approved: false` is evaluated FIRST and still kills every leg; a verdict
+  setting both still refuses everything. Getting this distinction right is the
+  whole task.
+- `scale_all_buys` portfolio-level sizing works exactly as before, applied to
+  whatever survives.
+- **No threshold moved.** Not one limit. This is the granularity of refusal
+  and nothing else.
+- The audit trail is per-symbol: each refusal writes a `rejection` evidence
+  row scoped to its symbol and a `risk/rejected` pipeline event carrying that
+  symbol's own reason.
+
+**Rejected approach.** Detecting a rejection and re-running the plan without
+the failing leg. That asks the wrong question twice and burns a second paid
+LLM session to paper over a schema defect.
+
+**Fail-closed asymmetry.** A malformed `modification` is dropped (losing a
+tuning instruction). A malformed `rejection` is not: dropping it would let a
+symbol the risk manager explicitly refused go on and trade. Every shape that
+still names a symbol is normalized; anything that names none fails the whole
+verdict closed. `rejected_symbols` is decision-bearing, so a repair reprompt
+that adds, drops or rewrites one is treated as an unauthorized re-decision.
+
+**Prompt.** `config/prompts/risk_manager.md` teaches the field, the four-lever
+ladder and the book-vs-name distinction, and its repair path is unchanged. All
+four anchors pinned by `test_f5_veto_hierarchy_is_unchanged` survive verbatim.
+
+**Supersedes.** `docs/architecture/DECISION_CHAIN_AUDIT.md` recorded F5's veto
+hierarchy as intentionally retained after external review on 2026-08-14. That
+reasoning was sound on the evidence available then; the supersession note now
+lives under F5 in that document.
+
+**Tests.** `tests/test_risk_verdict_per_symbol.py` — reproduces the XLE/CHPX
+case by name, pins the book-level veto in both directions, pins the repair
+path, and pins that the prompt teaches the distinction.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.

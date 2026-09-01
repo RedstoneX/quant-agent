@@ -2574,6 +2574,17 @@ class RiskStage:
                     kind="modification", scope="symbol", symbol=mod.symbol,
                     decision_id=ctx.decision_id, evidence_json=mod.model_dump_json(),
                 )
+            # Phase 10.1 — the per-symbol audit trail. Written for EVERY
+            # refusal the verdict carries, including one naming a symbol not
+            # in the plan, so "why was this name refused" stays answerable per
+            # name and not only through the run-scoped verdict blob.
+            for rejection in verdict.rejected_symbols:
+                _persist_evidence(
+                    pipeline.db, run_id=run_id, agent_name="risk_manager",
+                    kind="rejection", scope="symbol", symbol=rejection.symbol,
+                    decision_id=ctx.decision_id,
+                    evidence_json=rejection.model_dump_json(),
+                )
 
         if verdict is None:
             logger.error(
@@ -2598,6 +2609,11 @@ class RiskStage:
                 "reason": "risk_manager_unparseable_output",
             }
 
+        # BOOK-level veto, evaluated FIRST and unchanged. A correlation
+        # cluster, a total-exposure breach or a drawdown state is a property
+        # of the whole account, so when the book is what fails, every leg
+        # dying is the correct outcome — and a verdict that sets this AND
+        # names individual symbols still refuses everything.
         if not verdict.approved:
             logger.info(
                 "Risk manager REJECTED trades: %s",
@@ -2613,6 +2629,59 @@ class RiskStage:
                 "reason": verdict.reasoning,
             }
 
+        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone.
+        # Before this, `approved` was the only refusal the schema had, so a
+        # single sub-floor R/R took the whole plan with it — run-64290730
+        # (2026-09-01) refused the morning citing XLE alone and killed CHPX,
+        # a passing trade in a different sector, with it.
+        rejections = verdict.rejections_by_symbol()
+        refused_decisions: list = []
+        if rejections:
+            surviving: list = []
+            for decision in portfolio_decision.decisions:
+                reason = rejections.get(decision.symbol.strip().upper())
+                if reason is None:
+                    surviving.append(decision)
+                    continue
+                refused_decisions.append(decision)
+                logger.info(
+                    "Risk manager REFUSED %s (the rest of the plan is "
+                    "unaffected): %s", decision.symbol, reason,
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "risk", "rejected", reason,
+                )
+            unmatched = sorted(
+                set(rejections) - {d.symbol.strip().upper() for d in refused_decisions}
+            )
+            if unmatched:
+                logger.warning(
+                    "Risk manager refused %s, which is not in the proposed "
+                    "plan — no-op (evidence still recorded)",
+                    ", ".join(unmatched),
+                )
+            portfolio_decision.decisions = surviving
+
+            # `refused_decisions` guards the case where the refusals matched
+            # nothing: an empty plan plus a stray symbol name is not a
+            # refusal of anything and must not become one.
+            if refused_decisions and not surviving:
+                # Every leg refused individually. Same terminal status as a
+                # book veto because the outcome is the same — no orders — but
+                # each symbol carries its OWN reason above, not one shared
+                # sentence about a different symbol.
+                reasons = "; ".join(
+                    f"{sym}: {rejections[sym]}"
+                    for sym in sorted(
+                        {d.symbol.strip().upper() for d in refused_decisions}
+                    )
+                )
+                logger.info(
+                    "Every proposed trade was refused on its own merits: %s",
+                    reasons,
+                )
+                return {"status": "rejected", "orders": [], "reason": reasons}
+
         if verdict.modifications:
             portfolio_decision.decisions = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
@@ -2622,7 +2691,7 @@ class RiskStage:
             portfolio_decision.decisions, verdict,
         )
 
-        if verdict.modifications or scale < 1.0:
+        if verdict.modifications or scale < 1.0 or refused_decisions:
             portfolio_decision.decisions, _, blocked_reasons = (
                 pipeline._filter_hard_risk_decisions(
                     portfolio_decision.decisions,

@@ -4032,6 +4032,20 @@ class TradingPipeline:
                 mod_syms = sorted({m.get("symbol", "?") for m in mods if isinstance(m, dict)})
                 if mod_syms:
                     extras.append(f"mods on {', '.join(mod_syms)}")
+            # Phase 10.1 — a per-symbol refusal is the sharpest feedback this
+            # loop can carry: `reason_category` alone tells PM the plan had an
+            # R/R problem, this tells it which NAME died for it. Rendered as
+            # plain text from the stored verdict, tolerant of any shape,
+            # because a display line must never raise on a historical row.
+            rejected = data.get("rejected_symbols") or []
+            if isinstance(rejected, list):
+                rej_syms = sorted({
+                    (r.get("symbol") if isinstance(r, dict) else r)
+                    for r in rejected
+                    if isinstance(r, (dict, str))
+                } - {None, ""})
+                if rej_syms:
+                    extras.append(f"refused {', '.join(str(s) for s in rej_syms)}")
             tag = f" [{'; '.join(extras)}]"
             reason = (data.get("reasoning") or "")[:140].strip().replace("\n", " ")
             lines.append(f"- {ts}: {verdict}{tag} — {reason}")
@@ -6960,24 +6974,39 @@ class TradingPipeline:
             )
             return set(), None
 
+        # Phase 10.1 — the same granularity split as the morning plan, on the
+        # exit side: `approved=False` still vetoes EVERY exit (the book is
+        # what failed), while a per-symbol refusal vetoes only the exit it
+        # names and lets the other exits through. Empty `rejected_symbols`
+        # (every historical verdict, and any model that never emits the
+        # field) reproduces the previous behaviour exactly.
+        rejections = verdict.rejections_by_symbol()
         if verdict.approved:
-            logger.info(
-                "AI Risk approved %d exit(s): %s",
-                len(decisions), (verdict.reasoning or "")[:200],
-            )
-            return set(), verdict
+            veto_reasons = {
+                d.symbol: rejections[d.symbol.strip().upper()]
+                for d in decisions if d.symbol.strip().upper() in rejections
+            }
+            if not veto_reasons:
+                logger.info(
+                    "AI Risk approved %d exit(s): %s",
+                    len(decisions), (verdict.reasoning or "")[:200],
+                )
+                return set(), verdict
+        else:
+            veto_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
 
-        vetoed = {d.symbol for d in decisions}
+        vetoed = set(veto_reasons)
         logger.warning(
-            "AI Risk REJECTED %d exit(s) %s — holding instead. Reason: %s",
-            len(vetoed), sorted(vetoed), (verdict.reasoning or "")[:300],
+            "AI Risk REJECTED %d of %d exit(s) %s — holding instead. Reason: %s",
+            len(vetoed), len(decisions), sorted(vetoed),
+            (verdict.reasoning or "")[:300],
         )
         for symbol in sorted(vetoed):
             try:
                 self.db.record_intraday_evaluation(
                     symbol=symbol, run_id=run_id,
                     status="exit_vetoed_by_ai_risk",
-                    detail=(verdict.reasoning or "")[:400],
+                    detail=(veto_reasons[symbol] or "")[:400],
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("AI Risk exit review: audit write failed: %s", e)
