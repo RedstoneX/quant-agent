@@ -437,6 +437,36 @@ class RiskConfig(BaseModel):
     # Widening a stop lowers reward:risk, because the target does not move.
     # Under this the setup only ever qualified on a stop too tight to survive.
     min_reward_risk_after_widening: float = Field(default=1.5, ge=0, le=10)
+    # --- Level-backed stops (spec §12.1, 2026-09-01) ---------------------
+    # `min_stop_atr_multiple` above used to OVERWRITE the structural stop
+    # whenever the level sat closer than the band, after which the stop was
+    # at nothing real and `min_reward_risk_after_widening` was judged against
+    # that fabricated number. On 2026-09-01 the desk reviewed 38 qualified
+    # signals and placed zero trades. A stop that sits at a level
+    # `src/data/levels.py::find_structural_levels` actually computed is now
+    # honoured whatever its ATR distance; the band only applies when nothing
+    # computed backs it.
+    #
+    # How close the stop must sit to a computed level to count as "at" it.
+    # ATR-relative, not a percentage: the question is whether the analyst
+    # placed the stop AT this level, and that is a question about price
+    # NOISE. A flat percentage means a different thing on a 1.5%-ATR utility
+    # than on a 9%-ATR small cap — too tight to ever match on the volatile
+    # name, loose enough on the quiet one to match a level the stop is
+    # nowhere near. `find_structural_levels` also clusters pivots within 1%
+    # into one zone, so a level IS a zone; the tolerance has to be at least
+    # that zone's width, expressed in the units every other stop rule here
+    # already speaks.
+    level_match_atr_tolerance: float = Field(default=0.25, gt=0, le=2)
+    # The deterministic backstop under the exemption above. §12.1's safety
+    # argument rests on the 1*ATR hard floor in
+    # `config/prompts/tech_analyst.md` — but that is a PROMPT, and Invariant
+    # 2 requires deterministic Python protections to be the final authority
+    # and to fail closed. A real support level 0.2 ATR under entry is genuine
+    # structure AND a guaranteed whipsaw. So a level-backed stop is honoured
+    # however tight down to this many ATRs; inside it the stop is pushed out
+    # to exactly this floor — never to the full `min_stop_atr_multiple` band.
+    absolute_min_stop_atr_multiple: float = Field(default=1.0, ge=0, le=10)
     # --- Target derivation (2026-09-01) ---------------------------------
     # The floor above was dividing a stop computed from measured volatility
     # by a target a language model guessed. On 2026-09-01's morning run that

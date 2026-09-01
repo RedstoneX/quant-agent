@@ -1243,6 +1243,91 @@ distinguish a level-backed tight stop from an arbitrary one.
 not from the model asserting one. A stop the analyst simply placed close, with
 no level under it, still gets the floor.
 
+**IMPLEMENTED 2026-09-01** (branch `feat/level-backed-stops`), in
+`PortfolioConstructor._widen_stop_past_noise`. The stop rule now has three
+outcomes instead of one, each logged by name:
+
+| the stop | what happens | reward:risk is measured against |
+|---|---|---|
+| at a computed level, ≥ 1x ATR out | **honoured exactly as placed** | the honoured stop |
+| at a computed level, < 1x ATR out | widened to **1x ATR** — never to the band | the 1x ATR stop |
+| not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
+
+**Neither threshold moved.** `min_stop_atr_multiple` is still 3.0 and
+`min_reward_risk_after_widening` is still 1.5. This changes WHICH stop the
+arithmetic is performed on, nothing else — a level-backed trade whose real
+geometry still fails 1.5 is still refused, by a distinctly named code.
+
+**No second data path was built.** §10.4 had already established
+`TechAnalysisResult.computed_levels` — every level `find_structural_levels`
+found, supports and resistances unioned, set in Python by `TechAnalystAgent`
+after the model's response is parsed. That field is what "verified" means
+here, and it is reused rather than duplicated. Its side is re-partitioned
+against the trade's ENTRY, not against the last close, for exactly the reason
+`derive_structural_target` already does so: a ceiling price has broken through
+is a floor, and the entry can sit on the other side of a level from the close.
+
+**The model cannot write the field, and that is now pinned by tests.**
+`computed_levels` appears nowhere in `config/prompts/tech_analyst.md`, and the
+parse path overwrites it unconditionally with what the bars actually produced —
+so a model that emits one anyway has it discarded, including down to an empty
+list when the history is too short to yield levels. Without that, a model could
+assert a level beside its own stop and buy itself an exemption from the noise
+floor, and the verification would be worthless.
+
+**Matching tolerance: `risk.level_match_atr_tolerance`, default 0.25 ATR.**
+ATR-relative rather than a percentage, because "did the analyst place this stop
+AT that level" is a question about the name's own price noise — a flat
+percentage is far too tight on a 9%-ATR small cap and far too loose on a
+1.5%-ATR utility, so the same number would mean two different things. A
+computed level is also a *zone* (`find_structural_levels` clusters pivots
+within 1% into one), so the tolerance must be at least that wide.
+
+**No strength or touches threshold was added on top.**
+`find_structural_levels` already filters: at least 2 touches (`MIN_TOUCHES` —
+"a level touched once is a coincidence, not structure"), within 40% of the last
+close, recency-weighted and distance-penalised, and capped at the 6 strongest
+per side. Stacking a second threshold here would be an unratified risk decision.
+
+### 12.1a The 1x ATR floor — an addition beyond the ratified wording
+
+**Flagged for reversal if the owner disagrees.** §12.1 above argues the
+exemption is safe because `config/prompts/tech_analyst.md` already forbids a
+stop inside 1*ATR of entry. That argument rests on a **prompt** — an
+instruction to a language model — while Invariant 2 of this spec requires
+deterministic Python protections to be the final authority and to fail closed.
+A prompt is not a deterministic guarantee, and the whole point of §12.1 is that
+a tight stop now ships unaltered.
+
+The case that forced this: a genuine support level sitting 0.2 ATR under entry
+is real structure *and* a guaranteed whipsaw. Both are true at once, and
+honouring it would hand the broker a stop that fires on the first ordinary
+tick.
+
+So the implementation adds `risk.absolute_min_stop_atr_multiple` (default 1.0):
+a level-backed stop is honoured however tight **down to 1x ATR**, and inside
+that it is widened to exactly 1x ATR — **not** to the 3.0x band, which is the
+behaviour §12.1 removes. Setting it to 0 restores the ratified wording
+literally, and a test pins that.
+
+**The prompt was corrected, not left to contradict the code.**
+`config/prompts/tech_analyst.md` previously told the analyst that a 3.0x ATR
+floor would widen its stop and could reject the trade on reward:risk. That is
+no longer true and was actively misleading — it taught the model to pad stops
+to survive a floor that no longer applies to a level-backed stop. It now
+describes the three-outcome rule above, tells the analyst to anchor the stop to
+the computed "Structural levels" block it is already shown, and states plainly
+that naming a price in `support_levels` does not make it a verified level.
+
+**Unverified, and must not be quoted as if measured:** how many of the 38
+signals from 2026-09-01 would now pass. That run's per-symbol levels, ATRs and
+horizons are not available offline. The SLB reproduction in
+`tests/test_risk_based_sizing.py::TestSLBStopIsHonoured` uses **synthetic**
+level data, exactly as §10.4's does, and pins the arithmetic to the same
+back-solved ATR so the two reproductions agree: R/R 1.28 against the band stop
+(refused, as it was on the day), 2.59 against the honoured stop at the measured
+1.7x ATR median.
+
 ### 12.2 Sector exposure is measured with separate long and short budgets
 
 Today the engine sums sector exposure using SIGNED `market_value`, so a held

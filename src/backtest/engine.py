@@ -206,25 +206,32 @@ def _setup_type_for(bars_through_signal: list[OHLCV]) -> str:
 
 def _resolve_structural_stop_and_target(
     bars_through_signal: list[OHLCV], direction: str,
-) -> tuple[float | None, float | None]:
+) -> tuple[float | None, float | None, list[float]]:
     """Nearest structural level on the protective side becomes the stop
     candidate; the nearest level on the other side becomes the reference
-    target. Returns (None, None) when there is no level to defend a stop
+    target. Returns (None, None, []) when there is no level to defend a stop
     with — `find_structural_levels` already returns "no structure" honestly
     (empty lists) rather than inventing one, and this engine declines the
-    signal on the same terms the live analyst is told to."""
+    signal on the same terms the live analyst is told to.
+
+    The third element is every computed level, supports and resistances
+    unioned — the same shape `TechAnalysisResult.computed_levels` carries in
+    live. Spec §12.1 keys the stop rule off it, so without it this engine
+    would silently measure the OLD behaviour and the parity claim in the
+    module docstring would stop being true."""
     supports, resistances = find_structural_levels(bars_through_signal)
+    all_levels = sorted(lv.price for lv in (*supports, *resistances))
     if direction == "long":
         if not supports:
-            return None, None
+            return None, None, []
         stop = max(lv.price for lv in supports)  # nearest support below close
         target = min((lv.price for lv in resistances), default=None)
     else:
         if not resistances:
-            return None, None
+            return None, None, []
         stop = min(lv.price for lv in resistances)  # nearest resistance above close
         target = max((lv.price for lv in supports), default=None)
-    return stop, target
+    return stop, target, all_levels
 
 
 def _resolve_stop_for_signal(
@@ -237,14 +244,21 @@ def _resolve_stop_for_signal(
     atr_14: float | None,
     setup_type: str,
     ref_entry: float,
+    computed_levels: list[float] | None = None,
 ) -> float | None:
     """Reuses `PortfolioConstructor._resolve_stop` (direction-agnostic — it
     only reads whichever of `target.suggested_stop_price` /
     `analysis.stop_loss` is supplied) and, for longs only,
-    `_widen_stop_past_noise` (long-only math — see module docstring)."""
+    `_widen_stop_past_noise` (long-only math — see module docstring).
+
+    `computed_levels` carries the levels §12.1's stop rule verifies against,
+    the same field `TechAnalystAgent` sets in Python on the live path. This
+    engine's stop candidate IS one of them, so without this the backtest
+    would exercise the pre-§12.1 rule while claiming to run the real one."""
     analysis = SimpleNamespace(
         stop_loss=structural_stop, atr_14=atr_14,
         setup_type=setup_type, reference_target=target,
+        computed_levels=list(computed_levels or []),
     )
     target_shim = SimpleNamespace(suggested_stop_price=None)
     stop = constructor._resolve_stop(target_shim, analysis, ref_entry)
@@ -368,6 +382,12 @@ def run_backtest(
         max_position_pct=config.risk.max_position_pct,
         min_stop_atr_multiple=config.risk.min_stop_atr_multiple,
         min_reward_risk_after_widening=config.risk.min_reward_risk_after_widening,
+        # Spec §12.1 — a stop at a COMPUTED level is honoured whatever the
+        # band says, down to a deterministic 1x ATR floor. Wired here so a
+        # change to `config.risk.*` is the same experiment in the backtest
+        # as it is live.
+        level_match_atr_tolerance=config.risk.level_match_atr_tolerance,
+        absolute_min_stop_atr_multiple=config.risk.absolute_min_stop_atr_multiple,
         # Target-derivation tunables (2026-09-01). Wired for parity with
         # live, though this engine does not reach `_derive_target`: it
         # computes its own nearest-level target in
@@ -459,8 +479,8 @@ def run_backtest(
                 continue
 
             direction = "long"  # see module docstring: real-data run is long-only
-            structural_stop, target = _resolve_structural_stop_and_target(
-                bars_through_today, direction,
+            structural_stop, target, computed_levels = (
+                _resolve_structural_stop_and_target(bars_through_today, direction)
             )
             if structural_stop is None:
                 continue
@@ -484,6 +504,7 @@ def run_backtest(
                 constructor, symbol=symbol, direction=direction,
                 structural_stop=structural_stop, target=target,
                 atr_14=indicators.atr_14, setup_type=setup_type, ref_entry=ref_entry,
+                computed_levels=computed_levels,
             )
             if stop is None:
                 continue
