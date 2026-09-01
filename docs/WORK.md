@@ -238,7 +238,12 @@ state and pass in CI. Anything else failing is yours.
 
 
 **READY TO DEPLOY, WAITING ONLY ON THE MARKET CLOSING — do this first.**
-Branch `feat/telegram-run-deeplink` (pushed 2026-09-01, not merged). Makes
+**MERGED 2026-09-01 into `integration/ship-2026-09-01`** — verified with
+`git merge-base --is-ancestor`. This entry previously said "not merged",
+which was wrong and was repeated onward before being checked. **What is
+still owed is the DEPLOY, not the merge.**
+
+Branch `feat/telegram-run-deeplink`. Makes
 every ticker in a Telegram alert tappable through to that company's quote
 page. Full suite green: 3837 passed, 1 skipped, and only the two known
 `test_rehearsal_reproduces_cost_ceiling.py` failures that read live
@@ -252,9 +257,15 @@ which is "later, vaguely":
    the rehearsal-rig rule above applies and the rig has not been run
    against it yet.
 
-**The window is after the 15:30 ET close pass completes and before the
-20:00 ET evening session.** Order: run the rehearsal rig, open the PR, wait
-for CI, merge, deploy, restart, confirm the served bundle matches disk.
+**Superseded 2026-09-01 22:00 UTC:** the merge is done, so the remaining
+order is: run the rehearsal rig against the merged integration branch, wait
+for CI, deploy, restart, confirm the served bundle matches disk.
+
+**Timing constraint, measured from the live timers rather than assumed:** the
+production evening session fires at 23:30 UTC and several timers fire with
+it; the morning run is 13:00 UTC, half an hour before the open. Deploying
+restarts the service, so the window is AFTER the evening session completes
+and BEFORE 13:00 UTC.
 
 Rex asked directly: "who's gonna remember to deploy it? I'm not gonna
 remember." This entry is the answer. It stays here until it is deployed,
