@@ -22,12 +22,27 @@ def _tech_rc() -> TechReasoningChain:
     )
 
 
-def _analysis(symbol: str, entry: float, stop: float, target: float) -> TechAnalysisResult:
+def _analysis(
+    symbol: str, entry: float, stop: float, target: float,
+    horizon: int = 60, atr: float | None = None,
+) -> TechAnalysisResult:
+    """A realistic analyst result, including the fields production sets in
+    Python rather than asking the model for.
+
+    `atr_14` and `computed_levels` are attached by `TechAnalystAgent` after
+    parsing; the constructor has derived the take-profit from
+    `computed_levels` since 2026-09-01 and refuses without them. The default
+    ATR sits just inside the noise band so the structural stop is left alone
+    — these tests are about SIZING, and the widening tests below set their
+    own ATR explicitly.
+    """
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[stop], resistance_levels=[target],
-        setup_type="range", expected_horizon_sessions=10,
+        computed_levels=[stop, target],
+        atr_14=(entry - stop) / 3.5 if atr is None else atr,
+        setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
     )
 
@@ -526,13 +541,18 @@ def test_the_ceiling_flattens_conviction_at_realistic_stop_distances():
 # Stop width — the root cause behind both the sizing squeeze and noise exits
 # --------------------------------------------------------------------------
 
-def _vol_analysis(symbol, entry, stop, target, atr, setup="range"):
+def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60):
     from src.models import TechReasoningChain
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test", support_levels=[stop],
         resistance_levels=[target], setup_type=setup,
-        expected_horizon_sessions=10, atr_14=atr,
+        expected_horizon_sessions=horizon, atr_14=atr,
+        # Since 2026-09-01 the take-profit is derived from these, not from
+        # `reference_target`. The reward:risk check inside
+        # `_widen_stop_past_noise` measures against the DERIVED number, so a
+        # widening fixture has to supply the structure the derivation reads.
+        computed_levels=[stop, target],
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x"),
@@ -604,14 +624,28 @@ def test_widening_a_stop_into_a_bad_payoff_rejects_the_trade():
 
 
 def test_no_volatility_reading_leaves_the_structural_stop_untouched():
-    """Fail toward existing behaviour rather than inventing a width."""
+    """Stop widening still fails toward existing behaviour rather than
+    inventing a width: with no ATR the structural stop is returned as-is."""
+    constructor = PortfolioConstructor()
+    analysis = _vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)
+    assert constructor._widen_stop_past_noise(
+        "MSFT", analysis, 100.0, 97.6, target_price=160.0,
+    ) == 97.6
+
+
+def test_no_volatility_reading_refuses_the_trade_outright():
+    """...but the ORDER is refused, because the target is no longer the
+    analyst's guess (2026-09-01). Without an ATR there is no noise floor and
+    no reachable distance, so there is nothing to derive a target from — and
+    a fabricated target is exactly the defect this replaced. Fail closed,
+    with a named reason, rather than trade on half a chart."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_risk_target("MSFT", 1.0)], positions=[],
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)],
         total_value=EQUITY, price_map={"MSFT": 100.0},
     )
-    assert decisions[0].stop_loss == 97.6
+    assert decisions == []
 
 
 def test_wider_stops_give_conviction_room_to_change_the_size():

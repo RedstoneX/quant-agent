@@ -961,7 +961,10 @@ def _decision_ctx():
         symbol="NVDA", rating="buy", conviction="high", entry_price=100.0,
         stop_loss=95.0, reference_target=120.0, support_levels=[95.0],
         resistance_levels=[120.0], setup_type="breakout",
-        expected_horizon_sessions=10, reasoning="x",
+        # Python-set in production; the constructor derives the take-profit
+        # from these and refuses without them (2026-09-01).
+        computed_levels=[95.0, 120.0], atr_14=5.0 / 3.5,
+        expected_horizon_sessions=60, reasoning="x",
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x",

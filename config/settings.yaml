@@ -254,6 +254,40 @@ risk:
   # A widened stop lowers reward:risk because the target does not move. Under
   # this, the setup only ever qualified on a stop too tight to survive.
   min_reward_risk_after_widening: 1.5
+  # --- Target derivation (2026-09-01) ---------------------------------------
+  # The floor above used to divide a stop computed from measured volatility by
+  # a target the language model guessed. The morning run of 2026-09-01 rejected
+  # 30 of 38 actionable signals (79%) on that arithmetic, including the two
+  # highest-conviction calls of the day, and placed no trades. The floor stays
+  # at 1.5 — it was never the defect. The target is now computed from the same
+  # bars the stop comes from. The rule, and why each number is what it is:
+  # src/data/levels.py, "Deriving the TARGET from structure".
+  #
+  # A target inside this many ATRs of entry is not a destination — price is
+  # already there and the reward is one ordinary session's noise.
+  min_target_atr_multiple: 1.0
+  # Measured move claimed when nothing structural stands in the way, in
+  # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the analyst's
+  # stated horizon, and nothing more. This interacts with min_stop_atr_multiple
+  # by arithmetic: a stop k ATRs out and a target p*ATR*sqrt(H) clear a floor f
+  # only when sqrt(H) >= f*k/p. With p=1.0, f=1.5 and k=3.0 scaled by setup
+  # (3.45 range, 2.55 breakout), a measured-move trade needs a stated horizon
+  # of ~15 sessions on a breakout and ~27 on a range. A trade whose target is a
+  # real level is looser — about 12 sessions — because the level need not be a
+  # full projection away. Raising this is the lever if the desk decides too
+  # much is being refused. Lowering min_reward_risk_after_widening is NOT.
+  breakout_projection_atr_multiple: 1.0
+  # How far price can plausibly get inside the horizon, same units. Looser than
+  # the projection on purpose: a trade that works is an above-typical move, so
+  # "could it reach that level at all" is a wider question than "how far do I
+  # claim it goes when no level says otherwise".
+  max_target_reach_atr_multiple: 1.5
+  # Guard on the analyst's expected_horizon_sessions before it enters sqrt().
+  max_target_horizon_sessions: 60
+  # The model's target is kept as EVIDENCE, never as arithmetic. Above this
+  # absolute gap from the computed target the disagreement is logged loudly —
+  # a model consistently far from the chart is a finding about the seat.
+  target_divergence_warn_pct: 25.0
   require_stop_loss: true
   # Cash-only by default. Flip to true to allow margin — BUYs can then spend
   # beyond available cash. When false (default) the risk engine hard-blocks

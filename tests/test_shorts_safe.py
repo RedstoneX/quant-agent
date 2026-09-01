@@ -576,7 +576,11 @@ def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
         symbol="TSLA", rating="sell", entry_price=250.0, stop_loss=262.5,
         reference_target=220.0, reasoning="test",
         support_levels=[220.0], resistance_levels=[262.5],
-        setup_type="range", expected_horizon_sessions=10,
+        # Python-set in production (TechAnalystAgent), and required since
+        # 2026-09-01: the take-profit is derived from the computed levels,
+        # not read off the analyst's `reference_target`.
+        computed_levels=[220.0, 262.5], atr_14=12.5 / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=rc,
     )
 

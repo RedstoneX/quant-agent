@@ -32,7 +32,12 @@ def _analysis(symbol: str, entry: float = 100.0, stop: float = 95.0,
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, support_levels=[stop], resistance_levels=[target],
-        setup_type="range", expected_horizon_sessions=10,
+        # Python-set by TechAnalystAgent, not model-emitted. The constructor
+        # derives the take-profit from `computed_levels` (2026-09-01) and
+        # refuses without them; the ATR sits just inside the noise band so
+        # the structural stop is left alone.
+        computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
         reasoning="test", reasoning_chain=_tech_rc(),
     )
 

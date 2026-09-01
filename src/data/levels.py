@@ -25,6 +25,8 @@ matters right now, and what kind of setup the chart is showing.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass, asdict
 
 import numpy as np
@@ -275,3 +277,325 @@ def format_levels_block(
     else:
         out.append("    none within range")
     return "\n".join(out)
+
+
+# ===========================================================================
+# Deriving the TARGET from structure
+# ===========================================================================
+#
+# Why this exists (2026-09-01)
+# ----------------------------
+# Reward:risk is `(target - entry) / (entry - stop)`. Since 2026-08-27 the
+# STOP has been derived in code: structure places it, and
+# `min_stop_atr_multiple` pushes it out when structure put it inside ordinary
+# volatility. The TARGET was still `TechAnalysisResult.reference_target` — a
+# number a language model wrote down. So the gate divided a measured quantity
+# by an opinion. Those two are not commensurable, and the failure is
+# systematic rather than random: a correctly-sized wide stop plus a modestly
+# guessed target fails a 1.5 floor as a matter of arithmetic, whatever the
+# trade is actually worth.
+#
+# Evidence, morning run of 2026-09-01 (`run-64290730`): 38 actionable
+# signals, 30 of them (79%) under the floor before any judgement was applied.
+# SLB `strong_buy`/`high` scored 1.28 on a 7.7% stop; AGX `sell`/`high`
+# scored 0.84. Zero trades were placed.
+#
+# The floor is not the defect — its numerator is. So the numerator is
+# computed here, from the same bars the stop already comes from, and the
+# model's guess is demoted from arithmetic input to evidence.
+#
+# The rule
+# --------
+# Find the nearest structural level in the trade's direction that is more
+# than `min_target_atr_multiple` ATRs away (a "target" inside one ordinary
+# session's range is not a destination — price is already there). Then:
+#
+#   level exists, within reach  ->  the level IS the target. Price has to get
+#                                   through the first ceiling before any
+#                                   further one, and reaching past it to a
+#                                   further level to make the ratio work is
+#                                   exactly the invention being removed.
+#
+#   level exists, beyond reach  ->  nothing structural stands between entry
+#                                   and as far as this symbol travels in the
+#                                   intended hold, so structure does not
+#                                   bound this trade. Target = measured move.
+#
+#   no level in the direction   ->  ambiguous: either a genuine breakout to
+#                                   highs, or a chart nothing can be read
+#                                   from. `setup_type` is the only thing that
+#                                   distinguishes them, so "breakout" earns a
+#                                   measured move and anything else REFUSES.
+#
+# "Reach" and the measured move are the same estimate of travel:
+# `ATR * sqrt(sessions) * multiple`. Square-root scaling, not linear: daily
+# ranges accumulate as a random walk, and `ATR * N` overstates an N-session
+# excursion by roughly sqrt(N). `expected_horizon_sessions` is the analyst's
+# own estimate of time-to-resolution, already pinned at entry for exactly
+# this kind of use.
+#
+# Note the deliberate asymmetry between the reach multiple and the projection
+# multiple. Reach answers "could price plausibly get there at all?", so it is
+# loose — a trade that works is by definition an above-typical move. The
+# projection answers "how far do I claim it goes when no level says
+# otherwise?", so it is the typical excursion and nothing more. The two are
+# separately configurable because they are answering different questions.
+#
+# Everything fails closed. No levels, no level in the direction, no ATR, no
+# horizon -> no target and a NAMED reason. There is deliberately no default
+# and no fallback: a manufactured target is the defect being removed, and a
+# manufactured target with better provenance is still manufactured.
+#
+# Interaction with `min_stop_atr_multiple` is arithmetic and worth stating
+# outright, because it is the binding constraint on the measured-move branch.
+# A stop at `k` ATRs and a target at `p * ATR * sqrt(H)` clear a floor `f`
+# only when `sqrt(H) >= f * k / p`. At today's settings (p = 1.0, f = 1.5,
+# and k = 3.0 scaled by setup: 3.45 for a range, 2.55 for a breakout) that
+# is H >= ~21 sessions on the bare base, ~27 for a range setup and ~15 for a
+# breakout. A stated horizon shorter than that cannot clear the floor
+# however the trade is judged — a legitimate refusal about the trade's
+# geometry, reported distinctly from "the model guessed badly".
+#
+# The structural-level branch is looser, because the level does not have to
+# be a full projection away: it needs `W >= f*k*ATR` to clear the floor and
+# `W <= 1.5*ATR*sqrt(H)` to be reachable, so H >= (f*k/1.5)^2 — about 12
+# sessions for a range setup.
+
+#: A target closer than this many ATRs is not a destination. Price is
+#: already there and the "reward" is one ordinary session's noise.
+MIN_TARGET_ATR_MULTIPLE = 1.0
+
+#: Measured move, in sqrt(session)-scaled ATRs, claimed when no level stands
+#: in the way. 1.0 = the typical excursion over the stated horizon, and
+#: nothing more.
+BREAKOUT_PROJECTION_ATR_MULTIPLE = 1.0
+
+#: How far price can plausibly get within the horizon, in the same units.
+#: Deliberately looser than the projection above — see the note on asymmetry.
+MAX_REACH_ATR_MULTIPLE = 1.5
+
+#: Ceiling on `expected_horizon_sessions` before it enters the sqrt() travel
+#: estimate. An analyst claiming a 250-session horizon would otherwise
+#: licence a target ~16 ATRs out; this also absorbs a nonsense value.
+MAX_HORIZON_SESSIONS = 60
+
+#: Refusal codes. Each names a DIFFERENT thing being wrong, because "no
+#: trade" without a reason is what let the original defect survive unnoticed.
+REFUSAL_NO_ENTRY = "no_entry_price"
+REFUSAL_NO_VOLATILITY = "no_volatility_reading"
+REFUSAL_NO_HORIZON = "no_expected_horizon"
+REFUSAL_NO_STRUCTURE = "no_structural_levels"
+REFUSAL_NO_LEVEL_IN_DIRECTION = "no_level_in_direction"
+REFUSAL_PROJECTION_IMPLAUSIBLE = "projection_implausible"
+
+
+@dataclass(frozen=True)
+class TargetDerivation:
+    """Outcome of deriving a target. ``price is None`` means REFUSED.
+
+    `refusal` is machine-readable and `detail` is the one line a human (or a
+    downstream model reading the order's reasoning) needs to tell a refusal
+    about missing data apart from a refusal about the trade's geometry.
+    """
+
+    price: float | None
+    basis: str = ""          # "structural_level" | "measured_move" | "" (refused)
+    refusal: str = ""        # one of the REFUSAL_* codes; "" on success
+    detail: str = ""
+    level_used: float | None = None
+    horizon_reach: float | None = None      # ATR * sqrt(H) * max_reach_atr_multiple
+    model_target: float | None = None       # the LLM's guess, kept as evidence
+    divergence_pct: float | None = None     # computed vs. the model's guess
+
+    @property
+    def refused(self) -> bool:
+        return self.price is None
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def _refused(code: str, detail: str, model_target: float | None) -> TargetDerivation:
+    return TargetDerivation(
+        price=None, refusal=code, detail=detail, model_target=model_target,
+    )
+
+
+def _finite_positive(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
+def derive_structural_target(
+    *,
+    entry_price: float | None,
+    direction: str,
+    levels: Sequence[float],
+    atr: float | None,
+    horizon_sessions: int | None,
+    setup_type: str | None,
+    model_target: float | None = None,
+    min_target_atr_multiple: float = MIN_TARGET_ATR_MULTIPLE,
+    breakout_projection_atr_multiple: float = BREAKOUT_PROJECTION_ATR_MULTIPLE,
+    max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
+    max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
+) -> TargetDerivation:
+    """Compute where the instrument actually travels, or refuse by name.
+
+    Works both directions. For a long the target is ABOVE entry and drawn
+    from levels above it; for a short it is BELOW entry and drawn from levels
+    below it. Nothing about the rule is long-only — the comparison operators
+    and the sign of the projection are the whole of the difference.
+
+    `levels` is the UNION of the computed supports and resistances, as bare
+    prices. That is deliberate: `find_structural_levels` classifies a level
+    as support or resistance relative to the LAST CLOSE, while a trade is
+    entered at a live price that may sit on the other side of it. What
+    matters here is only whether a level is above or below THIS ENTRY, so the
+    partition is redone against `entry_price` rather than inherited.
+
+    `model_target` is never used to choose the answer. It is carried through
+    so callers can log where the model's guess and the computed level
+    disagree, which is the cheapest available read on whether the model's
+    targets were ever worth anything.
+    """
+    guess = _finite_positive(model_target)
+
+    entry = _finite_positive(entry_price)
+    if entry is None:
+        return _refused(REFUSAL_NO_ENTRY, "no usable entry price", guess)
+
+    volatility = _finite_positive(atr)
+    if volatility is None:
+        return _refused(
+            REFUSAL_NO_VOLATILITY,
+            "no ATR reading, so neither the noise floor nor the reachable "
+            "distance can be measured",
+            guess,
+        )
+
+    try:
+        horizon = int(horizon_sessions) if horizon_sessions is not None else 0
+    except (TypeError, ValueError):
+        horizon = 0
+    if horizon <= 0:
+        return _refused(
+            REFUSAL_NO_HORIZON,
+            "no expected_horizon_sessions, so there is no period over which "
+            "to ask how far this symbol travels",
+            guess,
+        )
+    horizon = min(horizon, max(1, int(max_horizon_sessions)))
+
+    is_short = str(direction or "").strip().lower() == "short"
+    travel = volatility * math.sqrt(horizon)
+    reach = travel * max_reach_atr_multiple
+    noise = volatility * min_target_atr_multiple
+    setup = str(setup_type or "").strip().lower()
+
+    def _divergence(price: float) -> float | None:
+        if guess is None:
+            return None
+        return round((price - guess) / guess * 100.0, 2)
+
+    usable = [p for p in (_finite_positive(lv) for lv in levels or ()) if p is not None]
+    if not usable:
+        # No structure at all is NOT the same as "no ceiling overhead". It
+        # means the history was too short or too dirty to say anything, which
+        # is what `find_structural_levels` returning empty lists is
+        # documented to mean. Refuse, whatever the setup claims.
+        return _refused(
+            REFUSAL_NO_STRUCTURE,
+            "no structural levels could be computed from the price history "
+            "(insufficient or unusable bars)",
+            guess,
+        )
+
+    if is_short:
+        directional = [p for p in usable if p < entry - noise]
+        nearest = max(directional) if directional else None
+    else:
+        directional = [p for p in usable if p > entry + noise]
+        nearest = min(directional) if directional else None
+
+    if nearest is not None and abs(nearest - entry) <= reach:
+        price = round(nearest, 2)
+        return TargetDerivation(
+            price=price,
+            basis="structural_level",
+            detail=(
+                f"nearest structural level {'below' if is_short else 'above'} "
+                f"entry ${entry:,.2f} is ${price:,.2f} "
+                f"({(price - entry) / entry * 100:+.1f}%), reachable inside "
+                f"{horizon} sessions (ATR ${volatility:,.2f} x sqrt({horizon})"
+                f" x {max_reach_atr_multiple:g} = ${reach:,.2f})"
+            ),
+            level_used=price,
+            horizon_reach=round(reach, 4),
+            model_target=guess,
+            divergence_pct=_divergence(price),
+        )
+
+    # Past this point no level stands in the way within the horizon. Only two
+    # situations licence a measured move, and both are stated, not assumed.
+    if nearest is None and setup != "breakout":
+        # Structure exists on the chart but none of it sits in the trade's
+        # direction, and the analyst did NOT call this a breakout. That is a
+        # disagreement between the chart and the read, not a clear runway.
+        return _refused(
+            REFUSAL_NO_LEVEL_IN_DIRECTION,
+            f"no structural level {'below' if is_short else 'above'} entry "
+            f"${entry:,.2f} beyond the ${noise:,.2f} noise floor, and "
+            f"setup_type={setup or 'unset'!r} does not claim a breakout",
+            guess,
+        )
+
+    projection = travel * breakout_projection_atr_multiple
+    if projection <= noise:
+        return _refused(
+            REFUSAL_PROJECTION_IMPLAUSIBLE,
+            f"a {horizon}-session measured move of ${projection:,.2f} does "
+            f"not clear its own ${noise:,.2f} noise floor",
+            guess,
+        )
+    raw = entry - projection if is_short else entry + projection
+    if raw <= 0:
+        # Only reachable on an extreme ATR-to-price ratio, but a short whose
+        # projection runs through zero is arithmetic, not a trade.
+        return _refused(
+            REFUSAL_PROJECTION_IMPLAUSIBLE,
+            f"a {horizon}-session measured move of ${projection:,.2f} puts "
+            f"the short's target at or below zero from entry ${entry:,.2f}",
+            guess,
+        )
+
+    price = round(raw, 2)
+    if nearest is None:
+        why = (
+            f"no structural level {'below' if is_short else 'above'} entry — "
+            "setup_type='breakout'"
+        )
+    else:
+        why = (
+            f"nearest structural level ${nearest:,.2f} is "
+            f"${abs(nearest - entry):,.2f} away, past the ${reach:,.2f} "
+            f"reachable in {horizon} sessions, so nothing stands in the way"
+        )
+    return TargetDerivation(
+        price=price,
+        basis="measured_move",
+        detail=(
+            f"{why}; measured move = ATR ${volatility:,.2f} x sqrt({horizon})"
+            f" x {breakout_projection_atr_multiple:g} = ${projection:,.2f} -> "
+            f"${price:,.2f}"
+        ),
+        level_used=round(nearest, 2) if nearest is not None else None,
+        horizon_reach=round(reach, 4),
+        model_target=guess,
+        divergence_pct=_divergence(price),
+    )

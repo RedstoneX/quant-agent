@@ -714,6 +714,23 @@ class TradingPipeline:
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
             ),
+            # Target derivation (2026-09-01) — the numerator of the ratio
+            # above, computed from bars instead of guessed by the analyst.
+            # Wired from the ratified settings, same pattern as every
+            # ceiling above.
+            min_target_atr_multiple=_risk_setting("min_target_atr_multiple", 1.0),
+            breakout_projection_atr_multiple=_risk_setting(
+                "breakout_projection_atr_multiple", 1.0,
+            ),
+            max_target_reach_atr_multiple=_risk_setting(
+                "max_target_reach_atr_multiple", 1.5,
+            ),
+            max_target_horizon_sessions=int(
+                _risk_setting("max_target_horizon_sessions", 60),
+            ),
+            target_divergence_warn_pct=_risk_setting(
+                "target_divergence_warn_pct", 25.0,
+            ),
             # Spec §9.4 "agreement earns size" — same "wire from the
             # ratified setting, not the constructor's own default" pattern
             # as every ceiling above.

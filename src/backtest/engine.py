@@ -368,6 +368,17 @@ def run_backtest(
         max_position_pct=config.risk.max_position_pct,
         min_stop_atr_multiple=config.risk.min_stop_atr_multiple,
         min_reward_risk_after_widening=config.risk.min_reward_risk_after_widening,
+        # Target-derivation tunables (2026-09-01). Wired for parity with
+        # live, though this engine does not reach `_derive_target`: it
+        # computes its own nearest-level target in
+        # `_resolve_structural_stop_and_target` and hands it to
+        # `_widen_stop_past_noise` directly, which is the same rule by a
+        # shorter path and was never exposed to the guessed-target defect.
+        min_target_atr_multiple=config.risk.min_target_atr_multiple,
+        breakout_projection_atr_multiple=config.risk.breakout_projection_atr_multiple,
+        max_target_reach_atr_multiple=config.risk.max_target_reach_atr_multiple,
+        max_target_horizon_sessions=config.risk.max_target_horizon_sessions,
+        target_divergence_warn_pct=config.risk.target_divergence_warn_pct,
     ))
 
     symbols_with_data = sorted(sym for sym, bars in bars_by_symbol.items() if bars)

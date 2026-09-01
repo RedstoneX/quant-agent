@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-08-31
+Updated: 2026-09-01
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
@@ -49,7 +49,20 @@ This file records what is accepted and true **now**. Git history preserves imple
   their config fields (`default_stop_atr_multiple`, `fallback_stop_pct`) are deleted.
   **Behavioral consequence: the desk now declines a trade outright — no BUY or SELL
   is constructed — whenever the Tech Analyst does not supply a structural stop and
-  target for a symbol**, rather than trading it against an invented number. On top
+  target for a symbol**, rather than trading it against an invented number.
+  **Superseded in part on 2026-09-01 (spec Phase 10.4, branch
+  `fix/target-from-structure`): the order's take-profit is no longer read from
+  the analyst's `reference_target` at all.** It is derived in Python from the
+  computed levels — the nearest structural level in the trade's direction, or
+  a measured move of `ATR × sqrt(expected_horizon_sessions)` when nothing
+  stands in the way — because dividing a volatility-derived stop by a guessed
+  target put 30 of 38 signals (79%) under the 1.5 reward:risk floor on the
+  2026-09-01 morning run and placed no trades. The floor was not changed. The
+  analyst's `reference_target` is still required by the validator and is kept
+  as evidence, logged against the computed number; it no longer enters the
+  arithmetic. Derivation refuses by name (missing levels / ATR / horizon)
+  rather than falling back to a default, so the "declines a trade outright"
+  posture above now extends to a symbol whose chart cannot support a target. On top
   of this, a new deterministic module `src/data/context.py` computes market context
   per symbol from the same bars — relative strength vs a same-batch benchmark (SPY,
   else QQQ, else IWM), returns across 1w/1m/3m/6m/12m, 52-week range position, ATR
@@ -161,7 +174,11 @@ This file records what is accepted and true **now**. Git history preserves imple
   (`risk.min_stop_atr_multiple`, base 3.0, scaled by setup type and macro
   regime) when the analyst placed it inside ordinary volatility, and rejects
   the trade if the widened stop drops reward:risk below
-  `risk.min_reward_risk_after_widening` (1.5) — measured, the book's stops
+  `risk.min_reward_risk_after_widening` (1.5). **Since 2026-09-01 both sides
+  of that ratio are measured** — the target is computed from structure, not
+  read from the analyst (see the Phase 1 entry above and spec Phase 10.4) —
+  so this rejection is now a statement about the trade's geometry and is
+  logged as one. Measured, the book's stops
   were sitting a median 1.7 ATRs from entry, which both fired exits inside
   noise and forced the 20% clamp above to bind at nearly every conviction
   level. `config/prompts/portfolio_manager.md`'s conviction bands and

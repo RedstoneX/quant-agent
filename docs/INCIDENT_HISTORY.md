@@ -22,6 +22,50 @@ what would catch it next time.
 
 ---
 
+### 2026-09-01 morning — the desk judged every trade by dividing a measurement by a guess
+
+**What broke, plainly.** The desk looked at 38 tradeable ideas and placed
+nothing. Every idea is scored on how much it could make against how much it
+could lose. The "could lose" half was a real number the system measures off
+the chart. The "could make" half was a number the AI simply wrote down. Two
+thirds of the ideas failed the score before any human-style judgement was
+applied at all — including the two the desk was most confident about.
+
+**The real cause.** The score was arithmetic performed on an opinion, and it
+failed systematically rather than randomly: a correctly-measured wide stop
+divided into a modestly-guessed target misses the threshold as a matter of
+arithmetic, whatever the trade is actually worth. **The threshold was not the
+defect and was not moved** — lowering a threshold that sits on invented
+numbers leaves it sitting on invented numbers.
+
+**What was done.** The "could make" number is now computed from the same
+measured chart structure the "could lose" number already came from, or the
+trade is refused by name. Six distinct refusal reasons, because "no trade"
+with no reason given is what let this survive unnoticed in the first place.
+The AI's own guess is kept as evidence and the gap between the two is logged,
+but it no longer enters the arithmetic.
+
+**The thing to argue about next is the HOLDING PERIOD, not the threshold.**
+The shape of the maths means a trade can only clear the bar if it is given
+long enough to get there — roughly 27 sessions for an unstructured target, 12
+when aiming at a real level on the chart. Below that the trade cannot pay
+1.5:1 however it is judged. This is also why the stop-floor fix shipped the
+same night matters: honouring a stop that sits on a real level roughly halves
+the required holding period. The two are one fix in two halves.
+
+**Not verified, and nobody should quote it as if it were.** How many of the 38
+would now pass is unknown — the per-symbol chart data from that run is not
+available offline. The worked example in the tests uses invented chart data;
+it shows what the rule does with a plausible chart, not what that stock's
+actual chart contained.
+
+**A second defect found while fixing this.** Widening a stop always moved it
+to the correct side of the entry price — so a short trade handed a nonsensical
+stop came out the other end looking valid, silently repairing the very error
+the safety check exists to catch. It now refuses. The test that should have
+caught this passed only because its fixture had no volatility reading, which
+is not a state production ever reaches.
+
 ### 2026-09-01 — the benchmark rig could not spend money; the trading desk was never affected
 
 **In plain words:** three separate things stopped a model test from running.

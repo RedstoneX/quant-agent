@@ -694,14 +694,8 @@ Two facts worth acting on:
 
 - `feat/news-dedup` — still unmerged; disposition being decided separately.
 
-#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — measure before changing
-On 2026-08-28, the reward:risk floor added the previous day rejected four candidates outright. Recorded reward:risk after the stop was widened past the noise band: CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30, against a 1.50 minimum.
-
-Three of the four offered **less reward than risk** — those are correctly refused. NVDA at 1.30 is the borderline case.
-
-This is the rule working as designed, but it is also a signal worth measuring rather than reacting to: with honest stop distances, the technical analyst's targets are frequently too close to clear a 1.5 payoff. Either the targets are too conservative or the widened stops are too wide. Do not adjust the 1.50 floor on impression — gather a week of these rejections first, then decide which of the two numbers is wrong.
-
-Note this means 2026-08-28's zero trades had **two independent causes**, not one: the cost circuit blocked the morning before the Portfolio Manager ran, and separately these four were refused on payoff.
+#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — RESOLVED 2026-09-01
+On 2026-08-28 the reward:risk floor rejected four candidates (CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30), which asked whether the targets were too conservative or the stops too wide. **Answered: neither — the targets were not measurements at all**, so those ratios never meant what they appeared to. Do not cite them as evidence about stop width. That day's zero trades had two causes, not one: the cost circuit blocked the morning, and separately these four were refused on payoff.
 
 #### RECURSION FAULT IN THE BAR FETCH
 `broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.

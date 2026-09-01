@@ -993,6 +993,50 @@ it for now: it requires a body of closed trades this account does not yet have,
 and it replaces one unmeasured number with another. Revisit under Phase 7 once
 there is real outcome history.
 
+**IMPLEMENTED 2026-09-01** (branch `fix/target-from-structure`), as
+`src/data/levels.py::derive_structural_target`. Find the nearest computed
+structural level in the trade's direction, beyond a `min_target_atr_multiple`
+noise floor, then:
+
+| situation | target |
+|---|---|
+| level exists, within reach | **the level** — price must clear the first ceiling before any further one |
+| level exists, beyond reach | **measured move** — nothing structural bounds the trade |
+| no level, `setup_type == "breakout"` | **measured move** — absence of overhead structure is what "breakout" asserts |
+| no level, any other setup | **REFUSE** — chart and analyst's read disagree |
+| no levels / no ATR / no horizon | **REFUSE**, by name |
+
+Reach and the measured move share one estimate of travel:
+`ATR x sqrt(sessions) x multiple`, from the analyst's own
+`expected_horizon_sessions`. Square-root, not linear — daily ranges accumulate
+as a random walk, so `ATR x N` overstates an N-session excursion by ~`sqrt(N)`.
+Fully symmetric for shorts; a short projection running through zero is refused.
+Six named refusal codes — "no trade" without a reason is what let the original
+defect survive. The model's `reference_target` is retained as EVIDENCE, never
+as arithmetic, and the computed-vs-guessed gap is logged.
+
+**The interaction with `min_stop_atr_multiple` is arithmetic and binding.** A
+stop `k` ATRs out and a target `p x ATR x sqrt(H)` clear a floor `f` only when
+`sqrt(H) >= f*k/p`. At the settings shipped on that branch (k=3.45 for a range
+setup, p=1.0, f=1.5) a measured-move trade needs a stated horizon of **~27
+sessions** and a structural-level trade **~12**. **This is precisely why 12.1
+is required and not optional**: honouring a level-backed stop collapses `k`
+from 3.45 to the measured median 1.7, and the required horizon falls with it.
+10.4 and 12.1 are one fix in two halves — shipping 10.4 alone leaves most
+trades refused on horizon geometry.
+
+**Unverified, and must not be quoted as if measured:** how many of the 38
+signals from 2026-09-01 would now pass. The run's per-symbol levels, ATRs and
+horizons are not available offline. The SLB reproduction in
+`tests/test_target_derivation.py::TestSLB` uses **synthetic** level data.
+
+**Pre-existing defect fixed alongside.** `_widen_stop_past_noise` moved a stop
+to `entry +/- multiple x ATR`, which is unconditionally on the correct side of
+entry — so a short handed a stop BELOW its entry came out with a valid-looking
+stop above it, silently repairing the nonsense the caller's side-check exists
+to catch. It now refuses. The existing test passed only because its fixture
+carried no ATR, which is not a state production reaches.
+
 ### Ordering
 
 10.1 and 10.3 are contained schema/sizing changes. 10.2 requires the
