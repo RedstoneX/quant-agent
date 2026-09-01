@@ -986,8 +986,9 @@ class BaseAgent(ABC):
             f"errors above — typically an empty or omitted narrative "
             f"field. Do NOT reconsider, add, remove, or change the value "
             f"of any decision-bearing field: every target/symbol/weight, "
-            f"every approved/modifications/scale_all_buys/reason_category "
-            f"value must be returned EXACTLY as in your previous response. "
+            f"every approved/modifications/rejected_symbols/scale_all_buys/"
+            f"reason_category value must be returned EXACTLY as in your "
+            f"previous response. "
             f"This is schema completion only. Respond ONLY with the JSON "
             f"object."
         )

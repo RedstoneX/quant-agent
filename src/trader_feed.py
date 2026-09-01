@@ -451,7 +451,17 @@ def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
     scale = risk.get("scale_all_buys")
     scale_text = f" · buy size {scale * 100:.0f}%" if isinstance(scale, (int, float)) else ""
     mods = snap.get("risk_mods") or []
-    lines.append(f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s)")
+    # Phase 10.1: a verdict can now be APPROVED overall and still have refused
+    # individual names. Reading only `approved` would show that run as a clean
+    # approval and never mention the trade that died.
+    rejected = risk.get("rejected_symbols") or []
+    rej_syms = sorted({
+        str(r.get("symbol")) for r in rejected if isinstance(r, dict) and r.get("symbol")
+    }) if isinstance(rejected, list) else []
+    refused_text = f" · refused {', '.join(rej_syms)}" if rej_syms else ""
+    lines.append(
+        f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s){refused_text}"
+    )
     reason = _clip(risk.get("reasoning"), 550)
     if reason:
         lines.append(f"   {reason}")

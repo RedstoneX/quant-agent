@@ -913,6 +913,30 @@ records F5's veto hierarchy as *intentionally retained* after external review on
 revised on evidence that did not exist then. Read that audit before changing the
 hierarchy, and record the supersession there.
 
+**IMPLEMENTED 2026-09-01** (branch `fix/risk-verdict-per-trade`). `RiskVerdict`
+gains `rejected_symbols` — a list of `{symbol, reason}`. The verdict now has
+four levers, narrowest first:
+
+| lever | scope | fires when |
+|---|---|---|
+| `modifications` | one symbol's fields | the trade is sound, sized or stopped wrong |
+| `rejected_symbols` | one symbol, refused | *that name* fails |
+| `scale_all_buys` | every new BUY/SHORT | the entry side is too big for the regime |
+| `approved: false` | the whole plan | the BOOK is what fails |
+
+Book-level risk still refuses broadly and is evaluated FIRST — correlation
+clusters, total exposure and drawdown state are properties of the account, not
+of one name. **No threshold moved**; this is the granularity of refusal only.
+
+**Fail-closed asymmetry.** A malformed `modification` is dropped. A malformed
+`rejection` is NOT — dropping it would let a symbol the risk manager explicitly
+refused go on to trade. Anything naming no symbol fails the whole verdict
+closed, and a repair reprompt that adds, drops or rewrites a rejection is
+treated as an unauthorized re-decision.
+
+The supersession note required above now lives under F5 in
+`docs/architecture/DECISION_CHAIN_AUDIT.md`.
+
 ### 10.2 Macro sets exposure. Macro does not select trades.
 
 `config/prompts/portfolio_manager.md` orders the reasoning chain
