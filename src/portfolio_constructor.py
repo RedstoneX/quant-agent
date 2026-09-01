@@ -27,6 +27,7 @@ import math
 import logging
 from dataclasses import dataclass
 
+from src.data.levels import TargetDerivation, derive_structural_target
 from src.models import Position, TargetPosition, TechAnalysisResult, TradeDecision
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,24 @@ class ConstructorConfig:
     # Below this the trade only ever looked good on a stop too tight to
     # survive, so it is rejected rather than taken at a worse payoff.
     min_reward_risk_after_widening: float = 1.5
+    # --- Target derivation (2026-09-01) ---------------------------------
+    # The stop has been computed from measured volatility since 2026-08-27;
+    # the target was still the language model's `reference_target`, so the
+    # reward:risk gate above was dividing a measurement by an opinion. These
+    # tune `src/data/levels.py::derive_structural_target`, which computes the
+    # target from the same bars the stop comes from. See that module's
+    # target-derivation section for the rule and the evidence; the defaults
+    # here deliberately mirror its module-level constants.
+    min_target_atr_multiple: float = 1.0
+    breakout_projection_atr_multiple: float = 1.0
+    max_target_reach_atr_multiple: float = 1.5
+    max_target_horizon_sessions: int = 60
+    # The model's target is not thrown away — it becomes evidence. Above this
+    # absolute percentage gap between the computed target and the model's
+    # guess, the disagreement is logged at WARNING rather than INFO, because
+    # a model that is consistently far from the chart is a finding about the
+    # model, not about the trade.
+    target_divergence_warn_pct: float = 25.0
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
     # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
@@ -518,6 +537,94 @@ class PortfolioConstructor:
             )
         return plans
 
+    def _derive_target(
+        self,
+        symbol: str,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        direction: str,
+    ) -> TargetDerivation:
+        """Compute the take-profit from structure, or refuse by name.
+
+        This replaces reading `analysis.reference_target` as the trade's
+        target. The model's number is still passed in — as `model_target`,
+        which the derivation never uses to choose an answer and only carries
+        so the disagreement can be logged. See
+        `src/data/levels.py::derive_structural_target`.
+
+        Deterministic and cheap, so it is called from both
+        `_resolve_entry_and_stop` (which needs it for the reward:risk check
+        after widening) and the builders (which need the number itself)
+        rather than being threaded through as state. Same inputs, same
+        answer, both times.
+        """
+        derivation = derive_structural_target(
+            entry_price=entry_price,
+            direction=direction,
+            levels=getattr(analysis, "computed_levels", None) or [],
+            atr=getattr(analysis, "atr_14", None),
+            horizon_sessions=getattr(analysis, "expected_horizon_sessions", None),
+            setup_type=getattr(analysis, "setup_type", None),
+            model_target=getattr(analysis, "reference_target", None),
+            min_target_atr_multiple=self.cfg.min_target_atr_multiple,
+            breakout_projection_atr_multiple=self.cfg.breakout_projection_atr_multiple,
+            max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
+            max_horizon_sessions=self.cfg.max_target_horizon_sessions,
+        )
+        self._log_target_divergence(symbol, derivation)
+        return derivation
+
+    def _log_target_divergence(
+        self, symbol: str, derivation: TargetDerivation,
+    ) -> None:
+        """Record where the model's guess and the computed level disagree.
+
+        The model's target is no longer arithmetic, but it is still the only
+        read available on whether the model's chart-reading is worth
+        anything. A large, one-directional gap across many symbols is a
+        finding about the seat; a large gap on one symbol is a finding about
+        that symbol.
+        """
+        if derivation.price is None or derivation.model_target is None:
+            return
+        gap = derivation.divergence_pct
+        if gap is None:
+            return
+        message = (
+            "Constructor: %s target — computed $%.2f (%s) vs analyst's "
+            "reference_target $%.2f: %+.1f%%"
+        )
+        args = (
+            symbol, derivation.price, derivation.basis,
+            derivation.model_target, gap,
+        )
+        if abs(gap) >= self.cfg.target_divergence_warn_pct:
+            logger.warning(message + " — the model and the chart disagree sharply", *args)
+        else:
+            logger.info(message, *args)
+
+    @staticmethod
+    def _target_note(derivation: TargetDerivation) -> str:
+        """Provenance for the order's reasoning, appended after truncation.
+
+        The AI Risk Manager reads `reasoning`. It must be able to see that
+        the take-profit is a computed level rather than the analyst's number,
+        and where the two differ — otherwise it re-does the comparison in its
+        head, which is the class of error that produced two contradictory
+        reward:risk figures in one response on 2026-08-31.
+        """
+        if derivation.price is None:
+            return ""
+        note = f" [target ${derivation.price:,.2f} — {derivation.basis}]"
+        if derivation.model_target is not None and derivation.divergence_pct is not None:
+            note = (
+                f" [target ${derivation.price:,.2f} computed from "
+                f"{derivation.basis.replace('_', ' ')}; analyst's reference "
+                f"${derivation.model_target:,.2f}, "
+                f"{derivation.divergence_pct:+.1f}%]"
+            )
+        return note
+
     def _resolve_entry_and_stop(
         self,
         target: TargetPosition,
@@ -561,10 +668,26 @@ class PortfolioConstructor:
         # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
+        # The target is derived BEFORE the stop is finalised, because the
+        # reward:risk check inside `_widen_stop_past_noise` needs a real
+        # target to measure against. It depends only on entry, direction and
+        # the chart — never on the stop — so there is no circularity.
+        derivation = self._derive_target(
+            target.symbol, analysis, entry_price, target.direction,
+        )
+        if derivation.price is None:
+            logger.warning(
+                "Constructor: %s %s rejected — no target could be computed "
+                "from structure [%s]: %s",
+                "SHORT" if is_short else "BUY", target.symbol,
+                derivation.refusal, derivation.detail,
+            )
+            return (None, None)
+
         stop_loss = self._resolve_stop(target, analysis, entry_price)
         stop_loss = self._widen_stop_past_noise(
             target.symbol, analysis, entry_price, stop_loss, regime=regime,
-            direction=target.direction,
+            direction=target.direction, target_price=derivation.price,
         )
         if stop_loss is not None:
             stop_loss = round(stop_loss, 2)
@@ -613,6 +736,7 @@ class PortfolioConstructor:
         stop_loss: float | None,
         regime: str | None = None,
         direction: str = "long",
+        target_price: float | None = None,
     ) -> float | None:
         """Push a stop out to `min_stop_atr_multiple` ATRs when structure put
         it inside ordinary volatility.
@@ -634,9 +758,46 @@ class PortfolioConstructor:
         Returns None when widening would leave a reward:risk the trade cannot
         justify. That is deliberate: a trade that only cleared the bar on a
         stop too tight to survive was never the trade it appeared to be.
+
+        `target_price` (2026-09-01) is the DERIVED target — computed from
+        structure by `_derive_target`. It has to be passed in rather than
+        read off the analysis, because the whole point of the change is that
+        `analysis.reference_target` is the language model's guess and this
+        gate is arithmetic. When it is omitted the old read is kept, for the
+        one caller that legitimately supplies its own structural target: the
+        backtest engine, which computes the nearest level itself and hands it
+        over on a shim (`src/backtest/engine.py`). That path was never
+        exposed to the defect.
         """
         if stop_loss is None or stop_loss <= 0 or entry_price <= 0:
             return stop_loss
+
+        is_short = direction == "short"
+        # A stop on the WRONG side of entry is refused here rather than
+        # widened into validity. Found 2026-09-01: widening moves the stop to
+        # `entry +/- multiple * ATR`, which is unconditionally on the correct
+        # side, so a short handed a stop BELOW its entry came out of this
+        # function with a valid-looking stop above it — silently repairing
+        # exactly the nonsense the caller's side check exists to catch.
+        # `test_short_stop_at_or_below_entry_is_rejected` only passed because
+        # its fixture carried no ATR, which is not a state production reaches
+        # (`atr_14` is Python-set on every analysis). Widening corrects a stop
+        # that is too CLOSE; it must not invent one that is on the wrong side.
+        if is_short and stop_loss <= entry_price:
+            logger.warning(
+                "Constructor: SHORT %s — stop $%.2f is at or below entry "
+                "$%.2f. Refusing rather than widening it into validity.",
+                symbol, stop_loss, entry_price,
+            )
+            return None
+        if not is_short and stop_loss >= entry_price:
+            logger.warning(
+                "Constructor: BUY %s — stop $%.2f is at or above entry $%.2f. "
+                "Refusing rather than widening it into validity.",
+                symbol, stop_loss, entry_price,
+            )
+            return None
+
         atr = getattr(analysis, "atr_14", None) if analysis else None
         try:
             atr = float(atr) if atr is not None else None
@@ -646,7 +807,6 @@ class PortfolioConstructor:
             return stop_loss  # no volatility reading — leave structure alone
 
         multiple = self._stop_atr_multiple(analysis, regime)
-        is_short = direction == "short"
         if is_short:
             band_edge = entry_price + multiple * atr
             if stop_loss >= band_edge:
@@ -656,11 +816,19 @@ class PortfolioConstructor:
             if band_edge <= 0 or stop_loss <= band_edge:
                 return stop_loss  # already outside the noise band
 
-        target_price = getattr(analysis, "reference_target", None) if analysis else None
+        if target_price is None and analysis is not None:
+            target_price = getattr(analysis, "reference_target", None)
         try:
             target_price = float(target_price) if target_price else None
         except (TypeError, ValueError):
             target_price = None
+        # The refusal below is now about GEOMETRY, and says so. Both sides of
+        # the ratio are computed from measured volatility: the stop is
+        # `min_stop_atr_multiple` ATRs out, the target is where structure or
+        # the horizon says price travels. When those two cannot clear the
+        # floor together, the trade is refused because its shape does not
+        # work at this entry — NOT because a model guessed a poor target,
+        # which is what this message used to mean and no longer does.
         if is_short:
             if target_price and target_price < entry_price:
                 risk = band_edge - entry_price
@@ -668,11 +836,12 @@ class PortfolioConstructor:
                 reward_risk = reward / risk if risk > 0 else 0.0
                 if risk <= 0 or reward_risk < self.cfg.min_reward_risk_after_widening:
                     logger.info(
-                        "Constructor: SHORT %s rejected — a stop outside the "
-                        "noise band (%.2f x ATR = $%.2f) leaves reward:risk "
-                        "%.2f, under the %.2f minimum. The setup only "
-                        "qualified on a stop inside one ordinary day's range.",
-                        symbol, multiple, band_edge, reward_risk,
+                        "Constructor: SHORT %s rejected on geometry — the "
+                        "computed target $%.2f against a stop %.2f x ATR out "
+                        "($%.2f) is reward:risk %.2f, under the %.2f minimum. "
+                        "Both numbers are measured; this entry does not "
+                        "support the trade.",
+                        symbol, target_price, multiple, band_edge, reward_risk,
                         self.cfg.min_reward_risk_after_widening,
                     )
                     return None
@@ -681,11 +850,12 @@ class PortfolioConstructor:
                 reward_risk = (target_price - entry_price) / (entry_price - band_edge)
                 if reward_risk < self.cfg.min_reward_risk_after_widening:
                     logger.info(
-                        "Constructor: %s rejected — a stop outside the noise band "
-                        "(%.2f x ATR = $%.2f) leaves reward:risk %.2f, under the "
-                        "%.2f minimum. The setup only qualified on a stop inside "
-                        "one ordinary day's range.",
-                        symbol, multiple, band_edge, reward_risk,
+                        "Constructor: %s rejected on geometry — the computed "
+                        "target $%.2f against a stop %.2f x ATR out ($%.2f) is "
+                        "reward:risk %.2f, under the %.2f minimum. Both "
+                        "numbers are measured; this entry does not support "
+                        "the trade.",
+                        symbol, target_price, multiple, band_edge, reward_risk,
                         self.cfg.min_reward_risk_after_widening,
                     )
                     return None
@@ -881,22 +1051,27 @@ class PortfolioConstructor:
             if entry_price is None or stop_loss is None:
                 return None
 
-        # Take-profit comes from the analyst's structural reference_target, or
-        # there is no trade. The previous `entry * (1 + 2*stop_gap_pct)` branch
-        # manufactured a target whenever the analyst omitted one, and
-        # thesis_progress, pace and TARGET_BREACH were then all measured
-        # against that invention. TechAnalysisResult now requires
-        # reference_target for every actionable rating — structure for a range
-        # setup, a measured move for a breakout — so this is a hard read.
-        if not (analysis and analysis.reference_target and analysis.reference_target > entry_price):
+        # Take-profit is COMPUTED from structure (2026-09-01), not read from
+        # the analyst's `reference_target`. Two earlier stages of the same
+        # argument: `entry * (1 + 2*stop_gap_pct)` manufactured a target when
+        # the analyst omitted one, and was deleted; then the analyst's own
+        # number was made mandatory, which removed the fabrication but left
+        # the reward:risk gate dividing a measured stop by a guessed target.
+        # Now both sides of that ratio come from the bars. The model's guess
+        # survives on `analysis.reference_target` as evidence and is logged
+        # against the computed level by `_derive_target`.
+        derivation = self._derive_target(
+            target.symbol, analysis, entry_price, target.direction,
+        )
+        if derivation.price is None or derivation.price <= entry_price:
             logger.warning(
-                "Constructor: BUY %s rejected — no structural reference_target "
-                "from the technical analyst (entry=$%.2f). Targets are no "
-                "longer synthesized.",
+                "Constructor: BUY %s rejected — no target could be computed "
+                "above entry $%.2f [%s]: %s",
                 target.symbol, entry_price,
+                derivation.refusal or "target_not_above_entry", derivation.detail,
             )
             return None
-        take_profit = float(analysis.reference_target)
+        take_profit = float(derivation.price)
 
         # `target_pct` and `current_pct` are GROSS-leverage weights (see
         # _current_weights), but every consumer of `allocation_pct` spends it
@@ -1009,7 +1184,7 @@ class PortfolioConstructor:
             # the PM contradicting itself.
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
-            ),
+            ) + self._target_note(derivation),
             # Conviction ledger (spec §7.2) — pinned at entry, never
             # recomputed. `plan` is None for a legacy notional target, so
             # `allocated_risk_pct` stays None rather than a fabricated
@@ -1046,18 +1221,25 @@ class PortfolioConstructor:
             if entry_price is None or stop_loss is None:
                 return None
 
-        # Take-profit: the analyst's structural reference_target, BELOW
-        # entry for a short (price must FALL for a short to profit) — the
-        # mirror of _build_buy's `reference_target > entry_price` read.
-        if not (analysis and analysis.reference_target and analysis.reference_target < entry_price):
+        # Take-profit: COMPUTED from structure and BELOW entry for a short
+        # (price must FALL for a short to profit) — the exact mirror of
+        # _build_buy, using the same derivation. The direction inversion
+        # lives inside `derive_structural_target`: it draws from levels below
+        # the entry and projects a measured move downward, so nothing here
+        # has to know which way the trade points beyond passing
+        # `target.direction` through.
+        derivation = self._derive_target(
+            target.symbol, analysis, entry_price, target.direction,
+        )
+        if derivation.price is None or derivation.price >= entry_price:
             logger.warning(
-                "Constructor: SHORT %s rejected — no structural "
-                "reference_target below entry from the technical analyst "
-                "(entry=$%.2f). Targets are not synthesized.",
+                "Constructor: SHORT %s rejected — no target could be computed "
+                "below entry $%.2f [%s]: %s",
                 target.symbol, entry_price,
+                derivation.refusal or "target_not_below_entry", derivation.detail,
             )
             return None
-        take_profit = float(analysis.reference_target)
+        take_profit = float(derivation.price)
 
         from src.risk.rules import _gross_multiplier
         gross_mul = _gross_multiplier(target.symbol)
@@ -1143,7 +1325,7 @@ class PortfolioConstructor:
             take_profit=take_profit,
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
-            ),
+            ) + self._target_note(derivation),
             # Conviction ledger (spec §7.2) — mirrors _build_buy's entry
             # pinning; see its comment for what each field means.
             conviction=target.conviction,

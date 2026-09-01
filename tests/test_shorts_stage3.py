@@ -64,25 +64,35 @@ def _pm_rc() -> ReasoningChain:
     )
 
 
+# `atr_14` and `computed_levels` are set in Python by TechAnalystAgent, never
+# emitted by the model. Since 2026-09-01 the constructor derives the
+# take-profit from `computed_levels` and refuses without them, so a fixture
+# missing them is not a state the pipeline can reach. The default ATR sits
+# just inside the noise band, leaving the structural stop alone: these are
+# short-plumbing tests, not stop-widening tests.
 def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
-                    atr_14=None) -> TechAnalysisResult:
+                    atr_14=None, horizon=60) -> TechAnalysisResult:
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[stop], resistance_levels=[target],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning_chain=_tech_rc(), atr_14=atr_14,
+        computed_levels=[stop, target],
+        setup_type="range", expected_horizon_sessions=horizon,
+        reasoning_chain=_tech_rc(),
+        atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
     )
 
 
 def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
-                     atr_14=None) -> TechAnalysisResult:
+                     atr_14=None, horizon=60) -> TechAnalysisResult:
     return TechAnalysisResult(
         symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[target], resistance_levels=[stop],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning_chain=_tech_rc(), atr_14=atr_14,
+        computed_levels=[target, stop],
+        setup_type="range", expected_horizon_sessions=horizon,
+        reasoning_chain=_tech_rc(),
+        atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
     )
 
 

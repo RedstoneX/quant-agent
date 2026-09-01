@@ -323,6 +323,28 @@ day costs $1.02 (2026-08-27 — the only day that week where all six sessions ra
 and the morning completed first time). Never estimate from an average of recent
 days: they are cheap precisely because the desk kept crashing early.
 
+### 2026-09-01 morning — reward:risk divided a measurement by an opinion
+
+**38 signals, 30 (79%) under the 1.5 floor before anyone judged anything,
+zero trades** — SLB at 1.28 and AGX at 0.84, both `high` conviction. The stop
+was measured; the target was a guess. Fixed on `fix/target-from-structure`;
+**the floor did not move**. Rule: spec Phase 10.4, not restated.
+
+- **The horizon is the real constraint — the number to argue about.** A stop
+  `k` ATRs out and a target `p·ATR·sqrt(H)` clear floor `f` only when
+  `sqrt(H) ≥ f·k/p`: **~27 sessions for a measured move on a range setup,
+  ~12 targeting a real level.** Below that the shape cannot pay 1.5:1.
+  Levers: `risk.breakout_projection_atr_multiple`, or horizon discipline —
+  not the floor.
+- **SLB reproduced: 1.70 at a 20+ session horizon, passes.** At 10–15 the
+  shelf is unreachable, the measured move governs, 0.92–1.12, still refused.
+  **That test's level data is synthetic.**
+- **UNVERIFIED: how many of the 38 would now pass.** Per-symbol levels, ATRs
+  and horizons are unavailable offline. Do not repeat a number unmeasured.
+- **Pre-existing defect fixed alongside:** stop widening silently repaired a
+  SHORT's stop sitting BELOW entry into a valid-looking one above it. Now
+  refuses; its test had passed only on an ATR-less fixture.
+
 ### 2026-08-31 evening — the reward:risk gate was being narrated, not computed
 
 **Two forced sessions rejected every trade. Neither rejection was a judgement
@@ -766,7 +788,7 @@ An audit raised eleven candidate defects beyond the two already tracked above; t
 
 **Landed (2026-08-30 through ~15:00 UTC 2026-08-31) — all five items now deployed to production**
 
-- All five ordered items from the 2026-08-29 backlog have shipped. (1) Inverse-ETF longs now count against the bearish exposure ceiling, with a second commit fixing a sign error: shorting an inverse ETF is bullish, not bearish (PR #158). (2) Free per-symbol news feeds are scoped to held positions and candidates instead of universally requested (PR #157). (3) Every trade carries its allocation, conviction, and deciding model pinned at entry; exits label whether they link to an originating decision (PR #159). (4) The rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status — at the time, one limitation was left in place on purpose: a crashed scan produced no marker, so the session status stayed 'ok' even on crash (production honesty gap, documented but not fixed by design) (PR #156). That gap is now closed too — see "Landed (2026-08-30, later)" above (PR #163): a crash now attaches its own status and reports as a failure. The other limitation from PR #156 still holds: the nested-outcome path is unit-tested but no production replay has actually contained an intraday scan yet (none in live history so far). (5) The desk can now formally argue out disagreements and size trade risk by the number of independent seats that agree: a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence, single-target drop not session-wide), and risk_allocation_pct is ceilinged by agreement count in the deterministic risk code (PR #160, merged during this audit window).
+- All five ordered items from the 2026-08-29 backlog have shipped: inverse-ETF longs count against the bearish ceiling, sign error included (PR #158); free per-symbol news feeds scoped to held positions and candidates (PR #157); allocation, conviction and deciding model pinned at entry, exits labelled against their originating decision (PR #159); the rehearsal harness reads the intraday scan's own outcome report, and a crashed scan now reports as a failure rather than 'ok' (PRs #156, #163); disagreements are formally adjudicated and risk is sized by agreement count, with an unadjudicated target dropped singly before grounding (PR #160). **One limitation still holds:** the nested-outcome path is unit-tested but no production replay has yet contained an intraday scan.
 - To check the live state: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` should show PR #160 merged.
 
 **Landed (2026-08-29) — read this first, supersedes most of what follows**
@@ -1220,14 +1242,8 @@ Full suite: 2900 passed (2899 after the first hardening pass + this test).
   rather than leave it to rot, shipping the re-peg disabled by default. Check
   `gh pr list` for current status before treating this as landed.
 
-#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — measure before changing
-On 2026-08-28, the reward:risk floor added the previous day rejected four candidates outright. Recorded reward:risk after the stop was widened past the noise band: CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30, against a 1.50 minimum.
-
-Three of the four offered **less reward than risk** — those are correctly refused. NVDA at 1.30 is the borderline case.
-
-This is the rule working as designed, but it is also a signal worth measuring rather than reacting to: with honest stop distances, the technical analyst's targets are frequently too close to clear a 1.5 payoff. Either the targets are too conservative or the widened stops are too wide. Do not adjust the 1.50 floor on impression — gather a week of these rejections first, then decide which of the two numbers is wrong.
-
-Note this means 2026-08-28's zero trades had **two independent causes**, not one: the cost circuit blocked the morning before the Portfolio Manager ran, and separately these four were refused on payoff.
+#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — RESOLVED 2026-09-01
+On 2026-08-28 the reward:risk floor rejected four candidates (CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30), which asked whether the targets were too conservative or the stops too wide. **Answered: neither — the targets were not measurements at all**, so those ratios never meant what they appeared to. Do not cite them as evidence about stop width. That day's zero trades had two causes, not one: the cost circuit blocked the morning, and separately these four were refused on payoff.
 
 #### RECURSION FAULT IN THE BAR FETCH
 `broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.

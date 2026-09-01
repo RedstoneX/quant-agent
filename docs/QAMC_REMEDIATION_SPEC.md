@@ -863,6 +863,104 @@ until size is expressed as risk. Build 2b first.
 
 ---
 
+## Phase 10 — The target is computed, not guessed
+
+**Document note (2026-09-01):** this section was written when 10.4 was
+implemented. Before that it did not exist — the spec ended at Phase 9, and
+work was dispatched against a "Phase 10.4" that had no text here. Recording
+the rule after the fact is the lesser evil; dispatching against a section
+nobody wrote is what to avoid next time.
+
+### 10.4 — Derive the take-profit from structure — IMPLEMENTED (branch `fix/target-from-structure`)
+
+**The defect.** Reward:risk is `(target − entry) / (entry − stop)`. Phase 1
+and Phase 2 made the STOP deterministic: structure places it, and
+`min_stop_atr_multiple` (3.0) pushes it out when structure put it inside
+ordinary volatility. The TARGET was still `TechAnalysisResult.reference_target`
+— a number a language model wrote down. The gate therefore divided a
+measurement by an opinion, and failed systematically rather than randomly: a
+correctly-sized wide stop plus a modestly-guessed target misses a 1.5 floor
+as a matter of arithmetic, whatever the trade is worth.
+
+**Evidence.** Morning run 2026-09-01 (`run-64290730`): 38 actionable signals,
+**30 (79%) below the 1.5 floor** before any judgement was applied. Casualties
+included SLB `strong_buy`/`high` at R/R 1.28 (entry $60.10, stop $55.50 — a
+7.7% stop) and AGX `sell`/`high` at 0.84. Zero trades placed.
+
+**The floor is not the defect and did not move.** Lowering a floor that sits
+on invented numbers leaves it sitting on invented numbers.
+
+**The rule** (`src/data/levels.py::derive_structural_target`). Find the
+nearest computed structural level in the trade's direction, beyond a
+`min_target_atr_multiple` noise floor, then:
+
+| Situation | Target |
+|---|---|
+| Level exists, within reach | **The level.** Price must clear the first ceiling before any further one; reaching past it to make the ratio work is the invention being removed. |
+| Level exists, beyond reach | **Measured move.** Nothing structural stands between entry and as far as the symbol travels in the intended hold, so structure does not bound this trade. |
+| No level in the direction, `setup_type == "breakout"` | **Measured move.** The absence of overhead structure is what "breakout" asserts, and the computed levels agree. |
+| No level in the direction, any other setup | **REFUSE.** The chart and the analyst's read disagree. |
+| No levels at all / no ATR / no horizon | **REFUSE**, by name. |
+
+"Reach" and the measured move share one estimate of travel:
+`ATR × sqrt(sessions) × multiple`, using the analyst's own
+`expected_horizon_sessions`. Square-root, not linear — daily ranges
+accumulate as a random walk and `ATR × N` overstates an N-session excursion
+by roughly `sqrt(N)`. The reach multiple (1.5) is deliberately looser than
+the projection multiple (1.0): reach asks "could price get there at all",
+the projection asks "how far do I claim it goes when no level says
+otherwise".
+
+**Direction.** Fully symmetric. A short draws from levels BELOW entry and
+projects downward; a short's projection running through zero is refused.
+
+**Fail closed, by name.** Six distinct refusal codes, because "no trade"
+without a reason is what let the original defect survive. Separately, the
+reward:risk refusal in `_widen_stop_past_noise` now reads as a statement
+about GEOMETRY — both sides of the ratio are measured — rather than "the
+model guessed badly".
+
+**The model's target is retained as evidence**, never as arithmetic:
+`reference_target` is untouched, the computed-vs-guessed gap is logged
+(loudly past `target_divergence_warn_pct`), and both numbers ride in the
+order's `reasoning` so the AI Risk Manager does not re-derive the ratio in
+its head — the failure that produced two contradictory R/R figures in one
+response on 2026-08-31.
+
+**The interaction with `min_stop_atr_multiple` is arithmetic and binding.**
+A stop `k` ATRs out and a target `p × ATR × sqrt(H)` clear a floor `f` only
+when `sqrt(H) ≥ f·k/p`. At the shipped settings (k=3.45 for a range setup,
+p=1.0, f=1.5) a measured-move trade needs a stated horizon of **~27
+sessions**; a structural-level trade needs **~12**. Below that the trade's
+shape cannot pay 1.5:1 however it is judged, and it is refused as geometry.
+**If the desk decides too much is being refused, the lever is
+`breakout_projection_atr_multiple` or the horizon discipline — not the
+floor.**
+
+**SLB, reproduced** (`tests/test_target_derivation.py::TestSLB`). Against a
+plausible resistance shelf at $67.90 and the ATR back-solved from the run's
+own stop (~$1.33, 2.2% of price): **R/R 1.70 at a stated horizon of 20+
+sessions — it now passes.** At 10–15 sessions the shelf is out of reach, the
+measured move governs, and SLB scores 0.92–1.12 and is still refused. The
+horizon, not the target, is the pivot. **The level data is synthetic — the
+production bars for that session are not in this repository — so this is
+what the rule does with a plausible chart, not what SLB's actual chart
+contained.**
+
+**Not done / not verified.** How many of the 38 signals would now pass is
+**unverified**: the run's per-symbol levels, ATRs and horizons are not
+available offline.
+
+**Pre-existing defect found and fixed alongside.**
+`_widen_stop_past_noise` moved a stop to `entry ± multiple × ATR`, which is
+unconditionally on the correct side of entry — so a short handed a stop
+BELOW its entry came out with a valid-looking stop above it, silently
+repairing the nonsense the caller's side-check exists to catch. It now
+refuses. The existing test passed only because its fixture carried no ATR,
+which is not a state production reaches.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.

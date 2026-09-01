@@ -633,6 +633,14 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # the indicators that fed the prompt so PortfolioConstructor's
         # fallback stop can be volatility-aware).
         input_indicators_by_sym: dict[str, float | None] = {}
+        # The same levels the prompt was built from, kept so the constructor
+        # can DERIVE the target rather than read the model's guess of it
+        # (2026-09-01). Recomputed here rather than threaded out of
+        # `build_user_message`: `find_structural_levels` is deterministic and
+        # costs single-digit milliseconds, and that method is a public
+        # prompt-rendering seam with snapshot tests over it — widening its
+        # return type to smuggle data out would be the worse trade.
+        computed_levels_by_sym: dict[str, list[float]] = {}
         for s in symbols_data:
             if not isinstance(s, dict):
                 continue
@@ -640,6 +648,12 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             indicators = s.get("indicators")
             if sym and indicators is not None:
                 input_indicators_by_sym[sym] = getattr(indicators, "atr_14", None)
+            bars = s.get("bars")
+            if sym and bars:
+                supports, resistances = find_structural_levels(bars)
+                computed_levels_by_sym[sym] = sorted(
+                    lv.price for lv in (*supports, *resistances)
+                )
 
         analyses: dict[str, TechAnalysisResult] = {}
         failed_symbols: list[str] = []
@@ -667,6 +681,11 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     atr = input_indicators_by_sym.get(analysis.symbol)
                     if atr is not None:
                         analysis.atr_14 = atr
+                    # Same treatment for the structural levels: computed in
+                    # Python, carried on the result, never asked of the model.
+                    analysis.computed_levels = computed_levels_by_sym.get(
+                        analysis.symbol, [],
+                    )
                     analyses[analysis.symbol] = analysis
                 except Exception as e:
                     bad_symbol = str((item or {}).get("symbol", "?")) if isinstance(item, dict) else "?"

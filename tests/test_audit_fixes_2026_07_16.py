@@ -106,7 +106,11 @@ def _analysis(symbol, entry=100.0, stop=99.0, target=110.0) -> TechAnalysisResul
         symbol=symbol, rating="buy", entry_price=entry,
         stop_loss=stop, reference_target=target,
         support_levels=[stop], resistance_levels=[target],
-        setup_type="range", expected_horizon_sessions=10,
+        # Python-set by TechAnalystAgent; the constructor derives the
+        # take-profit from `computed_levels` (2026-09-01) and refuses
+        # without them.
+        computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
         reasoning="t", reasoning_chain=_tech_rc(),
     )
 

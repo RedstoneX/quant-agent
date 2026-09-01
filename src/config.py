@@ -422,6 +422,35 @@ class RiskConfig(BaseModel):
     # Widening a stop lowers reward:risk, because the target does not move.
     # Under this the setup only ever qualified on a stop too tight to survive.
     min_reward_risk_after_widening: float = Field(default=1.5, ge=0, le=10)
+    # --- Target derivation (2026-09-01) ---------------------------------
+    # The floor above was dividing a stop computed from measured volatility
+    # by a target a language model guessed. On 2026-09-01's morning run that
+    # rejected 30 of 38 actionable signals (79%) before any judgement was
+    # applied, the two highest-conviction calls among them. The floor is not
+    # the defect; its numerator was. These tune the deterministic target
+    # derivation that replaced it — see the target-derivation section of
+    # src/data/levels.py for the rule and the arithmetic.
+    #
+    # A target inside this many ATRs of entry is not a destination.
+    min_target_atr_multiple: float = Field(default=1.0, gt=0, le=5)
+    # Measured move claimed when no structural level stands in the way, in
+    # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the stated
+    # horizon. NOTE the interaction with `min_stop_atr_multiple`: a stop at
+    # k ATRs and a target at p*ATR*sqrt(H) clear a floor f only when
+    # sqrt(H) >= f*k/p — at k=3.0, p=1.0, f=1.5 that is H >= ~21 sessions.
+    breakout_projection_atr_multiple: float = Field(default=1.0, gt=0, le=5)
+    # How far price can plausibly travel within the horizon, same units.
+    # Looser than the projection on purpose: this asks "could it get there",
+    # the projection asks "how far do I claim it goes".
+    max_target_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
+    # Ceiling on `expected_horizon_sessions` before it enters the sqrt()
+    # travel estimate, so an implausible horizon cannot licence a target far
+    # outside anything the symbol does.
+    max_target_horizon_sessions: int = Field(default=60, ge=1, le=500)
+    # Absolute gap between the computed target and the analyst's guess above
+    # which the disagreement is logged at WARNING. The guess is kept as
+    # evidence, never as arithmetic.
+    target_divergence_warn_pct: float = Field(default=25.0, gt=0, le=200)
     # Cash-only default. When False: no BUY may drive `cash` below zero, and
     # any session that starts with `cash < 0` must de-lever (SELL) before any
     # new BUY. When True: normal margin account behavior, risk engine only

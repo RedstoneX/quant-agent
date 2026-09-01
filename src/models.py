@@ -190,6 +190,20 @@ class TechAnalysisResult(BaseModel):
     # (no trade is being proposed) but not for an actionable rating.
     support_levels: list[float] = Field(default_factory=list)
     resistance_levels: list[float] = Field(default_factory=list)
+    # PYTHON-SET, not LLM-emitted (same pattern as `atr_14` below): every
+    # level `src/data/levels.py::find_structural_levels` found over the full
+    # fetched history, supports and resistances unioned into one list of bare
+    # prices. The two fields above are the LLM's SELECTION from the levels
+    # block in its prompt; this is the block itself, preserved so the
+    # constructor can derive the target arithmetically instead of reading the
+    # model's `reference_target` (2026-09-01 — see the target-derivation
+    # section of src/data/levels.py for why that division was invalid).
+    #
+    # Unioned on purpose. `find_structural_levels` calls a level support or
+    # resistance relative to the LAST CLOSE; the trade is entered at a live
+    # price that can sit on the other side of it, so the partition is redone
+    # against the actual entry at derivation time.
+    computed_levels: list[float] = Field(default_factory=list)
     # How the position must be MANAGED, decided at entry from the chart:
     #   "range"    — clear structure on both sides. Fixed target is meaningful;
     #                thesis_progress and pace are valid measurements.
