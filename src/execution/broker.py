@@ -272,6 +272,55 @@ class AlpacaBroker:
             "non_marginable_buying_power": non_marginable_buying_power,
         }
 
+    def get_margin_interest_activities(self, after: str | None = None) -> list[dict]:
+        """Broker-truth `INT` (margin interest) account activity records.
+
+        Spec §11.2's empirical check: paper trading's own docs don't say
+        whether margin interest is simulated, so this reads Alpaca's
+        account-activities ledger directly rather than guessing. Feeds
+        `src.margin_interest.compare_estimate_to_broker_activity`,
+        which does the actual "confirmed / not confirmed" judgement — this
+        method only fetches and normalizes the raw records.
+
+        `after` is an optional ISO date/datetime string (Alpaca's
+        `after` query param) to scope the lookup to the relevant
+        overnight period; omitted, Alpaca returns its own recent-activity
+        default window.
+
+        The SDK version pinned here (alpaca-py) has no typed wrapper for
+        the activities endpoint, so this uses the low-level
+        `TradingClient.get()` REST passthrough against
+        `/v2/account/activities/INT` directly. Never raises — a broker
+        read failure here must not be able to break the caller (the
+        morning alert / dashboard read); it degrades to an empty list,
+        which `compare_estimate_to_broker_activity` reports as "not
+        confirmed", never as a fabricated "confirmed absent".
+        """
+        try:
+            params: dict = {}
+            if after:
+                params["after"] = after
+            raw = self.client.get("/account/activities/INT", params or None)
+        except Exception as exc:
+            logger.warning("get_margin_interest_activities failed: %s", exc)
+            return []
+        if not isinstance(raw, list):
+            return []
+        out: list[dict] = []
+        for item in raw:
+            try:
+                if not isinstance(item, dict):
+                    continue
+                out.append({
+                    "date": item.get("date"),
+                    "net_amount": float(item.get("net_amount") or 0.0),
+                    "description": item.get("description", ""),
+                    "activity_type": item.get("activity_type", "INT"),
+                })
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def get_transient_equity_eligibility(self, symbol: str) -> dict:
         """Fail-closed broker eligibility for an out-of-universe candidate.
 
