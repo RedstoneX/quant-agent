@@ -482,3 +482,389 @@ refused.
   ceiling correct the failover simply succeeds), so what reaches it is a
   genuine attempt runaway — arguably a thing an operator should look at.
   Asserted explicitly in `test_cost_circuit.py` rather than glossed.
+
+---
+
+## Archive — work completed before 2026-09-01
+
+Moved out of `docs/WORK.md` on 2026-09-01 under the rule at the top of that
+file: **finished work is moved here, never deleted.** WORK.md is capped and
+loaded into context every session, so it must hold only what is still to be
+done.
+
+Every claim below was checked against `gh`/`git` and against the production
+checkout before being moved — all 20 PRs cited are genuinely merged AND
+deployed (production HEAD matched `origin/main` at the time of the check).
+Four claims did NOT survive that check and are corrected inline where they
+appear; they are listed here so the corrections are not buried:
+
+1. **Phase 9 (the research desk deliberates) was listed as the FIRST pending
+   item.** It is done: §9.1/9.2 shipped as PR #153 and §9.3/9.4 as PR #160,
+   both deployed. Only §9.5 (the conviction ledger) is partial, and that was
+   never named in the item.
+2. **"Insider filter — PR #133 not yet merged/deployed."** Merged 2026-08-29
+   and deployed. WORK.md already contradicted itself on this two hundred
+   lines further down.
+3. **"Inverse-ETF retirement still outstanding."** Obsolete rather than
+   undone — the owner reversed this on 2026-08-30 and the inverse ETFs stay.
+   `SH`/`SDS`/`PSQ`/`SQQQ` remain in the universe deliberately.
+4. **"26 unmerged branches await triage."** The remote now carries 5
+   non-main branches. The VPS security branch named there no longer exists;
+   its salvageable content was rescued as PR #143.
+
+Text below is moved verbatim. Where an entry contains its own later
+correction, both the original claim and the correction are preserved — that
+pairing is the record.
+
+**Landed (2026-08-31) — six PRs, all merged and deployed. Nine open defects closed, four more deleted, six new ones found — read this first**
+
+Tonight's audit worked through the thirteen open defects recorded below on 2026-08-30. Full detail and re-check commands for every item are in `docs/phases.yaml`'s `open_defects` entry — this is the plain-language summary.
+
+- The macro event calendar is now half-real. The desk fetches a genuine forward schedule of seven US macro releases (CPI, payrolls, PPI, PCE, GDP, retail sales, jobless claims) from a free government source and shows it to the Risk Manager and the Macro Analyst, and the earnings-date lookup that existed but was never called is now wired in. **Still missing: Fed meeting dates specifically.** No free source publishes those, so both prompts now say so outright instead of guessing. Whether to add the Fed's own free calendar page just for that has been put to the owner — **not yet decided.**
+- The price-list refresh gap is closed. A scheduled job now refreshes it twice a day, every day including weekends, and pages over Telegram the moment it starts going stale rather than waiting for the hard cutoff. (Correction to an earlier note: the claim that the box had no scheduled jobs at all was a checking mistake, not a real finding — the box has always had them. The refresh gap itself was real and is now fixed.)
+- The evening report's lessons and reminders now actually carry forward: they're saved and read back by tomorrow's trading decisions instead of being generated and thrown away. One of the four fields — the report grading its own prior forecast — is kept for the record but deliberately not fed back in, to avoid the same self-review loop that was cut once before.
+- A smaller inconsistency is fixed: the parked cash-equivalent holding can no longer take up one of the limited slots meant for real positions' news coverage.
+- Every trade's conviction, requested risk, allocated risk and which model decided it are now visible on the dashboard and through the API, not just recorded internally.
+- The rehearsal tool used to test changes offline no longer depends on how stale the live price list happens to be at the moment someone runs it — that dependency mismatched what it was supposed to be testing and could produce a false failure.
+- A safety-net test that was supposed to guarantee every outcome prints a plain explanation, but only ever checked itself against itself, has been rebuilt to check against the real code instead. It already found one genuine, small gap in the process (see below).
+- Three previously-identical "nothing happened" outcomes inside the mid-day quick check (feature off, already running, nothing found) now report distinctly, so they can be told apart after the fact. All three are and remain harmless.
+- Four pieces of dead code confirmed to have zero callers anywhere, including tests, were deleted: an unused local copy of the holdings list, a write-only bookkeeping field, a superseded internal data shape, and four small orphaned helper functions.
+
+**Landed (2026-08-31, later) — two of the items below were fixed the same night**
+
+- Fed meeting dates are no longer a gap. The Federal Reserve publishes its own
+  meeting calendar free and the desk now reads it. A second source covers the
+  years the machine-readable feed does not reach — without it the desk would
+  have confidently reported "no meeting" for dates it simply could not see.
+  "No meeting is scheduled" now prints only when a real schedule genuinely
+  covers the window asked about; every other case says so in words.
+- The alarm that tells the owner a change never reached the live server can
+  now actually send. It never could: the credentials were never wired into it,
+  so an alert would have gone to a log file and nobody. It has a probe that
+  proves the channel still works rather than assuming it.
+  **Not finished:** the accompanying scheduled jobs are written but were
+  deliberately NOT switched on. They implement a weekly confirmation the owner
+  rejected — a week of undetected silence is not monitoring. The replacement,
+  where every trading session proves the alert path as part of its own run, was
+  unfinished when this was written and has since merged — see below.
+
+**Closed (2026-08-31, later still):**
+
+- The mid-day failure outcome that would have shown a raw internal code now
+  explains itself in plain English. The safety-net test that found it is back
+  to tracking nothing, which is the state it is meant to be kept in — anything
+  parked in it is a defect deferred in writing.
+- The offline rehearsal tool no longer misreports how much slack the price-list
+  safeguard has. **This was recorded as cosmetic and it was not.** It was
+  checked before the setting was available, so it always read "none" — which
+  meant the tool told the reader the desk would refuse to run any paid analysis
+  in exactly the situation where the desk would in fact have run normally. The
+  opposite verdict, not a wrong number. The silent guess that hid it is now a
+  hard stop: asked before it can know, the tool refuses to answer rather than
+  making something up.
+- The scheduled job that pointed at a folder from the project's original owner
+  is corrected and merged. It was never wrong on the live server — only in the
+  repository's own copy, which meant installing that copy would have broken the
+  daily report on contact. Confirmed against the running server, not just the
+  merge: the job runs from the right folder and its last run sent the report
+  as normal.
+- The setup guide one internal file pointed readers at, and that never
+  existed, is no longer promised. The reference was removed rather than
+  writing a guide — the module it points at already documents itself in
+  full, and a second document would only have restated it.
+- Full wire-service news coverage is formally closed, not merely unchanged:
+  the owner has declined the paid subscription it would need. Free coverage
+  stays as already widened.
+
+**Both pull requests noted here as unfinished have since merged:** every one of
+the server's startup files is now under version control with an automatic daily
+check that reports any difference between the server and the repository; and
+the alert-path rework landed, making the trading sessions themselves the
+alert-channel watchdog and retiring the weekly digest the owner rejected.
+
+**Landed (2026-08-30, later) — two fixes plus a close call, all deployed**
+
+- The macro data feed's retry policy has been rebuilt. The old one gave a failing economic-data series one quick second try and then gave up; that is exactly what let one bad three-minute stretch (2026-08-26) lose all nine numbers the macro seat reads, silently. It now tries harder, with a real time limit on the whole job — a minute and a half, not per series — so a slow patch can be ridden out without ever risking a session running long. Six new free indicators were added on top of what was already tracked — a real (inflation-adjusted) 10-year yield, the market's inflation expectation, a 3-month Treasury rate, the dollar's strength against other currencies, investment-grade borrowing costs, and weekly unemployment claims — each checked against the real data source before being wired in. And if any of these numbers fail to come back, the desk is now told so directly, the same way it is already told when the news feed is degraded, instead of quietly reasoning from nothing (PR #162).
+- A second, smaller repair: if the mid-day opportunity scan crashed partway through, it used to look exactly like a normal quiet check that found nothing — no error, no signal, nothing for anyone to see. It now says plainly that it crashed, and the rehearsal report counts that as a failure instead of a pass (PR #163).
+- A close call, caught in time: the price list the spending safeguard uses to know what each AI call costs is supposed to refresh itself, but only when a real trading session actually starts one — nothing refreshes it on a clock. Over the weekend it sat unrefreshed long enough to cross the point where the safeguard would have refused to run any paid analysis at all come Monday morning, meaning the desk would have opened and done nothing. It was noticed and refreshed by hand before that happened. (Closed: PR #168 added a systemd timer that refreshes the price list twice a day, seven days a week — see the 2026-08-31 entry above.)
+- Still missing on the macro side: there is no calendar of upcoming Fed decisions or inflation reports. Asked whether one is coming up, the desk still answers from what the model remembers, not from a real schedule.
+
+**Found (2026-08-30, documentation audit) — ten more open defects recorded, none fixed yet**
+
+An audit raised eleven candidate defects beyond the two already tracked above; ten verified real, one turned out false. All ten are now recorded in `docs/phases.yaml`'s `open_defects` entry as items (c) through (m), ranked by how directly each touches a trading or risk decision — read that entry for the full detail and the exact re-check command for each. In order: (c) the earnings-date lookup meant to ground the risk manager's mandatory event-risk check is wired to nothing, so that check still runs on the model's memory instead of real data; (d) the evening report's discipline-notes / selection-rules / thesis-update / outlook-grading fields are generated by the LLM every night and dropped before they reach storage or any later decision, so the loop the evening report explicitly promises never closes; (e) the evening session excludes the parked cash-sweep vehicle from per-symbol news selection but the two same-day checks earlier in the day don't, so it can occupy one of the capped news slots that would otherwise go to a real position; (f) every trade's conviction / requested-risk / allocated-risk / deciding-model fields are persisted but not exposed anywhere a human can see them, dashboard or API; (g) the rehearsal harness's own test that proves it can reproduce last week's spending-limit failure is quietly coupled to the same OpenRouter pricing-cache staleness already recorded as defect (b) above, so it can fail for a reason unrelated to what it exists to test; (h) a test meant to guarantee every outcome of the mid-day quick check prints a plain explanation is not actually exhaustive — it only checks that its own checklist agrees with itself — though it does not currently fail; (i) several healthy outcomes of the intraday opportunity scan (feature off, lock contention, nothing found) are indistinguishable from each other after the fact (benign, a residual loose end from this month's crash-visibility fix, PR #163); (j)-(m) are lower-consequence dead code found in the same pass: an unused local positions table nothing in production reads, a run-context field written once and never read back, a superseded news-analysis model family kept alive only by tests, and four small helper functions with zero callers anywhere.
+
+**Checked and found NOT to be a defect:** a claim that `docs/STATE.md` pins a specific production commit that is now several merges behind current `main`. Verified live 2026-08-30: production HEAD and `origin/main` are both `6a8694a` — zero merges of gap (`scripts/status_board.py`'s own live `undeployed_merges` reading is 0). Not recorded as a defect.
+
+**Separately noticed while checking the above:** `docs/STATE.md`'s "Intraday opportunity discovery" section — the file was dated 2026-08-27 at the top at the time — still said the broker layer has no short-selling capability at all today, and that nothing in the codebase tells the Portfolio Manager the inverse ETFs are bearish instruments. Both were false: shorting went live 2026-08-29, and the inverse-ETF/Portfolio-Manager wiring landed 2026-08-30 (PR #158). Flagged here rather than fixed in the moment — and fixed twelve minutes later anyway, in commit `4fb02e47`, which corrected both claims in place with dated notes.
+
+**Landed (2026-08-30 through ~15:00 UTC 2026-08-31) — all five items now deployed to production**
+
+- All five ordered items from the 2026-08-29 backlog have shipped. (1) Inverse-ETF longs now count against the bearish exposure ceiling, with a second commit fixing a sign error: shorting an inverse ETF is bullish, not bearish (PR #158). (2) Free per-symbol news feeds are scoped to held positions and candidates instead of universally requested (PR #157). (3) Every trade carries its allocation, conviction, and deciding model pinned at entry; exits label whether they link to an originating decision (PR #159). (4) The rehearsal harness can now read the intraday scan's own outcome report instead of only the top-level status — at the time, one limitation was left in place on purpose: a crashed scan produced no marker, so the session status stayed 'ok' even on crash (production honesty gap, documented but not fixed by design) (PR #156). That gap is now closed too — see "Landed (2026-08-30, later)" above (PR #163): a crash now attaches its own status and reports as a failure. The other limitation from PR #156 still holds: the nested-outcome path is unit-tested but no production replay has actually contained an intraday scan yet (none in live history so far). (5) The desk can now formally argue out disagreements and size trade risk by the number of independent seats that agree: a target carrying an unadjudicated conflict is dropped before grounding (punishment fits offence, single-target drop not session-wide), and risk_allocation_pct is ceilinged by agreement count in the deterministic risk code (PR #160, merged during this audit window).
+- To check the live state: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` should show PR #160 merged.
+
+**Landed (2026-08-29) — read this first, supersedes most of what follows**
+
+- Short selling is complete and live: the desk can now open a short and cover
+  it, not merely hold one safely, on the same careful caps and gates a long
+  trade gets.
+- A tool to test a strategy change against real history now exists, though it
+  can only check the mechanical trading rules, not what the AI agents
+  themselves would have decided — that was never recorded, so it cannot be
+  replayed.
+- Any research seat, not only the chart analyst, can now bring a candidate to
+  the desk's attention. Still missing: the desk formally arguing out a
+  disagreement between seats, and sizing a trade bigger when more seats
+  independently agree.
+- The cost-circuit outage from two days ago is fully fixed, not just
+  patched, and its safety backstop now recovers on its own instead of
+  shutting a trading mode down for the rest of the day.
+- Both defects logged below that were specific to short trades — blind
+  performance stats and confused crash recovery — are verified fixed.
+- The news desk's free source list was widened, and a feed that had quietly
+  stopped publishing while still reporting success was found and removed.
+  Real wire-service coverage still needs a paid subscription and an owner
+  decision.
+- All of the above is merged and confirmed deployed to production as of
+  today. Most of "STILL OPEN — 2026-08-29" and "EXECUTION ORDER FOR THE NEXT
+  SESSION" below is now done; see their own superseded-notices rather than
+  reading them as current.
+
+Five items, ordered by dependency then value:
+
+1. **DONE (PR #158)** — Make the inverse funds coherent with real short selling. Since they stay, a
+   long position in one is bearish exposure the short-side ceiling cannot
+   currently see. That exposure now counts against the same ceiling, and the
+   Portfolio Manager knows these are bearish instruments. Correction 2026-08-30:
+   a second commit in the same PR fixed a sign error: shorting an inverse ETF is
+   bullish (betting the underlying index rises), not bearish, and must not consume
+   the bearish budget. The setting was renamed from `risk.max_short_gross_pct` to
+   `risk.max_gross_bearish_pct` to reflect the widened scope.
+2. **DONE (PR #157)** — Widen the free news sources further. Per-company
+   coverage now exists but is scoped to the names the desk holds or is watching
+   that day instead of universally, capped so it does not explode to ~100 requests.
+   Yahoo per-symbol only; Seeking Alpha was verified working and deliberately not
+   enabled due to cost constraints.
+3. **DONE (PR #160, merged during audit)** — The unbuilt half of the research-desk work: seats formally arguing out a
+   disagreement, and a name more independent seats agree on earning a larger
+   share of the risk budget. A target carrying an unadjudicated conflict is now dropped
+   before grounding (punishment fits offence — single-target drop, not session-wide).
+   Sizing by agreement is now in the deterministic risk code (not a model instruction):
+   risk_allocation_pct is ceilinged by how many independent seats are directionally aligned,
+   indexed by agreement count. Default schedule is [3.0, 4.0, 5.0, 5.0, 5.0]%, keeping
+   1-source trades at 60% of the 5% envelope, 2-source at 80%, 3+ at full 100%.
+4. **DONE (PR #159)** — Log every trade's allocated risk against how it actually turned out, so
+   conviction can be judged from data. Each trade now carries its allocated risk
+   percentage, stated conviction, and deciding model pinned at entry. Exit rows
+   label whether they link to an originating decision or have none. The grouping
+   of outcome-by-conviction exists but is gated: below 20 per bucket it reaches
+   the human operator only and is kept out of every agent prompt.
+5. **DONE (PR #156, with one gap since closed)** — The intra-session scan result that never
+   reaches the session report. The rehearsal harness can now read the intraday
+   scan's nested outcome from its own report instead of only the top-level status.
+   At the time, two limitations were recorded and not fixed by design: the path is
+   unit-tested but no current production replay actually contains an intraday_scan
+   key (still true — none exist in live history), and a crashed scan produced no
+   marker — the session read healthy and the operator could not see the crash.
+   **Correction 2026-08-30 (PR #163): the crash gap is now closed** — a crashed
+   scan attaches its own status and the session reports it as a failure.
+
+**Next, in order**
+
+1. **Phase 9 — the research desk deliberates.** Every seat may nominate a
+   candidate; Technical becomes a responder rather than the gatekeeper on
+   candidacy; material disagreements must be adjudicated, not just logged;
+   conviction follows multi-source agreement. Full design in
+   `docs/QAMC_REMEDIATION_SPEC.md` Phase 9. Depended on Phase 2b — now
+   committed (`75c0233`, `feat/pm-flex-routing`) — because "agreement earns
+   size" is meaningless until size is expressed as risk.
+
+3. **Earnings filing extraction fix — PR #115 (`009ab78`, branch
+   `feat/shorts-visible`, misnamed — it carries the earnings fix, not
+   shorting), merged into `main`.** Deploy status is not tracked here — check
+   `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1` against
+   `git log origin/main` to see whether it has shipped yet. Corrects the diagnosis
+   previously recorded here, which was wrong: the class is
+   `EarningsDataProvider` (`src/data/earnings.py`), not `EarningsProvider`,
+   and it was never doing a naive first-30,000-characters slice — structured
+   section extraction and a density-seeking fallback both already existed.
+   The real defect: `_extract_key_sections` matches the phrase "financial
+   statements", which also appears verbatim inside the auditor's opinion
+   letter ("...the related notes (collectively referred to as the financial
+   statements)"). The acceptance test measured only LENGTH (≥3,000 chars), so
+   that prose comfortably cleared the bar and suppressed the density-seeking
+   fallback that would have found the real tables. Measured over the 68
+   filings cached on the production box: 17 reached the earnings analyst
+   starved (<40 financial figures), 12 of those with ZERO — MSFT, AAPL,
+   GOOGL, BAC, CVX, NFLX among them. Fix: require ≥40 financial figures
+   (dollar amounts, comma-grouped thousands, parenthesized negatives — the
+   same pattern `_find_financial_dense_region` already scored by, now a
+   shared module constant) in addition to length; failing the content check
+   falls through to the fallback instead of returning. Re-measured across all
+   68: 17 improved, 51 unchanged, 0 regressed, 0 starved.
+
+4. **Insider routine/opportunistic filter — PR #133 opened against `main`, not yet
+   merged/deployed.** See the "Landed" entry above (`feat/insider-signal-filter`)
+   for what it does and the measured routine split with its caveat.
+
+6. **Phase 4.2 — repair the data feeds.** News-feed half **DONE** (branch
+   `fix/news-feeds-and-coverage`, 2026-08-28): Reuters/AP investigated live —
+   neither is fixable for free (Reuters retired public RSS in 2020; AP's own
+   feed requires a paid OAuth2 API, and the free third-party proxy is
+   Cloudflare-walled) — both removed from `RSS_FEEDS`, Yahoo Finance News
+   added as a partial free substitute, and `NewsCoverage` (`src/data/news.py`)
+   now makes a dead feed impossible to miss: it's in the analyst's own prompt
+   and in `data_status["news"]` (`ok`/`partial`/`failed`), which is what
+   `trader_feed.py`/`notifier.py` already render as the operator-facing
+   `⚠️ Data degraded` banner. **FRED half also DONE (2026-08-30, PR #162)** —
+   see the "Landed (2026-08-30, later)" entry above; this line was left
+   "still open" for two days after that stopped being true.
+   (4.1, un-blindfolding the intraday buy path, is done — `fb88e08`,
+   `feat/pm-flex-routing`, see the landed section above.)
+
+7. **Phase 5 — short selling, now a three-stage plan.** The prior estimate
+   recorded here — "bounded and additive, roughly a day, NOT a rewrite" — was
+   **wrong**. A survey for Stage 1 found roughly 50 long-only assumptions
+   across the money path, several failing silently: the constructor would
+   re-open a held short every session (a short's weight was absent from
+   `_current_weights`, so `.get(sym, 0.0)` read an already-held short as
+   unheld); short orders bypass the risk engine entirely via an early
+   `return []` on SELL; and shorts counted as zero portfolio risk in
+   `portfolio_heat` (`qty <= 0` was excluded). Discovery still ALREADY WORKS —
+   `TechAnalysisResult.rating` emits `sell` / `strong_sell` today. **Inverse
+   ETFs are explicitly NOT the answer** — the owner rejected that workaround;
+   he wants real short selling. Split into:
+
+   1. **Make shorts countable — PR #116 (`feat/shorts-countable`, two commits
+      `71325b1` + `a81bfde`), merged into `main`.** Deploy status is not
+      tracked here — check `sudo -n -u qamc git -C /home/qamc/quant-agent log
+      --oneline -1` against `git log origin/main`. Signed weights
+      in `_current_weights`, side-aware `r_multiple`/`position_risk`/
+      `portfolio_heat` in `src/risk/metrics.py`, and `qty != 0` (not `qty >
+      0`) in every reporting filter (`src/storage/db.py`,
+      `src/notifier.py`, `src/trader_feed.py`, `src/pipeline.py`). No order
+      path is touched — the constructor emits nothing for a held short
+      (`current_pct < 0`) rather than routing a cover or an add-to-short
+      through paths that don't yet handle direction. 40 tests added
+      (`tests/test_shorts_countable.py`), 21 of which failed pre-merge on
+      `main` without this fix; the rest are a no-op wall proving long
+      arithmetic is unperturbed.
+
+   2. **Make shorts safe — landed 2026-08-28 (commit `10e0f10`, "Stage 2 of
+      short selling: make shorts safe"; `tests/test_shorts_safe.py`, 28
+      tests), merged to `main`.** Correction 2026-08-29: this line
+      previously read "(not yet started)" — that was wrong as of today's
+      check against origin/main; stage 2 is done, stage 3 below is what
+      remains. Risk-engine routing so a SELL on an unheld symbol doesn't
+      skip the deterministic gate via the early `return []`; stop direction
+      (above entry) and trailing direction inverted for shorts; unbounded-loss
+      margin accounting.
+
+   3. **Turn it on (not yet started).** Order placement in the broker layer,
+      then retire the inverse ETFs (`SH`, `SDS`, `PSQ`, `SQQQ`) as the
+      bearish-expression mechanism. **Correction 2026-08-29: the first half
+      is done — stage 3 (PR #150) landed and is merged and deployed, so
+      shorts can be opened and covered.** The inverse-ETF retirement is
+      still outstanding: `SH`/`SDS`/`PSQ`/`SQQQ` remain in the trading
+      universe, now redundant rather than necessary.
+   Alpaca is ready: `shorting_enabled: true`, `no_shorting: false`,
+   `max_margin_multiplier: 4`, assets `shortable` with `borrow_status:
+   easy_to_borrow`. The Alpaca paper account was verified on 2026-08-28 as
+   already margin-enabled (`shorting_enabled: True`, `multiplier: 4`, equity
+   $9,871.87) — no owner action is outstanding. (`docs/QAMC_REMEDIATION_SPEC.md`
+   Phase 5 previously recorded an owner action to switch the account to
+   margin; that is stale and has been corrected there.)
+
+   **Known residual, needs a schema migration.** `pending_protection_restores`
+   WAL rows predate shorts and carry no side column, so a row for a short's
+   cancelled BUY stops looks byte-identical to one for a long's cancelled
+   SELL stops. `_derive_close_side_for_drain` (`src/pipeline.py`) reads the
+   broker's live signed position to tell them apart, but when that read
+   itself fails, `_drain_pending_protection_restores` deliberately degrades
+   to the pre-existing `sell` default rather than stalling the row —
+   verified in the code and comments as of 2026-08-29. Unreachable today
+   because shorts cannot yet be opened; becomes reachable, and wrong, the
+   day they can. Close it as part of stage 3, not after. Current behaviour
+   is pinned by `tests/test_shorts_emergency_close.py`'s crash-recovery
+   drain-path coverage (added `e9851ea`, flagged by PR #135's own coverage
+   audit as the one corner with zero tests) — read it before changing it.
+   **Correction 2026-08-29: closed as part of stage 3, as planned.**
+   `pending_protection_restores` now persists a `side` column, written at
+   row-creation time by whoever is closing the position; the drain path
+   prefers that persisted value and only falls back to the live-broker
+   derivation (never a blind `sell` default) for a legacy row written before
+   the migration. See `tests/test_wal_protection_side.py`.
+
+8. **Phase 6 — cost circuit and transparency.** Dollar-based cap with an
+   afternoon reserve; `position_id` linking a buy to the sell that closed it;
+   surface the reasoning already stored but never displayed. **Correction
+   2026-08-29: done** — see "Landed (2026-08-29)" at the top of this backlog.
+
+#### THE REHEARSAL HARNESS — built, acceptance test PASSING (corrected 2026-08-29)
+Merged to `main` as PR #122 (`feat/session-rehearsal`). Runs a full session offline against a snapshot of production, replaying recorded model responses. Free, deterministic, about 50 seconds. Blocks outbound network at the process level and proves the production database is byte-identical afterwards. Operator alerts are suppressed via `QAMC_REHEARSAL=1`.
+
+**This section previously said the acceptance test did not pass. That was stale by the time it was read on 2026-08-29** — the fix landed the same day it was written, inside the same PR (`ee6f671`, "un-merge chunked agent rows so replay stops running dry"), and nothing after that commit ever came back to correct this text. Verified again on 2026-08-29 by re-running both acceptance tests from a fresh worktree against the live production snapshot: `pytest tests/test_rehearsal_replay.py tests/test_rehearsal_reproduces_cost_ceiling.py` — **11 passed**.
+
+What was wrong and the fix: `tech_analyst.analyze_batch` auto-chunks a large symbol batch into several real provider calls (3 chunks + 1 missing-symbol recovery for the 2026-08-28 incident run, `agent_logs.provider_requests = 4`), then merges them into ONE `agent_logs` row before logging. Replay patches the provider transport, invoked once per real call, so it needed 4 recorded answers for that row and found 1 — the first chunk consumed it, every later chunk raised `MissingRecordedResponse`, and the resulting failure cascade masked the actual incident behind an unrelated `failed_call_unknown_cost` trip on `tech_analyst`. Fix (`ops/rehearsal/replay.py::_unmerge_chunked_call`): `analyze_batch` already joins each real call's text behind `"--- chunk i/N ---"` / `"--- missing-symbol recovery ---"` markers, in call order, in both `input_message` and `full_response` — a complete ordered record of the real calls a merged row represents. Replay now splits one row back into one `RecordedCall` per real call before matching, prorating merged-only token/cost figures by each part's share of the row text (last part takes the remainder, so parts always sum to exactly the recorded total).
+
+With the chunk defect fixed, the harness reproduces the 2026-08-28 incident timeline exactly (`llm_circuit_events` on the live box: 09:32 defect 1 — projected session cost, `portfolio_manager`, session $0.0461 / day $0.0476; 11:15 operator reset; 11:30 defect 4 — paid-session count cap, `tech_analyst`, day $0.1765). `test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block` forces the old byte-as-a-token estimator back on through config (demanding more measured history than the ledger holds) and confirms the reserved-exposure ceiling still blocks the Portfolio Manager exactly as it did that morning, zero trades proposed or executed. `test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure` runs the same incident under the four cost-circuit fixes (PR #126, merged same day) and confirms the ceiling no longer fires and the Portfolio Manager is reached — the correct post-fix outcome. Both tests require `sudo -n -u qamc` read access to the production database and skip cleanly where that access is unavailable.
+
+**Two more rig-only defects found 2026-08-29 by actually running the harness (not just its acceptance test) across `morning`/`midday`/`close`/`evening`/`intra_check` against the live snapshot, both fixed in the same pass:**
+
+1. **`ResponseLibrary.match()` could crash on an ordinary, unpinned rehearsal.** Reproduced live: a plain `morning` rehearsal (no incident pinning, matching against full history) hit `TypeError: '<' not supported between instances of 'RecordedCall' and 'RecordedCall'` inside `scored.sort(reverse=True)`. Cause: `_unmerge_chunked_call` gives every part of one merged `agent_logs` row the same `row_id`, so two un-merged parts of one chunked row tie exactly on `(score, -row_id)` whenever they also tie on Jaccard score (trivially true when neither shares a word with the live prompt), forcing Python to compare the un-orderable `RecordedCall` objects to break the tie. In production this cascaded: tech_analyst's retry logic caught it as a call failure, exhausted retries, failed over to a second provider, hit the identical crash on the identical tied candidates, burned through the cost circuit's `provider_attempt_limit`, and suspended paid analysis for the rest of the session — a rig-only bug that looked exactly like a production incident. Fixed in `ops/rehearsal/replay.py` by ranking candidates by index instead of by object; `tests/test_rehearsal_replay.py::test_match_does_not_crash_when_two_unmerged_parts_of_one_row_tie` pins it.
+2. **The verdict didn't know its own pipeline's status vocabulary.** `midday`, `close` and `intra_check` rehearsals that ran perfectly normally — no crash, no missing recording, no blocked agent — all came back `VERDICT: FAIL`, because `_verdict`'s healthy-status set only recognized `executed`/`no_orders`/`no_trades`/`market_holiday`. `run_position_review` (shared by midday/close) returns `"reviewed"` on a normal completion, `run_intra_check` returns `"ok"` when there is no loss violation (the common case on a 30-minute cadence), and `run_evening` returns `"analyzed"`. Production's own `src/trader_feed.py` and `src/notifier.py` already group these with the statuses the rig did recognize as healthy — the rig disagreeing with production about what counts as "this worked" is exactly the dishonest-output failure mode this harness exists to catch in the trading system, reproduced in the harness itself. Fixed in `ops/rehearsal/report.py`; `tests/test_rehearsal_report_verdict.py` pins it (new file, 6 tests).
+
+Full suite: 2892 tests passed before this pass; +7 net new (1 in `test_rehearsal_replay.py`, 6 in new `tests/test_rehearsal_report_verdict.py`). Now lives at `ops/rehearsal/` on `origin/main`, not on a standalone branch/worktree; see "Session start" above for the owner's 2026-08-29 instruction to run it routinely.
+
+**Hardening pass 2026-08-29 (second): verified the five just-added healthy statuses against `src/pipeline.py` directly rather than trusting the comments above, and audited every `run_*` session function for other gaps.** Found and fixed three more:
+
+1. Three genuine *failure* statuses — `position_review_parse_error` (`run_position_review`/midday+close), `evening_analysis_error` and `evening_parse_error` (`run_evening`) — were already asserted as FAIL by this pass's own tests but had no `STATUS_PLAIN` entry at all, so each would have printed the generic "ended with status 'X'" fallback instead of a real explanation. Added.
+2. `early_close` (`run_position_review`/midday+close, `src/pipeline.py:7806`) — a deliberate skip on half-day-holiday sessions, the same shape as `market_holiday` — was missing from both `STATUS_PLAIN` and the healthy set. Added to both.
+3. `run_morning`'s PM-failure family — `pm_parse_error`, `pm_schema_error`, `pm_grounding_error`, `pm_repair_changed_decision` (`src/agents/portfolio_manager.py`, surfaced via `ctx.analysis_failure_status`) — were real, reachable statuses with no `STATUS_PLAIN` entry. Production's own `src/notifier.py`/`src/trader_feed.py` already match on `status.startswith("pm_")` as a PM-decision failure; the rig's vocabulary had not caught up. Added as failures (not healthy).
+
+Also added `run_earnings_preprocess`'s statuses (`fetch_error`, `nothing_new`, `analysis_error`, `preprocessed`) pre-emptively — that session is real and scheduled but the rig still cannot invoke it (unchanged, separate gap, see below) — so the vocabulary is already correct on the day that gap closes.
+
+One nuance worth recording: `intraday_no_trades`/`intraday_executed` (from the first hardening pass above) are correct in meaning but were found to be currently **unreachable** as `report.status` — they only ever appear nested at `result["intraday_scan"]["status"]` (`src/pipeline.py:8497-8498`), which `ops/rehearsal/report.py`'s `collect()` never reads; production's own `src/trader_feed.py` reads that nesting explicitly (`nested = result.get("intraday_scan")`, line 54) rather than trusting `result["status"]` for intra_check. Left in `STATUS_PLAIN`/the healthy set (harmless, correct-if-ever-reached) but the rig having no visibility into the intraday scan's own outcome is a real, separate gap — reported, not fixed here.
+
+New guard test `tests/test_rehearsal_report_verdict.py::test_every_known_pipeline_terminal_status_is_classified` pins the full status vocabulary against a hardcoded, file:line-cited list (dynamic AST discovery was tried and rejected — the PM-failure family lives on `AgentResult.semantic_status`, set in a different file, not a string literal at the `"status"` key's return site, so a literal-string walk would silently miss exactly the drift this test exists to catch) — a future undocumented pipeline status now fails CI instead of printing raw.
+
+Full suite: 2900 passed (2899 after the first hardening pass + this test).
+
+#### BRANCHES READY, NO PR YET
+
+- `feat/insider-signal-filter` — merged as PR #133, no longer pending
+- `fix/news-feeds-and-coverage` — merged as PR #132
+
+- `fix/dollar-based-session-cap` — its first commit, `766a35d`, added
+  `afternoon_reserve_pct` (40) and `afternoon_reserve_release_et_hour` (12)
+  plus a `_morning_spend_ceiling()` helper that was defined and never
+  called. **Correction, 2026-08-29: superseded, not still open.**
+  `_morning_spend_ceiling()` is called from `begin_call` in current `main`
+  (`src/cost_circuit.py`), with dedicated passing tests
+  (`tests/test_cost_circuit.py::test_morning_spend_ceiling_pure_computation`,
+  `test_afternoon_reserve_blocks_morning_spend_above_the_ceiling`,
+  `test_afternoon_reserve_recovers_the_same_day_without_a_rollover`) —
+  landed via PR #126 (`fix/cost-circuit-four`) and PR #131
+  (`fix/pricing-staleness`), both already merged. See "STILL OPEN —
+  2026-08-29" item 5 below.
+
+- `feat/bounded-repeg` — PR #144 opened 2026-08-29. Agent decision: merge it
+  rather than leave it to rot, shipping the re-peg disabled by default. Check
+  `gh pr list` for current status before treating this as landed.
+
+- `MarketDataProvider.get_next_earnings_date()` is implemented but **unwired**;
+  the Tech Analyst accepts a `days_to_earnings` kwarg that nothing supplies.
+  **Correction: no longer true.** A real caller now exists
+  (`src/data/event_calendar.py`, submitted through a bounded
+  `ThreadPoolExecutor`), landed as part of closing defect (c) in
+  `docs/phases.yaml`'s `open_defects` entry.
+
+- Nothing tells the Portfolio Manager that `SH`, `SDS`, `PSQ` and `SQQQ` are
+  bearish instruments, so even the sanctioned bearish expression is unwired.
+  **Correction: no longer true.** `config/prompts/portfolio_manager.md` now
+  carries a dedicated "Inverse ETFs are bearish, not a hedge-flavoured long"
+  section (PR #158; also confirmed in `config/prompts/risk_manager.md`'s
+  "Short discipline" section).
+
+- 26 unmerged branches await triage, including two abandoned VPS security
+  branches (`claude/vps-security-hardening-t8m3qz`,
+  `claude/vps-deployment-hardening-q3f7k2`) worth rescuing before deletion.
