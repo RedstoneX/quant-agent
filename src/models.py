@@ -224,7 +224,23 @@ class TechAnalysisResult(BaseModel):
     # "MACD histogram turns negative for 2 consecutive closes" — lets PM / midday
     # exit BEFORE the broker stop fires, saving the 3-5% typically given up
     # between thesis-break and stop-trigger.
+    # MEASURED 2026-09-01: models emit `"thesis_invalid_if": null` on about 2% of
+    # candidates (42 explicit nulls in 2,056 field occurrences across two weeks
+    # of production responses, most recently the morning of 2026-09-01). Every
+    # OTHER field they null here is typed `| None` and tolerates it; this one
+    # was a bare `str`, so pydantic rejected the null and the WHOLE candidate
+    # was dropped with "Failed to parse tech analysis item". A silently
+    # discarded analysis is an idea the desk never gets to consider, which is
+    # the under-deployment problem arriving by a side door. Found by the
+    # rehearsal rig, confirmed against the production database.
     thesis_invalid_if: str = ""
+
+    @field_validator("thesis_invalid_if", mode="before")
+    @classmethod
+    def _null_thesis_invalid_if_is_blank(cls, v):
+        """An absent soft-exit signal is blank, never a reason to bin the read."""
+        return "" if v is None else v
+
     # Days since this rating was first issued (unchanged). Python-computed from
     # TechStore after TechAnalystAgent returns; None on first run or when the
     # symbol wasn't in yesterday's cache. Fresh=1 means "new today", 7+=stale.
@@ -723,7 +739,15 @@ class TargetPosition(BaseModel):
     target_weight_pct: float | None = Field(default=None, ge=0.0, le=20.0)
     conviction: Literal["high", "medium", "low"] = "medium"
     thesis: str
+    # Same null-coercion as TechAnalysisResult above, same measured reason: a
+    # model emitting an explicit null here must not invalidate the target.
     thesis_invalid_if: str = ""
+
+    @field_validator("thesis_invalid_if", mode="before")
+    @classmethod
+    def _null_thesis_invalid_if_is_blank(cls, v):
+        return "" if v is None else v
+
     # Optional override hints the constructor MAY use. Non-binding — if
     # absent, the constructor falls back to TA's ATR-based stop (2*ATR) and
     # the broker's live price for entry.
