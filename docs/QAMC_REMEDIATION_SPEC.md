@@ -1440,6 +1440,25 @@ alert. No offline sector table was built for the 80 uncovered names — see
 switch off the sector concentration cap") for why that was judged out of
 scope. Pinned by `tests/test_sector_cap_unresolved.py`.
 
+**Independently verified 2026-09-01** against the real production config
+(`max_sector_pct` 75 / `max_sector_hard_pct` 90, not a test sandbox number),
+in `tests/test_sector_cap_unresolved_independent_verification.py` — a
+separately-authored suite that does not import the fixtures above, to avoid
+rubber-stamping a bug shared between the fix and its own tests. Confirms:
+a pooled-Unknown book past the 90% ceiling is REFUSED, not merely logged; a
+small isolated unresolved order well under the ceiling is warned but not
+refused (same treatment a real sector gets at that size); the long/short
+split (§12.2) applies to the Unknown pool exactly as it does to a real
+sector, so an unresolved SHORT is judged against its own empty budget, not
+an unrelated 85%-full unresolved LONG pool; and a broad-market index ETF
+(SPY) resolves deterministically to `"Broad"` via the pre-existing
+`_INDEX_ETFS` table and never enters the unresolved-sector path at all —
+cash-park buys (SGOV/BIL) go further and never reach `RiskRuleEngine.check`
+in the first place (`CashSweeper.split_positions` removes the parked
+vehicle from `positions` before the sector block runs; `park_excess` calls
+only `check_daily_loss`), so neither is at risk of the new hard block
+freezing them.
+
 **Pinned by tests**, in `tests/test_sector_dial.py` unless noted: a held short
 no longer shrinks its sector's measured long exposure; each side is measured
 independently; a pending short does not consume the long budget; the pair
