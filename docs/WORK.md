@@ -4,6 +4,43 @@
 
 ### Session start — read this first
 
+**READY TO DEPLOY, WAITING ONLY ON THE MARKET CLOSING — do this first.**
+Branch `feat/telegram-run-deeplink` (pushed 2026-09-01, not merged). Makes
+every ticker in a Telegram alert tappable through to that company's quote
+page. Full suite green: 3837 passed, 1 skipped, and only the two known
+`test_rehearsal_reproduces_cost_ceiling.py` failures that read live
+production state.
+
+It was NOT deployed on 2026-09-01 for two specific reasons, neither of
+which is "later, vaguely":
+1. The market was open (12:44 ET) with the midday session 16 minutes out.
+   Deploying restarts the trading service; mid-session is the wrong moment.
+2. It touches `main.py` and `src/scheduler.py`, not only message text — so
+   the rehearsal-rig rule above applies and the rig has not been run
+   against it yet.
+
+**The window is after the 15:30 ET close pass completes and before the
+20:00 ET evening session.** Order: run the rehearsal rig, open the PR, wait
+for CI, merge, deploy, restart, confirm the served bundle matches disk.
+
+Rex asked directly: "who's gonna remember to deploy it? I'm not gonna
+remember." This entry is the answer. It stays here until it is deployed,
+and whoever picks this file up next is the one who owes him the deploy.
+
+**Known and deliberately NOT fixed on that branch** (do not let it block
+the merge): the alerts still link to the Mission Control home page rather
+than to the specific run. The cockpit has no URL routing whatsoever — no
+router package, no query or hash parsing anywhere in `frontend/src`, and
+`selectedRunId` is in-memory `useState` only. Deep-linking needs ~15 lines
+in `App.tsx` to read `?run=<id>` on mount for same-day runs, and more than
+that for older ones, because there is no UI to view a non-current run at
+all. Separately: `_append_company_identities` in `src/notifier.py` is dead
+code for real trading alerts — `src/pipeline.py` emits `executed`/
+`no_trades`, which route to `trader_feed.py`'s own formatters, and those
+never call `CompanyProfileStore`. That is why company names have never
+appeared in an alert.
+
+
 **Where finished work goes: `docs/INCIDENT_HISTORY.md`. Move it there. Do not
 delete it.** This file is capped at 100,000 bytes and is loaded into context
 every session, so it must hold ONLY work still to be done. When it fills up,
