@@ -84,6 +84,59 @@ if the rewrite works, so compare rankings, not numbers. **Also re-examine the
 `actionable_book` check itself** — if the new prompt legitimately produces more
 targets, that check may now be too easy to pass and stop discriminating.
 
+**Universe expansion and pruning — DESIGN AGREED WITH THE OWNER 2026-09-01,
+never written down until now. Not built. Do not redesign it; implement this.**
+
+Today the 101-symbol universe is a hand-written list. Symbols CAN be added
+dynamically but only narrowly: up to 3/run via SEC Form 4 smart-money
+admission, and up to 3 per seat / 6 total per run via Phase 9 nominations.
+**Nothing ever removes a symbol.**
+
+*Admission screen.* The criteria already exist under `smart_money:` but are
+used only to admit outsiders, never to BUILD the list. Reuse them, with these
+corrections:
+- **A year of price history minimum.** `min_external_history_days: 20` is
+  badly wrong — the analysis computes a 200-day moving average and its slope,
+  so a symbol admitted at 20 days produces blanks in the fields the analyst
+  leans on hardest.
+- **Screen on bid-ask spread, not the $10m dollar-volume floor.** $10m/day is
+  far stricter than a ~$10k account needs, and it screens the wrong thing:
+  what costs money is the spread.
+- **Require shortable / easy-to-borrow.** Half the point is bearish trades.
+- **Exclude warrants, units and rights.** Delisted warrants already reached
+  the data layer once and caused a recursion fault.
+- **Exclude names under a pending takeover** — an acquisition target trades
+  flat at the deal price, so every technical signal becomes noise while
+  looking like a calm uptrend.
+- **Volatility ceiling.** A name so wild that its structural stop is enormous
+  fails reward:risk by construction — screen it at the door rather than
+  rejecting it daily.
+- **Minimum company size**, so a micro-cap cannot qualify on one freak volume
+  day.
+- **NO earnings-date requirement.** Considered and REJECTED by the owner: ETFs
+  have no earnings and ~20 of the universe are ETFs. Reducing their size for a
+  missing date is equally wrong. Dropped entirely.
+- **No maximum price** — Phase 11.1 turns fractional sizing on, so a $500
+  share is no longer unsizeable.
+
+*Pruning.* Nothing does this today.
+- **Re-screen weekly.** Fail once -> flagged. Fail twice consecutively ->
+  removed. One bad week must not evict a good name.
+- **NEVER remove a symbol currently held.** That cuts a live position off from
+  analysis while its stop still sits at the broker — unwatched but real.
+- **Immediate removal, no second chance,** when the broker reports the asset
+  does not exist, or it is delisted or permanently halted.
+- **Log every addition and removal with its reason, and summarise them in the
+  morning alert.** The owner must never discover the universe changed by
+  accident.
+
+*Cost.* Scanning is free — the specialist seats run on the free Gemini tier
+(measured 2026-09-01: `tech_analyst` processed 307,754 input tokens at $0.00).
+The cost is the PM reading a longer candidate list. **Cap how many screened
+candidates reach the PM**, the same way `NominationConfig` already caps
+nominations, so the bill is a number that is set rather than one that emerges.
+Untested risk: the free tier is rate-limited and a much wider scan may hit it.
+
 **Still to build (nothing exists yet):** all four Phase 12 items, the margin
 interest tracker, the wider universe with pruning.
 

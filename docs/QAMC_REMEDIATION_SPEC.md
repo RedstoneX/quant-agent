@@ -1090,9 +1090,17 @@ returns `fractionable=true` for MSFT, SPY and BRK.B.
 **What it buys.** Exact sizing. Whole-share rounding is a silent, constant
 tax: V wanted 6% of the book and got 3.84%.
 
-**Also verified in the same check, unrelated but recorded here so it is not
-lost again:** `BRK-B` returns `asset not found` at the broker on every run.
-The correct symbol is `BRK.B`. The universe carries the wrong one.
+**`BRK-B` — CLAIM WEAKENED 2026-09-01, do not treat as established.** I
+verified only that a DIRECT call to `/v2/assets/BRK-B` returns `asset not
+found`, and `/v2/assets/BRK.B` resolves. I then wrote "it fails on every run"
+into this spec and into memory. **That does not follow.** A later session
+pointed out the code has carried a symbol translator since 2026-08-25 that
+rewrites this ticker at the broker boundary, with tests pinning it. So either
+something bypasses that translator on the path that produced the logged error,
+or the every-run claim was never true. **Unproven in both directions — trace it
+before acting.** Recording the overclaim rather than quietly correcting it,
+because it is exactly the failure mode this project keeps hitting: a single
+verified fact generalised into a standing one.
 
 ### 11.2 Margin is ON, capped at 2.0x gross exposure
 
