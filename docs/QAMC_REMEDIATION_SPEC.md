@@ -1406,15 +1406,39 @@ under the target, crowding costs a trade nothing (`sector_size_scale` returns
 that sector is shrunk, which is exactly what the PM needs to know before it
 writes decisions.
 
-**Explicitly NOT changed, and it is a real exposure.** A held position whose
-sector resolves to `"Unknown"` contributes to no sector bucket, and an incoming
-`"Unknown"` symbol is cap-exempt entirely. **80 of the 101 universe symbols
-depend on a live yfinance `.info` lookup with no static fallback** (the other
-21 are ETFs covered by `_ETF_SECTORS` / `_INDEX_ETFS` in
+**Explicitly NOT changed here, and it was a real exposure.** A held position
+whose sector resolves to `"Unknown"` contributed to no sector bucket, and an
+incoming `"Unknown"` symbol was cap-exempt entirely. **80 of the 101 universe
+symbols depend on a live yfinance `.info` lookup with no static fallback**
+(the other 21 are ETFs covered by `_ETF_SECTORS` / `_INDEX_ETFS` in
 `src/execution/broker.py`). `_get_sector` deliberately does not cache
 `"Unknown"`, so an outage does not permanently exempt a symbol — but for the
-duration of the outage the sector cap is OFF for any of those 80. Reported,
+duration of the outage the sector cap was OFF for any of those 80. Reported,
 not fixed, under this task's scope.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-af17eb92755512448`,
+same night — this was the gate the 75%/90%/margin-2.0x combination above was
+shipping behind). `RiskRuleEngine.check` rule 5 now calls
+`sector_side_gross(positions, include_unknown=True)` and no longer skips the
+block when `_get_sector` returns `"Unknown"`; `accumulate_pending_sector`
+pools it the same way for the in-batch accumulator. "Unknown" is treated as
+its own `(sector, side)` bucket, checked against the same soft target / hard
+ceiling as any real sector — conservative, not exempt — so a held or
+incoming unresolved-sector position no longer disappears from exposure or
+skips the cap. Deliberately narrow: `PortfolioConstructor`'s sizing pass
+(`_apply_sector_dial`, site (d) above) still does not pre-shrink for
+`"Unknown"` — that is unrelated, out of scope here, and safe left alone
+because the gate's hard wall is what actually enforces the ceiling
+regardless of whether sizing pre-shrank the order. A resolution failure now
+also raises a `sector_unresolved_lookup_failed` / `sector_unresolved_no_sector`
+advisory (distinguishing a transient lookup miss from a symbol that
+genuinely has no sector) that reaches the Risk Manager via `rule_violations`
+and surfaces as `data_status["sector"]` — the same "degraded" line the news
+and macro feeds already use in the session output and the owner's Telegram
+alert. No offline sector table was built for the 80 uncovered names — see
+`docs/INCIDENT_HISTORY.md` (2026-09-01, "a network blip could silently
+switch off the sector concentration cap") for why that was judged out of
+scope. Pinned by `tests/test_sector_cap_unresolved.py`.
 
 **Pinned by tests**, in `tests/test_sector_dial.py` unless noted: a held short
 no longer shrinks its sector's measured long exposure; each side is measured

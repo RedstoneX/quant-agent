@@ -2172,6 +2172,33 @@ class DecisionStage:
         return ctx
 
 
+def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
+    """Promote a `sector_unresolved_*` advisory (src/risk/rules.py rule 5)
+    into `data_status["sector"]` — the same generic dict `notifier.py` /
+    `trader_feed.py` already render as a plain "⚠️ degraded: ..." line in
+    the session output, and that output IS the owner's alert (every
+    session ends with a Telegram push). Matches the existing pattern
+    instead of inventing a new alert channel.
+
+    "degraded" (transient — self-heals) beats "partial" (may genuinely
+    have no sector) if a run somehow surfaces both, and never downgrades
+    an alert already raised earlier in the same run.
+    """
+    alerts = [v for v in violations if v.rule.startswith("sector_unresolved")]
+    if not alerts:
+        return
+    status = "degraded" if any(
+        v.rule == "sector_unresolved_lookup_failed" for v in alerts
+    ) else "partial"
+    if data_status.get("sector") == "degraded":
+        status = "degraded"
+    data_status["sector"] = status
+    logger.warning(
+        "Sector cap: unresolved sector affected a trading decision — %s",
+        "; ".join(dict.fromkeys(a.message for a in alerts)),
+    )
+
+
 class RiskStage:
     """Hard filter → earnings cap → correlation → RM review → mods → re-filter.
 
@@ -2406,6 +2433,7 @@ class RiskStage:
                 in_drawdown=in_drawdown,
             )
         )
+        _apply_sector_unresolved_alert(data_status, rule_violations)
         if blocked_reasons:
             reasons = "; ".join(dict.fromkeys(blocked_reasons))
             logger.warning("HARD RISK BLOCK (BUY blocked): %s", reasons)
@@ -2692,7 +2720,7 @@ class RiskStage:
         )
 
         if verdict.modifications or scale < 1.0 or refused_decisions:
-            portfolio_decision.decisions, _, blocked_reasons = (
+            portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
                 pipeline._filter_hard_risk_decisions(
                     portfolio_decision.decisions,
                     positions, total_value, daily_pnl,
@@ -2702,6 +2730,7 @@ class RiskStage:
                     cash=ctx.deployable_cash,
                 )
             )
+            _apply_sector_unresolved_alert(data_status, post_mod_violations)
             if blocked_reasons:
                 reasons = "; ".join(dict.fromkeys(blocked_reasons))
                 logger.warning("HARD RISK BLOCK AFTER MODIFICATIONS: %s", reasons)

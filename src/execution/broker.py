@@ -130,6 +130,42 @@ def _install_http_timeout(client, timeout: float = _BROKER_HTTP_TIMEOUT) -> None
 _sector_cache: dict[str, str] = {}
 _sector_lock = threading.Lock()
 
+# WHY (2026-09-01 audit): a symbol whose sector never resolves reads
+# identically to one with no exception at all — both come back "Unknown"
+# from `_get_sector` with no further detail. That is fine for the two
+# existing consumers (they only needed a sector string), but it is not
+# enough for an owner-facing alert: "the network is having a bad day, this
+# will self-heal" and "this instrument has no sector to find" are different
+# situations and should not read the same. Best-effort, advisory only —
+# NOT part of the caching contract above (an unresolved symbol is still
+# never cached; see `_get_sector`'s docstring), keyed the same way as
+# `_sector_cache`, and simply absent/stale when `_get_sector` itself is
+# mocked out wholesale (tests) — `_sector_resolution_status_for` defaults
+# to "unknown_reason" rather than guessing.
+_sector_resolution_status: dict[str, str] = {}
+
+
+def _sector_resolution_status_for(symbol: str) -> str:
+    """Best-effort reason the last `_get_sector(symbol)` call in THIS
+    process came back "Unknown". One of:
+
+      "resolved"       - moot; the symbol has a real sector.
+      "lookup_failed"  - network error, timeout, or an empty response with
+                          no error — yfinance returning nothing for a real
+                          symbol is usually transient (see
+                          test_sector_canonicalization.py). Will retry.
+      "no_sector"      - the fetch itself succeeded and returned real data,
+                          just no `sector` field — this symbol may
+                          genuinely be unclassifiable (e.g. an ETF outside
+                          `_ETF_SECTORS`), not a network problem.
+      "unknown_reason" - no attempt recorded yet for this symbol in this
+                          process (fresh process, or a test/caller mocked
+                          `_get_sector` directly instead of going through
+                          the real fetch below).
+    """
+    with _sector_lock:
+        return _sector_resolution_status.get(symbol, "unknown_reason")
+
 
 def _canonicalize_sector(raw: str | None) -> str:
     """Normalize yfinance / LLM sector strings to the 12-value canonical enum.
@@ -157,12 +193,21 @@ def _get_sector(symbol: str) -> str:
     a namespace.
 
     Caching policy: only KNOWN sectors are cached. "Unknown" is returned but
-    NOT cached so a transient yfinance outage doesn't permanently exempt the
-    symbol from RiskRuleEngine.max_sector_pct (the engine skips the cap when
-    sector=="Unknown"). Codex r11 P1: a one-shot lookup miss in --mode live
-    used to leave the symbol cap-exempt until process restart. Re-querying
-    yfinance on every call for an unresolved symbol is a small overhead vs.
-    silently disabling a hard risk rule.
+    NOT cached, so a transient yfinance outage gets re-diagnosed on every
+    call instead of freezing a stale verdict. Codex r11 P1: a one-shot
+    lookup miss in --mode live used to leave the symbol cap-exempt until
+    process restart. Re-querying yfinance on every call for an unresolved
+    symbol is a small overhead vs. silently disabling a hard risk rule.
+
+    2026-09-01 audit: "Unknown" used to mean EXEMPT from
+    `RiskRuleEngine.check`'s sector cap (rule 5 skipped the check outright).
+    80 of 101 universe symbols depend on this lookup with no offline
+    fallback, so a network blip silently switched the sector cap off for
+    most of the book. The gate now pools "Unknown" like any other sector
+    (`sector_side_gross(..., include_unknown=True)`) and checks it against
+    the same soft/hard cap pair instead of skipping it — see
+    `_sector_resolution_status_for` below for WHY a given call came back
+    "Unknown", which the gate surfaces as an owner-visible alert.
     """
     # _sector_lock guards ONLY the cache dict — never a network call.
     # audit F3: the old code held _sector_lock for the entire function
@@ -186,10 +231,19 @@ def _get_sector(symbol: str) -> str:
             _sector_cache[symbol] = etf_sector
         return etf_sector
 
+    # Set from inside the worker thread when the fetch itself raises — read
+    # back on the calling thread only after `.result()` returns (timeout
+    # aside, where we already know the answer without consulting this).
+    # Best-effort/advisory like the status table it feeds; not a
+    # correctness dependency of the timeout/lock guarantees below.
+    fetch_error = {"raised": False}
+
     def _fetch():
         try:
             return yf.Ticker(symbol).info or {}
-        except Exception:
+        except Exception as e:
+            logger.warning("yfinance sector fetch raised for %s: %s", symbol, e)
+            fetch_error["raised"] = True
             return {}
 
     # yfinance .info has no hard upper bound — a stuck socket can hang
@@ -201,11 +255,13 @@ def _get_sector(symbol: str) -> str:
     # still-running fetch leaks one worker thread — accepted vs. the
     # prior behaviour of stalling the whole session.
     ex = ThreadPoolExecutor(max_workers=1)
+    timed_out = False
     try:
         info = ex.submit(_fetch).result(timeout=_SECTOR_LOOKUP_TIMEOUT_S)
     except FuturesTimeout:
         logger.warning("yfinance sector lookup timed out for %s", symbol)
         info = {}
+        timed_out = True
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
 
@@ -214,6 +270,20 @@ def _get_sector(symbol: str) -> str:
     if canonical != "Unknown":
         with _sector_lock:
             _sector_cache[symbol] = canonical
+        return canonical
+
+    # Unresolved. Record WHY — never cached (see docstring above), same as
+    # the "Unknown" return itself, so a self-heal on the next call is
+    # re-diagnosed fresh rather than repeating a stale verdict.
+    # `not info` (fetch technically completed, no exception, but returned
+    # nothing) is bucketed with "lookup_failed": per
+    # test_sector_canonicalization.py's own finding, an empty response for
+    # a real symbol is usually transient, not proof the symbol lacks a
+    # sector. "no_sector" is reserved for a fetch that came back with real
+    # data and simply had no `sector` field in it.
+    status = "lookup_failed" if (timed_out or fetch_error["raised"] or not info) else "no_sector"
+    with _sector_lock:
+        _sector_resolution_status[symbol] = status
     return canonical
 
 
