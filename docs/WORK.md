@@ -21,11 +21,40 @@ model produced the best number arithmetic allows and the system refused it.
 30 of 38 signals (79%) failed; zero trades placed.
 
 **Do NOT "fix" this by tuning 3.0 -> 2.0.** The owner rejected that framing
-explicitly. The real question is whether an arbitrary floor should overwrite a
-real level and then have the trade judged on the result. **Answer: no.** If the
-level is the honest stop, judge the trade on the level; when a level sits
-inside the noise band the correct response is **a smaller position, not a fake
-wider stop.** NOT YET IMPLEMENTED OR RATIFIED.
+explicitly, and he is right: it keeps a floor that cannot tell a level-backed
+tight stop from an arbitrary one, and only changes how much damage it does.
+
+**THE CONCLUSION REACHED, reasoning included — do not re-derive it, and do not
+lose it. NOT ratified, NOT implemented.**
+
+**Honour a stop that sits at a VERIFIED structural level, however tight. Apply
+the ATR floor ONLY when no level backs the stop.**
+
+Why: a level close to entry is usually not chop, it is a **precise entry** — a
+breakout retest where former resistance now sits right beneath price, the
+bottom of a rising channel, any name whose structure is tighter than its daily
+swing. **The better the entry, the more the floor punishes it**: it inflates a
+tight meaningful stop into a wide meaningless one and never moves the target,
+so R/R collapses.
+
+And the case the floor was built for is **already handled upstream**:
+`config/prompts/tech_analyst.md` carries a hard floor of "never place the stop
+inside 1x ATR — a guaranteed whipsaw, not protection". A genuine noise-band
+stop cannot reach the constructor.
+
+**The measurement that settles it, quoted in the tech_analyst prompt itself:**
+on 2026-08-27 this book's stops sat at a median **1.7x ATR** — above the 1x
+guard, i.e. NOT in the noise. They were legitimate structural stops, and the
+3.0 floor was inflating them by ~76%. That same prompt DOCUMENTS the
+consequence ("the floor also does not move your `reference_target`, so a stop
+it has to widen quietly erodes the R/R you designed for — the trade is rejected
+outright if that erosion drops R/R below 1.5") and responds by asking the
+ANALYST to place wider stops, rather than by questioning the floor.
+
+**If adopted:** a 1.7x ATR structural stop over a ~15-session hold yields a
+best-case ratio near 2.3, clearing 1.5 comfortably. The 79%-rejection problem
+largely dissolves **without changing the floor value or the R/R threshold at
+all.**
 
 **Read `docs/OUTCOME.md`'s "This is a trading desk, not a retirement
 portfolio" section before touching any risk rule.** Owner correction,
