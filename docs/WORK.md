@@ -59,6 +59,20 @@ wrote its own reconstructed Phase 10 into the spec. **Merge
 it — the owner-ratified text is the one on that branch, not the
 reconstructions.**
 
+**The model-benchmark results are STALE — do not choose a PM model from them.**
+Every score in `ops/model_policy/results/*2026-09-01*.json` was measured against
+the OLD prompt, which is what produced the restrictive behaviour, so the scores
+are entangled with it. **The rig does not need rewriting, only re-running** —
+`benchmark_models.py` drives the real agent class, which reads
+`config/prompts/portfolio_manager.md` from disk, so re-running after the
+rewritten prompt lands tests the new prompt automatically. Keep the DIAGNOSIS
+(gpt-5.5 picked SPY in 5 of 5 runs and never proposed more than 2 positions —
+the most literal rule-follower, hence the most timid under a prompt full of
+"never"); discard the RANKING. Expect absolute scores to rise across the board
+if the rewrite works, so compare rankings, not numbers. **Also re-examine the
+`actionable_book` check itself** — if the new prompt legitimately produces more
+targets, that check may now be too easy to pass and stop discriminating.
+
 **Still to build (nothing exists yet):** all four Phase 12 items, the margin
 interest tracker, the wider universe with pruning.
 
