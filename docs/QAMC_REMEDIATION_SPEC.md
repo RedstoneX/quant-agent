@@ -1140,6 +1140,83 @@ the class the rig exists for.
 
 ---
 
+## Phase 12 — Owner decisions ratified 2026-09-01 (end of session)
+
+Four decisions, taken by Rex on 2026-09-01 after the desk placed zero trades.
+**All ratified, none implemented.** Together they are what unblocks trading.
+
+### 12.1 A stop that sits at a verified structural level is honoured, however tight
+
+`min_stop_atr_multiple` (3.0) currently OVERWRITES the level-derived stop
+whenever the level sits closer, after which the stop is not at anything real —
+and `min_reward_risk_after_widening` (1.5) is judged against that fabricated
+number.
+
+**New rule: if the stop sits at a VERIFIED structural level, use it regardless
+of ATR distance. Apply the ATR floor ONLY when no level backs the stop.**
+
+Why this is safe: `config/prompts/tech_analyst.md` already carries a hard floor
+— "never place the stop inside 1*ATR of entry ... a guaranteed whipsaw, not
+protection". A genuine noise-band stop cannot reach the constructor, so the
+case the 3.0 floor was built for is already handled upstream.
+
+Why it is necessary: measured 2026-08-27 and quoted in that same prompt, this
+book's stops sat at a median **1.7x ATR** — above the 1x guard, i.e. legitimate
+structural stops being inflated ~76%. Over a ~15-session hold a stock travels
+~3.9 ATR, so against a 3.0 ATR stop the best achievable ratio is ~1.29 against
+a 1.5 floor: **no trade can pass.** Proof: SLB on 2026-09-01, `strong_buy`/
+`high`, R/R 1.28 against a geometric maximum of 1.29. At 1.7x ATR the same hold
+yields ~2.3 and clears comfortably.
+
+**Explicitly rejected: tuning 3.0 -> 2.0.** It keeps a floor that cannot
+distinguish a level-backed tight stop from an arbitrary one.
+
+**A level must be VERIFIED to earn this** — it comes from `src/data/levels.py`,
+not from the model asserting one. A stop the analyst simply placed close, with
+no level under it, still gets the floor.
+
+### 12.2 Sector exposure is measured with separate long and short budgets
+
+Today the engine sums sector exposure using SIGNED `market_value`, so a held
+short makes its sector look SMALLER and the book can over-concentrate unseen.
+The code comment above it says "gross ... unsigned"; code and comment disagree.
+
+**New rule: track long sector exposure and short sector exposure
+independently, each against its own limit.** Neither offsets the other.
+
+Owner's reasoning, which governs: *"A long and a short in the same sector is
+not a hedge... We are trading opportunities."* Gross summing was rejected
+because it would block a legitimate pair trade — long the leader, short the
+laggard in the same hot sector.
+
+### 12.3 The sector limit rises from 40% to 75%
+
+Owner chose 75% over the recommended 60%. The 40% figure is a
+retirement-portfolio number and does not survive `docs/OUTCOME.md`'s
+trading-desk framing: diversification is not a goal here.
+
+**A sector limit's only remaining job is bounding correlated blow-up risk** —
+several positions dying in one shock. 75% keeps that bound while permitting
+genuine concentration in a hot sector.
+
+**State the consequence honestly rather than burying it:** at 75% in one
+sector, an ordinary 20% sector drawdown costs 15% of equity — five times the 3%
+daily-loss breaker, and it will trip the Phase 11.2 de-levering ladder. That is
+the accepted cost of a concentrated trading desk, not an oversight. Phase
+10.3's scaling still applies underneath: crossing the target shrinks each
+further position rather than refusing it.
+
+### 12.4 Everything ships together, tonight
+
+Owner instruction: implement and deploy all outstanding work in one pass rather
+than staging it. **This is a deliberate acceptance of change risk**, taken
+because the desk currently cannot trade at all and a partial fix leaves it that
+way. The mitigation is not staging — it is the rehearsal rig, which must be run
+against the fully merged result before deploy. See the session-start rule in
+`docs/WORK.md`.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.

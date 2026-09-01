@@ -7,116 +7,64 @@
 ## DECISIONS PENDING — CI FAILS WHEN ONE GOES OVERDUE
 
 **Do not delete a line to make the build pass. Decide it, then record the
-decision and remove the line in the SAME commit.**
+decision and remove the line in the SAME commit.** Format is fixed —
+`- [ ] DECIDE BY YYYY-MM-DD — question` — because
+`test_no_pending_decision_is_overdue` parses it.
 
-This block exists because a decision was already deferred here once and
-forgotten. On 2026-08-28 this file said, of the reward:risk floor: *"gather a
-week of these rejections first, then decide which of the two numbers is
-wrong."* Nobody came back. Four days later the desk reviewed 38 qualified
-signals and placed zero trades for exactly that reason. Rex asked how to stop
-it recurring; a promise is not an answer, so `test_no_pending_decision_is_
-overdue` in `tests/test_status_board.py` now fails the build once a date
-passes. Format is fixed — `- [ ] DECIDE BY YYYY-MM-DD — question` — because the
-test parses it.
+This block exists because a decision was deferred here once and forgotten. On
+2026-08-28 this file said, of the reward:risk floor: *"gather a week of these
+rejections first, then decide which of the two numbers is wrong."* Nobody came
+back. Four days later the desk reviewed 38 qualified signals and placed zero
+trades for exactly that reason.
 
-- [ ] DECIDE BY 2026-09-01 — Stop floor: adopt "honour a stop that sits at a
-  verified structural level however tight, apply the ATR floor only when no
-  level backs it"? Reasoning and the settling measurement are below under THE
-  CONCLUSION REACHED. This is the direct successor to the 2026-08-28 deferral
-  and is blocking trading today.
-- [ ] DECIDE BY 2026-09-01 — Sector exposure: does the sector limit measure
-  concentration (gross, unsigned) or net direction (signed)? Today a held short
-  makes its sector look SMALLER. Recommendation: separate long and short
-  budgets. See the entry below.
-- [ ] DECIDE BY 2026-09-01 — Is the 40% sector target still justified now that
-  `docs/OUTCOME.md` states this is a trading desk and not a retirement
-  portfolio? A sector limit's only defensible job here is bounding correlated
-  blow-up risk, which is a looser number.
-- [ ] DECIDE BY 2026-09-01 — Move the portfolio_manager seat to
-  `qwen/qwen3.7-max`? Measured better AND ~4x cheaper than the incumbent at
-  n=10. Owner asked to re-measure AFTER the rewritten prompt ships, so this
-  depends on the prompt landing first.
+*(No decisions currently pending — all four raised on 2026-09-01 were ratified
+the same day and are recorded as spec Phase 12.)*
 
+**START HERE — 2026-09-01 handoff. Everything below is a POINTER; the detail
+lives in the files named and is not repeated.**
 
-**STATE AT 2026-09-01 END OF SESSION — read this before anything else.**
+**Read first, in this order:**
+1. `docs/QAMC_REMEDIATION_SPEC.md` **Phase 12** — four decisions Rex ratified
+   2026-09-01. Nothing is implemented. This is the work.
+2. Then **Phase 10** (per-trade risk verdict, macro sizes rather than selects,
+   concentration scales, target from levels) and **Phase 11** (fractional
+   sizing, 2.0x margin).
+3. `docs/OUTCOME.md` — "This is a trading desk, not a retirement portfolio".
+   Read before touching any risk rule; it decides which rules are legitimate.
+4. `docs/INCIDENT_HISTORY.md` — what already broke and was fixed. Append-only.
 
-**THE FIRST THING TO FIX, and state it correctly.** Stops are derived from
-STRUCTURAL LEVELS. `min_stop_atr_multiple: 3.0` is a **FLOOR**: when the
-level-based stop sits closer than 3x ATR it is pushed out to 3x ATR and no
-longer sits at anything real. `min_reward_risk_after_widening: 1.5` is then
-judged against that arbitrary number. Over a ~15-session hold a stock travels
-~3.9 ATR, so against a 3.0 ATR stop the best achievable ratio is **~1.29 <
-1.5** — **no trade can pass, before anyone looks at a chart.**
+**Why it matters:** on 2026-09-01 the desk reviewed 38 qualified signals and
+placed zero trades. Root cause is Phase 12.1. It is still unfixed.
 
-Proof, run `run-64290730`: SLB `strong_buy`/`high`, entry 60.10, stop 55.50
-(= 4.60, almost exactly 3.0x ATR — the floor bound and overwrote the level),
-horizon 15, analyst R/R **1.28** against a geometric maximum of **1.29**. The
-model produced the best number arithmetic allows and the system refused it.
-30 of 38 signals (79%) failed; zero trades placed.
+**Owner instruction: ship everything in ONE pass, tonight.** Deliberate
+acceptance of change risk (Phase 12.4) — the desk cannot trade at all, so a
+partial fix leaves it that way. **The rehearsal rig is the mitigation and must
+run against the merged result before deploy.**
 
-**Do NOT "fix" this by tuning 3.0 -> 2.0.** The owner rejected that framing
-explicitly, and he is right: it keeps a floor that cannot tell a level-backed
-tight stop from an arbitrary one, and only changes how much damage it does.
+**Six branches, all pushed, none merged, none deployed:**
 
-**THE CONCLUSION REACHED, reasoning included — do not re-derive it, and do not
-lose it. NOT ratified, NOT implemented.**
-
-**Honour a stop that sits at a VERIFIED structural level, however tight. Apply
-the ATR floor ONLY when no level backs the stop.**
-
-Why: a level close to entry is usually not chop, it is a **precise entry** — a
-breakout retest where former resistance now sits right beneath price, the
-bottom of a rising channel, any name whose structure is tighter than its daily
-swing. **The better the entry, the more the floor punishes it**: it inflates a
-tight meaningful stop into a wide meaningless one and never moves the target,
-so R/R collapses.
-
-And the case the floor was built for is **already handled upstream**:
-`config/prompts/tech_analyst.md` carries a hard floor of "never place the stop
-inside 1x ATR — a guaranteed whipsaw, not protection". A genuine noise-band
-stop cannot reach the constructor.
-
-**The measurement that settles it, quoted in the tech_analyst prompt itself:**
-on 2026-08-27 this book's stops sat at a median **1.7x ATR** — above the 1x
-guard, i.e. NOT in the noise. They were legitimate structural stops, and the
-3.0 floor was inflating them by ~76%. That same prompt DOCUMENTS the
-consequence ("the floor also does not move your `reference_target`, so a stop
-it has to widen quietly erodes the R/R you designed for — the trade is rejected
-outright if that erosion drops R/R below 1.5") and responds by asking the
-ANALYST to place wider stops, rather than by questioning the floor.
-
-**If adopted:** a 1.7x ATR structural stop over a ~15-session hold yields a
-best-case ratio near 2.3, clearing 1.5 comfortably. The 79%-rejection problem
-largely dissolves **without changing the floor value or the R/R threshold at
-all.**
-
-**Read `docs/OUTCOME.md`'s "This is a trading desk, not a retirement
-portfolio" section before touching any risk rule.** Owner correction,
-2026-09-01: rules justified by DIVERSIFICATION rather than SURVIVAL must
-re-earn their place. Sector diversification is not a goal here; holding period
-is an output, not a setting; a long and a short in the same sector are not a
-hedge.
-
-**Six branches are open and unmerged, all pushed, none deployed:**
-| branch | what | state |
+| branch | spec | tests |
 |---|---|---|
-| `fix/risk-verdict-per-trade` | spec 10.1, per-symbol refusal | done, 3853 tests pass |
-| `fix/concentration-scales-size` | spec 10.3, sector scales size | done, 3848 pass |
-| `fix/target-from-structure` | spec 10.4, target from levels | done, 3850 pass |
-| `feat/telegram-run-deeplink` | symbol links + company names in alerts | done, ready to deploy |
-| `feat/golden-pm-prompt` | PM prompt rewrite | **WIP, 13 guard tests failing, do not merge** |
-| `rescue/price-provenance` | rescued 11-day-old work | parked, NOT mergeable, reference only |
+| `fix/risk-verdict-per-trade` | 10.1 | 3853 pass |
+| `fix/concentration-scales-size` | 10.3 | 3848 pass |
+| `fix/target-from-structure` | 10.4 | 3850 pass |
+| `feat/golden-pm-prompt` | PM prompt rewrite + Phases 10/11/12 in the spec | 3848 pass, 1 unrelated |
+| `feat/telegram-run-deeplink` | symbol links + company names in alerts | full suite green |
+| `rescue/price-provenance` | rescued 11-day-old work — **parked, NOT mergeable**, reference only |
 
-**Merge hazard:** spec Phase 10 and 11 exist only on `feat/golden-pm-prompt`'s
-ancestry, not on main. Two fix agents could not see them and each wrote their
-own Phase 10 section into the spec. **Expect conflicts in
-`docs/QAMC_REMEDIATION_SPEC.md`; reconcile deliberately — the owner-ratified
-text is the one written in this session, not the reconstructions.**
+**Merge hazard, read before merging anything:** spec Phases 10/11/12 exist ONLY
+on `feat/golden-pm-prompt`. The three fix agents could not see them and each
+wrote its own reconstructed Phase 10 into the spec. **Merge
+`feat/golden-pm-prompt` FIRST, then reconcile the others' spec sections against
+it — the owner-ratified text is the one on that branch, not the
+reconstructions.**
 
-**Open owner decisions:** which of the three geometry levers to move; whether
-to move the PM seat to `qwen/qwen3.7-max` (better AND ~4x cheaper, measured);
-sector concentration measurement (recommend separate long/short budgets);
-whether to revisit the 40% sector target on trading-desk grounds.
+**Still to build (nothing exists yet):** all four Phase 12 items, the margin
+interest tracker, the wider universe with pruning.
+
+**Baseline:** `pytest tests/ -q` gives 2 pre-existing failures in
+`tests/test_rehearsal_reproduces_cost_ceiling.py` — they read live production
+state and pass in CI. Anything else failing is yours.
 
 
 **READY TO DEPLOY, WAITING ONLY ON THE MARKET CLOSING — do this first.**
