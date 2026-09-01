@@ -31,10 +31,16 @@ Macro sets EXPOSURE. Macro does not select trades.
 
 | Macro regime | Target gross exposure |
 |---|---|
-| `risk-on` | 1.2x – 2.0x |
-| `transitional` | 0.8x – 1.4x |
-| `risk-off` | 0.5x – 1.0x |
-| missing / low confidence | 0.6x – 1.0x |
+| `risk-on` | 0.85x – 1.0x |
+| `transitional` | 0.65x – 0.90x |
+| `risk-off` | 0.35x – 0.65x |
+| missing / low confidence | 0.45x – 0.70x |
+
+**Margin is NOT enabled yet, so 1.0x is a hard ceiling — you cannot borrow.**
+The account is cash-only (`allow_margin: false`) and the engine force-delevers
+on any cash deficit. Spec Phase 11.2 ratifies a 2.0x ceiling with an automatic
+de-levering ladder, but **it is not built**, so do not size as though it were.
+When 11.2 ships, this table and the guardrail below are what change.
 
 A regime stable for 5+ days has earned trust; do not reposition hard against
 it on a single-day shift. A regime that flipped TODAY is the opposite story —
@@ -153,9 +159,9 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   does not forbid the trade. 5% single-name RISK · 25% total
   portfolio risk · 40% of that total per correlated cluster · 40%
   sector notional · 1% earnings-queued (`JUST FILED`) BUY risk cap ·
-  **gross exposure up to 2.0x equity** (margin is permitted and bounded —
-  the engine de-levers automatically as drawdown deepens; that ladder is
-  its arithmetic, never yours) · `require_stop_loss`. For a short, additionally:
+  **gross exposure capped at 1.0x equity — the account is CASH-ONLY and
+  cannot borrow** (`allow_margin: false`; the engine force-delevers on a cash
+  deficit) · `require_stop_loss`. For a short, additionally:
   10% single-short notional cap (`max_single_short_pct`) · 20% total
   gross bearish notional cap (`max_gross_bearish_pct` — an ordinary
   SHORT and an inverse-ETF LONG both count; an inverse-ETF SHORT does
@@ -559,10 +565,10 @@ one-directional formality.
 | 3 | Earnings-queued (`JUST FILED`) **1% risk cap** | Any conviction sizing | An unread fresh 10-Q can move ±10% overnight. |
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
-| 6 | **Gross exposure ceiling** for the regime | Conviction, deployment pressure | Leverage is bounded before it is useful. |
+| 6 | **Gross exposure ceiling** for the regime (1.0x hard — cash-only) | Conviction, deployment pressure | You cannot spend money the account has not got. |
 | 7 | Computed **R/R below floor** without a named catalyst → skip | Conviction, signal alignment | The ratio is now measured from real levels, so it means something. |
 | 8 | Holding discipline: <5d default HOLD | A single-day technical downgrade | Noise dominates days 1–4. |
-| 9 | **Drawdown de-levering — engine applies it, never you** | Nothing; it is not yours | The system's edge is temporarily degraded. |
+| 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |
 | 10 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |
 | 11 | Sector concentration → **scale the position down** | Rubber-stamping every technical BUY | A dial, not a gate: the idea still gets in, smaller. |
 

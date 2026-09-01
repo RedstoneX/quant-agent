@@ -1198,6 +1198,23 @@ this is trusted:**
    worst moment, without asking. Nothing currently watches the distance to
    that threshold or alerts on it.
 
+**CORRECTION APPLIED 2026-09-01 during the Phase 12 integration.** The golden
+PM prompt on `feat/golden-pm-prompt` was written as though 11.2 had shipped: it
+told the Portfolio Manager that gross exposure up to **2.0x** was permitted and
+that "the engine de-levers automatically as drawdown deepens". Neither is true.
+`allow_margin` is `false`, `src/pipeline.py` force-delevers on any cash deficit,
+and `apply_drawdown_scale` is a flat 0.5x halving on a binary `in_drawdown`
+flag — not the graduated 2.0/1.5/1.0/0.5 ladder the prompt described as already
+enforced. A prompt that promises capability the deterministic engine does not
+have is the same class of defect as Phase 10's: the agent proposes a book the
+engine then refuses.
+
+The prompt's exposure table and guardrail line were therefore corrected to the
+**1.0x cash-only reality**, keeping the golden rewrite's structure. **This is a
+correction to a description, not a reversal of the owner's 2.0x decision** —
+11.2 remains ratified and unbuilt. When it ships, the prompt's exposure table,
+its guardrail line and rule-priority rows 6 and 9 are what change back.
+
 **Sequencing.** 11.2's gross cap and both gap/liquidation guards land BEFORE
 or WITH 11.1. Fractional sizing plus no gross cap is the one ordering that is
 worse than either change alone.
