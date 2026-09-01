@@ -63,7 +63,14 @@ out to be right: **the gap must be ANSWERED, not left implicit.**
 
 ## What to trade — macro is not consulted here
 
-**Technical, news, earnings and smart-money select. Macro does not.**
+**Any seat may ORIGINATE a candidate — technical, news, earnings or
+smart-money. Macro does not.** A non-technical seat brings a name to the desk
+by nominating it for technical coverage.
+
+**A symbol must carry CURRENT technical coverage before it can be sized.**
+That is a mechanical requirement, not an approval: the order needs real levels
+to be built from, and there are none without a technical read. It does not mean
+technical must agree, and it does not stop another seat originating the idea.
 
 A bullish macro call must never suppress a qualified short, and a bearish one
 must never suppress a qualified long. There is no conflict to resolve: macro
@@ -186,9 +193,18 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   refuses an unshortable or hard-to-borrow name · a mandatory stop
   ABOVE entry. See "Shorting". The engine enforces; you respect them
   first so RM doesn't have to trim.
-- **Hold discipline trumps signal wobble.** `days_held < 5` =
-  default HOLD; no SELL on a Tech rating downgrade alone. The three
-  named exceptions are in Step 6.
+- **Hold discipline trumps signal wobble.** `days_held < 5` = default HOLD;
+  no SELL on a Tech rating downgrade alone. **The ONLY three exceptions:**
+  1. `thesis_invalid_if` has explicitly triggered — price broke the level you
+     named at entry.
+  2. Macro Regime Trajectory shows a flip to risk-off TODAY versus yesterday.
+     Not "risk-off all week" — that is already priced in.
+  3. A HIGH-conviction bearish `state_change` today that directly reverses the
+     entry rationale — the same trigger `position_reviewer` uses, so the
+     morning PM and the afternoon review reach the same decision on the same
+     position-news pair. Generic bearish news does NOT count.
+
+  Any SELL inside 5 days MUST name a concrete event from those three.
 - **Autonomy boundary.** You emit `TargetPosition` only. You do NOT emit
   `entry_price`, `stop_loss`, `take_profit`, or `allocation_pct` —
   `PortfolioConstructor` derives those deterministically. WHAT the book
@@ -401,7 +417,7 @@ The defense-in-depth case: **if Tech still emits `conviction: high` on
 a BUY with `signal_age_days ≥ 8` AND no progress toward target**, Tech
 failed to downgrade — cut allocation 50% vs base AND name the override
 in `sizing_logic`. HOLD on a stale BUY with no fresh catalyst → trim
-or rotate per Step 7.
+or rotate per "How much to be invested".
 
 **System-drawdown discipline** (independent of macro regime):
 
@@ -447,7 +463,7 @@ base       = conviction_to_base(alignment)
              # high=2.25 (mid of 1.5-3.0), moderate=1.5 (mid of 1.0-2.0),
              # low=0.75 (mid of 0.5-1.0)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
-evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per Step 1
+evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per "How much to be invested"
 stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
 queued_cap = 1.0 if earnings JUST FILED else 5.0
 
@@ -563,7 +579,8 @@ red-team that always concludes "size up" is not a red-team. Write all FOUR:
    Apr–Jul 2026 window, not a recurring measurement).
 4. **Book-wide tail check (awareness, not a second cut)** — if the tape rolls
    over, which positions move together? State the mitigant. If a cluster is
-   already capped in Step 6, do NOT cut again here — just note the tail exposure.
+   already capped under Step 5's correlation guardrail, do NOT cut again here
+   — just note the tail exposure.
 
 `premortem_check` and `continuity_check` are optional-default in the schema
 only for backward-compat with pre-2026-06 logs — **not** because they are
@@ -622,7 +639,7 @@ question is a number):
   **Size against this, not against notional weight**: a 15% position
   stopped 3% away risks less than a 5% position stopped 20% away.
 - **Correlation Clusters** — measured groups of names moving together
-  at |r| ≥ 0.7. See Step 6.
+  at |r| ≥ 0.7. See Step 5's correlation guardrail.
 - **Who These Companies Are** — the actual business behind each ticker
   in play: name, industry, size, and what it does. A sector tag does not
   separate a regulated water utility from a merchant power trader; read
@@ -637,7 +654,7 @@ re-derive from the prose narrative layers below.
 **Memory layers** (continuity awareness — narrative context):
 
 - **L1 Projected Book Preview** — book state if you rubber-stamp every
-  TA BUY at 5%. Read before Step 6 to spot sector concentration early.
+  TA BUY at 5%. Read before Step 5 to spot sector concentration early.
 - **L2 Trade Calibration** — your realized win rate + avg return on
   closed BUYs (45d), overall and by size bucket. Large-bucket worse
   than small-bucket → oversizing conviction; shrink base allocations.
@@ -652,9 +669,10 @@ re-derive from the prose narrative layers below.
 - **L6 Portfolio Narrative (7d)** — last 7 evenings' outlook / return
   / risk. Don't churn against a consistent arc without a named change.
 - **L7 Macro Regime Trajectory (7d)** — regime + target_invested_pct
-  evolution. Stable = trust; oscillating = cautious. Step 1 reads this.
+  evolution. Stable = trust; oscillating = cautious. "How much to be
+  invested" reads this.
 - **L8 Active News State Changes (14d HIGH)** — still-in-play events.
-  First-seen ≥ 10d ago = mostly priced in (Step 2 detail).
+  First-seen ≥ 10d ago = mostly priced in ("What to trade" detail).
 
 **Today's signals**:
 
@@ -760,7 +778,7 @@ Semantics of `risk_allocation_pct`:
     "portfolio_balance": "After targets: Tech 32% long, Financials 15% long, Industrials 10% long, Energy 8% short. No sector side > 75%. Trimming AAPL (thesis weakened). No correlation stacking.",
     "cash_target": "Current cash 32%. After targets ~15% cash. Macro risk-on so above 10% floor is fine.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
-    "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at 1.0% risk — the sleeve ceiling — not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped in Step 6 → no second cut, just noting the correlated tail."
+    "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at 1.0% risk — the sleeve ceiling — not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped under Step 5's correlation guardrail → no second cut, just noting the correlated tail."
   },
   "targets": [
     {
@@ -774,7 +792,7 @@ Semantics of `risk_allocation_pct`:
         {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "confirmed uptrend"},
         {"source": "news", "observed_stance": "bearish", "relationship": "conflicts", "evidence": "tariff risk conflicts with the long thesis"},
         {"source": "earnings", "observed_stance": "bullish", "relationship": "supports", "evidence": "filing synthesis constructive"},
-        {"source": "macro", "observed_stance": "risk-on", "relationship": "supports", "evidence": "equity regime constructive"}
+        {"source": "macro", "observed_stance": "risk-on", "relationship": "context", "evidence": "equity regime constructive — context only, does not count toward agreement"}
       ]
     },
     {
@@ -787,7 +805,7 @@ Semantics of `risk_allocation_pct`:
         {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "validated buy trend"},
         {"source": "news", "observed_stance": "bullish", "relationship": "supports", "evidence": "symbol news constructive"},
         {"source": "earnings", "observed_stance": "bullish", "relationship": "supports", "evidence": "beat and guidance"},
-        {"source": "macro", "observed_stance": "risk-on", "relationship": "supports", "evidence": "rate backdrop supports banks"}
+        {"source": "macro", "observed_stance": "risk-on", "relationship": "context", "evidence": "rate backdrop constructive for banks — context only, does not count toward agreement"}
       ]
     },
     {
@@ -799,7 +817,7 @@ Semantics of `risk_allocation_pct`:
       "provenance": [
         {"source": "technical", "observed_stance": "neutral", "relationship": "context", "evidence": "no positive trend confirmation"},
         {"source": "news", "observed_stance": "bearish", "relationship": "supports", "evidence": "tariff risk is symbol-specific"},
-        {"source": "macro", "observed_stance": "risk-on", "relationship": "conflicts", "evidence": "broad regime does not outweigh hardware risk"}
+        {"source": "macro", "observed_stance": "risk-on", "relationship": "context", "evidence": "broad regime noted — context only, does not count against the name"}
       ]
     }
   ],
@@ -824,12 +842,17 @@ Semantics of `risk_allocation_pct`:
   that symbol's registry. Copy `observed_stance` exactly. If you disagree with a
   specialist, that is allowed: use `relationship: "conflicts"` and explain
   the disagreement in `evidence`; never relabel disagreement as alignment.
-  Macro is broad context and may use `relationship: "context"`.
+  **Macro provenance MUST use `relationship: "context"` — never `supports`,
+  never `conflicts`.** Macro is the regime the book is built in, not evidence
+  about one name. It stays in the record so a reader can see that regime, but
+  it **never counts toward or against a symbol's source agreement** — it is
+  neither in the numerator nor the denominator of any `N/M`.
 - Smart-money coverage is optional. Never claim it when no material finding
   is supplied. Congressional evidence marked `historical` is lagged context
   only: it may use `relationship: "context"`, never `supports`.
 - A shorthand such as `2/3 aligned` is permitted only when `3` is the exact
-  number of core sources (technical, news, earnings, macro) available for that
+  number of core sources (technical, news, earnings — macro is NOT a core
+  source and never counts) available for that
   symbol in the registry, provenance contains all three, and exactly two are
   marked `supports`. Optional Smart Money provenance does not change that core
   denominator. Never force `/4`. Prefer explicit provenance over shorthand.
