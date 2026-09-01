@@ -342,6 +342,44 @@ risk:
   # any BUY that would drive cash negative, and the PM + midday prompts get
   # a mandatory de-lever directive when cash is already negative.
   allow_margin: false
+  # --- Spec §11.2 — the gross-exposure ceiling (owner-ratified 2026-09-01)
+  #
+  # Gross exposure = long market value + ABSOLUTE short market value, as a
+  # MULTIPLE of equity. Before this setting there was no gross-exposure cap
+  # in the codebase at all — max_portfolio_risk_pct bounds capital AT RISK
+  # (the sum of stop distances), not exposure, and max_gross_bearish_pct
+  # bounds only the bearish side. Nothing stopped the book reaching the
+  # broker's full 4x. This is a NEW CEILING, i.e. a tightening.
+  #
+  # It is enforced in two places, both deterministic Python and never as an
+  # instruction to an agent: the SIZING gate (portfolio_constructor shrinks
+  # or refuses entries that would breach it) and the EXECUTION gate
+  # (risk engine hard-block `max_gross_exposure`).
+  #
+  # The cash-sweep vehicle (cash_sweep.symbol, e.g. SGOV) does NOT count as
+  # exposure — it is parked cash, and counting it would consume the whole
+  # allowance doing nothing.
+  #
+  # 2.0x applies day AND night. There is deliberately no lower overnight
+  # ceiling: it would force a trim into every close, selling on a clock
+  # rather than on merit. The overnight cushion comes from the de-levering
+  # ladder instead (src/risk/rules.py::resolve_gross_ceiling), which steps
+  # the ceiling DOWN as peak-to-trough drawdown deepens:
+  #     0% to  -8%  ->  2.0x
+  #    -8% to -15%  ->  1.5x
+  #   -15% to -20%  ->  1.0x
+  #   worse than -20% -> 0.5x, and the owner is alerted
+  # The ladder only ever TIGHTENS this number, so lowering it here lowers
+  # every rung with it.
+  #
+  # NOTE: this ceiling does nothing on its own while allow_margin is false —
+  # the cash-only rule already binds gross below ~1.0x. It is built FIRST, on
+  # purpose: the ceiling must exist before borrowing is switched on.
+  max_gross_exposure_x: 2.0
+  # Broker maintenance-margin requirement (% of gross), used ONLY to report
+  # how far the book could fall before forced liquidation. Enforces nothing.
+  # 25 is Alpaca's standard equity requirement; at 2.0x it reads ~33%.
+  maintenance_margin_pct: 25
   # --- Stage 3 (shorts) -------------------------------------------------
   # Deliberately half of max_position_pct: a short's loss is unbounded
   # while a long's is capped at -100%, so one short's concentration budget

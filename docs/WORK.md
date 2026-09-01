@@ -146,10 +146,18 @@ candidates reach the PM**, the same way `NominationConfig` already caps
 nominations, so the bill is a number that is set rather than one that emerges.
 Untested risk: the free tier is rate-limited and a much wider scan may hit it.
 
-**Still to build (nothing exists yet):** **ALL of Phase 11** — fractional
-sizing, its three required stop-placement guards, the 2.0x gross-exposure cap,
-the de-levering ladder, and distance-to-forced-liquidation monitoring — plus
-the margin interest tracker and the wider universe with pruning.
+**Still to build:** **Phase 11.1** — fractional sizing and its three required
+stop-placement guards — plus the margin interest tracker and the wider
+universe with pruning.
+
+**Phase 11.2's ceiling is BUILT (2026-09-01):** the 2.0x gross-exposure cap
+enforced at the sizing and execution gates, the graduated de-levering ladder
+(2.0 / 1.5 / 1.0 / 0.5 on peak-to-trough drawdown, blocking new exposure
+before trimming anything, resolved from account state so a blank PM response
+cannot skip it), and distance-to-forced-liquidation on the alert and the
+dashboard. **`allow_margin` is still `false`** — the ceiling was built before
+borrowing is enabled, which was the sequencing requirement. See the
+IMPLEMENTED note at the end of §11.2 in `docs/QAMC_REMEDIATION_SPEC.md`.
 
 **Phase 11 was MISSING from this line until 2026-09-01 and that caused a real
 scope error.** A session read this list, built Phase 12 and the branch merges,

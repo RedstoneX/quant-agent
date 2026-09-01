@@ -503,6 +503,38 @@ class RiskConfig(BaseModel):
     # conservative choice — margin leverage amplifies drawdowns and is not
     # the bot's intended mode unless explicitly opted in.
     allow_margin: bool = False
+    # --- Spec §11.2: the gross-exposure ceiling (owner-ratified 2026-09-01)
+    #
+    # Gross exposure = long market value + ABSOLUTE short market value,
+    # measured against equity. Before this setting existed the codebase had
+    # NO gross-exposure ceiling of any kind: `max_portfolio_risk_pct` bounds
+    # AT-RISK capital (the sum of stop distances) and `max_gross_bearish_pct`
+    # bounds the bearish side only. Nothing stopped the book reaching the
+    # broker's full 4x. Adding this is a TIGHTENING, not a loosening.
+    #
+    # 2.0x is the owner's deliberate paper-account learning setting, taken
+    # against the recommendation to defer — see the §11.2 spec entry and
+    # [[qamc-live-capital-checklist]]. Re-derive it before real money.
+    #
+    # This is the STANDING cap, day AND night. There is deliberately no
+    # separate, lower overnight ceiling: an intraday-only allowance would
+    # force a trim into every close, selling on a clock rather than on merit,
+    # and this desk holds for days so it would almost never use one. The
+    # overnight cushion comes from the de-levering ladder
+    # (`src/risk/rules.py::resolve_gross_ceiling`) instead.
+    #
+    # The ladder can only ever tighten this number, never raise it — so
+    # lowering this setting lowers every rung with it.
+    max_gross_exposure_x: float = Field(default=2.0, gt=0, le=4.0)
+    # Broker maintenance-margin requirement, as a percent of gross exposure,
+    # used ONLY to report distance-to-forced-liquidation
+    # (`src/risk/rules.py::distance_to_forced_liquidation_pct`). It computes
+    # nothing the engine enforces; it answers "how far could the book fall
+    # before the broker sells without asking", which nothing watched before
+    # §11.2. 25% is Alpaca's standard equity maintenance requirement and
+    # reproduces the spec's two published figures exactly: ~33% at 2.0x,
+    # ~55% at 1.5x.
+    maintenance_margin_pct: float = Field(default=25.0, gt=0, lt=100)
     # --- Stage 3 (shorts) -----------------------------------------------
     # The single-short ceiling is deliberately HALF of `max_position_pct`:
     # a long's loss is bounded at -100% of the position, a short's is not,

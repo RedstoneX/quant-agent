@@ -140,6 +140,14 @@ class RunContext:
     #   recent_performance: {rolling_5d_pct, rolling_20d_pct, in_drawdown, trailing_days}
     position_history: dict = field(default_factory=dict)
     recent_performance: dict = field(default_factory=dict)
+    # Spec §11.2 — the session's gross-exposure state, resolved from ACCOUNT
+    # STATE ONLY (equity, its high-water mark, the configured cap) in the run
+    # preamble, before any LLM work. Deliberately not derived from anything
+    # the Portfolio Manager produced: a blank PM response must not leave the
+    # desk levered during a drawdown.
+    #   {gross_usd, gross_x, ceiling_x, base_ceiling_x, drawdown_pct,
+    #    distance_to_forced_liquidation_pct, alert_owner, reason}
+    leverage: dict = field(default_factory=dict)
 
     portfolio_decision: "PortfolioDecision | None" = None
     # Transport-successful model output can still fail deterministic parsing,
