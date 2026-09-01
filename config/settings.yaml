@@ -212,7 +212,28 @@ execution:
   # Alpaca accepts a fractional-qty GTC stop-limit is NOT established, and a
   # fractional position whose stop the broker refuses is the one state this
   # feature must never produce.
-  fractional_enabled: true
+  # SETTLED EMPIRICALLY 2026-09-01 against the live paper account, and the
+  # answer is NO. The spec called for settling this before trusting fractional
+  # in production. Submitting a fractional-quantity GTC stop returns:
+  #     code 42210000 "stop/stop_limit fractional GTC orders are not enabled"
+  # This fires BEFORE the quantity-availability check, so it is a capability
+  # limit, not an account state. A DAY-tif stop is not an escape: an OTO/DAY
+  # child is exactly what the 2026-07-16 audit removed, because Alpaca expires
+  # it at 16:00 ET and leaves the position naked overnight.
+  #
+  # Consequence, and why this flag is now false: refusal is not the RARE case
+  # the three guards were designed around, it is the ONLY case. Every
+  # fractional entry would take a whole-share stop covering the integer part,
+  # leave the fractional remainder permanently unprotected, and fire the
+  # owner alert every single time — and a position under one share would get
+  # no stop at all, ever. Guard 2 firing on every entry is alert fatigue on
+  # the one alert that must never be ignored.
+  #
+  # The 11.1 CODE is correct, merged and tested, and it contains this failure
+  # safely. It is the FEATURE that cannot work until Alpaca supports a durable
+  # fractional stop. Re-test with the probe in docs/QAMC_REMEDIATION_SPEC.md
+  # §11.1 before flipping this back.
+  fractional_enabled: false
   fractional_share_decimals: 4
 
 risk:

@@ -380,7 +380,14 @@ class ExecutionConfig(BaseModel):
 
     # Spec §11.1 (owner-ratified 2026-09-01), reversing the 2026-08-27
     # decision to keep fractional off.
-    fractional_enabled: bool = True
+    # DEFAULT FLIPPED TO FALSE 2026-09-01 on measured broker behaviour, not
+    # on caution. A fractional-quantity GTC stop is refused outright by
+    # Alpaca (code 42210000, "stop/stop_limit fractional GTC orders are not
+    # enabled"), ahead of any quantity check. So a fractional position cannot
+    # carry a durable protective stop on its fractional part — the remainder
+    # would sit unprotected and alert on every single entry. See
+    # config/settings.yaml for the full finding and the re-test procedure.
+    fractional_enabled: bool = False
     """Master switch for exact (fractional) entry sizing. ON by default —
     whole-share rounding is a silent, constant tax on every position the
     desk opens (V wanted 6% of the book and got 3.84%), and the reasoning
