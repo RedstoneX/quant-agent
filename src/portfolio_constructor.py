@@ -229,6 +229,24 @@ class ConstructorConfig:
     target_divergence_warn_pct: float = 25.0
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
+    # --- Spec §11.2 — the gross-exposure ceiling (2026-09-01) ------------
+    # The SIZING half of the ceiling. `max_gross_exposure` is in
+    # HARD_BLOCK_RULES, so without this clamp an entry that breaches the
+    # ceiling is DROPPED at the execution gate rather than taken smaller —
+    # the same relationship `max_position_pct` already has with its clamp
+    # here, and the same reason: a ceiling that only refuses produces
+    # no-trade sessions instead of right-sized ones.
+    #
+    # This is the STANDING cap. The ladder-resolved ceiling for the session
+    # is passed to `construct_orders` per run, because it depends on live
+    # drawdown and a config default cannot know it. Kept in sync with
+    # `risk.max_gross_exposure_x` — pipeline.py wires them from the same
+    # setting.
+    max_gross_exposure_x: float = 2.0
+    # The cash-park vehicle (`cash_sweep.symbol`, SGOV by default), which is
+    # parked cash and NOT exposure. Taken from config rather than hardcoded;
+    # None when sweeping is off.
+    cash_park_symbol: str | None = None
     # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
     # REMOVED. They were never the intended design — `_resolve_stop` always
     # preferred the analyst's structural level and fell through to
@@ -257,6 +275,7 @@ class PortfolioConstructor:
         clusters: list[list[str]] | None = None,
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
+        gross_ceiling=None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -285,6 +304,16 @@ class PortfolioConstructor:
         guaranteed to agree with what the PM was shown). Drives the agreement
         ceiling in `_plan_risk_targets`. Omitted, that ceiling is not enforced
         — same "no view, don't invent one" posture as `existing_risk_pct`.
+
+        `gross_ceiling`: spec §11.2. The de-levering ladder's resolved
+        `GrossCeiling` for this session — the standing cap, stepped down by
+        measured peak-to-trough drawdown. Entries are shrunk to fit it, and
+        refused outright when what remains is below `min_order_usd`. Omitted,
+        the constructor falls back to the standing cap with no drawdown
+        applied, so a caller that forgets it still sizes under A ceiling
+        rather than none. **This function never trims the held book** — the
+        gross ceiling's de-lever is authored in the session preamble, before
+        any agent runs, so it cannot depend on a model returning a book.
         """
         if total_value <= 0:
             return []
@@ -431,7 +460,49 @@ class PortfolioConstructor:
         # in a tight-cash session prioritizes highest conviction).
         sells.sort(key=lambda d: 0 if d.allocation_pct >= 100 else 1)
         buys.sort(key=lambda d: d.allocation_pct, reverse=True)
-        return sells + buys
+        orders = sells + buys
+
+        # Spec §11.2 — the SIZING half of the gross-exposure ceiling. Runs
+        # last, on the finished order list, because it is the only ceiling
+        # here that is a property of the WHOLE book rather than of one name:
+        # the exits above have already reduced what will be held, and every
+        # entry has to be rationed against the same headroom.
+        #
+        # `emit_trims=False` on purpose. Shrinking an order it is about to
+        # propose is this class's job; authoring a de-lever of the held book
+        # is not. That has exactly one owner — the session preamble, which
+        # runs before any agent and therefore keeps working on a run where
+        # the Portfolio Manager returns nothing at all.
+        from src.risk.rules import (
+            GrossCeiling, apply_gross_ceiling, resolve_gross_ceiling,
+        )
+        # isinstance, not truthiness: a caller (or a Mock pipeline in a test)
+        # that hands over something ceiling-shaped-but-not-a-ceiling must fall
+        # back to the standing cap rather than silently size against a
+        # comparison that raises.
+        ceiling = (
+            gross_ceiling if isinstance(gross_ceiling, GrossCeiling)
+            else resolve_gross_ceiling(
+                None, base_x=self.cfg.max_gross_exposure_x,
+            )
+        )
+        outcome = apply_gross_ceiling(
+            orders, positions, total_value, ceiling,
+            cash_park_symbol=self.cfg.cash_park_symbol,
+            min_order_usd=self.cfg.min_order_usd,
+            emit_trims=False,
+        )
+        for note in outcome.notes:
+            logger.warning("Constructor: %s", note)
+        # An entry rationed to nothing is dropped rather than emitted as a
+        # zero-allocation order — `allocation_pct == 0` means SKIP to the
+        # execution stage, and leaving it in the list would show the operator
+        # a trade that was never going to happen.
+        orders = [
+            d for d in orders
+            if d.action not in ("BUY", "SHORT") or d.allocation_pct > 0
+        ]
+        return orders
 
     def _plan_risk_targets(
         self,

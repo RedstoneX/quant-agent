@@ -740,6 +740,54 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
     )
 
 
+def _append_leverage_line(lines: list[str], result: dict) -> None:
+    """Spec §11.2 — how much the book owns, its ceiling, and how far it could
+    fall before the broker sells without asking.
+
+    Nothing watched the distance to forced liquidation before this. At the
+    ratified 2.0x it reads about 33% — a bad quarter, not an impossibility —
+    which is precisely why it belongs on the alert the operator actually
+    reads rather than in a log.
+
+    Rendered whenever the run measured it. Silent when the block is absent
+    (an older result dict, or a session that never reached the preamble) —
+    an omitted line is honest; an invented "1.0x" would not be.
+    """
+    leverage = result.get("leverage")
+    if not isinstance(leverage, dict) or not leverage:
+        return
+    gross_x = leverage.get("gross_x")
+    ceiling_x = leverage.get("ceiling_x")
+    if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+        return
+    # Colour-blind-safe: the state is carried by the WORD, never by hue alone.
+    de_levered = (
+        isinstance(leverage.get("base_ceiling_x"), (int, float))
+        and ceiling_x < leverage["base_ceiling_x"]
+    )
+    parts = [f"exposure: {gross_x:.2f}x of {ceiling_x:.2f}x allowed"]
+    distance = leverage.get("distance_to_forced_liquidation_pct")
+    if isinstance(distance, (int, float)):
+        parts.append(f"{distance:.0f}% fall to a margin call")
+    drawdown = leverage.get("drawdown_pct")
+    if isinstance(drawdown, (int, float)) and drawdown < 0:
+        parts.append(f"{abs(drawdown):.1f}% below the equity high")
+    prefix = "⚠️ DE-LEVERED" if de_levered else "leverage"
+    lines.append(f"{prefix} — {'  ·  '.join(parts)}")
+    if leverage.get("alert_owner"):
+        # The rung is READ from the resolved ceiling, never restated as a
+        # literal: a hardcoded "0.5x" here would go stale the day the ratified
+        # ladder changes, and an alert that misreports the cap is worse than
+        # no alert. And the wording is exact — at the lowest rung new
+        # positions are refused ONCE THE BOOK REACHES the cap, not
+        # unconditionally; a book already below it may still trade.
+        lines.append(
+            f"🔴 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
+            f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
+            f"new positions are refused once the book reaches it."
+        )
+
+
 def _append_company_identities(lines: list[str], symbols: list) -> None:
     """One line per relevant symbol: who the company is.
 
@@ -823,6 +871,7 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
 
     # System-health first: a naked long is more urgent than the order list.
     _append_coverage_gap_banner(lines, result)
+    _append_leverage_line(lines, result)
     orders = result.get("orders") or []
 
     # FORCE_DELEVER / EMERGENCY_SELL / EMERGENCY_COVER banner — these

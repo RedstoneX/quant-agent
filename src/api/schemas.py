@@ -99,6 +99,15 @@ class RiskLimits(BaseModel):
     max_total_position_pct: float | None = None
     max_daily_loss_pct: float | None = None
     max_sector_pct: float | None = None
+    # Spec §11.2. The STANDING gross-exposure cap as a multiple of equity
+    # (long market value + absolute short market value, cash park excluded).
+    # Distinct from max_total_position_pct, which bounds NET exposure — a
+    # hedge cancels a long there and does not here. The ladder-stepped
+    # ladder-stepped ceiling actually in force this session is NOT exposed
+    # here: computing it needs `src.risk.rules`, which `src/api/` may never
+    # import (tests/test_api_safety.py). It reaches the operator on the
+    # session alert instead.
+    max_gross_exposure_x: float | None = None
 
 
 class MarginInterestEstimate(BaseModel):

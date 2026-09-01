@@ -284,6 +284,9 @@ def _compute_risk_limits() -> RiskLimits:
         max_total_position_pct=limits.max_total_position_pct,
         max_daily_loss_pct=limits.max_daily_loss_pct,
         max_sector_pct=limits.max_sector_pct,
+        # Spec §11.2 — the standing gross-exposure cap. Distinct from
+        # max_total_position_pct, which bounds NET exposure.
+        max_gross_exposure_x=getattr(limits, "max_gross_exposure_x", None),
     )
 
 
@@ -306,6 +309,19 @@ def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
         broker_check_note=data.get("broker_check_note"),
         error=data.get("error"),
     )
+
+# NOTE (§11.2): Mission Control does NOT compute gross exposure, the
+# de-levering ladder, or distance-to-forced-liquidation. Doing so requires
+# `src.risk.rules`, and `src/api/` is forbidden by a ratified structural
+# guardrail (tests/test_api_safety.py) from importing the trading/risk stack
+# at all. Re-implementing the arithmetic here instead was explicitly rejected:
+# a second definition of "how much does the book own" is the exact sprawl
+# §12.2 cleaned up, and a dashboard that drifts from the gate is worse than a
+# dashboard that stays quiet. The standing cap is still reported on
+# `RiskLimits.max_gross_exposure_x` above (config read, no risk import), and
+# the live ladder state reaches the operator on the session alert
+# (`src/notifier.py::_append_leverage_line`). Showing it here needs the pure
+# measurement functions extracted to a module outside `src.risk` first.
 
 
 @router.get("/account", response_model=AccountResponse)

@@ -98,6 +98,30 @@ def _macro_regime(macro_analysis) -> str | None:
     return str(value) if value else None
 
 
+def _session_gross_ceiling(pipeline, ctx):
+    """Spec §11.2 — this session's ladder-resolved gross-exposure ceiling.
+
+    The run preamble already resolved it from account state before any agent
+    ran; this re-derives it so the resume lane (where the preamble did not
+    run) sizes against a real ceiling too. Returns None on any failure — the
+    constructor then falls back to the standing cap, which is still a
+    ceiling. It never falls back to "no ceiling".
+    """
+    resolve = getattr(pipeline, "_resolve_gross_ceiling", None)
+    if resolve is None:
+        return None
+    try:
+        from src.risk.rules import GrossCeiling
+        ceiling = resolve(ctx)
+        return ceiling if isinstance(ceiling, GrossCeiling) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "§11.2: could not resolve the gross-exposure ceiling for sizing; "
+            "the constructor falls back to the standing cap: %s", exc,
+        )
+        return None
+
+
 def _book_risk_inputs(ctx, total_value: float):
     """Per-symbol budget risk (% of equity) and correlation clusters, or Nones.
 
@@ -2126,6 +2150,11 @@ class DecisionStage:
             # wider for the same ATR reading than a trending one.
             regime=_macro_regime(macro_analysis),
             evidence_registry=evidence_registry,
+            # Spec §11.2 — the session's gross-exposure ceiling, already
+            # resolved from account state in the run preamble (and re-derived
+            # here only on a lane where the preamble did not run). The
+            # constructor sizes UNDER it; it never trims the held book.
+            gross_ceiling=_session_gross_ceiling(pipeline, ctx),
         )
         # Provenance for the AI Risk Manager: which proposed symbols did the
         # deterministic constructor remove? Derived here (targets minus
@@ -2400,6 +2429,13 @@ class RiskStage:
                 rm_recent_performance = {}
         in_drawdown = bool(rm_recent_performance.get("in_drawdown"))
 
+        # Spec §11.2 — the session's gross-exposure ceiling, resolved from
+        # ACCOUNT STATE and never from PM output. The run preamble already
+        # acted on it before any agent was called; reading it again here is
+        # what makes the execution gate below measure new orders against the
+        # same rung the constructor sized them under.
+        session_gross_ceiling = _session_gross_ceiling(pipeline, ctx)
+
         # Audit §1.1 — the drawdown-halve is deterministic code now, applied
         # before the hard filter so every downstream consumer (cash budget,
         # sector accumulation, RM, execution) sees the halved size rather than
@@ -2408,6 +2444,7 @@ class RiskStage:
             from src.risk.rules import apply_drawdown_scale
             portfolio_decision.decisions, drawdown_notes = apply_drawdown_scale(
                 portfolio_decision.decisions, in_drawdown=True,
+                ceiling=session_gross_ceiling,
             )
             for note in drawdown_notes:
                 symbol = note.split(" ", 1)[0]
@@ -2431,6 +2468,7 @@ class RiskStage:
                 correlation_matrix=correlation_matrix,
                 cash=ctx.deployable_cash,
                 in_drawdown=in_drawdown,
+                gross_ceiling=session_gross_ceiling,
             )
         )
         _apply_sector_unresolved_alert(data_status, rule_violations)
@@ -2728,6 +2766,7 @@ class RiskStage:
                     macro_target_invested_pct=macro_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
+                    gross_ceiling=session_gross_ceiling,
                 )
             )
             _apply_sector_unresolved_alert(data_status, post_mod_violations)

@@ -34,7 +34,14 @@ from src.agents.meta_reflector import MetaReflectorAgent
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
-from src.risk.rules import RiskRuleEngine
+from src.risk.rules import (
+    RiskRuleEngine,
+    apply_gross_ceiling,
+    distance_to_forced_liquidation_pct,
+    gross_exposure,
+    peak_to_trough_pct,
+    resolve_gross_ceiling,
+)
 from src.execution.broker import AlpacaBroker, _get_sector
 from src.pipeline_context import PMFacts, RunContext, SessionType
 from src.pipeline_stages import (
@@ -131,6 +138,13 @@ HARD_BLOCK_RULES = {
     # inverse ETF is a BULLISH bet and is correctly excluded
     # (src/risk/rules.py).
     "max_gross_bearish_pct",
+    # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
+    # value plus absolute short market value — may not exceed the ladder-
+    # resolved multiple of equity. There was NO gross-exposure ceiling in
+    # this codebase before: `max_portfolio_risk_pct` bounds capital at risk
+    # and `max_total_position_pct` bounds NET exposure, where a hedge
+    # cancels a long. Adding this hard block is a tightening.
+    "max_gross_exposure",
 }
 
 
@@ -710,6 +724,20 @@ class TradingPipeline:
             # ceiling and its sizing haircut.
             max_single_short_pct=_risk_setting("max_single_short_pct", 10.0),
             short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
+            # Spec §11.2 — same "size under the hard block" pattern again.
+            # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
+            # breaches the ceiling would be DROPPED rather than taken
+            # smaller without this. The per-session ladder step is passed to
+            # `construct_orders`; this is the standing cap it starts from.
+            max_gross_exposure_x=_risk_setting("max_gross_exposure_x", 2.0),
+            # The cash park is not exposure. Read from the SAME config gate
+            # `_sweeper()` uses (enabled + symbol) so the sizing gate and the
+            # execution gate can never disagree about what counts.
+            cash_park_symbol=(
+                getattr(getattr(config, "cash_sweep", None), "symbol", None)
+                if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
+                else None
+            ),
             min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
@@ -1234,6 +1262,10 @@ class TradingPipeline:
         correlation_matrix: dict[str, dict[str, float]] | None = None,
         cash: float | None = None,
         in_drawdown: bool = False,
+        # Spec §11.2. The ladder-resolved gross-exposure ceiling for this
+        # session. None falls back to the configured cap inside the engine —
+        # a caller that forgets it still gets a ceiling, never none.
+        gross_ceiling=None,
     ) -> tuple[list[TradeDecision], list, list[str]]:
         allowed_decisions: list[TradeDecision] = []
         remaining_violations = []
@@ -1253,6 +1285,12 @@ class TradingPipeline:
         # pre-existing book. Renamed from pending_short_gross_investment
         # (2026-08-30) alongside the ceiling itself.
         pending_gross_bearish_investment = 0.0
+        # Spec §11.2: running total of GROSS notional (direction-agnostic,
+        # leverage-adjusted) already allowed earlier in this batch. Without
+        # it two entries in one run would each be measured against only the
+        # pre-existing book and never see each other — the same gap
+        # `pending_investment` closes for net exposure.
+        pending_gross_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -1353,6 +1391,13 @@ class TradingPipeline:
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
                 pending_gross_bearish_investment=pending_gross_bearish_investment,
+                # Spec §11.2 — the execution half of the gross ceiling. The
+                # sweep vehicle has already been split out of `positions`
+                # above, so `cash_park_symbol` here is belt-and-braces for
+                # any future caller that has not.
+                gross_ceiling=gross_ceiling,
+                pending_gross_investment=pending_gross_investment,
+                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
@@ -1408,6 +1453,10 @@ class TradingPipeline:
             # gate in RiskRuleEngine.check.
             if signed_investment < 0:
                 pending_gross_bearish_investment += abs(signed_investment)
+            # Spec §11.2: gross is direction-agnostic — a BUY and a SHORT of
+            # the same size consume the same ceiling. `gross_investment` is
+            # already the leverage-adjusted unsigned magnitude.
+            pending_gross_investment += gross_investment
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )
@@ -6410,7 +6459,8 @@ class TradingPipeline:
             return {}
         if not rows:
             return {"rolling_5d_pct": None, "rolling_20d_pct": None,
-                    "in_drawdown": False, "trailing_days": 0}
+                    "in_drawdown": False, "trailing_days": 0,
+                    "peak_to_trough_pct": None}
 
         def _pct_change(start_idx: int) -> float | None:
             if start_idx >= len(rows):
@@ -6431,11 +6481,31 @@ class TradingPipeline:
         if rolling_20d is not None and rolling_20d < -8.0:
             in_drawdown = True
 
+        # Spec §11.2: peak-to-trough drawdown, which drives the de-levering
+        # ladder's gross-exposure ceiling. A SEPARATE measure from
+        # `in_drawdown` above, on purpose — that one asks "has our recent
+        # edge degraded, so halve new BUYs" over a rolling window; this one
+        # asks "how far are we off the high-water mark, so how much may the
+        # book own". A longer window is read because a high-water mark over
+        # 25 sessions is not a high-water mark.
+        try:
+            hwm_rows = self.db.get_daily_pnl(limit=252)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Failed to read the long daily_pnl window for the §11.2 "
+                "high-water mark; falling back to the short one: %s", e,
+            )
+            hwm_rows = rows
+        peak_to_trough = peak_to_trough_pct(
+            [r.get("total_value") for r in (hwm_rows or [])], current_equity,
+        )
+
         return {
             "rolling_5d_pct": rolling_5d,
             "rolling_20d_pct": rolling_20d,
             "in_drawdown": in_drawdown,
             "trailing_days": len(rows),
+            "peak_to_trough_pct": peak_to_trough,
         }
 
     def _refresh_account_state(self):
@@ -7740,6 +7810,209 @@ class TradingPipeline:
 
         return orders
 
+    # --- Spec §11.2 — the gross-exposure ceiling and the de-levering ladder
+
+    def _sweep_symbol(self) -> str | None:
+        """The configured cash-park vehicle, or None when sweeping is off.
+
+        Taken from `cash_sweep.symbol` rather than hardcoded to "SGOV" —
+        the setting already exists and an operator who changes the vehicle
+        must not have to change the risk engine too.
+        """
+        sweeper = self._sweeper()
+        return getattr(sweeper, "symbol", None) if sweeper is not None else None
+
+    def _resolve_gross_ceiling(self, ctx: RunContext):
+        """Resolve this session's gross-exposure ceiling from ACCOUNT STATE.
+
+        Nothing the Portfolio Manager produced is an input, and this returns
+        a correct ceiling on a run where the PM returned nothing at all. That
+        is deliberate: a blank/truncated model response is a measured failure
+        mode, and a ceiling that needed a parseable book would leave the desk
+        fully levered at exactly the moment it should be shedding exposure.
+
+        Also records the state on `ctx.leverage` for the morning alert and
+        the dashboard, including distance-to-forced-liquidation — which
+        nothing in this codebase watched before §11.2.
+        """
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        base_x = _risk_number(getattr(risk_cfg, "max_gross_exposure_x", None), 2.0)
+        maintenance_pct = _risk_number(
+            getattr(risk_cfg, "maintenance_margin_pct", None), 25.0,
+        )
+        drawdown_pct = None
+        performance = ctx.recent_performance or {}
+        if "peak_to_trough_pct" in performance:
+            drawdown_pct = performance.get("peak_to_trough_pct")
+        else:
+            # The preamble runs before DecisionStage populates
+            # `recent_performance`, so read the equity curve directly. One
+            # cheap local DB read; a failure degrades to "unknown drawdown",
+            # which resolves to the standing cap and trims nothing — never
+            # to a wrong number that reads as "no drawdown".
+            try:
+                rows = self.db.get_daily_pnl(limit=252)
+                drawdown_pct = peak_to_trough_pct(
+                    [r.get("total_value") for r in (rows or [])], ctx.total_value,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "§11.2: could not read the equity curve for the drawdown "
+                    "ladder — holding the standing %.1fx ceiling and trimming "
+                    "nothing: %s", base_x, e,
+                )
+        ceiling = resolve_gross_ceiling(drawdown_pct, base_x=base_x)
+        gross = gross_exposure(
+            ctx.positions, cash_park_symbol=self._sweep_symbol(),
+        )
+        equity = ctx.total_value if ctx.total_value else 0.0
+        ctx.leverage = {
+            "gross_usd": gross,
+            "gross_x": (gross / equity) if equity > 0 else None,
+            "ceiling_x": ceiling.ceiling_x,
+            "base_ceiling_x": ceiling.base_x,
+            "drawdown_pct": ceiling.drawdown_pct,
+            "rung": ceiling.rung,
+            "alert_owner": ceiling.alert_owner,
+            "reason": ceiling.reason,
+            "distance_to_forced_liquidation_pct":
+                distance_to_forced_liquidation_pct(
+                    gross, equity, maintenance_margin_pct=maintenance_pct,
+                ),
+        }
+        return ceiling
+
+    def _enforce_gross_ceiling(self, ctx: RunContext) -> list[dict]:
+        """De-lever the HELD book when it is over the §11.2 gross ceiling.
+
+        Runs in the session preamble, beside `_force_delever`, and therefore
+        BEFORE any agent is called. That placement is the requirement, not a
+        convenience: if any part of the ladder depended on the Portfolio
+        Manager returning a usable book, a truncated model response would
+        mean the desk stays levered exactly when it should be shedding
+        exposure. Nothing here reads a PM decision.
+
+        The ordering rule still holds and is enforced inside
+        `apply_gross_ceiling`: this call passes NO decisions, so there is no
+        new exposure to block, and trims are emitted only because the held
+        book alone exceeds the ceiling. New exposure proposed later in the
+        same session is blocked by the sizing gate (the constructor) and the
+        execution gate (`max_gross_exposure`), never by selling something the
+        desk already owns to make room.
+
+        Returns the submitted orders (empty when the book is under its
+        ceiling, which is the ordinary case). `ctx` is refreshed from the
+        broker after fills so downstream stages see truth.
+        """
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        if risk_cfg is None:
+            # Tests that bypass __init__ via TradingPipeline.__new__.
+            return []
+        ceiling = self._resolve_gross_ceiling(ctx)
+        min_order_usd = _risk_number(
+            getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
+            500.0,
+        )
+        outcome = apply_gross_ceiling(
+            [], ctx.positions, ctx.total_value, ceiling,
+            cash_park_symbol=self._sweep_symbol(),
+            min_order_usd=min_order_usd,
+        )
+        if not outcome.trims:
+            return []
+        logger.warning(
+            "GROSS-EXPOSURE DE-LEVER: the book owns $%.0f against a $%.0f "
+            "ceiling (%.2fx equity). %s",
+            outcome.held_gross, outcome.ceiling_usd, ceiling.ceiling_x,
+            ceiling.reason,
+        )
+        # A resting entry order would deepen the breach the moment it fills.
+        try:
+            self.broker.cancel_open_entry_orders()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gross-exposure de-lever: entry-order cancel failed: %s", exc)
+
+        positions_by_symbol = {p.symbol: p for p in ctx.positions}
+        orders: list[dict] = []
+        pending_protections: list[dict] = []
+        for trim in outcome.trims:
+            position = positions_by_symbol.get(trim.symbol)
+            if position is None or not position.current_price:
+                continue
+            held_qty = abs(position.qty)
+            qty = held_qty * (trim.allocation_pct / 100.0)
+            if float(position.qty).is_integer():
+                qty = float(int(qty))
+                if qty <= 0:
+                    qty = 1.0
+            if qty >= held_qty:
+                qty = self._full_sell_qty(held_qty)
+            if qty is None or qty <= 0:
+                continue
+            # Same 1%-through-the-market buffer `_force_delever` uses: when
+            # clearing unintended leverage, fill beats price. A COVER is a
+            # BUY, so it pays UP through the market rather than down.
+            #
+            # `FORCE_DELEVER` is already an EITHER-SIDE exit action in the
+            # ledger (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
+            # deterministic de-lever fires against whatever position is
+            # open" — so the same label correctly retires a short chain
+            # without inventing a second action name.
+            is_cover = trim.action == "COVER"
+            limit_price = round(
+                position.current_price * (1.01 if is_cover else 0.99), 2,
+            )
+            sale = self._submit_protected_sell(
+                symbol=trim.symbol, qty=qty, limit_price=limit_price,
+                reference_price=position.current_price,
+                position_qty_before_sell=abs(position.qty),
+                label="FORCE_DELEVER",
+                side="buy" if is_cover else "sell",
+            )
+            if sale is None:
+                continue
+            order, protection = sale
+            pending_protections.append(protection)
+            orders.append(order)
+            logger.info(
+                "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=$%.2f (%s)",
+                trim.action, trim.symbol, self._format_qty(qty), limit_price,
+                ceiling.reason,
+            )
+            try:
+                self.db.insert_trade(
+                    symbol=trim.symbol,
+                    action="FORCE_DELEVER",
+                    qty=qty,
+                    price=position.current_price,
+                    reasoning=trim.reasoning[:500],
+                    run_id=ctx.run_id,
+                    broker_order_id=order.get("id"),
+                    fill_status="submitted",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "GROSS-EXPOSURE DE-LEVER: trade row for %s failed: %s — "
+                    "the order may still be live at the broker", trim.symbol, e,
+                )
+        if pending_protections:
+            self._finalize_pending_protections(
+                pending_protections, context="GROSS-EXPOSURE DE-LEVER",
+            )
+        try:
+            account = self.broker.get_account()
+            ctx.positions = self.broker.get_positions()
+            ctx.cash = account["cash"]
+            ctx.deployable_cash = self._compute_deployable_cash(ctx.cash, ctx.positions)
+            ctx.total_value = account["portfolio_value"]
+            ctx.last_equity = account.get("last_equity", ctx.total_value)
+            # Re-measure so the alert and the dashboard report the book that
+            # now exists, not the one that triggered the de-lever.
+            self._resolve_gross_ceiling(ctx)
+        except Exception as e:  # noqa: BLE001
+            logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
+        return orders
+
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
         return self.execution_stage.run(ctx)
@@ -7978,6 +8251,15 @@ class TradingPipeline:
             # this session. Refreshes ctx.cash / positions on completion, so
             # every stage below runs on clean truth.
             forced_orders = self._force_delever(ctx)
+
+            # 1b. Spec §11.2 — the gross-exposure ceiling and its de-levering
+            # ladder. Deliberately here, before ANY agent runs: the ceiling is
+            # computed from account state alone, so a Portfolio Manager that
+            # returns nothing (a measured failure mode — one candidate model
+            # truncated mid-JSON on 1 run in 10) cannot leave the desk levered
+            # during a drawdown. Also populates ctx.leverage for the alert and
+            # the dashboard, including distance-to-forced-liquidation.
+            forced_orders = list(forced_orders) + self._enforce_gross_ceiling(ctx)
             positions = ctx.positions
             cash = ctx.cash
             total_value = ctx.total_value
@@ -8151,6 +8433,9 @@ class TradingPipeline:
                     "status": failure_status, "orders": [], "run_id": run_id,
                     "error": failure_error,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                 }
             if not portfolio_decision.decisions:
@@ -8158,6 +8443,9 @@ class TradingPipeline:
                 return {
                     "status": "no_trades", "orders": [], "run_id": run_id,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                 }
 
@@ -8232,6 +8520,9 @@ class TradingPipeline:
                     "status": "buys_unfunded", "orders": orders,
                     "run_id": run_id,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                     "execution_skips": list(ctx.execution_skips),
                 }
@@ -8244,6 +8535,9 @@ class TradingPipeline:
                     "status": "no_orders", "orders": orders,
                     "run_id": run_id,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                     "execution_skips": list(ctx.execution_skips),
                 }
@@ -8251,6 +8545,9 @@ class TradingPipeline:
             return {
                 "status": "executed", "orders": orders, "run_id": run_id,
                 "data_status": dict(ctx.data_status),
+                # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                # the distance to forced liquidation, for the operator alert.
+                "leverage": dict(ctx.leverage),
                 "stop_coverage_gaps": coverage_gaps,
                 "execution_skips": list(ctx.execution_skips),
             }
@@ -8670,6 +8967,13 @@ class TradingPipeline:
         # 1a. Cash-only safety net — force-sell if the account drifted into
         # margin. Refreshes ctx fields on completion.
         forced_orders = self._force_delever(ctx)
+
+        # 1b. Spec §11.2 — the gross-exposure ceiling and its de-levering
+        # ladder. Runs on midday and close too, not just the morning: the
+        # ceiling steps down on measured drawdown, and waiting for tomorrow's
+        # session to act on it is the coupling the ladder exists to avoid.
+        # Computed from account state alone — no agent output is an input.
+        forced_orders = list(forced_orders) + self._enforce_gross_ceiling(ctx)
         if forced_orders:
             # Reconcile immediately so the FORCE_DELEVER rows flip from
             # fill_status='submitted' to 'filled' before the reviewer's
@@ -8746,7 +9050,9 @@ class TradingPipeline:
                 where=f"{session_type}-paid-preflight",
                 orders=orders,
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
 
         # 2. News + Earnings update — capture developments since morning.
@@ -8770,7 +9076,9 @@ class TradingPipeline:
                 where=f"{session_type}-paid-news",
                 orders=orders,
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
         if session_news_coverage is not None and session_news_coverage.status != "ok":
             # midday/close have no data_status mechanism of their own (that
@@ -8792,7 +9100,9 @@ class TradingPipeline:
                 where=f"{session_type}-paid-earnings",
                 orders=orders,
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
         except Exception as e:  # noqa: BLE001 — reviewer proceeds without earnings
             logger.error("%s: earnings load failed (continuing without): %s",
@@ -8809,7 +9119,9 @@ class TradingPipeline:
                     str(circuit_state.get("trigger_detail") or "cost circuit opened")
                 ),
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
 
         # 3. LLM position review — memory-heavy, 6-step CoT.
@@ -8944,7 +9256,9 @@ class TradingPipeline:
                     where=f"{session_type}-paid-reviewer",
                     orders=orders,
                     extra={"session": session_type, "positions": len(positions),
-                           "stop_coverage_gaps": coverage_gaps},
+                           "stop_coverage_gaps": coverage_gaps,
+                           # Spec §11.2 — gross exposure and its ceiling.
+                           "leverage": dict(ctx.leverage)},
                 )
             review_log_kwargs = agent_log_kwargs(md_result)
             if review is None:
@@ -9000,6 +9314,8 @@ class TradingPipeline:
                     "orders": orders,
                     "run_id": run_id,
                     "stop_coverage_gaps": coverage_gaps,
+                    # Spec §11.2 — gross exposure and its ceiling.
+                    "leverage": dict(ctx.leverage),
                 }
             else:
                 # Phase 3.7 — deterministic trailing FIRST, before the LLM's
@@ -9064,6 +9380,9 @@ class TradingPipeline:
             "orders": orders,
             "run_id": run_id,
             "stop_coverage_gaps": coverage_gaps,
+            # Spec §11.2 — gross exposure, its ladder-resolved ceiling and the
+            # distance to forced liquidation, for the operator alert.
+            "leverage": dict(ctx.leverage),
         }
 
     def run_earnings_preprocess(self) -> dict:

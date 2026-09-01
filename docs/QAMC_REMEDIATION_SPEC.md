@@ -1049,10 +1049,15 @@ and the portfolio-level ceilings are untouched.
 
 ## Phase 11 — Fractional sizing and bounded margin (owner-ratified 2026-09-01)
 
-**Status: ratified by Rex on 2026-09-01. NOT implemented, NOT deployed.**
+**Status: ratified by Rex on 2026-09-01. 11.1 NOT implemented. 11.2's gross
+cap, de-levering ladder and liquidation guard IMPLEMENTED 2026-09-01 — see
+the note at the end of 11.2. `allow_margin` remains `false`.**
 Two decisions taken together because they both change how a position is
 sized, and shipping one without the other changes the risk profile in a way
-neither decision intended.
+neither decision intended. The required ordering is therefore satisfied: the
+ceiling exists before borrowing is switched on, and before fractional sizing
+removes the whole-share friction that has been accidentally holding
+deployment down.
 
 ### 11.1 Fractional shares are ON — the 2026-08-27 decision is reversed
 
@@ -1102,7 +1107,7 @@ before acting.** Recording the overclaim rather than quietly correcting it,
 because it is exactly the failure mode this project keeps hitting: a single
 verified fact generalised into a standing one.
 
-### 11.2 Margin is ON, capped at 2.0x gross exposure
+### 11.2 Margin is ON, capped at 2.0x gross exposure — IMPLEMENTED (the cap, the ladder and the liquidation guard)
 
 **Owner ratified 1.5x, then raised it to 2.0x on 2026-09-01**, against my
 recommendation to defer. His reasoning, recorded because it is the reason the
@@ -1274,6 +1279,107 @@ its guardrail line and rule-priority rows 6 and 9 are what change back.
 **Sequencing.** 11.2's gross cap and both gap/liquidation guards land BEFORE
 or WITH 11.1. Fractional sizing plus no gross cap is the one ordering that is
 worse than either change alone.
+
+**IMPLEMENTED 2026-09-01** (the gross cap, the ladder and the liquidation
+guard — *not* 11.1, and *not* the margin-interest tracker, which is separate
+work). `allow_margin` is deliberately still `false`: the ceiling is built
+BEFORE borrowing is enabled, which is the whole sequencing requirement.
+
+**The ceiling.** `risk.max_gross_exposure_x: 2.0`. Gross = long market value
++ absolute short market value, leverage-adjusted, with the cash park
+(`cash_sweep.symbol`) excluded — one measurement, `src/risk/rules.py::
+gross_exposure`, and every consumer calls it. Enforced at BOTH gates, in
+Python, never as an instruction to an agent:
+
+| gate | where | what it does |
+|---|---|---|
+| sizing | `PortfolioConstructor.construct_orders` | shrinks entries to fit; refuses one whose remnant is under `min_order_usd` |
+| execution | `RiskRuleEngine.check` → `max_gross_exposure` (in `HARD_BLOCK_RULES`) | hard-blocks anything that reached the engine without that sizing |
+
+Distinct from `max_total_position_pct`, which bounds NET exposure — a hedge
+cancels a long there and does not here — and from `max_gross_bearish_pct`,
+which bounds only the bearish side. **No previous ceiling answered "how much
+does the book own", which is the question a margin call asks.**
+
+**The ladder** is `resolve_gross_ceiling(drawdown_pct, base_x)` — a PURE
+FUNCTION of peak-to-trough drawdown and the configured cap, returning the
+ratified 2.0/1.5/1.0/0.5 rungs. It can only ever TIGHTEN the configured cap,
+so lowering the setting lowers every rung. **Ties resolve to the tighter
+rung** (exactly -8.00% is 1.5x, not 2.0x); an UNKNOWN drawdown resolves to
+the standing cap and trims nothing, because a fresh account with no equity
+history has not fallen.
+
+**Block first, trim second — enforced structurally, not by convention.**
+`apply_gross_ceiling` counts planned exits, then rations new entries against
+the remaining headroom, and only then tests whether the HELD book ALONE is
+still over. Proposed exposure is not an input to that last test, so the
+engine cannot sell what the desk owns to make room for what it does not.
+
+**Nothing in the ladder depends on the Portfolio Manager.** The ceiling is
+resolved from account state in the run preamble
+(`TradingPipeline._enforce_gross_ceiling`), before any agent is called, and
+the de-lever is engine-authored. A blank or mid-JSON-truncated PM response —
+measured at 1 run in 10 on one candidate model — is a no-trade session, and
+must never also be a no-de-lever session.
+
+**Wired to `apply_drawdown_scale`, not duplicated.** That function keeps its
+ratified flat 0.5x halving of new BUYs on the rolling 5d/20d `in_drawdown`
+flag, unchanged in threshold or magnitude, and now takes the resolved ceiling
+so its note NAMES the rung in force. The two drawdown measures are
+deliberately distinct and documented as such: "has our recent edge degraded,
+so halve new BUYs" is not the same question as "how far are we off the
+high-water mark, so how much may the book own".
+
+**Distance-to-forced-liquidation** is computed by
+`distance_to_forced_liquidation_pct` from the maintenance requirement
+(`risk.maintenance_margin_pct: 25`) and reproduces this section's two
+published figures rather than restating them: 33.3% at 2.0x, 55.6% at 1.5x.
+It is on the session alert. It is deliberately NOT on `/account`: `src/api/`
+is forbidden by a ratified structural guardrail
+(`tests/test_api_safety.py::test_api_source_files_never_import_pipeline_or_risk`)
+from importing `src.risk.*` at all, and re-implementing the arithmetic in the
+API layer was rejected — a second definition of "how much does the book own"
+is the sprawl §12.2 cleaned up. `/account` reports the standing cap only
+(`RiskLimits.max_gross_exposure_x`). Putting the live ladder state on the
+dashboard needs the pure measurement functions moved out of `src.risk` first;
+that is not done and is the one piece of §11.2 left open.
+
+**The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (54 tests)
+asserts the ceiling CHANGES on both sides of all four thresholds, that new
+exposure is blocked before anything is trimmed, that the ladder is applied
+exactly once — per call AND across the sizing-gate/execution-gate chain, with
+trimming structurally restricted to a single caller — and that a blank-PM
+session in drawdown still de-levers. Every property was re-verified by
+mutating the implementation and confirming the tests fail: a constant ladder
+fails 23 of them, a trim-to-make-room ordering fails 4, a compounding
+multiplier fails 1, and a PM-coupled de-lever fails 5 (including the two
+named blank-PM tests). The session alert that renders the rung is pinned too
+— it is the only place a human sees the ladder, now that the dashboard
+cannot.
+
+**Mutation figures, re-measured 2026-09-01** (the numbers in the paragraph
+above were the first pass and understate three of the four; these are the
+ones actually reproduced, each mutation applied to `src/risk/rules.py` and
+reverted):
+
+| mutation | tests failed |
+|---|---|
+| the ladder never steps (rung loop disabled) | 24 of 54 |
+| trim-to-make-room (entries never rationed, trims judged on the *projected* book) | 6 |
+| the rung applied as a compounding multiplier on order size | 2 |
+| the de-lever suppressed when the PM proposed nothing | 5 |
+
+One negative result is worth recording, because it looks like a test hole and
+is not: changing *only* `over` in step 3 from `held_gross_after_exits` to
+`projected_gross` fails nothing. It cannot — step 2 has already capped
+`granted` at the headroom, so `projected_gross` can never exceed the ceiling
+unless the held book alone already does, in which case the two expressions
+are equal. Block-before-trim is enforced by the *sequence*, not by that
+subtraction, and a real trim-to-make-room defect (the row above) is caught 6
+ways.
+
+**Not done here, deliberately:** 11.1 (fractional shares), the margin-
+interest tracker, and flipping `allow_margin`.
 
 **Neither part ships without a rehearsal-rig run** — see the session-start
 rule in `docs/WORK.md`. This changes sizing and execution, which is exactly

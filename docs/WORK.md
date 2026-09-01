@@ -214,11 +214,54 @@ candidates reach the PM**, the same way `NominationConfig` already caps
 nominations, so the bill is a number that is set rather than one that emerges.
 Untested risk: the free tier is rate-limited and a much wider scan may hit it.
 
-**Still to build (nothing exists yet):** **ALL of Phase 11** — fractional
-sizing, its three required stop-placement guards, the 2.0x gross-exposure cap,
-the de-levering ladder, and distance-to-forced-liquidation monitoring — plus
-the wider universe with pruning. (The margin interest tracker below shipped
-2026-09-01, in part — see its status note.)
+**Phase 11 status, 2026-09-01, after verification and merge — this replaces
+both earlier claims, which had each gone stale in a different direction.**
+
+**MERGED and verified on `integration/ship-2026-09-01`:**
+- **Margin interest tracker.** Measures only, never gates. Review found and
+  fixed a real defect: it fast-exited whenever `allow_margin` was false and so
+  never read cash at all — unsafe, because covering a losing short is exempt
+  from the cash-only block and can carry a genuine debit balance.
+- **The sector cap no longer switches itself off.** Pre-existing rot,
+  reproduced against pristine `af266de`: a holding at 85% of equity plus a 10%
+  order, both in an unresolved sector, produced ZERO violations — 95% pooled
+  straight past the 90% ceiling. 80 of 101 universe symbols depend on a live
+  network lookup with no offline fallback, so the cap was inert for most of
+  what the desk trades. Verified NOT over-broad: cash-park never reaches the
+  code, index and sector ETFs resolve from static tables offline.
+- **Phase 11.2's ceiling and ladder.** 2.0x gross cap at the sizing and
+  execution gates; the ladder stepping 2.0/1.5/1.0/0.5 on peak-to-trough
+  drawdown. Both owner gates verified BY MUTATION, not by reading the tests:
+  breaking the ladder so it never steps fails 24 of 55 tests, making it trim
+  to make room fails 6, making the rung compound fails 2. The ladder runs in
+  the session preamble BEFORE any agent, from account state alone, so a blank
+  PM response cannot skip it — which is not hypothetical, a benchmark run that
+  night had one candidate model return an empty book on 1 run in 5.
+
+**VERIFIED MERGEABLE, merging in the same session: Phase 11.1** — fractional
+sizing and its three stop guards. No path leaves a fractional position
+silently unprotected; the owner alert fires unconditionally after every
+protection attempt. Review found and fixed a real gap: the 30-minute sweep's
+repair belt used a bare single-shot stop submit with no retry and no
+whole-share fallback — the same weakness the entry guard exists to close.
+
+**`allow_margin` REMAINS `false`.** The ceiling was built before borrowing is
+enabled; that was the sequencing requirement and it held. The flag and the PM
+prompt's exposure table move together, later, after the rehearsal rig has run
+against the merged result.
+
+**Still to build:** the wider universe with pruning (design recorded below, no
+code), and Phase 10.2 deterministic analyst weighting.
+
+**Open, documented, not blocking:** the live rung is not on Mission Control.
+`src/api/` may never import `src.risk` (ratified guardrail,
+`tests/test_api_safety.py`), so the dashboard shows the standing cap only; the
+session alert is the sole operator surface until the measurement functions
+move out of the risk package. Also worth the owner's eye: the ladder
+introduces a SECOND drawdown measure (peak-to-trough against a 252-day
+high-water mark) alongside the existing rolling-window one. One table, one
+resolver, so the mechanism is not duplicated — but it adds a measure rather
+than reusing the existing one.
 
 **Phase 11 was MISSING from this line until 2026-09-01 and that caused a real
 scope error.** A session read this list, built Phase 12 and the branch merges,
