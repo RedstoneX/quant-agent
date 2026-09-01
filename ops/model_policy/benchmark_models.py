@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import contextlib
+import hashlib
 import importlib
 import json
 import os
@@ -360,6 +361,57 @@ def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) 
 # --------------------------------------------------------------------------
 
 
+def _prompt_conflicts(sources: list[dict]) -> list[str]:
+    """Roles whose prompt sha differs between the files being merged."""
+    by_role: dict[str, dict[str, list[str]]] = {}
+    for src in sources:
+        for role, fp in (src.get("prompts") or {}).items():
+            sha = fp.get("sha256")
+            if sha:
+                by_role.setdefault(role, {}).setdefault(sha, []).append(src["path"])
+    out = []
+    for role, shas in sorted(by_role.items()):
+        if len(shas) > 1:
+            detail = "; ".join(
+                f"{sha[:12]} <- {', '.join(paths)}" for sha, paths in shas.items()
+            )
+            out.append(f"{role}: {detail}")
+    return out
+
+
+def prompt_fingerprints(scenarios) -> dict:
+    """Record WHICH PROMPT produced these scores.
+
+    The harness drives the real agent classes, which load
+    `config/prompts/<role>.md` from disk. The prompt is therefore an INPUT
+    to every grade, not a constant — and until 2026-09-01 no result file
+    recorded which version it was. That is how a full set of PM
+    model-selection numbers stayed on disk for a week after the prompt they
+    were measured against had been rewritten, with nothing to reveal it.
+    Nobody was careless; the file simply could not be asked the question.
+
+    A missing or unreadable prompt is recorded as an explicit error rather
+    than omitted, because a silently absent fingerprint reproduces the exact
+    failure this exists to prevent.
+    """
+    out: dict[str, dict] = {}
+    for role in sorted({s.role for s in scenarios}):
+        rel = f"config/prompts/{role}.md"
+        path = PROJECT_ROOT / rel
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            out[role] = {"path": rel, "error": str(exc)}
+            continue
+        out[role] = {
+            "path": rel,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+            "lines": raw.count(b"\n") + (0 if raw.endswith(b"\n") else 1),
+        }
+    return out
+
+
 def aggregate(trials: list[Trial]) -> dict:
     """Per (model, scenario) means, then per-model rollups."""
     by_pair: dict[tuple[str, str], list[Trial]] = {}
@@ -508,7 +560,9 @@ def main(argv: list[str] | None = None) -> int:
         superseded: list[str] = []
         for path in args.report:
             doc = json.loads(Path(path).read_text())
-            sources.append({"path": path, "generated_at": doc.get("generated_at")})
+            sources.append({"path": path,
+                            "generated_at": doc.get("generated_at"),
+                            "prompts": doc.get("prompts")})
             seen_here: set[tuple[str, str]] = set()
             for raw in doc["trials"]:
                 trial = Trial(**raw)
@@ -527,10 +581,30 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             for s in superseded:
                 print(f"  {s}", file=sys.stderr)
+        # Merging trials graded against DIFFERENT prompts is the silent
+        # staleness this fingerprint exists to catch. Say so loudly rather
+        # than averaging across a prompt rewrite.
+        prompt_conflicts = _prompt_conflicts(sources)
+        if prompt_conflicts:
+            print("PROMPT MISMATCH — these files were graded against "
+                  "different prompts. Their scores are NOT comparable:",
+                  file=sys.stderr)
+            for c in prompt_conflicts:
+                print(f"  {c}", file=sys.stderr)
+        missing = [s_["path"] for s_ in sources if not s_.get("prompts")]
+        if missing:
+            print("NO PROMPT FINGERPRINT recorded in "
+                  f"{len(missing)} file(s) — predates this field, so prompt "
+                  "drift CANNOT be ruled out:", file=sys.stderr)
+            for m_ in missing:
+                print(f"  {m_}", file=sys.stderr)
+
         report = {
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "merged_from": sources,
             "superseded_pairs": superseded,
+            "prompt_conflicts": prompt_conflicts,
+            "sources_without_prompt_fingerprint": missing,
             "baseline": BASELINE_MODEL,
             "scenarios": {s.key: {"role": s.role, "description": s.description}
                           for s in SCENARIOS},
@@ -611,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         "repeats": args.repeats,
         "scenarios": {s.key: {"role": s.role, "description": s.description}
                       for s in scenarios},
+        "prompts": prompt_fingerprints(scenarios),
         "pricing_used": {m: pricing.get(m) for m in models},
         "trials": [asdict(t) for t in trials],
         "aggregate": aggregate(trials),
