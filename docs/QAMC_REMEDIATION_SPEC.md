@@ -863,6 +863,122 @@ until size is expressed as risk. Build 2b first.
 
 ---
 
+## Phase 10 — One voice must never veto the book (owner-ratified 2026-09-01)
+
+**Status: ratified by Rex on 2026-09-01, not yet implemented.** Four decisions,
+all made by the owner in conversation, all pointing at the same defect: the
+pipeline repeatedly turns a judgement that should ADJUST a trade into a binary
+that BLOCKS it.
+
+**The evidence that produced them.** Morning run `run-64290730`, 2026-09-01.
+59 symbols analysed, 38 actionable, **zero trades**. Reconstructed from the
+run funnel:
+
+- **30 of 38 actionable signals (79%) scored below the 1.5 R/R floor** and were
+  untradeable before any human judgement applied — including the two
+  highest-conviction calls of the day, SLB `strong_buy/high` at 1.28 and AGX
+  `sell/high` at 0.84.
+- Of the 8 that cleared the floor, **5 were shorts** (NKE 2.28, GEV 2.12, UNH
+  1.90, NEE 1.84, FLNC 1.84). The PM proposed **none** of them and put up two
+  longs instead. Macro had called the day `risk-on / bullish / high`. The market
+  closed the session down. 15 bearish candidates reached
+  `technical_analysis_validated` and every one died at
+  `candidate_not_selected_for_target`.
+- Risk rejected the whole plan naming **XLE only** (constructed R/R 1.18).
+  **CHPX went down with it at R/R 3.03**, comfortably inside the floor, on an
+  unrelated technical thesis in a different sector.
+
+### 10.1 The risk verdict becomes per-trade, judged against the live portfolio
+
+`RiskVerdict.approved` is a single `bool` for the entire plan.
+`RiskModification` can retune a symbol's fields but cannot reject one symbol.
+So one failing leg kills every other leg in the same run.
+
+Change the verdict to carry a per-symbol outcome. A failing trade dies alone.
+
+**Owner's framing, which is sharper than the original and governs the design:**
+*the batch is arbitrary — it is whatever happened to be proposed in one run.
+Judging a trade against its accidental co-passengers makes no sense. Judge it
+against what the account actually holds.* Portfolio-level risk (correlation,
+concentration, total exposure) is a property of the **live book**, not of the
+run.
+
+**Not acceptable as a fix:** detecting the rejection and re-running the plan
+without the failing leg. That asks the wrong question twice instead of the
+right question once, and burns a second paid session to hide a schema defect.
+
+**Note for whoever implements this.** `docs/architecture/DECISION_CHAIN_AUDIT.md`
+records F5's veto hierarchy as *intentionally retained* after external review on
+2026-08-14. This is not a careless gate — it is a reviewed decision now being
+revised on evidence that did not exist then. Read that audit before changing the
+hierarchy, and record the supersession there.
+
+### 10.2 Macro sets exposure. Macro does not select trades.
+
+`config/prompts/portfolio_manager.md` orders the reasoning chain
+`macro_filter · news_check · earnings_check · signal_conflicts`. Macro is first
+and is named *filter*. For an LLM reading top-to-bottom that is an instruction
+to eliminate before considering, and on 2026-09-01 it did exactly that.
+
+- Technical, news, earnings and smart-money **select** what to trade.
+- Macro **sizes**: it sets total and net exposure, nothing else.
+
+A bullish macro call must not be able to suppress a qualified short. Under this
+split there is no conflict to resolve: a bullish macro keeps the book net long
+while an individual short lives inside that exposure. Macro was never asked
+about the single name.
+
+**Owner's correction, accepted:** *if the weighting is real, position in the
+prompt is irrelevant.* Ordering only matters today because there is no
+weighting — the PM is a language model reading prose. Compute the weighting
+deterministically in Python and hand the PM a ranked, scored list; then no
+analyst can dominate by position. This is the same principle as the
+reward:risk fix below and as PR #202: **the number comes from code, the agent
+brings judgement.**
+
+Macro remains authoritative for its own question — index and sector direction.
+It has little to say about a single name falling for months on company-specific
+news, and must not be allowed to answer that question by default.
+
+### 10.3 Concentration scales size. It does not veto.
+
+Sector crowding currently blocks. It should reduce position size. A
+high-conviction opportunity in an already-heavy sector should still be taken,
+smaller. Same defect as 10.2: a dial wired as a gate.
+
+### 10.4 The reward:risk gate is replaced, not relaxed
+
+**Do NOT simply lower the 1.5 floor.** The floor is not the defect; its inputs
+are.
+
+The stop is already derived in code from measured volatility
+(`min_stop_atr_multiple: 3.0`). The **target is the model's guess**. R/R is then
+`(target − entry) / (entry − stop)` — arithmetic performed on an opinion. A
+correctly-sized wide stop plus a modestly-guessed target rejects automatically,
+which is precisely how a `strong_buy/high` breakout (SLB, 7.7% stop) became
+untradeable.
+
+**Derive the target in code**, from the structural levels the system already
+computes from price history (see Phase 1, `feat/tech-analyst-structural-levels`)
+and the distance the symbol actually travels over the intended holding period.
+Then the ratio measures something real and the floor means what its name says.
+
+**Rejected alternative, and why.** An expected-value gate (win-rate × payoff)
+is the theoretically better answer and was proposed first. The owner rejected
+it for now: it requires a body of closed trades this account does not yet have,
+and it replaces one unmeasured number with another. Revisit under Phase 7 once
+there is real outcome history.
+
+### Ordering
+
+10.1 and 10.3 are contained schema/sizing changes. 10.2 requires the
+deterministic analyst-weighting layer and is the largest. 10.4 depends on
+Phase 1's structural levels being trustworthy. **Nothing here relaxes a risk
+limit** — every change converts a blunt refusal into a proportionate response,
+and the portfolio-level ceilings are untouched.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.
