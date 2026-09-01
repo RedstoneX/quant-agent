@@ -17,8 +17,19 @@ rejections first, then decide which of the two numbers is wrong."* Nobody came
 back. Four days later the desk reviewed 38 qualified signals and placed zero
 trades for exactly that reason.
 
-*(No decisions currently pending — all four raised on 2026-09-01 were ratified
-the same day and are recorded as spec Phase 12.)*
+**THREE of the four raised on 2026-09-01 were ratified that day and are spec
+Phase 12. The fourth was NOT — it was deferred, and I wrongly deleted its line
+while writing "all four were ratified". That is exactly the forbidden move this
+test guards against, and it made a later session believe the model choice was
+settled. Restored:**
+
+- [ ] DECIDE BY 2026-09-02 — Which model runs the `portfolio_manager` seat?
+  **NOT DECIDED. Do not act on the existing benchmark numbers** — every score in
+  `ops/model_policy/results/*2026-09-01*.json` was measured against the OLD
+  prompt and is stale (see below). Owner's instruction was to RE-MEASURE after
+  the rewritten prompt ships, then decide. The incumbent `openai/gpt-5.5`
+  stays until that re-run exists. Re-running is a re-run, not a rebuild — the
+  rig reads the prompt from disk.
 
 **START HERE — 2026-09-01 handoff. Everything below is a POINTER; the detail
 lives in the files named and is not repeated.**
