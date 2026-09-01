@@ -873,3 +873,52 @@ def test_flagging_a_summary_never_changes_the_phase_verdict():
     p.summary = "See docs/phases.yaml and PR #150 for the detail."
     assert p.verdict == "CONFIRMED"
     assert p.summary_flagged is True
+
+
+def test_no_pending_decision_is_overdue():
+    """A deferred decision must expire loudly, not quietly.
+
+    On 2026-08-28 `docs/WORK.md` said of the reward:risk floor: "gather a week
+    of these rejections first, then decide which of the two numbers is wrong."
+    Nobody came back to it. On 2026-09-01 the desk reviewed 38 qualified
+    signals and placed zero trades for precisely that reason, and the owner
+    pointed out — correctly — that we were re-deriving a conclusion the repo
+    had already reached and forgotten.
+
+    A promise to remember is not a mechanism. This is the mechanism: any line
+    matching `- [ ] DECIDE BY YYYY-MM-DD — ...` fails the build once that date
+    has passed, so an unmade decision becomes a red build rather than a quiet
+    omission.
+
+    Deleting the line to go green is the one forbidden fix. Decide it, record
+    the decision, and remove the line in the same commit.
+    """
+    import datetime as _dt
+    import re as _re
+
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+
+    pattern = _re.compile(r"^- \[ \] DECIDE BY (\d{4})-(\d{2})-(\d{2}) [-—] (.+)$")
+    today = _dt.date.today()
+    overdue = []
+    for line in work_md.read_text().splitlines():
+        m = pattern.match(line.strip())
+        if not m:
+            continue
+        y, mo, d, question = m.groups()
+        try:
+            due = _dt.date(int(y), int(mo), int(d))
+        except ValueError:  # a malformed date is itself a defect
+            overdue.append(f"unparseable date in: {line.strip()[:100]}")
+            continue
+        if due < today:
+            overdue.append(f"{due} ({(today - due).days}d overdue) — {question[:90]}")
+
+    assert not overdue, (
+        "docs/WORK.md has overdue pending decisions:\n  "
+        + "\n  ".join(overdue)
+        + "\n\nDecide them and remove the line in the same commit that records "
+          "the decision. Do NOT delete the line to make this pass."
+    )

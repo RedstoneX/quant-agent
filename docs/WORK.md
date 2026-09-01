@@ -4,6 +4,40 @@
 
 ### Session start — read this first
 
+## DECISIONS PENDING — CI FAILS WHEN ONE GOES OVERDUE
+
+**Do not delete a line to make the build pass. Decide it, then record the
+decision and remove the line in the SAME commit.**
+
+This block exists because a decision was already deferred here once and
+forgotten. On 2026-08-28 this file said, of the reward:risk floor: *"gather a
+week of these rejections first, then decide which of the two numbers is
+wrong."* Nobody came back. Four days later the desk reviewed 38 qualified
+signals and placed zero trades for exactly that reason. Rex asked how to stop
+it recurring; a promise is not an answer, so `test_no_pending_decision_is_
+overdue` in `tests/test_status_board.py` now fails the build once a date
+passes. Format is fixed — `- [ ] DECIDE BY YYYY-MM-DD — question` — because the
+test parses it.
+
+- [ ] DECIDE BY 2026-09-03 — Stop floor: adopt "honour a stop that sits at a
+  verified structural level however tight, apply the ATR floor only when no
+  level backs it"? Reasoning and the settling measurement are below under THE
+  CONCLUSION REACHED. This is the direct successor to the 2026-08-28 deferral
+  and is blocking trading today.
+- [ ] DECIDE BY 2026-09-05 — Sector exposure: does the sector limit measure
+  concentration (gross, unsigned) or net direction (signed)? Today a held short
+  makes its sector look SMALLER. Recommendation: separate long and short
+  budgets. See the entry below.
+- [ ] DECIDE BY 2026-09-05 — Is the 40% sector target still justified now that
+  `docs/OUTCOME.md` states this is a trading desk and not a retirement
+  portfolio? A sector limit's only defensible job here is bounding correlated
+  blow-up risk, which is a looser number.
+- [ ] DECIDE BY 2026-09-08 — Move the portfolio_manager seat to
+  `qwen/qwen3.7-max`? Measured better AND ~4x cheaper than the incumbent at
+  n=10. Owner asked to re-measure AFTER the rewritten prompt ships, so this
+  depends on the prompt landing first.
+
+
 **STATE AT 2026-09-01 END OF SESSION — read this before anything else.**
 
 **THE FIRST THING TO FIX, and state it correctly.** Stops are derived from
