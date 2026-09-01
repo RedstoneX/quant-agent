@@ -979,6 +979,101 @@ and the portfolio-level ceilings are untouched.
 
 ---
 
+## Phase 11 — Fractional sizing and bounded margin (owner-ratified 2026-09-01)
+
+**Status: ratified by Rex on 2026-09-01. NOT implemented, NOT deployed.**
+Two decisions taken together because they both change how a position is
+sized, and shipping one without the other changes the risk profile in a way
+neither decision intended.
+
+### 11.1 Fractional shares are ON — the 2026-08-27 decision is reversed
+
+**What the earlier decision said.** Fractional stays off because Alpaca
+supports fractional for simple orders but not combined with bracket/OCO, and
+QAMC attaches the protective stop as an OTO bracket at entry (invariant 3:
+every position carries a broker-resident stop from the moment it opens).
+Going fractional means placing the stop as a separate order after the fill —
+a window where a position exists unprotected.
+
+**Why it was wrong, in the owner's words: "if the gap is brief upon entry,
+then it's irrelevant to eliminate that option."** He is right, and the
+original reasoning conflated two different risks. A second or two of exposure
+on a liquid name is negligible. The real risk is the stop order **never
+landing at all** — an API error, a rate limit, the process dying between the
+two steps — and that is not a brief gap, it is an indefinite one.
+
+**That failure is already covered.** The intra-session stop-coverage
+reconcile runs every 30 minutes and reports e.g. "all 5 long / 0 short
+position(s) adequately stop-covered". So the true worst case is bounded at
+one reconcile interval, and only when placement failed outright. The
+machinery for attaching a stop to an already-landed fill also exists —
+`place_entry_protection(superseded_filled_qty=...)`, built for the re-peg
+case where a fill lands under a superseded order id.
+
+**Verified live 2026-09-01, not inherited from the note:** the paper account
+returns `fractionable=true` for MSFT, SPY and BRK.B.
+
+**Required before this ships — all three, none optional:**
+1. Stop placement retries immediately and hard on failure.
+2. A stop that still fails alerts the OWNER, not a log line.
+3. The 30-minute sweep gains an explicit check for positions with NO stop at
+   all, distinct from the existing "stop is present but mis-sized" path.
+
+**What it buys.** Exact sizing. Whole-share rounding is a silent, constant
+tax: V wanted 6% of the book and got 3.84%.
+
+**Also verified in the same check, unrelated but recorded here so it is not
+lost again:** `BRK-B` returns `asset not found` at the broker on every run.
+The correct symbol is `BRK.B`. The universe carries the wrong one.
+
+### 11.2 Margin is ON, capped at 1.5x gross exposure
+
+**Owner ratified 1.5x on 2026-09-01**, against my recommendation to defer.
+My argument was that the desk is 78% cash and refusing to deploy, so leverage
+raises the stakes on the few trades it does take rather than producing more
+of them. He considered it and decided; recorded here so the disagreement is
+visible rather than silently dropped, and so that if 11.2 is later reversed,
+the reason it was tried is legible.
+
+**The account already permits this.** Alpaca reports `multiplier: 4`,
+`buying_power` ~$28.2k against ~$9.88k equity. Margin is not being switched
+on — it is being BOUNDED for the first time.
+
+**This is the part that matters: there is currently NO gross-exposure cap in
+the codebase.** `max_portfolio_risk_pct: 25` bounds AT-RISK capital (the sum
+of stop distances), not gross exposure. Nothing today stops the book reaching
+4x; it sits at 21.7% invested purely by the PM's own choice. **So 11.2 adds a
+ceiling where none existed. Implementing it is a tightening, not a
+loosening** — and shipping fractional sizing (11.1) without it would remove
+the whole-share friction that has been accidentally holding deployment down.
+
+**The rule:**
+- Gross exposure (long market value + absolute short market value) may not
+  exceed **1.5x equity**. Enforced deterministically in Python at the sizing
+  and execution gates, not by asking an agent to respect it.
+- **The cash-park does not count as exposure.** SGOV is parked cash, not a
+  position; counting it would consume the entire allowance doing nothing.
+- Never draw on the 4x intraday allowance — it forces a flat close.
+
+**Two exposures the current risk envelope does not model, and must before
+this is trusted:**
+1. **Overnight gap.** Stops protect intraday. They do not protect against an
+   open 15% lower, and levered that gap comes out of a thinner cushion. A
+   separate, tighter ceiling on overnight gross exposure is required.
+2. **Forced liquidation.** Below maintenance margin the broker sells, at the
+   worst moment, without asking. Nothing currently watches the distance to
+   that threshold or alerts on it.
+
+**Sequencing.** 11.2's gross cap and both gap/liquidation guards land BEFORE
+or WITH 11.1. Fractional sizing plus no gross cap is the one ordering that is
+worse than either change alone.
+
+**Neither part ships without a rehearsal-rig run** — see the session-start
+rule in `docs/WORK.md`. This changes sizing and execution, which is exactly
+the class the rig exists for.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.
