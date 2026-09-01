@@ -808,11 +808,20 @@ def apply_gross_ceiling(
                 f"({ceiling.ceiling_x:.1f}x equity)"
             )
         before = float(decision.allocation_pct)
-        if available < max(0.0, min_order_usd):
+        # `available` is GROSS dollars; `min_order_usd` is a NOTIONAL floor —
+        # what the order actually costs, which is what pays the commission.
+        # For a leveraged ETF the two differ: $600 of gross headroom in SQQQ
+        # (3x) buys a $200 order, which is below the floor. Comparing gross
+        # against a notional threshold would let exactly that token position
+        # through on the two tickers whose multiplier exceeds 1 (SDS 2x,
+        # SQQQ 3x); for everything else the two figures are identical.
+        if (available / multiplier) < max(0.0, min_order_usd):
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
             out.notes.append(
-                f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {reason}. "
+                f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {reason}, "
+                f"and what the ceiling still allows is below the "
+                f"${min_order_usd:,.0f} minimum worth trading. "
                 f"{ceiling.reason}"
             )
             continue
@@ -821,7 +830,7 @@ def apply_gross_ceiling(
         after = math.floor(
             (available / (equity * multiplier) * 100.0) * 100.0
         ) / 100.0
-        if after <= 0 or (equity * (after / 100.0) * multiplier) < min_order_usd:
+        if after <= 0 or (equity * (after / 100.0)) < min_order_usd:
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
             out.notes.append(

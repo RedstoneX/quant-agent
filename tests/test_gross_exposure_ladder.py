@@ -275,6 +275,33 @@ def test_a_remnant_below_the_minimum_order_is_refused_not_placed():
 # THE GATE, PART 3 — the ladder is applied EXACTLY ONCE.
 # ===========================================================================
 
+def test_the_minimum_order_floor_is_notional_not_gross():
+    """`min_order_usd` is what the order COSTS — the figure that has to pay a
+    commission. The headroom the ceiling grants is measured in GROSS, and for
+    a leveraged ETF the two are not the same number.
+
+    SQQQ is 3x, so $600 of gross headroom buys a $200 order. Comparing the
+    gross figure against a $500 notional floor would place exactly the token
+    position §10.3 exists to refuse.
+    """
+    positions = [_position("NVDA", qty=194.0, current_price=100.0)]  # $19.4k
+    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)              # $20k
+    short = TradeDecision(
+        action="SHORT", symbol="SQQQ", allocation_pct=10.0,
+        entry_price=100.0, stop_loss=110.0, take_profit=80.0,
+        reasoning="hedge",
+    )
+
+    outcome = apply_gross_ceiling(
+        [short], positions, EQUITY, ceiling, min_order_usd=500.0,
+    )
+
+    # $600 of gross headroom / 3x = a $200 order. Below the floor: refused.
+    assert short.allocation_pct == 0.0
+    assert outcome.blocked == ["SQQQ"]
+    assert "minimum worth trading" in " ".join(outcome.notes)
+
+
 def test_the_ceiling_is_a_level_so_applying_it_twice_changes_nothing():
     """Double-application is a live failure mode: the PM prompt tells the
     model the ladder is the engine's arithmetic and never its own, so if the
@@ -457,6 +484,15 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     assert morning.index("_enforce_gross_ceiling") < morning.index("_decision_stage"), (
         "the de-lever must run BEFORE the Portfolio Manager is called, so a "
         "blank or truncated model response cannot skip it"
+    )
+
+    # The midday/close lane has its own agent (the position reviewer) and the
+    # same requirement: the ladder steps on measured drawdown, and a reviewer
+    # that returns nothing must not postpone the de-lever to tomorrow.
+    review = inspect.getsource(TradingPipeline.run_position_review)
+    assert review.index("_enforce_gross_ceiling") < review.index("position_reviewer"), (
+        "the de-lever must run BEFORE the position reviewer is called, for "
+        "the same reason it runs before the Portfolio Manager"
     )
 
 
@@ -705,3 +741,159 @@ def test_an_unusable_equity_figure_refuses_every_new_position():
     assert decision.allocation_pct == 0.0
     assert outcome.blocked == ["AMD"]
     assert outcome.trims == []
+
+
+# ===========================================================================
+# THE GATE, PART 3b — exactly once ACROSS THE CHAIN, not just per call.
+#
+# The tests above prove one call is idempotent. These prove the two gates the
+# ceiling is actually enforced at — the SIZING gate (PortfolioConstructor,
+# which shrinks) and the EXECUTION gate (RiskRuleEngine, which blocks) — do
+# not compound when run back-to-back on the same order, and that only ONE
+# caller in the whole codebase is allowed to author a trim.
+# ===========================================================================
+
+def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
+    """The real chain, in order. The sizing gate shrinks an oversized entry
+    to exactly the headroom the ceiling allows; the execution gate then sees
+    that same order and must let it through untouched.
+
+    Two failures are guarded here at once:
+      * the execution gate REJECTING what the sizing gate just made fit —
+        the ceiling would produce no-trade sessions instead of smaller ones;
+      * either gate shrinking a second time — the book would de-lever twice
+        as hard as the ratified rung.
+    """
+    positions = [_position("NVDA", qty=100.0, current_price=100.0)]   # $10k
+    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)             # 1.5x = $15k
+    assert ceiling.ceiling_x == 1.5
+    decision = _buy("AMD", 100.0)                                     # wants $10k
+
+    # --- gate 1: sizing. `emit_trims=False` is exactly how the constructor
+    # calls it — shrinking its own proposal is its job, trimming is not.
+    apply_gross_ceiling(
+        [decision], positions, EQUITY, ceiling,
+        min_order_usd=500.0, emit_trims=False,
+    )
+    after_sizing = decision.allocation_pct
+    assert after_sizing == pytest.approx(50.0), "shrunk to the $5k of headroom"
+
+    # --- gate 2: execution. Same ceiling, same order, same book.
+    engine = RiskRuleEngine(_risk_config())
+    violations = engine.check(
+        decision=decision, positions=positions, total_value=EQUITY,
+        daily_pnl=0.0, gross_ceiling=ceiling,
+    )
+    assert GROSS_EXPOSURE_RULE not in [v.rule for v in violations], (
+        "the execution gate must not reject an order the sizing gate already "
+        "fitted under the very same ceiling"
+    )
+    assert decision.allocation_pct == after_sizing, (
+        "the execution gate BLOCKS; it must never re-size, or the two gates "
+        "would compound into a double de-lever"
+    )
+
+    # --- and the sizing gate run again is still a no-op.
+    apply_gross_ceiling(
+        [decision], positions, EQUITY, ceiling,
+        min_order_usd=500.0, emit_trims=False,
+    )
+    assert decision.allocation_pct == after_sizing
+
+
+def test_trimming_the_held_book_has_exactly_one_owner():
+    """Structural, because convention does not hold and mechanism does.
+
+    Two callers authoring de-lever orders from the same ceiling in one
+    session is the compounding failure that arithmetic idempotence cannot
+    catch — each would be individually correct and the book would be sold
+    down twice. So: across all of `src/`, exactly ONE call to
+    `apply_gross_ceiling` may leave `emit_trims` at its default of True, and
+    it must be the run preamble in `pipeline.py`, which runs before any agent
+    and therefore keeps working when the Portfolio Manager returns nothing.
+    """
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent / "src"
+    trim_owners: list[str] = []
+    sizing_callers: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name != "apply_gross_ceiling":
+                continue
+            emit = next(
+                (kw.value for kw in node.keywords if kw.arg == "emit_trims"), None,
+            )
+            disabled = isinstance(emit, ast.Constant) and emit.value is False
+            (sizing_callers if disabled else trim_owners).append(path.name)
+
+    assert trim_owners == ["pipeline.py"], (
+        f"exactly one caller may author de-lever orders; found {trim_owners}"
+    )
+    assert sizing_callers == ["portfolio_constructor.py"], (
+        f"the sizing gate must pass emit_trims=False; found {sizing_callers}"
+    )
+
+
+# ===========================================================================
+# The operator's view. With the ladder deliberately absent from Mission
+# Control (`src/api/` may never import the risk stack — see
+# tests/test_api_safety.py), the session alert is the ONLY place a human sees
+# which rung is in force. It was shipped untested; these pin it.
+# ===========================================================================
+
+def test_the_session_alert_reports_the_rung_in_force():
+    from src.notifier import _append_leverage_line
+
+    lines: list[str] = []
+    _append_leverage_line(lines, {"leverage": {
+        "gross_x": 1.8, "ceiling_x": 1.5, "base_ceiling_x": 2.0,
+        "drawdown_pct": -12.0, "distance_to_forced_liquidation_pct": 55.6,
+        "alert_owner": False,
+    }})
+
+    assert len(lines) == 1
+    line = lines[0]
+    assert "1.80x" in line and "1.50x" in line
+    assert "56% fall to a margin call" in line   # 55.6 rendered to 0dp
+    assert "12.0% below the equity high" in line
+    # Rex is red-green colour blind: the de-levered STATE must be carried by
+    # the word, never by a colour or an icon alone.
+    assert "DE-LEVERED" in line
+
+
+def test_the_alert_stays_silent_when_nothing_was_measured():
+    """An omitted line is honest; an invented '1.0x' is not."""
+    from src.notifier import _append_leverage_line
+
+    for result in ({}, {"leverage": {}}, {"leverage": {"gross_x": None,
+                                                       "ceiling_x": 1.5}}):
+        lines: list[str] = []
+        _append_leverage_line(lines, result)
+        assert lines == []
+
+
+def test_the_deepest_rung_raises_a_separate_owner_alert():
+    from src.notifier import _append_leverage_line
+
+    lines: list[str] = []
+    _append_leverage_line(lines, {"leverage": {
+        "gross_x": 0.4, "ceiling_x": 0.5, "base_ceiling_x": 2.0,
+        "drawdown_pct": -24.0, "distance_to_forced_liquidation_pct": 100.0,
+        "alert_owner": True,
+    }})
+
+    assert len(lines) == 2, "the -20% rung gets its own line, not a footnote"
+    alert = lines[1]
+    assert "DRAWDOWN PAST -20%" in alert
+    # The cap must be READ from the resolved ceiling, never hardcoded — a
+    # literal would go stale the day the ratified ladder changes.
+    assert "0.50x equity" in alert
+    # And the claim must be exact: this book is UNDER its cap, so it is not
+    # true that every new position is refused.
+    assert "refused once the book reaches it" in alert

@@ -154,8 +154,12 @@ universe with pruning.
 enforced at the sizing and execution gates, the graduated de-levering ladder
 (2.0 / 1.5 / 1.0 / 0.5 on peak-to-trough drawdown, blocking new exposure
 before trimming anything, resolved from account state so a blank PM response
-cannot skip it), and distance-to-forced-liquidation on the alert and the
-dashboard. **`allow_margin` is still `false`** — the ceiling was built before
+cannot skip it), and distance-to-forced-liquidation on the session alert.
+**Not on the dashboard:** `src/api/` may never import `src.risk` (ratified
+guardrail, `tests/test_api_safety.py`), so Mission Control shows the standing
+cap only — putting the live rung there needs the measurement functions moved
+out of `src.risk` first, and that is the one piece of §11.2 left open.
+**`allow_margin` is still `false`** — the ceiling was built before
 borrowing is enabled, which was the sequencing requirement. See the
 IMPLEMENTED note at the end of §11.2 in `docs/QAMC_REMEDIATION_SPEC.md`.
 

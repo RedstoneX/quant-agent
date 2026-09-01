@@ -56,7 +56,6 @@ from src.api.schemas import (
     PositionsResponse,
     PriceBar,
     PriceBarsResponse,
-    LeverageState,
     RiskLimits,
 )
 
@@ -289,85 +288,18 @@ def _compute_risk_limits() -> RiskLimits:
     )
 
 
-def _compute_leverage(portfolio_value: float | None) -> LeverageState:
-    """Spec §11.2 — gross exposure, the ladder-resolved ceiling in force, and
-    the distance to forced liquidation.
-
-    Read-only. Every number comes from the SAME `src.risk.rules` functions
-    the trading engine enforces with, so the dashboard cannot drift from the
-    gate. Degrades to an honest empty LeverageState on any failure — the
-    same fail-closed-to-empty posture as `_compute_liquidity` — because a
-    guessed leverage figure is worse than a missing one.
-    """
-    try:
-        from src.risk.rules import (
-            distance_to_forced_liquidation_pct,
-            gross_exposure,
-            peak_to_trough_pct,
-            resolve_gross_ceiling,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("routes_live._compute_leverage: risk rules unavailable: %s", exc)
-        return LeverageState()
-    if not isinstance(portfolio_value, (int, float)) or portfolio_value <= 0:
-        return LeverageState()
-
-    try:
-        limits = get_risk_limits()
-        base_x = float(getattr(limits, "max_gross_exposure_x", 2.0) or 2.0)
-        maintenance_pct = float(getattr(limits, "maintenance_margin_pct", 25.0) or 25.0)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("routes_live._compute_leverage: could not read risk config: %s", exc)
-        return LeverageState()
-
-    try:
-        sweep_symbol = get_cash_sweep_symbol() if get_cash_sweep_enabled() else None
-    except Exception:  # noqa: BLE001
-        sweep_symbol = None
-
-    positions_result = read_positions()
-    if positions_result.get("error") is not None:
-        return LeverageState()
-
-    class _P:
-        __slots__ = ("symbol", "market_value")
-
-        def __init__(self, symbol, market_value):
-            self.symbol = symbol
-            self.market_value = market_value
-
-    holdings = [
-        _P(p.get("symbol") or "", p.get("market_value") or 0.0)
-        for p in positions_result.get("positions", [])
-    ]
-    gross = gross_exposure(holdings, cash_park_symbol=sweep_symbol)
-
-    drawdown_pct = None
-    try:
-        from src.api.db_reads import get_recent_daily_pnl
-        rows = get_recent_daily_pnl(limit=252) or []
-        drawdown_pct = peak_to_trough_pct(
-            [r.get("total_value") for r in rows], portfolio_value,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "routes_live._compute_leverage: equity curve unreadable, the "
-            "ladder step cannot be shown: %s", exc,
-        )
-
-    ceiling = resolve_gross_ceiling(drawdown_pct, base_x=base_x)
-    return LeverageState(
-        gross_exposure_usd=gross,
-        gross_exposure_x=gross / portfolio_value,
-        ceiling_x=ceiling.ceiling_x,
-        base_ceiling_x=ceiling.base_x,
-        drawdown_pct=ceiling.drawdown_pct,
-        distance_to_forced_liquidation_pct=distance_to_forced_liquidation_pct(
-            gross, portfolio_value, maintenance_margin_pct=maintenance_pct,
-        ),
-        de_levered=ceiling.de_levered,
-        reason=ceiling.reason,
-    )
+# NOTE (§11.2): Mission Control does NOT compute gross exposure, the
+# de-levering ladder, or distance-to-forced-liquidation. Doing so requires
+# `src.risk.rules`, and `src/api/` is forbidden by a ratified structural
+# guardrail (tests/test_api_safety.py) from importing the trading/risk stack
+# at all. Re-implementing the arithmetic here instead was explicitly rejected:
+# a second definition of "how much does the book own" is the exact sprawl
+# §12.2 cleaned up, and a dashboard that drifts from the gate is worse than a
+# dashboard that stays quiet. The standing cap is still reported on
+# `RiskLimits.max_gross_exposure_x` above (config read, no risk import), and
+# the live ladder state reaches the operator on the session alert
+# (`src/notifier.py::_append_leverage_line`). Showing it here needs the pure
+# measurement functions extracted to a module outside `src.risk` first.
 
 
 @router.get("/account", response_model=AccountResponse)
@@ -401,10 +333,6 @@ def get_account() -> AccountResponse:
 
         liquidity = _compute_liquidity(cash, portfolio_value) if acct.get("error") is None else None
         risk_limits = _compute_risk_limits()
-        leverage = (
-            _compute_leverage(portfolio_value)
-            if acct.get("error") is None else None
-        )
 
         return AccountResponse(
             cash=cash,
@@ -416,7 +344,6 @@ def get_account() -> AccountResponse:
             history=history,
             liquidity=liquidity,
             risk_limits=risk_limits,
-            leverage=leverage,
             error=acct.get("error"),
         )
     except Exception as exc:

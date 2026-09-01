@@ -774,10 +774,16 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
     prefix = "⚠️ DE-LEVERED" if de_levered else "leverage"
     lines.append(f"{prefix} — {'  ·  '.join(parts)}")
     if leverage.get("alert_owner"):
+        # The rung is READ from the resolved ceiling, never restated as a
+        # literal: a hardcoded "0.5x" here would go stale the day the ratified
+        # ladder changes, and an alert that misreports the cap is worse than
+        # no alert. And the wording is exact — at the lowest rung new
+        # positions are refused ONCE THE BOOK REACHES the cap, not
+        # unconditionally; a book already below it may still trade.
         lines.append(
-            "🔴 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
-            "rung. Gross exposure is capped at 0.5x equity and new positions "
-            "are being refused until the account recovers."
+            f"🔴 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
+            f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
+            f"new positions are refused once the book reaches it."
         )
 
 

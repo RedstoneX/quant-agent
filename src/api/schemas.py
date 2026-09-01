@@ -103,38 +103,11 @@ class RiskLimits(BaseModel):
     # (long market value + absolute short market value, cash park excluded).
     # Distinct from max_total_position_pct, which bounds NET exposure — a
     # hedge cancels a long there and does not here. The ladder-stepped
-    # ceiling actually in force this session is on LeverageState below.
+    # ladder-stepped ceiling actually in force this session is NOT exposed
+    # here: computing it needs `src.risk.rules`, which `src/api/` may never
+    # import (tests/test_api_safety.py). It reaches the operator on the
+    # session alert instead.
     max_gross_exposure_x: float | None = None
-
-
-class LeverageState(BaseModel):
-    """Spec §11.2 — what the book owns against what it is allowed to own,
-    and how far it could fall before the broker liquidates it.
-
-    Read-only display of a deterministic measurement. Nothing here is
-    computed as a risk DECISION by the API; the same functions
-    (`src.risk.rules`) the trading engine enforces with produce these
-    numbers. None fields mean "not measurable right now" — never a guessed
-    default standing in for a real one."""
-    #: Long market value + |short market value|, in dollars. The cash-sweep
-    #: vehicle is excluded: it is parked cash, not a position.
-    gross_exposure_usd: float | None = None
-    #: The same figure as a multiple of equity.
-    gross_exposure_x: float | None = None
-    #: The ceiling actually in force — the standing cap, stepped down by the
-    #: de-levering ladder if the account is in drawdown.
-    ceiling_x: float | None = None
-    #: The standing cap before any ladder step.
-    base_ceiling_x: float | None = None
-    #: Peak-to-trough drawdown driving the ladder, as a negative percent.
-    drawdown_pct: float | None = None
-    #: How far, in percent, the book could fall before forced liquidation.
-    #: ~33% at 2.0x undrawn. Nothing watched this before §11.2.
-    distance_to_forced_liquidation_pct: float | None = None
-    #: True when a ladder rung has tightened the standing cap.
-    de_levered: bool = False
-    #: Plain-language explanation of the ceiling currently in force.
-    reason: str | None = None
 
 
 class AccountResponse(BaseModel):
@@ -148,7 +121,6 @@ class AccountResponse(BaseModel):
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
     liquidity: LiquidityBreakdown | None = None
     risk_limits: RiskLimits | None = None
-    leverage: LeverageState | None = None
     error: str | None = None             # set (fields above null) when the broker read failed
 
 

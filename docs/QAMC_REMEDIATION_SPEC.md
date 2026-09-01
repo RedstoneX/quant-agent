@@ -1286,15 +1286,49 @@ high-water mark, so how much may the book own".
 `distance_to_forced_liquidation_pct` from the maintenance requirement
 (`risk.maintenance_margin_pct: 25`) and reproduces this section's two
 published figures rather than restating them: 33.3% at 2.0x, 55.6% at 1.5x.
-It is on the session alert and on `/account` (`AccountResponse.leverage`).
+It is on the session alert. It is deliberately NOT on `/account`: `src/api/`
+is forbidden by a ratified structural guardrail
+(`tests/test_api_safety.py::test_api_source_files_never_import_pipeline_or_risk`)
+from importing `src.risk.*` at all, and re-implementing the arithmetic in the
+API layer was rejected — a second definition of "how much does the book own"
+is the sprawl §12.2 cleaned up. `/account` reports the standing cap only
+(`RiskLimits.max_gross_exposure_x`). Putting the live ladder state on the
+dashboard needs the pure measurement functions moved out of `src.risk` first;
+that is not done and is the one piece of §11.2 left open.
 
-**The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (49 tests)
+**The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (54 tests)
 asserts the ceiling CHANGES on both sides of all four thresholds, that new
 exposure is blocked before anything is trimmed, that the ladder is applied
-exactly once, and that a blank-PM session in drawdown still de-levers. Each
-property was verified adversarially — a constant ladder fails 22 of them, a
-trim-to-make-room ordering fails 3, a compounding multiplier fails 1, and a
-PM-coupled de-lever fails 4.
+exactly once — per call AND across the sizing-gate/execution-gate chain, with
+trimming structurally restricted to a single caller — and that a blank-PM
+session in drawdown still de-levers. Every property was re-verified by
+mutating the implementation and confirming the tests fail: a constant ladder
+fails 23 of them, a trim-to-make-room ordering fails 4, a compounding
+multiplier fails 1, and a PM-coupled de-lever fails 5 (including the two
+named blank-PM tests). The session alert that renders the rung is pinned too
+— it is the only place a human sees the ladder, now that the dashboard
+cannot.
+
+**Mutation figures, re-measured 2026-09-01** (the numbers in the paragraph
+above were the first pass and understate three of the four; these are the
+ones actually reproduced, each mutation applied to `src/risk/rules.py` and
+reverted):
+
+| mutation | tests failed |
+|---|---|
+| the ladder never steps (rung loop disabled) | 24 of 54 |
+| trim-to-make-room (entries never rationed, trims judged on the *projected* book) | 6 |
+| the rung applied as a compounding multiplier on order size | 2 |
+| the de-lever suppressed when the PM proposed nothing | 5 |
+
+One negative result is worth recording, because it looks like a test hole and
+is not: changing *only* `over` in step 3 from `held_gross_after_exits` to
+`projected_gross` fails nothing. It cannot — step 2 has already capped
+`granted` at the headroom, so `projected_gross` can never exceed the ceiling
+unless the held book alone already does, in which case the two expressions
+are equal. Block-before-trim is enforced by the *sequence*, not by that
+subtraction, and a real trim-to-make-room defect (the row above) is caught 6
+ways.
 
 **Not done here, deliberately:** 11.1 (fractional shares), the margin-
 interest tracker, and flipping `allow_margin`.
