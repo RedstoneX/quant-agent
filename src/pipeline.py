@@ -1884,15 +1884,46 @@ class TradingPipeline:
                 symbol, stop_price, price,
             )
             return False
-        try:
-            self.broker._submit_stop_limit_order(
-                symbol=symbol, qty=uncovered_qty, stop_price=stop_price,
-                limit_price=stop_price * (1 - self.broker.STOP_LIMIT_BUFFER_PCT),
-            )
-        except Exception as exc:  # noqa: BLE001
+        # Spec §11.1 guard 1 belongs here too. This was a single bare
+        # `_submit_stop_limit_order` call with NO retry burst at all — a
+        # transient failure (429, dropped connection) cost the position a
+        # full 30-minute cycle instead of clearing in ~2 seconds the way the
+        # entry path does, and for a FRACTIONAL `uncovered_qty` (this repair
+        # is reached with one whenever the gapped position is itself
+        # fractional) there was also no whole-share fallback — the exact gap
+        # guard 1 exists to close on the entry side, left open on the belt
+        # that is supposed to be its backstop. Route through the same
+        # retrying+fallback machinery instead of a second, weaker copy of it.
+        result = self.broker._submit_protective_stop_retrying(
+            symbol=symbol, qty=uncovered_qty, stop_price=stop_price,
+            limit_price=stop_price * (1 - self.broker.STOP_LIMIT_BUFFER_PCT),
+            side="sell",
+        )
+        if result is None:
             logger.error(
-                "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f): %s",
-                symbol, uncovered_qty, stop_price, exc,
+                "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f) — "
+                "retries exhausted", symbol, uncovered_qty, stop_price,
+            )
+            return False
+        residual = 0.0
+        if isinstance(result, dict):
+            try:
+                residual = float(result.get("uncovered_qty") or 0)
+            except (TypeError, ValueError):
+                residual = 0.0
+        if residual > 0:
+            # A whole-share floor stop landed but a sub-share sliver is
+            # still gapped. Reported as NOT repaired — not because nothing
+            # happened, but because the gap is real and smaller, not gone.
+            # The broker snapshot the NEXT sweep takes reflects the partial
+            # cover on its own and reclassifies this symbol "partial" rather
+            # than "none"; this pass keeps escalating instead of going quiet
+            # on a still-real gap.
+            logger.warning(
+                "coverage repair PARTIAL for %s: covered %.4f of %.4f "
+                "uncovered share(s) at stop $%.2f — %.4f share(s) still "
+                "gapped; next sweep will re-check", symbol,
+                uncovered_qty - residual, uncovered_qty, stop_price, residual,
             )
             return False
         logger.warning(

@@ -612,3 +612,66 @@ def test_an_intra_tick_that_found_a_coverage_gap_breaks_the_silence():
     assert msg is not None
     assert "NO STOP AT ALL" in msg
     assert "NAKED" in msg
+
+
+# ==========================================================================
+# 7. Guard 1, extended — the repair belt retries too
+#
+# `_repair_stop_coverage` (the 30-minute sweep's auto-repair) originally
+# called the broker's bare single-shot `_submit_stop_limit_order` directly —
+# no retry burst, and no whole-share fallback for a fractional
+# `uncovered_qty`, which this repair is reached with whenever the gapped
+# position is itself fractional. That is the same gap guard 1 exists to
+# close on the entry path, left open on the belt that is supposed to be its
+# backstop. Fixed by routing through `_submit_protective_stop_retrying`.
+# ==========================================================================
+
+def _repair_pipeline(*, stop_loss=140.0, live_price=150.0) -> MagicMock:
+    pipeline = MagicMock()
+    pipeline.db.get_symbol_last_buy.return_value = {"stop_loss": stop_loss}
+    pipeline.broker.get_latest_price.return_value = live_price
+    pipeline.broker.STOP_LIMIT_BUFFER_PCT = 0.03
+    return pipeline
+
+
+def test_repair_retries_a_transient_failure_in_band():
+    """A transient failure on the repair belt now clears inside the same
+    ~2-second burst instead of costing the position a full 30-minute cycle."""
+    pipeline = _repair_pipeline()
+    pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "r1"}
+
+    out = TradingPipeline._repair_stop_coverage(pipeline, "NVDA", 10.0)
+
+    assert out is True
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="NVDA", qty=10.0, stop_price=140.0,
+        limit_price=pytest.approx(140.0 * (1 - 0.03)), side="sell",
+    )
+
+
+def test_repair_exhausted_reports_unrepaired():
+    pipeline = _repair_pipeline()
+    pipeline.broker._submit_protective_stop_retrying.return_value = None
+
+    out = TradingPipeline._repair_stop_coverage(pipeline, "NVDA", 10.0)
+
+    assert out is False
+
+
+def test_repair_of_a_fractional_gap_that_only_partially_covers_keeps_escalating():
+    """The retry machinery fell back to a whole-share floor stop — real
+    progress, but a sub-share sliver is still gapped. `repaired` must stay
+    False so THIS pass keeps escalating; the next sweep's fresh broker
+    snapshot reclassifies the symbol 'partial' on its own."""
+    pipeline = _repair_pipeline()
+    pipeline.broker._submit_protective_stop_retrying.return_value = {
+        "id": "r1", "covered_qty": 12.0, "uncovered_qty": 0.3456,
+    }
+
+    out = TradingPipeline._repair_stop_coverage(pipeline, "NVDA", 12.3456)
+
+    assert out is False, "a real but partial cover must not read as repaired"
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="NVDA", qty=12.3456, stop_price=140.0,
+        limit_price=pytest.approx(140.0 * (1 - 0.03)), side="sell",
+    )
