@@ -34,6 +34,136 @@ def _gross_multiplier(symbol: str) -> float:
     return abs(_ETF_LEVERAGE.get(symbol, 1.0))
 
 
+# --- Spec §12.2 "long and short sector budgets are separate" --------------
+#
+# The defect this replaces: sector exposure was summed from SIGNED
+# `market_value`, so a HELD SHORT made its sector look SMALLER and the book
+# could over-concentrate unseen. The comment above that summation said
+# "gross ... unsigned magnitude" while the code was signed — code and comment
+# disagreed, and the comment was the one people read.
+#
+# Owner's ratified rule (2026-09-01), which governs the design: *"A long and
+# a short in the same sector is not a hedge... We are trading opportunities."*
+# So LONG sector exposure and SHORT sector exposure are tracked
+# INDEPENDENTLY, each measured against the same limit. Neither offsets the
+# other, and neither consumes the other's budget.
+#
+# GROSS SUMMING WAS EXPLICITLY REJECTED. Summing |long| + |short| into one
+# bucket would block the pair trade the owner wants legal — long the leader
+# and short the laggard in the same hot sector — by charging one sector
+# budget twice for two independent opportunities.
+#
+# The split is by POSITION SIDE (long vs short), not by bullish/bearish
+# thesis. An inverse-ETF LONG is long-side exposure in its sector; the
+# separate `max_gross_bearish_pct` cap answers the directional question and
+# is untouched here.
+#
+# One definition, four consumers, on purpose: `RiskRuleEngine.check` (the
+# gate), `PortfolioConstructor._current_sector_weights` (sizing),
+# `PMFacts` (what the Portfolio Manager reads) and the pipeline's projected
+# -portfolio preview all call these. Three independent implementations of
+# "how much is this sector holding" is exactly how the signed-vs-gross
+# defect survived for as long as it did.
+
+SECTOR_SIDE_LONG = "long"
+SECTOR_SIDE_SHORT = "short"
+
+
+def position_side(position) -> str:
+    """Which side of the book a HELD position sits on.
+
+    `qty` is authoritative — Alpaca reports a short with negative qty AND
+    negative market_value, but a position marked to a zero/uninitialised
+    price still has an honest qty sign. Falls back to `market_value` only
+    when qty is absent or exactly zero.
+    """
+    qty = getattr(position, "qty", 0.0) or 0.0
+    if qty:
+        return SECTOR_SIDE_SHORT if qty < 0 else SECTOR_SIDE_LONG
+    market_value = getattr(position, "market_value", 0.0) or 0.0
+    return SECTOR_SIDE_SHORT if market_value < 0 else SECTOR_SIDE_LONG
+
+
+def decision_side(action: str) -> str:
+    """Which side a proposed order would land on. SHORT is the only short."""
+    return SECTOR_SIDE_SHORT if str(action).upper() == "SHORT" else SECTOR_SIDE_LONG
+
+
+def sector_side_gross(
+    positions, *, resolve_sector=None, include_unknown: bool = False,
+) -> dict[tuple[str, str], float]:
+    """Held GROSS (unsigned) exposure in DOLLARS, keyed by `(sector, side)`.
+
+    Unsigned is the point: a short contributes its magnitude to the SHORT
+    bucket rather than a negative number to the sector's single bucket.
+
+    `resolve_sector` is an optional `(position) -> str` hook, because the
+    consumers legitimately resolve a sector differently — the gate and the
+    constructor read `position.sector` verbatim, while the PM-facing previews
+    fall back to a `_get_sector` lookup when the broker left the field blank.
+    That difference is about NAMING a sector, not about MEASURING one, and is
+    deliberately left to the caller.
+
+    `include_unknown=False` matches the gate, which skips the sector cap
+    entirely for an unclassified symbol: counting "Unknown" here would ration
+    against exposure the gate does not measure. (That exemption is a known,
+    separate exposure — see the yfinance coverage note in the §12.2 spec
+    entry — and is deliberately NOT changed here.)
+    """
+    out: dict[tuple[str, str], float] = {}
+    for p in positions:
+        gross = abs(getattr(p, "market_value", 0.0) or 0.0) * _gross_multiplier(p.symbol)
+        if not gross:
+            # A closed/zero position is not exposure. Skipping it also keeps a
+            # spurious 0.0% row out of the sector tables the PM reads.
+            continue
+        sector = resolve_sector(p) if resolve_sector else getattr(p, "sector", "")
+        sector = (sector or "").strip() or "Unknown"
+        if sector == "Unknown" and not include_unknown:
+            continue
+        key = (sector, position_side(p))
+        out[key] = out.get(key, 0.0) + gross
+    return out
+
+
+def accumulate_pending_sector(
+    pending: dict[tuple[str, str], float], sector: str, action: str,
+    gross_amount: float,
+) -> None:
+    """Book an approved-but-unexecuted order into the `(sector, side)`
+    accumulator `RiskRuleEngine.check` reads.
+
+    Exists so no caller has to remember that the key is a tuple. Keying it by
+    the bare sector string silently misses every lookup — the accumulator
+    would appear to work and enforce nothing, which is the whole failure mode
+    §12.2 is cleaning up.
+    """
+    if not sector or sector == "Unknown":
+        return
+    key = (sector, decision_side(action))
+    pending[key] = pending.get(key, 0.0) + gross_amount
+
+
+def sector_side_weights(
+    positions, total_value: float, *, resolve_sector=None,
+    include_unknown: bool = False,
+) -> dict[tuple[str, str], float]:
+    """`sector_side_gross` expressed as a PERCENT of equity.
+
+    Empty for a non-positive `total_value` — there is no percentage of zero
+    equity, and returning zeros would read as "no concentration".
+    """
+    if not total_value or total_value <= 0:
+        return {}
+    return {
+        key: value / total_value * 100
+        for key, value in sector_side_gross(
+            positions, resolve_sector=resolve_sector,
+            include_unknown=include_unknown,
+        ).items()
+    }
+
+
 # --- Spec §10.3 "concentration scales size, it does not veto" -------------
 #
 # `max_sector_pct` used to be a HARD BLOCK: a sector at the cap refused the
@@ -50,21 +180,34 @@ def _gross_multiplier(symbol: str) -> float:
 #
 # TWO knobs, and they mean different things:
 #
-#   `soft` (`risk.max_sector_pct`, 40) — the diversification TARGET. At or
-#       below it, crowding costs a trade nothing. Above it, every additional
-#       trade in that sector is progressively shrunk.
+#   `soft` (`risk.max_sector_pct`, 75 as of spec §12.3) — the concentration
+#       TARGET. At or below it, crowding costs a trade nothing. Above it,
+#       every additional trade in that sector is progressively shrunk.
 #
-#   `hard` (`risk.max_sector_hard_pct`, 60) — the ABSOLUTE ceiling, past
-#       which the answer is still no. A dial with no end is not a dial: a
-#       sector could otherwise grow without limit through an infinite series
-#       of ever-smaller additions. 60 is 1.5x the diversification target, and
-#       the reasoning is the loss it implies rather than the roundness of the
-#       number — at 60% of equity in one sector, an ordinary 20% sector-wide
-#       drawdown costs 12% of equity, four times the 3% daily-loss circuit
-#       breaker (`max_daily_loss_pct`). Past that the book has stopped being a
-#       portfolio with a tilt and become a single-sector bet, and no amount of
-#       single-name conviction is worth buying more of it. Configurable
-#       precisely because it is a judgement about how far a tilt may run.
+#   `hard` (`risk.max_sector_hard_pct`, 90 as of spec §12.3) — the ABSOLUTE
+#       ceiling, past which the answer is still no. A dial with no end is not
+#       a dial: a sector could otherwise grow without limit through an
+#       infinite series of ever-smaller additions.
+#
+# Spec §12.3 (owner-ratified 2026-09-01) moved the target from 40 to 75. The
+# 40 was a retirement-portfolio number and does not survive `docs/OUTCOME.md`:
+# *"This is a trading desk, not a long-term retirement desk."* Sector
+# diversification is not a goal here; a sector limit's ONLY remaining job is
+# bounding correlated blow-up risk — one shock taking several positions at
+# once.
+#
+# THE COST, STATED PLAINLY BECAUSE IT IS REAL: at 75% of equity in one
+# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — FIVE
+# TIMES the 3% daily-loss circuit breaker (`max_daily_loss_pct`), and it will
+# trip the de-levering ladder. That is the accepted price of a concentrated
+# trading desk, not an oversight.
+#
+# The 90 ceiling is NOT in the ratified §12.3 text — the spec set the target
+# and left the terminal bound unstated. 90 was chosen when §12.3 was built:
+# the 1.5x multiple that produced 60 from 40 gives 112.5 from 75, which is
+# meaningless, and a dial with no terminal bound bounds nothing. 90 keeps a
+# real ceiling while leaving 15 points of scaling range. Configurable
+# precisely because it is a judgement about how far a tilt may run.
 #
 # Both functions are pure, and both are used by BOTH consumers on purpose:
 # `PortfolioConstructor` calls them to SIZE an order down before it is ever
@@ -275,7 +418,12 @@ class RiskRuleEngine:
     def check(self, decision: TradeDecision, positions: list[Position],
               total_value: float, daily_pnl: float,
               pending_investment: float = 0.0,
-              pending_sector_investment: dict[str, float] | None = None,
+              # Spec §12.2: keyed by `(sector, side)`, not by sector alone —
+              # a pending SHORT must not consume the same sector's LONG
+              # budget. A plain-`str` key here is now a bug, and raises
+              # nothing silently only because `.get()` on a tuple key simply
+              # misses it; `accumulate_pending_sector` is the writer.
+              pending_sector_investment: dict[tuple[str, str], float] | None = None,
               pending_symbol_investment: dict[str, float] | None = None,
               baseline: float | None = None,
               correlation_matrix: dict[str, dict[str, float]] | None = None,
@@ -638,16 +786,26 @@ class RiskRuleEngine:
                     limit=max(cash - pending_cash_outflow, 0.0),
                 ))
 
-        # 5. Sector concentration — gross (existing, pending, and new all use unsigned magnitude)
+        # 5. Sector concentration — GROSS (unsigned) and SIDE-SPLIT (spec §12.2).
+        #
+        # The long book and the short book carry SEPARATE budgets in each
+        # sector, and neither offsets the other. Before §12.2 this summed
+        # SIGNED `market_value`, so a held short made its sector look smaller
+        # and a long book could over-concentrate behind it. `sector_side_gross`
+        # is the single definition; the constructor sizes against the same one.
         from src.execution.broker import _get_sector
         new_sector = _get_sector(decision.symbol)
         if new_sector and new_sector != "Unknown":
-            sector_value = sum(p.market_value * _gross_multiplier(p.symbol)
-                               for p in positions if p.sector == new_sector)
-            sector_value += (pending_sector_investment or {}).get(new_sector, 0.0)
+            side = decision_side(decision.action)
+            held_by_side = sector_side_gross(positions)
+            sector_value = held_by_side.get((new_sector, side), 0.0)
+            sector_value += (pending_sector_investment or {}).get(
+                (new_sector, side), 0.0,
+            )
             sector_value += gross_new
             sector_pct = sector_value / total_value * 100
-            # Spec §10.3. `max_sector_pct` is now the diversification TARGET,
+            side_label = "long" if side == SECTOR_SIDE_LONG else "short"
+            # Spec §10.3. `max_sector_pct` is now the concentration TARGET,
             # and breaching it is ADVISORY — it is reported to the AI Risk
             # Manager and the audit trail, but it no longer drops the trade.
             # The constructor has already shrunk the order for crowding
@@ -657,10 +815,13 @@ class RiskRuleEngine:
                 violations.append(RiskViolation(
                     rule="max_sector_pct",
                     message=(
-                        f"Sector '{new_sector}' would be {sector_pct:.1f}%, over the "
-                        f"{self.config.max_sector_pct}% diversification target "
+                        f"Sector '{new_sector}' {side_label} exposure would be "
+                        f"{sector_pct:.1f}%, over the "
+                        f"{self.config.max_sector_pct}% concentration target "
                         f"(advisory — size was scaled for crowding, not refused; "
-                        f"the hard ceiling is {self.config.sector_hard_ceiling_pct:.0f}%)"
+                        f"the hard ceiling is {self.config.sector_hard_ceiling_pct:.0f}%). "
+                        f"Long and short budgets are separate (§12.2) — the "
+                        f"other side of this sector is not netted against it"
                     ),
                     value=sector_pct,
                     limit=self.config.max_sector_pct,
@@ -689,8 +850,9 @@ class RiskRuleEngine:
                     rule="max_sector_hard_pct",
                     message=(
                         f"{decision.symbol} would add {gross_new_pct:.1f}% gross to "
-                        f"sector '{new_sector}', already at {prior_sector_pct:.1f}%. "
-                        f"Crowding permits at most {allowance_pct:.2f}% more "
+                        f"the {side_label} side of sector '{new_sector}', already at "
+                        f"{prior_sector_pct:.1f}%. Crowding permits at most "
+                        f"{allowance_pct:.2f}% more "
                         f"(hard ceiling {self.config.sector_hard_ceiling_pct:.0f}%)"
                     ),
                     value=gross_new_pct,

@@ -2,8 +2,8 @@
 compression / refactor. Each anchor is either:
 
   (a) a number / constant that's also wired into Python code (so prompt
-      and code must stay in sync — e.g. the 20% single-name cap, 40%
-      sector cap, $1 margin floor, 5% earnings-queued cap),
+      and code must stay in sync — e.g. the 20% single-name cap, 75%
+      per-side sector cap, $1 margin floor, 5% earnings-queued cap),
   (b) a load-bearing rule heading that downstream tests or operators
       grep for (e.g. PM's "Rule Priority" table, position_reviewer's
       6 hard-trigger keyword classes),
@@ -39,9 +39,23 @@ _HARD_ANCHORS = (
         "and HARD_BLOCK_RULES['max_position_pct']",
     ),
     (
-        "portfolio_manager.md", "40%",
-        "sector cap mirrors RiskConfig.max_sector_pct=40 + "
-        "HARD_BLOCK_RULES['max_sector_pct']",
+        # Spec §12.3 (owner-ratified 2026-09-01) moved the sector limit
+        # 40 -> 75. The old "40%" anchor was NOT simply retargeted: 40% still
+        # appears in the prompt twice for unrelated mechanisms (the
+        # 40%-per-correlated-cluster risk budget, and the "R/R 1.5 breaks even
+        # at a 40% hit rate" arithmetic), so an anchor on the bare string
+        # would have passed while the sector number was wrong. Anchor the
+        # sector figure by its own phrase instead.
+        "portfolio_manager.md", "75%",
+        "sector cap mirrors RiskConfig.max_sector_pct=75 (spec §12.3) + "
+        "HARD_BLOCK_RULES['max_sector_hard_pct']",
+    ),
+    (
+        "portfolio_manager.md", "sector notional PER SIDE",
+        "spec §12.2 — long and short sector exposure are separate budgets "
+        "against the same limit and must never be netted; the prompt has to "
+        "say PER SIDE or the PM reasons about a book the engine does not "
+        "enforce",
     ),
     (
         "portfolio_manager.md", "5.0",

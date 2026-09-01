@@ -120,7 +120,7 @@ Correctly filters to transaction codes P/S, non-derivative rows only, with a $10
 
 - **PM has no expectancy feedback by conviction level.** Aggregate 30-day win rate exists, but nothing tests whether "high conviction" has historically outperformed "medium". Until measured, conviction-weighted sizing is an assumption.
 - **No opportunity-cost framing at candidate selection.** Rotation logic only fires when cash is short, so a better candidate never displaces a mediocre holding while cash is ample.
-- **Sector tags only, no theme/factor exposure.** A 40% sector cap does not catch a cross-sector "AI capex" concentration.
+- **Sector tags only, no theme/factor exposure.** A 75% per-side sector cap (spec §12.3; 40% before 2026-09-01) does not catch a cross-sector "AI capex" concentration.
 - **`thesis_invalid_if` is free text**, evaluated by a model reading it. Conditions like "closes below MA50" are structured enough to check in code.
 
 ---

@@ -43,7 +43,9 @@ def test_pmfacts_render_produces_structured_block():
         rm_verdicts_seen=5, rm_scale_downs_last5=2, rm_mods_last5=3,
         invested_pct=72.0, cash_pct=28.0,
         position_count=8,
-        sector_weights={"Technology": 22.0, "Financial Services": 15.0},
+        # Spec §12.2 — the table is split by side and never netted.
+        sector_weights_long={"Technology": 22.0, "Financial Services": 15.0},
+        sector_weights_short={"Energy": 6.0},
         positions_under_5d=2, positions_5_to_15d=4, positions_over_15d=2,
         positions_drift_flagged=1,
         tech_signals_count=14, tech_signals_median_age_days=3,
@@ -55,6 +57,8 @@ def test_pmfacts_render_produces_structured_block():
     assert "win_rate=+58.30%" in rendered
     assert "2/5" in rendered  # scale_downs
     assert "Technology: 22.0%" in rendered
+    assert "LONG side" in rendered and "SHORT side" in rendered
+    assert "Energy: 6.0%" in rendered
     assert "drift-flagged (weight>12% + P&L>10%): 1" in rendered
     assert "stale(≥8d)=2" in rendered
     assert "in_drawdown=False" in rendered
@@ -132,8 +136,9 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     assert facts.invested_pct == 80.0
     assert facts.cash_pct == 20.0
     assert facts.position_count == 2
-    assert facts.sector_weights.get("Technology") == 88.0  # 20*440/10000 * 100
-    assert facts.sector_weights.get("Energy") == 11.0     # 10*110/10000 * 100
+    assert facts.sector_weights_long.get("Technology") == 88.0  # 20*440/10000 * 100
+    assert facts.sector_weights_long.get("Energy") == 11.0     # 10*110/10000 * 100
+    assert facts.sector_weights_short == {}   # long-only book (spec §12.2)
 
     # Signal freshness
     assert facts.tech_signals_count == 3
@@ -151,7 +156,7 @@ def test_pm_build_user_message_renders_facts_when_provided():
     facts = PMFacts(
         closed_trades_30d=8, win_rate_30d_pct=62.5,
         invested_pct=70.0, cash_pct=30.0, position_count=5,
-        sector_weights={"Technology": 30.0},
+        sector_weights_long={"Technology": 30.0},
     )
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")

@@ -1239,7 +1239,9 @@ class TradingPipeline:
         remaining_violations = []
         blocked_reasons: list[str] = []
         pending_investment = 0.0
-        pending_sector_investment: dict[str, float] = {}
+        # Spec §12.2 — keyed by `(sector, side)`. A pending SHORT must not eat
+        # the same sector's LONG budget, and vice versa.
+        pending_sector_investment: dict[tuple[str, str], float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
         # D9 (Stage 3): running total of gross BEARISH notional already
@@ -1399,9 +1401,14 @@ class TradingPipeline:
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )
-            sector = _get_sector(decision.symbol)
-            if sector and sector != "Unknown":
-                pending_sector_investment[sector] = pending_sector_investment.get(sector, 0.0) + gross_investment
+            # Spec §12.2 — books into the `(sector, side)` bucket this order
+            # would actually land in, so a pending SHORT never consumes the
+            # long budget the next BUY in that sector is measured against.
+            from src.risk.rules import accumulate_pending_sector
+            accumulate_pending_sector(
+                pending_sector_investment, _get_sector(decision.symbol),
+                decision.action, gross_investment,
+            )
 
         # Advisory check: projected net exposure vs macro's target_invested_pct.
         # Does NOT block trades; emits a non-hard violation so RiskManager sees it
@@ -4210,7 +4217,10 @@ class TradingPipeline:
         correlation_cluster advisory). Just current vs projected sector mix.
         """
         from src.execution.broker import _get_sector
-        from src.risk.rules import _effective_multiplier, _gross_multiplier
+        from src.risk.rules import (
+            SECTOR_SIDE_LONG, _effective_multiplier, _gross_multiplier,
+            sector_side_gross,
+        )
         if total_value <= 0:
             return ""
         buy_candidates = [
@@ -4239,11 +4249,15 @@ class TradingPipeline:
 
         current_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)
         current_invested_pct = abs(current_net) / total_value * 100
-        sector_gross: dict[str, float] = {}
-        for p in positions:
-            sec = _resolve_sector(p.symbol, p.sector)
-            gross = p.market_value * _gross_multiplier(p.symbol)
-            sector_gross[sec] = sector_gross.get(sec, 0.0) + gross
+        # Spec §12.2 — GROSS (unsigned) and split by side, keyed
+        # `(sector, side)`. Before §12.2 this summed SIGNED `market_value`
+        # exactly as the gate did, so a held short shrank its sector in the
+        # very preview whose job is to surface concentration.
+        sector_gross: dict[tuple[str, str], float] = sector_side_gross(
+            positions,
+            resolve_sector=lambda p: _resolve_sector(p.symbol, p.sector),
+            include_unknown=True,
+        )
 
         proj_net = current_net
         proj_sector = dict(sector_gross)
@@ -4254,15 +4268,20 @@ class TradingPipeline:
             sec = _resolve_sector(a.symbol)
             if sec == "Unknown":
                 unresolved_symbols.append(a.symbol)
-            proj_sector[sec] = proj_sector.get(sec, 0.0) + raw * _gross_multiplier(a.symbol)
+            # Every candidate here is BUY-rated, so it lands long-side.
+            key = (sec, SECTOR_SIDE_LONG)
+            proj_sector[key] = proj_sector.get(key, 0.0) + raw * _gross_multiplier(a.symbol)
         proj_invested_pct = abs(proj_net) / total_value * 100
         self._last_symbol_sectors = cached_sectors
 
-        def _sector_line(sector_dict: dict[str, float]) -> str:
+        def _sector_line(sector_dict: dict[tuple[str, str], float]) -> str:
             if not sector_dict:
                 return "(empty)"
             sorted_secs = sorted(sector_dict.items(), key=lambda kv: -kv[1])[:5]
-            return ", ".join(f"{s} {v / total_value * 100:.0f}%" for s, v in sorted_secs)
+            return ", ".join(
+                f"{sec} {side} {v / total_value * 100:.0f}%"
+                for (sec, side), v in sorted_secs
+            )
 
         lines = [
             f"- Current: {current_invested_pct:.0f}% net invested · sectors: {_sector_line(sector_gross)}",
@@ -4278,13 +4297,32 @@ class TradingPipeline:
             lines.append(
                 f"    → {proj_invested_pct:.0f}% net invested · sectors: {_sector_line(proj_sector)}"
             )
+            # Spec §12.2/§12.3 — this used to carry its own hardcoded `35`,
+            # a fourth sector number unrelated to config and already stale
+            # against the 40 it was shadowing. It now reads the SAME
+            # concentration target the constructor sizes against and the gate
+            # measures against, so the preview cannot warn about a line the
+            # rest of the system does not draw.
+            #
+            # The target, not some band below it, is the meaningful
+            # threshold: at or under it crowding costs a trade nothing
+            # (`sector_size_scale` returns 1.0), so there is nothing
+            # actionable to tell the PM. Above it every further trade in that
+            # sector is shrunk — which is exactly what the PM needs to know
+            # before it writes decisions.
+            target_pct = getattr(
+                getattr(self, "risk_engine", None), "config", None,
+            )
+            target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
             overweight = [
-                s for s, v in proj_sector.items()
-                if v / total_value * 100 > 35 and s != "Unknown"
+                f"{sec} ({side})" for (sec, side), v in proj_sector.items()
+                if v / total_value * 100 > target_pct and sec != "Unknown"
             ]
             if overweight:
                 lines.append(
-                    f"    ⚠ Sectors near/over 35% cap: {', '.join(sorted(overweight))}"
+                    f"    ⚠ Sector sides over the {target_pct:.0f}% concentration "
+                    f"target (each further trade there is scaled down, not "
+                    f"refused): {', '.join(sorted(overweight))}"
                 )
             if unresolved_symbols:
                 unique = list(dict.fromkeys(unresolved_symbols))
@@ -6050,7 +6088,6 @@ class TradingPipeline:
         """
         import statistics
         from src.execution.broker import _get_sector as _sector_of
-        from src.risk.rules import _gross_multiplier
 
         f = PMFacts()
 
@@ -6096,19 +6133,36 @@ class TradingPipeline:
             f.cash_pct = round((cash or 0) / total_value * 100, 1)
         f.position_count = len(positions)
 
-        # Sector weights (gross multiplier for leveraged ETFs)
-        for p in positions:
-            # qty != 0 — a short is a real sector exposure (a negative one).
-            # Its market_value is already negative, so the weight it adds is
-            # signed and a short hedge nets against the long book instead of
-            # vanishing from the sector table.
-            if p.qty == 0 or total_value <= 0:
-                continue
-            weight = p.market_value * _gross_multiplier(p.symbol) / total_value * 100
-            sector = p.sector or _sector_of(p.symbol) or "Unknown"
-            f.sector_weights[sector] = round(
-                f.sector_weights.get(sector, 0.0) + weight, 1,
+        # Sector weights — SEPARATE long and short budgets (spec §12.2).
+        #
+        # This REVERSES the netting that shipped with the shorts work: a held
+        # short used to add a NEGATIVE weight, so a long 15% and a short 5% in
+        # Technology rendered as a single 10% line. Owner's ratified reasoning:
+        # *"A long and a short in the same sector is not a hedge... We are
+        # trading opportunities."* Netting also showed the PM a smaller number
+        # than `RiskRuleEngine.check` enforces against — the PM would reason
+        # about concentration from one book while the gate refused on another.
+        #
+        # `sector_side_weights` is the shared definition the gate and the
+        # constructor use, so all three cannot drift apart again. The only
+        # thing local here is sector RESOLUTION: PM facts fall back to
+        # `_sector_of` when the broker left `Position.sector` blank, and
+        # "Unknown" is rendered rather than dropped so the PM can see that a
+        # slice of the book is unclassified.
+        from src.risk.rules import (
+            SECTOR_SIDE_SHORT, sector_side_weights,
+        )
+        for (sector, side), weight in sector_side_weights(
+            positions,
+            total_value,
+            resolve_sector=lambda p: p.sector or _sector_of(p.symbol) or "Unknown",
+            include_unknown=True,
+        ).items():
+            bucket = (
+                f.sector_weights_short if side == SECTOR_SIDE_SHORT
+                else f.sector_weights_long
             )
+            bucket[sector] = round(bucket.get(sector, 0.0) + weight, 1)
 
         # Age buckets + drift flag
         try:

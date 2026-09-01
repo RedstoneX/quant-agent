@@ -391,12 +391,12 @@ class RiskConfig(BaseModel):
     # the shrinking runs into, past which the answer is still no. Without it
     # a sector could grow without limit through ever-smaller additions.
     #
-    # Default is 1.5x the diversification target, deriving from
-    # `max_sector_pct` rather than hard-coding 60 so that an operator who
-    # tightens or loosens the target moves the ceiling with it instead of
-    # silently leaving the two inconsistent. See `sector_allowance_pct` for
-    # why 1.5x: at 60% of equity in one sector an ordinary 20% sector
-    # drawdown costs 12% of equity, four times `max_daily_loss_pct`.
+    # Default is 1.5x the target, capped at `SECTOR_HARD_CEILING_MAX` (90,
+    # spec §12.3), deriving from `max_sector_pct` rather than hard-coding a
+    # number so that an operator who tightens or loosens the target moves the
+    # ceiling with it instead of silently leaving the two inconsistent. The
+    # cap exists because 1.5x an already-permissive target stops being a
+    # ceiling: at the §12.3 target of 75 it would give 112.5.
     max_sector_hard_pct: float | None = Field(default=None, gt=0, le=100)
     require_stop_loss: bool
     # Owner-ratified total at-risk ceiling (2026-08-27): the sum of every
@@ -563,16 +563,35 @@ class RiskConfig(BaseModel):
     #: pydantic treats it as a constant rather than a settable field.
     SECTOR_HARD_MULTIPLE: ClassVar[float] = 1.5
 
+    #: Spec §12.3. The terminal bound on the DERIVED ceiling. With the target
+    #: at 75 (§12.3) the 1.5x multiple gives 112.5, which is not a ceiling at
+    #: all — a dial with no terminal bound bounds nothing. 90 keeps a real
+    #: ceiling while leaving 15 points of scaling range above the target.
+    #:
+    #: NOT IN THE RATIFIED §12.3 TEXT: the spec set the target and left the
+    #: terminal bound unstated. 90 was chosen when §12.3 was built and is open
+    #: for the owner to move. `risk.max_sector_hard_pct` in settings.yaml sets
+    #: it explicitly and overrides this derivation entirely.
+    SECTOR_HARD_CEILING_MAX: ClassVar[float] = 90.0
+
     @property
     def sector_hard_ceiling_pct(self) -> float:
         """The absolute sector ceiling, explicit or derived.
 
         Every consumer reads this rather than `max_sector_hard_pct` directly,
-        so the "unset means 1.5x the target" rule lives in exactly one place.
+        so the derivation rule lives in exactly one place.
+
+        Derived = 1.5x the target, capped at `SECTOR_HARD_CEILING_MAX` (90),
+        and never below the target itself — a ceiling under the target it
+        backstops would make the scaling band run backwards.
         """
         if self.max_sector_hard_pct is not None:
             return self.max_sector_hard_pct
-        return min(100.0, self.max_sector_pct * self.SECTOR_HARD_MULTIPLE)
+        derived = min(
+            self.SECTOR_HARD_CEILING_MAX,
+            self.max_sector_pct * self.SECTOR_HARD_MULTIPLE,
+        )
+        return min(100.0, max(self.max_sector_pct, derived))
 
     @model_validator(mode="after")
     def _sector_hard_ceiling_is_above_the_target(self):
