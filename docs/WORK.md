@@ -779,6 +779,37 @@ because the words were a rounding error next to the volume.
 **It also explains the bill.** ~50k tokens per call is why the
 portfolio_manager seat is 93% of LLM spend (see item 14).
 
+**THE ANALYSTS DO NOT CONCLUDE — THEY TRANSCRIBE. Owner's correction, and it is the bigger failure.**
+
+I first reported this as a data-quality bug (filings truncated, fields
+empty). That is real but it is the SMALLER problem, and the owner caught
+what I missed.
+
+Each of the 67 earnings reports is a FORM, not a call: eight extraction
+fields — filing metrics, guidance, strategy, competitive positioning,
+strategic risks, operational risks, strategy consistency, data quality —
+followed by ONE line of actual judgement (`Analyst synthesis: neutral
+(low)`). ~1,400 characters to deliver a one-line conclusion.
+
+**So fixing the truncation makes the prompt WORSE, not better.** Populate
+those empty fields and every report gets longer, the prompt grows past 50k
+tokens, the cost rises, and the conclusion is buried deeper. Any fix that
+starts with "get better filing text" is pushing in the wrong direction.
+
+**The owner's model of the desk is the correct one and we are not built to
+it:** analysts research and hand over a CONCLUSION; the PM is the final gate
+that weighs conclusions and allocates. Today the PM receives raw extraction
+and is expected to do the analysis itself — the analyst's job — which is why
+its prompt is 200k characters and why it is 93% of the LLM bill.
+
+**The structural fix, ahead of (a)-(d) below:** the earnings seat must
+return a call and a short thesis — direction, conviction, two or three lines
+of why, and a pointer to the detail — not a completed template. The full
+extraction stays retrievable for audit; it must stop being couriered to the
+PM by default. Same question applies to every other specialist seat: **check
+whether the technical, macro and news seats also hand over transcription
+rather than conclusions.**
+
 **Next, in order, none of it needing a paid call:**
   a. Cut or summarise the earnings section and re-render. How small does the
      prompt get, and what does it cost per call then?
