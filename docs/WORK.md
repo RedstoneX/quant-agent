@@ -934,7 +934,51 @@ point of the pattern — the guarantee is structural, not procedural.
 Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
 is costing 25% of all proposals now.
 
-**14. The safety budget is priced off a number 2.6x too high — DEFECT. Needs a judgement call, not a patch.**
+**14. Replace the budget guard — OWNER-APPROVED 2026-09-02. Design decided, not a tuning exercise.**
+
+**The decision: stop predicting what a call will cost. Delete the per-call
+reservation layer.** Replace it with three things:
+
+  a. **A spend cap on the OpenRouter API key itself.** Outside our code, so
+     no bug of ours can defeat it. **VERIFY the exact limit options the
+     provider offers before relying on this** — I have not confirmed them.
+     Do this FIRST: it is independent, costs nothing, and turns everything
+     below into a tuning question rather than a safety one.
+  b. **Stop when real money actually spent today hits the cap.** Settled
+     cost only. No estimate, so nothing to be wrong about.
+  c. **Stop when one session exceeds N calls.** This is the real defence
+     against the runaway loop that burned money in August — a loop is
+     defined by call COUNT, not call price, and counting cannot be wrong
+     about a rate.
+
+**Why the current design has to go rather than be retuned.** It reserves
+money before each call at a price it has to guess. The token estimate was
+fixed 2026-08-28 (`3153c87`, merged and live) — but the PRICE per token is
+still the pinned worst-case rate, and real calls settle at a median 0.38x
+of it. So it holds ~2.6x what it spends and stops the desk on money that was
+never spent.
+
+**The evidence it is net negative.** Measured spend is ~$1/day against a
+$2.75 ceiling. This guard has never once prevented a real overspend. On
+2026-09-02 it stopped the desk THREE times in one hour — once on a durable
+latch needing a manual reset, twice on a projection ($2.69 projected against
+$0.55 actually spent). A guard that causes more outages than it prevents
+losses is costing money, not saving it.
+
+**The objection, and why it does not hold.** A settled-cost check is
+lagging: you only know after the call returns. But the maximum overshoot is
+ONE call — under a dollar. Weigh that against a desk switched off for a day.
+
+**Do not price reservations at the cheap flex rate as a shortcut.**
+`allow_fallbacks` is on, so a saturated flex tier lands on the full rate and
+the reserve would under-cover exactly the dearest outcome. That is the trap
+that makes this a redesign rather than a one-line change.
+
+Sequence with item 17 — both are about a guard that stops the desk for
+reasons that were never true, and (a) above removes the need for the latch
+that item 17 is about.
+
+
 
 The only real-money item on this page. Measured 2026-09-02 over a clean
 window (2026-08-27 to 09-02, the first window uncontaminated by the runaway
