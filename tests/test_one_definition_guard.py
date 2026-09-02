@@ -331,7 +331,12 @@ def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]
             value = node.value
             if isinstance(value, ast.Constant):
                 continue  # a default, not a definition
-            if "_compute_deployable_cash" in _calls(value):
+            # A CALL to the sanctioned function is the fix, not the defect.
+            # Both the old engine-private owner and the shared one count.
+            calls = _calls(value)
+            if ("_compute_deployable_cash" in calls
+                    or "deployable_cash" in calls
+                    or "cash_above_reserve" in calls):
                 continue  # delegates to the owner
             out.append(
                 Finding(_rel(path), node.lineno, fn.name,
@@ -371,7 +376,12 @@ REGISTRY: dict[str, Quantity] = {
             "the PM is told the book is 60% invested while the risk gate "
             "enforces 100%, both against the same target"
         ),
-        owner="src/risk/rules.py::_effective_multiplier — leverage-aware exposure",
+        # Owner MOVED 2026-09-02: the leverage table and its multipliers were
+        # extracted to the pure quantities module so src/api could derive its
+        # inverse-ETF roster from the one table instead of hand-maintaining a
+        # copy. src/risk/rules.py imports it under the old private alias, so
+        # every existing call site is unchanged.
+        owner="src/quantities.py::effective_multiplier — leverage-aware exposure",
         # No site may compute a raw share-of-equity. Every legitimate one
         # carries a multiplier and is therefore never matched — the allowlist
         # is empty on purpose.
@@ -389,20 +399,33 @@ REGISTRY: dict[str, Quantity] = {
             "7-8% mean divergence, 39% on the worst day; ATR sets stop "
             "distance and stop distance sets position size"
         ),
-        owner="src/data/technical.py::compute_indicators — Wilder, via `ta`",
-        allow=frozenset({("src/data/technical.py", "compute_indicators")}),
+        # Owner MOVED 2026-09-02 when the fix landed: the shared Wilder
+        # implementation was extracted from compute_indicators into
+        # atr_series, which context.py now calls instead of keeping its own.
+        # Changing an owner is a deliberate, reviewed registry edit — that is
+        # the workflow, not a workaround.
+        owner="src/data/technical.py::atr_series — Wilder, via `ta`",
+        allow=frozenset({("src/data/technical.py", "atr_series"),
+                         ("src/data/technical.py", "compute_indicators")}),
     ),
     "average dollar volume": Quantity(
         name="average dollar volume",
         cost="5.26% spread — enough to flip a symbol's admission",
-        owner="src/data/context.py::compute_market_context",
-        allow=frozenset({("src/data/context.py", "compute_market_context")}),
+        # Owner MOVED 2026-09-02: consolidated into the pure quantities
+        # module so the API can use it without importing the risk stack.
+        owner="src/quantities.py::avg_dollar_volume",
+        allow=frozenset({("src/quantities.py", "avg_dollar_volume"),
+                         ("src/quantities.py", "dollar_volumes")}),
     ),
     "deployable cash": Quantity(
         name="deployable cash",
         cost="$54,000 to the engine and $33,000 to the dashboard, same book",
-        owner="src/pipeline.py::_compute_deployable_cash",
-        allow=frozenset({("src/pipeline.py", "_compute_deployable_cash")}),
+        # Owner MOVED 2026-09-02: same reason — the dashboard must read the
+        # engine's number, and src/api may not import src.pipeline.
+        owner="src/quantities.py::deployable_cash",
+        allow=frozenset({("src/quantities.py", "deployable_cash"),
+                         ("src/quantities.py", "cash_above_reserve"),
+                         ("src/quantities.py", "sweep_reserve_usd")}),
     ),
 }
 
@@ -511,7 +534,15 @@ def test_the_dashboard_does_not_compute_its_own_percent_deployed():
                 continue
             # A reduce() accumulating market values is the dashboard computing
             # exposure for itself rather than rendering a server-sent figure.
-            if "reduce" in stripped and "sum" in stripped:
+            # A market-value sum is only a second definition of PERCENT
+            # DEPLOYED when it is divided to make a share. Summing long
+            # and short notional for their own tiles is legitimate and
+            # must not fire, or this guard gets switched off.
+            divides = ("/ portfolio_value" in stripped
+                       or "/ (portfolio_value" in stripped
+                       or "/ equity" in stripped
+                       or "/ total_value" in stripped)
+            if "reduce" in stripped and "sum" in stripped and divides:
                 offenders.append(
                     f"{path.relative_to(REPO)}:{i}  {stripped[:80]}"
                 )
