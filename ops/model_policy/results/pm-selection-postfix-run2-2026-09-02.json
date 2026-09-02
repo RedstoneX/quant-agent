@@ -1,0 +1,262 @@
+{
+  "generated_at": "2026-09-02T20:26:08Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 3,
+  "scenarios": {
+    "pm_selection": {
+      "role": "portfolio_manager",
+      "description": "The REAL 2026-09-01 opportunity set (run-64290730): 59 technical reads, 38 actionable, 30 of them below the 1.5 R/R floor, 5 qualified shorts, and every famous mega-cap weak. Grades WHICH candidates the model picks \u2014 including a familiarity_bias number reported on every run. Does NOT measure profitability. Opt-in: ~56k input tokens per call (the live session billed 61,557 and cost $0.24 on gpt-5.5)."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "d956e4a1d7bc3f85257fd0b7aa1558055ef7b7725ddb7fe10471599240b8a241",
+      "bytes": 56245,
+      "lines": 948
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.5": {
+      "input": 5.0,
+      "output": 30.0
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "opens_a_position",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "10 opening/adding target(s): XLE long rr=1.67 buy/high; CHPX long rr=3.03 buy/low; PFE long rr=1.5 buy/medium; NVDA long rr=1.03 buy/medium; CRM long rr=0.48 buy/low; MSFT long rr=0.85 buy/medium; PATH long rr=1.32 buy/medium; COP long rr=0.76 buy/medium; NKE short rr=2.28 sell/medium; FLNC short rr=1.84 sell/medium"
+        },
+        {
+          "name": "selection_from_qualified_set",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "5/10 picks clear the 1.5 R/R floor (50%); qualified set was ['CHPX', 'FLNC', 'GEV', 'NEE', 'NKE', 'PFE', 'UNH', 'XLE']"
+        },
+        {
+          "name": "takes_a_qualified_short",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "qualified shorts taken=['NKE', 'FLNC'] other shorts=[] (available: ['FLNC', 'GEV', 'NEE', 'NKE', 'UNH'])"
+        },
+        {
+          "name": "rr_floor_discipline",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "every sub-floor pick names a catalyst"
+        },
+        {
+          "name": "familiarity_bias",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "famous-but-weak picks 2/10 (20%)=['NVDA', 'MSFT']; qualified candidates passed over=['GEV', 'NEE', 'UNH']"
+        }
+      ],
+      "input_tokens": 58699,
+      "output_tokens": 10020,
+      "cost_usd": 0.594095,
+      "latency_s": 172.6,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro is high-confidence risk-on with target invested 90.0%, while the account is only 21.6% invested and cash-only with no margin. I am therefore proposing a broad deployment package, but only through names with current technical coverage and either R/R >= 1.5 or a dated catalyst exception; the risk-on regime sets exposure, not individual trade direction.\",\n    \"news_check\": \"News tone conflicts with macro: the PM briefing is bearish overall because the 2026-09-01 global bond selloff and rising crude pressure equities, but active stock-level catalysts remain constructive for NVDA, CRM, MSFT, PATH, COP, and XLE. I am using dated Active News State Change rows only where the technical R/R is below 1.5, and I am not claiming news provenance for symbols whose registry lacks news coverage.\",\n    \"earnings_check\": \"RSG remains held unchanged because it is 1 day old and its 10-Q is JUST FILED, so no add before the filing is read. Earnings support COP, JPM, JNJ, NUE, and NVDA, but JPM, JNJ, and NUE fail today's R/R discipline without a resolvable catalyst; PFE is allowed only at modest size because earnings are bearish against the long.\",\n    \"signal_conflicts\": \"XLE: available=<macro=bullish, technical=buy>. Conflict: none; macro is context only and Tech buy with R/R 1.67 clears the floor. Resolution: open a 1.0% risk energy breakout sleeve, capped by lack of earnings/news confirmation. CHPX: available=<macro=bullish, technical=buy>. Con",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:CHPX",
+        "TARGET:COP",
+        "TARGET:CRM",
+        "TARGET:FLNC",
+        "TARGET:MSFT",
+        "TARGET:NKE",
+        "TARGET:NVDA",
+        "TARGET:PATH",
+        "TARGET:PFE",
+        "TARGET:XLE"
+      ]
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.6,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "opens_a_position",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "11 opening/adding target(s): XLE long rr=1.67 buy/high; CHPX long rr=3.03 buy/low; PFE long rr=1.5 buy/medium; NVDA long rr=1.03 buy/medium; CVX long rr=0.39 buy/medium; COP long rr=0.76 buy/medium; CRM long rr=0.48 buy/low; PATH long rr=1.32 buy/medium; MSFT long rr=0.85 buy/medium; NKE short rr=2.28 sell/medium; FLNC short rr=1.84 sell/medium"
+        },
+        {
+          "name": "selection_from_qualified_set",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "5/11 picks clear the 1.5 R/R floor (45%); qualified set was ['CHPX', 'FLNC', 'GEV', 'NEE', 'NKE', 'PFE', 'UNH', 'XLE']"
+        },
+        {
+          "name": "takes_a_qualified_short",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "qualified shorts taken=['NKE', 'FLNC'] other shorts=[] (available: ['FLNC', 'GEV', 'NEE', 'NKE', 'UNH'])"
+        },
+        {
+          "name": "rr_floor_discipline",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "every sub-floor pick names a catalyst"
+        },
+        {
+          "name": "familiarity_bias",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "famous-but-weak picks 2/11 (18%)=['NVDA', 'MSFT']; qualified candidates passed over=['GEV', 'NEE', 'UNH']"
+        }
+      ],
+      "input_tokens": 58699,
+      "output_tokens": 8610,
+      "cost_usd": 0.551795,
+      "latency_s": 122.77,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk-on with high confidence and a 90.0% target invested posture, while the account is only 21.6% invested with $7,705.34 cash available; that deployment gap must be attacked today. Margin is disabled in this account, so the practical ceiling is available cash rather than the standing margin framework, and I am sizing to fill most of the long-side gap while allowing the constructor to cash-cap orders.\",\n    \"news_check\": \"News tone conflicts with macro: the PM briefing is bearish because a global bond selloff, rising crude, and hawkish Fed rhetoric pressure broad equities and semiconductors, but stock-level HIGH catalysts remain active for NVDA, CRM/MSFT/PATH, and energy names. I am using dated HIGH state-change rows only where R/R is below 1.5: NVDA 2026-08-31, CRM/MSFT/PATH 2026-08-27, and CVX/COP 2026-08-27.\",\n    \"earnings_check\": \"Earnings confirmation is strongest for NVDA, COP, NKE, FLNC, and CRM context is neutral rather than confirming. RSG remains JUST FILED and is already held, so I am not adding while the filing is unread; PFE has bearish earnings and therefore stays small despite technical strength; NKE and FLNC have bearish earnings that support short exposure despite the bullish macro backdrop.\",\n    \"signal_conflicts\": \"XLE: available=<macro=bullish, technical=buy>. Conflict: none at the registry level; macro is context and Tech supports the long. Resolution: open a primary long because R/R clears 1",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:CHPX",
+        "TARGET:COP",
+        "TARGET:CRM",
+        "TARGET:CVX",
+        "TARGET:FLNC",
+        "TARGET:MSFT",
+        "TARGET:NKE",
+        "TARGET:NVDA",
+        "TARGET:PATH",
+        "TARGET:PFE",
+        "TARGET:XLE"
+      ]
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "opens_a_position",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "8 opening/adding target(s): XLE long rr=1.67 buy/high; CHPX long rr=3.03 buy/low; NVDA long rr=1.03 buy/medium; MSFT long rr=0.85 buy/medium; PATH long rr=1.32 buy/medium; PFE long rr=1.5 buy/medium; NKE short rr=2.28 sell/medium; FLNC short rr=1.84 sell/medium"
+        },
+        {
+          "name": "selection_from_qualified_set",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "5/8 picks clear the 1.5 R/R floor (62%); qualified set was ['CHPX', 'FLNC', 'GEV', 'NEE', 'NKE', 'PFE', 'UNH', 'XLE']"
+        },
+        {
+          "name": "takes_a_qualified_short",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "qualified shorts taken=['NKE', 'FLNC'] other shorts=[] (available: ['FLNC', 'GEV', 'NEE', 'NKE', 'UNH'])"
+        },
+        {
+          "name": "rr_floor_discipline",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "every sub-floor pick names a catalyst"
+        },
+        {
+          "name": "familiarity_bias",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "famous-but-weak picks 2/8 (25%)=['NVDA', 'MSFT']; qualified candidates passed over=['GEV', 'NEE', 'UNH']"
+        }
+      ],
+      "input_tokens": 58699,
+      "output_tokens": 9455,
+      "cost_usd": 0.577145,
+      "latency_s": 155.87,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro is high-confidence risk-on with a 90.0% invested / 10.0% cash target, while the account is only 21.6% invested with 78.4% cash, so the book is materially underdeployed. Because this account is marked no-margin for this session, I am using cash-funded longs plus small qualified single-name shorts rather than attempting the standing leveraged gross ceiling.\",\n    \"news_check\": \"News tone conflicts with macro: the PM briefing is bearish overall due to global bond selling, rising crude, and Fed hike fears, but NVDA has an in-play HIGH AI infrastructure catalyst from 2026-08-31 and PATH/MSFT have valid 2026-08-27 AI/cybersecurity-linked catalyst rows. Energy has supportive crude/geopolitical context, but I only count source stances present in the registry.\",\n    \"earnings_check\": \"I am not adding RSG because its 10-Q is JUST FILED and its Tech R/R is below the 1.5 floor. NVDA earnings are bullish, MSFT earnings are neutral, PFE earnings are bearish and therefore sizes down despite a technical buy, while NKE and FLNC earnings are bearish and support their short theses.\",\n    \"signal_conflicts\": \"XLE: available=<macro=bullish, technical=buy>. Conflict: none in the registry. Resolution: open a moderate long because R/R clears the floor and the technical trend is high conviction. CHPX: available=<macro=bullish, technical=buy>. Conflict: none in the registry, but Tech flags low liquidity/high ATR. Resolution: small speculative long on",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:CHPX",
+        "TARGET:FLNC",
+        "TARGET:MSFT",
+        "TARGET:NKE",
+        "TARGET:NVDA",
+        "TARGET:PATH",
+        "TARGET:PFE",
+        "TARGET:XLE"
+      ]
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.5|pm_selection": {
+        "model": "openai/gpt-5.5",
+        "scenario": "pm_selection",
+        "role": "portfolio_manager",
+        "runs": 3,
+        "quality_mean": 0.7667,
+        "quality_min": 0.6,
+        "cost_mean": 0.574345,
+        "latency_mean": 150.41,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.5": {
+        "scenarios": {
+          "pm_selection": {
+            "model": "openai/gpt-5.5",
+            "scenario": "pm_selection",
+            "role": "portfolio_manager",
+            "runs": 3,
+            "quality_mean": 0.7667,
+            "quality_min": 0.6,
+            "cost_mean": 0.574345,
+            "latency_mean": 150.41,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.7667,
+        "quality_worst": 0.7667,
+        "quality_worst_run": 0.6,
+        "cost_per_run_mean": 0.574345,
+        "cost_total_usd": 1.723035,
+        "quality_per_dollar": 1.33
+      }
+    }
+  }
+}
