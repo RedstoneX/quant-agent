@@ -2142,11 +2142,22 @@ class MissedOpportunity(LLMOutputModel):
     # validator (raise when theme_if_any set and theme_durability is None)
     # was provably unreachable dead code: theme_durability is a non-Optional
     # Literal with default "unknown", so an omitted field silently becomes
-    # "unknown" and an explicit null fails FIELD-level Literal validation
-    # before any mode="after" model validator runs. Deleted rather than
-    # "wired" — the docstring above explicitly permits "unknown" as an
-    # allowed (if rare) value, so raising on it would contradict the schema
-    # contract and get whole entries dropped by the evening pre-filter.
+    # "unknown" and an explicit null used to fail FIELD-level Literal
+    # validation before any mode="after" model validator could run. Deleted
+    # rather than "wired" — the docstring above explicitly permits "unknown"
+    # as an allowed (if rare) value, so raising on it would contradict the
+    # schema contract and get whole entries dropped by the evening pre-filter.
+    #
+    # UPDATED 2026-09-02: that last sentence turned out to describe what was
+    # ALREADY happening. The field-level rejection this note treats as
+    # incidental was dropping 25 of every 50 entries in production, for
+    # exactly the reason the note gives as the argument against raising.
+    # `LLMOutputModel._explicit_null_means_absent` now reads the null as an
+    # absent key, so a nulled durability becomes "unknown" and the entry
+    # survives. The validator stays deleted; the test that pinned the old
+    # mechanism was inverted rather than removed
+    # (tests/test_agents_audit_round2.py::
+    #  test_idx31_explicit_null_durability_is_now_unknown_not_a_dropped_entry).
 
     @model_validator(mode="after")
     def _addition_recommendation_consistency(self) -> "MissedOpportunity":

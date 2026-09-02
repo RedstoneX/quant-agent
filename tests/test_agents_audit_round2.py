@@ -483,11 +483,45 @@ def test_idx31_theme_without_durability_defaults_to_unknown():
     assert m.theme_durability == "unknown"
 
 
-def test_idx31_explicit_null_durability_is_field_level_error():
+def test_idx31_explicit_null_durability_is_now_unknown_not_a_dropped_entry():
+    """INVERTED 2026-09-02 — this used to assert `pytest.raises`.
+
+    The original assertion existed to prove the deleted
+    `_theme_durability_required_when_themed` validator was unreachable: a
+    field-level Literal error fires before any mode="after" model validator.
+    That mechanism was true, and it was also the bug. Production emitted
+    `"theme_durability": null` on 25 of 50 slots, and each one took the whole
+    MissedOpportunity down with it via the evening pre-filter — 12 entries
+    recovered on replay once null is read as absent.
+
+    The models.py comment that accompanied the deletion said as much at the
+    time: raising on `unknown` "would contradict the schema contract and get
+    whole entries dropped by the evening pre-filter". So this test now pins
+    the outcome that comment argued for. The point it was originally written
+    to protect — that the dead validator stays deleted — is still covered by
+    `test_idx31_dead_validator_removed` below.
+    """
+    m = MissedOpportunity(
+        symbol="VST", move_pct=12.0, miss_category="theme_blindspot",
+        theme_if_any="nuclear/power", theme_durability=None,
+        lesson="power theme uncovered",
+    )
+    assert m.theme_durability == "unknown"
+    assert m.symbol == "VST"          # the entry SURVIVES — that is the fix
+    assert m.theme_if_any == "nuclear/power"
+
+
+def test_idx31_null_theme_on_a_real_miss_still_rejects():
+    """Null tolerance must not weaken the rule that a real miss needs a theme.
+
+    `theme_if_any` is `str | None`, so a null there was always legal at the
+    field level; the mode="after" validator is what enforces the discipline,
+    and it still runs.
+    """
     with pytest.raises(ValidationError):
         MissedOpportunity(
             symbol="VST", move_pct=12.0, miss_category="theme_blindspot",
-            theme_if_any="nuclear/power", theme_durability=None,
+            theme_if_any=None, theme_durability=None,
             lesson="power theme uncovered",
         )
 
