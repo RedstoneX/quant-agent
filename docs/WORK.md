@@ -23,7 +23,19 @@ while writing "all four were ratified". That is exactly the forbidden move this
 test guards against, and it made a later session believe the model choice was
 settled. Restored:**
 
-- [ ] DECIDE BY 2026-09-02 — Which model runs the `portfolio_manager` seat?
+- [ ] DECIDE BY 2026-09-16 — Which model runs the `portfolio_manager` seat?
+  **DATE MOVED 2026-09-02, reason recorded — not a silent deferral.** The
+  re-measure this decision waits on DOES NOT EXIST: the newest file in
+  `ops/model_policy/results/` is dated 2026-09-01, i.e. pre-rewrite and stale
+  by this block's own terms. Verified by listing the directory, in this repo
+  and on the live desk. Deciding without it would be picking a model from
+  numbers we already wrote down as invalid.
+  **The blocking dependency is a benchmark re-run, and it SPENDS OPENROUTER
+  CREDITS — real money, and the owner's single stated financial concern.** It
+  is therefore an owner call to authorise, not an agent one, and that is why
+  this line moved rather than resolved. Weight it against the fact that the
+  `portfolio_manager` seat is ~93% of the LLM bill, so this is also the
+  largest available saving. See `qamc-llm-cost-concentration`.
   **NOT DECIDED. Do not act on the existing benchmark numbers** — every score in
   `ops/model_policy/results/*2026-09-01*.json` was measured against the OLD
   prompt and is stale (see below). Owner's instruction was to RE-MEASURE after
@@ -31,7 +43,20 @@ settled. Restored:**
   stays until that re-run exists. Re-running is a re-run, not a rebuild — the
   rig reads the prompt from disk.
 
-- [ ] DECIDE BY 2026-09-02 — Level quality bar for Phase 12.1. A stop is now
+- [ ] DECIDE BY 2026-09-09 — Level quality bar for Phase 12.1.
+  **DATE MOVED 2026-09-02, and the item got MORE load-bearing, not less.**
+  `wt/levels-wire` merged the same day and now scores level strength by TOUCH
+  COUNT (the unmeasured 252-session recency half-life is gone), which changes
+  top-6 level selection on 66 of 99 symbols. Touch count is now the primary
+  ranking signal AND the unresolved quality bar, so this compounds.
+  It is deferred only because `wt/rr-geometry` is actively editing stop and
+  level logic and two writers must not collide — start this the moment that
+  branch lands.
+  **This is NOT an owner-picks-a-number question.** Standing project rule:
+  market-structure thresholds come from published technical-analysis
+  literature, never from a model's training-recall, never from speculation,
+  and are never handed to the owner to guess. Research the doctrine, propose
+  the number WITH its source, then ratify. A stop is now
   honoured if it sits on a computed structural level, but a level currently
   qualifies on **two touches ever, anywhere in ~3 years** — so two old swing
   points can justify a very tight stop. **The 3x ATR floor used to hide this
@@ -702,6 +727,162 @@ the record of what went wrong disappeared exactly as it became history. The
 defect log is append-only and is never trimmed.
 
 ### Ordered backlog — RESUME POINT
+
+## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
+
+**This is the top of the backlog. Work it in order.** It is not a survey of
+good ideas from other projects; every line below is derived from THIS desk's
+own record and carries its own denominator. Do not reorder it from intuition.
+
+**Measured 2026-09-02 from the pre-reset database**
+(`data/resets/20260902T181859Z/quant_agent.db` — the live DB was wiped that
+day, this backup is the only complete copy). Reproduce with
+`scripts/blocked_proposals_census.py`, which is read-only and makes no broker
+calls.
+
+**Denominator: 68 entry proposals, 2026-08-18 to 2026-09-02. 15 filled — 22%.**
+53 blocked. Zero-fill sessions: **6 of 11**.
+
+Each item is classified WORKING AS INTENDED / TOO STRICT / DEFECT / NO RECORD.
+An item is only struck through when the fix is merged AND re-measured against
+the same 68.
+
+---
+
+**1. The reward:risk floor — 17 of 68 (25%). TOO STRICT. IN FLIGHT.**
+
+The single largest cause; nothing else is close. 10 died before an order was
+built, 7 were killed by the AI Risk Manager citing the 1.5 floor by name.
+
+Independently confirmed 2026-09-02, and the count UNDERSTATES it: where the
+floor does not reject outright, the Risk Manager **halves the allocation**
+instead ("Halve allocation per R/R enforcement policy" appears verbatim on
+XLF, XLE x2, XLB). So the floor both blocks and shrinks, and only the blocking
+half is counted above.
+
+It rests on a fake number. Evidence, verbatim from the record: *"PM's reasoning
+assumes R/R 1.67 but the executed order has R/R 1.18"* — the same trade,
+evaluated twice, with different stop geometry. Cause is the ATR stop FLOOR
+overwriting a structural stop, widening the risk denominator and crushing the
+ratio. See `qamc-rr-geometry-defect`.
+
+Two halves, in this order:
+  a. **Fix the geometry** so every R/R computation uses identical stop
+     geometry and a level-backed stop is honoured however tight. The 1-ATR
+     guard upstream already prevents a stop sitting in pure noise, so the
+     floor is redundant in the level-backed case and destructive in it.
+     Dispatched 2026-09-02 on `wt/rr-geometry`.
+  b. **Then** replace the 1.5 hard gate with the already-ratified weighted
+     composite score (see `qamc-weighted-scoring-architecture`). Do NOT do
+     this before (a) — scoring a fabricated ratio more gently is not a fix.
+
+**2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). NO RECORD.**
+
+Second-largest "cause", and it is not a rule at all — it is a hole in the
+record. Nearly a fifth of all ideas vanish with no table row and no surviving
+log line explaining why. One run produced real database rows while emitting
+zero log lines.
+
+Until this is closed, **every percentage on this page has a 19% blind spot**,
+and any future claim that a fix "worked" is unfalsifiable to that margin.
+Treat closing it as a prerequisite for trusting the re-measure, not as
+optional instrumentation.
+
+Also in this bucket: a 9-item `order_not_placed` shape where an order was
+built and then nothing else appears in any record. That looks like an
+interrupted run, not a deliberate no-trade.
+
+**3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
+
+Price protection behaving correctly, but it is a real cost: the slot was
+consumed, the idea aged out, and nothing was bought. Worth revisiting the
+repeg policy rather than the limit itself.
+
+**4. A SECOND reward:risk floor at execution time, set to 1.2 — 4 of 68 (6%). WORKING AS INTENDED, BUT.**
+
+Working as designed, but one quantity has two definitions with two different
+numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
+resolve it separately.
+
+**5. Allocation rounds to zero shares — 3 of 68 (4%). DEFECT (probably).**
+
+An account-scale artifact: a ~$9.9k account against $200+ share prices.
+Fractional sizing is now enabled, so **the open question is why this still
+rounds to zero** — that needs checking before it is written off as scale.
+
+**6. No structural level from which to derive a target — 3 of 68 (4%). TOO NEW TO CLASSIFY.**
+
+All three are from 2026-09-02, i.e. one day old. Re-measure before acting;
+this may be a new regression from that day's ship.
+
+**7. AI Risk Manager vetoes the entire plan for incoherence — 2 of 68 (3%). TOO STRICT.**
+
+Notable because it is reproducing AFTER a fix intended to stop exactly this.
+One veto discards every trade in the plan, so its cost is superlinear.
+
+**8. Stop placed on the wrong side of entry — 2 of 68 (3%). DEFECT, upstream.**
+
+The refusal is correct and must stay. The defect is whatever produced a
+wrong-sided stop in the first place, which is unfixed and unlocated.
+
+**9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.**
+
+Insufficient cash (1), a quote 14.6% off reference rejected as dirty data (1),
+outright broker rejection (1). Not material; do not spend time here.
+
+**10. Slots burned re-proposing names that never fill. NOT YET DIAGNOSED.**
+
+NVDA proposed **9 times, filled once**. JPM, VLO and PATH proposed 3 times
+each and filled **zero**. The desk has no memory of having already been
+refused, so it re-litigates the same names while genuinely new ideas go
+unexamined. Partially addressed on `wt/stuck-loops` (merged 2026-09-02) —
+**re-measure before assuming it is closed.**
+
+**11. Fourteen outright agent failures, ten of them on 2026-08-25 alone. DEFECT.**
+
+The desk produced **zero proposals that entire day** and this was not noticed
+at the time. A day of total silence looks identical to a quiet market from
+every surface we have. Related to item 2 and to the blind-data-day work
+parked on `wt/empty-levels`.
+
+**12. The desk's own funnel reporting misattributes vetoes. DEFECT, pre-existing.**
+
+`_outcome` in `src/pipeline.py` blames every originally-proposed symbol when
+the Risk Manager vetoes a plan — including symbols the constructor had already
+dropped before the Risk Manager ever saw them. The census script corrects for
+this internally; **the source does not**, so the dashboard and any future
+funnel report are wrong in the same direction. Reported, deliberately not
+fixed, because it is out of scope of the census that found it.
+
+---
+
+### Re-measure gate — TWO different questions, two different costs
+
+**No item above may be struck through on a code review.** But do not confuse
+the fast question with the slow one. Owner's correction, 2026-09-02, and it
+is right: *"we only need maybe a couple of runs in the morning to determine
+if it's still not pulling the trigger on longs or shorts for no reason."*
+
+**THE FAST CHECK — one or two sessions. Use this for item 1.**
+"Is the desk still refusing trades for no good reason?" is BINARY and it is
+answerable the next morning the market is open. A session either produces
+entry proposals that survive to an order, or it kills them at the R/R gate
+again. One clean morning tells you whether the geometry fix worked; two tells
+you it was not a fluke. Do not wait two weeks to learn this.
+  - What to look at: the proposals that session, and for each one whether the
+    R/R gate blocked or halved it. If the gate is still doing the killing,
+    the fix did not work — that is the whole test.
+  - **A zero-proposal session does NOT answer this**, it only means nothing
+    got that far. Distinguish "refused" from "never offered", or you will
+    read item 11's silent-failure mode as a pass.
+
+**THE SLOW CHECK — weeks. Use this for the funnel percentages.**
+Re-running `scripts/blocked_proposals_census.py` and claiming the SHARES
+moved (25% → x%) needs a comparable window, and the book was wiped
+2026-09-02 so that window starts from empty. Until roughly two weeks of
+sessions exist, any restated percentage is an estimate. Say so when making
+one. This is a bookkeeping bar, not a gate on shipping the next fix.
+
 
 **~~A held SHORT makes its sector look SMALLER to the risk engine~~ — DECIDED
 AND BUILT 2026-09-01.** The owner answered the question this item was raised
