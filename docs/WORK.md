@@ -982,6 +982,36 @@ morning charges and latches on — so the day it darkens is not the day it
 broke (never observed; read from code). And cache hits record no cost, so
 the alert prints `cost: $?.??` and hides the real figure.
 
+**15. We cannot tell a stale price from a live one — ABANDONED WORK EXISTS.**
+
+Every price the desk uses is currently just a number. Nothing records which
+feed it came from, when the MARKET observed it (as opposed to when we
+fetched it), or whether it is fresh enough to trade on. Retrieval time
+currently makes an old observation look current.
+
+This is upstream of at least three items already on this list: sizing that
+rounds to zero (item 5), the quote rejected as 14.6% off reference (item 9),
+and a blind data day that looks identical to a quiet one (item 11). It also
+bears on the paper-only IEX feed caveat that must be revisited before live
+capital.
+
+**~450 lines already exist on `rescue/price-provenance`** — rescued from the
+dev account 2026-09-01, never reviewed. It tags each price with its kind,
+provider, feed, market-as-of, retrieved-at and a freshness classification.
+**Health warning: it is a HALF-APPLIED PATCH.** Two `.rej` files are
+committed on the branch, meaning chunks failed to apply and nobody went
+back. Treat it as a strong starting point, not as work to merge.
+
+**16. The afternoon spending reserve was built and never connected.**
+
+37 lines on `fix/dollar-based-session-cap` (2026-08-29), whose own commit
+message says "NOT wired in". It reserves budget for the afternoon rather
+than letting the morning spend the day's allowance.
+
+Belongs with item 14, which the owner has PARKED until the model question is
+settled or the desk goes programmatic. Recorded here only so it is not
+rediscovered a third time.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
