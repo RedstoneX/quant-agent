@@ -110,6 +110,7 @@ class FakeClient:
         self.writes.append(f"close_all_positions(cancel_orders={cancel_orders})")
         closed = [
             SimpleNamespace(symbol=p.symbol, status=200,
+                            order_id=f"liq-{p.symbol}",
                             body=SimpleNamespace(id=f"liq-{p.symbol}"))
             for p in self._positions
         ]
@@ -793,6 +794,7 @@ def test_flatten_cancels_orders_before_liquidating(dr):
     assert client.writes[0] == "close_all_positions(cancel_orders=True)"
     assert "cancel_orders()" in client.writes
     assert len(out["close_all"]) == 6
+    assert out["close_all"][0]["order_id"].startswith("liq-")
     assert out["errors"] == []
 
 

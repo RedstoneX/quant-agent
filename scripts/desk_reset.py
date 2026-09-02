@@ -671,10 +671,15 @@ def flatten_book(client, *, settle_seconds: float, poll_seconds: float = 2.0) ->
     try:
         responses = client.close_all_positions(cancel_orders=True) or []
         for r in responses:
+            # ClosePositionResponse carries order_id directly; `body` is the
+            # full Order and is the fallback for older SDK shapes.
+            oid = getattr(r, "order_id", None) or getattr(
+                getattr(r, "body", None), "id", "",
+            )
             result["close_all"].append({
                 "symbol": str(getattr(r, "symbol", "")),
                 "status": str(getattr(r, "status", "")),
-                "order_id": str(getattr(getattr(r, "body", None), "id", "") or ""),
+                "order_id": str(oid or ""),
             })
     except Exception as exc:  # noqa: BLE001
         result["errors"].append(f"close_all_positions: {exc}")
