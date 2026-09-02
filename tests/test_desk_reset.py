@@ -14,6 +14,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -760,6 +761,33 @@ def test_closed_market_warns_that_liquidations_queue(dr):
     )
     assert w["refusals"] == []
     assert any("QUEUED" in x for x in w["warnings"])
+
+
+def test_fresh_decision_checkpoint_is_warned_about(dr, tmp_path):
+    """A checkpoint the resume lane can still act on describes the OLD book."""
+    ckpt = tmp_path / "checkpoints"
+    ckpt.mkdir()
+    (ckpt / "2026-09-02-morning.json").write_text("{}")
+    warnings = dr.check_live_checkpoints(tmp_path)
+    assert len(warnings) == 1
+    assert "2026-09-02-morning.json" in warnings[0]
+    assert "does not delete files" in warnings[0]
+
+
+def test_expired_decision_checkpoint_is_not_warned_about(dr, tmp_path):
+    import os
+    from src.decision_checkpoint import MAX_AGE_MINUTES
+    ckpt = tmp_path / "checkpoints"
+    ckpt.mkdir()
+    old = ckpt / "2026-08-31-morning.json"
+    old.write_text("{}")
+    stale = time.time() - (MAX_AGE_MINUTES * 60) - 600
+    os.utime(old, (stale, stale))
+    assert dr.check_live_checkpoints(tmp_path) == []
+
+
+def test_no_checkpoint_directory_is_not_an_error(dr, tmp_path):
+    assert dr.check_live_checkpoints(tmp_path / "nothing-here") == []
 
 
 def test_unknown_clock_is_warned_not_refused(dr):

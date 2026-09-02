@@ -520,6 +520,37 @@ def plan_evidence(conn: sqlite3.Connection, *, evidence_mode: str) -> dict:
     }
 
 
+def check_live_checkpoints(data_dir: Path, now: float | None = None) -> list[str]:
+    """Warn about a post-PM checkpoint the resume lane could still act on.
+
+    `src/decision_checkpoint.py` persists a decided-but-not-yet-risk-reviewed
+    plan and will re-offer it on the next tick for MAX_AGE_MINUTES. A
+    checkpoint younger than that describes the PRE-reset book, so a reset run
+    inside the morning window can be followed by the desk resuming a plan for
+    positions that no longer exist.
+
+    This is a WARNING, not a deletion: the tool does not delete files, and the
+    right fix is operator-side (let it expire, or remove it deliberately).
+    """
+    try:
+        from src.decision_checkpoint import MAX_AGE_MINUTES
+    except Exception:  # noqa: BLE001 — advisory only
+        return []
+    ckpt_dir = data_dir / "checkpoints"
+    if not ckpt_dir.is_dir():
+        return []
+    cutoff = (now if now is not None else time.time()) - MAX_AGE_MINUTES * 60
+    fresh = [p for p in sorted(ckpt_dir.glob("*.json")) if p.stat().st_mtime >= cutoff]
+    if not fresh:
+        return []
+    return [
+        f"{len(fresh)} decision checkpoint(s) younger than {MAX_AGE_MINUTES:g} min "
+        f"({', '.join(p.name for p in fresh)}) — the desk's zero-LLM resume lane "
+        "can still re-offer a plan built on the PRE-reset book. Let them expire "
+        "or remove them before the next session; this tool does not delete files."
+    ]
+
+
 def backup_database(db_path: Path, dest: Path) -> dict:
     """Consistent online copy via sqlite3's backup API (WAL-safe)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -950,6 +981,7 @@ def run(argv: list[str] | None = None) -> int:
         allow_market_open=args.allow_market_open,
         allow_session_window=args.allow_session_window,
     )
+    window["warnings"].extend(check_live_checkpoints(db_path.parent))
 
     # ---- database plan ----
     plan = {"tables_present": [], "clear": [], "keep": [], "unknown": [],

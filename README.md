@@ -416,6 +416,8 @@ Every one of those is a **hard refusal with no override flag**, for the same rea
 
 There is no window that is both "market open" and "no desk session active". The clean procedure is therefore: stop the desk's timers, run with `--allow-market-open` during regular hours, confirm flat, restart the timers. The tool prints this reasoning on every run rather than leaving it in a document.
 
+It also warns — without touching them — when `data/checkpoints/` holds a post-PM checkpoint younger than `decision_checkpoint.MAX_AGE_MINUTES`. The zero-LLM resume lane will still re-offer that plan, and it was built on the pre-reset book. Only reachable if you reset inside the morning window with the override flags, but silently resuming a plan for positions that no longer exist is not a failure worth discovering live.
+
 **What it does, in order:** prove paper → check timing → **back up** → flatten → clear. The backup is unconditional and has no `--no-backup`: `data/resets/<UTC timestamp>/` gets a consistent SQLite copy (online backup API, WAL-safe), `book_before.json` / `book_after.json`, and a `reset_manifest.json` recording the checks that passed, the plan, and the row counts deleted.
 
 The flatten is `DELETE /v2/positions?cancel_orders=true` (`close_all_positions(cancel_orders=True)`) — cancelling **before** liquidating is required, since a resting protective stop reserves the shares and a naive sell is rejected for insufficient quantity. A second `cancel_orders()` sweeps anything that appeared in the gap.
