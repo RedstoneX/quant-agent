@@ -20,6 +20,20 @@ and because eligibility FAILS CLOSED: a symbol is sized fractionally only
 when the broker itself confirms `fractionable`. Unknown, unreadable or
 un-askable all mean whole shares. Fractional-by-assumption is the state this
 must never reach.
+
+HYBRID FRACTIONAL STOPS (section 7, added 2026-09-01) extend those three
+guards rather than replacing them. The broker was probed against the live
+paper account: it refuses a fractional GTC order outright and accepts a
+fractional DAY one. So a fractional position is covered by TWO orders — a
+durable GTC stop over the whole shares and a DAY stop over the sub-share
+remainder — and the DAY stop lapses at every close by design.
+
+That makes the ALERTING the load-bearing part, not the placement. A lapsed
+overnight DAY stop is expected and must stay silent; the same stop missing
+during market hours, or a missing whole-share GTC leg at any hour, must
+still alert. Section 7 pins all three from both sides — including the case
+that must alert, so the suppression cannot degrade into "never alert about
+fractional".
 """
 from unittest.mock import MagicMock, patch
 
@@ -380,23 +394,112 @@ def test_stop_placement_gives_up_after_a_bounded_number_of_attempts():
     assert broker._submit_stop_limit_order.call_count == 3
 
 
-def test_a_fractional_fill_whose_exact_stop_is_refused_still_protects_the_whole_shares():
-    """The §11.1 open question, contained. If the broker will not carry a
-    stop for 12.3456 shares, covering 12 beats covering none — and the
-    sub-share remainder is reported, never swallowed."""
+def test_a_fractional_fill_is_protected_by_a_hybrid_gtc_plus_day_pair():
+    """§11.1 HYBRID FRACTIONAL STOPS — the open question, now answered.
+
+    The broker refuses a fractional GTC outright and accepts a fractional
+    DAY, so a 12.3456-share position is covered by TWO orders at the same
+    stop price: a durable GTC over the 12 whole shares and a DAY over the
+    0.3456 remainder. Nothing is uncovered while the session is open, so
+    guard 2 must stay silent (`uncovered_qty == 0`).
+
+    This REPLACES the old "three doomed attempts at the exact fractional qty,
+    then fall back to whole shares" pin. Those three attempts are now known
+    to be three guaranteed rejections, each one costing ~2 seconds with the
+    position open and unprotected."""
     broker = _protection_broker(
         filled_qty=12.3456,
-        stop_results=[RuntimeError("fractional qty not supported")] * 3
-        + [{"id": "stop-whole"}],
+        stop_results=[{"id": "stop-whole"}, {"id": "stop-frac"}],
+    )
+
+    with patch("src.execution.broker.time.sleep"):
+        out = broker.place_entry_protection("NVDA", "e1", 95.0, requested_qty=13)
+
+    # No attempt is wasted on the exact fractional qty any more.
+    assert broker._submit_stop_limit_order.call_count == 2
+    qtys = [c.kwargs["qty"] for c in broker._submit_stop_limit_order.call_args_list]
+    assert qtys[0] == 12.0, "the durable GTC leg covers the whole shares"
+    assert qtys[1] == pytest.approx(0.3456), "the DAY leg covers the remainder"
+
+    assert out["id"] == "stop-whole", "the durable leg is the id carried forward"
+    assert out["hybrid"] is True
+    assert out["gtc_qty"] == 12.0
+    assert out["day_qty"] == pytest.approx(0.3456)
+    assert out["covered_qty"] == pytest.approx(12.3456)
+    assert out["uncovered_qty"] == 0.0
+
+
+def test_a_position_under_one_share_gets_a_day_stop_and_no_gtc_leg():
+    """There is no whole part to place a GTC over, so the sub-share position
+    carries a DAY stop ONLY. It is fully covered while the session is open —
+    which is the entire reason the desk can hold a $900 name at all on a
+    ~$10k account."""
+    broker = _protection_broker(
+        filled_qty=0.6, stop_results=[{"id": "stop-frac"}],
+    )
+
+    with patch("src.execution.broker.time.sleep"):
+        out = broker.place_entry_protection("NVDA", "e1", 95.0, requested_qty=1)
+
+    assert broker._submit_stop_limit_order.call_count == 1
+    assert broker._submit_stop_limit_order.call_args.kwargs["qty"] == pytest.approx(0.6)
+    assert out["gtc_qty"] == 0.0
+    assert out["day_qty"] == pytest.approx(0.6)
+    assert out["uncovered_qty"] == 0.0
+
+
+def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
+    """The tif is derived from the QUANTITY inside `_submit_stop_limit_order`,
+    not chosen by a caller — so no path can forget the broker's rule and
+    submit a fractional GTC that is refused while the code believes a stop
+    was placed. This asserts against the actual request objects."""
+    from alpaca.trading.enums import TimeInForce
+    from alpaca.trading.requests import StopLimitOrderRequest
+
+    with patch("src.execution.broker.TradingClient") as tc_cls:
+        client = MagicMock()
+        client.submit_order.return_value = MagicMock(
+            id="s", status="new", symbol="NVDA",
+        )
+        tc_cls.return_value = client
+        broker = AlpacaBroker("k", "s", paper=True)
+        broker.wait_for_order_terminal = MagicMock(return_value="filled")
+        broker.get_order_fill_info = MagicMock(
+            return_value={"filled_qty": 12.3456},
+        )
+        with patch("src.execution.broker.time.sleep"):
+            broker.place_entry_protection("NVDA", "e1", 95.0, requested_qty=13)
+
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert len(reqs) == 2
+    assert all(isinstance(r, StopLimitOrderRequest) for r in reqs)
+    whole, frac = reqs
+    assert float(whole.qty) == 12.0
+    assert whole.time_in_force == TimeInForce.GTC   # durable, survives 16:00 ET
+    assert float(frac.qty) == pytest.approx(0.3456)
+    assert frac.time_in_force == TimeInForce.DAY    # the only tif the broker takes
+    # Both legs sit at the SAME trigger — a remainder stopped somewhere else
+    # would be a second, unreviewed risk decision.
+    assert float(whole.stop_price) == float(frac.stop_price) == 95.0
+
+
+def test_a_failed_day_leg_still_leaves_the_whole_shares_durably_covered():
+    """Guard 2's partial-cover alert survives the hybrid. If the DAY leg is
+    refused, the GTC leg still stands watch over the whole shares and the
+    sub-share remainder is REPORTED, never swallowed."""
+    broker = _protection_broker(
+        filled_qty=12.3456,
+        stop_results=[{"id": "stop-whole"}]
+        + [RuntimeError("day leg refused")] * 3,
     )
 
     with patch("src.execution.broker.time.sleep"):
         out = broker.place_entry_protection("NVDA", "e1", 95.0, requested_qty=13)
 
     assert out["id"] == "stop-whole"
-    assert out["_qty"] == 12.0
     assert out["covered_qty"] == 12.0
     assert out["uncovered_qty"] == pytest.approx(0.3456)
+    assert out["day_qty"] == 0.0
 
 
 # ==========================================================================
@@ -675,3 +778,449 @@ def test_repair_of_a_fractional_gap_that_only_partially_covers_keeps_escalating(
         symbol="NVDA", qty=12.3456, stop_price=140.0,
         limit_price=pytest.approx(140.0 * (1 - 0.03)), side="sell",
     )
+
+
+# ==========================================================================
+# 7. Spec §11.1 HYBRID FRACTIONAL STOPS — the whole/fractional split, the
+#    re-placement path, and THE ALERTING DISTINCTION.
+#
+# The broker was probed against the live paper account on 2026-09-01:
+#   * a fractional GTC order is refused ("fractional orders must be DAY
+#     orders", 42210000); a fractional TRAILING stop is refused at any tif;
+#   * STOP/DAY, STOP_LIMIT/DAY and LIMIT/DAY are accepted fractional;
+#   * whole-share GTC stops are unaffected.
+#
+# So a sub-share remainder cannot carry a durable stop, and its DAY stop
+# lapses every night by design. The single most important property of this
+# feature is therefore NOT that the stop gets placed — it is that the
+# alerting can tell an expected nightly lapse apart from a real failure. An
+# alert that fires every night on a healthy system is worse than no alert:
+# it trains the owner to swipe away the one message that must never be
+# ignored. These tests pin that distinction from both sides.
+# ==========================================================================
+
+from src.pipeline import _classify_coverage_gap, _split_protective_qty  # noqa: E402
+
+
+# --- the split itself -------------------------------------------------------
+
+@pytest.mark.parametrize("qty, whole, frac", [
+    (12.3456, 12.0, 0.3456),   # ordinary fractional position
+    (0.6,      0.0, 0.6),      # under one share — no GTC leg exists at all
+    (10.0,    10.0, 0.0),      # whole — must stay on the untouched GTC path
+    (1.0,      1.0, 0.0),
+    (0.0,      0.0, 0.0),
+    (-4.5,     4.0, 0.5),      # a short's signed qty is a magnitude here
+])
+def test_whole_fractional_split(qty, whole, frac):
+    w, f = _split_protective_qty(qty)
+    assert w == pytest.approx(whole)
+    assert f == pytest.approx(frac)
+
+
+def test_float_noise_does_not_mint_a_phantom_sub_share_leg():
+    """A fill of 7.000000000000001 shares is SEVEN shares. Splitting a
+    1e-15 'remainder' off it would submit a second, absurd DAY order and
+    make a healthy whole-share position look permanently fractional."""
+    assert _split_protective_qty(7.000000000000001) == (7.0, 0.0)
+    assert _split_protective_qty(10.5 - 10.0 + 10.0) == (10.0, 0.5)
+
+
+# --- the classifier ---------------------------------------------------------
+
+def test_classifier_names_a_sub_share_only_gap_fractional():
+    """12 whole shares still covered by their durable GTC stop, 0.3456
+    missing. The durable leg is intact, so this is the fractional case —
+    NOT 'partial', which would red-banner it."""
+    coverage, uncovered = _classify_coverage_gap(held=12.3456, covered=12.0)
+    assert coverage == "fractional"
+    assert uncovered == pytest.approx(0.3456)
+
+
+def test_classifier_names_a_sub_one_share_position_fractional_not_none():
+    """0.6 shares with zero coverage. A bare `covered <= 0` test calls this
+    NO STOP AT ALL — the owner-escalating condition — which would fire the
+    pager every single night on a 60-cent-ish remainder."""
+    coverage, uncovered = _classify_coverage_gap(held=0.6, covered=0.0)
+    assert coverage == "fractional"
+    assert uncovered == pytest.approx(0.6)
+
+
+def test_classifier_still_says_none_when_the_whole_share_leg_is_gone():
+    """12.3456 held, NOTHING covered. The durable GTC leg is missing, so
+    this is case (c) and it must never be softened by the fractional path."""
+    coverage, _ = _classify_coverage_gap(held=12.3456, covered=0.0)
+    assert coverage == "none"
+
+
+def test_classifier_still_says_partial_when_the_whole_share_leg_is_short():
+    """Only 3 of 12 whole shares covered. The remainder is the least of the
+    problems here."""
+    coverage, _ = _classify_coverage_gap(held=12.3456, covered=3.0)
+    assert coverage == "partial"
+
+
+def test_classifier_is_unchanged_for_whole_share_positions():
+    assert _classify_coverage_gap(held=10.0, covered=0.0)[0] == "none"
+    assert _classify_coverage_gap(held=10.0, covered=4.0)[0] == "partial"
+
+
+# --- the sweep, with the clock controlled ----------------------------------
+
+def _hybrid_sweep_pipeline(positions, covered_by_symbol: dict, *,
+                           repair: bool = True) -> MagicMock:
+    pipeline = MagicMock()
+    pipeline.broker.get_positions.return_value = positions
+    pipeline.db.get_pending_protection_restores.return_value = []
+    pipeline._sweeper.return_value = None
+    pipeline._repair_stop_coverage.return_value = repair
+
+    def _snapshot(symbol, side="sell"):
+        qty = covered_by_symbol.get(symbol, 0.0)
+        return True, ([{"qty": qty}] if qty else [])
+
+    pipeline.broker.snapshot_protective_stops.side_effect = _snapshot
+    # Bind the REAL escalation, or the MagicMock silently absorbs the call
+    # and every assertion below passes for the wrong reason.
+    pipeline._alert_owner_no_stop = TradingPipeline._alert_owner_no_stop
+    return pipeline
+
+
+def _priced(symbol: str, qty: float, price: float = 900.0) -> MagicMock:
+    position = MagicMock()
+    position.symbol = symbol
+    position.qty = qty
+    position.current_price = price
+    return position
+
+
+def _sweep(pipeline, *, market_open: bool):
+    with patch("src.pipeline._market_is_open_now", return_value=market_open):
+        return TradingPipeline._reconcile_stop_coverage(pipeline)
+
+
+# --- case (a): the expected overnight lapse --------------------------------
+
+def test_a_lapsed_overnight_fractional_stop_does_not_alert_the_owner():
+    """CASE (a), AND THE MOST IMPORTANT TEST IN THIS FILE.
+
+    The market is shut. The 12 whole shares are still covered by their
+    durable GTC stop; the 0.3456 remainder lost its DAY stop at 16:00 ET
+    exactly as designed. This happens to every fractional position every
+    single night. If it pages the owner, the feature has destroyed the
+    credibility of guard 2 and the desk is worse off than before."""
+    # repair=False models reality: a DAY order into a shut market cannot be
+    # placed. A fixture that pretends the repair succeeds would mask exactly
+    # the regression this test exists to catch.
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=False)
+
+    alert.assert_not_called()
+    assert gaps[0]["coverage"] == "fractional_overnight"
+
+
+def test_a_lapsed_overnight_fractional_stop_is_not_repaired_into_a_shut_market():
+    """A DAY order submitted after the close is a rejection at best and a
+    surprise queued order at worst. The next session's sweep owns it."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert"):
+        _sweep(pipeline, market_open=False)
+
+    pipeline._repair_stop_coverage.assert_not_called()
+
+
+def test_a_sub_one_share_position_overnight_does_not_alert_either():
+    """0.6 shares, zero coverage, market shut. This is the case the old
+    classifier called NO STOP AT ALL — the owner-escalating condition — and
+    it would have fired nightly for as long as the position was held."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("TINY", 0.6)], {"TINY": 0.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=False)
+
+    alert.assert_not_called()
+    assert gaps[0]["coverage"] == "fractional_overnight"
+
+
+def test_the_overnight_exposure_is_reported_as_a_number_not_a_reassurance():
+    """The owner accepted this exposure on condition it be observable: 'a
+    number he can look at beats a guarantee he has to trust'. 0.3456 shares
+    of a $900 name is $311.04."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456, price=900.0)], {"NVDA": 12.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert"):
+        gaps = _sweep(pipeline, market_open=False)
+
+    assert gaps[0]["uncovered_qty"] == pytest.approx(0.3456)
+    assert gaps[0]["unprotected_value"] == pytest.approx(311.04, abs=0.01)
+
+
+def test_the_overnight_exposure_reaches_the_session_alert():
+    """Reported where the owner actually reads, not only in a log file —
+    and NOT as a red banner, because nothing here needs doing."""
+    from src.notifier import format_session_result
+
+    body = format_session_result("evening", {
+        "status": "ok", "run_id": "r",
+        "stop_coverage_gaps": [{
+            "symbol": "NVDA", "held_qty": 12.3456, "covered_qty": 12.0,
+            "coverage": "fractional_overnight", "uncovered_qty": 0.3456,
+            "unprotected_value": 311.04,
+        }],
+    }, 2.0)
+
+    assert "311.04" in body
+    assert "NVDA" in body
+    assert "NO STOP AT ALL" not in body
+    assert "STOP MIS-SIZED" not in body
+
+
+def test_an_expected_overnight_lapse_does_not_break_intra_check_silence():
+    """intra_check ticks 14 times a day and is silent by design. A routine
+    fractional re-placement must not be what breaks that silence."""
+    from src.notifier import format_session_result
+
+    assert format_session_result("intra_check", {
+        "status": "ok", "run_id": "r", "positions": 3,
+        "stop_coverage_gaps": [
+            {"symbol": "NVDA", "held_qty": 12.3456, "covered_qty": 12.0,
+             "coverage": "fractional_replaced"},
+        ],
+    }, 2.0) is None
+
+
+# --- case (b): a placement failure during session hours --------------------
+
+def test_a_missing_fractional_stop_during_session_hours_is_repaired():
+    """CASE (b). The same shortfall, but the market is OPEN — the remainder
+    should be covered right now. This is also the start-of-session
+    re-placement path: the sweep is what puts the DAY stop back."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=True,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=True)
+
+    pipeline._repair_stop_coverage.assert_called_once()
+    assert pipeline._repair_stop_coverage.call_args.args[0] == "NVDA"
+    assert pipeline._repair_stop_coverage.call_args.args[1] == pytest.approx(0.3456)
+    assert gaps[0]["coverage"] == "fractional_replaced"
+    alert.assert_not_called()
+
+
+def test_a_fractional_stop_that_cannot_be_re_placed_in_hours_still_alerts():
+    """CASE (b), the failing half. The repair did not land and the market is
+    open — this is a real placement failure and it alerts exactly as guard 2
+    always has. THIS is the assertion that proves the overnight suppression
+    is not just 'never alert about fractional'."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("TINY", 0.6)], {"TINY": 0.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=True)
+
+    alert.assert_called_once()
+    assert "NO STOP AT ALL" in alert.call_args.args[0]
+    assert gaps[0]["coverage"] == "none"
+
+
+def test_a_partly_covered_fractional_gap_in_hours_falls_back_to_the_banner():
+    """Repair failed but the durable GTC leg is still standing watch over 12
+    shares. Guard 3's existing ladder is unchanged: some coverage banners,
+    it does not escalate."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=True)
+
+    alert.assert_not_called()
+    assert gaps[0]["coverage"] == "partial"
+
+
+# --- case (c): the whole-share GTC leg is missing --------------------------
+
+def test_a_missing_whole_share_gtc_leg_alerts_even_overnight():
+    """CASE (c). 12.3456 held with NOTHING covered, market shut. The durable
+    leg is the one that is supposed to survive the night; its absence is
+    never the expected state and must never be suppressed by the overnight
+    rule."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456)], {"NVDA": 0.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=False)
+
+    alert.assert_called_once()
+    assert "NO STOP AT ALL" in alert.call_args.args[0]
+    assert gaps[0]["coverage"] == "none"
+
+
+def test_a_short_whole_share_gtc_leg_banners_even_overnight():
+    """Case (c)'s milder half: 3 of 12 whole shares covered, market shut.
+    Still a real gap, still reported, still not softened."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 12.3456)], {"NVDA": 3.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert"):
+        gaps = _sweep(pipeline, market_open=False)
+
+    assert gaps[0]["coverage"] == "partial"
+
+
+def test_a_whole_share_position_is_unaffected_by_any_of_this():
+    """Every short, and every long while `fractional_enabled` is off. A
+    naked whole-share position alerts at 3am exactly as it did before."""
+    pipeline = _hybrid_sweep_pipeline(
+        [_priced("NVDA", 10.0)], {"NVDA": 0.0}, repair=False,
+    )
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        gaps = _sweep(pipeline, market_open=False)
+
+    alert.assert_called_once()
+    assert gaps[0]["coverage"] == "none"
+
+
+# --- the market-hours discriminator itself ---------------------------------
+
+def test_market_hours_check_fails_toward_open():
+    """Getting this wrong in the 'shut' direction SUPPRESSES a real naked-
+    position alert, which is the one failure this desk cannot absorb.
+    Getting it wrong the other way costs a redundant banner. So anything
+    unknown answers OPEN."""
+    from src.pipeline import _market_is_open_now
+
+    broker = MagicMock()
+    broker.get_session_close.side_effect = RuntimeError("calendar down")
+    with patch("src.pipeline.et_now", side_effect=RuntimeError("clock down")):
+        assert _market_is_open_now(broker) is True
+
+
+def test_market_hours_check_respects_an_early_close():
+    """A half-day closes at 13:00 ET. A DAY stop lapses THEN, not at 16:00,
+    so a 13:30 sweep must call the market shut or it would report every
+    fractional position as a failure on Thanksgiving Friday."""
+    from datetime import datetime
+    from src.pipeline import _market_is_open_now
+    from src.trading_calendar import ET
+
+    broker = MagicMock()
+    broker.get_session_close.return_value = datetime(2026, 11, 27, 13, 0, tzinfo=ET)
+    now = datetime(2026, 11, 27, 13, 30, tzinfo=ET)
+    with patch("src.pipeline.et_now", return_value=now):
+        assert _market_is_open_now(broker) is False
+
+
+# --- the OTHER re-placement paths must not destroy the hybrid pair ---------
+
+def test_a_trailing_stop_ratchet_re_places_the_hybrid_pair_not_one_day_order():
+    """`replace_stop_loss` cancels a position's stops and re-places coverage
+    for the whole quantity. On a fractional position a single order is
+    necessarily fractional, therefore necessarily DAY, therefore gone at the
+    close — the position would silently LOSE its durable GTC leg and the next
+    overnight sweep would correctly page the owner about it. A trailing-stop
+    ratchet must not be able to manufacture a nightly false alarm."""
+    from alpaca.trading.enums import TimeInForce
+
+    with patch("src.execution.broker.TradingClient") as tc_cls:
+        client = MagicMock()
+        client.submit_order.return_value = MagicMock(
+            id="s", status="new", symbol="NVDA",
+        )
+        tc_cls.return_value = client
+        broker = AlpacaBroker("k", "s", paper=True)
+        broker._list_open_stop_orders_by_side = MagicMock(return_value=([], []))
+        broker.get_positions = MagicMock(return_value=[
+            MagicMock(symbol="NVDA", qty=12.3456),
+        ])
+        broker.get_latest_price = MagicMock(return_value=200.0)
+        broker.replace_stop_loss("NVDA", 150.0)
+
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert len(reqs) == 2, "the hybrid pair, not one collapsed order"
+    assert float(reqs[0].qty) == 12.0
+    assert reqs[0].time_in_force == TimeInForce.GTC
+    assert float(reqs[1].qty) == pytest.approx(0.3456)
+    assert reqs[1].time_in_force == TimeInForce.DAY
+
+
+def test_a_whole_share_trailing_ratchet_is_still_one_gtc_order():
+    """Every short, and every long while `fractional_enabled` is off."""
+    from alpaca.trading.enums import TimeInForce
+
+    with patch("src.execution.broker.TradingClient") as tc_cls:
+        client = MagicMock()
+        client.submit_order.return_value = MagicMock(
+            id="s", status="new", symbol="NVDA",
+        )
+        tc_cls.return_value = client
+        broker = AlpacaBroker("k", "s", paper=True)
+        broker._list_open_stop_orders_by_side = MagicMock(return_value=([], []))
+        broker.get_positions = MagicMock(return_value=[
+            MagicMock(symbol="NVDA", qty=12.0),
+        ])
+        broker.get_latest_price = MagicMock(return_value=200.0)
+        broker.replace_stop_loss("NVDA", 150.0)
+
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert len(reqs) == 1
+    assert float(reqs[0].qty) == 12.0
+    assert reqs[0].time_in_force == TimeInForce.GTC
+
+
+def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
+    """Same hazard on the partial-exit path: trimming 5 shares off 12.3456
+    leaves a 7.3456 residual, and re-protecting it with one fractional order
+    would leave the whole residual DAY-only."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker._list_open_sell_stop_orders.return_value = []
+    pipeline._format_qty = lambda q: str(q)
+
+    cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0,
+                  "limit_price": 88.0}]
+    assert pipeline._reprotect_residual_after_partial_sell(
+        "NVDA", 7.3456, cancelled,
+    ) is True
+
+    qtys = [
+        c.kwargs["qty"]
+        for c in pipeline.broker._submit_stop_limit_order.call_args_list
+    ]
+    assert qtys[0] == 7.0
+    assert qtys[1] == pytest.approx(0.3456)
+
+
+def test_a_hybrid_pair_is_all_or_nothing_when_a_leg_is_rejected():
+    """A half-placed pair is the worst outcome available: the caller's
+    rollback believes nothing landed, while the coverage sweep sees a
+    mis-sized stop. If the DAY leg is rejected, the GTC leg that already
+    landed is cancelled and the failure propagates."""
+    with patch("src.execution.broker.TradingClient"):
+        broker = AlpacaBroker("k", "s", paper=True)
+    broker.client = MagicMock()
+    broker._submit_stop_limit_order = MagicMock(
+        side_effect=[{"id": "leg-gtc"}, RuntimeError("day leg rejected")],
+    )
+
+    with pytest.raises(RuntimeError):
+        broker._submit_stop_legs(symbol="NVDA", qty=12.3456, stop_price=90.0)
+
+    broker.client.cancel_order_by_id.assert_called_once_with("leg-gtc")

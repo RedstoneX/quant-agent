@@ -207,32 +207,41 @@ execution:
   # whole shares (fail closed, never fractional-by-assumption). Shorts are
   # always whole-share — a borrowed share cannot be fractional.
   #
-  # Set to false to turn exact sizing off without a code change. That is the
-  # lever to pull if the open question in §11.1 resolves badly: whether
-  # Alpaca accepts a fractional-qty GTC stop-limit is NOT established, and a
-  # fractional position whose stop the broker refuses is the one state this
-  # feature must never produce.
-  # SETTLED EMPIRICALLY 2026-09-01 against the live paper account, and the
-  # answer is NO. The spec called for settling this before trusting fractional
-  # in production. Submitting a fractional-quantity GTC stop returns:
-  #     code 42210000 "stop/stop_limit fractional GTC orders are not enabled"
-  # This fires BEFORE the quantity-availability check, so it is a capability
-  # limit, not an account state. A DAY-tif stop is not an escape: an OTO/DAY
-  # child is exactly what the 2026-07-16 audit removed, because Alpaca expires
-  # it at 16:00 ET and leaves the position naked overnight.
+  # Set to false to turn exact sizing off without a code change.
   #
-  # Consequence, and why this flag is now false: refusal is not the RARE case
-  # the three guards were designed around, it is the ONLY case. Every
-  # fractional entry would take a whole-share stop covering the integer part,
-  # leave the fractional remainder permanently unprotected, and fire the
-  # owner alert every single time — and a position under one share would get
-  # no stop at all, ever. Guard 2 firing on every entry is alert fatigue on
-  # the one alert that must never be ignored.
+  # BROKER CAPABILITY, measured 2026-09-01 against the live paper account:
+  #     * a fractional GTC order is REFUSED — "fractional orders must be DAY
+  #       orders" (code 42210000). This fires before the quantity-
+  #       availability check, so it is a capability limit, not account state.
+  #     * a fractional TRAILING stop is REFUSED at every tif.
+  #     * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
+  #     * whole-share GTC stops are unaffected (control probe accepted).
   #
-  # The 11.1 CODE is correct, merged and tested, and it contains this failure
-  # safely. It is the FEATURE that cannot work until Alpaca supports a durable
-  # fractional stop. Re-test with the probe in docs/QAMC_REMEDIATION_SPEC.md
-  # §11.1 before flipping this back.
+  # HYBRID STOP COVERAGE is how a fractional position is protected given
+  # that. A position of N.f shares carries TWO protective orders at the SAME
+  # stop price:
+  #     * a GTC stop over floor(N.f) — durable, survives 16:00 ET;
+  #     * a DAY stop over the sub-share remainder — lapses at the close BY
+  #       DESIGN and is re-placed by the first coverage sweep of the next
+  #       session (`_reconcile_stop_coverage`, hoisted to the very first
+  #       broker action of the morning run so the window at the open is as
+  #       short as this system can make it).
+  # Under one share there is no whole part, so it is a DAY stop only.
+  #
+  # THE ACCEPTED TRADE. The remainder is unprotected overnight. The owner
+  # ratified that on 2026-09-01: without fractional sizing a ~$10k account is
+  # simply excluded from expensive names the analysts keep picking, and being
+  # locked out of the market is itself a cost for a desk whose purpose is to
+  # participate and to learn. The exposure is bounded by construction (always
+  # under one share per position) and is REPORTED IN DOLLARS on the session
+  # alert rather than left to trust.
+  #
+  # ALERTING. A lapsed overnight DAY stop is EXPECTED and does not alert —
+  # alerting nightly on a healthy system would destroy the credibility of the
+  # one alert that must never be ignored. A stop that cannot be placed or
+  # re-placed DURING MARKET HOURS alerts exactly as guard 2 always has, and a
+  # missing whole-share GTC leg alerts at any hour. See
+  # `_classify_coverage_gap` and `_reconcile_stop_coverage` in src/pipeline.py.
   fractional_enabled: false
   fractional_share_decimals: 4
 

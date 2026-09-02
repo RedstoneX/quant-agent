@@ -42,7 +42,11 @@ from src.risk.rules import (
     peak_to_trough_pct,
     resolve_gross_ceiling,
 )
-from src.execution.broker import AlpacaBroker, _get_sector
+from src.execution.broker import (
+    AlpacaBroker,
+    _get_sector,
+    _split_protective_qty,
+)
 from src.pipeline_context import PMFacts, RunContext, SessionType
 from src.pipeline_stages import (
     DecisionStage,
@@ -339,6 +343,128 @@ def _missed_ops_quality_metrics(
         single_day_conc = None
 
     return avg_dvol_m, vol_conf_ratio, single_day_conc
+
+
+def _market_is_open_now(broker) -> bool:
+    """Is the regular cash session open RIGHT NOW?
+
+    Spec §11.1 hybrid fractional stops. This is the discriminator the
+    whole alerting distinction rests on: a fractional DAY stop that is
+    absent while the market is SHUT is the design working — it lapsed at
+    16:00 ET exactly as intended and the next session re-places it. The
+    same stop absent while the market is OPEN is a placement failure and
+    must wake somebody.
+
+    FAILS TOWARD "OPEN" ON PURPOSE. Every way this can be wrong has an
+    asymmetric cost: believing the market is shut when it is open would
+    SUPPRESS a real naked-position alert, which is the one failure this
+    desk cannot absorb. Believing it is open when it is shut costs a
+    redundant banner. So anything unknown, unreadable or unexpected
+    answers True, and only a confident, positively-established "outside
+    the session" answers False.
+
+    The session-window table (`trading_calendar.SESSION_WINDOWS`) is the
+    weekday 09:30-16:00 ET baseline; `broker.get_session_close()`
+    tightens it on early-close days (Thanksgiving Friday 13:00, July 3),
+    and is best-effort — a calendar failure leaves the baseline answer
+    rather than inventing a closed market.
+
+    Note the callers all sit behind `_is_trading_day()`, so a holiday
+    never reaches here; the weekday check is belt-and-braces for a
+    direct call.
+    """
+    from datetime import datetime as _dt
+
+    try:
+        from src.trading_calendar import in_session_window
+
+        now = et_now()
+        if not in_session_window("intra_check", now):
+            return False
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "market-hours check failed (%s) — assuming the market is OPEN "
+            "so a coverage gap still alerts", exc,
+        )
+        return True
+    try:
+        session_close = broker.get_session_close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("market-hours: get_session_close failed: %s", exc)
+        return True
+    if isinstance(session_close, _dt) and now >= session_close:
+        return False
+    return True
+
+
+def _position_notional(position, qty: float) -> float:
+    """Dollar value of `qty` shares of `position`, or 0.0 if unknowable.
+
+    Spec §11.1 hybrid fractional stops, observability half. The owner's
+    standing objection to invisible risk is that "a number he can look at
+    beats a guarantee he has to trust" — so the overnight sub-share
+    exposure is reported in DOLLARS, not in shares. A share count is
+    meaningless across a book that holds both a $12 name and a $900 one,
+    and the whole reason fractional sizing exists here is the $900 one.
+
+    Uses the price already on the broker's position snapshot rather than
+    a fresh quote: this runs inside the coverage sweep's per-position
+    loop, and an extra round-trip per held name to decorate an alert
+    would be paid on every sweep of every session. Returns 0.0 rather
+    than guessing when the snapshot carries no usable price — an omitted
+    number is honest, an invented one is not.
+    """
+    try:
+        price = float(getattr(position, "current_price", 0) or 0)
+        shares = float(qty)
+    except (TypeError, ValueError):
+        return 0.0
+    if not (math.isfinite(price) and price > 0):
+        return 0.0
+    if not (math.isfinite(shares) and shares > 0):
+        return 0.0
+    return round(price * shares, 2)
+
+
+def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
+    """Name the shortfall between held shares and stop-covered shares.
+
+    Returns ``(coverage, frac_uncovered)`` where `coverage` is one of:
+
+    ``'none'``       zero protective coverage on a position that should
+                     have some. Guard 3's worst condition; escalates.
+    ``'partial'``    some coverage, but the WHOLE-SHARE part of the
+                     position is under-covered. Guard 3's milder
+                     condition; banner, not escalation.
+    ``'fractional'`` the ONLY thing missing is the sub-share remainder —
+                     the durable GTC leg over floor(held) is intact.
+
+    Spec §11.1 hybrid fractional stops. The third value is the whole
+    point: under the hybrid design a sub-share remainder loses its DAY
+    stop at every close, so classifying that as 'none' (which is what a
+    bare `covered <= 0` test does for a position under one share) would
+    fire the NO-STOP-AT-ALL owner alert every single night on a state
+    that is expected, bounded and deliberate. An alert that cries wolf
+    nightly is worse than no alert, because it trains the owner to swipe
+    away the one message that must never be ignored.
+
+    Market hours are deliberately NOT an input here. This answers only
+    "what is missing"; the caller decides what that means at this hour.
+    Keeping the two apart is what makes the overnight suppression
+    auditable — it can only ever soften a gap already known to be
+    'fractional', and it is one branch at one call site rather than a
+    condition smeared through the classifier.
+    """
+    whole_held, frac_held = _split_protective_qty(held)
+    shortfall = max(0.0, held - covered)
+    # The durable leg is intact iff the covered qty reaches the whole-share
+    # floor of the position. Anything less means a GTC stop is missing,
+    # which is never the expected overnight state.
+    durable_leg_intact = covered + 1e-6 >= whole_held
+    only_sub_share_missing = shortfall <= frac_held + 1e-6
+    if frac_held > 0 and durable_leg_intact and only_sub_share_missing:
+        return "fractional", shortfall
+    return ("none" if covered <= 1e-6 else "partial"), 0.0
 
 
 class TradingPipeline:
@@ -1743,7 +1869,40 @@ class TradingPipeline:
         reconciler has always refused to make for an unrecorded stop.
         Symbols already queued for WAL recovery are skipped — the drain owns
         them. Returns the list of under-covered ``{symbol, held_qty,
-        covered_qty, repaired}`` for the caller to surface to the operator.
+        covered_qty, coverage, repaired}`` for the caller to surface to the
+        operator.
+
+        SPEC §11.1 HYBRID FRACTIONAL STOPS — this sweep is also the
+        re-placement mechanism, and the alerting distinction lives here.
+
+        A fractional position is covered by two orders: a durable GTC stop
+        over floor(qty) and a DAY stop over the sub-share remainder, which
+        the broker expires at 16:00 ET by design. That means "held qty
+        exceeds covered qty" is now THREE different situations, not one, and
+        reporting them identically would be the worst possible outcome — a
+        nightly red banner on an expected state teaches the owner to ignore
+        the banner that must never be ignored:
+
+          (a) the durable GTC leg is intact, only the sub-share remainder is
+              uncovered, and the market is SHUT. Expected. Stamped
+              ``coverage='fractional_overnight'`` with ``uncovered_qty`` and
+              ``unprotected_value`` so the exposure is a NUMBER the owner can
+              read. No repair (a DAY order into a shut market is a rejection
+              at best), no banner, no escalation.
+          (b) the same shortfall while the market is OPEN. A placement
+              failure. Repaired in place; if the repair lands it is stamped
+              ``'fractional_replaced'`` — this is the ordinary start-of-
+              session heartbeat and stays quiet — and if it does NOT land it
+              falls back onto guard 3's existing ladder and alerts exactly as
+              before.
+          (c) the whole-share GTC leg is missing or short. Never suppressed,
+              never reclassified, market hours irrelevant: 'none' escalates
+              to the owner, 'partial' banners. Unchanged from guard 3.
+
+        The three §11.1 guards are extended by this, not replaced: the retry
+        burst (guard 1) now runs over each hybrid leg, the owner alert (guard
+        2) still fires on a genuine partial cover, and this sweep still
+        separates NO STOP AT ALL from STOP MIS-SIZED (guard 3).
         """
         try:
             positions = self.broker.get_positions()
@@ -1758,6 +1917,12 @@ class TradingPipeline:
             }
         except Exception:  # noqa: BLE001
             pending_syms = set()
+
+        # Spec §11.1 hybrid fractional stops. Read ONCE per pass, not per
+        # position: every gap in this sweep must be judged against the same
+        # clock, or a sweep straddling 16:00 ET could call one symbol's
+        # lapse expected and the next symbol's identical lapse a failure.
+        market_open = _market_is_open_now(self.broker)
 
         gaps: list[dict] = []
         longs_checked = 0
@@ -1809,11 +1974,90 @@ class TradingPipeline:
                 # position with zero coverage has nothing between it and the
                 # tape. The second is the state that ends a desk, and it was
                 # being reported in the same sentence as the first.
-                coverage = "none" if covered <= 1e-6 else "partial"
+                coverage, frac_uncovered = _classify_coverage_gap(
+                    held=held, covered=covered,
+                )
                 gap = {
                     "symbol": symbol, "held_qty": qty, "covered_qty": covered,
                     "coverage": coverage,
                 }
+                # ---- Spec §11.1 hybrid fractional stops: case (a) ----
+                # The durable whole-share GTC leg is intact and the only
+                # thing missing is the sub-share remainder, whose DAY stop
+                # the broker expires at 16:00 ET BY DESIGN. Outside session
+                # hours that is not a fault, it is the mechanism working, and
+                # it happens to EVERY fractional position EVERY night. It is
+                # reported as measured overnight exposure — a number the
+                # owner can look at — and it does not touch either red
+                # banner or the owner escalation. Nor is a repair attempted:
+                # a DAY order submitted into a shut market is a rejection at
+                # best and a surprise queued order at worst.
+                if coverage == "fractional" and not market_open:
+                    gap["coverage"] = "fractional_overnight"
+                    gap["uncovered_qty"] = frac_uncovered
+                    gap["unprotected_value"] = _position_notional(
+                        p, frac_uncovered,
+                    )
+                    gap["repaired"] = False
+                    logger.info(
+                        "FRACTIONAL DAY STOP LAPSED (expected): %s held=%.4f, "
+                        "%.4f whole share(s) still covered by the durable GTC "
+                        "stop, %s sub-share remainder unprotected until the "
+                        "next session re-places its DAY stop.",
+                        symbol, qty, covered, frac_uncovered,
+                    )
+                    gaps.append(gap)
+                    continue
+                if coverage == "fractional":
+                    # ---- case (b), first half: session hours ----
+                    # The remainder should be covered RIGHT NOW. Repair it,
+                    # and only if the repair fails does it carry a real
+                    # condition name into the alerting below.
+                    logger.warning(
+                        "FRACTIONAL STOP MISSING DURING SESSION HOURS: %s "
+                        "held=%.4f, %.4f covered — the sub-share DAY stop is "
+                        "absent while the market is OPEN, which is a placement "
+                        "failure, not the expected overnight lapse. Repairing.",
+                        symbol, qty, covered,
+                    )
+                    repaired = (
+                        False if is_short
+                        else self._repair_stop_coverage(symbol, held - covered)
+                    )
+                    gap["repaired"] = repaired
+                    if repaired:
+                        # Re-placed inside the same pass. This is the ordinary
+                        # start-of-session path for every fractional position
+                        # the desk holds, so it must NOT read as a red banner
+                        # — it is the design's daily heartbeat.
+                        gap["coverage"] = "fractional_replaced"
+                        gap["uncovered_qty"] = 0.0
+                        logger.info(
+                            "FRACTIONAL DAY STOP RE-PLACED: %s — the sub-share "
+                            "remainder is covered again for this session.",
+                            symbol,
+                        )
+                    else:
+                        # Could not re-place during session hours. Falls back
+                        # onto guard 3's existing ladder unchanged: zero
+                        # coverage escalates, some coverage banners.
+                        gap["coverage"] = "none" if covered <= 1e-6 else "partial"
+                        gap["uncovered_qty"] = held - covered
+                        gap["unprotected_value"] = _position_notional(
+                            p, held - covered,
+                        )
+                        logger.error(
+                            "FRACTIONAL STOP RE-PLACEMENT FAILED for %s during "
+                            "session hours (held=%.4f, covered=%.4f) — this is "
+                            "case (b) and it alerts.", symbol, qty, covered,
+                        )
+                    gaps.append(gap)
+                    continue
+                # ---- case (c) and every pre-existing condition ----
+                # The whole-share GTC leg is missing or short. Never
+                # suppressed, never reclassified, market hours irrelevant:
+                # that leg is the durable protection and its absence is the
+                # state that ends a desk.
                 if coverage == "none":
                     logger.critical(
                         "NO STOP AT ALL: %s held=%.4f with ZERO open "
@@ -1844,6 +2088,25 @@ class TradingPipeline:
                 "Stop-coverage reconcile: all %d long / %d short position(s) "
                 "adequately stop-covered", longs_checked, shorts_checked,
             )
+        # Spec §11.1 hybrid fractional stops, observability half. Total the
+        # deliberate overnight exposure into ONE line the owner can read at a
+        # glance. The individual gap dicts carry it too (the notifier renders
+        # them), but a running total is what turns "a bounded remainder" from
+        # a promise into a measurement.
+        overnight = [
+            g for g in gaps if g.get("coverage") == "fractional_overnight"
+        ]
+        if overnight:
+            total_value = sum(
+                float(g.get("unprotected_value") or 0) for g in overnight
+            )
+            logger.warning(
+                "OVERNIGHT FRACTIONAL EXPOSURE: %d position(s) carrying a "
+                "sub-share remainder with no live stop until the next session "
+                "— $%.2f total at risk. Expected and bounded by design; the "
+                "whole-share part of each is still covered by its GTC stop.",
+                len(overnight), total_value,
+            )
         # Spec §11.1 guard 3, escalation half. A gap the auto-repair CLOSED
         # needs no interruption — the belt did its job. A position still
         # carrying NO stop at all after the repair attempt is a live naked
@@ -1853,6 +2116,15 @@ class TradingPipeline:
         # a log file. Mis-sized gaps stay in the session banner rather than
         # interrupting the owner — they are real but bounded, and alerting on
         # both is how a channel gets tuned out.
+        #
+        # Spec §11.1 hybrid fractional stops: the `coverage == "none"` test is
+        # exactly the right filter and needs no exception added to it. An
+        # expected overnight lapse is stamped 'fractional_overnight' and a
+        # re-placed one 'fractional_replaced', so neither can reach this list
+        # — while a sub-share position that could NOT be re-covered during
+        # SESSION hours falls back to 'none' above and escalates here, which
+        # is precisely case (b). The suppression lives in one classifier, not
+        # in a growing list of special cases at the escalation site.
         naked = [
             g for g in gaps
             if g.get("coverage") == "none" and not g.get("repaired")
@@ -1886,9 +2158,19 @@ class TradingPipeline:
             logger.error("no-stop owner alert failed: %s", exc)
 
     def _repair_stop_coverage(self, symbol: str, uncovered_qty: float) -> bool:
-        """Best-effort: re-place a GTC protective stop on an uncovered long
-        using the stop level recorded on its last BUY. Returns True when a
-        stop was actually submitted.
+        """Best-effort: re-place protective stop coverage on an uncovered long
+        using the stop level recorded on its last BUY. Returns True when the
+        gap was actually closed.
+
+        Spec §11.1 hybrid fractional stops: this is also THE re-placement
+        path for a sub-share DAY stop that lapsed at yesterday's close. It
+        needs no fractional special-case of its own — it routes through
+        `_submit_protective_stop_retrying`, which splits a fractional
+        `uncovered_qty` into its GTC and DAY legs, so re-placing 0.3456
+        share(s) at the open and protecting a whole fresh 12.3456-share entry
+        are the same one code path. The caller (`_reconcile_stop_coverage`)
+        owns the decision of WHETHER to call this at the current hour; this
+        function does not consult the clock.
 
         Why this is now safe to auto-repair (it deliberately wasn't before):
         the old objection was "the original protective level is unknown for a
@@ -1986,8 +2268,9 @@ class TradingPipeline:
             )
             return False
         logger.warning(
-            "COVERAGE REPAIRED: %s — placed GTC stop-limit for %.4f uncovered "
-            "share(s) at the recorded BUY stop $%.2f",
+            "COVERAGE REPAIRED: %s — placed protective stop-limit coverage for "
+            "%.4f uncovered share(s) at the recorded BUY stop $%.2f (GTC over "
+            "the whole shares, DAY over any sub-share remainder)",
             symbol, uncovered_qty, stop_price,
         )
         return True
@@ -3202,10 +3485,23 @@ class TradingPipeline:
                 return True
 
         side_kwargs = {} if side == "sell" else {"side": side}
+        # Spec §11.1: a FRACTIONAL residual is re-protected by the hybrid
+        # pair (durable GTC over the whole shares, DAY over the sub-share
+        # remainder), not by one fractional order that the broker will only
+        # accept as DAY and that would therefore take the whole position's
+        # protection with it at 16:00 ET. A whole-share residual submits
+        # exactly one GTC order with exactly the same arguments as before.
+        whole, frac = _split_protective_qty(residual_qty)
+        legs = [whole] if whole >= 1 else []
+        if frac > 0:
+            legs.append(frac)
+        if not legs:
+            legs = [residual_qty]
         try:
-            self.broker._submit_stop_limit_order(
-                symbol=symbol, qty=residual_qty, stop_price=best_stop, **side_kwargs,
-            )
+            for leg_qty in legs:
+                self.broker._submit_stop_limit_order(
+                    symbol=symbol, qty=leg_qty, stop_price=best_stop, **side_kwargs,
+                )
             logger.info(
                 "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
                 symbol, self._format_qty(residual_qty), best_stop,
@@ -8285,7 +8581,27 @@ class TradingPipeline:
         self._activate_cost_session(run_id, "morning")
 
         try:
-            # 0a. Drain orphaned protection-restore intents from prior
+            # 0a. FIRST BROKER ACTION OF THE DAY: broker-truth coverage audit
+            # (independent of the WAL). Catches any long that went naked
+            # WITHOUT leaving a recovery row — and, since spec §11.1's hybrid
+            # fractional stops, RE-PLACES the sub-share DAY stops that the
+            # broker expired at yesterday's close.
+            #
+            # This used to run at 0b, after three drain passes that each make
+            # their own broker round-trips. Every second it spent waiting was
+            # a second the fractional remainder of every held position sat
+            # unprotected into an open market, and the open is exactly when
+            # that matters most. The owner accepted a bounded OVERNIGHT
+            # exposure; he did not accept it bleeding into the session, so
+            # the unprotected window at the open is now as short as this
+            # system can make it.
+            #
+            # Symbols the drain owns are skipped by the reconciler either way
+            # (it reads `get_pending_protection_restores` itself), so moving
+            # ahead of the drain changes nothing for them — the drain still
+            # restores their coverage microseconds later, exactly as before.
+            coverage_gaps = self._reconcile_stop_coverage()
+            # 0b. Drain orphaned protection-restore intents from prior
             # sessions where finalize had to bail (lingering SELL didn't
             # converge, or broker API hiccup). Each drained row brings a
             # symbol's stop coverage back in line with broker reality.
@@ -8294,9 +8610,6 @@ class TradingPipeline:
             # audit F4: resolve BUY write-ahead orphans from a prior
             # crashed session before this run touches positions/cash.
             self._reconcile_orphan_pending_submits()
-            # 0b. Broker-truth coverage audit (independent of the WAL): catch
-            # any long that's gone naked WITHOUT leaving a recovery row.
-            coverage_gaps = self._reconcile_stop_coverage()
             # 0c. Broker-truth EXIT audit (2026-08-28 ONDS/CCJ): a protective
             # stop firing overnight is exactly the case morning must catch
             # first — the position has been closed for hours by the time

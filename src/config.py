@@ -380,13 +380,12 @@ class ExecutionConfig(BaseModel):
 
     # Spec §11.1 (owner-ratified 2026-09-01), reversing the 2026-08-27
     # decision to keep fractional off.
-    # DEFAULT FLIPPED TO FALSE 2026-09-01 on measured broker behaviour, not
-    # on caution. A fractional-quantity GTC stop is refused outright by
-    # Alpaca (code 42210000, "stop/stop_limit fractional GTC orders are not
-    # enabled"), ahead of any quantity check. So a fractional position cannot
-    # carry a durable protective stop on its fractional part — the remainder
-    # would sit unprotected and alert on every single entry. See
-    # config/settings.yaml for the full finding and the re-test procedure.
+    # The flag is still shipped FALSE — the owner owns the switch and flips
+    # it himself — but the reason has changed. It is no longer "a fractional
+    # position cannot be protected". HYBRID STOP COVERAGE protects one: a GTC
+    # stop over the whole shares plus a DAY stop over the sub-share remainder,
+    # re-placed at the start of every session. See config/settings.yaml for
+    # the measured broker capability and the accepted overnight trade-off.
     fractional_enabled: bool = False
     """Master switch for exact (fractional) entry sizing. ON by default —
     whole-share rounding is a silent, constant tax on every position the
@@ -396,11 +395,15 @@ class ExecutionConfig(BaseModel):
     fill→stop window this was meant to avoid already exists on every entry.
 
     Turning this OFF restores whole-share flooring everywhere without a code
-    change — the escape hatch for the one unsettled question in §11.1 (see
-    `fractional_share_decimals`): whether Alpaca accepts a fractional-qty
-    GTC stop-limit at all. A symbol is still only sized fractionally when
-    the broker confirms `fractionable` for it (`get_fractionability`, which
-    fails CLOSED), so this flag widens nothing on its own."""
+    change. A symbol is still only sized fractionally when the broker
+    confirms `fractionable` for it (`get_fractionability`, which fails
+    CLOSED), so this flag widens nothing on its own.
+
+    The §11.1 open question — whether Alpaca will carry a stop for a
+    fractional quantity — was settled empirically on 2026-09-01: not as a
+    GTC order, but YES as a DAY order. Hence the hybrid: floor(qty) on a
+    durable GTC stop, the sub-share remainder on a DAY stop that lapses at
+    the close and is re-placed at the next open."""
 
     fractional_share_decimals: int = Field(default=4, ge=1, le=9)
     """Decimal places an exact share count is FLOORED to (never rounded up —

@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 import threading
 import time
@@ -83,6 +84,73 @@ _ENTRY_FILL_TIMEOUT_S = 30.0
 #     a human inside two seconds beats a fourth doomed attempt.
 _STOP_PLACEMENT_MAX_ATTEMPTS = 3
 _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
+
+# Spec §11.1 HYBRID FRACTIONAL STOPS. Measured 2026-09-01 against the live
+# paper account — treat as broker capability, not account state:
+#
+#   * a fractional-quantity order MUST be time_in_force=DAY. A fractional
+#     GTC order is refused outright: "fractional orders must be DAY orders"
+#     (code 42210000).
+#   * a fractional order must be market, limit, stop or stop_limit. A
+#     fractional TRAILING stop is refused at EVERY tif.
+#   * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
+#   * whole-share GTC stops are unaffected (control probe accepted).
+#
+# So a position of N.f shares cannot be covered by one durable order. It is
+# covered by TWO: a GTC stop over floor(N.f) — which survives the close —
+# and a DAY stop over the sub-share remainder, which lapses at 16:00 ET by
+# design and is re-placed at the start of the next session. The remainder is
+# a bounded, deliberate overnight exposure the owner accepted in exchange for
+# being able to hold expensive names at all on a ~$10k account.
+#
+# `_derive_stop_tif` is where that rule is MECHANICALLY enforced: every stop
+# this class submits goes through `_submit_stop_limit_order`, and the tif is
+# derived from the quantity there rather than chosen by each caller. A path
+# that forgets the rule cannot exist, because no path gets to state it.
+_FRACTIONAL_QTY_EPSILON = 1e-9
+
+
+def _split_protective_qty(qty) -> tuple[float, float]:
+    """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
+
+    The whole part is what a durable GTC stop can cover; the remainder is what
+    only a DAY stop can. Both are returned as non-negative magnitudes — a
+    short's signed qty is normalised by its callers long before this.
+
+    The remainder is rounded to 9dp before the epsilon test so that float
+    representation error (10.5 - 10.0 landing at 0.5000000000000007, or a qty
+    of 7.000000000000001 arriving from a fill) cannot mint a phantom
+    sub-share leg for a position that is really whole.
+    """
+    try:
+        value = abs(float(qty))
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if not math.isfinite(value) or value <= 0:
+        return 0.0, 0.0
+    whole = float(math.floor(value))
+    frac = round(value - whole, 9)
+    if frac <= _FRACTIONAL_QTY_EPSILON:
+        return whole, 0.0
+    if frac >= 1.0:  # only reachable via the round() above on a near-integer
+        return whole + 1.0, 0.0
+    return whole, frac
+
+
+def _derive_stop_tif(qty) -> TimeInForce:
+    """The ONLY place a protective stop's time_in_force is decided.
+
+    Whole share count → GTC, the durable order that survives 16:00 ET and is
+    what every pre-fractional path already got. Fractional → DAY, because the
+    broker refuses any other tif for a fractional quantity (see the block
+    comment above). This is derived from the quantity rather than passed in
+    by the caller on purpose: a caller that could ask for a fractional GTC
+    would just be asking for a rejection, and the one thing this desk cannot
+    afford is a protective order that was refused while the code believed it
+    was placed.
+    """
+    _whole, frac = _split_protective_qty(qty)
+    return TimeInForce.DAY if frac > 0 else TimeInForce.GTC
 
 
 def _alpaca_symbol(symbol: str) -> str:
@@ -2286,13 +2354,62 @@ class AlpacaBroker:
             return None
         return stop_order
 
+    def _submit_stop_leg_retrying(
+        self, *, symbol: str, qty: float, stop_price: float,
+        limit_price: float | None, side: str, leg: str,
+    ) -> dict | None:
+        """One protective-stop LEG, with spec §11.1 guard 1's retry burst.
+
+        Extracted from `_submit_protective_stop_retrying` so the hybrid split
+        can run the identical retry discipline over each of its two legs
+        instead of a second, weaker copy of it. `leg` is log context only
+        ('GTC', 'GTC whole-share', 'DAY fractional') — the tif itself is
+        derived from `qty` inside `_submit_stop_limit_order` and is not a
+        decision made here.
+
+        Returns the broker's response dict, or None when every attempt
+        failed. Never raises.
+        """
+        attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
+        for attempt in range(1, attempts + 1):
+            try:
+                order = self._submit_stop_limit_order(
+                    symbol=symbol, qty=qty, stop_price=stop_price,
+                    limit_price=limit_price, side=side,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protective stop [%s] attempt %d/%d FAILED for %s "
+                    "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
+                    symbol, qty, stop_price, exc,
+                )
+                if attempt < attempts:
+                    delay = _STOP_PLACEMENT_BACKOFF_S[
+                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
+                    ]
+                    time.sleep(delay)
+                continue
+            if attempt > 1:
+                logger.warning(
+                    "protective stop [%s] placed for %s on attempt %d/%d — the "
+                    "position was briefly unprotected and is now covered",
+                    leg, symbol, attempt, attempts,
+                )
+            else:
+                logger.info(
+                    "entry protection: [%s] %s stop-limit placed for %s "
+                    "qty=%.4f @ stop $%.2f", leg, side, symbol, qty, stop_price,
+                )
+            return order
+        return None
+
     def _submit_protective_stop_retrying(
         self, *, symbol: str, qty: float, stop_price: float,
         limit_price: float | None, side: str,
     ) -> dict | None:
-        """Spec §11.1 guard 1 — submit a protective stop, retrying immediately
-        and hard on failure. Returns the stop order dict, or None when every
-        attempt failed.
+        """Spec §11.1 guard 1 — submit protective stop coverage for `qty`,
+        retrying immediately and hard on failure. Returns a stop order dict,
+        or None when nothing at all could be placed.
 
         The retry happens HERE, in the same call, milliseconds after the
         failure — not queued, not deferred to the next 30-minute sweep. The
@@ -2305,82 +2422,96 @@ class AlpacaBroker:
         on — a naked position that nobody is told about is strictly worse
         than one that fails loudly.
 
-        On a fractional fill whose exact qty the broker refuses (see the
-        §11.1 open question about whether Alpaca carries a stop for a
-        fractional quantity at all), the final attempt drops to the
-        WHOLE-SHARE floor of the fill: a stop over `floor(qty)` shares leaves
-        a sub-share residual uncovered, which is a far smaller and strictly
-        bounded exposure than leaving the entire position naked. ONLY in that
-        fallback does the returned dict carry `covered_qty`/`uncovered_qty` —
-        the ordinary success path returns the broker's response untouched, so
-        nothing downstream sees a new shape on the common path. The caller
-        alerts the owner on a non-zero `uncovered_qty` exactly as it would on
-        an outright failure.
-        """
-        attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
-        for attempt in range(1, attempts + 1):
-            try:
-                order = self._submit_stop_limit_order(
-                    symbol=symbol, qty=qty, stop_price=stop_price,
-                    limit_price=limit_price, side=side,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "protective stop attempt %d/%d FAILED for %s (qty=%.4f, "
-                    "stop $%.2f): %s", attempt, attempts, symbol, qty,
-                    stop_price, exc,
-                )
-                if attempt < attempts:
-                    delay = _STOP_PLACEMENT_BACKOFF_S[
-                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
-                    ]
-                    time.sleep(delay)
-                continue
-            if attempt > 1:
-                logger.warning(
-                    "protective stop placed for %s on attempt %d/%d — the "
-                    "position was briefly unprotected and is now covered",
-                    symbol, attempt, attempts,
-                )
-            else:
-                logger.info(
-                    "entry protection: GTC %s stop-limit placed for %s "
-                    "qty=%.4f @ stop $%.2f", side, symbol, qty, stop_price,
-                )
-            return order
+        WHOLE SHARE COUNTS (every short, and every long while
+        `execution.fractional_enabled` is off) take a single GTC stop and
+        this function behaves exactly as it always has, down to the returned
+        shape: the broker's own response, untouched.
 
-        # Every attempt at the exact quantity failed. If that quantity was
-        # FRACTIONAL, one cause is a broker that will not carry a stop for a
-        # fractional qty at all — in which case the whole-share floor is a
-        # request it can accept, and covering floor(qty) beats covering none.
-        whole = float(int(qty))
-        if whole >= 1 and whole < qty:
-            logger.critical(
-                "protective stop: %s exhausted %d attempt(s) at the exact "
-                "fractional qty %.4f — falling back to a WHOLE-SHARE stop for "
-                "%.0f share(s). If this succeeds, %.4f share(s) remain "
-                "UNCOVERED and the owner is alerted.",
-                symbol, attempts, qty, whole, qty - whole,
+        A FRACTIONAL qty takes the HYBRID split instead, because the broker
+        will not carry one durable order over it (measured 2026-09-01; see
+        the `_FRACTIONAL_QTY_EPSILON` block comment):
+
+            leg A   GTC stop over floor(qty)   — durable, survives the close
+            leg B   DAY stop over the sub-share remainder — lapses at 16:00
+                    ET BY DESIGN and is re-placed by the next session's
+                    coverage sweep
+
+        Under one share there is no leg A, so a sub-share position carries a
+        DAY stop only. This REPLACES the old "try the exact fractional qty
+        three times, then fall back to a whole-share stop" path: those three
+        attempts are now known to be three guaranteed rejections costing ~2
+        seconds of naked position each time, and the whole-share fallback
+        they led to is exactly leg A, reached immediately instead.
+
+        The returned dict is leg A's response (leg B's when there is no leg
+        A) annotated with `covered_qty` / `uncovered_qty` / `gtc_qty` /
+        `day_qty` / `hybrid`. `uncovered_qty` keeps the meaning every caller
+        already reads it with: shares the broker is NOT watching right now.
+        It is 0.0 when both legs land, which is the ordinary fractional
+        success — so guard 2 stays silent on success and still fires on a
+        genuine partial cover.
+        """
+        whole, frac = _split_protective_qty(qty)
+        if frac <= 0:
+            # Whole-share: unchanged in every observable way.
+            return self._submit_stop_leg_retrying(
+                symbol=symbol, qty=qty, stop_price=stop_price,
+                limit_price=limit_price, side=side, leg="GTC",
             )
-            try:
-                order = self._submit_stop_limit_order(
-                    symbol=symbol, qty=whole, stop_price=stop_price,
-                    limit_price=limit_price, side=side,
+
+        logger.info(
+            "protective stop for %s is HYBRID: GTC over %.0f whole share(s) + "
+            "DAY over %s sub-share remainder, both @ stop $%.2f. The DAY leg "
+            "lapses at the close by design and is re-placed at the next "
+            "session's open.", symbol, whole, frac, stop_price,
+        )
+        gtc_order = None
+        if whole >= 1:
+            gtc_order = self._submit_stop_leg_retrying(
+                symbol=symbol, qty=whole, stop_price=stop_price,
+                limit_price=limit_price, side=side, leg="GTC whole-share",
+            )
+            if gtc_order is None:
+                logger.critical(
+                    "protective stop: the DURABLE whole-share GTC leg FAILED "
+                    "for %s (%.0f share(s), stop $%.2f) after %d attempt(s). "
+                    "This is the leg that must never be missing; the caller "
+                    "alerts the owner.",
+                    symbol, whole, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "protective stop: whole-share fallback ALSO failed for %s "
-                    "(qty=%.0f, stop $%.2f): %s", symbol, whole, stop_price, exc,
-                )
-                return None
-            if isinstance(order, dict):
-                # A COPY — never annotate the broker's own response object in
-                # place; a caller holding that dict must not have its shape
-                # changed underneath it.
-                order = {**order, "covered_qty": whole,
-                         "uncovered_qty": qty - whole}
-            return order
-        return None
+        day_order = self._submit_stop_leg_retrying(
+            symbol=symbol, qty=frac, stop_price=stop_price,
+            limit_price=limit_price, side=side, leg="DAY fractional",
+        )
+        if day_order is None:
+            logger.error(
+                "protective stop: the DAY fractional leg FAILED for %s (%s "
+                "share(s), stop $%.2f) after %d attempt(s) — the sub-share "
+                "remainder is uncovered NOW, during the session, which is not "
+                "the expected overnight lapse.",
+                symbol, frac, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
+            )
+
+        gtc_qty = whole if gtc_order is not None else 0.0
+        day_qty = frac if day_order is not None else 0.0
+        covered = gtc_qty + day_qty
+        if covered <= 0:
+            return None
+        # A COPY — never annotate the broker's own response object in place;
+        # a caller holding that dict must not have its shape changed
+        # underneath it. Leg A is the base when it exists: it is the durable
+        # order, and it is the id worth carrying forward.
+        base = gtc_order if gtc_order is not None else day_order
+        return {
+            **base,
+            "covered_qty": covered,
+            "uncovered_qty": max(0.0, round(qty - covered, 9)),
+            "gtc_qty": gtc_qty,
+            "day_qty": day_qty,
+            "gtc_stop_id": (gtc_order or {}).get("id"),
+            "day_stop_id": (day_order or {}).get("id"),
+            "hybrid": True,
+        }
 
     def close_position(self, symbol: str) -> dict:
         order = self.client.close_position(_alpaca_symbol(symbol))
@@ -2515,8 +2646,26 @@ class AlpacaBroker:
         uses), a BUY's belongs ABOVE it. A SELL limit placed above its stop,
         or a BUY limit placed below its, can never fill — the order looks
         accepted but is dead on arrival.
+
+        TIME IN FORCE IS DERIVED FROM `qty`, NOT PASSED IN (spec §11.1
+        hybrid fractional stops). Whole share counts get GTC exactly as
+        before — every existing call site is byte-identical. A FRACTIONAL
+        qty gets DAY, because the broker refuses a fractional GTC order
+        outright (measured; see `_derive_stop_tif`). Putting the rule here
+        rather than at each call site means every path that can submit a
+        fractional stop — entry protection, the coverage repair, the WAL
+        restore, the partial-sell reprotect, the ex-dividend shift — becomes
+        broker-legal at once, and no future path can forget it.
         """
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+        time_in_force = _derive_stop_tif(qty)
+        if time_in_force is TimeInForce.DAY:
+            logger.info(
+                "protective stop for %s is FRACTIONAL (qty=%s) — submitting "
+                "DAY, the only tif the broker accepts for a fractional order. "
+                "It lapses at the close and is re-placed by the next session's "
+                "coverage sweep.", symbol, qty,
+            )
         stop_price_q = _quantize_price(stop_price)
         if limit_price and limit_price > 0:
             limit_price_q = _quantize_price(limit_price)
@@ -2530,7 +2679,7 @@ class AlpacaBroker:
             symbol=_alpaca_symbol(symbol),
             qty=qty,
             side=order_side,
-            time_in_force=TimeInForce.GTC,
+            time_in_force=time_in_force,
             stop_price=stop_price_q,
             limit_price=limit_price_q,
         )
@@ -2539,6 +2688,63 @@ class AlpacaBroker:
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
                 "symbol": _internal_symbol(symbol)}
+
+    def _submit_stop_legs(
+        self, *, symbol: str, qty: float, stop_price: float,
+        limit_price: float | None = None, side: str = "sell",
+    ) -> list[dict]:
+        """Submit the protective stop LEG(S) covering `qty`, all-or-nothing.
+
+        A whole share count is ONE GTC stop — byte-identical to the bare
+        `_submit_stop_limit_order` call this replaced. A fractional qty is
+        the spec §11.1 hybrid PAIR: a durable GTC stop over floor(qty) plus a
+        DAY stop over the sub-share remainder, both at the same trigger.
+
+        WHY EVERY RE-PLACEMENT PATH NEEDS THIS, not just entry protection.
+        `replace_stop_loss` (trailing) and the partial-sell reprotect both
+        cancel a position's existing stops and submit ONE order for the whole
+        remaining quantity. On a fractional position that single order is
+        necessarily fractional, therefore necessarily DAY, therefore gone at
+        16:00 ET — and the position would have SILENTLY LOST its durable
+        whole-share GTC leg. The next overnight sweep would then see zero
+        coverage on 12.3456 held shares, correctly call it NO STOP AT ALL,
+        and page the owner. A trailing-stop ratchet must not be able to
+        convert a properly protected position into a nightly false alarm.
+
+        Raises if any leg is rejected, after cancelling any leg that already
+        landed. Callers here have an all-or-nothing rollback contract ("the
+        submit either worked or it raised"); a half-placed pair left behind
+        would be read by the coverage sweep as a mis-sized stop and by the
+        rollback as nothing at all.
+        """
+        whole, frac = _split_protective_qty(qty)
+        legs = [whole] if whole >= 1 else []
+        if frac > 0:
+            legs.append(frac)
+        if not legs:
+            legs = [qty]
+        placed: list[dict] = []
+        for leg_qty in legs:
+            try:
+                placed.append(self._submit_stop_limit_order(
+                    symbol=symbol, qty=leg_qty, stop_price=stop_price,
+                    limit_price=limit_price, side=side,
+                ))
+            except Exception:
+                for done in placed:
+                    try:
+                        self.client.cancel_order_by_id(done.get("id"))
+                    except Exception as cancel_exc:  # noqa: BLE001
+                        logger.error(
+                            "_submit_stop_legs: leg %s failed for %s AND the "
+                            "already-placed leg %s could not be cancelled: %s "
+                            "— the symbol may carry a partial stop the caller "
+                            "does not know about; the coverage sweep will "
+                            "reconcile it.",
+                            leg_qty, symbol, done.get("id"), cancel_exc,
+                        )
+                raise
+        return placed
 
     def _restore_stop_orders(
         self, symbol: str, stop_specs: list[dict],
@@ -2875,12 +3081,18 @@ class AlpacaBroker:
         # short; submitting that raw would hand Alpaca a negative qty.
         qty = abs(fresh_positions[0].qty)
         try:
-            order = self._submit_stop_limit_order(
+            # Spec §11.1: a fractional position is re-protected by the HYBRID
+            # PAIR, not by one fractional order that would be DAY-only and
+            # gone by tomorrow morning. Whole-share positions submit exactly
+            # one GTC order, unchanged.
+            legs = self._submit_stop_legs(
                 symbol=symbol, qty=qty, stop_price=new_stop_price, side=side,
             )
+            order = legs[0]
             logger.info(
-                "Trailing stop placed for %s: replaced %d old stop(s), new %s stop @ $%.2f",
-                symbol, len(cancelled_specs), side, new_stop_price,
+                "Trailing stop placed for %s: replaced %d old stop(s), new %s "
+                "stop @ $%.2f across %d leg(s)",
+                symbol, len(cancelled_specs), side, new_stop_price, len(legs),
             )
             return order
         except Exception as exc:
