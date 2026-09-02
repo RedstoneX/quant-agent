@@ -802,6 +802,31 @@ that weighs conclusions and allocates. Today the PM receives raw extraction
 and is expected to do the analysis itself — the analyst's job — which is why
 its prompt is 200k characters and why it is 93% of the LLM bill.
 
+**THE "ANALYSTS CAN RUN CHEAPER MODELS" VERDICT IS NOW INVALID. Do not act on it.**
+
+Owner's inference, 2026-09-02, and it follows directly from the above. The
+cheap-model benchmark measured the analysts doing the job they CURRENTLY do
+— filling in an extraction form from filing text. Extraction is an easy
+task and cheap models are adequate at it. **The job they SHOULD do is form
+a judgement, which is a different and harder task, and the verdict does not
+transfer to it.**
+
+Compounding it: some of that grading ran on filings that arrived truncated,
+so part of what was measured was how well a cheap model extracts from
+nothing.
+
+Eight seats were moved to Google-direct on 2026-08-31 and now cost $0.00
+across 35 calls. **Leave them there for now** — the saving is real and the
+current task is genuinely easy. But **re-measure the seat before asking it
+to conclude rather than transcribe**, and do not cite the existing result as
+evidence it can.
+
+**The full chain, so nobody re-derives it:** filings arrive incomplete →
+cheap models fill in a form → 67 forms are couriered to the PM → the PM does
+the actual analysis across 200k characters → which is why that one seat is
+93% of the LLM bill. Every layer was measured and signed off in isolation
+and none is wrong on its own terms.
+
 **The structural fix, ahead of (a)-(d) below:** the earnings seat must
 return a call and a short thesis — direction, conviction, two or three lines
 of why, and a pointer to the detail — not a completed template. The full
