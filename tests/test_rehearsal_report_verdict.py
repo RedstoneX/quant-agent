@@ -895,3 +895,221 @@ def test_collect_handles_malformed_nested_intraday_scan():
             os.unlink(db_path3)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# INCONCLUSIVE — "the rig could not judge" is not the same claim as "the code
+# is broken", and until 2026-09-02 the report made them look identical.
+#
+# An unpinned rehearsal replayed the morning's decision stage using a
+# portfolio-manager answer recorded in a DIFFERENT session (`intra_check-
+# d0909ddc`, agent_logs row 312, a real decision about ZS) instead of the
+# morning's own row 309. The grounding check compared that decision against a
+# morning that never analysed ZS and reported `pm_grounding_error` — printed
+# exactly like a genuine defect, and argued about for an hour as if it were
+# one. See docs/INCIDENT_HISTORY.md, "the rehearsal rig's verdict was a coin
+# flip", and `_replay_fidelity` in ops/rehearsal/report.py.
+#
+# These tests pin BOTH directions. The downgrade must fire on the transplant,
+# and must NOT fire on the same symptom when the replay was faithful — a
+# genuine defect being quietly relabelled "inconclusive" would be a strictly
+# worse gate than the coin flip it replaced.
+# ---------------------------------------------------------------------------
+
+
+class _FakeLibrary:
+    """Just the two attributes `collect()` reads off a ResponseLibrary."""
+
+    def __init__(self, matches):
+        self.matches = matches
+        self.findings: list[dict] = []
+
+
+def _grounding_db(tmp_path, *, run_id, analysed=("AAPL", "MSFT")):
+    import sqlite3
+
+    path = tmp_path / "sandbox.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE agent_logs (id INTEGER PRIMARY KEY, run_id TEXT, "
+        "agent_name TEXT, timestamp TEXT, status TEXT, cost_usd REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE specialist_evidence (id INTEGER PRIMARY KEY, run_id TEXT, "
+        "agent_name TEXT, kind TEXT, symbol TEXT, evidence_json TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE trades (id INTEGER PRIMARY KEY, run_id TEXT, "
+        "symbol TEXT, action TEXT, qty INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE llm_circuit_events (id INTEGER PRIMARY KEY, run_id TEXT, "
+        "trigger_code TEXT, detail TEXT, agent_name TEXT, event_type TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO specialist_evidence (run_id, agent_name, kind, symbol, "
+        "evidence_json) VALUES (?, 'tech_analyst', 'analysis', ?, '{}')",
+        [(run_id, symbol) for symbol in analysed],
+    )
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
+def _grounding_report(
+    tmp_path, *, pm_run, analyst_run, error, analysed=("AAPL", "MSFT"),
+    source_run_symbols=("ZS",),
+):
+    import sqlite3
+
+    from ops.rehearsal.report import collect
+
+    run_id = "rehearsal-morning-20260901"
+    db_path = _grounding_db(tmp_path, run_id=run_id, analysed=analysed)
+    # The recorded run the PM answer came from owns the symbol it decided
+    # about — the third leg of the test, and what makes the downgrade an
+    # attribution rather than a guess at a capitalised word.
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "INSERT INTO specialist_evidence (run_id, agent_name, kind, symbol, "
+        "evidence_json) VALUES (?, 'tech_analyst', 'analysis', ?, '{}')",
+        [(pm_run, symbol) for symbol in source_run_symbols],
+    )
+    conn.commit()
+    conn.close()
+    library = _FakeLibrary([
+        {"agent": "tech_analyst", "run_id": analyst_run, "row_id": 307,
+         "similarity": 0.91, "recorded_at": "2026-09-01 13:33:27"},
+        {"agent": "portfolio_manager", "run_id": pm_run, "row_id": 309,
+         "similarity": 0.88, "recorded_at": "2026-09-01 13:34:33"},
+    ])
+    return collect(
+        session="morning", rehearsed_date="2026-09-01", run_id=run_id,
+        source_run_id=None,
+        result={"status": "pm_grounding_error", "error": error},
+        db_path=db_path, library=library, trading_stub=None,
+        isolation_checks=[], unavailable=[], network_attempts=[], notes=[],
+        fill_model="immediate", duration_s=1.0,
+    )
+
+
+def test_a_pm_answer_replayed_from_another_session_is_inconclusive(tmp_path):
+    """The 2026-09-02 ZS case. Two recorded sessions stitched into one, and a
+    failure naming a symbol this morning never touched: the rig did not
+    reproduce the session, so it has not judged the code."""
+    report = _grounding_report(
+        tmp_path,
+        pm_run="intra_check-d0909ddc", analyst_run="run-64290730",
+        error=("ZS: increase lacks a current-run Technical analysis; "
+               "ZS: claims technical coverage that does not exist"),
+    )
+    assert report.verdict == "INCONCLUSIVE"
+    rendered = report.render()
+    assert "VERDICT: INCONCLUSIVE" in rendered
+    # And it must say plainly that this is not a judgement on the code.
+    assert "NOT a judgement on the code" in rendered
+    assert "ZS" in rendered
+
+
+def test_the_same_failure_from_one_recorded_run_is_still_a_failure(tmp_path):
+    """THE GUARD THAT MATTERS. Identical symptom — a grounding error naming a
+    symbol with no coverage — but every seat replayed from the SAME recorded
+    morning. Nothing was stitched, so nothing is excused: a portfolio manager
+    that invents a ticker is the defect this rig exists to catch."""
+    report = _grounding_report(
+        tmp_path,
+        pm_run="run-64290730", analyst_run="run-64290730",
+        error=("ZS: increase lacks a current-run Technical analysis; "
+               "ZS: claims technical coverage that does not exist"),
+    )
+    assert report.verdict == "FAIL"
+
+
+def test_a_stitched_replay_is_still_a_failure_when_the_symbol_was_covered(tmp_path):
+    """The other half of the conjunction. The replay was imperfect, but the
+    failure is about a symbol this session really did analyse, so the code
+    genuinely produced an ungrounded plan about something in front of it."""
+    report = _grounding_report(
+        tmp_path,
+        pm_run="intra_check-d0909ddc", analyst_run="run-64290730",
+        error="AAPL: claims technical coverage that does not exist",
+        analysed=("AAPL", "MSFT"),
+    )
+    assert report.verdict == "FAIL"
+
+
+def test_a_pinned_rehearsal_can_never_be_downgraded(tmp_path):
+    """A pinned replay draws every seat from one run, so the mechanical half
+    of the test can never hold. Pinning is the default; the downgrade is
+    therefore unreachable on a default invocation, by construction."""
+    report = _grounding_report(
+        tmp_path,
+        pm_run="run-64290730", analyst_run="run-64290730",
+        error="NVDA: claims macro coverage that does not exist",
+    )
+    assert report.verdict == "FAIL"
+
+
+def test_the_report_states_what_it_replayed_and_how_much_it_covered(tmp_path):
+    """A reader must not have to take PASS as 'the session was fully
+    exercised'. Offline the rig routinely resolves only part of the batch —
+    18 to 22 symbols went unresolved on every 2026-09-01 morning run — so the
+    pin and the coverage shortfall are printed next to the verdict, not
+    buried in the log."""
+    from ops.rehearsal.replay import ReplayRunChoice
+    from ops.rehearsal.report import collect
+
+    run_id = "rehearsal-morning-20260901"
+    db_path = _grounding_db(tmp_path, run_id=run_id, analysed=("AAPL", "MSFT"))
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "INSERT INTO specialist_evidence (run_id, agent_name, kind, symbol, "
+        "evidence_json) VALUES (?, 'pipeline', 'pipeline_event', ?, ?)",
+        [(run_id, sym, '{"outcome": "blocked", "stage": "deterministic_gate", '
+          '"reason": "technical_analysis_unresolved_after_retry"}')
+         for sym in ("KO", "HD", "NKE")],
+    )
+    conn.commit()
+    conn.close()
+
+    report = collect(
+        session="morning", rehearsed_date="2026-09-01", run_id=run_id,
+        source_run_id="run-64290730", result={"status": "no_orders"},
+        db_path=db_path, library=_FakeLibrary([]), trading_stub=None,
+        isolation_checks=[], unavailable=[], network_attempts=[], notes=[],
+        fill_model="immediate", duration_s=1.0,
+        replay_choice=ReplayRunChoice(
+            run_id="run-64290730", mode="auto",
+            reason="replay pinned automatically to run-64290730, the most "
+                   "recent complete morning run",
+        ),
+    )
+    assert report.verdict == "PASS"
+    assert report.coverage["unresolved"] == 3
+    assert report.coverage["analysed"] == 2
+
+    rendered = report.render()
+    verdict_at = rendered.index("VERDICT:")
+    numbers_at = rendered.index("BY THE NUMBERS")
+    pin_at = rendered.index("run-64290730")
+    coverage_at = rendered.index("INCOMPLETE ANALYST COVERAGE")
+    # Both sit between the verdict and the first body section, i.e. a reader
+    # cannot reach the numbers without having passed them.
+    assert verdict_at < pin_at < numbers_at
+    assert verdict_at < coverage_at < numbers_at
+    assert "3 of 5 symbol(s)" in rendered
+
+
+def test_a_symbol_the_source_run_does_not_own_is_not_a_transplant(tmp_path):
+    """The third leg. Two sessions were stitched and the failure names
+    something this morning never touched — but the recorded run the decision
+    came from does not own it either, so nothing has been shown to have been
+    transplanted. Report the failure; do not explain it away."""
+    report = _grounding_report(
+        tmp_path,
+        pm_run="intra_check-d0909ddc", analyst_run="run-64290730",
+        error="ZS: claims technical coverage that does not exist",
+        source_run_symbols=(),
+    )
+    assert report.verdict == "FAIL"

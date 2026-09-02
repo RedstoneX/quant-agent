@@ -57,7 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--replay-run", default=None,
         help=(
             "agent_logs run_id whose recorded model responses this rehearsal "
-            "replays; omit to draw on all recorded history"
+            "replays. Omit (or pass 'auto') to pin automatically to the most "
+            "recent COMPLETE recorded run of this session type that had "
+            "started by --as-of; the chosen run is printed in the report. "
+            "Pass 'any' to draw on all recorded history instead — that makes "
+            "the verdict depend on how the shared response pool happens to be "
+            "consumed rather than on the code, and is only ever a deliberate "
+            "diagnostic choice"
         ),
     )
     parser.add_argument(
@@ -196,7 +202,11 @@ def main(argv: list[str] | None = None) -> int:
         print(report.render())
         if args.json:
             print(json.dumps(report.to_dict(), indent=2, default=str))
-        return 0 if report.verdict == "PASS" else 1
+        # Three outcomes, three exit codes: a caller gating a deploy must be
+        # able to tell "the code is broken" (1) from "the rig could not judge
+        # it" (2) without parsing prose. 2 is not a softer 1 — it means no
+        # judgement was reached and the run has to be repeated properly.
+        return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}.get(report.verdict, 1)
     finally:
         if not args.keep_sandbox and not args.sandbox:
             shutil.rmtree(sandbox_root, ignore_errors=True)

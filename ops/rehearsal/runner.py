@@ -44,6 +44,18 @@ behaviour changes — a rehearsal that ASKS for a stale cache (pass an age past
 staleness path itself is tested. What changed is that staleness became
 something a rehearsal declares rather than something it catches from the
 calendar.
+
+WHICH RECORDED RUN IS REPLAYED IS ALSO AN INPUT, NOT A LOTTERY
+--------------------------------------------------------------
+Same principle, same failure, found later and much more expensively. Left
+unpinned, replay drew from every recorded response in history and the verdict
+became a function of how the shared pool happened to be consumed rather than
+of the code under test — PASS or FAIL on identical code. `replay_run` now
+defaults to `select_replay_run` (ops/rehearsal/replay.py), which pins the most
+recent complete recorded run of the session being rehearsed. Pass an explicit
+run id to override, or the literal `"any"` to ask for the old pool-wide
+behaviour on purpose. The choice is printed in the report, because a reader
+cannot judge a comparison without knowing what was compared.
 """
 
 from __future__ import annotations
@@ -53,7 +65,7 @@ import os
 import sys
 import time
 from contextlib import ExitStack, contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -258,7 +270,10 @@ def run_rehearsal(
         ProductionWitness, assert_broker_is_stubbed, assert_isolated, no_network,
     )
     from ops.rehearsal.faults import ProviderFaultInjector
-    from ops.rehearsal.replay import ResponseLibrary, replay_provider_calls
+    from ops.rehearsal.replay import (
+        REPLAY_RUN_ANY, REPLAY_RUN_AUTO, ReplayRunChoice, ResponseLibrary,
+        replay_provider_calls, select_replay_run,
+    )
     from ops.rehearsal.report import collect
 
     if session not in SESSIONS:
@@ -292,7 +307,37 @@ def run_rehearsal(
     pricing_note_index = len(notes)
     notes.append(_PENDING_NOTE)
 
-    library = ResponseLibrary.from_database(str(sandbox.db_path), run_id=replay_run)
+    # Decide WHICH recorded run is replayed before loading anything, and say
+    # so in the report's notes: an unstated pin is the same defect as no pin.
+    requested = (replay_run or REPLAY_RUN_AUTO).strip()
+    if requested.lower() == REPLAY_RUN_ANY:
+        choice = ReplayRunChoice(
+            run_id=None, mode="any", complete=False,
+            reason=(
+                "replay was deliberately NOT pinned (--replay-run any): "
+                "responses are drawn from ALL recorded history, so this "
+                "verdict depends on how the shared pool happened to be "
+                "consumed and is not reproducible across code changes"
+            ),
+        )
+    elif requested.lower() == REPLAY_RUN_AUTO:
+        choice = select_replay_run(
+            str(sandbox.db_path), session,
+            not_after_utc=now_et.astimezone(timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+        )
+    else:
+        choice = ReplayRunChoice(
+            run_id=requested, mode="explicit",
+            reason=f"replay pinned explicitly to {requested} (--replay-run)",
+        )
+    # Not appended to `notes`: the choice is a first-class report field and
+    # is printed directly under the verdict, where it cannot be skimmed past.
+
+    library = ResponseLibrary.from_database(
+        str(sandbox.db_path), run_id=choice.run_id,
+    )
     if not library.available():
         notes.append(
             "no recorded model responses matched the requested run — every "
@@ -367,7 +412,8 @@ def run_rehearsal(
         session=session,
         rehearsed_date=now_et.date().isoformat(),
         run_id=run_id,
-        source_run_id=replay_run,
+        source_run_id=choice.run_id,
+        replay_choice=choice,
         result=result,
         db_path=str(sandbox.db_path),
         library=library,
