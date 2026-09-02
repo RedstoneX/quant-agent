@@ -563,9 +563,13 @@ def openrouter_cache_age_hours() -> float | None:
 # ever BOUNDS a reservation that already carries `reservation_multiplier` on
 # top. So a cache within `grace_period_hours` of the 24h freshness boundary
 # is used rather than latched -- with a widened multiplier (below) and a
-# loud warning -- and only a cache older than that, or missing entirely, or
-# lacking a rate for a model actually configured, still fails closed exactly
-# as before 2026-08-28.
+# loud warning -- and only a cache older than that, or missing entirely,
+# still fails closed exactly as before 2026-08-28.
+#
+# 2026-09-02: a rate map that IS readable but does not price one accepted
+# model was the third way into the same latch, and the only one that could
+# not self-heal. It now degrades per-model to the pinned baseline instead;
+# see the note at that check inside the function.
 def refresh_openrouter_pricing(
     force: bool = False,
     *,
@@ -588,11 +592,16 @@ def refresh_openrouter_pricing(
     always passes the configured `llm_cost_circuit.openrouter_pricing_*`
     values explicitly.
 
-    Beyond the grace window, with no cache at all, or with a cache that
-    exists but lacks a valid rate for one of the accepted models, this
-    returns False exactly as it always has -- that is genuinely unbounded
-    cost, not merely stale, and the caller's fail-closed response
-    (`mark_unavailable`) is correct for it.
+    Beyond the grace window, or with no cache at all, this returns False
+    exactly as it always has -- that is genuinely unbounded cost, not merely
+    stale, and the caller's fail-closed response (`mark_unavailable`) is
+    correct for it.
+
+    A rate map we DID obtain that happens not to price one accepted model no
+    longer returns False (2026-09-02): that model alone falls back to its
+    pinned `_PRICING_OPENROUTER` baseline and the refresh succeeds. See the
+    long note at that check for why bricking the desk on a model
+    deprecation was both disproportionate and unrecoverable without a human.
 
     On success ``PRICING`` is updated in place so both reservations and
     post-call accounting use the same catalog snapshot.
@@ -622,21 +631,51 @@ def refresh_openrouter_pricing(
             "cannot be budgeted safely"
         )
         return False
-    missing = [
+    # A catalog we could read, that simply does not price one accepted
+    # model, used to return False here -- i.e. the same durable
+    # `mark_unavailable` latch as no provenance at all (2026-09-02 audit).
+    # That was the worst remaining shape of the 2026-08-28 pricing SPOF, and
+    # strictly worse than the stale-cache one it sat next to, because it does
+    # not self-heal: a successful fetch WRITES the cache before this check
+    # runs, so the next session reads that same fresh-but-incomplete cache,
+    # never re-fetches, never reaches the grace window above, and fails
+    # identically until a human edits this file. OpenRouter retiring a model
+    # id is an ordinary event -- `google/gemini-2.5-flash-lite` below is
+    # already refused to new Google keys -- so an unattended desk could be
+    # darkened indefinitely by a deprecation notice it had no part in.
+    #
+    # It is also not the "genuinely unbounded cost" this function fails
+    # closed for. Every id this loop can name is a key of
+    # `_PRICING_OPENROUTER`, so a verified, dated, drift-checked rate for it
+    # (ops/model_policy/verify_pricing.py) exists by construction -- the
+    # premise that there is "no rate at all" was never true. Fall back to
+    # that pinned rate for the unpriced model only, keep the live rate for
+    # every model the catalog DID price, and shout. The cost ceiling is
+    # untouched: the call is still priced, still reserved, still counted.
+    # And a model genuinely withdrawn from OpenRouter answers 404, which
+    # `cost_circuit._is_known_zero_cost_failure` already accounts at $0 --
+    # so the seat fails safely per-call while the desk keeps trading.
+    unpriced = [
         model for model in _PRICING_OPENROUTER
         if not _valid_rates(rates.get(model))
     ]
-    if missing:
+    if unpriced:
         logger.error(
-            "OpenRouter catalog lacks valid rates for accepted models: %s",
-            ", ".join(sorted(missing)),
+            "OpenRouter catalog lacks valid rates for %s -- pricing %s from the "
+            "pinned baseline in src/cost_table.py instead of suspending paid "
+            "analysis. Verify the model id is still routed by config/settings.yaml "
+            "(a retired id should be removed from the seat AND from "
+            "_PRICING_OPENROUTER); until then this rate is last-verified, not "
+            "current.",
+            ", ".join(sorted(unpriced)),
+            "it" if len(unpriced) == 1 else "them",
         )
-        return False
-    for model in _PRICING_OPENROUTER:
-        live = rates[model]
+    for model, pinned in _PRICING_OPENROUTER.items():
+        live = rates.get(model)
+        source = pinned if not _valid_rates(live) else live
         PRICING[model] = {
-            "input": float(live["input"]),
-            "output": float(live["output"]),
+            "input": float(source["input"]),
+            "output": float(source["output"]),
         }
     if stale_but_in_grace:
         age_hours = _openrouter_cache_age_hours() or 0.0

@@ -1006,18 +1006,29 @@ def test_no_cache_at_all_fails_closed_even_with_grace_configured(tmp_path, monke
     assert ok is False
 
 
-def test_stale_cache_missing_a_configured_model_still_fails_closed(tmp_path, monkeypatch, _restore_pricing):
-    """A grace-eligible cache that simply never priced one of the accepted
-    models (e.g. an operator added a new OpenRouter model to
-    config/settings.yaml after the cache was written) must still fail
-    closed -- a widened multiplier cannot compensate for a rate that does
-    not exist at all."""
+# ============================================================================
+# 2026-09-02: a rate map we COULD read that does not price one accepted model
+# used to be the third way into the durable `mark_unavailable` latch -- and
+# the only one that could not self-heal, because a successful fetch writes
+# the cache BEFORE the completeness check, so every later session re-read the
+# same fresh-but-incomplete file and never re-fetched. An OpenRouter model
+# deprecation could therefore darken an unattended desk indefinitely. Every
+# id that check can name is a key of `_PRICING_OPENROUTER`, so a verified,
+# dated, drift-checked rate for it always exists: it degrades to that instead.
+# ============================================================================
+
+def test_stale_cache_missing_a_configured_model_prices_it_from_the_pinned_baseline(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """The unpriced model falls back to its pinned rate; every model the
+    cache DID price still takes the cached rate; the refresh succeeds."""
     import os
     import time
     from src import cost_table
 
     rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
     del rates["openai/gpt-5.5"]
+    rates["qwen/qwen3-235b-a22b-2507"] = {"input": 0.0875, "output": 0.35}
     cache = tmp_path / "openrouter.json"
     cache.write_text(_json_mod.dumps(rates))
     stale_age_s = cost_table._CACHE_MAX_AGE_SECONDS + 6 * 3600  # well within a 24h grace
@@ -1029,7 +1040,92 @@ def test_stale_cache_missing_a_configured_model_still_fails_closed(tmp_path, mon
     ok = cost_table.refresh_openrouter_pricing(
         grace_period_hours=24.0, max_stale_multiplier=1.5,
     )
-    assert ok is False
+
+    assert ok is True
+    assert cost_table.PRICING["openai/gpt-5.5"] == (
+        cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]
+    )
+    # Not "everything reverts to pinned": the models the map did price keep
+    # the rate that was actually read, or a live repricing would be silently
+    # discarded whenever any single id went missing.
+    assert cost_table.PRICING["qwen/qwen3-235b-a22b-2507"] == {
+        "input": 0.0875, "output": 0.35,
+    }
+
+
+def test_fresh_catalog_missing_a_model_keeps_trading_instead_of_latching(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """The unrecoverable shape: a LIVE fetch succeeds and writes a fresh
+    cache that no longer carries a retired model id. Before 2026-09-02 this
+    returned False, the caller latched, and the next session read the same
+    fresh cache without re-fetching -- so nothing short of a human editing
+    this file could clear it."""
+    from src import cost_table
+
+    cache = tmp_path / "openrouter.json"
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    live = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    del live["google/gemini-2.5-flash-lite"]
+
+    def _fetch():
+        cache.write_text(_json_mod.dumps(live))  # the real fetch caches first
+        return live
+
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", _fetch)
+
+    assert cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    ) is True
+    # And again on the next session, now reading the fresh cache it wrote --
+    # the step that used to make this permanent.
+    assert cost_table.refresh_openrouter_pricing(
+        grace_period_hours=24.0, max_stale_multiplier=1.5,
+    ) is True
+    assert cost_table.PRICING["google/gemini-2.5-flash-lite"] == (
+        cost_table._PRICING_OPENROUTER["google/gemini-2.5-flash-lite"]
+    )
+
+
+def test_degraded_model_is_still_priced_so_the_ceiling_still_binds(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """The point of degrading rather than latching is that the call stays
+    BUDGETED. A model left unpriced would reach the cost circuit as
+    `unknown_model_price` and suspend paid analysis anyway -- the latch by
+    another name."""
+    from src import cost_table
+
+    cache = tmp_path / "openrouter.json"
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    live = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    del live["openai/gpt-5.5"]
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: live)
+
+    assert cost_table.refresh_openrouter_pricing(grace_period_hours=24.0) is True
+    assert cost_table.estimate_cost("openai/gpt-5.5", 1_000_000, 0) == pytest.approx(
+        cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]["input"]
+    )
+
+
+def test_corrupt_rate_for_one_model_degrades_without_poisoning_the_others(
+    tmp_path, monkeypatch, _restore_pricing,
+):
+    """`_valid_rates` rejects a malformed entry the same way it rejects an
+    absent one -- a string, a bool, a negative -- and that must take the same
+    degrade path, never write the junk into PRICING."""
+    from src import cost_table
+
+    cache = tmp_path / "openrouter.json"
+    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
+    live = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
+    live["openai/gpt-5.5"] = {"input": "5.0", "output": -30.0}
+    monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: live)
+
+    assert cost_table.refresh_openrouter_pricing(grace_period_hours=24.0) is True
+    assert cost_table.PRICING["openai/gpt-5.5"] == (
+        cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]
+    )
 
 
 def test_stale_multiplier_scales_monotonically_with_age(tmp_path, monkeypatch):

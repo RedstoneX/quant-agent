@@ -3215,8 +3215,20 @@ class LLMCostCircuitBreaker:
         actual_cost_usd: float | None,
         *,
         actual_model: str | None = None,
+        failed_attempt_errors: list[BaseException] | None = None,
     ) -> None:
-        """Release a reservation and account the completed provider response."""
+        """Release a reservation and account the completed provider response.
+
+        `failed_attempt_errors` carries the exceptions from every provider
+        attempt on this logical call that did NOT produce the response being
+        settled here -- a retried primary, a failed primary whose failover
+        then succeeded.  It is the success-path twin of `fail_call`'s
+        `attempt_errors` and exists for the same reason: see the note above
+        the `failed_attempt_reserve` computation below.  Callers that cannot
+        enumerate their attempts pass nothing and get the pre-2026-09-02
+        behaviour, so this can only ever recognise more genuinely-free
+        attempts -- never fewer.
+        """
 
         if not self.enabled or reservation.reservation_id == "disabled":
             return
@@ -3270,6 +3282,28 @@ class LLMCostCircuitBreaker:
                 int(row["max_output_tokens"]),
             ) or 0.0
             failed_attempt_reserve = max(0.0, total_reserved - current_attempt_reserve)
+            # Defect 2, success half (2026-09-02). `fail_call` was taught on
+            # 2026-08-31 (PR #197) that a 429/400/401/403/404 or a pre-send
+            # transport failure provably billed $0, because charging those
+            # reserves put $1.90 of phantom spend on the 2026-08-31 ledger and
+            # latched the desk twice before an operator reversed it by hand.
+            # `complete_call` never learned the same thing, so the IDENTICAL
+            # phantom charge survived on the branch where the retry SUCCEEDS:
+            # the failed attempt's conservative reserve was added on top of
+            # the real cost of the response we actually got. Measured on the
+            # two occurrences in the ledger -- 2026-08-28 14:31 tech_analyst
+            # (booked $0.013458 against a real $0.001410, 9.6x) and 2026-08-31
+            # 14:36 news_analyst (booked $0.012591 against $0.002347, 5.4x) --
+            # both first attempts were provider refusals that cost nothing.
+            #
+            # Same allow-list, same contagious-ambiguity rule: ONE attempt
+            # that might have been billed keeps the whole reserve chargeable.
+            if failed_attempt_reserve and failed_attempt_errors and (
+                _all_attempts_provably_free(
+                    failed_attempt_errors[-1], failed_attempt_errors,
+                )
+            ):
+                failed_attempt_reserve = 0.0
             accounted = total_reserved if unknown else float(actual_cost_usd) + failed_attempt_reserve
             call_cost_exact = not unknown and not bool(failed_attempt_reserve)
             updated_reservation = conn.execute(

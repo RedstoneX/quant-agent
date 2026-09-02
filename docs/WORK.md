@@ -859,9 +859,53 @@ $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
 several runaway looping incidents that burned tokens — the reason the LLM
 cost circuit breaker was added — so the per-seat shares below are inflated
 by an unknown amount and should not be read as the PM's steady-state share
-of spend. A clean baseline needs to be re-measured once the current tranche
-(flex routing, the `intra_check` fix) is deployed and the circuit breaker
-has had a run without tripping.
+of spend. A clean baseline needed re-measuring once the current tranche (flex
+routing, the `intra_check` fix) was deployed. **It has been — see immediately
+below; use those numbers, not these.**
+
+**CLEAN BASELINE, measured 2026-09-02 from `llm_budget_days` and `agent_logs`
+on the live desk.** Dates used: **2026-08-27 to 2026-09-02**, which is the
+whole post-contamination record. 2026-08-31 is included but its ledger is only
+meaningful after the operator's phantom-charge correction that afternoon;
+2026-09-02 is a partial day (through 14:01 ET). 2026-08-29/30 was a weekend.
+
+| Day | Settled spend | Note |
+|---|---:|---|
+| 2026-08-27 | $1.0200 | |
+| 2026-08-28 | $0.7394 | |
+| 2026-08-31 | $1.4578 | includes three operator-triggered morning re-runs |
+| 2026-09-01 | $0.7793 | |
+| 2026-09-02 | $0.8958 | partial, to 14:01 ET |
+
+**~$0.73–$1.14 on an ordinary day against a $2.75 ceiling — the desk is using
+about a third of its budget.** No trend: the range is flat across the five
+days and the variation is run-count, not per-call drift.
+
+**The concentration is confirmed, and it got MORE concentrated, not less.**
+Over 2026-08-27..09-02: **portfolio_manager is $4.2475 of $4.5646 — 93.0% of
+spend on 35 of 153 calls.** Every other seat combined is $0.3171. The eight
+seats that moved to Google-direct `gemini-3.5-flash-lite` on 2026-08-31 now
+cost **$0.00** (free tier) — 35 calls, zero dollars. So the *entire* remaining
+LLM bill is one seat's model choice plus two small OpenRouter stragglers
+(`tech_analyst` $0.209 pre-migration, `risk_manager` $0.023).
+
+**Do not re-litigate "the research desk is cheap" from this.** It is now
+cheap because it is free, which is a routing fact, not an efficiency one. The
+only lever that moves the bill is the PM seat: its input size, its cadence, or
+its endpoint. A weaker PM model is ruled out by the owner and that ruling
+stands.
+
+**One measurement to act on before any budget change.** Provider-reported cost
+for `openai/gpt-5.5` has been a **median 0.38x** of the pinned $5/$30 estimate
+across the 32 calls since 2026-08-28 (the flex endpoint plus cache reads).
+Reservations and the reserved-exposure ceilings are still sized off the pinned
+rate, so every PM reservation is ~2.7x what the seat is actually billed. That
+is what produced the 2026-08-28 hold at $1.9118 on a call that cost ~$0.25,
+and the response was to raise the ceiling 1.80 -> 2.60. **The ceiling is being
+loosened to accommodate a bad estimate.** Pricing reservations at the flex
+rate is NOT the fix — fallbacks are enabled, so a saturated flex tier lands on
+the $5/$30 endpoint and the reservation would then under-cover the dearest
+possible outcome. Owner decision, not a patch.
 
 | Mode | Runs | Avg/run | Dominated by |
 |---|---:|---:|---|
