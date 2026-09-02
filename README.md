@@ -385,6 +385,49 @@ Install: `cp scripts/systemd/quant-agent-alert-heartbeat.* ~/.config/systemd/use
 
 **The bootstrap limit, stated plainly.** Two failure modes, deliberately not conflated. **(A)** The channel is broken while the box is alive — revoked token, wrong chat id, blocked bot, egress rule, a unit that never sourced `.env`. This is the likely failure, it is fully detectable from inside the box, and it is what everything above covers. **(B)** The box itself is dead, off or unreachable. Nothing running on the box can report that, and no local engineering changes it. An out-of-band ping to an external monitoring service would cover (B); that dependency was **refused outright** — this desk does not rely on an outside service to know its own alarm works — so the hook was deleted rather than left switched off, and a test keeps it gone. **If the box dies, you find out when you next look.** That is not fixed here and nothing in this design quietly pretends otherwise.
 
+### Resetting the desk (`scripts/desk_reset.py`)
+
+While the trade logic is still being stabilised the book is wiped and restarted **daily**, so the wipe is a tool with guardrails rather than a sequence someone remembers at 07:00. It is **dry-run by default** — the plain invocation reads the broker and the database, prints every position, every open order and every table with its row count, and changes nothing:
+
+```bash
+python scripts/desk_reset.py                 # dry run: prints the plan, touches nothing
+python scripts/desk_reset.py --execute       # actually do it
+```
+
+`--execute` is the confirmation flag. On a TTY it additionally asks you to type `reset`; scripted use must pass `--yes` explicitly (an `--execute` with no TTY and no `--yes` is refused, so a cron line can never half-confirm).
+
+**It refuses to run against anything it cannot prove is a paper account.** Four independent signals, all of which must agree, because any one of them can be edited or bypassed on its own:
+
+| Check | Catches |
+|---|---|
+| `alpaca.paper` is exactly `True` | the settings edit `AppConfig._enforce_paper_only` already guards — asserted again here so the tool stays safe if that guard is ever removed |
+| `alpaca.base_url` names `paper-api.alpaca.markets` | a config that says paper and points elsewhere |
+| the **resolved** SDK base URL is the paper host | a client built `paper=False`, or `url_override`'d past the config entirely |
+| `account_number` carries Alpaca's `PA` prefix | the account's own answer. `GET /v2/account` has **no** paper/live field (verified against the reference, not assumed) — paper and live are separate hosts, not an account property — so the account number is the only account-level signal that exists |
+
+Plus a fifth, read-only: a single `GET /v2/account` against the **live** host. Paper keys are rejected there; if these credentials *authenticate*, they are live credentials and the run aborts no matter what the config says. A network failure on that probe is inconclusive, so it warns and defers to the four above. `--no-live-probe` skips it.
+
+Every one of those is a **hard refusal with no override flag**, for the same reason `AppConfig` has none: authorising a liquidation against a live account should be a reviewed code change, not a command-line argument.
+
+**Timing.** It refuses while the market is open (`--allow-market-open`) and while one of the desk's own session windows is live (`--allow-session-window`) — two separate flags, because they are two separate risks. The trade-off is real and there is no free window:
+
+- **Market closed** — the safe-looking option, and the default-legal one. But liquidation is a market order and market orders are not extended-hours eligible, so Alpaca **queues them for release at the next open** ([orders-at-alpaca](https://docs.alpaca.markets/us/docs/orders-at-alpaca)). The book reads "flat" only after that open, right on top of the 09:30 morning session. Keep the morning timer masked until the queued sells have filled.
+- **Market open** — fills are immediate and real, but `intra_check` covers the whole 09:30-16:00 session, so the desk can trade against you mid-reset.
+
+There is no window that is both "market open" and "no desk session active". The clean procedure is therefore: stop the desk's timers, run with `--allow-market-open` during regular hours, confirm flat, restart the timers. The tool prints this reasoning on every run rather than leaving it in a document.
+
+It also warns — without touching them — when `data/checkpoints/` holds a post-PM checkpoint younger than `decision_checkpoint.MAX_AGE_MINUTES`. The zero-LLM resume lane will still re-offer that plan, and it was built on the pre-reset book. Only reachable if you reset inside the morning window with the override flags, but silently resuming a plan for positions that no longer exist is not a failure worth discovering live.
+
+**What it does, in order:** prove paper → check timing → **back up** → flatten → clear. The backup is unconditional and has no `--no-backup`: `data/resets/<UTC timestamp>/` gets a consistent SQLite copy (online backup API, WAL-safe), `book_before.json` / `book_after.json`, and a `reset_manifest.json` recording the checks that passed, the plan, and the row counts deleted.
+
+The flatten is `DELETE /v2/positions?cancel_orders=true` (`close_all_positions(cancel_orders=True)`) — cancelling **before** liquidating is required, since a resting protective stop reserves the shares and a naive sell is rejected for insufficient quantity. A second `cancel_orders()` sweeps anything that appeared in the gap.
+
+**If the flatten does not land, the database is not cleared** (exit 5). The local ledger is the only thing linking a still-open position to its history, so wiping it after a failed liquidation would leave the broker holding positions nothing on the box can explain. That covers a broker error, and positions still open after the settle window *with the market open*. Positions still open with the market **closed** are the normal queued case and do not block the clear. The backup and both book snapshots are written either way.
+
+Exit codes: `0` fine, `1` you declined the prompt, `2` bad invocation, `3` **not provably a paper account**, `4` refused on timing, `5` flatten failed so the database was left alone.
+
+**There is no Alpaca API for resetting a paper account to its original funding.** The dashboard no longer resets accounts at all: it creates and deletes them, and a newly created account needs newly generated API keys ([paper-trading](https://docs.alpaca.markets/us/docs/paper-trading)). For this desk that is the expensive path, not the cheap one — the Alpaca credentials are injected by the OneCLI gateway (`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`), so new keys mean an operator edit inside OneCLI, not a `.env` change `dev` can make. Sell-everything keeps the account number, the keys and the gateway wiring intact, which is why it is the implemented path.
+
 ## Trading Universe
 
 101 symbols (source of truth: `config/settings.yaml:trading.universe`):
@@ -469,6 +512,16 @@ pytest tests/ -v    # full suite (see "Tested" above for why no count is pinned 
 - Evening insights (cross-session memory)
 - `pending_protection_restores` — orphaned protective-stop recovery queue, drained at every session entry and TTL-pruned after 30 days
 - `pending_repegs` — bounded entry re-peg write-ahead queue (an Alpaca replacement mints a NEW order id; this row is what lets a crash mid-replace be recovered), drained at every session entry and TTL-pruned after 30 days
+
+**What the daily reset clears, and what it keeps.** `scripts/desk_reset.py` works from an explicit allowlist (`TABLE_POLICY`) — it only ever `DELETE`s rows, never drops a table and never deletes a file, and a table it has never heard of is **kept** and reported rather than silently emptied.
+
+| | Tables | Why |
+|---|---|---|
+| **Cleared** | `trades`, `positions`, `daily_pnl`, `insights`, `intraday_evaluations`, `pending_protection_restores`, `pending_repegs` | The contaminated record: the trade ledger, the book mirror, the equity curve, the evening lessons grading those trades, and two write-ahead queues whose order ids die with the flatten |
+| **Kept** | `agent_logs`, `alert_channel_checks`, `llm_budget_*`, `llm_circuit_*`, `llm_quota_holds` | Spend accounting and alerting health, not trading decisions. `src/token_budget.py` fits its per-model size estimates from `agent_logs` (`MIN_SAMPLES = 8`), so wiping it would reset the desk's budget fits along with its cost history |
+| **Partly cleared** | `specialist_evidence` | The counts are real but the PM/RM rows carry reasons derived from the reward:risk geometry defect. Default `--evidence analysis-only` keeps paid specialist *observation* (`analysis`, `finding`, `admission`, `scan_summary`, `coverage`) and drops every decision-shaped row (`target`, `proposed_order`, `reasoning`, `verdict`, `modification`, `review_metrics`, `seat_stance`, `execution_skip`, `pipeline_event`, …). `--evidence none` empties it; `--evidence all` leaves it alone. Nothing in the trading pipeline reads this table, so the choice is a forensic-display one, not a safety one |
+
+Everything file-based below is **untouched** — the reset does not delete files at all. That is deliberate: `data/pricing_cache.json`, `data/openrouter_pricing_cache.json`, `data/company_profiles.json` and the news/macro/earnings/tech/smart-money stores are expensive to rebuild in time and money, and none of them is a trading decision.
 
 **File-based** (`data/news/`):
 - `macro_narrative.json` — persistent grand backdrop, evolves daily
