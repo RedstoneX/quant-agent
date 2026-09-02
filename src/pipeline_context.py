@@ -232,6 +232,13 @@ class PMFacts:
 
     # Current book state
     invested_pct: float = 0.0
+    #: Signed, leverage-aware net direction of the book, as a % of equity.
+    #: NEGATIVE means net short. Deliberately separate from `invested_pct`:
+    #: "is the money at work" and "which way does the book lean" are two
+    #: questions and one number cannot answer both. Both come from the same
+    #: `src.risk.rules.book_exposure` call, so they can never disagree about
+    #: which positions they measured.
+    net_exposure_pct: float = 0.0
     cash_pct: float = 100.0
     position_count: int = 0
     # Spec §12.2 (owner-ratified 2026-09-01) — SEPARATE long and short sector
@@ -348,7 +355,7 @@ class PMFacts:
 {rm_block}
 
 ### Book State (current)
-- invested={self.invested_pct:.1f}% · cash={self.cash_pct:.1f}% · positions={self.position_count}
+- invested={self.invested_pct:.1f}% (capital at work, unsigned) · net direction={self.net_exposure_pct:+.1f}% (leverage-aware; negative = net short) · cash={self.cash_pct:.1f}% · positions={self.position_count}
 - age buckets: <5d={self.positions_under_5d} · 5-15d={self.positions_5_to_15d} · >15d={self.positions_over_15d}
 - drift-flagged (weight>12% + P&L>10%): {self.positions_drift_flagged}
 - sector weights — LONG side (top 8, gross % of equity):

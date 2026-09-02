@@ -121,7 +121,7 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
 
     facts = pipeline._build_pm_facts(
         positions=positions, analyses=analyses,
-        total_value=10_000, cash=2000,
+        total_value=10_000, cash=100,
         recent_performance={"rolling_5d_pct": -2.0, "rolling_20d_pct": 1.0, "in_drawdown": False},
     )
 
@@ -132,9 +132,18 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     assert facts.rm_verdicts_seen == 1
     assert facts.rm_scale_downs_last5 == 1
 
-    # Book state
-    assert facts.invested_pct == 80.0
-    assert facts.cash_pct == 20.0
+    # Book state.
+    #
+    # `invested_pct` is `book_exposure(...).deployed_pct` — measured from the
+    # POSITIONS, not derived as `total_value - cash`. It used to be the
+    # subtraction, which is a second definition of the quantity the pre-trade
+    # `macro_exposure_deviation` advisory judges against the same macro
+    # target (see tests/test_one_definition_per_quantity.py). The fixture's
+    # cash is now the figure that actually completes the book — 9,900 of
+    # positions + 100 of cash = the 10,000 of equity — so both readings
+    # agree and the assertion no longer depends on which one is used.
+    assert facts.invested_pct == 99.0     # (8,800 MSFT + 1,100 XOM) / 10,000
+    assert facts.cash_pct == 1.0
     assert facts.position_count == 2
     assert facts.sector_weights_long.get("Technology") == 88.0  # 20*440/10000 * 100
     assert facts.sector_weights_long.get("Energy") == 11.0     # 10*110/10000 * 100

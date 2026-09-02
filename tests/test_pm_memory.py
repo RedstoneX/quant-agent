@@ -1048,7 +1048,11 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
             positions, _tech_buy_analyses(), total_value=10000,
             default_buy_pct=5.0,
         )
-    assert "Current: 30% net invested" in out
+    # `invested` is capital at work (unsigned, un-leveraged) and `net
+    # direction` is the signed leverage-aware figure, both from the one
+    # `book_exposure` call. Long-only book, so the two agree at 30%.
+    assert "Current: 30% invested (capital at work)" in out
+    assert "net direction +30%" in out
     # 30 + 3*5 = 45% Tech, all long-side (spec §12.2 labels the side).
     assert "Technology long 45%" in out
     assert "over the 40% concentration target" in out

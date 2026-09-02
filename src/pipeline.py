@@ -34,12 +34,14 @@ from src.agents.meta_reflector import MetaReflectorAgent
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
+from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     RiskRuleEngine,
     apply_gross_ceiling,
     distance_to_forced_liquidation_pct,
     gross_exposure,
     peak_to_trough_pct,
+    position_weight_pct,
     resolve_gross_ceiling,
 )
 from src.execution.broker import (
@@ -1417,6 +1419,13 @@ class TradingPipeline:
         # pre-existing book and never see each other — the same gap
         # `pending_investment` closes for net exposure.
         pending_gross_investment = 0.0
+        # Raw (unsigned, UN-leveraged) notional already approved this batch.
+        # This is the pending leg of `book_exposure`'s `deployed` measure —
+        # capital committed, which is what macro's `target_invested_pct` is
+        # defined against. Distinct from `pending_cash_outflow` (BUYs only,
+        # a funding question) and from `pending_gross_investment` (leverage
+        # multiplied, a ceiling question).
+        pending_raw_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -1559,6 +1568,10 @@ class TradingPipeline:
             # Sector exposure accumulates GROSS (direction-agnostic magnitude).
             gross_investment = raw_investment * _gross_multiplier(decision.symbol)
             pending_investment += signed_investment
+            # Deployment accumulates RAW notional for BUY *and* SHORT: both
+            # commit capital, and neither leverage nor direction changes how
+            # much of the book stops being idle cash.
+            pending_raw_investment += raw_investment
             if not is_short:
                 # Cash outflow is raw $ notional — leverage/direction don't
                 # change the brokerage cash the BUY consumes. Inverse/
@@ -1599,9 +1612,22 @@ class TradingPipeline:
         # Does NOT block trades; emits a non-hard violation so RiskManager sees it
         # and can either scale_all_buys or override with a reasoning.
         if macro_target_invested_pct is not None and total_value > 0:
-            from src.risk.rules import _effective_multiplier, RiskViolation
-            existing_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)
-            projected_invested_pct = abs(existing_net + pending_investment) / total_value * 100
+            from src.risk.rules import book_exposure, RiskViolation
+            # Read through `book_exposure` — the SAME function that produces
+            # PM's `invested_pct`. Before this, the two seats were judged
+            # against one target using two definitions with opposite signs
+            # (see the measured example on `book_exposure`), and the RM's leg
+            # additionally `abs()`-ed a signed net, so a net-SHORT book read
+            # as positively invested and was indistinguishable from the
+            # equivalent long. `projected` is the book AFTER this batch:
+            # deployment counts every approved order's raw notional (a SHORT
+            # commits capital too), direction counts them signed.
+            projected = book_exposure(
+                positions, total_value,
+                pending_deployed_usd=pending_raw_investment,
+                pending_net_usd=pending_investment,
+            )
+            projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - macro_target_invested_pct
             if abs(deviation) > 15:
                 # RC3: direction matters. The old symmetric message told RM
@@ -1621,7 +1647,8 @@ class TradingPipeline:
                 remaining_violations.append(RiskViolation(
                     rule="macro_exposure_deviation",
                     message=(
-                        f"Projected net exposure {projected_invested_pct:.0f}% deviates "
+                        f"Projected invested {projected_invested_pct:.0f}% (capital at "
+                        f"work; net direction {projected.net_pct:+.0f}%) deviates "
                         f"from Macro target {macro_target_invested_pct:.0f}% by {deviation:+.0f}pp "
                         f"({guidance})"
                     ),
@@ -4398,11 +4425,13 @@ class TradingPipeline:
         for p in positions:
             if p.qty <= 0 or p.avg_entry <= 0:
                 continue
-            cost_basis = p.avg_entry * p.qty
-            if cost_basis <= 0:
-                continue
-            pnl_pct = p.unrealized_pnl / cost_basis * 100
-            if pnl_pct < profit_pct_trigger:
+            # Same `unrealized_pnl_pct` every P&L% in the system now uses.
+            # Long-only here (the `p.qty <= 0` filter above), so the absolute
+            # cost basis is arithmetically identical to the signed one this
+            # replaces — routed through the shared function so a future
+            # short-side auto-TP cannot inherit a fifth denominator.
+            pnl_pct = unrealized_pnl_pct(p)
+            if pnl_pct is None or pnl_pct < profit_pct_trigger:
                 continue
             # Did we already trim this holding? Look at trades newer than the
             # most recent BUY for this symbol. If a TAKE_PROFIT exists there,
@@ -4663,8 +4692,8 @@ class TradingPipeline:
         """
         from src.execution.broker import _get_sector
         from src.risk.rules import (
-            SECTOR_SIDE_LONG, _effective_multiplier, _gross_multiplier,
-            sector_side_gross,
+            SECTOR_SIDE_LONG, BookExposure, _effective_multiplier,
+            _gross_multiplier, book_exposure, sector_side_gross,
         )
         if total_value <= 0:
             return ""
@@ -4692,8 +4721,14 @@ class TradingPipeline:
                 cached_sectors[symbol] = sector
             return sector
 
-        current_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)
-        current_invested_pct = abs(current_net) / total_value * 100
+        # Same `book_exposure` the PM's Account Status, the PMFacts Book
+        # State block and the pre-trade advisory read. This preview used to
+        # carry its own `abs(sum(mv * signed_mult))` — a fourth number for
+        # the one quantity, in the same prompt as the other three, and the
+        # `abs()` made a net-SHORT book render as positively invested.
+        current_book = book_exposure(positions, total_value)
+        current_invested_pct = current_book.deployed_pct
+        current_net = current_book.net_usd
         # Spec §12.2 — GROSS (unsigned) and split by side, keyed
         # `(sector, side)`. Before §12.2 this summed SIGNED `market_value`
         # exactly as the gate did, so a held short shrank its sector in the
@@ -4705,18 +4740,24 @@ class TradingPipeline:
         )
 
         proj_net = current_net
+        proj_deployed = current_book.deployed_usd
         proj_sector = dict(sector_gross)
         unresolved_symbols: list[str] = []
         for a in buy_candidates:
             raw = total_value * (default_buy_pct / 100)
             proj_net += raw * _effective_multiplier(a.symbol)
+            proj_deployed += raw
             sec = _resolve_sector(a.symbol)
             if sec == "Unknown":
                 unresolved_symbols.append(a.symbol)
             # Every candidate here is BUY-rated, so it lands long-side.
             key = (sec, SECTOR_SIDE_LONG)
             proj_sector[key] = proj_sector.get(key, 0.0) + raw * _gross_multiplier(a.symbol)
-        proj_invested_pct = abs(proj_net) / total_value * 100
+        proj_book = BookExposure(
+            equity=total_value, deployed_usd=proj_deployed,
+            net_usd=proj_net, gross_usd=0.0,
+        )
+        proj_invested_pct = proj_book.deployed_pct
         self._last_symbol_sectors = cached_sectors
 
         def _sector_line(sector_dict: dict[tuple[str, str], float]) -> str:
@@ -4729,7 +4770,8 @@ class TradingPipeline:
             )
 
         lines = [
-            f"- Current: {current_invested_pct:.0f}% net invested · sectors: {_sector_line(sector_gross)}",
+            f"- Current: {current_invested_pct:.0f}% invested (capital at work) · "
+            f"net direction {current_book.net_pct:+.0f}% · sectors: {_sector_line(sector_gross)}",
         ]
         if buy_candidates:
             n = len(buy_candidates)
@@ -4740,7 +4782,8 @@ class TradingPipeline:
                 f"({', '.join(shown)}{tail}):"
             )
             lines.append(
-                f"    → {proj_invested_pct:.0f}% net invested · sectors: {_sector_line(proj_sector)}"
+                f"    → {proj_invested_pct:.0f}% invested · net direction "
+                f"{proj_book.net_pct:+.0f}% · sectors: {_sector_line(proj_sector)}"
             )
             # Spec §12.2/§12.3 — this used to carry its own hardcoded `35`,
             # a fourth sector number unrelated to config and already stale
@@ -5632,12 +5675,13 @@ class TradingPipeline:
                         days_held = None
                 entry_reasoning = (buy_row.get("reasoning") or "")[:300]
 
-            # P&L% (defensive — avg_entry could be zero for fresh positions)
-            pnl_pct = None
-            if p.avg_entry and p.qty:
-                cost = p.avg_entry * p.qty
-                if cost > 0:
-                    pnl_pct = round(p.unrealized_pnl / cost * 100, 2)
+            # P&L% — the one definition (`src.risk.metrics.unrealized_pnl_pct`),
+            # which returns None when genuinely unknowable. The `cost > 0`
+            # guard this replaces silently returned None for EVERY short
+            # (a short's `avg_entry * qty` is negative), so evening's
+            # thesis-health review saw no P&L on the short book at all.
+            _pnl_pct = unrealized_pnl_pct(p)
+            pnl_pct = None if _pnl_pct is None else round(_pnl_pct, 2)
 
             # Tech trajectory — last 4 ratings for this symbol
             tech_trajectory = tech_map_multi.get(sym, [])[:4]
@@ -6571,10 +6615,24 @@ class TradingPipeline:
             if data.get("modifications"):
                 f.rm_mods_last5 += 1
 
-        # Book state
+        # Book state.
+        #
+        # `invested_pct` comes from `book_exposure` — the SAME function the
+        # pre-trade gate's `macro_exposure_deviation` advisory reads, so PM
+        # and RM can no longer be told opposite things about one book (they
+        # were: 70% "10pp OVER" to PM and 10% "50pp UNDER" to RM on the same
+        # $50k-long/$20k-SQQQ book). `positions` here is already sweep-split
+        # by DecisionStage, and `cash` is `deployable_cash` (raw cash + the
+        # parked vehicle), so the parked T-bills count as cash on both legs.
+        #
+        # `net_exposure_pct` is reported ALONGSIDE rather than substituted:
+        # deployment answers "is the money at work", direction answers "which
+        # way does the book lean", and one number cannot be both.
+        from src.risk.rules import book_exposure
         if total_value > 0:
-            invested = total_value - (cash or 0)
-            f.invested_pct = round(invested / total_value * 100, 1)
+            exposure = book_exposure(positions, total_value)
+            f.invested_pct = round(exposure.deployed_pct, 1)
+            f.net_exposure_pct = round(exposure.net_pct, 1)
             f.cash_pct = round((cash or 0) / total_value * 100, 1)
         f.position_count = len(positions)
 
@@ -6625,12 +6683,15 @@ class TradingPipeline:
                 f.positions_5_to_15d += 1
             else:
                 f.positions_over_15d += 1
-            # Drift check
-            if p.avg_entry and p.qty and total_value > 0:
-                weight = p.market_value / total_value * 100
-                cost_basis = p.avg_entry * p.qty
-                pnl_pct = (p.unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0
-                if weight > 12 and pnl_pct > 10:
+            # Drift check — SAME weight and SAME P&L% the PM's own position
+            # line renders (`position_weight_pct` / `unrealized_pnl_pct`).
+            # This block used to carry raw, un-leveraged weight and a
+            # `cost_basis > 0` P&L, so a line reading `Weight: 18.0% DRIFT`
+            # sat three lines above `drift-flagged: 0` in one prompt.
+            if total_value > 0:
+                weight = position_weight_pct(p, total_value)
+                pnl_pct = unrealized_pnl_pct(p)
+                if weight > 12 and pnl_pct is not None and pnl_pct > 10:
                     f.positions_drift_flagged += 1
 
         # Signal freshness
@@ -9095,20 +9156,24 @@ class TradingPipeline:
             if take_profit and cur > 0:
                 dist_target_pct = (take_profit - cur) / cur * 100
 
-            weight_pct = (p.market_value / total_value * 100) if total_value else 0
+            # GROSS-leverage weight — the one definition (see
+            # `src.risk.rules.weight_pct_of`). Raw here meant the reviewer
+            # was shown a 3x fund at a third of the weight the engine caps
+            # it at, and the drift flag below never fired on one.
+            weight_pct = position_weight_pct(p, total_value)
 
-            # Winner flags.
-            # abs(): cost basis is |entry x qty|. A short's negative qty
-            # flipped the sign, rendering a winning short as a loser (and
-            # feeding parabolic/drift flags the wrong side).
-            pnl_pct = (
-                p.unrealized_pnl / abs(entry * p.qty) * 100
-                if (entry and p.qty) else 0
-            )
+            # Winner flags. `unrealized_pnl_pct` divides by |entry x qty|;
+            # a short's negative qty otherwise flips the sign and feeds the
+            # parabolic/drift flags the wrong side. None = unknowable, which
+            # is not a flag either way.
+            pnl_pct = unrealized_pnl_pct(p)
             parabolic_flag = (
-                pnl_pct >= 15 and days_held is not None and days_held < 3
+                pnl_pct is not None and pnl_pct >= 15
+                and days_held is not None and days_held < 3
             )
-            drift_flag = weight_pct > 12 and pnl_pct > 10
+            drift_flag = (
+                weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
+            )
             target_breach_flag = progress_pct is not None and progress_pct > 150
 
             # Vol-unit context so the reviewer reasons about stop distance

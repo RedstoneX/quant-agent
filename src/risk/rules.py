@@ -655,6 +655,182 @@ def gross_exposure(positions, *, cash_park_symbol: str | None = None) -> float:
     return total
 
 
+# --- One definition of "how invested is the book" ------------------------
+#
+# THE DEFECT THIS REPLACES (measured 2026-09-01, two implementations run on
+# one book): `$50k AAPL long + $20k SQQQ` against a 60% target, $100k equity.
+#
+#   PM was told   `total_value - cash`            -> 70% -> "10pp OVER target"
+#   RM was told   `abs(sum(mv * signed_mult))`    -> 10% -> "50pp UNDER target,
+#                                                            do NOT scale down"
+#
+# Same book, same target, opposite sign, and each seat acted on its own
+# number. `book_exposure` is now the only place either question is answered.
+#
+# WHY `deployed_pct` IS THE ONE COMPARED TO `target_invested_pct`, and not
+# the signed leverage-aware number:
+#
+#  1. The target is DEFINED as the complement of cash by the seat that emits
+#     it. `MacroPositionGuidance` bounds `target_invested_pct` and
+#     `cash_recommendation_pct` to 0-100 each, and the macro prompt requires
+#     them to "sum to ~100". It is a capital-deployment target.
+#  2. The consequence the gap exists to fix is idle cash — PMFacts renders it
+#     as "the single largest P&L drag (idle cash in a rising market)" and
+#     routes it to the `cash_target` step. Leverage does not make a dollar
+#     less idle: $20k in a 3x fund is $20k of cash put to work, not $60k.
+#  3. The signed measure has no honest comparison to a 0-100 target. A book
+#     fully deployed in a 3x inverse ETF reads -300%, i.e. "375pp under a 75%
+#     target, deploy more" — with no cash to deploy. A long $50k / short $50k
+#     book reads 0% and asks for more of the money it has already spent.
+#  4. The leverage-and-direction question is ALREADY answered, deterministically
+#     and ENFORCED rather than advised, by `gross_exposure` + the §11.2
+#     `apply_gross_ceiling`, and by `max_gross_bearish_pct`. It does not need
+#     `macro_exposure_deviation` to answer it a second time, badly.
+#
+# `deployed_usd` sums |market_value|, which also repairs a quieter defect in
+# the PM's old `total_value - cash`: equity is `cash + sum(market_value)`, and
+# a held short's `market_value` is NEGATIVE, so a short made the book look
+# LESS deployed to the PM, which then deployed more. Shorting is capital put
+# to work, not capital returned to the pile.
+#
+# `net_usd` is kept and REPORTED rather than discarded, and it carries no
+# `abs()`. The old `abs(existing_net + pending)` made a net-SHORT book read as
+# positively invested — long and short of the same size were literally the
+# same number. A negative `net_pct` now says "net short" out loud.
+#
+# The cash-sweep vehicle is not exposure in ANY of the three, matching
+# `gross_exposure`, `_force_delever` and every LLM-facing position view.
+
+
+@dataclass(frozen=True)
+class BookExposure:
+    """One book, measured three ways that can no longer drift apart.
+
+    `deployed` — capital committed, unsigned, NO leverage multiple. The
+        cash-complement measure, and the ONLY one comparable to macro's
+        `target_invested_pct`.
+    `net` — signed and leverage-aware. Direction of the book. Negative means
+        net short. Hedges cancel, which is the point of this one.
+    `gross` — unsigned and leverage-aware. What the §11.2 ceiling caps.
+    """
+    equity: float
+    deployed_usd: float
+    net_usd: float
+    gross_usd: float
+
+    def _pct(self, usd: float) -> float:
+        if not self.equity or self.equity <= 0 or not math.isfinite(self.equity):
+            return 0.0
+        return usd / self.equity * 100
+
+    @property
+    def deployed_pct(self) -> float:
+        return self._pct(self.deployed_usd)
+
+    @property
+    def net_pct(self) -> float:
+        return self._pct(self.net_usd)
+
+    @property
+    def gross_pct(self) -> float:
+        return self._pct(self.gross_usd)
+
+
+def book_exposure(
+    positions,
+    equity: float,
+    *,
+    cash_park_symbol: str | None = None,
+    pending_deployed_usd: float = 0.0,
+    pending_net_usd: float = 0.0,
+    pending_gross_usd: float = 0.0,
+) -> BookExposure:
+    """The single source for "how invested is this book".
+
+    `pending_*` are approved-but-unexecuted orders from the same batch, so a
+    pre-trade gate can ask the question about the book it is ABOUT to hold.
+    They are passed already-summed by the caller because the accumulation has
+    to interleave with the per-decision approval loop.
+
+    Non-finite `market_value` is skipped rather than poisoning the total to
+    NaN — same convention as `gross_exposure`; `unmeasurable_gross_symbols`
+    is the caller's guard against acting on a total that quietly excluded a
+    position.
+    """
+    park = (cash_park_symbol or "").strip().upper()
+    deployed = 0.0
+    net = 0.0
+    for p in positions or []:
+        symbol = str(getattr(p, "symbol", "") or "").strip().upper()
+        if park and symbol == park:
+            continue
+        market_value = getattr(p, "market_value", 0.0) or 0.0
+        try:
+            market_value = float(market_value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(market_value):
+            continue
+        deployed += abs(market_value)
+        net += market_value * _effective_multiplier(symbol)
+    return BookExposure(
+        equity=float(equity or 0.0),
+        deployed_usd=deployed + float(pending_deployed_usd or 0.0),
+        net_usd=net + float(pending_net_usd or 0.0),
+        gross_usd=gross_exposure(positions, cash_park_symbol=cash_park_symbol)
+        + float(pending_gross_usd or 0.0),
+    )
+
+
+# --- One definition of a position's WEIGHT -------------------------------
+#
+# GROSS-leverage weight, signed. `market_value x |leverage| / equity`.
+#
+# THE DEFECT THIS REPLACES (measured 2026-09-01): the PM prompt states "All
+# weights are GROSS-leverage weights", renders a position line reading
+# `Weight: 18.0% ... DRIFT` from the gross number, and three lines later
+# renders `drift-flagged: 0` from a raw one that never crossed the 12%
+# threshold. One prompt, two weights, contradicting each other in view of the
+# model that has to act on them.
+#
+# GROSS is the convention because it is the one the ENGINE enforces: the
+# `max_position_pct` hard cap, the sector budgets and the constructor's
+# current-weight comparison are all gross. Rendering a raw weight to the PM
+# made it restate a 3x SQQQ's 6% raw as its target, which the constructor read
+# as "cut 18% down to 6%" and turned into a 67% SELL nobody asked for.
+#
+# SIGNED, not absolute: a held short's weight is negative, which is how the
+# drift heuristic stays a long-side question. A winning short's |market_value|
+# SHRINKS toward zero, so it cannot drift into an oversized position the way
+# an appreciating long can.
+
+
+def weight_pct_of(market_value: float, symbol: str, equity: float) -> float:
+    """Signed GROSS-leverage weight of `market_value` held in `symbol`.
+
+    Takes a dollar figure rather than a position so the pre-trade gate can ask
+    it about a projected `held + pending + new` exposure, not only about what
+    is already on the books.
+    """
+    try:
+        mv = float(market_value or 0.0)
+        eq = float(equity or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not eq or eq <= 0 or not math.isfinite(eq) or not math.isfinite(mv):
+        return 0.0
+    return mv * _gross_multiplier(str(symbol or "").strip().upper()) / eq * 100
+
+
+def position_weight_pct(position, equity: float) -> float:
+    """`weight_pct_of` for a held position. The form most callers want."""
+    return weight_pct_of(
+        getattr(position, "market_value", 0.0) or 0.0,
+        getattr(position, "symbol", "") or "",
+        equity,
+    )
+
+
 @dataclass
 class GrossCeilingOutcome:
     """What `apply_gross_ceiling` did, in the order it did it."""
@@ -1200,7 +1376,16 @@ class RiskRuleEngine:
         if not is_short:
             current_symbol_raw = sum(p.market_value for p in positions if p.symbol == decision.symbol)
             current_symbol_raw += (pending_symbol_investment or {}).get(decision.symbol, 0.0)
-            position_pct = (current_symbol_raw + new_investment) * gross_mul / total_value * 100
+            # `weight_pct_of` is the ONE definition of a gross-leverage
+            # weight — the same function the constructor's current-weight
+            # map, the PM's position lines and the PM facts drift check
+            # call. Identical arithmetic to the inline form it replaces
+            # (`(mv) * gross_mul / equity * 100`); routed through the shared
+            # function so the cap and the numbers the PM sizes against
+            # cannot drift apart again.
+            position_pct = weight_pct_of(
+                current_symbol_raw + new_investment, decision.symbol, total_value,
+            )
             if position_pct > self.config.max_position_pct:
                 violations.append(RiskViolation(
                     rule="max_position_pct",
@@ -1227,9 +1412,12 @@ class RiskRuleEngine:
             # is the only signed term here (a short's market_value is
             # negative), so it alone needs `abs()`.
             pending_same_symbol = (pending_symbol_investment or {}).get(decision.symbol, 0.0)
-            single_short_pct = (
-                (abs(current_short_raw) + pending_same_symbol + new_investment)
-                * gross_mul / total_value * 100
+            # Through `weight_pct_of` — the one definition of a
+            # gross-leverage weight. Identical arithmetic to the inline
+            # `* gross_mul / total_value * 100` it replaces.
+            single_short_pct = weight_pct_of(
+                abs(current_short_raw) + pending_same_symbol + new_investment,
+                decision.symbol, total_value,
             )
             if single_short_pct > self.config.max_single_short_pct:
                 violations.append(RiskViolation(
@@ -1379,10 +1567,24 @@ class RiskRuleEngine:
                     limit=round(gross_ceiling_x, 4),
                 ))
 
-        # 2. Total net exposure limit — signed, so long+short hedges cancel
-        current_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)
-        net_exposure = current_net + pending_investment + signed_new
-        total_pct = abs(net_exposure) / total_value * 100
+        # 2. Total net exposure limit — signed, so long+short hedges cancel.
+        #
+        # Reads the SAME `book_exposure` that PM's `invested_pct`, the PM
+        # prompt's Account Status line and the `macro_exposure_deviation`
+        # advisory read, so this cap can no longer be enforced against a book
+        # measured differently from the one the seats were shown.
+        #
+        # The `abs()` here is DELIBERATE and stays: this is a magnitude
+        # ceiling, and a book 150% net SHORT is as far over it as one 150%
+        # net long. That is the opposite of the `abs()` removed from the
+        # macro advisory, which was erasing the direction of a number whose
+        # whole job was to report it. Non-finite market values are already
+        # hard-blocked above, so `book_exposure`'s skip cannot hide one here.
+        projected_book = book_exposure(
+            positions, total_value,
+            pending_net_usd=pending_investment + signed_new,
+        )
+        total_pct = abs(projected_book.net_pct)
         if total_pct > self.config.max_total_position_pct:
             violations.append(RiskViolation(
                 rule="max_total_position_pct",

@@ -622,13 +622,22 @@ question is a number):
   avg_hold_days_30d` — actual realized outcomes
 - `rm_scale_downs_last5 / rm_mods_last5` — did RM keep trimming me?
   (0 = clean, ≥2 = oversizing)
-- `invested_pct / cash_pct` — current deployment
+- `invested_pct / cash_pct` — current deployment. `invested_pct` is CAPITAL
+  AT WORK: unsigned and un-leveraged, so a short counts its own notional
+  (it is capital committed, not capital returned) and a 3x fund counts its
+  sticker price. This is the number macro's `target_invested_pct` is set
+  against — the two are complements of each other, and both are bounded
+  0-100. `net direction` on the same line is the separate, signed and
+  leverage-aware question of which way the book leans; NEGATIVE means net
+  short. Never compare `net direction` to the macro target.
 - `sector weights — LONG side` / `sector weights — SHORT side` — the book by
   sector, split by side and rendered as gross (unsigned) percentages. They are
   NOT netted: each side carries its own budget against the same 75% limit
 - `positions_under_5d / 5_to_15d / over_15d` — age-tier distribution
 - `positions_drift_flagged` — holdings with Weight > 12% + P&L > 10%
-  (need trim or named reason)
+  (need trim or named reason). Counted from the SAME gross weight and the
+  SAME P&L% printed on each position line above, so the count and the lines
+  can never disagree
 - `tech_signals_median_age_days / stale_count` — signal freshness
 - `rolling_5d_pct / rolling_20d_pct / in_drawdown` — system performance
 - **Portfolio Risk** — total capital at risk if every open stop fired,
@@ -765,7 +774,12 @@ Semantics of `risk_allocation_pct`:
   |leverage| — e.g. $6k of 3x SQQQ on a $100k book shows `Weight: 18.0%
   (gross, 3x leveraged)`, not 6%. State targets on the same gross basis;
   restating a leveraged ETF's raw dollar weight would be read as a
-  large trim.
+  large trim. Every weight you are shown, the `drift-flagged` count, the
+  20% single-name cap and the constructor's diff all come from one
+  function, so they are the same number everywhere.
+- **P&L% is measured against the |cost basis|.** A winning SHORT shows a
+  POSITIVE percentage. The sign of a P&L comes from the dollar figure, never
+  from the denominator.
 
 ```json
 {
