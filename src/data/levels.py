@@ -51,9 +51,12 @@ MIN_TOUCHES = 2
 # entirely irrelevant to today's decision.
 MAX_DISTANCE_PCT = 40.0
 
-# Touches decay with age: a level defended last month matters more than one
-# defended three years ago. Half-life in trading sessions (~1 year).
-RECENCY_HALFLIFE_SESSIONS = 252.0
+# No RECENCY_HALFLIFE_SESSIONS here. Until 2026-09-02 this was 252.0 (~1
+# trading year), decaying each touch's contribution to `strength` by
+# `0.5 ** (age_sessions / 252)`. It was picked for being round, never
+# measured, and is gone rather than slowed down — see the strength
+# computation in `find_structural_levels` for the measurement that replaced
+# it and docs/RESEARCH_FINDINGS.md §7 for the full caveats.
 
 # How many levels to report per side. Enough to describe the structure, few
 # enough to stay readable in a prompt.
@@ -73,9 +76,9 @@ class Level:
 
     price: float
     kind: str  # "support" | "resistance"
-    touches: int  # pivots clustered into this level (pre-decay count)
-    last_touch_sessions_ago: int
-    strength: float  # recency-weighted score; higher = more significant
+    touches: int  # pivots clustered into this level
+    last_touch_sessions_ago: int  # informational only — not a strength input, see below
+    strength: float  # touch count, distance-discounted; higher = more significant
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -218,17 +221,43 @@ def find_structural_levels(
         newest_index = max(p[0] for p in cluster)
         sessions_ago = last_index - newest_index
 
-        # Each touch contributes on a recency curve, so many ancient touches
-        # cannot outrank a level being actively defended today.
-        strength = float(
-            sum(
-                0.5 ** ((last_index - idx) / RECENCY_HALFLIFE_SESSIONS)
-                for idx, _price, _side in cluster
-            )
-        )
-        # Nearby levels are more actionable than distant ones: a stop or target
-        # 3% away is a decision, one 35% away is trivia.
-        strength *= 1.0 / (1.0 + distance_pct / 10.0)
+        # Strength is touch count, discounted by distance — no age term.
+        # A recency half-life stood here until 2026-09-02, weighting each
+        # touch down by `0.5 ** (age_sessions / 252)` so old touches barely
+        # counted. It is gone because it was checked, not because it was
+        # suspected: `src/data/level_quality.py` fit a decay curve directly
+        # against our own bars (7,218 daily touch episodes, 101 symbols, 5
+        # years) and found no age effect at all — likelihood ratio 0.00
+        # against a constant-probability null, on both an age-of-level and a
+        # time-since-last-touch definition (docs/RESEARCH_FINDINGS.md §7). A
+        # level defended three years ago predicts a bounce exactly as well as
+        # one defended last week, in the data we actually have.
+        #
+        # The same measurement DOES support touches: pooled bounce
+        # probability rises from 0.516 (first touch) to 0.644 (5+ prior
+        # touches) on real price series, against a flat ~0.48-0.51 on
+        # shuffled controls (slope +0.0249 real vs +0.0049 shuffled) — a
+        # real, reproduced effect. Treat it as promising, not settled: two
+        # settings were changed after an initial run found nothing, and the
+        # shuffle control rules out the return distribution as an
+        # explanation but does not isolate levels from ordinary volatility
+        # clustering (§7 states both caveats plainly). Touch count is the
+        # honest way to use a promising-not-settled finding without
+        # overclaiming it.
+        #
+        # The measured probability CURVE itself is deliberately not imported
+        # as scoring weights, for two reasons visible in the numbers above:
+        # it is non-monotonic at low touch counts (0.507 at one prior touch,
+        # BELOW 0.516 at zero), and it pools every level past 5 touches into
+        # one number for posterior-sample-size reasons, which would score a
+        # 5-touch level and a 20-touch level identically here. Checked
+        # directly on the desk's 101-symbol universe (2026-09-02): swapping
+        # in that curve moves MORE of the top-6 selection than dropping decay
+        # did (33.9% of side-slots vs 27.1%, both measured the same way), so
+        # it is not a free upgrade sitting next to the simpler option — it is
+        # a different and less defensible ranking. Distance is untouched:
+        # nothing here measured it, so nothing here changes it.
+        strength = float(len(cluster)) / (1.0 + distance_pct / 10.0)
 
         level = Level(
             price=round(price, 2),

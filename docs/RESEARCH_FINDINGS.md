@@ -152,6 +152,209 @@ Also: **anomaly decay after publication** (McLean & Pontiff, 2016) — published
 
 ---
 
+## 7. Support and resistance — does a level actually hold?
+
+**Measured on our own data 2026-09-02.** `src/data/levels.py` finds where price
+repeatedly stopped, and every stop and target now traces to it. What it never
+did was say whether a given level is *likely to hold*: its `strength` field is a
+recency-weighted touch count on a scale nobody calibrated. `src/data/level_quality.py`
+measures that, and `scripts/level_quality_report.py` reproduces every number below.
+Nothing is wired into sizing, stops or targets — a test (`TestNotWiredIntoTrading`)
+fails if any module under `src/` imports it.
+
+### What the literature says
+
+Garzarelli, Cristelli, Pompa, Zaccaria & Pietronero, *Memory effects in stock price
+dynamics* (Scientific Reports 4:4487, 2014), LSE tick data: the probability price
+bounces off a level RISES with the number of times it has already bounced there,
+and the effect disappears on shuffled surrogates.
+<https://www.nature.com/articles/srep04487>
+
+Chung & Bellotti (arXiv:2101.07410, 2021) replicate the touch-count effect and add
+explicit decay — level strength falls with age. Neither paper publishes a decay rate
+that transfers to daily US equity bars.
+
+**Neither paper uses volume.** In the 2014 paper the word appears once, in an
+unrelated context. No study found in review offers measured evidence that
+high-volume levels hold more often than low-volume ones.
+
+### Method
+
+*Bin width* is `delta = mean(|x_t - x_(t-1)|)` over the series at the sampling scale
+in use — both papers' resolution. It self-scales across instruments and price regimes,
+so there is no per-symbol tuning and no fixed percentage to go stale. It is also
+invariant under permutation of the increments, which makes the arithmetic surrogate an
+*exact* match on resolution rather than an approximate one.
+
+*Score* is a Beta-Bernoulli posterior, `P(bounce | b_prev) = (n + 1) / (N + 2)` under a
+Beta(1,1) prior, pooled across levels and symbols by prior-touch count. A uniform prior
+is the right one because the question under test is precisely whether the rate departs
+from a coin flip.
+
+*Control* is the same estimator on surrogates built by shuffling the series' own
+returns. That keeps the volatility, fat tails and skew and destroys only the ordering —
+which is the only thing a level can be made of.
+
+### The data we actually have
+
+Historical bars come from **yfinance** (`src/data/market.py::get_ohlcv`); Alpaca's IEX
+feed is the *fallback* when yfinance returns empty, not the primary source. Vendor
+history caps, measured 2026-09-02:
+
+| Sampling | History available | Bars/symbol | Universe total |
+|---|---|---|---|
+| Daily | to 1993 (SPY); `trading.lookback_days: 1800` uses ~5y | 1,254 median at 5y | 121,698 |
+| 1 hour | 730 days (vendor cap) | 5,066 | 490,646 (100/101 symbols) |
+| 5 / 15 min | 60 days (vendor cap) | 4,609 | 461,302 |
+| 1 min | 7 days (vendor cap) | ~2,366 | not measured |
+
+The published studies used tick data at second-scale sampling. We have nothing
+comparable, and the question of whether the estimator survives the coarser sampling
+had to be answered before anything was built on it.
+
+### The validation gate — the result
+
+101 symbols, daily bars, five years (2021-09-02 to 2026-09-02), arithmetic surrogates
+(band identical by construction at $3.1694), five surrogates per series:
+
+| Prior touches | REAL bounces/arrivals | REAL P(bounce) [95%] | SHUFFLED P(bounce) [95%] |
+|---|---|---|---|
+| 0 | 1878 / 3636 | **0.516** [0.500, 0.533] | 0.471 [0.465, 0.478] |
+| 1 | 895 / 1767 | **0.507** [0.483, 0.530] | 0.486 [0.476, 0.497] |
+| 2 | 459 / 844 | **0.544** [0.510, 0.577] | 0.495 [0.479, 0.510] |
+| 3 | 244 / 439 | **0.556** [0.509, 0.602] | 0.506 [0.483, 0.528] |
+| 4 | 129 / 222 | **0.580** [0.515, 0.644] | 0.484 [0.452, 0.516] |
+| 5+ | 200 / 310 | **0.644** [0.590, 0.696] | 0.505 [0.470, 0.539] |
+
+Pooled: real **0.5271** against shuffled **0.4805**, separation **+0.0467**. Slope
+**+0.0249** P(bounce) per prior touch on real series against **+0.0049** on shuffled.
+Stable across seeds 0 / 7 / 13 (separation +0.0467 / +0.0412 / +0.0459; the real slope
+is identical, the real series being the same each time).
+
+**The published pattern reproduces in direction and shape — real rises with prior
+touches, shuffled stays flat near a coin flip — and is far weaker in magnitude than
+the tick-data papers report.** Bounce probability runs 0.52 to 0.64, not "well above
+0.5" throughout. No parameter was adjusted to obtain the separation: the estimator has
+one scale parameter and it is computed from the data.
+
+At **1 hour** the same shape holds (real 0.461 to 0.594, slope +0.0265; shuffled flat,
+slope +0.0051; separation +0.0388). At **5 minutes** it does NOT: the level shift
+survives (real 0.5175 against shuffled 0.4753) but the *rise* vanishes — real slope
++0.0028 against a shuffled +0.0035. Whatever produces the touch-count effect on our
+data is not visible at 5-minute sampling over 60 days.
+
+### What was changed after seeing a result — stated plainly
+
+The first configuration run did **not** show the separation, and two settings were
+changed afterwards. Both changes are recorded here because a reader has to be able to
+judge them:
+
+1. **Surrogate mode: log returns to arithmetic differences.** With log-return
+   surrogates the control's band came out $1.89 against the real series' $0.82 — the
+   control was being measured at 2.3x coarser resolution than the thing it controlled,
+   which is not a control. Arithmetic differences make the band identical by
+   construction. This is a fairness fix to the control, not a setting on the estimator.
+2. **History window: full vendor history to five years.** `trading.lookback_days: 1800`
+   is what the desk actually fetches, and a single `delta` spanning 1993 to 2026 is
+   meaningless — $3.17 is most of a day's range now and several months of range in
+   1995. Five years matches the configured lookback.
+
+Under the original configuration (30+ years, log surrogates, five symbols) real and
+shuffled both rose with prior touches and the pooled separation was +0.0011 — no
+finding. **A reader who thinks either change was self-serving should treat the result
+as unestablished.** Nothing about the estimator itself was touched: it has one scale
+parameter and that parameter is computed from the data.
+
+### Two further caveats that matter
+
+**The shuffle control does not isolate levels specifically.** It rules out the
+distribution of returns as the explanation. It does not separate level memory from
+ordinary volatility clustering or short-horizon autocorrelation, both of which the
+surrogate also destroys. The measurement establishes that ordering matters; it does
+not prove that *levels* are the mechanism.
+
+**High prior-touch buckets are right-censored upward.** A penetration ends a level, so
+a level never broken within the sample contributes bounces and no penetration. That
+bias is real and is not corrected — the shuffled control is censored identically, which
+is what makes the comparison, not either column alone, carry the finding. Reading the
+real 5+ figure of 0.644 as a standalone hold probability would overstate it.
+
+### Recency decay — not fittable at the scale the desk trades
+
+Fitted on our own episodes as `p(age) = 0.5 + (p0 - 0.5) * 2^(-age/H)`, against a
+constant-probability null, with the half-life reported only when the extra parameter
+clears the chi-square 95% threshold at 1 df *and* lands inside the span of data.
+
+- **Daily (7,218 episodes): NOT FITTABLE.** Likelihood ratio 0.00 on both age
+  definitions. There is no age effect in the daily sample at all.
+- **Hourly (20,178 episodes): NOT FITTABLE.** Level age fits the wrong way round
+  (P(bounce) 0.069 at age zero — a level that *strengthens* with age, which is not the
+  claim); time-since-last-touch pins on the grid's one-bar floor.
+- **5-minute (18,578 episodes): fittable.** Half-life 19.7 bars (~98 minutes) from
+  P(bounce) 0.599 at age zero; 14.1 bars (~70 minutes) on time-since-last-touch.
+
+**Decay stays out.** The desk's levels are daily, and the daily sample supports no rate.
+The papers' anchors (tick effect dying between 90 and 180 seconds; daily FX levels
+persisting about five business days) are recorded here for sanity only and are
+deliberately not imported — importing one would be inventing a market-structure
+constant, which is exactly the failure mode this desk has ruled out.
+
+### Volume-at-price — recorded, never scored
+
+The standard profile is computed on the same `delta` bins: point of control is the
+maximum-volume bin, and the value area expands one bin at a time toward the larger
+neighbour until 70% of volume is enclosed. **The 70% is a normal-distribution
+convention, not an empirically optimised figure.** Each bar's volume is spread
+uniformly across the bins its range covers — an assumption, and the standard one,
+because the alternative is intraday data we do not have at daily scale.
+
+These fields ride along on every `LevelQualityRecord` and enter **no** probability.
+The reasoning is stated in the module and repeated here because it is the part most
+likely to be forgotten: the published mechanism for why levels exist at all is stacked
+resting **limit orders** at a price, and traded volume is a *proxy* for that mechanism —
+possibly a poor one, since a price where enormous volume traded is a price where those
+resting orders were consumed. **The volume terms are mechanism-motivated, not
+evidence-backed.** Recording them is what makes "does volume add anything over touch
+count?" answerable on our own book later. Scoring them today would be inventing a
+constant. A test (`TestVolumeIsNeverScored`) fails if volume ever moves a probability.
+
+### What this does NOT license
+
+Nothing about sizing. The measured edge is small, the mechanism is not isolated, and
+the calibration is fitted on the same history any backtest would score against. Wiring
+level quality into sizing, stop placement or the R/R gate is a separate decision on
+separate evidence, and it has not been made.
+
+### What changed in `levels.py` because of this measurement (2026-09-02)
+
+`src/data/levels.py`'s `strength` field — the score that selects which 6 levels
+per side the Tech Analyst is shown — weighted each touch by `0.5 ** (age_sessions
+/ 252)`, a one-year half-life picked for being round and never measured. It is
+now touch count alone, discounted by distance exactly as before:
+`strength = touches / (1 + distance_pct / 10)`. This acts on the "no age effect"
+finding above; it does not wire `level_quality.py` itself into the trading path —
+nothing under `src/` imports that module, `TestNotWiredIntoTrading` still passes,
+and sizing, stops, targets and the R/R gate are unchanged.
+
+Checked on the full 101-symbol universe (same-day bars) before deciding: removing
+the recency term changes the top-6 selection on at least one side for 66 of the 99
+symbols that had any levels, and moves 27.1% of the 1,020 side-slots compared (6
+slots x 170 sides with a candidate level). That is not a no-op — the Tech Analyst
+has been shown a systematically different set of levels than the data supports for
+as long as the invented half-life stood. A second alternative — scoring by the
+measured pooled bounce probability per touch count instead of raw touch count —
+was checked against the same universe and moves the selection even more (33.9% of
+slots, 71/99 symbols), because that curve is non-monotonic at low touch counts and
+pools everything past 5 touches into one number for posterior-sample-size reasons
+unrelated to level quality. Touch count was kept for being simpler and for being
+the less disruptive of the two changes, not merely the more convenient one.
+
+The touch-count finding should be treated as promising, not settled, here exactly
+as it is above: two settings were changed after an initial run found nothing, and
+the shuffle control does not isolate levels from ordinary volatility clustering.
+
+---
+
 ## Summary of what to build, in order
 
 | Priority | Item | Type |
@@ -162,5 +365,6 @@ Also: **anomaly decay after publication** (McLean & Pontiff, 2016) — published
 | 4 | Deterministic macro regime; LLM confined to FOMC text | Python + LLM |
 | 5 | Insider purchase as % of holdings, role weighting, cap tilt | Python |
 | 6 | Post-cutoff discipline in the backtester | Process |
+| 7 | Level-quality measurement — built, measured, `levels.py` strength now touch-count-based; `level_quality.py` itself NOT wired | Python |
 
 Items 1, 2 and 5 need no new data source and no model spend.

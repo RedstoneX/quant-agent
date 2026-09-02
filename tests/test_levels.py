@@ -124,19 +124,99 @@ class TestRelevanceFiltering:
         supports, resistances = find_structural_levels(_bars(old + ramp + now))
         assert not any(lv.price < 20 for lv in supports + resistances)
 
-    def test_recent_touches_outrank_ancient_ones(self):
-        """Strength must reward recency, not raw touch count."""
-        ancient = _oscillation(95.0, 97.0, cycles=15)   # many old touches
-        middle = [96.0 + i * 0.02 for i in range(150)]
-        recent = _oscillation(98.0, 100.0, cycles=3)    # few, but current
+    def test_touch_count_outranks_recency(self):
+        """Strength rewards touch count now, not recency — reversed 2026-09-02.
+
+        This test asserted the opposite until 2026-09-02: a recently-touched
+        level beat a long-abandoned one on fewer touches, because `strength`
+        decayed each touch by a 252-session half-life nobody had measured.
+        `src/data/level_quality.py` then fit decay directly against our own
+        bars and found no age effect at all (docs/RESEARCH_FINDINGS.md §7),
+        so the assumption this test pinned was wrong, not just outdated. It
+        now asserts what the measurement supports: more touches outranks
+        fewer, however old they are.
+
+        Ancient and recent price zones are kept well over 1% apart so
+        `_cluster`'s tolerance cannot chain them into one confounded level —
+        the original version of this test put them close enough together
+        that the "recent" cluster absorbed several ancient pivots too, which
+        is why it kept passing under both the old formula and the new one
+        and never actually caught anything.
+        """
+        ancient = _oscillation(70.0, 72.0, cycles=15)            # 15 touches, old
+        buffer = [72.0 + i * (18.0 / 120) for i in range(120)]   # monotonic: no pivots
+        recent = (
+            _oscillation(94.0, 96.0, cycles=3)                   # 3 touches, fresh
+            + [96.5, 97.0, 97.5, 98.0, 98.5, 99.0]                # clears edge-of-series
+        )
         supports, _ = find_structural_levels(
-            _bars(ancient + middle + recent), max_distance_pct=100.0
+            _bars(ancient + buffer + recent), max_distance_pct=100.0
         )
         assert supports, "expected support levels"
         newest = min(supports, key=lambda lv: lv.last_touch_sessions_ago)
-        assert newest.strength == max(lv.strength for lv in supports), (
-            "a currently-defended level must outrank a long-abandoned one"
+        strongest = max(supports, key=lambda lv: lv.strength)
+        assert strongest.touches > newest.touches, (
+            "the strongest level here must be the one with more touches, "
+            "not the one most recently touched"
         )
+
+    def test_strength_does_not_depend_on_when_the_touches_happened(self):
+        """Same touches, same distance, different age -> identical strength.
+
+        The direct regression test for the recency term's removal. Two
+        series share one touch pattern (4 touches at each of two prices) and
+        the same final distance-from-price, differing only in how long ago
+        the pattern happened (~200 sessions vs ~7-12 sessions). If any age
+        term — even a weak one — crept back in, these would diverge; under
+        the formula this pins, they must match exactly.
+        """
+        osc = _oscillation(88.0, 90.0, cycles=4)
+        old_tail = [90.0 + i * (20.0 / 199) for i in range(200)]
+        recent_tail = [90.0 + i * (20.0 / 6) for i in range(7)]
+
+        old_supports, _ = find_structural_levels(
+            _bars(osc + old_tail), max_distance_pct=100.0
+        )
+        recent_supports, _ = find_structural_levels(
+            _bars(osc + recent_tail), max_distance_pct=100.0
+        )
+        assert old_supports and recent_supports
+        assert [lv.strength for lv in old_supports] == [
+            lv.strength for lv in recent_supports
+        ]
+        # The match above is only meaningful if touches agreed (so strength
+        # had no OTHER reason to match) and recency genuinely differed (so
+        # there was something for a lingering age term to react to).
+        assert [lv.touches for lv in old_supports] == [lv.touches for lv in recent_supports]
+        assert [lv.last_touch_sessions_ago for lv in old_supports] != [
+            lv.last_touch_sessions_ago for lv in recent_supports
+        ]
+
+    def test_closer_levels_still_outrank_equally_touched_distant_ones(self):
+        """Distance still discounts strength — untouched by the 2026-09-02 change.
+
+        Nothing about the distance term was measured or changed; this pins it
+        directly so a future edit to the touch-count formula cannot silently
+        take the distance discount out with it. Two zones share the same
+        touch count (4 each) so only distance from the last close can be
+        doing the separating.
+        """
+        far = _oscillation(58.0, 60.0, cycles=4)
+        ramp = [60.0 + i * (33.0 / 120) for i in range(120)]
+        near = (
+            _oscillation(93.0, 95.0, cycles=4)
+            + [95.5, 96.0, 96.5, 97.0, 97.5, 98.0]
+        )
+        supports, _ = find_structural_levels(
+            _bars(far + ramp + near), max_distance_pct=100.0
+        )
+        near_levels = [lv for lv in supports if lv.price > 90.0]
+        far_levels = [lv for lv in supports if lv.price < 65.0]
+        assert near_levels and far_levels
+        assert all(lv.touches == 4 for lv in near_levels + far_levels), (
+            "this only isolates distance if the touch counts already match"
+        )
+        assert min(lv.strength for lv in near_levels) > max(lv.strength for lv in far_levels)
 
     def test_levels_are_returned_strongest_first(self):
         bars = _bars(_oscillation(100.0, 120.0, cycles=8))
