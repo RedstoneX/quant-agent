@@ -424,10 +424,12 @@ def _violations(quantity: Quantity, findings: list[Finding]) -> list[Finding]:
 
 
 def _report(quantity: Quantity, violations: list[Finding]) -> str:
+    plural = "site" if len(violations) == 1 else "sites"
     lines = [
         "",
-        f"  '{quantity.name}' has {len(violations) + len(quantity.allow)} definitions; "
-        f"it must have exactly one.",
+        f"  '{quantity.name}' is computed outside its sanctioned owner at "
+        f"{len(violations)} {plural}.",
+        "  It must have exactly one definition.",
         f"  Sanctioned owner: {quantity.owner}",
         f"  What a second definition costs: {quantity.cost}",
         "",
