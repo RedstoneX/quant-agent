@@ -505,6 +505,194 @@ def test_unrecognized_failure_defaults_to_ambiguous_not_zero_cost(tmp_path):
 
 
 # ============================================================================
+# Defect 2, success half (2026-09-02): the same phantom charge on the branch
+# where the retry SUCCEEDS. `fail_call` learned the zero-cost allow-list on
+# 2026-08-31; `complete_call` did not, so a first attempt refused with a 429
+# still had its conservative reserve added on top of the real cost of the
+# response the retry produced. Measured twice in the live ledger at 9.6x and
+# 5.4x the true cost of those calls.
+# ============================================================================
+
+def _retry_then_succeed(circuit, *, run_id, first_error, actual_cost,
+                        failed_attempt_errors, agent_name="tech_analyst",
+                        model="google/gemini-3.5-flash-lite"):
+    """One logical call: attempt 1 authorized and failed with `first_error`,
+    attempt 2 authorized and settled at `actual_cost`. Mirrors what
+    `BaseAgent._execute` does -- the reservation is never failed, because the
+    call as a whole succeeded -- and returns the reservation."""
+    circuit.activate_session(run_id, "morning")
+    reservation = circuit.begin_call(
+        agent_name=agent_name, model=model,
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    # attempt 1 fails; the agent keeps the exception and retries rather than
+    # calling fail_call, exactly as the retry loop does.
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(
+        reservation, actual_cost, actual_model=reservation.model,
+        failed_attempt_errors=failed_attempt_errors,
+    )
+    return reservation
+
+
+def _settled(path, reservation):
+    with sqlite3.connect(path) as conn:
+        return conn.execute(
+            "SELECT actual_cost_usd FROM llm_budget_reservations "
+            "WHERE reservation_id=?", (reservation.reservation_id,),
+        ).fetchone()[0]
+
+
+@pytest.mark.parametrize("status_code", [429, 400, 401, 403, 404])
+def test_success_after_provably_free_attempt_is_charged_only_the_real_cost(
+    tmp_path, status_code,
+):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    refusal = _StatusCodeError(status_code, f"provider rejected ({status_code})")
+
+    reservation = _retry_then_succeed(
+        circuit, run_id=f"run-retry-{status_code}", first_error=refusal,
+        actual_cost=0.0014, failed_attempt_errors=[refusal],
+    )
+
+    assert _settled(path, reservation) == pytest.approx(0.0014)
+    state = circuit.status()
+    assert state["current_session_cost_usd"] == pytest.approx(0.0014)
+    assert state["suspended"] is False
+    # The day is exact: nothing about this call is estimated any more.
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
+            (f"run-retry-{status_code}",),
+        ).fetchone()[0] == 1
+
+
+def test_success_after_ambiguous_attempt_still_carries_the_failed_reserve(tmp_path):
+    """Fail closed, unchanged: a 500 might have billed for a stream that
+    started and died, so its reserve stays on the ledger and the day stops
+    being exact -- exactly the pre-2026-09-02 behaviour."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    ambiguous = _StatusCodeError(500, "upstream exploded mid-stream")
+
+    reservation = _retry_then_succeed(
+        circuit, run_id="run-retry-500", first_error=ambiguous,
+        actual_cost=0.0014, failed_attempt_errors=[ambiguous],
+    )
+
+    assert _settled(path, reservation) > 0.0014
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
+            ("run-retry-500",),
+        ).fetchone()[0] == 0
+
+
+def test_one_ambiguous_attempt_among_free_ones_keeps_the_whole_reserve(tmp_path):
+    """Ambiguity is contagious on purpose (see `_all_attempts_provably_free`):
+    the reservation covers the whole call, so one attempt that might have
+    been billed makes all of it chargeable."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    free = _StatusCodeError(429, "rate limited")
+    ambiguous = _StatusCodeError(503, "upstream unavailable")
+
+    reservation = _retry_then_succeed(
+        circuit, run_id="run-retry-mixed", first_error=free,
+        actual_cost=0.0014, failed_attempt_errors=[free, ambiguous],
+    )
+
+    assert _settled(path, reservation) > 0.0014
+
+
+def test_caller_that_names_no_attempts_keeps_the_old_conservative_charge(tmp_path):
+    """The parameter is optional, so an old caller (or a replay script) that
+    cannot enumerate its attempts must get the pre-fix accounting -- this can
+    only ever recognise MORE genuinely-free attempts, never fewer."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+
+    reservation = _retry_then_succeed(
+        circuit, run_id="run-retry-silent",
+        first_error=_StatusCodeError(429, "rate limited"),
+        actual_cost=0.0014, failed_attempt_errors=None,
+    )
+
+    assert _settled(path, reservation) > 0.0014
+
+
+def test_clean_first_attempt_success_is_unaffected_by_the_new_parameter(tmp_path):
+    """No failed attempts, no reserve to forgive: an empty list must settle
+    at exactly the provider's figure, same as before."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-clean", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(
+        reservation, 0.0014, actual_model=reservation.model,
+        failed_attempt_errors=[],
+    )
+
+    assert _settled(path, reservation) == pytest.approx(0.0014)
+
+
+def test_base_agent_reports_its_failed_attempts_to_the_circuit(tmp_path, monkeypatch):
+    """End-to-end: the 2026-08-28 14:31 shape. A 429 on the first provider
+    attempt, a clean success on the retry, and the ledger must show the real
+    cost -- not the real cost plus a reserve for a request the provider
+    refused before generating a token."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-agent-retry", "morning")
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
+    monkeypatch.setenv("QUANT_AGENT_RETRY_BASE_S", "0")
+
+    usage = SimpleNamespace(input_tokens=100, output_tokens=10)
+    ok = SimpleNamespace(
+        content=[SimpleNamespace(text='{"ok": true}')],
+        usage=usage, stop_reason="end_turn",
+    )
+    client = MagicMock()
+    client.messages.create.side_effect = [_StatusCodeError(429, "slow down"), ok]
+    with patch("anthropic.Anthropic", return_value=client):
+        agent = _Agent(api_key="x", model="claude-sonnet-4-6", max_tokens=64)
+        agent.set_cost_circuit(circuit)
+        result = agent.run()
+
+    # Pin the PATH before pinning the money. Without these the test can pass
+    # for the wrong reason: a single-attempt success, or a failover onto a
+    # dearer model whose own attempt reserve swallows the failed one, both
+    # settle at the right number while exercising none of the fix.
+    assert result.provider_requests == 2
+    assert result.used_fallback is False
+    assert result.model == "claude-sonnet-4-6"
+
+    with sqlite3.connect(path) as conn:
+        settled, exact = conn.execute(
+            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id=?", ("run-agent-retry",),
+        ).fetchone()
+        reserve_row = conn.execute(
+            "SELECT attempt_count FROM llm_budget_reservations WHERE run_id=?",
+            ("run-agent-retry",),
+        ).fetchone()
+    assert reserve_row[0] == 2, "both attempts must have been authorized"
+    # Two provider attempts were authorized, so the reservation carried two
+    # attempts' worth of reserve; only the one that produced a response may
+    # be charged, and the priced-from-usage figure is far below either.
+    assert exact == 1
+    assert settled == pytest.approx(result.cost_usd, rel=1e-9)
+    assert settled == pytest.approx(0.00045, rel=1e-9)
+
+
+# ============================================================================
 # Defect 4 (2026-08-28): `max_free_failure_sessions_per_mode` (default 2)
 # was the OPERATIVE per-mode limit, not a backstop -- intra_check fires 14
 # times between 09:30-16:00 ET, so its 3rd session of the day tripped at

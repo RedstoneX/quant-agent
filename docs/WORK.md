@@ -891,6 +891,54 @@ point of the pattern — the guarantee is structural, not procedural.
 Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
 is costing 25% of all proposals now.
 
+**14. The safety budget is priced off a number 2.6x too high — DEFECT. Needs a judgement call, not a patch.**
+
+The only real-money item on this page. Measured 2026-09-02 over a clean
+window (2026-08-27 to 09-02, the first window uncontaminated by the runaway
+loops).
+
+Actual spend is **$0.73–$1.14/day against a $2.75/day ceiling** — comfortable.
+But **the portfolio_manager seat is $4.25 of $4.56 — 93% of the entire bill,
+on 35 of 153 calls.** The eight seats moved to Google-direct on 08-31 now cost
+$0.00. The whole remaining bill is one seat's model choice.
+
+**The defect:** before each call the desk sets aside money to cover it, priced
+at the pinned worst-case rate. The seat's real cost is a **median 0.38x** of
+that across 32 calls — roughly **2.6x over-reserved**. So the budget looks
+spent long before it is, and the desk stops trading on money it never spent.
+On 08-28 a $1.91 hold went against a call that really cost ~$0.25, and the
+response at the time was to raise the daily ceiling 1.80 → 2.60.
+
+**That is the part that matters: a bad estimate quietly loosened the real
+protection.** The ceiling was raised to accommodate spending that was never
+happening, so the guard is now weaker than it was designed to be, for a
+reason that was not true.
+
+**Why the obvious fix is wrong.** Reserving at the cheap flex rate looks
+right and is not: `allow_fallbacks` is on, so a saturated flex tier lands on
+the full $5/$30 rate, and the reservation would then fail to cover the
+dearest outcome — trading a false alarm for a real overrun. Saves $0/day and
+costs ceiling integrity.
+
+The genuine options are (a) turn off fallbacks for this seat so the cheap
+rate is the true worst case, trading uptime for accuracy; (b) lower the daily
+ceiling back toward 1.80 now that the phantom charges below are fixed; or
+(c) move the seat, which is the standing owner decision above and the largest
+saving available. **Do not do (a) or (b) blind — measure a week of real
+settled cost against reservations first.**
+
+Related and already fixed on the same branch: a retry that succeeded after a
+refused first attempt was charged for BOTH (over-charged $0.0223 total —
+pennies, but it is the mechanism that put $1.90 of imaginary spend on the
+ledger and darkened the desk twice in one day), and a pricing gap that could
+have latched the desk off permanently with no way to self-heal.
+
+**Two found and deliberately NOT fixed, reported rather than actioned:**
+a session killed mid-call at day's end leaves a reservation that the NEXT
+morning charges and latches on — so the day it darkens is not the day it
+broke (never observed; read from code). And cache hits record no cost, so
+the alert prints `cost: $?.??` and hides the real figure.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
@@ -1094,9 +1142,53 @@ $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
 several runaway looping incidents that burned tokens — the reason the LLM
 cost circuit breaker was added — so the per-seat shares below are inflated
 by an unknown amount and should not be read as the PM's steady-state share
-of spend. A clean baseline needs to be re-measured once the current tranche
-(flex routing, the `intra_check` fix) is deployed and the circuit breaker
-has had a run without tripping.
+of spend. A clean baseline needed re-measuring once the current tranche (flex
+routing, the `intra_check` fix) was deployed. **It has been — see immediately
+below; use those numbers, not these.**
+
+**CLEAN BASELINE, measured 2026-09-02 from `llm_budget_days` and `agent_logs`
+on the live desk.** Dates used: **2026-08-27 to 2026-09-02**, which is the
+whole post-contamination record. 2026-08-31 is included but its ledger is only
+meaningful after the operator's phantom-charge correction that afternoon;
+2026-09-02 is a partial day (through 14:01 ET). 2026-08-29/30 was a weekend.
+
+| Day | Settled spend | Note |
+|---|---:|---|
+| 2026-08-27 | $1.0200 | |
+| 2026-08-28 | $0.7394 | |
+| 2026-08-31 | $1.4578 | includes three operator-triggered morning re-runs |
+| 2026-09-01 | $0.7793 | |
+| 2026-09-02 | $0.8958 | partial, to 14:01 ET |
+
+**~$0.73–$1.14 on an ordinary day against a $2.75 ceiling — the desk is using
+about a third of its budget.** No trend: the range is flat across the five
+days and the variation is run-count, not per-call drift.
+
+**The concentration is confirmed, and it got MORE concentrated, not less.**
+Over 2026-08-27..09-02: **portfolio_manager is $4.2475 of $4.5646 — 93.0% of
+spend on 35 of 153 calls.** Every other seat combined is $0.3171. The eight
+seats that moved to Google-direct `gemini-3.5-flash-lite` on 2026-08-31 now
+cost **$0.00** (free tier) — 35 calls, zero dollars. So the *entire* remaining
+LLM bill is one seat's model choice plus two small OpenRouter stragglers
+(`tech_analyst` $0.209 pre-migration, `risk_manager` $0.023).
+
+**Do not re-litigate "the research desk is cheap" from this.** It is now
+cheap because it is free, which is a routing fact, not an efficiency one. The
+only lever that moves the bill is the PM seat: its input size, its cadence, or
+its endpoint. A weaker PM model is ruled out by the owner and that ruling
+stands.
+
+**One measurement to act on before any budget change.** Provider-reported cost
+for `openai/gpt-5.5` has been a **median 0.38x** of the pinned $5/$30 estimate
+across the 32 calls since 2026-08-28 (the flex endpoint plus cache reads).
+Reservations and the reserved-exposure ceilings are still sized off the pinned
+rate, so every PM reservation is ~2.7x what the seat is actually billed. That
+is what produced the 2026-08-28 hold at $1.9118 on a call that cost ~$0.25,
+and the response was to raise the ceiling 1.80 -> 2.60. **The ceiling is being
+loosened to accommodate a bad estimate.** Pricing reservations at the flex
+rate is NOT the fix — fallbacks are enabled, so a saturated flex tier lands on
+the $5/$30 endpoint and the reservation would then under-cover the dearest
+possible outcome. Owner decision, not a patch.
 
 | Mode | Runs | Avg/run | Dominated by |
 |---|---:|---:|---|

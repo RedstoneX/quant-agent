@@ -130,6 +130,83 @@ every number above (and the per-day / per-symbol breakdowns) against any
 `quant_agent.db` snapshot. Read-only, no pipeline imports, no broker calls.
 
 ---
+### 2026-09-02 — the phantom bill was only half fixed, and a model going out of print could have switched the desk off for good
+
+**In plain words:** two ways the desk could stop itself over money it never
+actually spent. The first was the 2026-08-31 phantom charge, still alive on
+the half nobody looked at. The second was worse: if the model marketplace ever
+stopped listing one of our models, the desk would have shut down and stayed
+shut down, with no way back except a person editing a file by hand.
+
+**Neither was costing much. Both could cost a trading day.** Measured over the
+clean period 2026-08-27 to 2026-09-02 (2026-08-31's own numbers only after the
+operator's ledger correction that afternoon), real spend runs $0.73–$1.14 a
+day against a $2.75 ceiling, and the Portfolio Manager is 93% of it — $4.25 of
+$4.56 on 35 of 153 calls. Nothing found here moves that. What they move is
+uptime, and an unattended desk that stops does not restart itself.
+
+**The phantom charge survived on the branch where the retry works.**
+`fail_call` learned on 2026-08-31 that a 429/400/401/403/404 or a pre-send
+transport failure provably billed nothing. `complete_call` never learned it.
+So when the first attempt was refused and the *second one succeeded*, the
+refusal's conservative reserve was still added on top of the real cost of the
+response we got and paid for. It happened twice in the recorded ledger:
+tech_analyst on 2026-08-28 at 14:31 booked $0.0135 against a real $0.0014
+(9.6x), news_analyst on 2026-08-31 at 14:36 booked $0.0126 against $0.0023
+(5.4x). Two cents in total — and the same mechanism that put $1.90 of
+imaginary spend on the ledger and darkened the desk twice in one day. The
+direction matters and it is worth saying plainly: this error runs AGAINST the
+desk. It never hides spending; it invents it, burns the day's budget with it,
+and stops trading early on money that was never charged.
+
+**Fixed the same way, deliberately: the same allow-list, the same contagious
+ambiguity.** One attempt that might have been billed and the whole reservation
+is charged exactly as before. A caller that cannot say what its attempts
+failed with keeps the old behaviour, so this can only ever forgive more
+genuinely-free attempts, never fewer.
+
+**The pricing latch had a third door, and it was the one that could not be
+walked back through.** The 2026-08-28 grace window fixed a stale price list.
+It did not fix a price list we could read that simply did not carry one of our
+models — and OpenRouter retiring a model id is an ordinary event, not a fault
+(`google/gemini-2.5-flash-lite` is already refused to new Google keys). That
+path returned "no pricing", which suspends paid analysis behind the durable
+operator-reset latch. It could not recover on its own, because a successful
+fetch **writes the cache before the completeness check runs**: every later
+session read the same fresh-but-incomplete file, never re-fetched, never
+reached the grace window, and failed identically. An unattended desk could
+have been switched off indefinitely by a deprecation notice it had no part in.
+
+**What was wrong was the premise, not the number.** That check can only ever
+name a model that is already a row in the pinned baseline table in
+`src/cost_table.py` — a verified, dated, drift-checked rate. "There is no rate
+at all", which is what failing closed asserts, was never true for anything it
+could name. It now prices that one model from its pinned rate, keeps the live
+rate for every model the catalog did price, and shouts. The ceiling is
+untouched: the call is still priced, still reserved, still counted, and a
+model genuinely withdrawn answers 404 — which the zero-cost allow-list already
+accounts at $0, so the seat fails safely per-call while the desk keeps
+trading.
+
+**Deliberately NOT changed, and someone should decide about it.** The pinned
+`openai/gpt-5.5` rate is $5/$30 per million and the PM seat routes to the
+`openai/flex` endpoint — provider-reported cost has been a **median 0.38x** of
+the pinned estimate over 32 calls since 2026-08-28. Reservations, and
+therefore the reserved-exposure ceilings, are sized from the pinned rate, so
+every PM reservation is roughly **2.7x** what the seat actually gets billed.
+That is what produced the 2026-08-28 hold ("would project session cost to
+$1.9118, above ceiling $1.80") on a call that really cost about $0.25 — and
+the response was to raise the ceiling from 1.80 to 2.60. The mis-measurement
+is quietly loosening the real protection. It is NOT safe to just price
+reservations at the flex rate: fallbacks are enabled, so a saturated flex tier
+lands on the $5/$30 endpoint and the reservation would then under-cover
+exactly the call that costs most. This needs an owner decision, not a patch.
+
+**Also found, also not changed.** A session killed mid-call at the end of a
+trading day leaves an attempted reservation that nothing sweeps until the next
+session runs — which is the next morning, when the sweep charges it and raises
+the hard latch. The day it darkens is not the day it broke. Never observed;
+reported because the shape is the same as every incident above.
 
 ### 2026-09-02 — one word the model spelled differently could bin a whole stock analysis, and 118 other fields could do it too
 
