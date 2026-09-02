@@ -419,3 +419,18 @@ def test_required_fields_are_never_treated_as_droppable():
             assert not cls.model_fields[field_name].is_required(), (
                 f"{cls.__name__}.{field_name} is required but marked droppable"
             )
+
+
+def test_every_session_starts_with_zeroed_parse_counters():
+    """RiskStage also runs on the intraday scan, which never touches the
+    research stage. Resetting in a stage would have made the afternoon
+    re-report the morning's losses in a long-lived scheduler process."""
+    from src.pipeline_context import RunContext
+
+    parse_telemetry.record_dropped_item("TechAnalysisResult", "NVDA")
+    parse_telemetry.record_null_coercion("TechAnalysisResult", "thesis_invalid_if")
+    for session in ("morning", "midday", "close", "evening", "intra_check"):
+        RunContext.start(session)
+        assert parse_telemetry.total_dropped() == 0
+        assert parse_telemetry.total_null_coercions() == 0
+        parse_telemetry.record_dropped_item("TechAnalysisResult", "NVDA")

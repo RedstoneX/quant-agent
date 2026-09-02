@@ -1084,11 +1084,6 @@ class MorningResearchStage:
 
     def run(self, ctx: RunContext) -> RunContext:
         logger.info("=== Stage: MorningResearch ===")
-        # Zeroed here so the counts RiskStage reads belong to THIS session's
-        # research fan-out and not to whatever a long-lived process parsed
-        # before it. Every LLM response this stage validates is parsed after
-        # this line.
-        parse_telemetry.reset()
         data_status: dict[str, str] = {}
         try:
             prior_macro_state = self.macro_store.load_last_state() or {}
@@ -2720,7 +2715,7 @@ class RiskStage:
             ))
             logger.warning("Morning data degradation: %s", data_status)
 
-        # Parse-level losses in the research fan-out (2026-09-02). Before
+        # Parse-level losses anywhere in this session (2026-09-02). Before
         # this, an analysis discarded over one malformed field was a single
         # ERROR log line nobody counted, and an explicit null silently
         # replaced by a default left no trace at all. Both are inputs the
@@ -2736,6 +2731,7 @@ class RiskStage:
         # the session log; no order is blocked by it, because a parse loss is
         # evidence about COVERAGE, not about the soundness of the orders that
         # did survive.
+        #
         # Read LIVE rather than from a research-stage snapshot: the Portfolio
         # Manager parses in DecisionStage, AFTER research, and
         # `TargetPosition.thesis_invalid_if` is one of the two fields this

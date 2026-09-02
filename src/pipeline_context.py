@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
+from src.models import parse_telemetry
+
 if TYPE_CHECKING:
     from src.data.event_calendar import EventCalendarCoverage, FOMCCoverage
     from src.data.macro import MacroCoverage
@@ -221,6 +223,13 @@ class RunContext:
         Run ID prefix matches legacy formatting so log greps like
         'run-abcd1234' and 'midday-abcd1234' keep working.
         """
+        # Zero the parse counters here rather than in any one stage: this is
+        # the single factory every session goes through, and RiskStage — which
+        # reads them — also runs on the intraday scan path, which never
+        # touches MorningResearchStage. Resetting in a stage would have made
+        # the afternoon re-report the morning's losses in a long-lived
+        # scheduler process.
+        parse_telemetry.reset()
         rid_prefix = "run" if session == "morning" else session
         return cls(
             run_id=f"{rid_prefix}-{uuid.uuid4().hex[:8]}",
