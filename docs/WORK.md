@@ -779,6 +779,41 @@ because the words were a rounding error next to the volume.
 **It also explains the bill.** ~50k tokens per call is why the
 portfolio_manager seat is 93% of LLM spend (see item 14).
 
+**ROOT CAUSE OF THE EMPTY EARNINGS REPORTS — FOUND IN THE LOGS 2026-09-02.**
+
+`_extract_key_sections` in `src/data/earnings.py` is failing to find the
+sections it looks for. The production journal says so directly, 12 times in
+7 days:
+
+```
+Structured extraction too sparse (965 chars); falling back to truncated
+full text (184067 -> 30000 chars, slice @ 138000)
+```
+
+**It recovers 965-1,614 characters of signal from a 184,000-character
+filing.** That is not "sparse", it is a failed match — the section headings
+it keys on do not match how these filings are actually laid out.
+
+It then falls back to a 30,000-character slice. That fallback was ALREADY
+repaired once (an R6 audit found 58 cases where a naive first-N slice fed
+the LLM nothing but XBRL labels), and it now seeks the densest numeric
+region instead. So the fallback is sane — but it is a blind slice of a
+document nobody parsed, and roughly **20 of 67 reports still come back
+mostly `[UNSOURCED]`.** Call it a ~30% failure rate.
+
+**Fix the matcher, not the fallback.** The fallback is a safety net that is
+now load-bearing, which is why the failure is quiet — nothing errors, the
+report is simply empty and gets couriered to the PM anyway.
+
+**Sequencing, and it matters:** repairing this ALONE makes the prompt worse
+(see the transcription problem below) — more recovered text means longer
+forms. Fix the analyst's OUTPUT SHAPE first so it returns a conclusion, then
+fix this so the conclusion is drawn from real data. In that order.
+
+**Cheap check nobody has run:** the log line prints the recovered length
+every time. Alert when it is under a threshold instead of logging at INFO
+and moving on. A 965-character recovery from a 184k filing should be loud.
+
 **THE ANALYSTS DO NOT CONCLUDE — THEY TRANSCRIBE. Owner's correction, and it is the bigger failure.**
 
 I first reported this as a data-quality bug (filings truncated, fields
