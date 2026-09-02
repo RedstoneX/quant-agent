@@ -131,6 +131,28 @@ def test_fill_under_a_different_decision_does_not_convert(tmp_path):
     assert "Conversion: 0 of 1 proposals reached a fill (0%)" in out
 
 
+def test_a_later_non_fill_status_does_not_unconvert_an_earlier_fill(tmp_path):
+    """A fill locks in conversion; a stray later row on the same key must
+    not undo it.
+
+    `trades` can carry more than one row per (decision_id, symbol) — a
+    retry or a repeg. One fill converts the proposal, so a filled row wins
+    over any other status regardless of arrival order (see the comment
+    above the fills loop in `_build_blocked_proposals`) — a broker-side
+    cleanup row landing after the fill must not reopen an already-converted
+    proposal. Mutation-found: removing the "already filled" guard left every
+    existing test green, because none of them logged a second trades row
+    after a fill.
+    """
+    pipeline, db = _pipeline(tmp_path)
+    _target(db, "r1", "d1", "NVDA", days_ago=3)
+    _trade(db, "r1", "d1", "NVDA", "filled", days_ago=3)
+    _trade(db, "r1", "d1", "NVDA", "canceled", days_ago=3)  # arrives after the fill
+
+    out = pipeline._build_blocked_proposals()
+    assert "Conversion: 1 of 1 proposals reached a fill (100%)" in out
+
+
 def test_zero_sized_target_is_an_exit_not_a_proposal(tmp_path):
     """A target sized to zero closes a position; it is not an ask to get in.
 
@@ -239,6 +261,29 @@ def test_execution_skip_reason_is_rendered_verbatim(tmp_path):
     out = pipeline._build_blocked_proposals()
     assert ("- PATH: proposed 3× across 3 sessions, filled 0 — most recent "
             "first: insufficient_cash, geometry_rr, qty_zero") in out
+
+
+def test_execution_skip_takes_priority_over_a_rejecting_verdict(tmp_path):
+    """Pins the current precedence when a proposal carries BOTH a stored
+    execution_skip reason and a rejecting verdict for the same decision:
+    the execution_skip reason is what gets reported, not the verdict
+    rejection.
+
+    Why skips are checked first is not written down anywhere in the source
+    — this test exists so a future reordering is a deliberate choice, not
+    an accidental one. Mutation-found: swapping the check order left every
+    existing test green, because none of them logged both an execution_skip
+    and a rejecting verdict for the same key.
+    """
+    pipeline, db = _pipeline(tmp_path)
+    _target(db, "r1", "d1", "NVDA", days_ago=3)
+    _proposed_order(db, "r1", "d1", "NVDA", days_ago=3)
+    _verdict(db, "r1", "d1", approved=False, category="rr_fail", days_ago=3)
+    _skip(db, "r1", "d1", "NVDA", "qty_zero", days_ago=3)
+
+    out = pipeline._build_blocked_proposals()
+    assert "qty_zero" in out
+    assert "rm_rejected" not in out
 
 
 def test_rm_plan_rejection_carries_its_reason_category(tmp_path):
