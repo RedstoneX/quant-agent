@@ -731,6 +731,165 @@ def _min_order_usd(pipeline) -> float:
     return value
 
 
+# --- Spec §11.2 — the EXECUTION-time deployment budget --------------------
+#
+# THE DEFECT THIS REPLACES (2026-09-02, the morning margin was switched on).
+# The BUY submit loop clamped every entry against `available_cash`, seeded
+# from the broker's RAW CASH figure, and that clamp was gated on NOTHING.
+# Raw cash is at most `equity - gross`, so the arithmetic held gross below
+# 1.0x equity STRUCTURALLY: however high `risk.max_gross_exposure_x` was
+# set, a long could never cost more than settled money, and the §11.2
+# ceiling could never become the binding constraint on the long side.
+# `allow_margin: true` shipped that morning and changed nothing a long
+# could do. Shorts were exempt (D11) and so were unaffected either way.
+#
+# THE CLAMP IS NOT REMOVED, and deleting it was considered and rejected.
+# With margin enabled the broker ACCEPTS a buy that exceeds cash, so this
+# loop is the last quantitative bound before the order leaves the building;
+# with no clamp a batch of entries is bounded by nothing this side of
+# Alpaca's own 4x. What changes is WHICH number is clamped against: the
+# ladder-resolved gross headroom, so the de-levering ladder is the one
+# number that governs how much the desk deploys.
+#
+# Fail-closed in all three degraded directions, because this gate is last:
+#   - ladder unreadable  -> raw settled cash, i.e. exactly the pre-margin
+#     behaviour. NEVER the standing 2.0x cap. The constructor may fall back
+#     to the standing cap because another gate still runs after it; nothing
+#     runs after this one.
+#   - equity unusable    -> zero budget. `_resolve_gross_ceiling` already
+#     forces the ladder's FLOOR rung on a non-finite equity read (guard 2,
+#     2026-09-02) and alerts the owner; multiplying that rung by a NaN
+#     equity would produce a NaN budget, every `>` comparison against it
+#     would be False, and the clamp would silently grant INFINITE room on
+#     precisely the broken-snapshot morning the guard exists for.
+#   - park symbol unreadable -> parked cash counts as gross, which shrinks
+#     the headroom rather than inflating it.
+def _entry_deployment_budget(pipeline, ctx, positions, equity, cash):
+    """Dollars of NEW entry notional this session may still add.
+
+    Returns `(budget_usd, ladder_backed, note)`. `ladder_backed` says which
+    of the two meanings the number carries, and the submit loop needs it:
+    a ladder budget is GROSS headroom, which a short consumes as surely as
+    a long does, while the cash fallback is a settled-cash pool, which a
+    short does not draw on at all (D11).
+    """
+    from src.risk.rules import gross_exposure
+
+    ceiling = _session_gross_ceiling(pipeline, ctx)
+    if ceiling is None:
+        logger.warning(
+            "§11.2: the gross-exposure ceiling could not be resolved for the "
+            "submit loop — falling back to the pre-margin raw-cash clamp "
+            "($%.2f). Entries are bounded by settled cash this session, not "
+            "by the ladder.", float(cash) if isinstance(cash, (int, float)) else 0.0,
+        )
+        usable_cash = (
+            float(cash)
+            if isinstance(cash, (int, float)) and not isinstance(cash, bool)
+            and math.isfinite(float(cash))
+            else 0.0
+        )
+        return max(0.0, usable_cash), False, "raw settled cash (ladder unreadable)"
+
+    if (isinstance(equity, bool) or not isinstance(equity, (int, float))
+            or not math.isfinite(float(equity)) or float(equity) <= 0):
+        logger.warning(
+            "§11.2: equity read is unusable (%r) — refusing every new entry "
+            "this session rather than sizing a budget against it. The ladder "
+            "is already at its floor rung (%.1fx) for the same reason.",
+            equity, ceiling.ceiling_x,
+        )
+        return 0.0, True, "no usable equity read — no new entry permitted"
+
+    equity = float(equity)
+    # The park vehicle is parked cash, not exposure — the same exclusion
+    # `gross_exposure` is given everywhere else it is called. An unreadable
+    # symbol falls through to None, which counts the vehicle as gross and so
+    # UNDER-states the headroom; that is the safe side to be wrong on.
+    try:
+        park = pipeline._sweep_symbol()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("§11.2: cash-park symbol unreadable (%s) — counting "
+                       "parked cash as gross for the budget", e)
+        park = None
+    if not isinstance(park, str):
+        park = None
+    # No non-finite guard on the total: `gross_exposure` SKIPS a non-finite
+    # `market_value` rather than propagating it, so this sum cannot come back
+    # NaN. `unmeasurable_gross_symbols` is the guard against acting on a
+    # total that quietly excluded a position, and it is the pre-trade gate's
+    # job — a BUY carrying one is already hard-blocked before this loop.
+    held_gross = gross_exposure(positions, cash_park_symbol=park)
+
+    # Floored at zero. A book already ABOVE its rung has negative headroom,
+    # and a negative budget is not a smaller budget: it would render to the
+    # operator as "-$500 still deployable" and would silently eat the first
+    # $500 of any credit a later refresh brought in.
+    headroom = max(0.0, ceiling.ceiling_x * equity - held_gross)
+    note = (
+        f"§11.2 ladder headroom ${headroom:,.2f} "
+        f"({ceiling.ceiling_x:.2f}x x ${equity:,.0f} equity "
+        f"- ${held_gross:,.0f} held gross, rung {ceiling.rung})"
+    )
+
+    # `is True`, not `bool(...)`: a MagicMock config attribute is truthy, and
+    # reading a stub as "margin enabled" would hand a test pipeline a levered
+    # budget it was never meant to have. Only a real `True` unbinds cash.
+    # RiskConfig.allow_margin is pydantic-typed `bool`, so production is
+    # unaffected by the stricter read.
+    allow_margin = getattr(
+        getattr(getattr(pipeline, "config", None), "risk", None),
+        "allow_margin", False,
+    ) is True
+    if not allow_margin:
+        usable_cash = (
+            float(cash)
+            if isinstance(cash, (int, float)) and not isinstance(cash, bool)
+            and math.isfinite(float(cash))
+            else 0.0
+        )
+        usable_cash = max(0.0, usable_cash)
+        if usable_cash < headroom:
+            note = (
+                f"raw settled cash ${usable_cash:,.2f} (margin disabled; "
+                f"tighter than the {ceiling.ceiling_x:.2f}x ladder headroom "
+                f"${headroom:,.2f})"
+            )
+        headroom = min(headroom, usable_cash)
+    return headroom, True, note
+
+
+def _single_name_execution_cap(pipeline, equity: float) -> float:
+    """`max_position_pct` of equity, re-applied to the size EXECUTION chose.
+
+    Same idiom as the §10.3 minimum-notional floor a few lines below the
+    clamp: the gate upstream already caps a single name, and execution only
+    ever shrinks what the gate approved, so in the ordinary lane this is
+    redundant. It is here because the budget above is a POOL — one order
+    could otherwise draw the entire session's ladder headroom — and because
+    the resume lane reaches this loop without the pre-trade gate having run.
+    Redundant and local beats correct-only-if-another-file-ran.
+
+    Falls back to the configured default (20) rather than to "no cap" when
+    the setting is unreadable, and to zero on an unusable equity figure —
+    the same fail-closed direction as the budget.
+    """
+    if (isinstance(equity, bool) or not isinstance(equity, (int, float))
+            or not math.isfinite(float(equity)) or float(equity) <= 0):
+        return 0.0
+    raw = getattr(
+        getattr(getattr(pipeline, "config", None), "risk", None),
+        "max_position_pct", None,
+    )
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        pct = 20.0
+    else:
+        pct = float(raw)
+        if not math.isfinite(pct) or pct <= 0:
+            pct = 20.0
+    return float(equity) * pct / 100.0
+
+
 def _alert_owner_protection_failed(pipeline, spec: dict, protection,
                                    entry_order_id: str) -> None:
     """Spec §11.1 guard 2 — a stop that did not land ALERTS THE OWNER.
@@ -3583,12 +3742,12 @@ class ExecutionStage:
                 )
                 continue
             # A SHORT is deliberately excluded from the funding total: it
-            # sells borrowed shares and never draws on `available_cash` (see
-            # D11 in the submit loop, where `available_cash` is left untouched
-            # for a short). Funding one liquidates the vehicle to raise cash
-            # that no order can spend — guaranteed churn, not a safety
-            # margin. BUY notionals are still counted in full, so this can
-            # only remove waste, never under-fund a BUY.
+            # sells borrowed shares and spends no cash (see D11 in the submit
+            # loop, where a short is never sized by the entry budget).
+            # Funding one liquidates the vehicle to raise cash that no order
+            # can spend — guaranteed churn, not a safety margin. BUY
+            # notionals are still counted in full, so this can only remove
+            # waste, never under-fund a BUY.
             if not preflight_short:
                 fundable_notional[decision.symbol] = preflight_qty * preflight_price
             preflight_survivors.append(decision)
@@ -3597,10 +3756,10 @@ class ExecutionStage:
         # Cash-sweep funding. `planned_notional` counts BUYs ONLY, at the
         # quantity the submit loop will actually reach — allocation capped by
         # the §11.1 risk budget, quantized by the same helper. A SHORT is
-        # excluded outright: it sells borrowed shares and never draws on
-        # `available_cash` (see D11 in the sizing loop), so funding one
-        # liquidates the vehicle for cash no order can spend. Both were
-        # over-funding, and over-funding is not free: the bookend re-parks
+        # excluded outright: it sells borrowed shares and spends no cash (see
+        # D11 in the sizing loop), so funding one liquidates the vehicle for
+        # cash no order can spend. Both were over-funding, and over-funding
+        # is not free: the bookend re-parks
         # the residue minutes later, which is two crossings of the spread
         # for no position (2026-08-27: sold $3,422.61, re-bought $1,007.60
         # 53 seconds later; 2026-08-31: sold $503.47, re-bought $806.40
@@ -3614,9 +3773,15 @@ class ExecutionStage:
         # for the fill and CONFIRMS the observed rise in broker cash (a
         # filled sale credits `cash` immediately; the 2026-08-19 loss of a
         # fully-approved plan was a 51s fill outliving a 15s wait, not
-        # settlement — see cash_sweep._FUND_TERMINAL_TIMEOUT_S). Whatever
-        # it confirms, `available_cash` below governs: a BUY the sale
-        # didn't actually fund is safely skipped.
+        # settlement — see cash_sweep._FUND_TERMINAL_TIMEOUT_S).
+        #
+        # Since margin went on (2026-09-02) the sale is no longer what makes
+        # a BUY POSSIBLE — the entry budget below is ladder headroom, and a
+        # BUY the sale failed to fund now draws a margin loan instead of
+        # being skipped. It is still worth doing: borrowing at
+        # `margin_interest_rate_pct` against T-bills the desk already owns is
+        # a guaranteed negative carry, so the sweep converts first and the
+        # loan is what is left over.
         # isinstance guard: stage tests stub `pipeline` with MagicMock.
         if buy_decisions:
             from src.execution.cash_sweep import CashSweeper
@@ -3650,7 +3815,7 @@ class ExecutionStage:
                     # ctx before it decides what it can confirm, so on the
                     # zero-confirmed path ctx already held fresher figures
                     # than these locals — and the locals, not ctx, govern the
-                    # BUY loop's `available_cash`. Refreshing only on the
+                    # BUY loop's entry budget. Refreshing only on the
                     # success path meant an unconfirmed funding attempt left
                     # the loop sizing against a pre-sale cash reading; if
                     # anything had DRAWN cash in between, that reading is
@@ -3685,7 +3850,23 @@ class ExecutionStage:
                         "cash_sweep_disabled", raw_cash=cash,
                     )
 
-        available_cash = cash
+        # Spec §11.2 — how much NEW exposure this session may still add, and
+        # the pool every entry below draws from. Ladder-derived (see
+        # `_entry_deployment_budget`); raw cash only when the ladder cannot
+        # be read at all. `total_value` and `positions` are the post-sell,
+        # post-funding figures adopted above, so the headroom is measured
+        # against the book the entries will actually join.
+        entry_budget, budget_is_gross, budget_note = _entry_deployment_budget(
+            pipeline, ctx, positions, total_value, cash,
+        )
+        single_name_cap = _single_name_execution_cap(pipeline, total_value)
+        if buy_decisions:
+            logger.info(
+                "Entry budget for %d entr%s: $%.2f — %s (single-order ceiling "
+                "$%.2f)",
+                len(buy_decisions), "y" if len(buy_decisions) == 1 else "ies",
+                entry_budget, budget_note, single_name_cap,
+            )
         pending_entry_stops: list[dict] = []
         for decision in buy_decisions:
             if decision.action not in ("BUY", "SHORT"):
@@ -4055,32 +4236,48 @@ class ExecutionStage:
                     continue
 
                 estimated_cost = qty * sizing_price
-                # D11: opening a short is not gated by the tracked
-                # `available_cash` pool — it does not spend settled cash the
-                # way a BUY does (it sells borrowed shares), and the caps
-                # (D9) plus the borrow gate (D6) are the sole control
-                # surface for a short, not a cash re-size here.
-                if not is_short and estimated_cost > available_cash:
+                # The ceiling THIS order may reach: the batch pool, or the
+                # single-name cap, whichever is lower. Two different jobs —
+                # the pool stops the SESSION deploying past the ladder rung,
+                # the cap stops ONE order draining the pool.
+                order_ceiling = min(entry_budget, single_name_cap)
+                # D11: a SHORT is never trimmed or refused here. It does not
+                # spend settled cash (it sells borrowed shares), and the caps
+                # (D9) plus the borrow gate (D6) are the sole control surface
+                # for a short. It DOES consume gross exposure, so it draws
+                # the ladder pool down after submission below — but it is
+                # never sized by it, which keeps the short path exactly as it
+                # shipped.
+                if not is_short and estimated_cost > order_ceiling:
                     affordable_qty = _size_shares(
-                        pipeline, available_cash / sizing_price,
+                        pipeline, order_ceiling / sizing_price,
                         fractional=fractional,
                     )
+                    # The skip reason stays `insufficient_cash` even though
+                    # the binding number is no longer always cash: it is a
+                    # persisted evidence code the funnel, the trader feed and
+                    # the blocked-proposal digest already read, and renaming
+                    # it would orphan every historical row. The detail line
+                    # carries the truth.
                     if affordable_qty <= 0:
                         logger.warning(
-                            "Skipping BUY %s: estimated cost $%.2f exceeds available cash $%.2f after sell phase",
-                            decision.symbol, estimated_cost, available_cash,
+                            "Skipping BUY %s: estimated cost $%.2f exceeds the "
+                            "$%.2f still deployable — %s",
+                            decision.symbol, estimated_cost, order_ceiling,
+                            budget_note,
                         )
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol, "insufficient_cash",
-                            f"estimated cost ${estimated_cost:.2f} exceeds "
-                            f"available cash ${available_cash:.2f}",
+                            f"estimated cost ${estimated_cost:.2f} exceeds the "
+                            f"${order_ceiling:.2f} still deployable "
+                            f"({budget_note})",
                         )
                         continue
                     logger.warning(
-                        "Resizing BUY %s from %s to %s share(s): confirmed cash "
-                        "$%.2f only partially covers the approved order",
+                        "Resizing BUY %s from %s to %s share(s): only $%.2f is "
+                        "still deployable — %s",
                         decision.symbol, _fmt_shares(qty),
-                        _fmt_shares(affordable_qty), available_cash,
+                        _fmt_shares(affordable_qty), order_ceiling, budget_note,
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
@@ -4097,15 +4294,15 @@ class ExecutionStage:
                     floor_usd = _min_order_usd(pipeline)
                     if estimated_cost < floor_usd:
                         logger.warning(
-                            "Skipping BUY %s: cash re-size cut the order to "
-                            "$%.2f (%s sh), below the $%.0f minimum worth "
+                            "Skipping BUY %s: the budget re-size cut the order "
+                            "to $%.2f (%s sh), below the $%.0f minimum worth "
                             "trading",
                             decision.symbol, estimated_cost,
                             _fmt_shares(qty), floor_usd,
                         )
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol, "below_min_notional",
-                            f"available cash ${available_cash:.2f} re-sized the "
+                            f"${order_ceiling:.2f} still deployable re-sized the "
                             f"order to ${estimated_cost:.2f}, below the "
                             f"${floor_usd:,.0f} minimum worth trading",
                         )
@@ -4121,6 +4318,8 @@ class ExecutionStage:
                         "confirmed_cash_partially_funded_order",
                         approved_qty=qty_by_risk if qty_by_risk is not None and qty_by_risk < qty_by_alloc else qty_by_alloc,
                         resized_qty=qty,
+                        deployment_budget=entry_budget,
+                        order_ceiling=order_ceiling,
                     )
 
                 # Write-ahead intent: insert a pending row BEFORE calling
@@ -4229,10 +4428,17 @@ class ExecutionStage:
                 if isinstance(order, dict):
                     order.setdefault("action", decision.action)  # audit F5
                 orders.append(order)
-                if not is_short:
-                    # D11: a SHORT does not spend `available_cash` — see the
-                    # matching skip on the affordability re-size above.
-                    available_cash -= estimated_cost
+                if budget_is_gross or not is_short:
+                    # The pool is drawn down by what the order CONSUMES of
+                    # it, and the two budgets are consumed by different
+                    # things. A ladder budget is GROSS headroom: a short
+                    # occupies gross exactly as a long does (`gross_exposure`
+                    # sums the magnitude of both), so it must draw the pool
+                    # or a batch of shorts would leave the longs behind them
+                    # sized against headroom that is already spent. The cash
+                    # fallback is a settled-cash pool, which a short does not
+                    # touch at all — D11, unchanged.
+                    entry_budget -= estimated_cost
                 order_type = "limit" if limit_price is not None else "market"
                 logger.info(
                     "Executed: %s %s %s @ %s $%.2f",

@@ -60,6 +60,23 @@ unreviewed — do not merge any of it without running the suite.**
 | `worktree-agent-ab445cf7c4b9aa358` | 11.1 fractional sizing + stop guards | WIP, interrupted, UNVERIFIED |
 | `worktree-agent-af17eb92755512448` | sector cap fails loudly on unresolved sector | WIP, interrupted, UNVERIFIED |
 
+**SUPERSEDED 2026-09-02 — `allow_margin` is now `true`.** The condition below
+was met: the gross cap and the ladder merged and were verified, and the PM
+prompt's exposure table moved to 2.0x in the same commit as the flip. Two
+things a reader needs that the paragraph below cannot tell them:
+
+- The flip was INERT for longs for its first day. A third ceiling nobody had
+  listed — the BUY submit loop's clamp against raw broker cash — held gross
+  under 1.0x whatever the setting said. Fixed 2026-09-02; the submit loop now
+  draws on a ladder-derived pool. Spec §11.2 carries the detail.
+- **2.0x is still not reachable, and that one is the owner's call.**
+  `max_total_position_pct: 90` hard-blocks NET exposure, and for a long-only
+  book net IS gross: measured, long-only tops out at 0.90x and a long/short
+  book at about 1.3x. The standing 2.0x rung and the -8% 1.5x rung cannot
+  bind. The PM prompt still asks for 1.60-2.00x on `risk-on`.
+
+The original paragraph, kept for the sequencing it records:
+
 **`allow_margin` is still `false`. It must STAY false** until the gross cap and
 the ladder are merged and verified. The PM prompt's exposure table is at 1.0x
 cash-only and moves to 2.0x **at the same moment as that flip, never before.**
