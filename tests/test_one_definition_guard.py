@@ -264,8 +264,12 @@ def find_atr_definitions(tree: ast.AST, path: Path) -> list[Finding]:
     out: list[Finding] = []
     for fn in _functions(tree):
         calls = _calls(fn)
+        # Deliberately NOT matching a bare local named `tr` — too common a
+        # name to carry a guard on. `_atr_series` is still matched because it
+        # CALLS `_true_ranges`, and any honest re-implementation must either
+        # call a true-range helper or name the concept in full.
         derives_tr = "_true_ranges" in calls or bool(
-            {"true_range", "true_ranges", "tr"} & _names(fn)
+            {"true_range", "true_ranges"} & _names(fn)
         )
         averages = bool(calls & {"convolve", "mean", "nanmean", "average", "rolling"})
         wilder = bool(calls & {"AverageTrueRange", "average_true_range", "atr"})
