@@ -1158,6 +1158,41 @@ Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
 a stale price list. That path was fixed 2026-09-02; **this one was not** —
 the latch itself is the shared hazard, not any single route into it.
 
+**19. The model's consistency is an ASSET — three uses. Do not start these before item 0.**
+
+Recorded because the owner is right to be sceptical: these are secondary,
+and item 0 is the real answer. But the consistency is measured, not hoped
+for, and it would be wasteful to rediscover it.
+
+**The measurement:** 5 blinded runs, two arms, quality identical to FOUR
+DECIMAL PLACES. Post-fix, 5 more runs: 0.85/0.85/0.85/0.60/0.85, failing the
+same check every time with the same two names.
+
+  a. **Use it as a test instrument for item 0.** Same input gives the same
+     output, so ANY change in its answer proves the input changed. That is
+     precisely how to verify a pipeline change actually reached the model,
+     which is what item 0 needs. A noisy model could not do this.
+  b. **Stop paying for repeats where the answer does not vary.** The
+     portfolio_manager seat is 93% of the LLM bill. Running one call
+     instead of five, where consistency holds, is a direct saving. Measure
+     first, on the seats where it holds.
+  c. **Subtract the bias rather than argue with it.** The pull toward
+     famous-but-weak names is stable and measurable — the same two names,
+     every run. A consistent bias can be quantified and taken off the score
+     arithmetically. Three attempts to fix it with WORDS all measured as
+     no-change. Feed this into the already-ratified weighted composite
+     score rather than another prompt rule.
+
+**Also worth surfacing rather than suppressing:** the model clearly holds
+knowledge about these companies that our stored evidence does not contain
+(the blinding test could not remove the news facts that identify an issuer).
+Where its view and our evidence DISAGREE, that is either a gap in our data
+or a stale belief in its training. Both are worth seeing.
+
+**Owner's caveat, recorded verbatim in spirit:** this may be grasping at
+straws, and the real answer is fully understanding what the model receives.
+That is item 0. Treat everything here as secondary to it.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
