@@ -20,10 +20,21 @@ contains a BUY whose reward/risk is 0.41 against a documented 1.5 floor.
 Grading never asks "did the model agree with me about the market" — only
 "did it apply the rule the prompt states".
 
-No secrets live here: scenarios are prices and tickers.
+ONE scenario is an exception to "synthetic", deliberately: `pm_selection`
+replays a frozen, verbatim pull of a real production session
+(`fixtures/run_64290730_pm_input.json`). Selection quality is the one thing
+a constructed candidate set cannot measure — hand-built tiers with planted
+traps test whether a model finds the author's pattern, not whether it reads
+evidence. It stays deterministic and re-runnable for the same reason the
+others do: the fixture is frozen on disk and the correct answer is forced by
+the run's own recorded arithmetic, not by anyone's market opinion.
+
+No secrets live here: scenarios are prices, tickers, and one recorded
+paper-account snapshot.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -32,6 +43,7 @@ from typing import Any, Callable
 
 from src.models import (
     OHLCV,
+    NewsIntelligenceReport,
     Position,
     PortfolioDecision,
     ReasoningChain,
@@ -595,6 +607,341 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
         "provenance_present", 0.10,
         bool(decision.targets) and all(target.provenance for target in decision.targets),
         f"{sum(bool(t.provenance) for t in decision.targets)}/{len(decision.targets)} targets",
+    ))
+    return checks
+
+
+# --------------------------------------------------------------------------
+# 3c. portfolio_manager — SELECTION quality against a REAL opportunity set
+# --------------------------------------------------------------------------
+#
+# WHAT THIS MEASURES: given the evidence a real morning actually produced,
+# does the model choose the candidates the evidence supports?
+#
+# WHAT IT DOES NOT MEASURE: profitability. Nobody knows which of these picks
+# would have made money, and this scenario does not pretend to. Every check
+# below is answerable from the run's own recorded numbers — the ratings,
+# convictions and reward/risk ratios the tech analyst emitted, and the
+# reward/risk floor the prompts already state. A model that scores 1.00 here
+# has selected in line with the evidence it was shown; whether that evidence
+# was RIGHT about the market is a separate, unmeasured question.
+#
+# WHY IT IS NOT SYNTHETIC. The first draft of this scenario hand-built ~30
+# candidates in tiers with planted "traps". That measures whether a model can
+# find a pattern the author planted, which is not the same thing as reading
+# evidence — real signals carry real ambiguity, invented ones carry the
+# author's assumptions. The fixture is therefore a verbatim pull of
+# `run-64290730`, the 2026-09-01 morning session, from the read-only Mission
+# Control API. See the `_provenance` block inside the fixture for exactly
+# what was pulled, and its `fidelity` block for what is NOT reproducible
+# offline. That block is measured, not asserted: rendering this fixture
+# through `build_user_message` and diffing it against the run's recorded
+# prompt gives 18 of 22 shared sections byte-identical at 91.4% of the live
+# character count. Three sections are absent because they are computed from
+# the production DB or fetched at runtime (PMFacts, portfolio heat, company
+# profiles); the smart-money findings are absent because reconstructing them
+# would have meant inventing SEC source URLs. Where an absence changes what
+# a model sees, the fidelity block says so — the one that matters here is
+# that Energy reads as macro-bullish rather than the macro-neutral the live
+# session showed.
+#
+# WHY THAT RUN. It is the desk's own documented failure. 82 candidates
+# entered the funnel, 59 got a technical read, 38 were actionable, and the
+# session placed ZERO trades. `bearish_hedge_considered` was false: fifteen
+# validated bearish candidates were on the table, five of them clearing the
+# reward/risk floor, and not one short was proposed on a day the market fell.
+# The live PM emitted three long targets (XLE, CHPX, NVDA), two reached a
+# proposed order, none executed, and the risk manager rejected the plan for
+# `rr_fail`. Matching what the live desk did is therefore FAILURE, not
+# success, and nothing below grades against its output.
+#
+# WHY IT SEPARATES EVIDENCE FROM FAMILIARITY WITHOUT PLANTING ANYTHING. The
+# real numbers did that on their own. The two highest-conviction calls of the
+# day are unglamorous and both sit BELOW the floor — SLB `strong_buy`/high at
+# 1.28 and AGX `sell`/high at 0.84. Five of the eight candidates that clear
+# the floor are SHORTS, on NKE / GEV / UNH / NEE / FLNC. Meanwhile every
+# famous mega-cap that got a read is weak: NVDA 1.03, AAPL 1.02, MSFT 0.85,
+# GOOGL 0.59, and AMZN / META / QQQ / SPY were not analysed at all, so they
+# cannot be targeted. A model selecting on evidence lands on the unglamorous
+# names; a model selecting on familiarity reaches for the mega-caps it knows.
+# `familiarity_bias` reports that share as a number on every run, pass or fail.
+#
+# THE CHECKS, and why they weigh what they weigh:
+#   parsed_and_grounded          0.10  survived the grounding validator
+#   opens_a_position             0.10  did anything at all
+#   selection_from_qualified_set 0.25  majority of picks clear the R/R floor
+#   takes_a_qualified_short      0.25  took one of the five qualified shorts
+#   rr_floor_discipline          0.15  every sub-floor pick names a catalyst
+#   familiarity_bias             0.15  no famous-and-weak pick
+# The two 0.25s are the measurement; everything else is a guard around it.
+# A model that opens nothing scores 0.10 — BELOW a book full of sub-floor
+# names — because the last two checks are gated on having made a pick.
+# Inaction is the failure being studied, so it must not collect credit for
+# rules it never had the chance to break.
+
+_SELECTION_FIXTURE =Path(__file__).resolve().parent / "fixtures" / "run_64290730_pm_input.json"
+
+# Reward/risk floor the PM and RM prompts both state. A target below it is
+# not forbidden — it requires a named catalyst — which is what
+# `rr_floor_discipline` grades.
+_SELECTION_RR_FLOOR = 1.5
+
+# The famous names the familiarity check is about. Fixed list, not derived:
+# deriving "famous" from the data would let the fixture redefine the very
+# thing being measured. Only those with a technical read this session can be
+# targeted at all; the rest are listed so a future fixture that DOES cover
+# them is scored the same way.
+_SELECTION_FAMOUS = ("AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "QQQ", "SPY")
+
+
+def _load_selection_fixture() -> dict:
+    """The frozen run-64290730 pull. Raises rather than degrading quietly.
+
+    Loaded from disk instead of inlined as Python literals for one reason:
+    every value has to be provably the API's, not a transcription of it. The
+    file is the record; the module only reads it.
+    """
+    if not _SELECTION_FIXTURE.exists():
+        raise RuntimeError(f"selection fixture missing: {_SELECTION_FIXTURE}")
+    return json.loads(_SELECTION_FIXTURE.read_text())
+
+
+_SELECTION = _load_selection_fixture()
+_SELECTION_ANALYSES = [
+    TechAnalysisResult.model_validate(row) for row in _SELECTION["analyses"]
+]
+_SELECTION_POSITIONS = [
+    Position.model_validate(row) for row in _SELECTION["positions"]
+]
+_SELECTION_NEWS = NewsIntelligenceReport.model_validate(_SELECTION["news_intel"])
+_SELECTION_BY_SYMBOL = {a.symbol: a for a in _SELECTION_ANALYSES}
+_SELECTION_TOTAL_VALUE = _SELECTION["account"]["total_value"]
+_SELECTION_HELD_WEIGHT_PCT = {
+    p.symbol: p.market_value / _SELECTION_TOTAL_VALUE * 100
+    for p in _SELECTION_POSITIONS
+}
+
+# `risk_reward` is a computed property on TechAnalysisResult — Python's
+# arithmetic over the analyst's own entry/stop/target, never the analyst's
+# claim about its own ratio. None for a neutral rating or malformed geometry.
+_SELECTION_RR = {a.symbol: a.risk_reward for a in _SELECTION_ANALYSES}
+_SELECTION_ACTIONABLE = {a.symbol for a in _SELECTION_ANALYSES if a.rating != "neutral"}
+_SELECTION_BEARISH = {
+    a.symbol for a in _SELECTION_ANALYSES if a.rating in ("sell", "strong_sell")
+}
+_SELECTION_QUALIFIED = {
+    symbol for symbol in _SELECTION_ACTIONABLE
+    if (_SELECTION_RR.get(symbol) or 0.0) >= _SELECTION_RR_FLOOR
+}
+_SELECTION_QUALIFIED_SHORTS = _SELECTION_QUALIFIED & _SELECTION_BEARISH
+# Famous AND weak: covered this session, and its own reward/risk is below the
+# floor. Every mega-cap with a read on 2026-09-01 lands here; that is the
+# finding, not a construction.
+_SELECTION_FAMOUS_WEAK = {
+    symbol for symbol in _SELECTION_FAMOUS
+    if symbol in _SELECTION_RR
+    and (_SELECTION_RR[symbol] or 0.0) < _SELECTION_RR_FLOOR
+}
+
+# The shape of the day, asserted at import. These six numbers are what the
+# checks below mean; if a fixture edit moves any of them, the benchmark has
+# silently become a different test and must fail loudly instead. The import
+# is covered by tests/test_model_policy_harness_imports.py, so this runs in
+# CI without a single LLM call.
+_SELECTION_SHAPE = {
+    "analysed": len(_SELECTION_ANALYSES),
+    "actionable": len(_SELECTION_ACTIONABLE),
+    "below_rr_floor": len(_SELECTION_ACTIONABLE) - len(_SELECTION_QUALIFIED),
+    "qualified": len(_SELECTION_QUALIFIED),
+    "qualified_shorts": len(_SELECTION_QUALIFIED_SHORTS),
+    "bearish_actionable": len(_SELECTION_BEARISH),
+    "famous_weak": len(_SELECTION_FAMOUS_WEAK),
+    "positions_held": len(_SELECTION_POSITIONS),
+}
+_SELECTION_SHAPE_EXPECTED = {
+    "analysed": 59,
+    "actionable": 38,
+    "below_rr_floor": 30,
+    "qualified": 8,
+    "qualified_shorts": 5,
+    "bearish_actionable": 15,
+    "famous_weak": 4,
+    "positions_held": 5,
+}
+if _SELECTION_SHAPE != _SELECTION_SHAPE_EXPECTED:
+    raise RuntimeError(
+        "run-64290730 selection fixture no longer has the shape this scenario "
+        f"grades: got {_SELECTION_SHAPE}, expected {_SELECTION_SHAPE_EXPECTED}"
+    )
+
+
+def _pm_selection_invoke(agent):
+    account = _SELECTION["account"]
+    memory = _SELECTION["memory"]
+    decision, _ = agent.decide(
+        analyses=_SELECTION_ANALYSES,
+        positions=_SELECTION_POSITIONS,
+        macro_analysis=_SELECTION["macro_analysis"],
+        cash_balance=account["cash_balance"],
+        reserve_balance=account["reserve_balance"],
+        total_value=account["total_value"],
+        news_intel=_SELECTION_NEWS,
+        earnings_analyses=_SELECTION["earnings_analyses"],
+        recent_performance=_SELECTION["recent_performance"],
+        position_history=_SELECTION["position_history"],
+        yesterday_insights=_SELECTION["yesterday_insights"],
+        weekly_narrative=memory["weekly_narrative"],
+        macro_trajectory=memory["macro_trajectory"],
+        active_state_changes=memory["active_state_changes"],
+        rm_recent_verdicts=memory["rm_recent_verdicts"],
+        pm_recent_decisions=memory["pm_recent_decisions"],
+        projected_portfolio=memory["projected_portfolio"],
+        calibration_note=memory["calibration_note"],
+        recent_missed_lessons=memory["recent_missed_lessons"],
+        recent_loss_pits=memory["recent_loss_pits"],
+        allow_margin=account["allow_margin"],
+        session_type=account["session_type"],
+        allowed_buy_symbols=set(_SELECTION["allowed_buy_symbols"]),
+        transient_admitted_symbols=set(_SELECTION["transient_admitted_symbols"]),
+    )
+    return decision
+
+
+def _selection_opens_or_adds(decision: PortfolioDecision) -> list:
+    """The targets that are a SELECTION, not book management.
+
+    A close, a trim, or a restatement of a position the model inherited is
+    not a choice about which candidate to back, so scoring it would credit
+    or blame a model for what the fixture handed it. Held names count only
+    when the target raises their weight, using the same risk-to-notional
+    conversion `PortfolioConstructor` does (`_effective_weight_pct`). The
+    0.5pp band absorbs the rounding between a risk allocation and the weight
+    it implies — the same tolerance `_pm_grade` applies to its funding sum.
+    """
+    picks = []
+    for target in decision.targets:
+        if target.is_close:
+            continue
+        held_pct = _SELECTION_HELD_WEIGHT_PCT.get(target.symbol)
+        if held_pct is None:
+            picks.append(target)
+            continue
+        weight = _effective_weight_pct(target, _SELECTION_BY_SYMBOL)
+        if weight is not None and weight > held_pct + 0.5:
+            picks.append(target)
+    return picks
+
+
+def _selection_evidence_repr(target) -> str:
+    """`SYM long rr=1.67 buy/high` — the real evidence behind one pick."""
+    analysis = _SELECTION_BY_SYMBOL.get(target.symbol)
+    if analysis is None:
+        return f"{target.symbol} {target.direction} NO-COVERAGE"
+    rr = _SELECTION_RR.get(target.symbol)
+    return (
+        f"{target.symbol} {target.direction} rr={rr} "
+        f"{analysis.rating}/{analysis.conviction}"
+    )
+
+
+def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
+    checks: list[Check] = []
+    checks.append(Check(
+        "parsed_and_grounded", 0.10, decision is not None,
+        "PortfolioDecision passed live grounding validation",
+    ))
+    if decision is None:
+        return checks
+
+    picks = _selection_opens_or_adds(decision)
+    pick_symbols = [t.symbol for t in picks]
+    evidence = "; ".join(_selection_evidence_repr(t) for t in picks) or "none"
+
+    # The live desk's actual failure was inaction: 38 actionable signals and
+    # nothing that survived to an order. A model that opens nothing has
+    # reproduced it, whatever its reasoning says.
+    checks.append(Check(
+        "opens_a_position", 0.10, bool(picks),
+        f"{len(picks)} opening/adding target(s): {evidence}",
+    ))
+
+    # THE selection signal. Eight of the 38 actionable candidates cleared the
+    # 1.5 reward/risk floor on the analyst's own arithmetic. Requiring a
+    # majority rather than purity is deliberate: a sub-floor pick WITH a
+    # named catalyst is legal under the prompt, and `rr_floor_discipline`
+    # below is where that is judged. This check asks whether the book is
+    # built mostly out of the best evidence available, not whether it is
+    # built exclusively out of it.
+    qualified_picks = [s for s in pick_symbols if s in _SELECTION_QUALIFIED]
+    share = len(qualified_picks) / len(picks) if picks else 0.0
+    checks.append(Check(
+        "selection_from_qualified_set", 0.25,
+        bool(picks) and share >= 0.5,
+        f"{len(qualified_picks)}/{len(picks)} picks clear the {_SELECTION_RR_FLOOR} "
+        f"R/R floor ({share * 100:.0f}%); qualified set was "
+        f"{sorted(_SELECTION_QUALIFIED)}",
+    ))
+
+    # The specific failure this scenario exists to detect. Fifteen validated
+    # bearish candidates were on offer and five of them — NKE 2.28, GEV 2.12,
+    # UNH 1.90, NEE 1.84, FLNC 1.84 — carried the best reward/risk of the
+    # day. The live desk proposed none, and its funnel recorded
+    # `bearish_hedge_considered=false`. Shorts are a first-class, prompt-
+    # documented instrument here (`direction: "short"`, its own caps and
+    # borrow gate) and are not blocked by the cash-only account, so declining
+    # every one of them is a choice, not a constraint.
+    shorts = [t for t in picks if t.direction == "short"]
+    qualified_shorts = [t.symbol for t in shorts if t.symbol in _SELECTION_QUALIFIED_SHORTS]
+    other_shorts = [t.symbol for t in shorts if t.symbol not in _SELECTION_QUALIFIED_SHORTS]
+    checks.append(Check(
+        "takes_a_qualified_short", 0.25, bool(qualified_shorts),
+        f"qualified shorts taken={qualified_shorts} other shorts={other_shorts} "
+        f"(available: {sorted(_SELECTION_QUALIFIED_SHORTS)})",
+    ))
+
+    # A sub-floor idea is allowed WITH a named catalyst and forbidden without
+    # one — the rule both the PM and RM prompts state, and the rule the live
+    # run's risk manager rejected the plan on (`rr_fail`, XLE at 1.18). This
+    # is the trap check: 30 of the 38 actionable candidates fail the floor,
+    # so an undisciplined selector trips it immediately.
+    #
+    # Gated on `picks` so an empty book cannot pass it. Vacuous truth is the
+    # wrong answer here: a model that opens nothing has not demonstrated
+    # discipline, it has declined to be measured — and "opened nothing" is
+    # precisely what the live desk did. Same for `familiarity_bias` below.
+    # The two together are 0.30 of the score, and handing that to inaction
+    # would have made doing nothing outscore a bad-but-real book.
+    undisciplined = [
+        f"{t.symbol}(rr={_SELECTION_RR.get(t.symbol)})"
+        for t in picks
+        if (_SELECTION_RR.get(t.symbol) or 0.0) < _SELECTION_RR_FLOOR
+        and not (t.catalyst or "").strip()
+    ]
+    checks.append(Check(
+        "rr_floor_discipline", 0.15,
+        bool(picks) and not undisciplined,
+        f"{len(undisciplined)} sub-floor pick(s) with no catalyst: {undisciplined}"
+        if undisciplined else (
+            "every sub-floor pick names a catalyst" if picks
+            else "no picks to judge — an empty book cannot demonstrate discipline"
+        ),
+    ))
+
+    # The diagnostic the owner asked for, reported as a NUMBER on every run
+    # including a passing one. A famous-and-weak pick is a mega-cap whose own
+    # reward/risk was below the floor while unglamorous candidates that
+    # cleared it went untaken — which is what choosing on familiarity looks
+    # like from the outside. It is not proof of bias in a single run; it is
+    # the rate to watch across models and repeats.
+    famous_picks = [s for s in pick_symbols if s in _SELECTION_FAMOUS_WEAK]
+    passed_over = sorted(_SELECTION_QUALIFIED - set(pick_symbols))
+    famous_share = len(famous_picks) / len(picks) if picks else 0.0
+    checks.append(Check(
+        "familiarity_bias", 0.15,
+        bool(picks) and not famous_picks,
+        f"famous-but-weak picks {len(famous_picks)}/{len(picks)} "
+        f"({famous_share * 100:.0f}%)={famous_picks}; "
+        f"qualified candidates passed over={passed_over}",
     ))
     return checks
 
@@ -1190,6 +1537,22 @@ SCENARIOS: list[Scenario] = [
         default=False,
         description="30 candidates, 15 holdings and production-sized memory. "
                     "Grades grounded parse, provenance and phantom exits.",
+    ),
+    Scenario(
+        key="pm_selection",
+        role="portfolio_manager",
+        agent_path="src.agents.portfolio_manager:PortfolioManagerAgent",
+        invoke=_pm_selection_invoke,
+        grade=_pm_selection_grade,
+        default=False,
+        description="The REAL 2026-09-01 opportunity set (run-64290730): 59 "
+                    "technical reads, 38 actionable, 30 of them below the 1.5 "
+                    "R/R floor, 5 qualified shorts, and every famous mega-cap "
+                    "weak. Grades WHICH candidates the model picks — including "
+                    "a familiarity_bias number reported on every run. Does NOT "
+                    "measure profitability. Opt-in: ~56k input tokens per call "
+                    "(the live session billed 61,557 and cost $0.24 on "
+                    "gpt-5.5).",
     ),
     Scenario(
         key="risk_rr_breach",

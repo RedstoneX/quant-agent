@@ -181,12 +181,12 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[530.0],
+        reference_target=545.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
-        computed_levels=[490.0, 530.0], atr_14=17.0 / 3.5,
+        computed_levels=[490.0, 545.0], atr_14=17.0 / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
@@ -323,12 +323,12 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[530.0],
+        reference_target=545.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
-        computed_levels=[490.0, 530.0], atr_14=17.0 / 3.5,
+        computed_levels=[490.0, 545.0], atr_14=17.0 / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),

@@ -161,10 +161,17 @@ def test_pm_decision_missing_chain_field_is_repaired(monkeypatch):
         raising=False,
     )
     # This test isolates schema repair. PM grounding has dedicated coverage
-    # in test_pm_grounding.py and runs after repair in production.
+    # in test_pm_grounding.py and runs after repair in production; the
+    # sub-floor catalyst gate has its own in test_subfloor_catalyst_gate.py
+    # and would otherwise drop this target for having no technical read at
+    # all (`analyses=[]` -> R/R unknown -> treated as sub-floor).
     monkeypatch.setattr(
         PortfolioManagerAgent, "validate_grounding",
         staticmethod(lambda *args, **kwargs: []),
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "_apply_subfloor_catalyst_rule",
+        classmethod(lambda cls, decision, **kwargs: decision),
     )
 
     decision, _ = agent.decide(analyses=[], positions=[])
@@ -661,6 +668,12 @@ def test_pm_repair_preserving_full_payload_is_still_accepted(monkeypatch):
     monkeypatch.setattr(
         PortfolioManagerAgent, "validate_grounding",
         staticmethod(lambda *args, **kwargs: []),
+    )
+    # Same isolation as above — the sub-floor catalyst gate is not what this
+    # test is about, and `analyses=[]` puts every target under the floor.
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "_apply_subfloor_catalyst_rule",
+        classmethod(lambda cls, decision, **kwargs: decision),
     )
 
     decision, _ = agent.decide(analyses=[], positions=[])

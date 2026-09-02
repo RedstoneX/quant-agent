@@ -726,3 +726,28 @@ Current bounded activities:
    evidence.
 
 See `docs/WORK.md` for the active contract and exact Research Intelligence acceptance criteria.
+
+## Note, 2026-09-02 — the reward:risk floor was not a floor
+
+Appended, not a rewrite of the Phase 2b paragraph above, which is now
+slightly stale and needs an owner pass. That paragraph says the constructor
+"rejects the trade if the widened stop drops reward:risk below
+`risk.min_reward_risk_after_widening` (1.5)". True — and until 2026-09-02
+that was ALL it did. The check sat inside the widening branches, behind
+early returns for "stop already outside the noise band" and "no ATR
+reading", so an entry whose stop was wide enough to begin with was never
+judged against the floor at all.
+
+Measured on the pre-reset production database
+(`data/resets/20260902T181859Z/quant_agent.db`), 2026-08-18 to 2026-09-02:
+14 of the 49 constructed entry orders shipped with a reward:risk under 1.5,
+as low as 0.43; the constructor's refusal message appears zero times in the
+whole production log history before 2026-09-02; two of the 14 reached the
+broker and XLE on 2026-08-21 FILLED 9 shares at $64.26 on a ratio of 0.81.
+The rest were caught by the Risk Manager's prose or by the 1.2
+execution-time belt — a deterministic floor enforced by a language model.
+
+Fixed on `wt/rr-geometry`: the floor is applied once, to the stop that will
+actually ship, whichever rule placed it. The threshold did not move and no
+path became more permissive. Details and the full measurement are in spec
+§12.1b / §12.1c. **Not deployed.**

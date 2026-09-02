@@ -1018,6 +1018,63 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
     assert kwargs["macro_analysis"] == macro_model.model_dump()
 
 
+def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
+    """The sub-floor catalyst gate must run on the SAME two numbers the
+    deterministic risk layer downstream uses — the floor the constructor will
+    actually enforce, and the size `allocate_risk_budget` will actually grant.
+    Re-defaulting them inside the agent would let a settings.yaml override
+    move one and not the other (2026-09-02)."""
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.db.get_latest_insights.return_value = None
+    p._sweeper = MagicMock(return_value=None)
+    p._compute_recent_performance = MagicMock(return_value={})
+    p._build_position_history = MagicMock(return_value={})
+    p._build_weekly_narrative = MagicMock(return_value="")
+    p._build_macro_trajectory = MagicMock(return_value="")
+    p._build_active_state_changes = MagicMock(return_value="")
+    p._build_rm_recent_verdicts = MagicMock(return_value="")
+    p._build_pm_recent_decisions = MagicMock(return_value="")
+    p._build_projected_portfolio = MagicMock(return_value="")
+    p._build_calibration_note = MagicMock(return_value="")
+    p._build_macro_tech_alignment = MagicMock(return_value="")
+    p._build_recent_missed_lessons = MagicMock(return_value="")
+    p._build_recent_loss_pits = MagicMock(return_value="")
+    p._build_pm_facts = MagicMock(return_value=MagicMock())
+    p._ensure_correlation_matrix = MagicMock(return_value={})
+    p.config = MagicMock()
+    p.config.risk.allow_margin = False
+    # Deliberately NOT the defaults, so a hardcoded number cannot pass.
+    p.config.risk.min_reward_risk_after_widening = 1.9
+    p.config.risk.min_position_risk_pct = 0.3
+    p.config.trading.universe = []
+    p._last_symbol_sectors = {}
+    p.portfolio_manager = MagicMock()
+    p.portfolio_manager.decide.return_value = (
+        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                        input_tokens=1, output_tokens=1, cost_usd=0.0,
+                        model="test-model"),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.analyses = []
+    ctx.macro_analysis = None
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.deployable_cash = 50_000.0
+    ctx.admitted_symbols = set()
+
+    DecisionStage(pipeline=p).run(ctx)
+
+    kwargs = p.portfolio_manager.decide.call_args.kwargs
+    assert kwargs["rr_floor"] == 1.9
+    assert kwargs["starter_risk_pct"] == 0.3
+
+
 def test_morning_research_stage_constructs_with_all_deps():
     """Stage wiring — all required dependencies exposed as constructor kwargs."""
     stage = MorningResearchStage(
@@ -1194,6 +1251,82 @@ def test_morning_research_stage_records_admission_reason_without_collision():
     assert admission_event["reason"] == "smart_money_form4_admission"
     assert admission_event["admission_reason"] == "material_sec_form4_purchase"
     assert admission_event["transaction_value_usd"] == 87_980_000.0
+
+
+def test_morning_research_stage_smart_money_truncated_marks_status_truncated():
+    """2026-09-02: smart_money_analyst_max_tokens was measured against real
+    production truncations (finish_reason=length). A truncated response can
+    still parse to syntactically valid-but-incomplete JSON, which must not
+    be silently recorded as "ok" (clean run) or "empty" (no signal) —
+    those are both currently-reachable branches in this stage's status
+    logic. It must land as its own "truncated" status so the notifier's
+    degraded banner picks it up.
+    """
+    from types import SimpleNamespace
+
+    from src.agents.base import AgentResult
+
+    config = SimpleNamespace(
+        trading=SimpleNamespace(universe=["SPY"], lookback_days=30),
+        smart_money=SimpleNamespace(enabled=True),
+    )
+    market = MagicMock()
+    market.get_ohlcv.return_value = []
+    macro = MagicMock()
+    macro.get_macro_summary.return_value = {}
+    macro_analyst = MagicMock()
+    macro_analyst.analyze.return_value = (
+        None,
+        AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
+    )
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+
+    smart_money_provider = MagicMock()
+    smart_money_provider.fetch.return_value = ([SimpleNamespace(symbol="RSG")], None)
+
+    truncated_result = AgentResult(
+        raw_text='{"findings":[]}', tokens_used=3000, model="test",
+        user_message="x", output_tokens=3000, finish_reason="length",
+        truncated=True,
+    )
+    smart_money_analyst = MagicMock()
+    # Findings list is empty (as a truncated call would plausibly look
+    # like "no signal") and there's no analysis_error — the parse
+    # succeeded on the incomplete-but-valid JSON.
+    smart_money_analyst.analyze.return_value = ([], truncated_result, None)
+
+    db = MagicMock()
+
+    stage = MorningResearchStage(
+        config=config,
+        db=db,
+        market=market,
+        macro=macro,
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_analyst,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        smart_money_provider=smart_money_provider,
+        smart_money_analyst=smart_money_analyst,
+        admit_smart_money_candidates_fn=lambda _observations: (set(), {}),
+        has_actionable_signal_fn=lambda *args, **kwargs: False,
+        run_news_update_fn=lambda *args, **kwargs: (None, None),
+        load_earnings_analyses_fn=lambda *args, **kwargs: ([], []),
+    )
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["smart_money"] == "truncated"
 
 
 @patch("src.pipeline_stages.compute_indicators")

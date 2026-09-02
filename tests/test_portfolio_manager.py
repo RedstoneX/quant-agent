@@ -15,10 +15,18 @@ def _tech_rc() -> TechReasoningChain:
 @pytest.fixture
 def sample_analyses():
     return [
+        # 507 / 490 / 540 is reward:risk 1.94. The old 530 target made it
+        # 1.35 — accidentally below the floor, chosen before the PM layer
+        # enforced one. Since 2026-09-02 a sub-floor target without a
+        # catalyst that resolves to an Active News State Change row is
+        # dropped (`_apply_subfloor_catalyst_rule`), which silently turned
+        # every test in this file into a test of THAT rule instead of the
+        # one it was written for. See tests/test_subfloor_catalyst_gate.py
+        # for the rule's own coverage.
         TechAnalysisResult(
             symbol="SPY", rating="buy", entry_price=507.0,
-            reference_target=530.0, stop_loss=490.0,
-            support_levels=[490.0], resistance_levels=[530.0],
+            reference_target=540.0, stop_loss=490.0,
+            support_levels=[490.0], resistance_levels=[540.0],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="Strong uptrend", reasoning_chain=_tech_rc(),
         ),

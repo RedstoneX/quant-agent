@@ -140,7 +140,19 @@ llm:
   news_analyst_max_tokens: 16000
   macro_analyst_max_tokens: 16000
   earnings_analyst_max_tokens: 16000
-  smart_money_analyst_max_tokens: 1200
+  # Measured from production quant_agent.log/.log.1 (2026-08-26 to
+  # 2026-09-02, 7 real calls): 6 completed cleanly with out= 438-650 tokens;
+  # 1 hit finish_reason=length at exactly the old ceiling of 1200 (that run's
+  # input was an outlier at in=23722, ~4x the typical ~5-7K). The schema caps
+  # output structurally (at most 8 findings, summary/why_now <=24 words
+  # each), so the theoretical max is roughly 750-900 tokens — yet the
+  # measured max observed (650, n=6) already sits close to that, and a real
+  # call still truncated at 1200. Set to 3000: ~2.5x the ceiling that just
+  # truncated in production, comfortably above both the observed max and the
+  # schema's structural cap, without inflating to the 16K sized for the
+  # free-text analyst seats (different task shape — this seat returns a
+  # short bounded JSON list, not prose).
+  smart_money_analyst_max_tokens: 3000
   portfolio_manager_max_tokens: 16000
   risk_manager_max_tokens: 16000
   position_reviewer_max_tokens: 16000
@@ -355,6 +367,13 @@ risk:
   min_stop_atr_multiple: 3.0
   # A widened stop lowers reward:risk because the target does not move. Under
   # this, the setup only ever qualified on a stop too tight to survive.
+  #
+  # The name is historical. Since 2026-09-02 (spec 12.1b) this is checked on
+  # EVERY entry against the stop that will actually ship, not only ones the
+  # constructor widened. It previously sat behind two early returns, so a stop
+  # that was already wide enough was never checked at all — 14 of 49 orders in
+  # the pre-reset production database shipped under this floor, and one filled
+  # at 0.81. The number did not change; where it is applied did.
   min_reward_risk_after_widening: 1.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level
