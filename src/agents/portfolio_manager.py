@@ -726,6 +726,22 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             "## Recent Loss Pits\n(no repeat failure modes in the last 14 days)"
         )
 
+        # What you asked for and never got. Diagnostic only — nothing here
+        # blocks a name; it tells you which of your asks the machinery keeps
+        # refusing, and with what stored reason.
+        blocked_proposals: str = kwargs.get("blocked_proposals") or ""
+        blocked_section = (
+            f"## Proposal Conversion (last 21d — what you asked for vs what "
+            f"you got)\n{blocked_proposals}\n\n"
+            "A block is cleaner evidence than a loss: it comes with its cause "
+            "attached. If a name is listed here, re-proposing it unchanged "
+            "will fail the same way again — either fix what the reason names "
+            "(geometry, sizing, cash) or drop the name. This is information, "
+            "not a prohibition: none of these symbols is barred."
+            if blocked_proposals else
+            "## Proposal Conversion\n(no proposals on record in the last 21 days)"
+        )
+
         # Self-calibration layers: PM reads RM's recent verdicts on it + its own
         # recent decisions, to avoid oversizing repeatedly and to spot flip-flops.
         rm_recent_verdicts: str = kwargs.get("rm_recent_verdicts") or ""
@@ -809,6 +825,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 
 {loss_pits_section}
 
+{blocked_section}
+
 {insights_section}
 
 {macro_section}
@@ -866,6 +884,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                macro_tech_alignment: str = "",
                recent_missed_lessons: str = "",
                recent_loss_pits: str = "",
+               blocked_proposals: str = "",
                facts=None,
                allow_margin: bool = True,
                symbol_sectors: dict[str, str] | None = None,
@@ -896,6 +915,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             macro_tech_alignment=macro_tech_alignment,
             recent_missed_lessons=recent_missed_lessons,
             recent_loss_pits=recent_loss_pits,
+            blocked_proposals=blocked_proposals,
             facts=facts,
             allow_margin=allow_margin,
             symbol_sectors=symbol_sectors or {},
