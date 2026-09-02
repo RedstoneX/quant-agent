@@ -1322,3 +1322,283 @@ Full suite: 2900 passed (2899 after the first hardening pass + this test).
 - 26 unmerged branches await triage, including two abandoned VPS security
   branches (`claude/vps-security-hardening-t8m3qz`,
   `claude/vps-deployment-hardening-q3f7k2`) worth rescuing before deletion.
+
+---
+
+## Moved out of docs/WORK.md, 2026-09-02 — finished 2026-09-01/2026-08-27 records
+
+WORK.md is capped at 100,000 bytes and had grown past it. These sections describe work that shipped, merged or deployed and were already superseded by the state block at the top of WORK.md. They are moved here verbatim, not trimmed, because this log is append-only.
+
+### The 2026-09-01 handoff — branches, Phase 11 merge record, telegram deep link
+
+**START HERE — 2026-09-01 handoff. Everything below is a POINTER; the detail
+lives in the files named and is not repeated.**
+
+**Read first, in this order:**
+1. `docs/QAMC_REMEDIATION_SPEC.md` **Phase 12** — four decisions Rex ratified
+   2026-09-01. Nothing is implemented. This is the work.
+2. Then **Phase 10** (per-trade risk verdict, macro sizes rather than selects,
+   concentration scales, target from levels) and **Phase 11** (fractional
+   sizing, 2.0x margin).
+3. `docs/OUTCOME.md` — "This is a trading desk, not a retirement portfolio".
+   Read before touching any risk rule; it decides which rules are legitimate.
+4. `docs/INCIDENT_HISTORY.md` — what already broke and was fixed. Append-only.
+
+**Why it matters:** on 2026-09-01 the desk reviewed 38 qualified signals and
+placed zero trades. Root cause is Phase 12.1. It is still unfixed.
+
+**Owner instruction: ship everything in ONE pass, tonight.** Deliberate
+acceptance of change risk (Phase 12.4) — the desk cannot trade at all, so a
+partial fix leaves it that way. **The rehearsal rig is the mitigation and must
+run against the merged result before deploy.**
+
+**Six branches, all pushed, none merged, none deployed:**
+
+| branch | spec | tests |
+|---|---|---|
+| `fix/risk-verdict-per-trade` | 10.1 | 3853 pass |
+| `fix/concentration-scales-size` | 10.3 | 3848 pass |
+| `fix/target-from-structure` | 10.4 | 3850 pass |
+| `feat/golden-pm-prompt` | PM prompt rewrite + Phases 10/11/12 in the spec | 3848 pass, 1 unrelated |
+| `feat/telegram-run-deeplink` | symbol links + company names in alerts | full suite green |
+| `rescue/price-provenance` | rescued 11-day-old work — **parked, NOT mergeable**, reference only |
+
+**Merge hazard, read before merging anything:** spec Phases 10/11/12 exist ONLY
+on `feat/golden-pm-prompt`. The three fix agents could not see them and each
+wrote its own reconstructed Phase 10 into the spec. **Merge
+`feat/golden-pm-prompt` FIRST, then reconcile the others' spec sections against
+it — the owner-ratified text is the one on that branch, not the
+reconstructions.**
+
+**The model-benchmark results are STALE — do not choose a PM model from them.**
+Every score in `ops/model_policy/results/*2026-09-01*.json` was measured against
+the OLD prompt, which is what produced the restrictive behaviour, so the scores
+are entangled with it. **The rig does not need rewriting, only re-running** —
+`benchmark_models.py` drives the real agent class, which reads
+`config/prompts/portfolio_manager.md` from disk, so re-running after the
+rewritten prompt lands tests the new prompt automatically. Keep the DIAGNOSIS
+(gpt-5.5 picked SPY in 5 of 5 runs and never proposed more than 2 positions —
+the most literal rule-follower, hence the most timid under a prompt full of
+"never"); discard the RANKING. Expect absolute scores to rise across the board
+if the rewrite works, so compare rankings, not numbers. **Also re-examine the
+`actionable_book` check itself** — if the new prompt legitimately produces more
+targets, that check may now be too easy to pass and stop discriminating.
+
+**Universe expansion and pruning — DESIGN AGREED WITH THE OWNER 2026-09-01,
+never written down until now. Not built. Do not redesign it; implement this.**
+
+Today the 101-symbol universe is a hand-written list. Symbols CAN be added
+dynamically but only narrowly: up to 3/run via SEC Form 4 smart-money
+admission, and up to 3 per seat / 6 total per run via Phase 9 nominations.
+**Nothing ever removes a symbol.**
+
+*Admission screen.* The criteria already exist under `smart_money:` but are
+used only to admit outsiders, never to BUILD the list. Reuse them, with these
+corrections:
+- **A year of price history minimum.** `min_external_history_days: 20` is
+  badly wrong — the analysis computes a 200-day moving average and its slope,
+  so a symbol admitted at 20 days produces blanks in the fields the analyst
+  leans on hardest.
+- **Screen on bid-ask spread, not the $10m dollar-volume floor.** $10m/day is
+  far stricter than a ~$10k account needs, and it screens the wrong thing:
+  what costs money is the spread.
+- **Require shortable / easy-to-borrow.** Half the point is bearish trades.
+- **Exclude warrants, units and rights.** Delisted warrants already reached
+  the data layer once and caused a recursion fault.
+- **Exclude names under a pending takeover** — an acquisition target trades
+  flat at the deal price, so every technical signal becomes noise while
+  looking like a calm uptrend.
+- **Volatility ceiling.** A name so wild that its structural stop is enormous
+  fails reward:risk by construction — screen it at the door rather than
+  rejecting it daily.
+- **Minimum company size**, so a micro-cap cannot qualify on one freak volume
+  day.
+- **NO earnings-date requirement.** Considered and REJECTED by the owner: ETFs
+  have no earnings and ~20 of the universe are ETFs. Reducing their size for a
+  missing date is equally wrong. Dropped entirely.
+- **No maximum price** — Phase 11.1 turned fractional sizing on (built
+  2026-09-01), so a $500 share is no longer unsizeable.
+
+*Pruning.* Nothing does this today.
+- **Re-screen weekly.** Fail once -> flagged. Fail twice consecutively ->
+  removed. One bad week must not evict a good name.
+- **NEVER remove a symbol currently held.** That cuts a live position off from
+  analysis while its stop still sits at the broker — unwatched but real.
+- **Immediate removal, no second chance,** when the broker reports the asset
+  does not exist, or it is delisted or permanently halted.
+- **Log every addition and removal with its reason, and summarise them in the
+  morning alert.** The owner must never discover the universe changed by
+  accident.
+
+*Cost.* Scanning is free — the specialist seats run on the free Gemini tier
+(measured 2026-09-01: `tech_analyst` processed 307,754 input tokens at $0.00).
+The cost is the PM reading a longer candidate list. **Cap how many screened
+candidates reach the PM**, the same way `NominationConfig` already caps
+nominations, so the bill is a number that is set rather than one that emerges.
+Untested risk: the free tier is rate-limited and a much wider scan may hit it.
+
+**Phase 11 status, 2026-09-01, after verification and merge — this replaces
+both earlier claims, which had each gone stale in a different direction.**
+
+**MERGED and verified on `integration/ship-2026-09-01`:**
+- **Margin interest tracker.** Measures only, never gates. Review found and
+  fixed a real defect: it fast-exited whenever `allow_margin` was false and so
+  never read cash at all — unsafe, because covering a losing short is exempt
+  from the cash-only block and can carry a genuine debit balance.
+- **The sector cap no longer switches itself off.** Pre-existing rot,
+  reproduced against pristine `af266de`: a holding at 85% of equity plus a 10%
+  order, both in an unresolved sector, produced ZERO violations — 95% pooled
+  straight past the 90% ceiling. 80 of 101 universe symbols depend on a live
+  network lookup with no offline fallback, so the cap was inert for most of
+  what the desk trades. Verified NOT over-broad: cash-park never reaches the
+  code, index and sector ETFs resolve from static tables offline.
+- **Phase 11.2's ceiling and ladder.** 2.0x gross cap at the sizing and
+  execution gates; the ladder stepping 2.0/1.5/1.0/0.5 on peak-to-trough
+  drawdown. Both owner gates verified BY MUTATION, not by reading the tests:
+  breaking the ladder so it never steps fails 24 of 55 tests, making it trim
+  to make room fails 6, making the rung compound fails 2. The ladder runs in
+  the session preamble BEFORE any agent, from account state alone, so a blank
+  PM response cannot skip it — which is not hypothetical, a benchmark run that
+  night had one candidate model return an empty book on 1 run in 5.
+
+- **Phase 11.1, fractional sizing and its three stop guards — MERGED.** — fractional
+sizing and its three stop guards. No path leaves a fractional position
+silently unprotected; the owner alert fires unconditionally after every
+protection attempt. Review found and fixed a real gap: the 30-minute sweep's
+repair belt used a bare single-shot stop submit with no retry and no
+whole-share fallback — the same weakness the entry guard exists to close.
+
+**`allow_margin` REMAINS `false`.** The ceiling was built before borrowing is
+enabled; that was the sequencing requirement and it held. The flag and the PM
+prompt's exposure table move together, later, after the rehearsal rig has run
+against the merged result.
+
+**Still to build:** the wider universe with pruning (design recorded below, no
+code), and Phase 10.2 deterministic analyst weighting.
+
+**Open, documented, not blocking:** the live rung is not on Mission Control.
+`src/api/` may never import `src.risk` (ratified guardrail,
+`tests/test_api_safety.py`), so the dashboard shows the standing cap only; the
+session alert is the sole operator surface until the measurement functions
+move out of the risk package. Also worth the owner's eye: the ladder
+introduces a SECOND drawdown measure (peak-to-trough against a 252-day
+high-water mark) alongside the existing rolling-window one. One table, one
+resolver, so the mechanism is not duplicated — but it adds a measure rather
+than reusing the existing one.
+
+**Phase 11 was MISSING from this line until 2026-09-01 and that caused a real
+scope error.** A session read this list, built Phase 12 and the branch merges,
+and correctly believed Phase 11 was out of scope. Verified by search across
+every branch: no fractional sizing anywhere, and **no gross-exposure cap of any
+kind exists** — `max_portfolio_risk_pct` bounds AT-RISK capital, not gross. So
+11.2 ADDS a ceiling where none exists; it is a tightening, not a loosening, and
+it must land before `allow_margin` is turned on.
+
+**Phase 12.1/12.2/12.3 are now IMPLEMENTED** (2026-09-01) along with the five
+open branches. Phase 10.2 — computing analyst weighting in Python so no seat
+dominates by prompt position — is also still unbuilt.
+
+**Baseline:** `pytest tests/ -q` gives 2 pre-existing failures in
+`tests/test_rehearsal_reproduces_cost_ceiling.py` — they read live production
+state and pass in CI. Anything else failing is yours.
+
+
+**READY TO DEPLOY, WAITING ONLY ON THE MARKET CLOSING — do this first.**
+**MERGED 2026-09-01 into `integration/ship-2026-09-01`** — verified with
+`git merge-base --is-ancestor`. This entry previously said "not merged",
+which was wrong and was repeated onward before being checked. **What is
+still owed is the DEPLOY, not the merge.**
+
+Branch `feat/telegram-run-deeplink`. Makes
+every ticker in a Telegram alert tappable through to that company's quote
+page. Full suite green: 3837 passed, 1 skipped, and only the two known
+`test_rehearsal_reproduces_cost_ceiling.py` failures that read live
+production state.
+
+It was NOT deployed on 2026-09-01 for two specific reasons, neither of
+which is "later, vaguely":
+1. The market was open (12:44 ET) with the midday session 16 minutes out.
+   Deploying restarts the trading service; mid-session is the wrong moment.
+2. It touches `main.py` and `src/scheduler.py`, not only message text — so
+   the rehearsal-rig rule above applies and the rig has not been run
+   against it yet.
+
+**Superseded 2026-09-01 22:00 UTC:** the merge is done, so the remaining
+order is: run the rehearsal rig against the merged integration branch, wait
+for CI, deploy, restart, confirm the served bundle matches disk.
+
+**Timing constraint, measured from the live timers rather than assumed:** the
+production evening session fires at 23:30 UTC and several timers fire with
+it; the morning run is 13:00 UTC, half an hour before the open. Deploying
+restarts the service, so the window is AFTER the evening session completes
+and BEFORE 13:00 UTC.
+
+Rex asked directly: "who's gonna remember to deploy it? I'm not gonna
+remember." This entry is the answer. It stays here until it is deployed,
+and whoever picks this file up next is the one who owes him the deploy.
+
+**Known and deliberately NOT fixed on that branch** (do not let it block
+the merge): the alerts still link to the Mission Control home page rather
+than to the specific run. The cockpit has no URL routing whatsoever — no
+router package, no query or hash parsing anywhere in `frontend/src`, and
+`selectedRunId` is in-memory `useState` only. Deep-linking needs ~15 lines
+in `App.tsx` to read `?run=<id>` on mount for same-day runs, and more than
+that for older ones, because there is no UI to view a non-current run at
+all. Separately: `_append_company_identities` in `src/notifier.py` is dead
+code for real trading alerts — `src/pipeline.py` emits `executed`/
+`no_trades`, which route to `trader_feed.py`'s own formatters, and those
+never call `CompanyProfileStore`. That is why company names have never
+appeared in an alert.
+
+### The 2026-08-27 evening deploy
+
+**Historical — the 2026-08-27 evening deploy.** As of that evening,
+production was deployed at `46b2029` (merge of PR #113,
+`feat/pm-flex-routing`), superseding `32c174b` (PR #114, the deploy-drift
+alarm, merged on top of `e6ada88` — PR #113 carries `32c174b` in its own
+merge history). Phase 3 (exit rework), the execution limit fix, the
+deploy-drift alarm, Phase 2b risk-based sizing, the stop-width fix, the
+OpenRouter flex-routing change and the intraday un-blindfolding were all live
+as of that deploy: seven positions open, all with broker-resident stops,
+`paper: true`, daily LLM budget raised to $2.75. (Earlier same-day notes had
+claimed `18dd4bc`, then `e6ada88`, as the deploy SHA; `18dd4bc` was never
+actually on the box, and `e6ada88` was superseded within the same session —
+recorded here only for the forensic trail, not because it matters now.)
+**None of this paragraph describes current state** — use the command above.
+
+**Historical — 2026-08-27 night, nothing further deployed, deliberately.**
+The sizing and stop-width change (`3dff940`, part of the deploy above) had
+its first live session 2026-08-28 09:30 ET, and the operator chose not to
+confound that read with another deploy that night. PR #115 (earnings fix)
+and PR #116 (shorts Stage 1) were both open, reviewed, and intentionally left
+undeployed that night. **Whether they are deployed now is a different
+question — check reality, above, and see the ordered backlog below.**
+
+**Historical — deploy-drift alarm (PR #114, `9eef617` + `38a985c`), landed in
+the 2026-08-27 deploy.** `scripts/check_deploy_drift.py` plus
+`quant-agent-drift-check.timer` (Mon-Fri 08:45 ET) alerts over Telegram when
+the box's deployed HEAD falls behind `origin/main`. Built because PR #111 sat
+merged-but-undeployed for eight hours with nothing catching it. Verified
+firing.
+
+**Historical — also in the 2026-08-27 deploy, PR #113 (`feat/pm-flex-routing`,
+merged as `46b2029`):**
+
+- `75c0233` Phase 2b risk-based sizing + the correlation-aware risk budget
+  gate — **the highest-consequence change in this deploy.** It decides how
+  much money each trade may lose. `b712f4c` and `3dff940` land on top of it,
+  same branch: the constructor now clamps to the risk engine's 20%
+  single-name ceiling instead of proposing orders it hard-blocks, and entry
+  stops sitting inside ordinary volatility get pushed out to a
+  regime-and-setup-scaled ATR floor (`risk.min_stop_atr_multiple`) — a
+  widened stop that drops reward:risk below 1.5 rejects the trade outright.
+  Measured against the real book: MSFT's stop went 2.4% → 7.0%, VLO 4.5% →
+  9.2%, OKLO 7.7% → 24.7%, and 0.5/1.0/1.5% conviction now produces
+  7.1/14.2/20.0% positions instead of clamping all three to 20%. First live
+  session under this change is 2026-08-28 09:30 ET.
+- `fb88e08` the intraday PM un-blindfolding.
+- `16f6535` the PM's OpenRouter `openai/flex` endpoint routing.
+- `6b7af86` the Mission Control `input_message` surface, `cdb387b` the
+  sector-stance vocabulary + `TypeError` crash fix, `002095c` risk-sized
+  targets reappearing in the cockpit funnel, `300ea14` + `6f897a1` + `55f0e05`
+  the benchmark-harness repair and its guards, and the `docs:` commits.

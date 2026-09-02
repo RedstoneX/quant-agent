@@ -563,12 +563,29 @@ def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
 
     VERIFIED REACHABLE, not hypothetical: `reference_target` is the analyst's
     guessed target and the least-validated price on the model. Pydantic
-    accepts NaN for it, the rating/price consistency validator compares only
-    entry against stop, and `risk_reward` then returns `round(nan/5)` \u2014 NaN.
+    accepts NaN for it and the rating/price consistency validator compares
+    only entry against stop, so a NaN target reaches `risk_reward` intact.
+
+    WHAT `risk_reward` DOES WITH IT CHANGED, and this test was written before
+    it did. Until `models.reward_to_risk` became the one definition of this
+    ratio (2026-09-02, spec 12.1b), the field returned `round(nan / 5)` \u2014 NaN
+    \u2014 and the whole hazard was that `nan < floor` is False. That function now
+    refuses non-finite input at the door and returns None, which the gate
+    below catches with an explicit `is not None` rather than with a
+    comparison NaN can defeat, and which renders to the PM prompt as
+    "R/R n/a" instead of "R/R nan:1".
+
+    So the premise assertion checks the property that actually matters \u2014 the
+    ratio is NOT a usable number \u2014 rather than the historical NaN
+    representation of it. Every substantive assertion below is unchanged: a
+    NaN target must not buy the catalyst exception, and must not escape the
+    starter-size cap.
     """
     analysis = _analysis("NVDA", target=float("nan"))
-    assert analysis.risk_reward != analysis.risk_reward, (
-        "this test is worthless unless risk_reward really is NaN"
+    rr = analysis.risk_reward
+    assert rr is None or rr != rr, (
+        "this test is worthless unless a NaN target really does make "
+        f"risk_reward unusable; got {rr!r}"
     )
 
     dropped = _apply(
