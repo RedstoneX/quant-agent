@@ -305,6 +305,16 @@ def stance_is_aligned(source: str, symbol: str, stance: str, *, wants_bullish: b
 #: COUNTING toward the agreement tally (it is still shown to the PM, and
 #: still valid provenance — see `PortfolioManagerAgent.stale_evidence_sources`).
 #:
+#: Also (2026-09-02) the bound `EarningsDataProvider._get_existing_analysis`
+#: (`src/data/earnings.py`) uses to decide whether a disk-cached analysis is
+#: even eligible to be re-served as the CURRENT earnings view when no fresher
+#: SEC filing exists — past this age that fallback returns None instead, so
+#: an over-age analysis never reaches a session in the first place. That is a
+#: stricter, earlier check than `stale_evidence_sources` above: this one
+#: decides whether a stance is shown at all, that one decides whether a
+#: stance that IS shown gets to count. Same threshold, so the two can never
+#: disagree about what "too old" means.
+#:
 #: 90 is not a new number. `config/prompts/earnings_analyst.md` already tells
 #: the seat that a filing more than 90 days old must cap its own `conviction`
 #: at `low` and flag `stale_filing_<N>d`, and that past 180 days the filing

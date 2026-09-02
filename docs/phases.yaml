@@ -804,6 +804,10 @@ phases:
         symbol: "def stale_evidence_sources"
         note: "§9.4 freshness: the gate itself. Removes a stale stance from the TALLY only — it stays in the registry, so grounding still accepts it and this can only ever lower a ceiling."
       - kind: symbol_in_file
+        path: "src/data/earnings.py"
+        symbol: "EARNINGS_STANCE_MAX_AGE_DAYS"
+        note: "§9.4 freshness, the cause (2026-09-02): `_get_existing_analysis` imports the same constant and refuses to re-serve an analysis past it, returning None instead — the symbol looks like one with no earnings coverage yet, not a stale view presented as current. Complements stale_evidence_sources, which gates the CONSEQUENCE (the tally) for whatever a session is actually shown; this gates what the disk fallback is allowed to show in the first place."
+      - kind: symbol_in_file
         path: "src/risk/rules.py"
         symbol: "def count_opposing_sources"
         note: "§9.4: how many seats took the OPPOSITE side. Surfaced in the PM prompt, the constructor log and the order note; prices nothing. Making dissent subtract is an open owner decision."
@@ -839,6 +843,14 @@ phases:
         path: "tests/test_agreement_sizing.py"
         test: "test_a_gated_stance_stays_in_the_registry"
         note: "§9.4 freshness: the gate must not delete coverage — validate_grounding fails the WHOLE session on any error, so removing the stance would turn a stale view into a hard block instead of a size reduction."
+      - kind: test_exists
+        path: "tests/test_earnings_preprocess.py"
+        test: "test_existing_analysis_at_the_threshold_is_still_served"
+        note: "§9.4 freshness, the cause: the data-layer bound at the identical 90-day edge stale_evidence_sources uses, so the two layers agree at the boundary."
+      - kind: test_exists
+        path: "tests/test_earnings_preprocess.py"
+        test: "test_check_and_fetch_omits_the_symbol_entirely_when_only_a_stale_analysis_exists"
+        note: "§9.4 freshness, the cause: end-to-end proof that an over-age symbol degrades to the SAME no-coverage shape as a symbol never covered at all, rather than a distinct state any consumer has to learn to handle."
       - kind: test_exists
         path: "tests/test_agreement_sizing.py"
         test: "test_dissent_does_not_move_the_size_across_a_ceiling_rung"

@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from src.risk.rules import EARNINGS_STANCE_MAX_AGE_DAYS
 from src.util.time import et_now, et_today
 from pathlib import Path
 from urllib.request import urlopen, Request
@@ -722,11 +723,44 @@ class EarningsDataProvider:
     def _get_existing_analysis(
         self, symbol: str, form_type: str | None = None
     ) -> EarningsReport | None:
-        """Find the latest existing analysis for a symbol.
+        """Find the latest existing analysis for a symbol, bounded by age.
 
         When form_type is given, only analyses of that form are considered; otherwise
         any form's most-recent analysis is returned. Ordering is by filing_date from
         the filename, not by lexicographic sort (so 10-K 2026-03-01 beats 10-Q 2026-02-15).
+
+        This is the fallback `_check_symbol` reaches whenever the SEC scan window
+        (45 days) has nothing for the symbol — a quiet quarter, not an outage, is
+        the common case. Before 2026-09-02 that fallback had no age bound at all:
+        whatever was newest on disk was re-served as the CURRENT earnings view no
+        matter how old, because `prune()` only removes raw filing HTML, and only
+        past 1000 days. A symbol with no new filing for a year would still hand
+        back that year-old analysis looking exactly like a fresh one.
+        `PortfolioManagerAgent.stale_evidence_sources` already stops a stance past
+        this age from EARNING SIZE — but that gate is downstream, in the sizing
+        path, and it deliberately leaves a served stance in place (see its
+        docstring) rather than remove it, because pulling a stance the PM has
+        already cited out of the evidence registry fails `validate_grounding` for
+        the WHOLE session, not just that one target. Bounding it HERE instead
+        means an over-age analysis is never handed to a session as "current" in
+        the first place: the symbol looks exactly like one with no earnings
+        coverage yet at all — a CIK miss, an unlisted name, a first-run symbol —
+        which every consumer already treats as ordinary, not an error. Nothing
+        about `stale_evidence_sources` changes: it still recomputes staleness
+        generically from `filing_date` for anything that IS served, so a report
+        reaching the PM through some other path is still caught there too.
+
+        Reuses `EARNINGS_STANCE_MAX_AGE_DAYS` (`src/risk/rules.py`) rather than a
+        new threshold — this desk already wrote 90 days down twice before this
+        fix existed (the earnings seat's own prompt caps conviction past it and
+        calls anything past 180d one that "should not have reached you";
+        `TradingPipeline._missed_ops_earnings_signal` already refuses anything
+        older as "recent" evidence). A fourth, independent number here would just
+        be one more way for the three to quietly disagree.
+
+        An unparseable or missing filing_date is treated as too old to serve —
+        an unknowable age is not evidence of freshness, the same call
+        `stale_evidence_sources` and `_missed_ops_earnings_signal` already make.
         """
         symbol_dir = self.data_dir / symbol
         if not symbol_dir.exists():
@@ -748,6 +782,20 @@ class EarningsDataProvider:
         parts = analyses[0].stem.split("_", 2)
         form_type = parts[1] if len(parts) > 1 else "unknown"
         filing_date = parts[2] if len(parts) > 2 else "unknown"
+
+        try:
+            age_days = (et_today() - date.fromisoformat(filing_date)).days
+        except (TypeError, ValueError):
+            age_days = None
+        if age_days is None or age_days > EARNINGS_STANCE_MAX_AGE_DAYS:
+            logger.info(
+                "Existing earnings analysis for %s (%s, filed %s) is %s — "
+                "the fallback will not re-serve it (bound: %dd)",
+                symbol, form_type, filing_date,
+                "unparseable" if age_days is None else f"{age_days}d old",
+                EARNINGS_STANCE_MAX_AGE_DAYS,
+            )
+            return None
 
         return EarningsReport(
             symbol=symbol,
