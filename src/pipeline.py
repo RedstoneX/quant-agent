@@ -4326,9 +4326,22 @@ class TradingPipeline:
                     if not isinstance(t, dict):
                         continue
                     sym = t.get("symbol", "?")
-                    w = t.get("target_weight_pct", "?")
+                    # The live schema sizes a target by `risk_allocation_pct`;
+                    # `target_weight_pct` is the legacy notional field older
+                    # logs carry. Reading only the legacy one rendered every
+                    # recent size as "?", and a flip-flop check that cannot
+                    # see the size is not a check. Tag the unit — 1% of risk
+                    # and 1% of notional are not the same number.
+                    risk = t.get("risk_allocation_pct")
+                    weight = t.get("target_weight_pct")
+                    if risk is not None:
+                        w = f"{risk}%r"
+                    elif weight is not None:
+                        w = f"{weight}%w"
+                    else:
+                        w = "?"
                     conv = (t.get("conviction") or "?")[0]
-                    summary_parts.append(f"{sym}→{w}%({conv})")
+                    summary_parts.append(f"{sym}→{w}({conv})")
             elif decisions:
                 for d in decisions[:8]:
                     if not isinstance(d, dict):
@@ -5612,6 +5625,214 @@ class TradingPipeline:
             if refs and cause == "macro_warning_ignored":
                 line += f' — ignored: "{refs[0]}"'
             lines.append(line)
+        return "\n".join(lines)
+
+    def _build_blocked_proposals(
+        self,
+        lookback_days: int = 21,
+        min_proposals: int = 3,
+        max_lines: int = 5,
+    ) -> str:
+        """PM memory: names it keeps asking for and never gets, and why.
+
+        Every other per-symbol memory PM reads (loss pits, missed lessons,
+        position history, R-multiples) is keyed on a POSITION, so a symbol
+        that never became a position is invisible to all of them — however
+        many times PM proposed it. This is the only section that can see a
+        block, and a block is the cleanest feedback the desk produces: it
+        arrives with its cause attached, where a filled trade's loss is
+        confounded by whatever the market did next.
+
+        Computed at prompt-build time from existing tables — no schema
+        change. `specialist_evidence` marks each stage of a proposal's life
+        and `decision_id` joins it to `trades`:
+
+            target → proposed_order → verdict → execution_skip | trades.fill
+
+        A `target` is one proposal. Targets sized to zero are EXIT
+        instructions, not requests to get in, so they are excluded — a
+        blocked exit is a different defect and counting it here would
+        overstate the entry-side block rate.
+
+        Every blocking reason is copied VERBATIM out of stored data —
+        `execution_skip.reason` (`qty_zero`, `geometry_rr`,
+        `insufficient_cash`), `verdict.reason_category` (`rr_fail`, …),
+        `trades.fill_status` (`canceled`, …) — so this section and the
+        RM-verdict section name the same failure the same way. Exactly three
+        tokens are ours: `rm_zeroed`, `order_not_placed` and
+        `no_order_built`. Each describes an ABSENCE, which no table records:
+        nothing was written, so nothing can be quoted. They are kept
+        distinct because "the order was never built" and "the order was
+        built and never placed" are different halves of the machinery.
+
+        Conversion is judged on any `filled` trade sharing the proposal's
+        `decision_id`. Today only entry orders carry a `decision_id`, so
+        that is exact; if exits ever carry one, this biases toward calling a
+        proposal converted, which makes the section quieter rather than
+        making it cry wolf.
+
+        Diagnostic only. Nothing here gates, filters or caps anything.
+
+        Returns "" when the window holds no proposals at all — PM's section
+        then shows its own "no proposals on record" default. When there are
+        proposals but no repeat offender, the aggregate line still renders
+        with an explicit "none" so the desk can never mistake a quiet
+        section for a missing one.
+        """
+        import json as _json
+        from datetime import timedelta
+        try:
+            since = (et_today() - timedelta(days=lookback_days)).isoformat()
+            raw = self.db.get_proposal_funnel_rows(since)
+        except Exception as e:
+            logger.warning("blocked_proposals: DB fetch failed: %s", e)
+            return ""
+
+        proposals: list[tuple[str, str, str]] = []   # (ts, decision_id, symbol)
+        ordered: set[tuple[str, str]] = set()        # (decision_id, symbol)
+        skips: dict[tuple[str, str], str] = {}       # → verbatim reason
+        verdicts: dict[str, dict] = {}               # decision_id → verdict
+        for row in raw.get("evidence") or []:
+            kind = row.get("kind")
+            did = row.get("decision_id")
+            if not did:
+                continue
+            try:
+                data = _json.loads(row.get("evidence_json") or "{}")
+            except (TypeError, ValueError) as e:
+                # One unparseable row must not blank the whole section, but a
+                # silent drop hides a proposal PM did make. Same discipline as
+                # the L3d/L3f builders above.
+                logger.warning(
+                    "blocked_proposals: JSON parse failed for %s row %s: %s",
+                    kind, (row.get("timestamp") or "?"), e,
+                )
+                continue
+            if not isinstance(data, dict):
+                continue
+            if kind == "verdict":
+                verdicts[did] = data
+                continue
+            sym = (row.get("symbol") or data.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            if kind == "target":
+                # `risk_allocation_pct` is the live field; `target_weight_pct`
+                # is the legacy one older rows carry. Either can size a
+                # target (see TargetPosition), so read whichever is present.
+                size = data.get("risk_allocation_pct")
+                if size is None:
+                    size = data.get("target_weight_pct")
+                try:
+                    if size is None or float(size) <= 0.0:
+                        continue        # an exit instruction, not a proposal
+                except (TypeError, ValueError):
+                    continue
+                proposals.append((row.get("timestamp") or "", did, sym))
+            elif kind == "proposed_order":
+                ordered.add((did, sym))
+            elif kind == "execution_skip":
+                reason = (data.get("reason") or "").strip()
+                if reason:
+                    skips[(did, sym)] = reason
+
+        if not proposals:
+            return ""
+
+        fills: dict[tuple[str, str], str] = {}
+        for row in raw.get("trades") or []:
+            did = row.get("decision_id")
+            sym = (row.get("symbol") or "").strip().upper()
+            if not did or not sym:
+                continue
+            status = (row.get("fill_status") or "").strip().lower()
+            if not status:
+                continue
+            # A decision can emit more than one order for a symbol (a retry, a
+            # repeg). One fill converts the proposal, so a filled row wins
+            # over any other status regardless of arrival order.
+            if fills.get((did, sym)) == "filled":
+                continue
+            fills[(did, sym)] = status
+
+        def _outcome(did: str, sym: str) -> str | None:
+            """None == converted. Otherwise the verbatim blocking reason."""
+            key = (did, sym)
+            status = fills.get(key)
+            if status == "filled":
+                return None
+            if status:
+                return f"order_{status}"
+            if key in skips:
+                return skips[key]
+            verdict = verdicts.get(did)
+            if isinstance(verdict, dict):
+                if verdict.get("approved") is False:
+                    cat = (verdict.get("reason_category") or "").strip()
+                    return f"rm_rejected:{cat}" if cat else "rm_rejected"
+                for mod in (verdict.get("modifications") or []):
+                    if not isinstance(mod, dict):
+                        continue
+                    if (mod.get("symbol") or "").strip().upper() != sym:
+                        continue
+                    try:
+                        if float(mod.get("new_value")) == 0.0:
+                            return "rm_zeroed"
+                    except (TypeError, ValueError):
+                        continue
+            if key in ordered:
+                return "order_not_placed"
+            return "no_order_built"
+
+        by_symbol: dict[str, list[tuple[str, str | None]]] = {}
+        block_counts: dict[str, int] = {}
+        converted = 0
+        for ts, did, sym in proposals:
+            reason = _outcome(did, sym)
+            by_symbol.setdefault(sym, []).append((ts, reason))
+            if reason is None:
+                converted += 1
+            else:
+                block_counts[reason] = block_counts.get(reason, 0) + 1
+
+        total = len(proposals)
+        pct = (100.0 * converted / total) if total else 0.0
+        top = sorted(block_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+        lines = [
+            f"Conversion: {converted} of {total} proposals reached a fill "
+            f"({pct:.0f}%) in the last {lookback_days} days.",
+        ]
+        if top:
+            lines.append(
+                "Top blocks: "
+                + ", ".join(f"{reason} × {n}" for reason, n in top)
+                + "."
+            )
+
+        repeats = [
+            (sym, rows) for sym, rows in by_symbol.items()
+            if len(rows) >= min_proposals
+            and all(reason is not None for _, reason in rows)
+        ]
+        if not repeats:
+            lines.append(
+                f"Repeat blocked names: none — no symbol was proposed "
+                f"{min_proposals}+ times without a fill in this window."
+            )
+            return "\n".join(lines)
+
+        repeats.sort(key=lambda item: (-len(item[1]), item[0]))
+        lines.append(
+            f"Repeat blocked names ({min_proposals}+ proposals, 0 fills):"
+        )
+        for sym, rows in repeats[:max_lines]:
+            rows = sorted(rows, key=lambda r: r[0], reverse=True)  # newest first
+            sessions = len({ts[:10] for ts, _ in rows if ts})
+            recent = ", ".join(str(reason) for _, reason in rows[:3])
+            lines.append(
+                f"- {sym}: proposed {len(rows)}× across {sessions} sessions, "
+                f"filled 0 — most recent first: {recent}"
+            )
         return "\n".join(lines)
 
     def _build_missed_opportunities_digest(

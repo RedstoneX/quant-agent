@@ -2115,6 +2115,10 @@ class DecisionStage:
         # the last 14 days. Empty strings when no recurring pattern found.
         recent_missed_lessons = pipeline._build_recent_missed_lessons()
         recent_loss_pits = pipeline._build_recent_loss_pits()
+        # Names PM keeps proposing and never gets. Every other per-symbol
+        # memory above is keyed on a position, so none of them can see a
+        # symbol that never became one.
+        blocked_proposals = pipeline._build_blocked_proposals()
         # Audit §1.2 — build the correlation matrix HERE, before PM decides,
         # rather than in RiskStage after it already has. RiskStage reuses the
         # memoized matrix, so the deterministic cluster check still judges PM
@@ -2154,6 +2158,7 @@ class DecisionStage:
             macro_tech_alignment=macro_tech_alignment,
             recent_missed_lessons=recent_missed_lessons,
             recent_loss_pits=recent_loss_pits,
+            blocked_proposals=blocked_proposals,
             facts=pm_facts,
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
