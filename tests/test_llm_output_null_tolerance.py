@@ -11,13 +11,12 @@ Background (measured against the production agent_logs snapshot covering
 All three declare a default and none accepted `None`, so pydantic rejected the
 whole object before any mode="after" validator ran.
 
-Scope, stated honestly: all 42 tech items carrying the null were rated
-`neutral` (verified from the raw JSON, independent of the models), and the
-2026-09-01 batch log reads `Batch: 58/58 symbols analyzed` — the retry
-recovered every one. So this defect has not yet cost the desk a tradeable
-candidate; what it has cost is paid retry round-trips and a class of loss that
-would be invisible if it ever landed on a `buy`. The exposure is what justifies
-the fix, not a proven lost trade.
+Scope, stated honestly: the 42 nulls span 28 symbols; 4 of those were lost
+permanently (EQNR, AMT, EQIX, PLD) and the rest were rescued by a paid retry.
+But all 42 were rated `neutral` — verified from the raw JSON, independent of
+the models — so no tradeable candidate has been shown lost, and 2026-09-01
+(`Batch: 58/58 symbols analyzed`) lost nothing at all. The fix is justified by
+those 4 analyses and by the exposure, not by a lost trade.
 
 The two halves of this file are equally load-bearing:
 

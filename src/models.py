@@ -71,13 +71,16 @@ def _normalize_enum_case_fields(
 # nothing to say here" is what an omitted key already means, and an omitted
 # key takes the default without complaint.
 #
-# Scope, stated honestly (checked before relying on it): every one of the 42
-# tech items carrying the null was rated `neutral`, and the 2026-09-01 batch
-# logged `58/58 symbols analyzed`, meaning the bounded retry recovered all of
-# them. This defect has therefore not yet been shown to cost a TRADEABLE
-# candidate — it has cost paid retry round-trips, and it sits on a field the
-# same models fill on actionable reads too. The exposure justifies the fix; a
-# lost trade has not been demonstrated and must not be claimed.
+# Scope, stated honestly (checked before relying on it). The 42 nulls span 28
+# distinct symbols across 4 responses. FOUR were lost permanently — EQNR
+# (2026-08-20) and AMT/EQIX/PLD (2026-08-25), matching those batches' own
+# "1 failed" / "3 failed" lines exactly. The other 24 were rescued by a
+# bounded retry: a paid extra call each, invisible afterwards because a
+# rescued batch reports data_status "ok". But every one of the 42 was rated
+# `neutral`, so no TRADEABLE candidate has been shown lost, and the
+# zero-trade day of 2026-09-01 (which lost nothing — 58/58) has a different
+# cause. The exposure and those 4 analyses justify the fix; a lost trade does
+# not, and must not be claimed.
 #
 # A static sweep of src/models.py found 119 fields with this exact shape, so
 # patching them one `field_validator` at a time is a losing race — the next

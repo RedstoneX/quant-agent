@@ -45,15 +45,25 @@ came back null, and each one silently deleted that whole missed-opportunity
 entry from the quarterly theme aggregation. Replaying the stored responses,
 12 entries that the desk had discarded now parse.
 
-**What was RULED OUT.** The original report tied this to the zero-trade
-morning of 2026-09-01. It does not hold up. Every one of the 42 null-carrying
-technical analyses was rated `neutral` — no trade was being proposed in any of
-them — verified from the raw stored JSON, independent of the models. And that
-morning's batch logged `58/58 symbols analyzed`, meaning the bounded retry
-recovered all ten. **No tradeable candidate has been shown to be lost to this
-defect.** What it demonstrably cost is paid retry round-trips, and a loss that
-would have been invisible had it landed on a `buy`. The fix is justified by
-the exposure, not by a lost trade, and should not be described otherwise.
+**What it actually cost, and what was RULED OUT.** The 42 nulls fall across
+28 distinct symbols in 4 responses. Of those 28, **4 were lost permanently** —
+EQNR on 2026-08-20, and AMT, EQIX and PLD on 2026-08-25. Those two batches
+logged `90/91 symbols analyzed, 1 failed` and `84/87, 3 failed`, and the failed
+symbols are exactly the null-carrying ones the retry did not rescue. The
+remaining 24 were recovered by a bounded retry — a paid extra LLM call each
+time, and invisible afterwards because a rescued batch reports `data_status`
+"ok".
+
+**What does NOT hold up** is the causal link to the zero-trade morning of
+2026-09-01. Every one of the 42 null-carrying analyses — including all ten
+that morning — was rated `neutral`, verified from the raw stored JSON
+independent of the models, and that batch logged `58/58 symbols analyzed`
+with nothing lost. A `neutral` read proposes no trade, so **no tradeable
+candidate has been shown lost to this defect**, and the zero-trade day has a
+different cause. What the defect demonstrably cost is 4 analyses, some paid
+retry round-trips, and a failure mode that would have been invisible had it
+landed on a `buy`. The fix is justified by that plus the exposure — not by a
+lost trade, and it should not be described as one.
 
 **The real cause.** Pydantic checks a field's declared type before any
 whole-object rule runs, so an explicit null on a field that is not marked
