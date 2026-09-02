@@ -91,9 +91,9 @@ def _build_long_win_series() -> list[OHLCV]:
       ever looked at for a signal — bars 0..208 give exactly 209 bars of
       history on day 208, one short of the threshold.
     * Two deliberate, confirmed swing lows at exactly $95.00 (bars 40 and
-      140) and two at exactly $115.00 (bars 70 and 170) — clustered
+      140) and two at exactly $125.00 (bars 70 and 170) — clustered
       (`CLUSTER_TOLERANCE_PCT`), each with `touches=2` (`MIN_TOUCHES`), so
-      `find_structural_levels` reports support=$95.00 and resistance=$115.00
+      `find_structural_levels` reports support=$95.00 and resistance=$125.00
       with nothing else nearby to compete.
     * Bar 209 (the 210th bar, first one ever evaluated) closes back at the
       baseline (~$100) — support/resistance classification is relative to
@@ -101,15 +101,25 @@ def _build_long_win_series() -> list[OHLCV]:
       days, which reliably trips the deterministic prefilter's
       volume-change branch (`TradingPipeline._has_actionable_signal_fn`).
     * Bar 210 (signal + 1) opens at exactly $105.00 — the entry fill.
-    * Bar 211 opens $106, and its HIGH ($116) breaches the $115.00 target
+    * Bar 211 opens $106, and its HIGH ($126) breaches the $125.00 target
       while its LOW ($110) stays well clear of the $95.00 stop, so the
       exit is unambiguously a target hit, one session after entry.
 
     By hand: entry $105.00, stop $95.00 (structural; $10 away vs a padding
     ATR far too small for `min_stop_atr_multiple=3.0` to push it any
-    further out — see the noise-band arithmetic below), target $115.00.
+    further out — see the noise-band arithmetic below), target $125.00.
     At 5% risk on $100,000 equity: shares = floor(100000*0.05/10) = 500.
-    pnl = (115.00 - 105.00) * 500 = $5,000.00. r_multiple = 10/10 = 1.0.
+    pnl = (125.00 - 105.00) * 500 = $10,000.00. r_multiple = 20/10 = 2.0.
+
+    **The resistance is $125.00, not $115.00, and that is load-bearing.**
+    At $115.00 this trade's reward:risk is (115-105)/(105-95) = 1.00, and
+    since 2026-09-02 `_widen_stop_past_noise` applies
+    `min_reward_risk_after_widening` (1.5) to the shipping geometry on
+    EVERY path — including a stop already outside the noise band, which is
+    this one. The live desk would refuse this entry, so a backtest that
+    took it would be modelling a desk that does not exist. At $125.00 the
+    ratio is 2.00 and the trade is one the constructor would actually
+    place.
     """
     bars: list[OHLCV] = []
     d = BASE_DATE
@@ -121,7 +131,7 @@ def _build_long_win_series() -> list[OHLCV]:
         if i in dip_indices:
             o, h, l, c = 99.8 + drift, 100.0 + drift, 95.00, 99.5 + drift
         elif i in spike_indices:
-            o, h, l, c = 100.2 + drift, 115.00, 100.0 + drift, 100.5 + drift
+            o, h, l, c = 100.2 + drift, 125.00, 100.0 + drift, 100.5 + drift
         else:
             o, h, l, c = 99.9 + drift, 100.2 + drift, 99.8 + drift, 100.0 + drift
         vol = 5_000_000 if i >= n_pad - 5 else 1_000_000
@@ -142,7 +152,7 @@ def _build_long_win_series() -> list[OHLCV]:
     d += timedelta(days=1)
 
     bars.append(OHLCV(  # bar 211: target breached, stop untouched
-        date=d, open=106.0, high=116.0, low=110.0, close=115.5, volume=1_000_000,
+        date=d, open=106.0, high=126.0, low=110.0, close=125.5, volume=1_000_000,
     ))
     return bars
 
@@ -174,15 +184,15 @@ def test_hand_computed_long_trade():
     assert t.entry_date == BASE_DATE + timedelta(days=210)
     assert t.entry_price == 105.0          # next day's OPEN, not the signal day's close
     assert t.stop_price == 95.0            # the structural support, unwidened
-    assert t.target_price == 115.0         # the structural resistance
+    assert t.target_price == 125.0         # the structural resistance
     assert t.exit_date == BASE_DATE + timedelta(days=211)
-    assert t.exit_price == 115.0
+    assert t.exit_price == 125.0
     assert t.exit_reason == "target"
     assert t.shares == 500
     assert t.hold_days == 1
-    assert t.pnl == 5000.0
-    assert t.r_multiple == 1.0
-    assert result.final_equity == 105_000.0
+    assert t.pnl == 10000.0
+    assert t.r_multiple == 2.0
+    assert result.final_equity == 110_000.0
 
     # Insufficient-history accounting: exactly the 209 days below the
     # MIN_BARS_FOR_SIGNAL threshold were skipped, not silently dropped.
@@ -385,29 +395,29 @@ def test_determinism_same_inputs_same_output():
 def test_ab_two_configs_one_parameter_produce_different_labelled_results():
     """Configs A and B are identical except `max_position_risk_pct`
     (5.0 vs 2.5). Half the requested risk halves the position: 500 shares
-    -> 250, $5,000 P&L -> $2,500 — exactly proportional, and each result
+    -> 250, $10,000 P&L -> $5,000 — exactly proportional, and each result
     stays correctly attributed to its own config."""
     bars = _build_long_win_series()
     _, _, result_a = _run(bars, max_position_risk_pct=5.0)
     _, _, result_b = _run(bars, max_position_risk_pct=2.5)
 
     assert result_a.trades[0].shares == 500
-    assert result_a.trades[0].pnl == 5000.0
+    assert result_a.trades[0].pnl == 10000.0
     assert result_b.trades[0].shares == 250
-    assert result_b.trades[0].pnl == 2500.0
+    assert result_b.trades[0].pnl == 5000.0
     assert result_a.trades != result_b.trades
 
     metrics_a = compute_metrics(result_a.trades, 100_000.0)
     metrics_b = compute_metrics(result_b.trades, 100_000.0)
-    assert metrics_a.expectancy_dollars == 5000.0
-    assert metrics_b.expectancy_dollars == 2500.0
+    assert metrics_a.expectancy_dollars == 10000.0
+    assert metrics_b.expectancy_dollars == 5000.0
 
     table = format_ab_table("A (risk 5.0)", metrics_a, "B (risk 2.5)", metrics_b)
     assert "A (risk 5.0)" in table
     assert "B (risk 2.5)" in table
+    assert "$10,000.00" in table
     assert "$5,000.00" in table
-    assert "$2,500.00" in table
-    assert "$-2,500.00" in table  # the delta column
+    assert "$-5,000.00" in table  # the delta column
 
 
 # ---------------------------------------------------------------------------

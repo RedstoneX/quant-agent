@@ -301,6 +301,22 @@ class RiskManagerAgent(BaseAgent):
             )
 
         # Tech Analyst Signals — lets RM audit PM's fidelity AND enforce R/R discipline.
+        #
+        # The R/R on THIS line is the analyst's, measured at the analyst's
+        # own snapshot entry against the analyst's own guessed target. The
+        # R/R on the decision line above is the ORDER's, measured at the
+        # live entry the constructor priced against the target it derived
+        # from the bars. They are different numbers because they are
+        # different questions, and both are arithmetically correct.
+        #
+        # Saying so is not decoration. On 2026-09-01 this seat rejected an
+        # entire plan over XLE with "PM's reasoning assumes R/R 1.67 but the
+        # executed order has R/R 1.18 ... no justification is given", and on
+        # 2026-08-31 it halved an XLE allocation citing "entry price
+        # degradation from TechAnalyst's $62.29 to $63.76". Nothing had gone
+        # wrong either time and no stop had moved — the entry drifted between
+        # analysis and construction, as it always will. The seat was left to
+        # infer a defect from an unexplained gap, so it inferred one.
         if tech_analyses:
             tech_lines = []
             for a in tech_analyses:
@@ -310,7 +326,19 @@ class RiskManagerAgent(BaseAgent):
                 tech_lines.append(
                     f"- {a.symbol}: {a.rating} ({a.conviction}) | {rr_str} | {price_str} — {a.reasoning[:120]}"
                 )
-            tech_section = "## Tech Analyst Signals (cross-check PM's decisions + R/R discipline)\n" + "\n".join(tech_lines)
+            tech_section = (
+                "## Tech Analyst Signals (cross-check PM's decisions + R/R discipline)\n"
+                "The R/R here is the ANALYST's, priced at its own snapshot entry "
+                "against its own target. The R/R on each order above is the "
+                "ORDER's, priced at the live entry and the structurally derived "
+                "target — that is the number the 1.5 floor is judged on, and the "
+                "only one to enforce. A gap between the two is normal price drift "
+                "between analysis and construction, not a defect and not PM "
+                "inconsistency; both are computed by the same Python function. An "
+                "order whose own R/R fails the floor has already been refused "
+                "deterministically and is not in the list above.\n"
+                + "\n".join(tech_lines)
+            )
         else:
             tech_section = "## Tech Analyst Signals\n(not provided)"
 
