@@ -24,7 +24,7 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.models import (
     BuyGrade, EveningReport, MissedOpportunity, NewsIntelligenceReport,
-    Position, SellGrade,
+    Position, SellGrade, parse_telemetry,
 )
 
 logger = logging.getLogger(__name__)
@@ -593,9 +593,13 @@ upcoming events that bear on held theses. Respond as JSON matching
                 )
                 continue
             try:
-                model_cls(**item)
+                # Dry run: this same dict is validated again by EveningReport
+                # below, so tallying here would double-count it.
+                with parse_telemetry.suspended():
+                    model_cls(**item)
             except ValidationError as e:
                 sym = item.get("symbol") or f"<idx {i}>"
+                parse_telemetry.record_dropped_item(model_cls.__name__, str(sym))
                 logger.warning(
                     "Evening analyst: dropping malformed %s entry for "
                     "%s: %s", key, sym, e,
@@ -635,9 +639,11 @@ upcoming events that bear on held theses. Respond as JSON matching
                 )
                 continue
             try:
-                MissedOpportunity(**item)
+                with parse_telemetry.suspended():   # dry run — see above
+                    MissedOpportunity(**item)
             except ValidationError as e:
                 sym = item.get("symbol") or f"<idx {i}>"
+                parse_telemetry.record_dropped_item("MissedOpportunity", str(sym))
                 logger.warning(
                     "Evening analyst: dropping malformed missed_opportunities "
                     "entry for %s: %s", sym, e,

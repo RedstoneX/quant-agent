@@ -6,7 +6,7 @@ from src.agents.base import BaseAgent, AgentResult
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
 from src.data.context import compute_market_context, format_context_block
 from src.data.levels import find_structural_levels, format_levels_block
-from src.models import TechAnalysisResult
+from src.models import TechAnalysisResult, parse_telemetry
 from src.token_budget import pack_to_budget, size_model_for_agent
 
 logger = logging.getLogger(__name__)
@@ -690,6 +690,16 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 except Exception as e:
                     bad_symbol = str((item or {}).get("symbol", "?")) if isinstance(item, dict) else "?"
                     failed_symbols.append(bad_symbol)
+                    # Counted, not just logged. A candidate the analysts
+                    # researched and the Portfolio Manager never saw is
+                    # under-deployment arriving by a side door, and until now
+                    # the only trace was this log line — erased entirely from
+                    # the operator's view whenever the retry below recovered
+                    # the symbol and left data_status["tech"] reading "ok".
+                    # Surfaced by RiskStage as the `analysis_parse_loss`
+                    # advisory, the same non-blocking seam `data_degraded` and
+                    # `pm_audit_step_missing` already use.
+                    parse_telemetry.record_dropped_item("TechAnalysisResult", bad_symbol)
                     logger.error("Failed to parse tech analysis item for %s: %s", bad_symbol, e)
             if unsubmitted_symbols:
                 logger.warning(

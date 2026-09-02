@@ -1,7 +1,13 @@
+import logging
+import threading
+from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_symbol(value: str) -> str:
@@ -45,7 +51,271 @@ def _normalize_enum_case_fields(
     return values
 
 
-class Nomination(BaseModel):
+# ---------------------------------------------------------------------------
+# Explicit-null tolerance for fields that already declare a default
+# ---------------------------------------------------------------------------
+#
+# MEASURED (2026-09-01/02, against the production agent_logs snapshot covering
+# 2026-08-14..2026-09-01):
+#
+#   TechAnalysisResult.thesis_invalid_if          42 nulls / 2,021 occurrences
+#   MissedOpportunity.theme_durability            25 nulls /    50 occurrences
+#   MissedOpportunity.universe_addition_reason    11 nulls /    50 occurrences
+#
+# All three are non-Optional fields WITH a default. Pydantic validates the
+# declared type before any mode="after" model validator runs, so an explicit
+# `null` is a type error and the WHOLE object is rejected — the analysis, the
+# missed-opportunity entry, everything on it. A field-level `| None` sibling
+# on the same object tolerates the identical input. The distinction is
+# invisible to the model producing the JSON and carries no meaning: "I have
+# nothing to say here" is what an omitted key already means, and an omitted
+# key takes the default without complaint.
+#
+# Scope, stated honestly (checked before relying on it): every one of the 42
+# tech items carrying the null was rated `neutral`, and the 2026-09-01 batch
+# logged `58/58 symbols analyzed`, meaning the bounded retry recovered all of
+# them. This defect has therefore not yet been shown to cost a TRADEABLE
+# candidate — it has cost paid retry round-trips, and it sits on a field the
+# same models fill on actionable reads too. The exposure justifies the fix; a
+# lost trade has not been demonstrated and must not be claimed.
+#
+# A static sweep of src/models.py found 119 fields with this exact shape, so
+# patching them one `field_validator` at a time is a losing race — the next
+# field the model decides to null is not on anybody's list. This is the
+# mechanical version: any field that declares a default treats an explicit
+# null as an ABSENT key, which is a state the schema already declares legal
+# and production already exercises constantly.
+#
+# What this deliberately does NOT do:
+#   * REQUIRED fields are untouched. A null in `symbol`, `rating`,
+#     `reasoning`, `reasoning_chain`, `TradeDecision.stop_loss`,
+#     `SellGrade.sell_price` etc. still rejects the object, which is correct:
+#     no default exists, so there is nothing safe to fall back to.
+#   * `X | None` fields are untouched — they already accept null.
+#   * mode="after" validators still run unchanged. An actionable
+#     TechAnalysisResult with a nulled `support_levels` still fails
+#     `_validate_rating_price_consistency` ("requires at least one structural
+#     level"). Null-tolerance never manufactures a tradeable analysis.
+#   * `_NULL_MUST_FAIL` (below) keeps null fatal on the handful of defaulted
+#     fields whose default is an affirmative instruction rather than an
+#     "unknown/empty" marker.
+#
+# Sibling of `_normalize_enum_case_fields` above and the same argument: a
+# cosmetic difference in how the model spells "nothing" must not cost the desk
+# a whole candidate.
+
+
+class AnalysisParseTelemetry:
+    """Per-run tally of what parsing lost or had to paper over.
+
+    Coercion without counting is exactly the failure this fix is supposed to
+    stop: `thesis_invalid_if` is the SOFT-EXIT signal ("what would prove this
+    thesis wrong"), so silently substituting a blank keeps the analysis but
+    throws a real risk-management input away, and nothing anywhere would say
+    so. Recovering the object is right; recovering it quietly is not.
+
+    Thread-safe because the morning research stage validates tech, macro,
+    news and earnings responses concurrently in a ThreadPoolExecutor.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts: Counter = Counter()
+        self._drops: Counter = Counter()
+        self._local = threading.local()
+
+    @property
+    def _suspended(self) -> bool:
+        return getattr(self._local, "suspended", 0) > 0
+
+    @contextmanager
+    def suspended(self):
+        """Don't tally anything validated inside this block.
+
+        Three call sites (`PortfolioManagerAgent._drop_invalid_targets`,
+        `EveningAnalystAgent._drop_invalid_entries` and
+        `._drop_invalid_missed_opportunities`) pre-validate each list item to
+        decide keep-or-drop, then hand the SURVIVING raw dicts to the parent
+        model, which validates them a second time. Without this the operator's
+        count would be double the number of objects actually affected, and a
+        number the operator has to mentally halve is a number they will stop
+        reading.
+
+        Thread-local: a real parse running concurrently in another research
+        thread still counts.
+        """
+        self._local.suspended = getattr(self._local, "suspended", 0) + 1
+        try:
+            yield
+        finally:
+            self._local.suspended -= 1
+
+    def record_null_coercion(self, model_name: str, field_name: str) -> None:
+        """A defaulted field arrived as an explicit null and took its default."""
+        if self._suspended:
+            return
+        with self._lock:
+            self._counts[(model_name, field_name)] += 1
+
+    def record_dropped_item(self, model_name: str, key: str) -> None:
+        """A whole parsed item was discarded — `key` is the symbol where known.
+
+        This is the loss the null-tolerance rule above is designed to prevent,
+        counted separately so "we kept it but blanked a field" is never
+        confused with "the desk never saw this candidate at all". Recorded
+        even when a retry later recovers the symbol: today that case logs at
+        INFO, leaves `data_status["tech"]` reading "ok", and is therefore
+        completely invisible to the operator while still costing a paid LLM
+        round-trip.
+        """
+        if self._suspended:
+            return
+        with self._lock:
+            self._drops[(model_name, key)] += 1
+
+    def snapshot(self) -> dict[tuple[str, str], int]:
+        with self._lock:
+            return dict(self._counts)
+
+    def dropped_snapshot(self) -> dict[tuple[str, str], int]:
+        with self._lock:
+            return dict(self._drops)
+
+    def total_null_coercions(self) -> int:
+        with self._lock:
+            return sum(self._counts.values())
+
+    def total_dropped(self) -> int:
+        with self._lock:
+            return sum(self._drops.values())
+
+    def reset(self) -> None:
+        with self._lock:
+            self._counts.clear()
+            self._drops.clear()
+
+    def describe_null_coercions(self) -> str:
+        """One-line, grep-able summary for the operator log / RM advisory."""
+        snap = self.snapshot()
+        if not snap:
+            return ""
+        return ", ".join(
+            f"{model}.{field}x{n}"
+            for (model, field), n in sorted(snap.items(), key=lambda kv: -kv[1])
+        )
+
+    def describe_dropped(self) -> str:
+        snap = self.dropped_snapshot()
+        if not snap:
+            return ""
+        return ", ".join(
+            f"{model}:{key}" + (f"x{n}" if n > 1 else "")
+            for (model, key), n in sorted(snap.items(), key=lambda kv: -kv[1])
+        )
+
+
+parse_telemetry = AnalysisParseTelemetry()
+
+
+# Defaulted fields where an explicit null must STILL reject the object.
+#
+# The general rule above is safe because a default of "", [], "unknown" or
+# None means "nothing was said". These two defaults are not that: they are
+# affirmative instructions that move capital, and they carry defaults only for
+# backward-compatible replay of historical rows, not because absence is
+# semantically harmless.
+#
+#   TargetPosition.direction   default "long" is a SIDE. Coercing a null here
+#                              would silently turn a short into a long.
+#   RiskVerdict.scale_all_buys default 1.0 is "apply no risk reduction".
+#                              Coercing a null would silently release a brake
+#                              the Risk Manager may have meant to pull.
+#
+# Both belong to objects that are dropped per-item by their callers, so the
+# blast radius of keeping them strict is one target / one verdict, not a
+# whole session.
+_NULL_MUST_FAIL: frozenset[tuple[str, str]] = frozenset({
+    ("TargetPosition", "direction"),
+    ("RiskVerdict", "scale_all_buys"),
+})
+
+
+_NULL_TOLERANT_FIELDS_CACHE: dict[str, frozenset[str]] = {}
+_NULL_TOLERANT_CACHE_LOCK = threading.Lock()
+
+
+def _null_droppable_fields(cls: type[BaseModel]) -> frozenset[str]:
+    """Field names on `cls` where an explicit null should mean "absent".
+
+    A field qualifies when it (a) has a default, (b) does NOT already accept
+    None, and (c) is not on `_NULL_MUST_FAIL`. Computed once per class —
+    `TypeAdapter` construction is not cheap and this runs on every parsed
+    object.
+    """
+    key = f"{cls.__module__}.{cls.__qualname__}"
+    cached = _NULL_TOLERANT_FIELDS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    names: set[str] = set()
+    for field_name, field in cls.model_fields.items():
+        if field.is_required():
+            continue
+        if (cls.__name__, field_name) in _NULL_MUST_FAIL:
+            continue
+        try:
+            TypeAdapter(field.annotation).validate_python(None)
+        except Exception:
+            names.add(field_name)   # rejects None *and* has a default
+        else:
+            continue                # already Optional — nothing to do
+    result = frozenset(names)
+    with _NULL_TOLERANT_CACHE_LOCK:
+        _NULL_TOLERANT_FIELDS_CACHE[key] = result
+    return result
+
+
+class LLMOutputModel(BaseModel):
+    """Base for every model parsed out of an LLM response.
+
+    Carries one behaviour: an explicit `null` on a field that declares a
+    default is treated as an absent key, tallied in `parse_telemetry`, and
+    logged. See the block comment above for the measurement and the
+    reasoning.
+
+    Models that are NOT parsed from LLM output (OHLCV, Position,
+    TechnicalIndicators, AgentLog, MissedOpportunitySnapshot) deliberately do
+    not inherit this: a null in those comes from our own code, and a loud
+    failure is the correct response to our own bug.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _explicit_null_means_absent(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        droppable = _null_droppable_fields(cls)
+        if not droppable:
+            return values
+        hits: list[str] = []
+        for field_name in droppable:
+            if values.get(field_name, ...) is None:
+                hits.append(field_name)
+        if not hits:
+            return values
+        values = dict(values)
+        for field_name in sorted(hits):
+            del values[field_name]
+            parse_telemetry.record_null_coercion(cls.__name__, field_name)
+        logger.warning(
+            "%s: dropped explicit null on defaulted field(s) %s — the object "
+            "is kept and the declared default applies, but the model said "
+            "nothing where the prompt asked for something",
+            cls.__name__, ", ".join(sorted(hits)),
+        )
+        return values
+
+
+class Nomination(LLMOutputModel):
     """A research seat's request that Technical examine a candidate.
 
     Phase 9 (`docs/QAMC_REMEDIATION_SPEC.md` §9.1/§9.2): before this,
@@ -156,7 +426,7 @@ class TechnicalIndicators(BaseModel):
     def normalize_symbol(cls, value: str) -> str:
         return _normalize_symbol(value)
 
-class TechReasoningChain(BaseModel):
+class TechReasoningChain(LLMOutputModel):
     """5-step CoT for a single symbol — forces the LLM to show its work per
     framework step. Every field has `min_length=1` so the LLM cannot skip a
     step by sending an empty string. This matches the discipline already in
@@ -171,7 +441,7 @@ class TechReasoningChain(BaseModel):
     support_resistance: str = Field(min_length=1)    # key levels from indicators + recent pivots
 
 
-class TechAnalysisResult(BaseModel):
+class TechAnalysisResult(LLMOutputModel):
     symbol: str
     rating: Literal["strong_buy", "buy", "neutral", "sell", "strong_sell"]
     conviction: Literal["high", "medium", "low"] = "medium"
@@ -238,7 +508,14 @@ class TechAnalysisResult(BaseModel):
     @field_validator("thesis_invalid_if", mode="before")
     @classmethod
     def _null_thesis_invalid_if_is_blank(cls, v):
-        """An absent soft-exit signal is blank, never a reason to bin the read."""
+        """An absent soft-exit signal is blank, never a reason to bin the read.
+
+        Retained after `LLMOutputModel._explicit_null_means_absent` generalised
+        this: the model-level rule only sees the initial parse dict, so it does
+        not cover post-construction assignment. Redundant on the parse path (by
+        the time this runs the null key is already gone, and the ledger has
+        already counted it), load-bearing on the assignment path.
+        """
         return "" if v is None else v
 
     # Days since this rating was first issued (unchanged). Python-computed from
@@ -364,7 +641,7 @@ class TechAnalysisResult(BaseModel):
         return self
 
 
-class TradeDecision(BaseModel):
+class TradeDecision(LLMOutputModel):
     model_config = ConfigDict(validate_assignment=True)
 
     # Stage 3 (shorts): SHORT opens/adds a short (mirror of BUY); COVER
@@ -496,7 +773,7 @@ class TradeDecision(BaseModel):
         return self
 
 
-class ReasoningChain(BaseModel):
+class ReasoningChain(LLMOutputModel):
     """7-step CoT for the portfolio manager — forces the audit trail on the
     central decision. Every required field has `min_length=1` so the LLM
     can't dodge a step with `""`. continuity_check AND premortem_check are
@@ -522,7 +799,7 @@ class ReasoningChain(BaseModel):
     premortem_check: str = ""
 
 
-class AnalystProvenance(BaseModel):
+class AnalystProvenance(LLMOutputModel):
     """Machine-checkable specialist claim supporting a PM target.
 
     ``relationship=conflicts`` is an explicit, legitimate PM disagreement;
@@ -545,7 +822,7 @@ class AnalystProvenance(BaseModel):
         )
 
 
-class SmartMoneyObservation(BaseModel):
+class SmartMoneyObservation(LLMOutputModel):
     """Source-backed smart-money fact; timestamps and amounts are source facts.
 
     Congressional fields remain optional-compatible with records already stored
@@ -621,7 +898,7 @@ class SmartMoneyObservation(BaseModel):
         return self
 
 
-class SmartMoneyFinding(BaseModel):
+class SmartMoneyFinding(LLMOutputModel):
     symbol: str
     stance: Literal["bullish", "bearish", "neutral", "mixed"]
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
@@ -678,7 +955,7 @@ class SmartMoneyFinding(BaseModel):
         return self
 
 
-class TargetPosition(BaseModel):
+class TargetPosition(LLMOutputModel):
     """PM's per-symbol intent — WHAT the book should look like, not HOW to get there.
 
     The PortfolioConstructor translates a list of TargetPositions + current
@@ -741,11 +1018,17 @@ class TargetPosition(BaseModel):
     thesis: str
     # Same null-coercion as TechAnalysisResult above, same measured reason: a
     # model emitting an explicit null here must not invalidate the target.
+    # (No production null observed on this field — 272 occurrences, 0 nulls —
+    # but the tech-side field is the same prompt instruction to the same
+    # models, so the exposure is real even though it has not fired yet.)
     thesis_invalid_if: str = ""
 
     @field_validator("thesis_invalid_if", mode="before")
     @classmethod
     def _null_thesis_invalid_if_is_blank(cls, v):
+        """See TechAnalysisResult's copy. Kept for the `validate_assignment`
+        path, which this model enables and which model-level before-validators
+        do not run on."""
         return "" if v is None else v
 
     # Optional override hints the constructor MAY use. Non-binding — if
@@ -799,7 +1082,7 @@ class TargetPosition(BaseModel):
         return self.target_weight_pct == 0.0
 
 
-class PortfolioDecision(BaseModel):
+class PortfolioDecision(LLMOutputModel):
     reasoning_chain: ReasoningChain
     # Phase 2 output: PM emits intent (target weights), not orders.
     targets: list[TargetPosition] = Field(default_factory=list)
@@ -828,7 +1111,7 @@ class PortfolioDecision(BaseModel):
     portfolio_view: str
 
 
-class RiskModification(BaseModel):
+class RiskModification(LLMOutputModel):
     symbol: str
     field: str
     original_value: float
@@ -876,7 +1159,7 @@ def _normalize_rejected_symbols_field(values):
     return values
 
 
-class SymbolRejection(BaseModel):
+class SymbolRejection(LLMOutputModel):
     """One symbol refused on its own merits, without touching the rest of
     the plan. The per-TRADE lane of the risk verdict.
 
@@ -936,7 +1219,7 @@ class SymbolRejection(BaseModel):
         return _normalize_symbol(v)
 
 
-class RiskReasoningChain(BaseModel):
+class RiskReasoningChain(LLMOutputModel):
     """6-step CoT for the risk manager — forces audit trail on the last gate.
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
@@ -949,7 +1232,7 @@ class RiskReasoningChain(BaseModel):
     overall: str = Field(min_length=1)              # final synthesis and why approved/rejected/modified
 
 
-class RiskVerdict(BaseModel):
+class RiskVerdict(LLMOutputModel):
     # BOOK-level verdict. `approved=False` still refuses the ENTIRE plan and
     # always will: correlation clusters, total exposure and drawdown state are
     # properties of the whole account, so when the BOOK is what fails, killing
@@ -1018,7 +1301,7 @@ class RiskVerdict(BaseModel):
         return out
 
 
-class MacroObservation(BaseModel):
+class MacroObservation(LLMOutputModel):
     indicator: str
     reading: str
     interpretation: str
@@ -1084,7 +1367,7 @@ def normalize_sector_stance(value) -> str | None:
     return SECTOR_STANCE_TO_DIRECTION.get(stance)
 
 
-class MacroSectorGuidance(BaseModel):
+class MacroSectorGuidance(LLMOutputModel):
     sector: Literal[
         "Technology", "Financial Services", "Healthcare", "Consumer Cyclical",
         "Consumer Defensive", "Energy", "Industrials", "Communication Services",
@@ -1101,13 +1384,13 @@ class MacroSectorGuidance(BaseModel):
         return _normalize_enum_case_fields(values, lower_fields=("stance",))
 
 
-class MacroPositionGuidance(BaseModel):
+class MacroPositionGuidance(LLMOutputModel):
     target_invested_pct: float = Field(ge=0, le=100)
     cash_recommendation_pct: float = Field(ge=0, le=100)
     reasoning: str
 
 
-class MacroReasoningChain(BaseModel):
+class MacroReasoningChain(LLMOutputModel):
     """Six-step CoT, one field per step — forces the LLM to walk each stage.
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
@@ -1120,7 +1403,7 @@ class MacroReasoningChain(BaseModel):
     sector_implications: str = Field(min_length=1)        # What this means for sector tilts
 
 
-class MacroAnalysis(BaseModel):
+class MacroAnalysis(LLMOutputModel):
     reasoning_chain: MacroReasoningChain
     regime: Literal["risk-on", "risk-off", "neutral", "transitional"]
     confidence: Literal["high", "medium", "low"]
@@ -1187,7 +1470,7 @@ class MacroAnalysis(BaseModel):
         return values
 
 
-class MacroNarrative(BaseModel):
+class MacroNarrative(LLMOutputModel):
     last_updated: str
     era_themes: list[str] = Field(min_length=1)
     current_regime: str = Field(min_length=5)
@@ -1200,7 +1483,7 @@ class MacroNarrative(BaseModel):
         return v
 
 
-class StateChange(BaseModel):
+class StateChange(LLMOutputModel):
     event: str
     previous_state: str
     new_state: str
@@ -1214,7 +1497,7 @@ class StateChange(BaseModel):
         return _normalize_enum_case_fields(values, lower_fields=("conviction",))
 
 
-class StockNewsItem(BaseModel):
+class StockNewsItem(LLMOutputModel):
     headline: str
     sentiment: Literal["bullish", "bearish", "neutral"]
     conviction: Literal["high", "medium", "low"]
@@ -1235,7 +1518,7 @@ class StockNewsItem(BaseModel):
         )
 
 
-class NewsIntelligenceReport(BaseModel):
+class NewsIntelligenceReport(LLMOutputModel):
     macro_narrative: MacroNarrative
     state_changes: list[StateChange] = []
     stock_news: dict[str, list[StockNewsItem]] = {}
@@ -1276,49 +1559,49 @@ class Position(BaseModel):
         return _normalize_symbol(value)
 
 
-class EarningsSegment(BaseModel):
+class EarningsSegment(LLMOutputModel):
     name: str
     revenue: str
     growth: str = "not disclosed"
 
 
-class EarningsRevenue(BaseModel):
+class EarningsRevenue(LLMOutputModel):
     total: str
     yoy_growth: str = "not disclosed"
     segments: list[EarningsSegment] = []
 
 
-class EarningsProfitability(BaseModel):
+class EarningsProfitability(LLMOutputModel):
     gross_margin: str = "not disclosed"
     operating_margin: str = "not disclosed"
     net_income: str = "not disclosed"
     eps: str = "not disclosed"
 
 
-class EarningsCashFlow(BaseModel):
+class EarningsCashFlow(LLMOutputModel):
     operating_cf: str = "not disclosed"
     free_cf: str = "not disclosed"
     capex: str = "not disclosed"
 
 
-class EarningsBalanceSheet(BaseModel):
+class EarningsBalanceSheet(LLMOutputModel):
     cash_and_equivalents: str = "not disclosed"
     total_debt: str = "not disclosed"
     assessment: str = "not disclosed"
 
 
-class EarningsStrategicDirection(BaseModel):
+class EarningsStrategicDirection(LLMOutputModel):
     key_initiatives: list[str] = []
     capital_allocation: str = "not disclosed"
     competitive_positioning: str = "not disclosed"
 
 
-class EarningsRiskFlags(BaseModel):
+class EarningsRiskFlags(LLMOutputModel):
     strategic_risks: list[str] = []
     operational_risks: list[str] = []
 
 
-class EarningsReasoningChain(BaseModel):
+class EarningsReasoningChain(LLMOutputModel):
     """5-step CoT for fundamental analysis — why sentiment is what it is.
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
@@ -1335,7 +1618,7 @@ class EarningsReasoningChain(BaseModel):
     valuation_context: str = Field(min_length=1)
 
 
-class EarningsInvestmentImplications(BaseModel):
+class EarningsInvestmentImplications(LLMOutputModel):
     sentiment: Literal["bullish", "bearish", "neutral"]
     conviction: Literal["high", "medium", "low"]
     reasoning_chain: EarningsReasoningChain
@@ -1351,7 +1634,7 @@ class EarningsInvestmentImplications(BaseModel):
         )
 
 
-class EarningsAnalysis(BaseModel):
+class EarningsAnalysis(LLMOutputModel):
     symbol: str
     form_type: Literal["10-Q", "10-K"]
     filing_date: str
@@ -1406,7 +1689,7 @@ class EarningsAnalysis(BaseModel):
         return _sanitize_nominations_field(values)
 
 
-class PositionAction(BaseModel):
+class PositionAction(LLMOutputModel):
     # Stage 3 (shorts): COVER is the short-side twin of SELL/REDUCE for the
     # intraday reviewer — closes/trims a held SHORT, never opens one. The
     # reviewer's prompt (config/prompts/position_reviewer.md) asks for it,
@@ -1437,7 +1720,7 @@ class PositionAction(BaseModel):
         return self
 
 
-class PositionReasoningChain(BaseModel):
+class PositionReasoningChain(LLMOutputModel):
     """Six-step chain the position reviewer must fill before emitting actions.
 
     Parallel depth to morning PM's 7-step reasoning_chain — prevents
@@ -1472,7 +1755,7 @@ class PositionReasoningChain(BaseModel):
     HOLD needs no comparison. TRAIL_STOP names the upside protected vs given up."""
 
 
-class PositionReview(BaseModel):
+class PositionReview(LLMOutputModel):
     reasoning_chain: PositionReasoningChain
     actions: list[PositionAction] = []
     overall_assessment: str = Field(min_length=1)
@@ -1484,7 +1767,7 @@ class PositionReview(BaseModel):
         return _normalize_enum_case_fields(values, lower_fields=("risk_level",))
 
 
-class EveningReasoningChain(BaseModel):
+class EveningReasoningChain(LLMOutputModel):
     """Seven-step chain evening analyst must fill before emitting the report.
 
     Depth parallel to PM's 7-step and position_reviewer's 6-step chains.
@@ -1555,7 +1838,7 @@ ThesisTrajectory = Literal[
 ]
 
 
-class SellGrade(BaseModel):
+class SellGrade(LLMOutputModel):
     """Structured grade of a single recent SELL — what evening judged right or
     wrong. PM / position reviewer can read aggregate counts to feed back into
     their SELL discretion.
@@ -1612,7 +1895,7 @@ BuyLossRootCause = Literal[
 ]
 
 
-class BuyGrade(BaseModel):
+class BuyGrade(LLMOutputModel):
     """Structured grade of a recent BUY — did the entry play out?
     Mirrors SellGrade so the feedback loop is symmetric.
 
@@ -1774,7 +2057,7 @@ class MissedOpportunitySnapshot(BaseModel):
         return _normalize_symbol(v)
 
 
-class MissedOpportunity(BaseModel):
+class MissedOpportunity(LLMOutputModel):
     """Evening-analyst OUTPUT for one snapshot: classified miss + lesson +
     (for non-universe symbols) watchlist-addition recommendation.
 
@@ -1877,7 +2160,7 @@ class MissedOpportunity(BaseModel):
         return self
 
 
-class EveningReport(BaseModel):
+class EveningReport(LLMOutputModel):
     # Three Literal enums (risk_rating + tomorrow_bias + tomorrow_conviction)
     # are case-folded BEFORE Pydantic validates — LLMs occasionally drift to
     # uppercase variants like "MODERATE" which would otherwise reject the
@@ -1976,7 +2259,7 @@ MetaReflectionAgentName = Literal[
 ]
 
 
-class MetaReasoningChain(BaseModel):
+class MetaReasoningChain(LLMOutputModel):
     """7-step chain the meta-reflector must fill before emitting the report.
 
     Parallel depth to morning PM's 7-step chain and position reviewer's
@@ -2075,7 +2358,7 @@ class MetaReasoningChain(BaseModel):
     improving → don't pile on."""
 
 
-class ThemeCoverage(BaseModel):
+class ThemeCoverage(LLMOutputModel):
     """Quarter-level theme participation — the core "trend capture" metric.
 
     All four lists may be empty. The meta-reflector populates them from its
@@ -2109,7 +2392,7 @@ class ThemeCoverage(BaseModel):
 MetaLossRootCause = BuyLossRootCause
 
 
-class LossPattern(BaseModel):
+class LossPattern(LLMOutputModel):
     """One row of loss_pattern_report.top_patterns — cause + attribution +
     proposed guard. Agent attribution drives which prompt gets the
     `proposed_guard` as a candidate learning."""
@@ -2137,7 +2420,7 @@ class LossPattern(BaseModel):
     force vague language, which is worse than the extra context."""
 
 
-class LossPatternReport(BaseModel):
+class LossPatternReport(LLMOutputModel):
     """Quarterly loss autopsy. Parallel structure to ThemeCoverage so the
     meta-reflector's ups/downs analysis stays symmetric."""
     top_patterns: list[LossPattern] = Field(default_factory=list, max_length=5)
@@ -2153,7 +2436,7 @@ class LossPatternReport(BaseModel):
     (degrading) or give existing ones time to work (improving)."""
 
 
-class PromptLearning(BaseModel):
+class PromptLearning(LLMOutputModel):
     """A proposed edit to one agent's prompt. Append-only for safety —
     never delete existing rules, never rewrite core sections. PR 4's
     prompt_editor enforces additional guards (length, dedup, prohibited
@@ -2200,7 +2483,7 @@ class PromptLearning(BaseModel):
         return self
 
 
-class QuarterlyMetaReflection(BaseModel):
+class QuarterlyMetaReflection(LLMOutputModel):
     """Top-level meta-reflector output. Persisted to
     data/evolution/{period}/reflection.json alongside the digest."""
     period: str
