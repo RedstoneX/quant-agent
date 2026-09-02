@@ -1278,6 +1278,23 @@ stopped until a person happens to look. On an unattended desk that is a day
      A notification failure is currently terminal and unrecorded. It must be
      persisted and retried, and escalate to a second channel — an alert path
      with no fallback is not an alert path.
+  **CHECKED 2026-09-02 — the heartbeat tests the PIPE, not the DESK. Half
+     of item (c) is already built; do not rebuild it.**
+     `quant-agent-alert-heartbeat.timer` fires daily at 10:15 UTC and logs
+     `alert channel PROVED (stage=delivered)`. It ran clean on 09-01 and
+     09-02. But it proves only that a Telegram message CAN be sent — it says
+     nothing about whether the desk did any work. It would report the
+     channel healthy while the desk sat frozen all day.
+     **So the sending half exists and works. What is missing is the
+     "has anything happened" half** — no completed session in N scheduled
+     windows, no proposals produced, no run recorded. Build that and reuse
+     the proven channel.
+     **And note the gap it does not close:** on 2026-09-02 the heartbeat
+     proved delivery at 10:15, and that same afternoon the cost-circuit
+     alert still failed to send ("cost-circuit unavailable alert was not
+     delivered to Telegram"). A provable channel does not mean every alert
+     PATH uses it correctly. Test the paths, not just the pipe.
+
   c. **Nothing watches for SILENCE.** Every alarm we have fires on an event.
      None fires on the absence of events, which is exactly the shape this
      failure takes. `quant-agent-alert-heartbeat.timer` exists on the box —
