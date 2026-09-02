@@ -22,6 +22,115 @@ what would catch it next time.
 
 ---
 
+### 2026-09-02 — the full proposal-to-fill census: where every trade idea actually dies, counted, not guessed
+
+**In plain words:** the desk had a stale "23% of proposals become a fill"
+number and no complete breakdown of why. This is the complete count, over
+the whole recorded history, of every proposal and exactly what killed the
+ones that did not fill. The 1.5 reward:risk floor already had a name and a
+paper trail (see the entries below); this is the first time it was counted
+alongside every OTHER cause on the same footing, so it can be ranked instead
+of assumed.
+
+**Data used.** `/home/qamc/quant-agent/data/quant_agent.db` was reset live,
+mid-measurement (2026-09-02 18:18:59Z — `scripts/desk_reset.py`, flattening
+8 positions and wiping `trades`/`intraday_evaluations`/the decision-linked
+half of `specialist_evidence`, citing the reward:risk defect below as why
+that history was "contaminated"). The reset script itself copied the
+pre-wipe database to
+`data/resets/20260902T181859Z/quant_agent.db` before deleting anything —
+that copy is what this census is built from. It carries the full recorded
+history: `specialist_evidence` 2026-08-17 through 2026-09-02 18:01, `trades`
+2026-08-14 through 2026-09-02 17:02, 104 distinct runs. It supersedes the two
+older `data/quant_agent.db.bak-*` files (both stop at 2026-08-28) and is the
+only complete copy left once the reset runs.
+
+**Denominator: 68.** That is every `target` (PM proposal) with a positive
+size — an entry request, not an exit — recorded from 2026-08-18 through
+2026-09-02. 15 of the 68 filled (22%, matching the stale figure — it was
+stale in detail, not in headline). 53 did not.
+
+**Ranked causes (of 53 blocked):**
+
+| n | % of 68 | cause | classification |
+|---|---|---|---|
+| 17 | 25% | reward:risk floor (1.5) — 10 killed before an order was ever built (`PortfolioConstructor._widen_stop_past_noise`), 7 killed by the AI Risk Manager citing the same floor by name in its veto text | RULE TOO STRICT |
+| 13 | 19% | unrecoverable — no table and no surviving log explains the drop | **gap in the record itself, not a rule** |
+| 6 | 9% | order reached the broker, was accepted, never filled, got cancelled | WORKING AS INTENDED (price-protection cancels an order sitting unfilled beyond its window) but a real, material cost |
+| 4 | 6% | execution-time reward:risk re-check (1.2 floor — a DIFFERENT, narrower rule than the 1.5 one above, fires only when execution moved the stop or limit after Risk Manager approval) | WORKING AS INTENDED |
+| 3 | 4% | allocation rounded to zero shares | account-scale artifact (paper account ≈$9.9k against $200+ stocks), not really a rule at all |
+| 3 | 4% | no structural level existed to derive a target from (`[no_level_in_direction]`) — a brand-new check, all 3 on 2026-09-02, one day old | too new to classify with confidence; watching |
+| 2 | 3% | AI Risk Manager vetoed the whole plan for reading as internally inconsistent (not a reward:risk call) | RULE TOO STRICT — the exact failure mode `docs/STATE.md`'s "Removed Before You Saw This" fix (2026-08-31) targeted, still reproducing after that fix shipped |
+| 2 | 3% | analyst supplied a stop on the wrong side of entry; constructor correctly refused rather than inventing one | the REFUSAL is WORKING AS INTENDED; the upstream stop being wrong-sided at all is a DEFECT worth its own look |
+| 1 | 1% | insufficient cash | WORKING AS INTENDED, and not a material cause — 1 of 68 |
+| 1 | 1% | quote 14.6% away from reference, refused rather than crossed | WORKING AS INTENDED against what looks like a bad IEX print (known paper-data limitation, not new) |
+| 1 | 1% | broker explicitly rejected the submitted order | one occurrence, not investigated further |
+
+**Direct answers to the six questions asked of this data:**
+
+1. *Died at the 1.5 reward:risk floor specifically?* **17 of 68 (25%)** —
+   confirmed as the single largest NAMED cause, ahead of every other rule.
+   It is not, however, the majority of blocked proposals (53) the way "the
+   single largest cause" might imply — the unrecoverable-gap bucket (13) is
+   close behind it, and together the two dwarf everything else.
+2. *Died for lack of a structural level to anchor a stop?* **3 of 68**,
+   all on one day (2026-09-02) under a check that shipped 2026-09-01. Real,
+   but currently small next to the reward:risk floor — one day of data is
+   not enough to say whether it stays small.
+3. *Died at the cash/exposure clamp rather than a risk rule?* **1 of 68.**
+   Not a material cause over this window, whatever it may become at larger
+   size.
+4. *Died to something that looks like a bug rather than a rule?* Two
+   patterns qualify: the 2 wrong-sided stops (#8 above — the constructor's
+   refusal is correct, but a stop landing on the wrong side of entry at all
+   means something upstream produced a self-contradictory number), and the
+   9-of-53 `order_not_placed` shape specifically (constructor built the
+   order, nothing in any table or surviving log says what happened next —
+   no trade, no skip, no rejection). The second is the stronger DEFECT
+   candidate: that shape is exactly what an interrupted or crashed run
+   looks like from the outside, not what a deliberate no-trade looks like.
+   Separately, `agent_logs`/`specialist_evidence` record 14 outright agent
+   failures in this window — 10 of them `portfolio_manager:
+   no_valid_grounded_decision` on 2026-08-25 alone, which is why that date
+   produced zero proposals at all rather than merely zero fills.
+5. *Sessions with zero fills, and the dominant cause on each?* **6 of the 11
+   sessions that produced at least one proposal** (55%): 2026-08-18 and
+   2026-08-19 (dominant: unexplained gap), 2026-08-20 and 2026-09-01
+   (dominant: reward:risk-floor veto by the Risk Manager), 2026-08-24
+   (dominant: orders cancelled after submission), 2026-08-28 (dominant:
+   reward:risk floor at the constructor).
+6. *Same symbol repeating across refusals?* NVDA was proposed **9** times
+   and filled **once** — by far the most repeated name, and its 8 misses
+   are spread across nearly every cause on the list above, not one. Three
+   symbols were proposed 3+ times and filled **zero**: JPM, VLO, PATH.
+
+**What could NOT be attributed, and how much of the total that is.** 13 of
+68 proposals (19% of all proposals, 25% of blocked ones) resolve to
+`no_order_built` or `order_not_placed` with no supporting record anywhere —
+not in `specialist_evidence`, not in `trades`, and not in the systemd
+`journalctl --user` history (which otherwise reaches back to 2026-08-09 and
+resolved another 15 of the 68 by cross-referencing the constructor's own log
+lines against proposal timestamps — that cross-reference is what produced
+the #1 reward:risk-floor figure above; the constructor logs no reason to
+any table, only to `logger.info`/`logger.warning`). One specific run
+(`run-5834d319-dec-51d3bf`, 2026-08-31 ~19:06) has ZERO constructor log
+lines in the journal despite producing a real verdict and real trades
+minutes later — either that invocation didn't run under the systemd unit
+this journal captures (a manual/replay run's stdout goes nowhere this
+census can reach), or its logging was lost some other way. This is reported
+as a genuine gap, not resolved further.
+
+**What this does NOT change.** The reward:risk floor's value (1.5) and the
+level-backed-stop exemption (spec §12.1) are unchanged by this entry — see
+the 2026-08-31 and earlier entries below for that history. This entry adds
+the ranking and the complete count; it does not re-litigate the threshold.
+
+**Reusable going forward:** `scripts/blocked_proposals_census.py` — regenerates
+every number above (and the per-day / per-symbol breakdowns) against any
+`quant_agent.db` snapshot. Read-only, no pipeline imports, no broker calls.
+
+---
+
 ### 2026-09-02 — one word the model spelled differently could bin a whole stock analysis, and 118 other fields could do it too
 
 **In plain words:** when an analyst wrote "nothing to say here" as an empty
