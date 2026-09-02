@@ -631,9 +631,14 @@ def read_book(client) -> dict:
             "unrealized_pl": str(getattr(p, "unrealized_pl", "")),
         })
 
+    # Alpaca's default page size for GET /v2/orders is 50. The report and the
+    # backup snapshot should not silently truncate at 50 open orders, so ask
+    # for the maximum outright.
     orders = [
         _order_summary(o)
-        for o in client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN))
+        for o in client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500),
+        )
     ]
 
     market_open = None
