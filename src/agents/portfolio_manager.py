@@ -12,6 +12,7 @@ from src.models import (
     TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
     parse_telemetry,
 )
+from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
@@ -1677,7 +1678,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     # decorative.
 
     @staticmethod
-    def _state_change_symbols_by_date(active_state_changes: str) -> dict[str, set[str]]:
+    def _state_change_symbols_by_date(
+        active_state_changes: str, asof: date | None = None,
+    ) -> dict[str, set[str]]:
         """Parse the rendered `active_state_changes` block into
         `{iso_date: {SYMBOL, ...}}`.
 
@@ -1693,11 +1696,41 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         HIGH-conviction state change affecting this symbol was recorded on
         this date", which is the checkable claim; it does not distinguish
         two same-day rows about the same name, and it does not need to.
+
+        RECENCY. A row older than `ACTIVE_STATE_CHANGE_WINDOW_DAYS`, or dated
+        in the future, is dropped. This is redundant TODAY — the producer
+        scans exactly that window, so it cannot render an older row — and it
+        is here so it stays true: the age bound is currently a property of
+        one function in `pipeline.py`, and if that ever drifts, the thing
+        that silently widens is what counts as a catalyst. It reuses the
+        producer's own constant rather than choosing a second number.
+        `asof` defaults to the trading calendar's today; if that cannot be
+        read the block resolves to NOTHING, so the exception becomes
+        unavailable rather than unbounded.
         """
+        if asof is None:
+            try:
+                asof = et_today()
+            except Exception as exc:  # pragma: no cover - clock/tz failure
+                logger.warning(
+                    "%s: cannot read today's date (%s) — no catalyst citation "
+                    "can be aged, so none is honoured this session.",
+                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS, exc,
+                )
+                return {}
         by_date: dict[str, set[str]] = {}
         for line in (active_state_changes or "").splitlines():
             match = _STATE_CHANGE_ROW_RE.match(line)
             if match is None:
+                continue
+            try:
+                row_date = date.fromisoformat(match.group(1))
+            except ValueError:
+                continue
+            age = (asof - row_date).days
+            if age < 0 or age > ACTIVE_STATE_CHANGE_WINDOW_DAYS:
+                # Stale, or dated ahead of the session. Either way it cannot
+                # be what a trade taken today is reacting to.
                 continue
             # Split on the LAST arrow: the event prose can contain one, the
             # symbol list cannot.
@@ -1757,6 +1790,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         active_state_changes: str,
         rr_floor: float,
         starter_risk_pct: float,
+        asof: date | None = None,
     ) -> PortfolioDecision:
         """Gate and cap every target whose Technical read is below the
         reward:risk floor.
@@ -1794,7 +1828,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         under its floor), so this preserves the capability at the least the
         desk can express rather than removing it.
         """
-        by_date = cls._state_change_symbols_by_date(active_state_changes)
+        by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
         rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
         kept: list[TargetPosition] = []

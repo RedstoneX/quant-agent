@@ -1217,6 +1217,88 @@ stop above it, silently repairing the nonsense the caller's side-check exists
 to catch. It now refuses. The existing test passed only because its fixture
 carried no ATR, which is not a state production reaches.
 
+#### 10.4a The floor's catalyst exception was assertable. It is now checked.
+
+**IMPLEMENTED 2026-09-02** (branch `wt/catalyst-loophole`), in
+`PortfolioManagerAgent._apply_subfloor_catalyst_rule`.
+
+The floor has always carried an escape hatch: a below-floor pick is allowed
+if it names a catalyst. Nothing checked the name. Benchmarked 2026-09-01 on
+the real opportunity set of the zero-trade day (`run-64290730`), both
+candidate models picked NVDA at R/R 1.03 in 9 of 9 runs and passed over GEV,
+which cleared the floor — **without disobeying anything**. Each sub-floor pick
+named a catalyst, cut size under 1%, and stated in plain text that the ratio
+was below floor. The rule-compliance grader passed them; the risk manager
+agreed.
+
+**The defect is in the rule, not in the model.** For any heavily-covered name
+the news feed always carries a concrete, dated, real catalyst, so an
+*assertable* exception is a null constraint on exactly the names it most needs
+to bind — and the desk's own `active_state_changes` block was supplying the
+catalyst that justified the exception. Note this is **not** a name-recognition
+story: blinding the ticker was actually run (2026-09-02,
+`feat/blind-the-ticker`) and changed nothing, NVDA being picked 5/5 in both
+blinded arms. See `docs/architecture/MODEL_ROUTING_POLICY.md`.
+
+Two deterministic changes, both applied **after the PM submits** — a tenth
+firmly worded sentence in a 52KB prompt whose ninth was already obeyed is not
+a design:
+
+1. **The catalyst must resolve to a stored row.** It is cited by the ISO date
+   of an `Active News State Changes` row, and that row must name the symbol.
+   Those rows are already persisted (`news_store.recent_state_changes` over
+   the dated daily reports) and already rendered into the PM's prompt with
+   their date and affected symbols — no new data source. A citation that
+   resolves to no such row means the exception does not apply and **the target
+   is dropped**.
+2. **A resolving sub-floor pick is capped in code** at
+   `STARTER_POSITION_RISK_PCT` (0.5%), whatever size the model asked for.
+   Not a new number: it is `RiskConfig.min_position_risk_pct`, the floor
+   `allocate_risk_budget` already denies requests beneath. The capability is
+   preserved at the smallest size the desk can express.
+
+**Refusal DROPS the target; it never sizes it at zero.** A zero weight on a
+held symbol is read downstream as *close the position*, so expressing this
+refusal as a zero would silently liquidate a name we merely declined to add
+to. It would not error — it would sell.
+
+**Fail-closed throughout.** `risk_reward` of `None` (neutral rating, malformed
+geometry) and NaN both land on the sub-floor branch — NaN is reachable, since
+`reference_target` accepts it and every comparison against NaN is False. An
+empty or unparseable state-change block, a row naming no symbols, a row older
+than `ACTIVE_STATE_CHANGE_WINDOW_DAYS`, a future-dated row, or an unreadable
+clock all make the exception *unavailable* rather than unbounded.
+
+**Scope is deliberately asymmetric**: only opening and increasing targets are
+gated. Exits and reductions are exempt — this desk must never find it harder
+to cut risk than to add it.
+
+**Measured blast radius, and read this before claiming the fix is decisive.**
+Against the pre-reset production database (reset `20260902T181859Z`), 76 PM
+targets were stored, 8 of which claimed a catalyst; all 8 were sub-floor.
+Replaying the resolver over each session's real state-change block:
+
+| verdict | count | symbols |
+|---|---|---|
+| still passes (citation resolves as written) | 2 | NVDA (08-28), ZS (09-01) |
+| refused | 6 | CRM ×2 (08-28), NVDA (08-31, 09-01, 09-02), AUGO (09-02) |
+
+**That 2-of-8 overstates the gate's bite and must not be quoted alone.** Those
+six were written before the rule existed, so most fail only on *formatting* —
+they assert prose with no ISO date. Asking the stronger question, *could a
+correctly formatted citation have been found?*, **7 of the 8 were backable by
+a real row naming the symbol**; only AUGO, a small cap with no state-change
+coverage at all, is refused structurally. Tightening the recency bound does
+not recover this: sweeping the maximum row age from 14 days down to 1 removes
+only ZS (6 of 8 still backable), and only a same-session-only rule cuts it to
+2 — a threshold with no doctrinal support, so it was not adopted.
+
+**So the honest reading is that the CAP, not the resolution requirement, is
+what binds on the mega-caps.** Resolution removes the unfalsifiable assertion
+and makes every claimed exception auditable against a row a human can read;
+it does not, on this evidence, remove many trades. The size cap applies to all
+7 regardless.
+
 ### Ordering
 
 10.1 and 10.3 are contained schema/sizing changes. 10.2 requires the

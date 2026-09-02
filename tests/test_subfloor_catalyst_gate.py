@@ -24,11 +24,14 @@ deliberately closed.
 """
 
 import json
+from datetime import date, timedelta
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.agents.portfolio_manager as pm_module
+from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.agents.portfolio_manager import (
     SUBFLOOR_CATALYST_UNVERIFIED_STATUS,
     SUBFLOOR_SIZE_CAPPED_STATUS,
@@ -38,6 +41,18 @@ from src.models import (
     PortfolioDecision, Position, TechAnalysisResult, TechReasoningChain,
 )
 from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
+
+
+# The fixture block below is copied from the 2026-09-01 session, and the gate
+# ages every row against the current date. Pin the session date so these tests
+# keep testing the RULE instead of quietly turning into a clock test once the
+# fixture rows fall out of the rolling window.
+FIXTURE_SESSION_DATE = date(2026, 9, 1)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_session_date(monkeypatch):
+    monkeypatch.setattr(pm_module, "et_today", lambda: FIXTURE_SESSION_DATE)
 
 
 # The block as `TradingPipeline._build_active_state_changes` renders it —
@@ -478,3 +493,119 @@ def test_the_gate_reuses_the_risk_configs_own_numbers():
     fields = RiskConfig.model_fields
     assert fields["min_reward_risk_after_widening"].default == REWARD_RISK_FLOOR
     assert fields["min_position_risk_pct"].default == STARTER_POSITION_RISK_PCT
+
+
+# --------------------------------------------------------------------------
+# Recency, and every way the inputs can be absent or unreadable
+# --------------------------------------------------------------------------
+
+def test_a_row_older_than_the_producers_own_window_cannot_be_cited():
+    """The producer scans `ACTIVE_STATE_CHANGE_WINDOW_DAYS`, so it cannot
+    render an older row today. The gate re-checks anyway: the age bound lives
+    in one function in `pipeline.py`, and if that drifts, the thing that
+    silently widens is what counts as a catalyst."""
+    stale = FIXTURE_SESSION_DATE - timedelta(
+        days=ACTIVE_STATE_CHANGE_WINDOW_DAYS + 1,
+    )
+    fresh = FIXTURE_SESSION_DATE - timedelta(
+        days=ACTIVE_STATE_CHANGE_WINDOW_DAYS,
+    )
+    block = (
+        f"- [{stale}] Ancient but still on the table \u2192 NVDA\n"
+        f"- [{fresh}] Right on the edge of the window \u2192 GEV"
+    )
+    by_date = PortfolioManagerAgent._state_change_symbols_by_date(block)
+    assert str(stale) not in by_date, "a stale row must not be citable"
+    assert by_date[str(fresh)] == {"GEV"}, "the window edge is inclusive"
+
+
+def test_a_subfloor_pick_citing_a_stale_row_is_dropped():
+    stale = FIXTURE_SESSION_DATE - timedelta(
+        days=ACTIVE_STATE_CHANGE_WINDOW_DAYS + 1,
+    )
+    decision = _decision([_target("NVDA", catalyst=f"{stale}: the old deal")])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        asc=f"- [{stale}] The old deal \u2192 NVDA",
+    )
+    assert result.targets == [], "a stale catalyst is not a catalyst"
+
+
+def test_a_future_dated_row_cannot_back_a_trade_taken_today():
+    """Not hypothetical hygiene: the desk runs in ET while parts of the stack
+    stamp UTC, so a row dated tomorrow is a plausible artefact. It cannot be
+    what a trade taken today is reacting to."""
+    ahead = FIXTURE_SESSION_DATE + timedelta(days=1)
+    decision = _decision([_target("NVDA", catalyst=f"{ahead}: tomorrow's news")])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        asc=f"- [{ahead}] Tomorrow's news \u2192 NVDA",
+    )
+    assert result.targets == []
+
+
+def test_an_unreadable_clock_makes_the_exception_unavailable(monkeypatch):
+    """Fail closed. A missing value must never be the thing that grants
+    permission — the recent buying-power near-miss was exactly this shape."""
+    def _boom():
+        raise RuntimeError("tz database unavailable")
+
+    monkeypatch.setattr(pm_module, "et_today", _boom)
+    assert PortfolioManagerAgent._state_change_symbols_by_date(
+        ACTIVE_STATE_CHANGES,
+    ) == {}
+
+
+def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
+    """Every comparison against NaN is False, so a naive `if rr < floor`
+    would wave a NaN straight through, and a missing value would be the thing
+    granting permission \u2014 the shape of the buying-power near-miss.
+
+    VERIFIED REACHABLE, not hypothetical: `reference_target` is the analyst's
+    guessed target and the least-validated price on the model. Pydantic
+    accepts NaN for it, the rating/price consistency validator compares only
+    entry against stop, and `risk_reward` then returns `round(nan/5)` \u2014 NaN.
+    """
+    analysis = _analysis("NVDA", target=float("nan"))
+    assert analysis.risk_reward != analysis.risk_reward, (
+        "this test is worthless unless risk_reward really is NaN"
+    )
+
+    dropped = _apply(
+        _decision([_target("NVDA", catalyst=LIVE_NVDA_CATALYST)]), [analysis],
+    )
+    assert dropped.targets == [], "NaN must not grant the exception"
+
+    capped = _apply(
+        _decision([_target("NVDA", risk=3.0,
+                           catalyst="2026-08-31 Anthropic/Lambda deal")]),
+        [analysis],
+    )
+    assert capped.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT, (
+        "NaN must not escape the cap either"
+    )
+
+
+# --------------------------------------------------------------------------
+# The refusal must DROP, never zero
+# --------------------------------------------------------------------------
+
+def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
+    """THE non-obvious hazard. `risk_allocation_pct=0` on a held symbol is
+    read downstream as CLOSE IT, so expressing this refusal as a zero would
+    silently LIQUIDATE a position we already own rather than declining to add
+    to it. It does not error \u2014 it just sells. Omitting the symbol is HOLD,
+    which is the only correct way to say no here."""
+    decision = _decision([
+        _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST),
+    ])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        positions=[_held("NVDA", qty=10.0)],
+    )
+    assert result.targets == [], "the target must be removed outright"
+    assert not any(
+        t.symbol.upper() == "NVDA" and (t.risk_allocation_pct == 0
+                                        or t.target_weight_pct == 0)
+        for t in result.targets
+    ), "a zeroed target would read as a SELL of a position we still want held"
