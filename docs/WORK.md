@@ -766,15 +766,58 @@ evaluated twice, with different stop geometry. Cause is the ATR stop FLOOR
 overwriting a structural stop, widening the risk denominator and crushing the
 ratio. See `qamc-rr-geometry-defect`.
 
-Two halves, in this order:
+**The gate fails in BOTH directions, and that is the thing to understand.**
+It refuses good trades on a fabricated ratio (above), AND it waves through
+exactly the wrong names via its own exception clause (below). Fixing one
+without the other just moves the damage.
+
+**The exception clause hands out the key to its own lock.** The rule permits
+a below-floor pick when a named catalyst justifies it. On the NVDA case the
+model complied completely: it named a catalyst, cut size below 1%, stated in
+plain text that the ratio was below floor, and the Risk Manager reviewed and
+agreed. Everyone followed the rule. **The catalyst came from our own news
+feed** — and for any famous name there is always a concrete dated catalyst
+available, so the clause can never bind on precisely the names it most needs
+to bind on. Our own accountability machinery supplies the escape.
+
+This is NOT a model overriding evidence, and any framing that says so is an
+overstatement that has already been made twice in this project and corrected
+twice. Blinding the ticker was run 2026-09-02 (`feat/blind-the-ticker`) and
+changed NOTHING — NVDA picked 5/5 in both arms, quality identical to four
+decimal places. The cause is this gate, not recognition of the name.
+
+Four parts, in this order:
   a. **Fix the geometry** so every R/R computation uses identical stop
      geometry and a level-backed stop is honoured however tight. The 1-ATR
      guard upstream already prevents a stop sitting in pure noise, so the
      floor is redundant in the level-backed case and destructive in it.
      Dispatched 2026-09-02 on `wt/rr-geometry`.
-  b. **Then** replace the 1.5 hard gate with the already-ratified weighted
+  b. **Make the catalyst CHECKABLE rather than ASSERTABLE.** It must point at
+     a specific dated row we already store, not merely be asserted in prose.
+     Prose is unfalsifiable and the model is not lying — it is citing real
+     news we handed it. Started on `wt/catalyst-loophole` (`e547f04`, WIP
+     checkpoint: real code in the PM, constants and pipeline, plus a
+     480-line gate test — stopped mid-work to conserve budget, NOT finished).
+  c. **Cap any below-floor pick at the smallest starter size IN CODE**, after
+     the model submits. Keeps the capability, costs nothing when the catalyst
+     is genuine, and does not depend on prompt compliance. Same branch.
+  d. **Then** replace the 1.5 hard gate with the already-ratified weighted
      composite score (see `qamc-weighted-scoring-architecture`). Do NOT do
      this before (a) — scoring a fabricated ratio more gently is not a fix.
+
+**Blinding the ticker is fourth on this list, not first, and is arguably
+done.** Do not spend more on it; the measured result is a negative one.
+
+**Telling the desk its own record — BUILT AND LIVE, but currently blind.**
+`630da15` shipped 2026-09-02 and IS in production: the PM now receives a
+"Proposal Conversion (last 21d — what you asked for vs what you got)" block
+naming what the machinery keeps refusing and why. **But the book was wiped
+the same day**, and that block reads from the history the reset cleared —
+the live database now holds 1 target and 1 trade, so the section renders
+effectively empty and will stay near-empty until roughly three weeks of new
+proposals accumulate. **The capability is shipped; the evidence it needs was
+erased hours later.** Do not read a quiet Proposal Conversion block as "no
+stuck loops" — read it as "no data yet".
 
 **2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). NO RECORD.**
 
