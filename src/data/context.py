@@ -34,6 +34,7 @@ import numpy as np
 
 from src.data.technical import atr_series
 from src.models import OHLCV
+from src.quantities import avg_dollar_volume
 
 # Trading sessions per window. Calendar months are avoided deliberately —
 # indicators are computed on completed bars, so a session count is exact
@@ -293,12 +294,15 @@ def compute_market_context(
                         break
                 sessions_in_range = count
 
-    avg_dollar_volume = None
-    if len(bars) >= _W_1M:
-        recent_bars = bars[-_W_1M:]
-        avg_dollar_volume = round(
-            float(np.mean([b.close * b.volume for b in recent_bars])), 2
-        )
+    # 20-day average dollar volume — the SAME definition the two admission
+    # gates use (`src.quantities.avg_dollar_volume`), not a third one. This
+    # site previously averaged `_W_1M` = 21 bars: the generic
+    # one-month-of-sessions constant leaking into a measure whose name, the
+    # config key it is compared against and every log line all say 20. With
+    # one halted session in the window the three implementations read
+    # $11.400M / $12.000M / $11.429M on identical bars.
+    _adv = avg_dollar_volume(bars)
+    avg_dollar_volume_20d_usd = None if _adv is None else round(_adv, 2)
 
     # Accumulation vs distribution.
     up_down_ratio = None
@@ -339,7 +343,7 @@ def compute_market_context(
         consolidation_low=round(cons_low, 2) if cons_low else None,
         consolidation_range_pct=cons_range_pct,
         sessions_in_range=sessions_in_range,
-        avg_dollar_volume_20d=avg_dollar_volume,
+        avg_dollar_volume_20d=avg_dollar_volume_20d_usd,
         up_down_volume_ratio=up_down_ratio,
         unfilled_gaps=_find_unfilled_gaps(bars, _MAX_GAPS_REPORTED),
     )

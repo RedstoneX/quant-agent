@@ -3,36 +3,23 @@ import math
 from dataclasses import dataclass, field
 from src.config import RiskConfig
 from src.models import TradeDecision, Position
+# The leverage table and the two multiplier functions now live in
+# `src.quantities` — a dependency-free module OUTSIDE `src.risk`, so
+# `src/api/` (forbidden by tests/test_api_safety.py from importing the risk
+# stack) can share this one definition instead of hand-copying it. These
+# aliases keep every existing `_ETF_LEVERAGE` / `_effective_multiplier` /
+# `_gross_multiplier` reference in this module and its importers working,
+# and bind the SAME dict object, so `patch.dict(rules._ETF_LEVERAGE, ...)`
+# still reaches every consumer.
+from src.quantities import (
+    ETF_LEVERAGE as _ETF_LEVERAGE,
+    effective_multiplier as _effective_multiplier,
+    gross_multiplier as _gross_multiplier,
+    net_exposure_pct,
+    net_exposure_usd,
+)
 
 logger = logging.getLogger(__name__)
-
-# Leveraged/inverse ETF multipliers for effective exposure calculation.
-# Negative = inverse/short (hedge-like against the underlying index).
-_ETF_LEVERAGE = {
-    "SH": -1.0,    # -1x S&P 500
-    "SDS": -2.0,   # -2x S&P 500
-    "PSQ": -1.0,   # -1x Nasdaq 100
-    "SQQQ": -3.0,  # -3x Nasdaq 100
-    "DRAM": 1.0,   # 1x (normal ETF, no adjustment)
-    "SMH": 1.0,
-}
-
-
-def _effective_multiplier(symbol: str) -> float:
-    """Signed exposure multiplier (negative for inverse ETFs).
-
-    Used for net directional exposure — hedges cancel out.
-    """
-    return _ETF_LEVERAGE.get(symbol, 1.0)
-
-
-def _gross_multiplier(symbol: str) -> float:
-    """Unsigned leverage magnitude.
-
-    Used for per-symbol and per-sector size limits where direction doesn't matter
-    (a 3x ETF still consumes 3x notional regardless of long/short bias).
-    """
-    return abs(_ETF_LEVERAGE.get(symbol, 1.0))
 
 
 # --- Spec §12.2 "long and short sector budgets are separate" --------------
@@ -1585,6 +1572,10 @@ class RiskRuleEngine:
             pending_net_usd=pending_investment + signed_new,
         )
         total_pct = abs(projected_book.net_pct)
+        # Cross-check (fix/dashboard-and-duplicate-definitions): the
+        # dashboard serves this same magnitude from src/quantities.py, which
+        # cannot import src.risk. A guard test asserts the two agree, so the
+        # bar and the ceiling it is drawn against cannot drift apart.
         if total_pct > self.config.max_total_position_pct:
             violations.append(RiskViolation(
                 rule="max_total_position_pct",

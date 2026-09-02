@@ -92,9 +92,34 @@ export interface LiquidityBreakdown {
   sweep_symbol: string | null;
   raw_cash: number | null;
   sweep_parked_value: number | null;
+  /** Sweep MECHANIC (park_excess's cushion), not a risk limit and not a
+   * deduction from what the desk may deploy today. */
   reserve_usd: number | null;
+  /** raw_cash + sweep_parked_value — the SAME figure the trading engine
+   * sizes against (src/quantities.py::deployable_cash). It used to be
+   * max(raw_cash - reserve_usd, 0), a number no part of the engine ever
+   * used, and read 1.58x lower on the same book. */
   deployable_cash: number | null;
+  /** max(raw_cash - reserve_usd, 0) — raw cash spendable without selling
+   * the sweep vehicle first. Conservative, and deliberately not called
+   * "deployable". */
+  cash_above_reserve: number | null;
+  /** @deprecated alias of deployable_cash; server assigns, never recomputes. */
   total_liquidity: number | null;
+}
+
+/** How invested the book is, measured by the risk engine's own definition
+ * (src/quantities.py::net_exposure_usd/_pct — the functions
+ * src/risk/rules.py's max_total_position_pct rule calls). Never re-derive
+ * this in the UI: doing so is what made the gauge and the ceiling it is
+ * drawn against disagree by 13.6 percentage points. */
+export interface ExposureBreakdown {
+  /** sum(market_value x signed ETF multiplier); hedges subtract, leveraged
+   * funds count at their multiple, sweep vehicle excluded. */
+  net_exposure_usd: number | null;
+  /** abs(net_exposure_usd) / portfolio_value x 100 — directly comparable
+   * to risk_limits.max_total_position_pct. */
+  net_exposure_pct: number | null;
 }
 
 export interface RiskLimits {
@@ -113,6 +138,7 @@ export interface AccountResponse {
   paper: boolean | null;
   history: DailyPnlPoint[];
   liquidity: LiquidityBreakdown | null;
+  exposure: ExposureBreakdown | null;
   risk_limits: RiskLimits | null;
   error: string | null;
 }

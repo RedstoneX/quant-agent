@@ -84,8 +84,16 @@ if str(_REPO_ROOT_FOR_IMPORT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT_FOR_IMPORT))
 
 from src.api.deps import INVERSE_ETF_SYMBOLS
+from src.quantities import (
+    cash_above_reserve,
+    deployable_cash,
+    net_exposure_pct,
+    net_exposure_usd,
+    sweep_reserve_usd,
+)
 from src.api.schemas import (
     CandidateFunnelItem,
+    ExposureBreakdown,
     LiquidityBreakdown,
     MacroBroaderContext,
     PmReasoning,
@@ -230,54 +238,75 @@ def create_app() -> FastAPI:
         return response.status_code, payload
 
     async def _patch_account(data: dict) -> dict:
-        """Old production's /account predates this branch's `liquidity`
-        and `risk_limits` fields (Stage 6 / Stage 6j). Computes the same
-        honest raw-cash/sweep/deployable split _compute_liquidity() in
-        src/api/routes_live.py does, from real upstream /account +
-        /positions data, and reconstructs risk_limits from this dev
-        checkout's own non-secret config/settings.yaml risk section.
-        Self-obsoleting: once upstream already returns either field, this
-        is a no-op passthrough for that field."""
+        """Old production's /account predates this branch's `liquidity`,
+        `exposure` and `risk_limits` fields (Stage 6 / Stage 6j). Every
+        number here comes from `src.quantities` — the SAME functions
+        _compute_liquidity()/_compute_exposure() in src/api/routes_live.py
+        call — so this shim cannot drift from the endpoint it stands in
+        for. It used to re-type the reserve and deployable-cash formulas by
+        hand, which is exactly how the dashboard came to print a
+        "deployable" figure the engine had never used. risk_limits is
+        reconstructed from this dev checkout's own non-secret
+        config/settings.yaml risk section. Self-obsoleting: once upstream
+        already returns a field, this is a no-op passthrough for it."""
         if data.get("risk_limits") is None and data.get("error") is None:
             data["risk_limits"] = _risk_limits_config()
-        if data.get("liquidity") is not None or data.get("error") is not None:
+        if data.get("error") is not None:
+            return data
+        if data.get("liquidity") is not None and data.get("exposure") is not None:
             return data
         cfg = _cash_sweep_config()
         cash = data.get("cash")
         portfolio_value = data.get("portfolio_value")
         sweep_parked_value = None
+        upstream_positions: list[dict] = []
         try:
             pos_status, pos_data = await upstream_json("/positions")
             if pos_status == 200 and pos_data.get("error") is None:
+                upstream_positions = pos_data.get("positions", []) or []
                 sweep_parked_value = sum(
                     p.get("market_value") or 0.0
-                    for p in pos_data.get("positions", [])
+                    for p in upstream_positions
                     if p.get("symbol") == cfg["symbol"]
                 )
         except httpx.RequestError as exc:
             logger.warning("liquidity reconstruction: /positions read failed: %s", exc)
 
-        reserve_usd = (
-            portfolio_value * cfg["reserve_pct"] / 100.0
-            if portfolio_value is not None else None
-        )
-        deployable_cash = (
-            max(cash - reserve_usd, 0.0)
-            if cash is not None and reserve_usd is not None else None
-        )
-        total_liquidity = (
-            cash + sweep_parked_value
-            if cash is not None and sweep_parked_value is not None else None
-        )
-        data["liquidity"] = LiquidityBreakdown(
-            sweep_enabled=cfg["enabled"],
-            sweep_symbol=cfg["symbol"],
-            raw_cash=cash,
-            sweep_parked_value=sweep_parked_value,
-            reserve_usd=reserve_usd,
-            deployable_cash=deployable_cash,
-            total_liquidity=total_liquidity,
-        ).model_dump()
+        if data.get("liquidity") is None:
+            reserve_usd = (
+                sweep_reserve_usd(portfolio_value, cfg["reserve_pct"])
+                if portfolio_value is not None else None
+            )
+            deployable = (
+                deployable_cash(cash, sweep_parked_value)
+                if cash is not None and sweep_parked_value is not None else None
+            )
+            above_reserve = (
+                cash_above_reserve(cash, reserve_usd)
+                if cash is not None and reserve_usd is not None else None
+            )
+            data["liquidity"] = LiquidityBreakdown(
+                sweep_enabled=cfg["enabled"],
+                sweep_symbol=cfg["symbol"],
+                raw_cash=cash,
+                sweep_parked_value=sweep_parked_value,
+                reserve_usd=reserve_usd,
+                deployable_cash=deployable,
+                cash_above_reserve=above_reserve,
+                total_liquidity=deployable,
+            ).model_dump()
+
+        if data.get("exposure") is None:
+            if upstream_positions:
+                net_usd = net_exposure_usd(
+                    upstream_positions, cash_park_symbol=cfg["symbol"],
+                )
+                data["exposure"] = ExposureBreakdown(
+                    net_exposure_usd=net_usd,
+                    net_exposure_pct=net_exposure_pct(net_usd, portfolio_value),
+                ).model_dump()
+            else:
+                data["exposure"] = ExposureBreakdown().model_dump()
         return data
 
     def _patch_positions(data: dict) -> dict:

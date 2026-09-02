@@ -37,6 +37,18 @@ from src.api.broker_reads import (
     read_positions,
     read_price_bars,
 )
+# `src.quantities` holds the single definition of every number this
+# dashboard shares with the trading engine. It is dependency-free and lives
+# OUTSIDE `src.risk`, so importing it here does not breach the structural
+# guardrail in tests/test_api_safety.py — that is precisely the seam the
+# §11.2 note further down asked for.
+from src.quantities import (
+    cash_above_reserve,
+    deployable_cash,
+    net_exposure_pct,
+    net_exposure_usd,
+    sweep_reserve_usd,
+)
 from src.api.deps import (
     get_alpaca_paper,
     get_cash_sweep_enabled,
@@ -47,6 +59,7 @@ from src.api.deps import (
 from src.api.schemas import (
     AccountResponse,
     DailyPnlPoint,
+    ExposureBreakdown,
     HealthResponse,
     LiquidityBreakdown,
     LiveQuote,
@@ -217,14 +230,24 @@ def get_health() -> HealthResponse:
         )
 
 
-def _compute_liquidity(cash: float | None, portfolio_value: float | None) -> LiquidityBreakdown:
+def _compute_liquidity(
+    cash: float | None,
+    portfolio_value: float | None,
+    positions_result: dict | None = None,
+) -> LiquidityBreakdown:
     """Honest raw-cash / sweep-parked / deployable split (2026-08-18 soak
     finding: SGOV must never read like an ordinary position or an invented
-    risk posture). Reads positions independently so a positions-read
-    failure degrades only the sweep_parked_value/total_liquidity fields,
-    never silently zeroes them. A config-read failure degrades this whole
-    breakdown to an honest empty object — it must never take down the rest
-    of the /account response (see AccountResponse.cash etc)."""
+    risk posture). Reads positions independently (or reuses the caller's
+    already-fetched payload) so a positions-read failure degrades only the
+    sweep_parked_value/deployable_cash fields, never silently zeroes them.
+    A config-read failure degrades this whole breakdown to an honest empty
+    object — it must never take down the rest of the /account response
+    (see AccountResponse.cash etc).
+
+    `deployable_cash` is the ENGINE'S figure, computed by the same
+    `src.quantities.deployable_cash` the pre-trade cash gate uses. The
+    reserve-adjusted figure this field used to hold is still reported, as
+    `cash_above_reserve`."""
     try:
         sweep_enabled = get_cash_sweep_enabled()
         sweep_symbol = get_cash_sweep_symbol()
@@ -234,7 +257,8 @@ def _compute_liquidity(cash: float | None, portfolio_value: float | None) -> Liq
         return LiquidityBreakdown()
 
     sweep_parked_value: float | None = None
-    positions_result = read_positions()
+    if positions_result is None:
+        positions_result = read_positions()
     if positions_result.get("error") is None:
         sweep_parked_value = sum(
             p.get("market_value") or 0.0
@@ -243,18 +267,22 @@ def _compute_liquidity(cash: float | None, portfolio_value: float | None) -> Liq
         )
 
     reserve_usd = (
-        portfolio_value * reserve_pct / 100.0
+        sweep_reserve_usd(portfolio_value, reserve_pct)
         if portfolio_value is not None
         else None
     )
-    deployable_cash = (
-        max(cash - reserve_usd, 0.0)
-        if cash is not None and reserve_usd is not None
+    # One definition, shared with the engine: cash + the sweep vehicle the
+    # BUY phase liquidates on demand. Unknown until BOTH halves are known —
+    # a positions-read failure must not print raw cash as if it were the
+    # whole deployable figure.
+    deployable = (
+        deployable_cash(cash, sweep_parked_value)
+        if cash is not None and sweep_parked_value is not None
         else None
     )
-    total_liquidity = (
-        cash + sweep_parked_value
-        if cash is not None and sweep_parked_value is not None
+    above_reserve = (
+        cash_above_reserve(cash, reserve_usd)
+        if cash is not None and reserve_usd is not None
         else None
     )
 
@@ -264,8 +292,45 @@ def _compute_liquidity(cash: float | None, portfolio_value: float | None) -> Liq
         raw_cash=cash,
         sweep_parked_value=sweep_parked_value,
         reserve_usd=reserve_usd,
-        deployable_cash=deployable_cash,
-        total_liquidity=total_liquidity,
+        deployable_cash=deployable,
+        cash_above_reserve=above_reserve,
+        # Deprecated alias — assigned, not recomputed.
+        total_liquidity=deployable,
+    )
+
+
+def _compute_exposure(
+    portfolio_value: float | None,
+    positions_result: dict | None = None,
+) -> ExposureBreakdown:
+    """Net exposure by the ENGINE'S definition, so the cockpit's "%
+    deployed" gauge and the ceiling it is drawn against finally measure the
+    same thing.
+
+    `src.quantities.net_exposure_usd/_pct` is what `src.risk.rules`'
+    `max_total_position_pct` rule calls; the cockpit used to re-derive the
+    number from position `direction` labels instead (hedges ADDED, leverage
+    ignored). Same fail-soft posture as `_compute_liquidity`: any unusable
+    input degrades to an all-None object, never a fabricated 0."""
+    try:
+        sweep_symbol = get_cash_sweep_symbol()
+    except Exception as exc:
+        logger.warning("routes_live._compute_exposure: could not read cash_sweep symbol: %s", exc)
+        sweep_symbol = None
+
+    if positions_result is None:
+        positions_result = read_positions()
+    if positions_result.get("error") is not None:
+        return ExposureBreakdown()
+
+    # The engine splits the sweep vehicle out of `positions` before the risk
+    # gate sees them; this payload is unsplit, so exclude it by symbol here.
+    net_usd = net_exposure_usd(
+        positions_result.get("positions", []), cash_park_symbol=sweep_symbol,
+    )
+    return ExposureBreakdown(
+        net_exposure_usd=net_usd,
+        net_exposure_pct=net_exposure_pct(net_usd, portfolio_value),
     )
 
 
@@ -310,18 +375,24 @@ def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
         error=data.get("error"),
     )
 
-# NOTE (§11.2): Mission Control does NOT compute gross exposure, the
-# de-levering ladder, or distance-to-forced-liquidation. Doing so requires
-# `src.risk.rules`, and `src/api/` is forbidden by a ratified structural
-# guardrail (tests/test_api_safety.py) from importing the trading/risk stack
-# at all. Re-implementing the arithmetic here instead was explicitly rejected:
-# a second definition of "how much does the book own" is the exact sprawl
-# §12.2 cleaned up, and a dashboard that drifts from the gate is worse than a
-# dashboard that stays quiet. The standing cap is still reported on
-# `RiskLimits.max_gross_exposure_x` above (config read, no risk import), and
-# the live ladder state reaches the operator on the session alert
-# (`src/notifier.py::_append_leverage_line`). Showing it here needs the pure
-# measurement functions extracted to a module outside `src.risk` first.
+# NOTE (§11.2): Mission Control still does NOT compute the de-levering
+# ladder or distance-to-forced-liquidation — those need `src.risk.rules`,
+# and `src/api/` is forbidden by a ratified structural guardrail
+# (tests/test_api_safety.py) from importing the trading/risk stack at all.
+# Re-implementing that arithmetic here was, and remains, rejected: a second
+# definition of "how much does the book own" is the exact sprawl §12.2
+# cleaned up, and a dashboard that drifts from the gate is worse than one
+# that stays quiet.
+#
+# The condition this note named as the way out has now been met. The pure
+# measurement functions live in `src.quantities`, a dependency-free module
+# outside `src.risk` that `src.risk.rules` itself imports, so
+# `_compute_exposure` above reports NET exposure from the engine's own
+# definition rather than a lookalike. The standing cap is still reported on
+# `RiskLimits.max_gross_exposure_x` (config read, no risk import) and the
+# live ladder state still reaches the operator on the session alert
+# (`src/notifier.py::_append_leverage_line`); the ladder is session state,
+# not arithmetic, so it stays off this endpoint.
 
 
 @router.get("/account", response_model=AccountResponse)
@@ -353,7 +424,19 @@ def get_account() -> AccountResponse:
         except Exception:
             history = []
 
-        liquidity = _compute_liquidity(cash, portfolio_value) if acct.get("error") is None else None
+        # One positions read serves both the liquidity split and the
+        # exposure gauge — they used to be independent round-trips, and an
+        # /account response built from two different broker snapshots is
+        # its own way of making two numbers disagree.
+        positions_result = read_positions() if acct.get("error") is None else None
+        liquidity = (
+            _compute_liquidity(cash, portfolio_value, positions_result)
+            if acct.get("error") is None else None
+        )
+        exposure = (
+            _compute_exposure(portfolio_value, positions_result)
+            if acct.get("error") is None else None
+        )
         risk_limits = _compute_risk_limits()
         margin_interest = (
             _compute_margin_interest(cash) if acct.get("error") is None else None
@@ -368,6 +451,7 @@ def get_account() -> AccountResponse:
             paper=get_alpaca_paper(),
             history=history,
             liquidity=liquidity,
+            exposure=exposure,
             risk_limits=risk_limits,
             margin_interest=margin_interest,
             error=acct.get("error"),

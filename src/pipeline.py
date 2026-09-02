@@ -11,6 +11,7 @@ from src.trading_calendar import et_now, et_today, session_date_key
 from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
+from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroCoverage, MacroDataProvider
 from src.data.event_calendar import FOMCCalendarProvider, MacroEventCalendarProvider
@@ -277,30 +278,19 @@ def _missed_ops_quality_metrics(
     if not bars or len(bars) < 2:
         return None, None, None
 
-    # Isolate trailing 20 bars for the 20-day volume stats. Insufficient
-    # history → None for that metric only.
-    trailing_20 = bars[-20:] if len(bars) >= 20 else bars
+    # 20-day dollar volume via the single shared definition
+    # (`src.quantities.avg_dollar_volume`) — this digest and the external-
+    # symbol admission gate used to compute the same measure two different
+    # ways (a halted session was dropped here and counted there, 5.26%
+    # apart on a 20-bar window). Only the THRESHOLDS differ now: $5M here,
+    # $10M at admission. `min_bars=5` keeps this caller's deliberate
+    # tolerance for short history; the gate demands a full window.
     avg_dvol_m: float | None = None
     vol_conf_ratio: float | None = None
     try:
-        dollar_vols: list[float] = []
-        for b in trailing_20:
-            close_attr = getattr(b, "close", None)
-            vol_attr = getattr(b, "volume", None)
-            # Strict type check — production OHLCV carries int/float, but
-            # MagicMock objects in tests respond to float() with 1.0 via
-            # __float__, which would smuggle phantom volume into the
-            # dollar-vol math. Require real numerics.
-            if not isinstance(close_attr, (int, float)):
-                continue
-            if not isinstance(vol_attr, (int, float)):
-                continue
-            close = float(close_attr)
-            vol = float(vol_attr)
-            if close > 0 and vol > 0:
-                dollar_vols.append(close * vol)
-        if len(dollar_vols) >= 5:
-            avg_dvol = sum(dollar_vols) / len(dollar_vols)
+        dollar_vols = dollar_volumes(bars)
+        avg_dvol = avg_dollar_volume(bars, min_bars=5)
+        if avg_dvol is not None:
             avg_dvol_m = round(avg_dvol / 1_000_000, 2)
             # Today's dollar volume vs the average. >1.5 = buyers showed up.
             if dollar_vols and avg_dvol > 0:
@@ -1013,19 +1003,22 @@ class TradingPipeline:
         not authoritative for execution: ExecutionStage still re-reads raw
         broker `cash` after the funding sale and skips any BUY that cash
         does not actually cover. See `CashSweeper.fund_buys`.
+
+        The arithmetic itself lives in `src.quantities.deployable_cash` —
+        one definition, shared with Mission Control's "Deployable" tile,
+        which used to show `max(cash - sweep_reserve, 0)` instead and read
+        1.58x lower than the figure the engine actually sized against.
         """
-        if not isinstance(cash, (int, float)) or not math.isfinite(cash):
-            return 0.0
         sweeper = self._sweeper()
         if sweeper is None:
-            return float(cash)
+            return deployable_cash(cash, 0.0)
         try:
             parked = sweeper.parked_value(positions)
         except Exception as e:  # noqa: BLE001 — unknowable sweep state must not inflate
             logger.warning("deployable cash: parked-value read failed (%s) — "
                            "treating sweep reserve as unavailable", e)
-            return float(cash)
-        return float(cash) + parked
+            parked = 0.0
+        return deployable_cash(cash, parked)
 
     @staticmethod
     def _format_qty(qty: float) -> str:
@@ -1229,22 +1222,28 @@ class TradingPipeline:
         recent = bars[-20:]
         try:
             last_price = float(recent[-1].close)
-            avg_dollar_volume = sum(
-                float(bar.close) * float(bar.volume) for bar in recent
-            ) / len(recent)
-        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+        except (AttributeError, TypeError, ValueError, IndexError):
             logger.info("%s admission rejected %s: invalid_market_data", context, symbol)
             return False, "invalid_market_data", {}
+        # Single shared definition (`src.quantities.avg_dollar_volume`);
+        # the threshold below stays this gate's own. None = the window did
+        # not contain a full 20 usable sessions, which fails closed here
+        # rather than admitting on partial data.
+        adv = avg_dollar_volume(recent)
+        if adv is None:
+            logger.info("%s admission rejected %s: invalid_market_data", context, symbol)
+            return False, "invalid_market_data", {}
+        avg_dollar_volume_usd = adv
         if last_price < cfg.min_external_price_usd:
             logger.info(
                 "%s admission rejected %s: price %.2f < %.2f",
                 context, symbol, last_price, cfg.min_external_price_usd,
             )
             return False, "price_below_minimum", {}
-        if avg_dollar_volume < cfg.min_external_avg_dollar_volume_usd:
+        if avg_dollar_volume_usd < cfg.min_external_avg_dollar_volume_usd:
             logger.info(
                 "%s admission rejected %s: avg dollar volume %.0f < %.0f",
-                context, symbol, avg_dollar_volume,
+                context, symbol, avg_dollar_volume_usd,
                 cfg.min_external_avg_dollar_volume_usd,
             )
             return False, "dollar_volume_below_minimum", {}
@@ -1254,7 +1253,7 @@ class TradingPipeline:
             return False, "unresolved_sector", {}
         return True, None, {
             "last_price": round(last_price, 4),
-            "avg_dollar_volume_20d_usd": round(avg_dollar_volume, 2),
+            "avg_dollar_volume_20d_usd": round(avg_dollar_volume_usd, 2),
             "sector": sector,
             "broker": broker_fact,
         }
