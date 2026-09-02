@@ -11,6 +11,17 @@ from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
 
+#: The rolling window `recent_state_changes` scans, and therefore the oldest
+#: `first_seen_date` `TradingPipeline._build_active_state_changes` can render.
+#:
+#: Not a new threshold — it is the 14 this method has always defaulted to,
+#: given a name so a second consumer can be held to the same window. The
+#: sub-floor catalyst gate imports it and refuses to honour a citation older
+#: than this, so a producer regression that ever rendered a stale row cannot
+#: silently widen what counts as a catalyst
+#: (`PortfolioManagerAgent._apply_subfloor_catalyst_rule`).
+ACTIVE_STATE_CHANGE_WINDOW_DAYS = 14
+
 
 def _parse_iso_date(s: str) -> date | None:
     """Parse a 'YYYY-MM-DD' string to a date, or None if it isn't one."""
@@ -108,7 +119,11 @@ class NewsStore:
         path = self._today_dir() / "raw_headlines.json"
         _atomic_write(path, json.dumps(headlines, indent=2, ensure_ascii=False))
 
-    def recent_state_changes(self, lookback_days: int = 14, limit: int = 8) -> list[dict]:
+    def recent_state_changes(
+        self,
+        lookback_days: int = ACTIVE_STATE_CHANGE_WINDOW_DAYS,
+        limit: int = 8,
+    ) -> list[dict]:
         """Scan the last N dated reports for HIGH-conviction state_changes.
 
         Dedupes by `event` string — same event appearing across multiple days is

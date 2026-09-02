@@ -174,15 +174,23 @@ def test_pipeline_morning_run_buy(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[530.0],
+        reference_target=545.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
         # Divisor 4.5 clears the WIDEST stop multiple these tests can hit
         # (3.0 base x 1.15 range x 1.20 risk-off = 4.14), so the structural
         # stop survives untouched whatever regime the test stubs.
-        computed_levels=[490.0, 530.0], atr_14=17.0 / 4.5,
+        #
+        # Resistance is $545, not $530, and that is load-bearing. Since
+        # 2026-09-02 the constructor's 1.5 reward:risk floor is applied to
+        # the SHIPPING geometry on every path, including a stop already
+        # outside the ATR band — which is this one. At $530 the ratio is
+        # (530-507)/(507-490) = 1.35 and the entry is refused on geometry,
+        # which is not what these pipeline tests are about. At $545 it is
+        # 2.24 and the constructor places the trade.
+        computed_levels=[490.0, 545.0], atr_14=17.0 / 4.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
@@ -307,15 +315,15 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[530.0],
+        reference_target=545.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
         # Divisor 4.5 clears the WIDEST stop multiple these tests can hit
         # (3.0 base x 1.15 range x 1.20 risk-off = 4.14), so the structural
         # stop survives untouched whatever regime the test stubs.
-        computed_levels=[490.0, 530.0], atr_14=17.0 / 4.5,
+        computed_levels=[490.0, 545.0], atr_14=17.0 / 4.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
@@ -482,9 +490,9 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     # uses live broker price.
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=98.0,
-        reference_target=130.0, stop_loss=72.0,
-        support_levels=[72.0], resistance_levels=[130.0],
-        computed_levels=[72.0, 130.0], atr_14=26.0 / 4.5,
+        reference_target=145.0, stop_loss=72.0,
+        support_levels=[72.0], resistance_levels=[145.0],
+        computed_levels=[72.0, 145.0], atr_14=26.0 / 4.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
@@ -600,15 +608,15 @@ def test_pipeline_risk_rejected(
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
         symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=530.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[530.0],
+        reference_target=545.0, stop_loss=490.0,
+        support_levels=[490.0], resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
         # Divisor 4.5 clears the WIDEST stop multiple these tests can hit
         # (3.0 base x 1.15 range x 1.20 risk-off = 4.14), so the structural
         # stop survives untouched whatever regime the test stubs.
-        computed_levels=[490.0, 530.0], atr_14=17.0 / 4.5,
+        computed_levels=[490.0, 545.0], atr_14=17.0 / 4.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),

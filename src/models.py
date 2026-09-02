@@ -1,4 +1,5 @@
 import logging
+import math
 import threading
 from collections import Counter
 from contextlib import contextmanager
@@ -8,6 +9,75 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
+
+
+def reward_to_risk(
+    entry_price: float | None,
+    stop_price: float | None,
+    target_price: float | None,
+    *,
+    is_short: bool,
+) -> float | None:
+    """THE reward:risk of an entry. One definition, every caller.
+
+    Every place in this codebase that divides a reward by a risk goes
+    through this function. That is the whole point of it, and it is a
+    correction of a measured failure rather than a tidiness exercise.
+
+    On 2026-09-01 the Risk Manager rejected a live XLE BUY with the words
+    *"PM's reasoning assumes R/R 1.67 but the executed order has R/R
+    1.18"*. Both numbers were arithmetically correct and neither stop had
+    moved: 1.67 was `TechAnalysisResult.risk_reward`, computed at the
+    analyst's own snapshot entry $63.96 against its own guessed target
+    $68.00; 1.18 was `TradeDecision.reward_risk`, computed at the live
+    entry $64.51 the constructor actually priced against the structural
+    target the constructor actually derived. On that particular trade the
+    two targets happened to coincide at $68.00, so the ENTIRE gap was the
+    entry: same trade, same stop ($61.54), two entries, four independent
+    copies of the division. On 2026-08-31 the same seat caught the same
+    thing on XLE
+    again — *"entry price degradation from TechAnalyst's $62.29 to
+    $63.76"*. A ratio the desk gates on must not be re-derived by hand at
+    each site; when it is, the sites disagree and the disagreement itself
+    starts rejecting trades.
+
+    FAIL CLOSED. Returns None — "this is not a measurable entry geometry"
+    — for anything malformed, and non-finite input is malformed. That
+    matters more than it looks: a NaN price propagates silently through
+    `reward / risk` and every subsequent `ratio < floor` comparison is
+    False, so a NaN would WAVE A TRADE THROUGH a floor it cannot satisfy.
+    Callers must treat None as "cannot judge" and refuse rather than
+    permit wherever the geometry was supposed to exist.
+
+    Returns the UNROUNDED ratio. Rounding is a display concern and belongs
+    at the edge; rounding before a comparison is how 1.4951 renders as
+    "1.5" to a reader while failing a 1.5 gate.
+    """
+    values = (entry_price, stop_price, target_price)
+    if any(v is None for v in values):
+        return None
+    try:
+        entry = float(entry_price)   # type: ignore[arg-type]
+        stop = float(stop_price)     # type: ignore[arg-type]
+        target = float(target_price)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (entry, stop, target)):
+        return None
+    if entry <= 0 or stop <= 0 or target <= 0:
+        return None
+    if is_short:
+        risk = stop - entry
+        reward = entry - target
+    else:
+        risk = entry - stop
+        reward = target - entry
+    if risk <= 0 or reward <= 0:
+        return None
+    ratio = reward / risk
+    if not math.isfinite(ratio):
+        return None
+    return ratio
 
 
 def _normalize_symbol(value: str) -> str:
@@ -542,20 +612,28 @@ class TechAnalysisResult(LLMOutputModel):
         Computed in Python (not trusted to the LLM). For BUY we expect (target > entry > stop);
         for SELL the inequalities flip. Returns None when any price is missing, the rating
         is neutral, or the geometry is malformed (so PM / RM won't render a fake ratio).
+
+        **This is the ANALYST's geometry, not the order's**, and the two
+        are routinely different: `entry_price` is the analyst's snapshot
+        price and `reference_target` is the model's guess, while the order
+        ships at the live price against a target the constructor derives
+        from the bars. `TradeDecision.reward_risk` is the number the desk
+        gates on. Both now divide through the same `reward_to_risk`, so
+        any gap between them is a genuine difference of INPUTS — which is
+        what the constructor's reconciliation note explains — and never a
+        difference of arithmetic.
         """
-        if self.entry_price is None or self.stop_loss is None or self.reference_target is None:
-            return None
         if self.rating in ("buy", "strong_buy"):
-            risk = self.entry_price - self.stop_loss
-            reward = self.reference_target - self.entry_price
+            is_short = False
         elif self.rating in ("sell", "strong_sell"):
-            risk = self.stop_loss - self.entry_price
-            reward = self.entry_price - self.reference_target
+            is_short = True
         else:
             return None
-        if risk <= 0 or reward <= 0:
-            return None
-        return round(reward / risk, 2)
+        ratio = reward_to_risk(
+            self.entry_price, self.stop_loss, self.reference_target,
+            is_short=is_short,
+        )
+        return None if ratio is None else round(ratio, 2)
 
     @field_validator("symbol")
     @classmethod
@@ -685,6 +763,20 @@ class TradeDecision(LLMOutputModel):
     # last clamp is not re-derived into a third number here. None when no
     # risk-based plan exists for this symbol (legacy notional target).
     allocated_risk_pct: float | None = None
+    # --- Which rule placed the shipping stop (2026-09-02) ----------------
+    # One of the `STOP_RULE_*` codes in `src/portfolio_constructor.py`, or
+    # None when nothing resolved a stop (SELL/COVER/HOLD, legacy callers,
+    # tests). Set by the constructor at the moment the order is built.
+    #
+    # It exists so the EXECUTION stage can tell a stop that sits at a
+    # computed structural level from one the constructor merely accepted.
+    # `src/pipeline_stages.py` carries a second, execution-time 1x ATR stop
+    # floor, and without this field that floor re-widened level-backed
+    # stops the constructor had deliberately honoured under §12.1 — undoing
+    # the fix one stage later, against an ATR recomputed from different
+    # bars. Recomputing level-backing there instead would have created
+    # exactly the second data path §12.1 was careful not to build.
+    stop_rule: str | None = None
 
     @computed_field
     @property
@@ -709,22 +801,26 @@ class TradeDecision(LLMOutputModel):
         deterministic side computes. Geometry rules match the tech-analyst
         field: prices must be present and the inequalities must hold for the
         side, else None, so nobody renders a fake ratio.
+
+        Since 2026-09-02 the division itself lives in `reward_to_risk`, so
+        this field, `TechAnalysisResult.risk_reward`, the constructor's
+        entry gate and the execution-time re-check are all the SAME
+        arithmetic on whatever geometry each is handed. See that function
+        for the XLE 1.67-vs-1.18 rejection that forced it.
         """
-        if self.entry_price is None or self.stop_loss is None or self.take_profit is None:
-            return None
         if self.action == "BUY":
-            risk = self.entry_price - self.stop_loss
-            reward = self.take_profit - self.entry_price
+            is_short = False
         elif self.action == "SHORT":
-            risk = self.stop_loss - self.entry_price
-            reward = self.entry_price - self.take_profit
+            is_short = True
         else:
             # SELL / COVER reduce an existing position; HOLD opens nothing.
             # No entry geometry to measure, so no ratio exists.
             return None
-        if risk <= 0 or reward <= 0:
-            return None
-        return round(reward / risk, 2)
+        ratio = reward_to_risk(
+            self.entry_price, self.stop_loss, self.take_profit,
+            is_short=is_short,
+        )
+        return None if ratio is None else round(ratio, 2)
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
