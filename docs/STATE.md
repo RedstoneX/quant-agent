@@ -62,8 +62,21 @@ This file records what is accepted and true **now**. Git history preserves imple
   as evidence, logged against the computed number; it no longer enters the
   arithmetic. Derivation refuses by name (missing levels / ATR / horizon)
   rather than falling back to a default, so the "declines a trade outright"
-  posture above now extends to a symbol whose chart cannot support a target. On top
-  of this, a new deterministic module `src/data/context.py` computes market context
+  posture above now extends to a symbol whose chart cannot support a target.
+  **Pending on branch `wt/levels-wire`, not yet merged (2026-09-02): the
+  distance/recency-weighted ranking above loses the recency half of that —
+  `strength` is now touch count discounted by distance only.** The
+  252-session half-life was never measured; `src/data/level_quality.py`'s
+  decay fit against the desk's own daily bars found no age effect at all
+  (likelihood ratio 0.00, `docs/RESEARCH_FINDINGS.md` §7), so a level
+  defended three years ago now counts the same as one defended last week.
+  Checked on the full 101-symbol universe before this was decided: dropping
+  recency changes the top-6 levels shown to the Tech Analyst on at least one
+  side for 66 of 99 symbols (27.1% of the 1,020 side-slots compared) — not a
+  no-op. `level_quality.py` itself stays unwired; nothing under `src/`
+  imports it, and `TestNotWiredIntoTrading` still passes.
+
+  On top of this, a new deterministic module `src/data/context.py` computes market context
   per symbol from the same bars — relative strength vs a same-batch benchmark (SPY,
   else QQQ, else IWM), returns across 1w/1m/3m/6m/12m, 52-week range position, ATR
   as a percentage of price with its 1-year percentile and a volatility state
