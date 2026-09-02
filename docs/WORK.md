@@ -65,6 +65,55 @@ settled. Restored:**
   recency and/or touch-count requirement. Risk judgement, owner's call, NOT an
   agent decision — no agent may pick a threshold here.
 
+**DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
+garbage out) must work before anything else.**
+
+Owner's instruction: every one of the 5-6 shared analyst seats (tech, news,
+macro, earnings, smart_money, evening) has data-quality issues — empty
+fields, silent death, or empty data passed to the PM as if it were real.
+Audited from real production logs, not assumed. Ranked by measured severity:
+
+1. **Earnings — worst, fixed.** ~20 of 67 filings recovered under 1,600
+   chars from a 184k-char filing (failed section match, not sparse data);
+   12 including MSFT/AAPL/GOOGL/BAC/CVX/NFLX extracted ZERO figures. Root
+   cause: text-regex heading match is inherently unreliable across filers.
+   Fixed by pulling the numbers from SEC's structured XBRL API instead,
+   independent of the text matcher — verified against live SEC data.
+   Separately, a fabricated valuation claim (P/E, market cap invented
+   despite no price data given) was detected but never closed the loop —
+   the same bad number re-served from cache for days (KO, MTZ). Now
+   redacted and the cache self-heals. See PR merging
+   `fix/earnings-data-quality`.
+2. **Smart money — fixed.** Token ceiling (1200) was 13x smaller than
+   every other seat with no measured justification; a real call truncated
+   in production. Resized to 3000 from measured production usage, and
+   truncation now gets its own `data_status` value instead of hiding
+   inside "empty". See PR merging `fix/smart-money-tokens`.
+3. **Tech analyst — already fixed by an earlier 2026-09-02 session**
+   (`thesis_invalid_if` null crash); confirmed no recurrence post-deploy.
+4. **News analyst — root cause NOT found yet.** One production failure
+   was structural (4 required top-level fields missing entirely, not one
+   malformed item) but the raw LLM payload isn't captured anywhere, only
+   the post-hoc log line. Needs raw-response capture wired in before this
+   can be diagnosed properly — do not guess a fix without it.
+5. **Evening analyst — flagged by a peer session (17 validation
+   failures), NOT YET AUDITED.** Next up.
+6. **Macro analyst — no defect.** Its warnings are a sanity-check working
+   as designed (rejects an LLM-claimed regime shift on insufficient fresh
+   indicators).
+
+**Also shipped: a bad analyst seat now gets its OWN Telegram alert.**
+Before this, `data_status` anything but "ok"/"empty" only showed up as one
+line inside the routine session-result message — exactly what the alert
+rule below forbids. See PR merging `feat/data-quality-alert`.
+
+**Standing alert-design rule, reiterated by the owner 2026-09-02 (already
+in effect for margin/naked-position alerts, now extended to data quality):
+every failure alerts in its OWN Telegram message, never bundled into a
+normal run summary, and severity is carried in TEXT, never colour — the
+owner is red/green colour blind.** Deliberately not deduplicated: a
+still-broken seat should keep alerting, not go quiet.
+
 **STATE AT 2026-09-01 END OF SESSION — read this before the older handoff below.**
 
 **SHIPPED AND VERIFIED, on `integration/ship-2026-09-01` (tip `af266de`), pushed:**
