@@ -1333,6 +1333,46 @@ or a stale belief in its training. Both are worth seeing.
 straws, and the real answer is fully understanding what the model receives.
 That is item 0. Treat everything here as secondary to it.
 
+**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02. Do not trade on partial evidence.**
+
+**Owner's ruling, and it overrides my weaker proposal.** I suggested letting
+the run continue with reduced coverage and warning the PM which inputs were
+hollow. That is wrong: *"the decision matrix is flawed — it's asking it to
+make a decision when it doesn't have enough information to make an informed
+logical decision."* A decision on incomplete evidence is not a degraded
+decision, it is a fabricated one.
+
+**The retry mechanism already exists and costs nothing to use.** `intra_check`
+fires every 30 minutes, 09:30-16:00 ET. A skipped run costs half an hour, not
+a day. There is no need to choose between "trade on garbage" and "lose the
+session".
+
+**It is also CHEAPER.** A run on bad evidence still spends a full
+portfolio_manager call (~$0.55, and that seat is 93% of the bill) to produce
+a decision nobody should act on. Checking coverage first is free.
+
+**Design:**
+  a. **Compute coverage BEFORE the expensive call.** Deterministic Python,
+     no model: how many earnings reports are usable, how many technical
+     reads survived validation, is smart money present at all.
+  b. **Below threshold → do not decide.** Skip the run, record the coverage
+     figures and which seats were short, spend nothing.
+  c. **The next scheduled run tries again.** No new infrastructure.
+  d. **THE SKIP MUST BE LOUD.** Item 11 is the desk producing zero proposals
+     for a whole day and nobody noticing. A silent skip is that bug again.
+     A skip is an event to surface, not an absence to infer.
+
+**The signal already exists — read it, do not rebuild it.** Every earnings
+report already carries a `data quality` line, and 11 of them say outright
+"insufficient information" or "filing text heavily truncated". The agents
+ARE reporting that they did not get what they needed. It is couriered to the
+PM as prose inside 140,000 characters instead of being extracted as a
+status. **Pull the field the agent already writes.**
+
+**Threshold is NOT an agent's to invent.** It is a risk judgement. Propose a
+number with reasoning and have it ratified; do not let a coding agent pick
+one, and do not ship a placeholder.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
