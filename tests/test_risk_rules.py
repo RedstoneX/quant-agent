@@ -283,3 +283,165 @@ def test_check_negative_total_value_emits_blocking_violation(engine):
     )
     violations = engine.check(decision, positions=[], total_value=-100.0, daily_pnl=0.0)
     assert len(violations) == 1
+
+
+# ===========================================================================
+# GUARD 3 (2026-09-02 operational safety guard) — INVESTIGATION: can a halt
+# or hard-block risk rule refuse a risk-reducing order and trap a position?
+#
+# Answer, from the code: NO. `RiskRuleEngine.check`'s very first statement
+# is `if decision.action in ("SELL", "COVER"): return []` — before ANY of
+# HARD_BLOCK_RULES (max_daily_loss_pct, max_total_position_pct,
+# max_position_pct, require_stop_loss, max_sector_hard_pct, cash_only,
+# drawdown_buy_cap, max_single_short_pct, max_gross_bearish_pct) is even
+# evaluated. These tests pin that property directly: SELL/COVER return no
+# violations even when EVERY other check would fail if it ran.
+#
+# A trade that flips a long into a short is NOT expressible as a single
+# SELL here — src/portfolio_constructor.py's `_build_sell`/`_build_cover`
+# clamp the sold/covered fraction to at most the CURRENTLY HELD size
+# (`alloc = max(1.0, min(99.0, ...))` or `100.0` for a full close), so the
+# exemption below can never be handed a disguised flip; a flip requires a
+# SEPARATE BUY/SHORT decision afterward, which is NOT exempt (see the last
+# test below).
+# ===========================================================================
+
+def _breaching_positions():
+    """A book that, if SELL/COVER were not exempt, would fail
+    max_position_pct, max_total_position_pct AND max_sector_hard_pct at
+    once: one name at 500% of a $10 book, all in one sector."""
+    return [
+        Position(
+            symbol="MEGA", qty=500, avg_entry=100.0, current_price=100.0,
+            market_value=50_000.0, unrealized_pnl=0.0, sector="Technology",
+        ),
+    ]
+
+
+def test_sell_bypasses_every_hard_block_even_at_extreme_breach(engine):
+    """total_value <= 0 alone is HARD_BLOCK_RULES-worthy for a BUY (see
+    RiskRuleEngine.check's own synthetic total_value violation) — a SELL
+    must sail through regardless."""
+    decision = TradeDecision(
+        action="SELL", symbol="MEGA", allocation_pct=100.0,
+        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        reasoning="closing the position",
+    )
+    violations = engine.check(
+        decision, positions=_breaching_positions(),
+        total_value=-1.0,          # would hard-block a BUY outright
+        daily_pnl=-999_999.0,      # would blow max_daily_loss_pct
+        cash=float("nan"),         # would hard-block cash_only
+        in_drawdown=True,
+    )
+    assert violations == []
+
+
+def test_cover_bypasses_every_hard_block_even_at_extreme_breach(engine):
+    decision = TradeDecision(
+        action="COVER", symbol="MEGA", allocation_pct=100.0,
+        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        reasoning="covering the short",
+    )
+    violations = engine.check(
+        decision, positions=_breaching_positions(),
+        total_value=float("nan"),
+        daily_pnl=-999_999.0,
+        cash=float("nan"),
+        in_drawdown=True,
+    )
+    assert violations == []
+
+
+def test_buy_is_NOT_exempt_under_the_same_breaching_state(engine):
+    """Sanity check that the exemption is action-specific, not something
+    that accidentally short-circuits the whole engine: a BUY under
+    identical conditions must still be hard-blocked."""
+    decision = TradeDecision(
+        action="BUY", symbol="MEGA", allocation_pct=10.0,
+        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+        reasoning="adding more",
+    )
+    violations = engine.check(
+        decision, positions=_breaching_positions(),
+        total_value=-1.0, daily_pnl=0.0,
+    )
+    assert len(violations) > 0
+
+
+def test_apply_gross_ceiling_never_blocks_sell_or_cover_on_unusable_equity():
+    """The SIZING half of the ladder (apply_gross_ceiling) has its own
+    fail-closed branch for non-finite/zero/negative equity — pinned here
+    to confirm it refuses new BUY/SHORT exposure ONLY, never a SELL/COVER
+    already in the decision list."""
+    from src.risk.rules import GrossCeiling, apply_gross_ceiling
+
+    ceiling = GrossCeiling(
+        ceiling_x=2.0, base_x=2.0, drawdown_pct=None,
+        alert_owner=False, rung="unknown", reason="test",
+    )
+    decisions = [
+        TradeDecision(action="SELL", symbol="AAA", allocation_pct=100.0,
+                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+                      reasoning="exit"),
+        TradeDecision(action="COVER", symbol="BBB", allocation_pct=100.0,
+                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+                      reasoning="cover"),
+        TradeDecision(action="BUY", symbol="CCC", allocation_pct=10.0,
+                      entry_price=50.0, stop_loss=45.0, take_profit=60.0,
+                      reasoning="new risk"),
+    ]
+    positions = [
+        Position(symbol="AAA", qty=10, avg_entry=100.0, current_price=100.0,
+                 market_value=1000.0, unrealized_pnl=0.0, sector="Technology"),
+        Position(symbol="BBB", qty=-10, avg_entry=100.0, current_price=100.0,
+                 market_value=-1000.0, unrealized_pnl=0.0, sector="Technology"),
+    ]
+    for bad_equity in (float("nan"), 0.0, -5_000.0):
+        outcome = apply_gross_ceiling(
+            [d.model_copy(deep=True) for d in decisions], positions, bad_equity, ceiling,
+        )
+        by_symbol = {d.symbol: d for d in outcome.decisions}
+        assert by_symbol["AAA"].allocation_pct == 100.0, "SELL must be untouched"
+        assert by_symbol["BBB"].allocation_pct == 100.0, "COVER must be untouched"
+        assert by_symbol["CCC"].allocation_pct == 0.0, "only new risk (BUY) is refused"
+        assert "AAA" not in outcome.blocked
+        assert "BBB" not in outcome.blocked
+
+
+def test_apply_gross_ceiling_never_blocks_sell_or_cover_when_book_is_over_ceiling():
+    """A book massively over its ceiling still must not refuse an exit —
+    it can only BLOCK new BUY/SHORT and, separately, TRIM the held book
+    (which itself only ever emits new SELL/COVER-shaped orders, never
+    withholds a proposed one).
+
+    ZZZ is held but untouched by any decision, so it alone keeps the
+    post-trade book over the $5,000 ceiling (equity $10,000 x 0.5x)
+    regardless of AAA's full exit — the genuine "no headroom" case DDD's
+    new SHORT should be rationed against.
+    """
+    from src.risk.rules import GrossCeiling, apply_gross_ceiling
+
+    ceiling = GrossCeiling(
+        ceiling_x=0.5, base_x=2.0, drawdown_pct=-30.0,
+        alert_owner=True, rung="-20%", reason="test",
+    )
+    decisions = [
+        TradeDecision(action="SELL", symbol="AAA", allocation_pct=100.0,
+                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+                      reasoning="exit"),
+        TradeDecision(action="SHORT", symbol="DDD", allocation_pct=5.0,
+                      entry_price=50.0, stop_loss=55.0, take_profit=40.0,
+                      reasoning="new short"),
+    ]
+    positions = [
+        Position(symbol="AAA", qty=1000, avg_entry=100.0, current_price=100.0,
+                 market_value=100_000.0, unrealized_pnl=0.0, sector="Technology"),
+        Position(symbol="ZZZ", qty=500, avg_entry=100.0, current_price=100.0,
+                 market_value=50_000.0, unrealized_pnl=0.0, sector="Healthcare"),
+    ]
+    outcome = apply_gross_ceiling(decisions, positions, 10_000.0, ceiling)
+    by_symbol = {d.symbol: d for d in outcome.decisions}
+    assert by_symbol["AAA"].allocation_pct == 100.0, "the exit must still go through in full"
+    assert by_symbol["DDD"].allocation_pct == 0.0, "new SHORT exposure has no headroom and is rationed to 0"
+    assert "AAA" not in outcome.blocked

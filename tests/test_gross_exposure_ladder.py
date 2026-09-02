@@ -17,6 +17,7 @@ The ratified table (owner, 2026-09-01):
     worse than -20%            0.5x, and the owner is alerted
 """
 
+import math
 import pytest
 
 from src.models import Position, TradeDecision
@@ -897,3 +898,219 @@ def test_the_deepest_rung_raises_a_separate_owner_alert():
     # And the claim must be exact: this book is UNDER its cap, so it is not
     # true that every new position is refused.
     assert "refused once the book reaches it" in alert
+
+
+# ===========================================================================
+# GUARD 2 (2026-09-02 operational safety guard) — a non-finite equity read
+# must never become the high-water mark, and must never silently pass a
+# threshold comparison.
+#
+# The documented failure mode (another system's source): an incremental
+# "if new > hwm: hwm = new" tracker lets a single NaN reading poison `hwm`
+# permanently, because every later comparison against NaN is False. This
+# codebase's `peak_to_trough_pct` is structurally immune to THAT shape of
+# bug — the peak is a fresh max() over a filtered list on every call, never
+# a variable carried between calls — but the tests below pin that property
+# explicitly rather than trusting the architecture, and close two real gaps
+# found while verifying it: (a) a dropped non-finite reading was silent, and
+# (b) a non-finite CURRENT equity read fell through to the same "unknown
+# drawdown" branch a genuinely fresh account uses, silently holding the
+# loosest (standing) cap instead of halting new risk.
+# ===========================================================================
+
+def test_peak_to_trough_pct_never_lets_nan_win_the_peak():
+    """The literal ask: a NaN sits among the candidates for 'peak' (as if
+    one day's stored total_value were corrupted). The ladder must still
+    function, using the REAL data, not the corrupted entry."""
+    # The corrupted entry (float('nan')) stands where a legitimate but
+    # UNREMARKABLE reading would — 150_000 is the genuine peak.
+    history = [100_000.0, float("nan"), 150_000.0, 130_000.0]
+    drawdown = peak_to_trough_pct(history, 120_000.0)
+    assert drawdown == -20.0, "peak must be 150_000 (max of the FINITE readings), not NaN"
+
+    ceiling = resolve_gross_ceiling(drawdown, base_x=BASE_X)
+    assert ceiling.ceiling_x == 0.5
+    assert ceiling.rung == "-20%"
+    assert ceiling.alert_owner is True
+
+
+def test_peak_to_trough_pct_nan_can_never_become_the_peak_directly():
+    """Even when the NaN sits at the position that WOULD win a naive
+    max() (last, or largest-looking), it still cannot win — because it is
+    filtered out before max() ever runs, not compared away."""
+    history = [100_000.0, float("nan")]
+    # If the NaN could somehow "win" as if it were +inf, this would not be
+    # None; if it silently sorted as the smallest value, the peak would
+    # wrongly be 100_000 and this would compute a spurious 0.0% drawdown
+    # instead of reflecting that the true peak is unknown/unverifiable
+    # here. It must fall back to the one finite candidate, 100_000.
+    drawdown = peak_to_trough_pct(history, 100_000.0)
+    assert drawdown == 0.0
+
+
+def test_peak_to_trough_pct_inf_can_never_become_the_peak_directly():
+    """+inf is the sharper version of the same property: unlike NaN, `inf
+    > 0` is TRUE, so a filter that only excluded non-positive values (and
+    dropped the explicit `math.isfinite` check) would let +inf sail into
+    `values` and WIN max() — producing peak=inf and therefore a NaN
+    drawdown (`(x - inf) / inf`) silently propagated back to the caller.
+    That is a mutation this suite must catch, so it is pinned directly."""
+    history = [100_000.0, float("inf")]
+    drawdown = peak_to_trough_pct(history, 100_000.0)
+    assert drawdown == 0.0
+    assert math.isfinite(drawdown)
+
+
+def test_peak_to_trough_pct_logs_when_dropping_non_finite_readings(caplog):
+    """'Never silently passes': a dropped NaN/inf must leave a trace, even
+    though the return value is correct either way — this is the guard
+    against the reading vanishing with no evidence it ever existed."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
+        peak_to_trough_pct([100_000.0, float("nan"), float("inf")], 90_000.0)
+    assert any(
+        "dropped" in r.message and "non-finite" in r.message
+        for r in caplog.records
+    )
+
+
+def test_peak_to_trough_pct_no_warning_when_all_readings_are_clean(caplog):
+    """Regression guard: the new logging must not fire on the ordinary
+    (no corruption) path — that would turn a silent, correct case noisy."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
+        peak_to_trough_pct([100_000.0, 110_000.0], 105_000.0)
+    assert not any("dropped" in r.message for r in caplog.records)
+
+
+def test_peak_to_trough_pct_all_history_corrupted_still_returns_a_number_not_nan(caplog):
+    """Documented, deliberately-not-closed residual: if EVERY historical
+    reading is non-finite but today's own read is fine, the function falls
+    back to treating today as the peak (0.0% drawdown) rather than
+    crashing or returning NaN — 'the ladder still functions'. It is
+    WARNED, though, because a true historical peak could have been lost."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
+        drawdown = peak_to_trough_pct([float("nan")] * 5, 95_000.0)
+    assert drawdown == 0.0
+    assert math.isfinite(drawdown)
+    assert any("dropped" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_resolve_gross_ceiling_non_finite_drawdown_never_crosses_a_threshold(bad):
+    """A NaN/inf drawdown_pct must be intercepted before the `drawdown <=
+    threshold` loop, never reach it and silently evaluate False on every
+    rung (which would leave the ceiling at the loosest, standing value
+    while LOOKING like a real comparison happened)."""
+    ceiling = resolve_gross_ceiling(bad, base_x=BASE_X)
+    assert ceiling.rung == "unknown"
+    assert ceiling.ceiling_x == BASE_X
+    assert ceiling.drawdown_pct is None, "a non-finite input must not be echoed back as a number"
+
+
+def test_insert_daily_pnl_rejects_a_nan_total_value():
+    """DB-level finding, not something this guard adds: SQLite's Python
+    driver silently binds float('nan') as SQL NULL, so a NaN total_value
+    trips the `total_value REAL NOT NULL` constraint and insert_daily_pnl
+    RAISES rather than persisting corrupted data. Pinned here because it
+    is a second, independent reason a NaN can never become the stored
+    high-water mark in production — belt and suspenders with
+    peak_to_trough_pct's own filtering."""
+    from src.storage.db import Database
+
+    db = Database(":memory:")
+    db.initialize()
+    with pytest.raises(Exception):
+        db.insert_daily_pnl("2026-09-02", float("nan"), 0.0, 0.0)
+
+
+# --- TradingPipeline._resolve_gross_ceiling: the bad-current-read fix ------
+
+def _pipeline_for_ceiling(**risk_overrides):
+    from unittest.mock import MagicMock
+    from src.pipeline import TradingPipeline
+    from types import SimpleNamespace
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.config = SimpleNamespace(risk=_risk_config(**risk_overrides))
+    p.db = MagicMock()
+    p.db.get_daily_pnl.return_value = []
+    return p
+
+
+def _ctx_with_equity(total_value, *, positions=None, recent_performance=None):
+    from src.pipeline_context import RunContext
+
+    ctx = RunContext.start("morning")
+    ctx.total_value = total_value
+    ctx.positions = positions if positions is not None else []
+    ctx.recent_performance = recent_performance or {}
+    return ctx
+
+
+@pytest.mark.parametrize("bad_equity", [float("nan"), float("inf"), float("-inf")])
+def test_resolve_gross_ceiling_forces_floor_and_alerts_on_bad_current_equity(bad_equity):
+    """The actual fix: a non-finite CURRENT equity read (Alpaca has been
+    observed to return NaN portfolio_value on market-open glitches) must
+    NOT fall through to the standing (loosest) cap the way a genuinely
+    unmeasurable/fresh-account drawdown does. It must halt new risk (the
+    floor rung) and alert the owner — never assume zero drawdown."""
+    pipeline = _pipeline_for_ceiling()
+    ctx = _ctx_with_equity(bad_equity)
+
+    ceiling = pipeline._resolve_gross_ceiling(ctx)
+
+    assert ceiling.ceiling_x == GROSS_LADDER[-1][1], "must be the ladder's own floor rung, not hardcoded"
+    assert ceiling.alert_owner is True
+    assert ceiling.rung == "bad_read"
+    assert ceiling.drawdown_pct is None
+
+
+def test_resolve_gross_ceiling_bad_read_floor_is_never_looser_than_base(bad_equity=float("nan")):
+    """If an operator ever configured a base ceiling BELOW the ladder's
+    floor rung, the bad-read fallback must not raise it back up."""
+    pipeline = _pipeline_for_ceiling(max_gross_exposure_x=0.3)
+    ctx = _ctx_with_equity(bad_equity)
+
+    ceiling = pipeline._resolve_gross_ceiling(ctx)
+
+    # Asserted by RUNG, not just the inequality: base_x=0.3 happens to sit
+    # below the floor rung too, so an inequality alone can't tell "the
+    # bad-read guard fired" apart from "it silently fell back to the
+    # standing cap, which happened to already be tight enough" — the
+    # exact silent-pass-through this guard exists to rule out.
+    assert ceiling.rung == "bad_read"
+    assert ceiling.ceiling_x <= 0.3
+
+
+def test_resolve_gross_ceiling_fresh_account_is_not_punished_like_a_bad_read():
+    """Regression guard for the DELIBERATE prior behaviour this guard must
+    not break: a genuinely fresh account (no daily_pnl history yet) with a
+    perfectly good current equity read is NOT a bad read, and must still
+    resolve to the standing cap with no owner alert — exactly as
+    resolve_gross_ceiling's own docstring requires."""
+    pipeline = _pipeline_for_ceiling()
+    ctx = _ctx_with_equity(100_000.0)  # good read, empty history via the mock db
+
+    ceiling = pipeline._resolve_gross_ceiling(ctx)
+
+    assert ceiling.rung != "bad_read"
+    assert ceiling.ceiling_x == BASE_X
+    assert ceiling.alert_owner is False
+
+
+def test_resolve_gross_ceiling_normal_drawdown_path_still_works():
+    """Regression guard: a genuinely finite equity read with real history
+    still walks the ordinary ladder path (unaffected by the new branch)."""
+    pipeline = _pipeline_for_ceiling()
+    pipeline.db.get_daily_pnl.return_value = [
+        {"total_value": 100_000.0}, {"total_value": 150_000.0},
+    ]
+    ctx = _ctx_with_equity(120_000.0)
+
+    ceiling = pipeline._resolve_gross_ceiling(ctx)
+
+    assert ceiling.rung != "bad_read"
+    assert ceiling.drawdown_pct == -20.0
+    assert ceiling.ceiling_x == 0.5
