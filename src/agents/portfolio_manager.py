@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from datetime import date
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -12,13 +13,16 @@ from src.models import (
 )
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
+    EARNINGS_STANCE_MAX_AGE_DAYS,
     _gross_multiplier,
     book_exposure as _book_exposure,
     count_aligned_sources,
+    count_opposing_sources,
     position_weight_pct,
     stance_is_aligned,
     weight_pct_of,
 )
+from src.trading_calendar import et_today
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +107,94 @@ class PortfolioManagerAgent(BaseAgent):
         return rows
 
     @classmethod
+    def _earnings_stance_rows(
+        cls, earnings_analyses: list[dict],
+    ) -> list[tuple[str, str, str]]:
+        """`(SYMBOL, stance, filing_date)` for every earnings entry that
+        produces a registry stance, in input order.
+
+        The filter is exactly the one `build_evidence_registry`'s `put`
+        applies — a dict `analysis`, a non-empty collapsed sentiment, a
+        non-empty symbol — extracted so the freshness gate below and the
+        registry itself cannot drift apart about WHICH entry a symbol's
+        earnings stance came from. Order is preserved because the registry
+        is last-wins per symbol.
+
+        `filing_date` is read from the pipeline wrapper first (the shape
+        `run_earnings_preprocess` / `EarningsAnalystAgent.analyze_reports`
+        emit) and from the validated analysis second. Empty string when
+        neither carries one — an unknowable age, which the gate treats as
+        stale.
+        """
+        rows: list[tuple[str, str, str]] = []
+        for item in earnings_analyses:
+            analysis = item.get("analysis")
+            if not isinstance(analysis, dict):
+                continue
+            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
+            stance = cls._collapse_stances([sentiment])
+            symbol = str(item.get("symbol") or "").strip().upper()
+            if not symbol or not stance:
+                continue
+            filing_date = str(
+                item.get("filing_date") or analysis.get("filing_date") or ""
+            ).strip()
+            rows.append((symbol, stance, filing_date))
+        return rows
+
+    @classmethod
+    def stale_evidence_sources(
+        cls,
+        *,
+        earnings_analyses: list[dict],
+        asof: date | None = None,
+    ) -> dict[str, frozenset[str]]:
+        """`{SYMBOL: {"earnings"}}` for stances too old to earn size.
+
+        §9.4 pays for agreement, and before this gate it paid the same for a
+        view formed yesterday and one formed six months ago: the registry
+        recorded only `investment_implications.sentiment` and dropped
+        `filing_date` and `is_new` on the floor, so a cached bullish earnings
+        stance was a full live corroborating source forever. Nothing in
+        `src/risk/rules.py` or `src/portfolio_constructor.py` looked at age.
+        That is reachable, not theoretical: when a symbol has no filing
+        inside the provider's 45-day SEC scan window,
+        `EarningsProvider._check_symbol` falls back to
+        `_get_existing_analysis`, which has NO age bound and re-serves
+        whatever is on disk (the store prunes at 1000 days).
+
+        Threshold: `EARNINGS_STANCE_MAX_AGE_DAYS` (90) — the number the
+        earnings seat's own prompt and the missed-opportunity scan already
+        use. See that constant for why it is reused rather than invented.
+
+        A stale stance is REMOVED FROM THE TALLY ONLY. It stays in the
+        canonical registry, so `validate_grounding` still recognises the
+        coverage and a PM that cites it does not fail the session — this is
+        a size reduction, not a new hard block. The prompt marks it so the
+        PM cannot read it as corroborating.
+
+        An absent or unparseable `filing_date` is treated as stale: an
+        unknowable age is not evidence of freshness, and the same call is
+        already made in `TradingPipeline._missed_ops_earnings_signal`.
+        """
+        today = asof or et_today()
+        stale: dict[str, frozenset[str]] = {}
+        for symbol, _stance, filing_date in cls._earnings_stance_rows(earnings_analyses):
+            try:
+                age_days = (today - date.fromisoformat(filing_date)).days
+                is_stale = age_days > EARNINGS_STANCE_MAX_AGE_DAYS
+            except (TypeError, ValueError):
+                is_stale = True
+            # Last-wins, exactly as the registry resolves the stance itself:
+            # a later entry for the same symbol replaces the verdict rather
+            # than merging with it.
+            if is_stale:
+                stale[symbol] = frozenset({"earnings"})
+            else:
+                stale.pop(symbol, None)
+        return stale
+
+    @classmethod
     def build_evidence_registry(
         cls,
         *,
@@ -145,12 +237,13 @@ class PortfolioManagerAgent(BaseAgent):
             for symbol, items in news_intel.stock_news.items():
                 put(symbol, "news", cls._collapse_stances(i.sentiment for i in items))
 
-        for item in earnings_analyses:
-            analysis = item.get("analysis")
-            if not isinstance(analysis, dict):
-                continue
-            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
-            put(str(item.get("symbol") or ""), "earnings", cls._collapse_stances([sentiment]))
+        # One rule, two readers: `_earnings_stance_rows` decides which
+        # earnings entries produce a stance at all, and `put`'s last-wins
+        # ordering is preserved exactly. `stale_evidence_sources` walks the
+        # SAME rows so the freshness verdict can never attach to a different
+        # filing than the one whose stance actually landed in the registry.
+        for symbol, stance, _filing_date in cls._earnings_stance_rows(earnings_analyses):
+            put(symbol, "earnings", stance)
 
         smart_money_stances: dict[str, list[str]] = {}
         for finding in smart_money_findings or []:
@@ -204,9 +297,32 @@ class PortfolioManagerAgent(BaseAgent):
             smart_money_findings=smart_money_findings,
             symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
+        # §9.4 freshness — which registry entries are real coverage but too
+        # old to EARN size. Computed from the same earnings list the registry
+        # was built from, so the prompt and the constructor gate the same
+        # stances (`pipeline_stages` recomputes both from identical inputs).
+        stale_sources = self.stale_evidence_sources(
+            earnings_analyses=earnings_analyses,
+        )
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
         )
+        if stale_sources:
+            # The registry values themselves stay undecorated — the PM must
+            # copy the stance string EXACTLY for `validate_grounding`, so the
+            # staleness is carried alongside rather than inside them.
+            stale_registry_note = (
+                "\n\nSTALE (still real coverage, still citable as provenance, "
+                "but NOT counted toward the agreement ceiling below — the "
+                f"filing is more than {EARNINGS_STANCE_MAX_AGE_DAYS} days old):\n"
+                + "\n".join(
+                    f"- {symbol}: {', '.join(sorted(sources))}"
+                    for symbol, sources in sorted(stale_sources.items())
+                    if symbol in evidence_registry
+                )
+            )
+            if not stale_registry_note.rstrip().endswith(":"):
+                evidence_registry_text += stale_registry_note
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
         # not chosen one yet when it reads this: a name it takes long
@@ -215,10 +331,32 @@ class PortfolioManagerAgent(BaseAgent):
         # `PortfolioConstructor` re-derives the count from — not a preview
         # of a different number. See 2026-08-20/Phase 2b's incident class:
         # a silent clamp the PM's own stated reasoning disagreed with.
+        #
+        # The OPPOSED count sizes nothing (see
+        # `src/risk/rules.py::count_opposing_sources`). It is here because a
+        # seat arguing the other way was previously indistinguishable from a
+        # seat with no view and from no coverage at all — the PM could size a
+        # name its own earnings or macro seat was bearish on and read
+        # "1 aligned" as the whole story.
+        def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
+            ignored = stale_sources.get(symbol)
+            stale_note = (
+                f"; {', '.join(sorted(ignored))} stance NOT counted — filing "
+                f"older than {EARNINGS_STANCE_MAX_AGE_DAYS}d"
+                if ignored and any(s in sources for s in ignored) else ""
+            )
+            long_for = count_aligned_sources(symbol, sources, "long", ignored_sources=ignored)
+            long_against = count_opposing_sources(symbol, sources, "long", ignored_sources=ignored)
+            short_for = count_aligned_sources(symbol, sources, "short", ignored_sources=ignored)
+            short_against = count_opposing_sources(symbol, sources, "short", ignored_sources=ignored)
+            return (
+                f"- {symbol}: {long_for} aligned / {long_against} opposed if long, "
+                f"{short_for} aligned / {short_against} opposed if short "
+                f"(of {len(sources)} source(s) with current coverage{stale_note})"
+            )
+
         agreement_lines = [
-            f"- {symbol}: {count_aligned_sources(symbol, sources, 'long')} aligned "
-            f"if long, {count_aligned_sources(symbol, sources, 'short')} aligned if "
-            f"short (of {len(sources)} source(s) with current coverage)"
+            _agreement_line(symbol, sources)
             for symbol, sources in sorted(evidence_registry.items())
         ]
         agreement_text = (
@@ -490,6 +628,17 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 guidance = analysis.get("guidance", "N/A")
                 filing_label = f"{ea.get('form_type', '?')} ({ea.get('filing_date', '?')})"
                 source_note = " [from cache]" if not ea.get("is_new") else " [new filing]"
+                # §9.4 freshness: `[from cache]` and a filing date were
+                # already here, so the model COULD see the age — but the same
+                # stance was simultaneously being counted as a live
+                # corroborating source in the agreement block below. Say
+                # plainly which way it is, in the section the PM actually
+                # reads the view from.
+                if "earnings" in stale_sources.get(str(sym).strip().upper(), frozenset()):
+                    source_note += (
+                        f" [STALE >{EARNINGS_STANCE_MAX_AGE_DAYS}d — context only; "
+                        "does NOT count toward the agreement ceiling]"
+                    )
 
                 # Strategic direction
                 strat = analysis.get("strategic_direction", {})
@@ -852,9 +1001,17 @@ Memory and narrative sections are context, never current specialist coverage.
 ## Independent Source Agreement (deterministic ceiling — Step 5)
 {agreement_text}
 `risk_allocation_pct` is CEILINGED — never raised — by how many independent
-sources above are actually aligned with the direction you propose, computed
+sources above are actually ALIGNED with the direction you propose, computed
 from this registry, not from what you write in provenance. Ask for what the
-idea has earned; the ceiling only ever refuses size it did not earn.
+idea has earned; the ceiling only ever refuses size it did not earn. A source
+whose stance is marked stale is not in the aligned count: an old filing is
+still worth reading, but it has not confirmed anything about today.
+
+The OPPOSED count is a seat arguing the OTHER way. It currently changes no
+ceiling — a name with 2 aligned and 2 opposed is sized exactly like one with
+2 aligned and 0 opposed. It is shown because those two are not the same idea
+and you should not treat them as one: say in your reasoning why you are
+overriding a seat that disagrees, or ask for less.
 
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
 

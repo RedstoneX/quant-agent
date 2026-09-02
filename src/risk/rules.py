@@ -301,7 +301,43 @@ def stance_is_aligned(source: str, symbol: str, stance: str, *, wants_bullish: b
     return stance_is_bullish if wants_bullish else stance_is_bearish
 
 
-def count_aligned_sources(symbol: str, sources: dict[str, str], direction: str) -> int:
+#: §9.4 freshness. An earnings stance older than this many days stops
+#: COUNTING toward the agreement tally (it is still shown to the PM, and
+#: still valid provenance — see `PortfolioManagerAgent.stale_evidence_sources`).
+#:
+#: 90 is not a new number. `config/prompts/earnings_analyst.md` already tells
+#: the seat that a filing more than 90 days old must cap its own `conviction`
+#: at `low` and flag `stale_filing_<N>d`, and that past 180 days the filing
+#: "should not have reached you"; `TradingPipeline._missed_ops_earnings_signal`
+#: already refuses anything older than 90 days as "recent earnings evidence".
+#: The seat and the reflector had a threshold; only the SIZING path did not
+#: read it. Reusing 90 makes the sizing path agree with the opinion the desk
+#: had already written down, rather than adding a fourth staleness rule.
+EARNINGS_STANCE_MAX_AGE_DAYS = 90
+
+
+def _count_sources(
+    symbol: str,
+    sources: dict[str, str],
+    *,
+    wants_bullish: bool,
+    ignored_sources: frozenset[str] | set[str] | None,
+) -> int:
+    ignored = ignored_sources or frozenset()
+    return sum(
+        1 for source, stance in sources.items()
+        if source not in ignored
+        and stance_is_aligned(source, symbol, stance, wants_bullish=wants_bullish)
+    )
+
+
+def count_aligned_sources(
+    symbol: str,
+    sources: dict[str, str],
+    direction: str,
+    *,
+    ignored_sources: frozenset[str] | set[str] | None = None,
+) -> int:
     """The deterministic "agreement count": how many independent seats (of
     technical/news/earnings/macro/smart_money) recorded a stance for
     `symbol` that points the same way as `direction` ("long" wants
@@ -314,11 +350,51 @@ def count_aligned_sources(symbol: str, sources: dict[str, str], direction: str) 
     earns size, so it has to come from evidence the PM cannot selectively
     quote from, not from the PM's own (possibly incomplete) claims about
     itself.
+
+    `ignored_sources` names the seats whose stance for THIS symbol is too
+    stale to earn size — currently only `earnings`, gated at
+    `EARNINGS_STANCE_MAX_AGE_DAYS` by
+    `PortfolioManagerAgent.stale_evidence_sources`. It is a REMOVAL from the
+    tally, never an addition, so it can only ever lower a ceiling. A stale
+    stance stays in the registry (it is still real coverage, and the PM may
+    still cite it) — it simply stops being paid for.
     """
-    wants_bullish = direction != "short"
-    return sum(
-        1 for source, stance in sources.items()
-        if stance_is_aligned(source, symbol, stance, wants_bullish=wants_bullish)
+    return _count_sources(
+        symbol, sources,
+        wants_bullish=(direction != "short"),
+        ignored_sources=ignored_sources,
+    )
+
+
+def count_opposing_sources(
+    symbol: str,
+    sources: dict[str, str],
+    direction: str,
+    *,
+    ignored_sources: frozenset[str] | set[str] | None = None,
+) -> int:
+    """How many independent seats took the side OPPOSITE `direction`.
+
+    The exact mirror of `count_aligned_sources`: on a long it counts bearish
+    stances, on a short bullish ones, through the same `stance_is_aligned`
+    vocabulary (inverse-ETF macro flip included). Neutral and mixed stances
+    are in NEITHER count — a seat with no view took no side.
+
+    **This number sizes nothing.** §9.4 pays for agreement and is silent on
+    dissent: a bearish earnings stance on a long contributes 0 to the
+    agreement count, which is arithmetically identical to neutral and to no
+    coverage at all, and nothing subtracts. That was invisible rather than
+    decided — the desk could size up a name one of its own seats was
+    actively bearish on and no number anywhere said so. This function exists
+    to make that visible and countable (PM prompt, constructor log, order
+    note) so the owner can decide what, if anything, dissent should cost.
+    Wiring it into the ceiling would be a risk-rule change and needs a
+    ratified decision first.
+    """
+    return _count_sources(
+        symbol, sources,
+        wants_bullish=(direction == "short"),
+        ignored_sources=ignored_sources,
     )
 
 

@@ -795,6 +795,18 @@ phases:
         path: "src/risk/rules.py"
         symbol: "def stance_is_aligned"
         note: "§9.4: helper to check whether a source's stance aligns with the desired direction"
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "EARNINGS_STANCE_MAX_AGE_DAYS"
+        note: "§9.4 freshness: an earnings stance older than 90 days stops counting toward the agreement tally. 90 is the earnings seat's own existing threshold (config/prompts/earnings_analyst.md, and _missed_ops_earnings_signal), not a new number."
+      - kind: symbol_in_file
+        path: "src/agents/portfolio_manager.py"
+        symbol: "def stale_evidence_sources"
+        note: "§9.4 freshness: the gate itself. Removes a stale stance from the TALLY only — it stays in the registry, so grounding still accepts it and this can only ever lower a ceiling."
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "def count_opposing_sources"
+        note: "§9.4: how many seats took the OPPOSITE side. Surfaced in the PM prompt, the constructor log and the order note; prices nothing. Making dissent subtract is an open owner decision."
       - kind: setting_present
         path: "config/settings.yaml"
         key: "risk.agreement_ceiling_pct"
@@ -815,6 +827,22 @@ phases:
         path: "tests/test_agreement_sizing.py"
         test: "test_count_aligned_sources_three_or_more_aligned"
         note: "§9.4: three-source agreement test case for the ceiling"
+      - kind: test_exists
+        path: "tests/test_agreement_sizing.py"
+        test: "test_stance_exactly_at_the_threshold_is_still_fresh"
+        note: "§9.4 freshness: the boundary. 90 days old is NOT stale; the gate fires strictly past the threshold."
+      - kind: test_exists
+        path: "tests/test_agreement_sizing.py"
+        test: "test_a_stale_bullish_earnings_view_no_longer_earns_the_higher_ceiling"
+        note: "§9.4 freshness: the defect priced — same registry, same trade, ceiling drops 4.0% to 3.0% purely because the filing is past the threshold."
+      - kind: test_exists
+        path: "tests/test_agreement_sizing.py"
+        test: "test_a_gated_stance_stays_in_the_registry"
+        note: "§9.4 freshness: the gate must not delete coverage — validate_grounding fails the WHOLE session on any error, so removing the stance would turn a stale view into a hard block instead of a size reduction."
+      - kind: test_exists
+        path: "tests/test_agreement_sizing.py"
+        test: "test_dissent_does_not_move_the_size_across_a_ceiling_rung"
+        note: "§9.4: dissent is recorded and deliberately does NOT subtract. Uses 2-aligned/1-opposed because 1-aligned/1-opposed cannot detect a penalty — the schedule prices 0 and 1 identically."
       - kind: manual
         note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing, and in turn §9.3/§9.4."
       - kind: file_exists

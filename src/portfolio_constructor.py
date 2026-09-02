@@ -275,6 +275,7 @@ class PortfolioConstructor:
         clusters: list[list[str]] | None = None,
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
+        stale_sources: dict[str, frozenset[str]] | None = None,
         gross_ceiling=None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
@@ -304,6 +305,14 @@ class PortfolioConstructor:
         guaranteed to agree with what the PM was shown). Drives the agreement
         ceiling in `_plan_risk_targets`. Omitted, that ceiling is not enforced
         — same "no view, don't invent one" posture as `existing_risk_pct`.
+
+        `stale_sources`: spec §9.4 freshness. {symbol: {source}} — registry
+        entries that are real coverage but too old to earn size, from
+        `PortfolioManagerAgent.stale_evidence_sources` (the same pure function
+        the PM's own prompt used, recomputed by the caller from identical
+        inputs). Removed from the agreement tally only, so it can lower a
+        ceiling and never raise one. Omitted, nothing is gated — a caller with
+        no freshness view must not invent one, exactly as above.
 
         `gross_ceiling`: spec §11.2. The de-levering ladder's resolved
         `GrossCeiling` for this session — the standing cap, stepped down by
@@ -336,6 +345,7 @@ class PortfolioConstructor:
             clusters=clusters,
             regime=regime,
             evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
         )
 
         # Spec §10.3. Held GROSS exposure per sector, carried through the
@@ -515,6 +525,7 @@ class PortfolioConstructor:
         clusters: list[list[str]] | None,
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
+        stale_sources: dict[str, frozenset[str]] | None = None,
     ) -> dict[str, RiskPlan]:
         """Turn risk-based targets into notional weights, under the budget.
 
@@ -539,6 +550,7 @@ class PortfolioConstructor:
         from src.risk.budget import RiskRequest, allocate_risk_budget
         from src.risk.rules import (
             _gross_multiplier, agreement_ceiling_for_count, count_aligned_sources,
+            count_opposing_sources,
         )
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
@@ -556,6 +568,9 @@ class PortfolioConstructor:
         # between PM's stated allocation and the constructed order reads as
         # PM contradicting itself (2026-08-20 incident), not as arithmetic.
         agreement_notes: dict[str, str] = {}
+        # §9.4 dissent, recorded alongside — never subtracted. See the
+        # opposing-count block below.
+        dissent_notes: dict[str, str] = {}
 
         for target in targets:
             if target.risk_allocation_pct is None:
@@ -589,11 +604,46 @@ class PortfolioConstructor:
             # (infinite), never silently treated as zero agreement — a
             # missing registry is not evidence of disagreement.
             agreement_count: int | None = None
+            opposing_count: int | None = None
             if evidence_registry is not None:
                 sources = evidence_registry.get(sym.upper(), {})
-                agreement_count = count_aligned_sources(sym, sources, target.direction)
+                # §9.4 freshness: a stance the caller has judged too old is
+                # dropped from the TALLY only. It stays in `sources`, so it is
+                # still coverage `validate_grounding` recognises — this can
+                # lower the ceiling, never raise it.
+                ignored = (stale_sources or {}).get(sym.upper())
+                agreement_count = count_aligned_sources(
+                    sym, sources, target.direction, ignored_sources=ignored,
+                )
+                # Dissent, counted but NOT priced. §9.4 pays for agreement and
+                # says nothing about opposition, so a seat arguing the other
+                # way scores the same zero as a seat with no view — the desk
+                # could size a name one of its own analysts was bearish on and
+                # leave no number behind saying so. Recorded here, on every
+                # sized target, so how often that happens is measurable before
+                # anyone decides what it should cost. Feeding it into
+                # `agreement_ceiling_for_count` would be a risk-rule change
+                # and needs the owner, not this function.
+                opposing_count = count_opposing_sources(
+                    sym, sources, target.direction, ignored_sources=ignored,
+                )
                 agreement_ceiling = agreement_ceiling_for_count(
                     self.cfg.agreement_ceiling_pct, agreement_count,
+                )
+                if ignored:
+                    gated = sorted(s for s in ignored if s in sources)
+                    if gated:
+                        logger.info(
+                            "Constructor: %s — %s stance(s) present but too "
+                            "stale to count toward agreement (%d aligned "
+                            "after the freshness gate)",
+                            sym, ", ".join(gated), agreement_count,
+                        )
+                logger.info(
+                    "Constructor: %s agreement %d aligned / %d opposed "
+                    "(direction=%s, %d source(s) with coverage)",
+                    sym, agreement_count, opposing_count,
+                    target.direction, len(sources),
                 )
             else:
                 agreement_ceiling = float("inf")
@@ -614,6 +664,19 @@ class PortfolioConstructor:
                     "allow. More independent confirmation earns more of the "
                     "risk budget; this idea earned less. Deterministic, not "
                     "PM inconsistency]"
+                )
+            if opposing_count:
+                # Carried into the order's reasoning (see `RiskPlan.note`) so
+                # the AI Risk Manager reads it and it lands in the persisted
+                # proposed_order evidence — a dissent count nobody can query
+                # is not a measurement.
+                dissent_notes[sym] = (
+                    f"[constructor: {sym} — {opposing_count} independent "
+                    f"source(s) took the OPPOSITE side of this "
+                    f"{target.direction} ({agreement_count} aligned). This did "
+                    "NOT reduce the size: §9.4 prices agreement only. Recorded "
+                    "so the cost of overriding a dissenting seat is "
+                    "measurable]"
                 )
             requests.append(RiskRequest(sym, requested_pct))
 
@@ -643,6 +706,8 @@ class PortfolioConstructor:
             # explains why the REQUEST itself was already smaller before
             # the budget allocator ever saw it.
             note_parts = [agreement_notes[sym]] if sym in agreement_notes else []
+            if sym in dissent_notes:
+                note_parts.append(dissent_notes[sym])
             if allocation is not None:
                 grant = allocation.grants.get(sym.upper())
                 granted = grant.granted_pct if grant else 0.0

@@ -416,6 +416,78 @@ This lands naturally on top of Phase 2b, which replaces notional conviction
 sizing with risk allocation: multi-source agreement earns a larger share of
 the risk budget.
 
+**Freshness (built 2026-09-02).** "Independent sources agree" was implemented
+as a headcount with no notion of *when* a source formed its view.
+`build_evidence_registry` read only `investment_implications.sentiment` from an
+earnings analysis and discarded `is_new` and `filing_date`; neither
+`src/risk/rules.py` nor `src/portfolio_constructor.py` looked at age anywhere
+in the sizing path. A cached bullish earnings stance therefore counted as a
+full live corroborating source indefinitely, moving a name from one aligned
+source to two and buying it a 3.0% → 4.0% risk allowance — a 33% larger
+allowance on evidence that had confirmed nothing about today. This is reachable
+rather than theoretical: when a symbol has no filing inside the provider's
+45-day SEC scan window, `EarningsProvider._check_symbol` falls back to
+`_get_existing_analysis`, which has **no age bound at all** and re-serves
+whatever is on disk (the store prunes at 1000 days).
+
+`PortfolioManagerAgent.stale_evidence_sources` now gates an earnings stance
+out of the tally past `EARNINGS_STANCE_MAX_AGE_DAYS` (90). **90 is not a new
+number**: `config/prompts/earnings_analyst.md` already caps the seat's own
+conviction at `low` past 90 days and calls a filing past 180 days one that
+"should not have reached you", and `_missed_ops_earnings_signal` already
+refuses anything older than 90 days as recent earnings evidence. The seat and
+the reflector had a threshold; only the sizing path did not read it.
+
+Two properties are deliberate and tested:
+
+- **Removal from the tally only.** The stance stays in the canonical registry,
+  so `validate_grounding` still recognises the coverage and a PM that cites it
+  does not fail the session. `validate_grounding` fails the WHOLE session on a
+  non-empty error list, so deleting the stance would have converted a stale
+  view from a sizing question into a hard block. This is a size reduction, and
+  it can only ever lower a ceiling.
+- **The PM is told.** The prompt already labelled a cached view `[from cache]`
+  with its filing date and then counted it as live in the agreement block of
+  the same message. The agreement line, the registry block and the earnings
+  section now all say the same thing.
+
+**Measured impact, `run-64290730` (2026-09-01), 65 symbols carrying an earnings
+stance: zero.** No filing in that run is older than 48 days (median 28), so the
+gate removes 0 sources and drops 0 ceiling rungs. Across all 28 runs in the
+snapshot (2026-08-17 → 2026-09-01, 1643 analyses) nothing exceeds 48 days
+either. The gate is a guard against the unbounded `_get_existing_analysis`
+fallback, not a correction to today's book. For scale, the same measurement at
+a 45-day threshold — the provider's own scan window — gates 3 stances and drops
+2 symbols a rung (GE and NFLX, 4.0% → 3.0%). **Choosing a threshold below 90
+would be inventing a number; 90 is the one the desk had already written down.**
+
+**Dissent is counted, not priced (built 2026-09-02).** `count_aligned_sources`
+counts only sources aligned with the trade direction, so on a long a bearish
+earnings stance contributes 0 — arithmetically identical to neutral and to no
+coverage at all. Nothing subtracts, and until now nothing recorded that it had
+happened. `count_opposing_sources` is the exact mirror of the aligned count
+through the same `stance_is_aligned` vocabulary; it is surfaced in the PM
+prompt, logged per sized target, and written into the order note that reaches
+the AI Risk Manager and the persisted `proposed_order` evidence. **It changes
+no ceiling.** Making dissent subtract is a risk-rule change and needs an owner
+decision; this exists so the frequency and the cost of overriding a dissenting
+seat are measurable before that decision is taken. On `run-64290730`, of the 42
+symbols carrying both a technical and an earnings stance, 4 were internally
+split (CAT, GEV, PFE, SLB) — sized identically to a name with one aligned
+source and no dissent.
+
+**Open, not built: conviction-weighted agreement.** Every seat emits a
+conviction and the tally ignores it entirely — a high-conviction bearish read
+and a weak one are the same number. This interacts directly with the dissent
+question above (how much a dissenter subtracts is meaningless without knowing
+how strongly it dissents) and the two need deciding together. See §9.5 item 3a:
+the owner removed conviction weighting from the ledger's credit on 2026-08-31
+for two stated reasons, and **one of them is factually wrong about this
+section** — "a confident call already earns a larger position through the §9.4
+agreement ceiling" is not true of the code, which is a pure headcount. The
+circularity objection stands on its own; the double-counting objection does
+not, and the owner should know that before ruling here.
+
 ### 9.5 — A conviction ledger per candidate
 
 **Status (owner-ratified 2026-08-31): specified, scheduled work. PARTIALLY
