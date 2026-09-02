@@ -747,7 +747,56 @@ Each item is classified WORKING AS INTENDED / TOO STRICT / DEFECT / NO RECORD.
 
 ---
 
-**0. Nobody has traced what actually reaches the model — AUDIT. OWNER MADE THIS PRIORITY ONE, 2026-09-02.**
+**0. 70% OF WHAT THE MODEL READS IS EARNINGS PROSE — MEASURED 2026-09-02. Owner made the audit priority one; this is its first result.**
+
+**The finished prompt was rendered and measured for the first time.** Nobody
+had ever read it. It is **199,646 characters — roughly 50,000 tokens** — and
+the breakdown is not what anyone assumed:
+
+| section | chars | share |
+|---|---:|---:|
+| **Earnings Analysis (SEC filings, ~35 companies)** | **140,107** | **70%** |
+| Technical Analysis Reports | 17,409 | 8.7% |
+| Independent Source Agreement (the Step 5 ceiling) | 11,902 | 6.0% |
+| Canonical Evidence Registry | 6,870 | 3.4% |
+| Macro Analysis | 5,799 | 2.9% |
+| News Intelligence | 3,248 | 1.6% |
+| **Deterministic BUY Eligibility — which stocks may be bought** | **853** | **0.4%** |
+| Proposal Conversion (what keeps getting refused) | 69 | 0.03% |
+
+**The list of what the desk is actually allowed to buy is 853 characters,
+sitting after 140,000 characters of SEC filing summaries.** The record of
+what keeps getting blocked is 69 characters — empty, because the book was
+wiped the same day it shipped (see item 1).
+
+**This is a plausible mechanism for the familiarity bias, and it costs
+nothing to test.** The biggest, most-covered companies have the longest
+filings and the most earnings prose. A prompt that is 70% earnings text is
+therefore 70% dominated by exactly the famous names the model keeps picking.
+Three attempts to fix that behaviour with WORDS all measured as no-change —
+because the words were a rounding error next to the volume.
+
+**It also explains the bill.** ~50k tokens per call is why the
+portfolio_manager seat is 93% of LLM spend (see item 14).
+
+**Next, in order, none of it needing a paid call:**
+  a. Cut or summarise the earnings section and re-render. How small does the
+     prompt get, and what does it cost per call then?
+  b. Re-run the selection benchmark against the trimmed prompt. If
+     `familiarity_bias` moves, the cause is volume, not the model. **This is
+     the first intervention with a real mechanism behind it.**
+  c. Move BUY eligibility and Proposal Conversion to the TOP. They are the
+     binding constraints and they are currently buried.
+  d. Then continue the trace: 22 separate inputs feed this one prompt
+     (see `_pm_selection_invoke` in `ops/model_policy/scenarios.py`).
+
+**Confirmed for the owner:** there is no hidden channel. The model receives
+one assembled text and nothing else. The problem was never that we could not
+see what it gets — it is that nobody had looked.
+
+---
+
+**Original audit brief, still open below.**
 
 **This outranks item 1. Start here, before touching anything else.** The
 reward:risk work below is real and stays queued, but it is a fix to a gate
