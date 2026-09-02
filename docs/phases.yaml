@@ -898,6 +898,9 @@ phases:
         - "A full run costs nothing and takes well under a minute, so a change to the trading logic can be checked before it's ever allowed near real positions or real spending."
         - "This matters because the market is only open a small fraction of the week — waiting for it to test something isn't realistic."
         - "It can reproduce, on demand, the exact day the desk stopped trading entirely after tripping a spending limit on only seventeen cents of real cost — so that failure can be checked against going forward instead of argued about from memory."
+        - "For four days it gave a pass or a fail on identical code depending on which saved answers it happened to pick up. Fixed on 2026-09-02: it now always replays one specific saved trading session, and prints which one, so two runs of the same code give the same answer."
+        - "It also has a third answer now — 'could not judge' — for when it could not faithfully recreate the session. That used to look identical to a real failure, and a red light cost an hour of argument instead of being believed or dismissed. It is deliberately hard to reach, so a genuine fault is never quietly excused."
+        - "Honest limit, stated where it will be read: it still cannot recreate a full morning offline — the news and economic-data feeds are unreachable — so it can show you that a morning got worse, but not that a morning is well."
     status: "DONE AND LIVE"
     confidence: "high"
     evidence:

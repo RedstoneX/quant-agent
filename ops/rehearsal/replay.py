@@ -124,6 +124,42 @@ _SESSION_SUFFIXES = (
     "_morning", "_midday", "_close", "_evening", "_intra_check", "_preprocess",
 )
 
+# `RunContext.start` (src/pipeline_context.py) mints run ids as
+# "<prefix>-<8 hex>", with the morning session keeping the legacy bare "run"
+# prefix and every other session using its own name. Auto-pinning has to
+# reverse that mapping to find the recorded runs of one session type.
+SESSION_RUN_PREFIX = {
+    "morning": "run",
+    "midday": "midday",
+    "close": "close",
+    "evening": "evening",
+    "intra_check": "intra_check",
+}
+
+# The agents a recorded run must contain before it counts as a COMPLETE
+# example of that session — the deepest stage the session reaches, plus what
+# that stage depends on. Derived from what live history actually contains
+# (agent_logs, 2026-09-02: 32 recorded morning runs, 26 of which reached the
+# portfolio manager; the other 6 stopped in research and cannot answer a
+# rehearsal's decision-stage calls at all).
+#
+# Requiring MORE than a session strictly needs is the safe direction: spare
+# recordings go unused, missing ones raise MissingRecordedResponse and inject
+# a failure production never had. `risk_manager` is deliberately NOT required
+# for morning — a portfolio manager that proposes nothing legitimately never
+# calls it, and 21 of the 32 recorded mornings end that way.
+SESSION_REQUIRED_AGENTS = {
+    "morning": ("tech_analyst", "portfolio_manager"),
+    "midday": ("news_analyst", "position_reviewer"),
+    "close": ("news_analyst", "position_reviewer"),
+    "evening": ("evening_analyst",),
+    "intra_check": ("tech_analyst", "portfolio_manager"),
+}
+
+# `--replay-run` values that are instructions rather than run ids.
+REPLAY_RUN_AUTO = "auto"
+REPLAY_RUN_ANY = "any"
+
 
 class MissingRecordedResponse(RuntimeError):
     """A rehearsed call had no recorded response to replay."""
@@ -195,6 +231,148 @@ def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
     if union == 0:
         return 0.0
     return len(left & right) / union
+
+
+# ------------------------------------------------------- choosing the run
+#
+# WHY A REHEARSAL PINS ITS REPLAY BY DEFAULT
+# ------------------------------------------
+# Unpinned, `.match()` draws from every recorded response this system has ever
+# produced, and each recording is consumed once. That makes the pool a shared,
+# order-sensitive resource: any change to how many calls the pipeline makes —
+# or to how many analyses parse, which changes the prompts, which changes the
+# Jaccard ranking — consumes it differently, so a DIFFERENT historical answer
+# gets replayed. The verdict then tracks pool consumption rather than the code
+# under test.
+#
+# Measured on 2026-09-02 (docs/INCIDENT_HISTORY.md, "the rehearsal rig's
+# verdict was a coin flip"): a fix that eliminated 10 parse failures and
+# recovered 2 symbols — strictly an improvement — flipped an unpinned morning
+# rehearsal from PASS to FAIL. Pinned to one run, both commits FAIL
+# identically and the improvement shows up where it should, as rejections
+# falling from 23 to 21.
+#
+# The symptom was `pm_grounding_error` naming `ZS`: the unpinned matcher had
+# handed the morning's decision stage a portfolio-manager answer recorded in
+# `intra_check-d0909ddc` (agent_logs row 312) instead of the morning's own row
+# 309, and the grounding check then judged a decision about `ZS` against a
+# session that never analysed `ZS`.
+#
+# So the default is now "the most recent COMPLETE recorded run of the session
+# being rehearsed, that had already started by the rehearsed instant", which
+# makes the verdict a function of (code, session, --as-of, database) and
+# nothing else. `--replay-run <id>` still pins explicitly; `--replay-run any`
+# asks for the old pool-wide behaviour on purpose.
+
+
+@dataclass
+class ReplayRunChoice:
+    """Which recorded run a rehearsal replays, and how that was decided."""
+
+    run_id: str | None
+    mode: str          # "explicit" | "auto" | "any"
+    reason: str        # one plain sentence, printed in the report
+    complete: bool = True
+    candidates_considered: int = 0
+
+    def as_note(self) -> str:
+        return self.reason
+
+
+def select_replay_run(
+    db_path: str, session: str, *, not_after_utc: str | None = None,
+) -> ReplayRunChoice:
+    """Pick the recorded run an unpinned rehearsal of `session` should replay.
+
+    Deterministic by construction: candidate runs are filtered on session
+    prefix, on having started at or before `not_after_utc` (the rehearsed
+    instant, as a UTC 'YYYY-MM-DD HH:MM:SS' string — `agent_logs.timestamp`
+    defaults to SQLite's `datetime('now')`, which is UTC), and on carrying a
+    recording for every agent in `SESSION_REQUIRED_AGENTS`. The survivors are
+    ordered by (start timestamp, run id) and the last one wins.
+
+    Falls back, loudly, rather than silently: an incomplete run is preferred
+    to no pin at all, and no pin at all is reported as a rig limitation.
+    """
+    prefix = SESSION_RUN_PREFIX.get(session)
+    if not prefix:
+        return ReplayRunChoice(
+            run_id=None, mode="any", complete=False,
+            reason=(
+                f"replay was NOT pinned: '{session}' has no known run-id "
+                f"prefix, so recorded responses are drawn from all history "
+                f"and this verdict is not reproducible"
+            ),
+        )
+
+    query = (
+        "SELECT run_id, agent_name, MIN(timestamp) AS started "
+        "FROM agent_logs "
+        "WHERE input_message IS NOT NULL AND input_message != '' "
+        "AND full_response IS NOT NULL AND run_id LIKE ? "
+        "GROUP BY run_id, agent_name"
+    )
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(query, (f"{prefix}-%",)).fetchall()
+    finally:
+        conn.close()
+
+    starts: dict[str, str] = {}
+    agents: dict[str, set[str]] = {}
+    for row in rows:
+        run = str(row["run_id"])
+        # A rehearsal writes its own rows into the sandbox under
+        # "rehearsal-<session>-<date>"; those are never replay material.
+        if run.startswith("rehearsal-"):
+            continue
+        started = str(row["started"] or "")
+        starts[run] = min(starts[run], started) if run in starts else started
+        agents.setdefault(run, set()).add(_normalise(str(row["agent_name"])))
+
+    if not_after_utc:
+        starts = {r: t for r, t in starts.items() if t and t <= not_after_utc}
+
+    required = set(SESSION_REQUIRED_AGENTS.get(session, ()))
+    ordered = sorted(starts, key=lambda r: (starts[r], r))
+    complete = [r for r in ordered if required.issubset(agents.get(r, set()))]
+
+    if complete:
+        chosen = complete[-1]
+        return ReplayRunChoice(
+            run_id=chosen, mode="auto", complete=True,
+            candidates_considered=len(ordered),
+            reason=(
+                f"replay pinned automatically to {chosen}, the most recent "
+                f"complete {session} run recorded at or before the rehearsed "
+                f"instant (started {starts[chosen]} UTC; {len(complete)} of "
+                f"{len(ordered)} recorded {session} runs were complete). Pass "
+                f"--replay-run to override"
+            ),
+        )
+    if ordered:
+        chosen = ordered[-1]
+        missing = sorted(required - agents.get(chosen, set()))
+        return ReplayRunChoice(
+            run_id=chosen, mode="auto", complete=False,
+            candidates_considered=len(ordered),
+            reason=(
+                f"replay pinned automatically to {chosen}, but NO recorded "
+                f"{session} run is complete — this one has no recording for "
+                f"{', '.join(missing)}, so calls to it cannot be answered and "
+                f"this rehearsal exercises less than a whole session"
+            ),
+        )
+    return ReplayRunChoice(
+        run_id=None, mode="any", complete=False,
+        reason=(
+            f"replay was NOT pinned: no recorded {session} run exists at or "
+            f"before the rehearsed instant, so responses are drawn from all "
+            f"history and this verdict is NOT reproducible — treat it as "
+            f"unmeasured, not as a result"
+        ),
+    )
 
 
 # The exact marker `analyze_batch` / `_merge_agent_results` join real calls

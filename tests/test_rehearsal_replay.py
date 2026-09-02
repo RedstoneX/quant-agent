@@ -270,3 +270,127 @@ def test_match_does_not_crash_when_two_unmerged_parts_of_one_row_tie():
     library2 = ResponseLibrary([call])
     chosen2 = library2.match("tech_analyst", "totally unrelated live prompt text")
     assert chosen2.full_response == chosen.full_response
+
+
+# ---------------------------------------------------------------------------
+# Choosing the recorded run: the 2026-09-02 "verdict was a coin flip" defect.
+#
+# Unpinned, a rehearsal drew each agent's answer independently from the whole
+# recorded pool, so the verdict tracked how that shared pool happened to be
+# consumed rather than the code under test — PASS and FAIL on identical code.
+# `select_replay_run` is the default that closes it: one recorded run, chosen
+# deterministically from (session, --as-of, database).
+# ---------------------------------------------------------------------------
+
+
+def _history_db(tmp_path, rows):
+    """A minimal `agent_logs` carrying (run_id, agent_name, timestamp) rows."""
+    import sqlite3
+
+    path = tmp_path / "history.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE agent_logs (id INTEGER PRIMARY KEY, run_id TEXT, "
+        "agent_name TEXT, timestamp TEXT, input_message TEXT, "
+        "full_response TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO agent_logs (run_id, agent_name, timestamp, "
+        "input_message, full_response) VALUES (?, ?, ?, 'prompt', 'answer')",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
+def test_select_replay_run_pins_the_most_recent_complete_run(tmp_path):
+    """The default has to be one run, and the newest usable one."""
+    from ops.rehearsal.replay import select_replay_run
+
+    db = _history_db(tmp_path, [
+        ("run-old", "tech_analyst", "2026-08-30 13:30:00"),
+        ("run-old", "portfolio_manager", "2026-08-30 13:34:00"),
+        ("run-new", "tech_analyst", "2026-09-01 13:30:00"),
+        ("run-new", "portfolio_manager", "2026-09-01 13:34:00"),
+    ])
+    choice = select_replay_run(db, "morning")
+    assert choice.run_id == "run-new"
+    assert choice.mode == "auto" and choice.complete
+    # The reader must be told which run was compared, in the report itself.
+    assert "run-new" in choice.reason
+
+
+def test_select_replay_run_skips_a_run_that_never_reached_the_decision(tmp_path):
+    """A morning that stopped in research cannot answer a decision-stage call;
+    pinning to it would inject a MissingRecordedResponse production never had."""
+    from ops.rehearsal.replay import select_replay_run
+
+    db = _history_db(tmp_path, [
+        ("run-whole", "tech_analyst", "2026-08-30 13:30:00"),
+        ("run-whole", "portfolio_manager", "2026-08-30 13:34:00"),
+        ("run-stub", "news_analyst_morning", "2026-09-01 13:30:00"),
+        ("run-stub", "macro_analyst", "2026-09-01 13:31:00"),
+    ])
+    choice = select_replay_run(db, "morning")
+    assert choice.run_id == "run-whole"
+
+
+def test_select_replay_run_will_not_replay_the_future(tmp_path):
+    """--as-of fixes the rehearsed instant; a run that had not started by then
+    is not something that morning could have produced."""
+    from ops.rehearsal.replay import select_replay_run
+
+    db = _history_db(tmp_path, [
+        ("run-before", "tech_analyst", "2026-09-01 13:30:00"),
+        ("run-before", "portfolio_manager", "2026-09-01 13:34:00"),
+        ("run-after", "tech_analyst", "2026-09-02 13:30:00"),
+        ("run-after", "portfolio_manager", "2026-09-02 13:34:00"),
+    ])
+    choice = select_replay_run(
+        db, "morning", not_after_utc="2026-09-01 13:35:00",
+    )
+    assert choice.run_id == "run-before"
+
+
+def test_select_replay_run_never_pins_a_rehearsals_own_rows(tmp_path):
+    """A rehearsal writes `rehearsal-<session>-<date>` rows into its sandbox.
+    Replaying a replay would be self-referential nonsense."""
+    from ops.rehearsal.replay import select_replay_run
+
+    db = _history_db(tmp_path, [
+        ("run-real", "tech_analyst", "2026-09-01 13:30:00"),
+        ("run-real", "portfolio_manager", "2026-09-01 13:34:00"),
+        ("rehearsal-morning-20260902", "tech_analyst", "2026-09-02 13:30:00"),
+        ("rehearsal-morning-20260902", "portfolio_manager", "2026-09-02 13:34:00"),
+    ])
+    assert select_replay_run(db, "morning").run_id == "run-real"
+
+
+def test_select_replay_run_says_so_when_it_cannot_pin_anything(tmp_path):
+    """No pin is a rig limitation and has to read as one — silence here is
+    how the unpinned default hid for as long as it did."""
+    from ops.rehearsal.replay import select_replay_run
+
+    db = _history_db(tmp_path, [
+        ("evening-x", "evening_analyst", "2026-09-01 00:00:00"),
+    ])
+    choice = select_replay_run(db, "morning")
+    assert choice.run_id is None
+    assert choice.complete is False
+    assert "NOT pinned" in choice.reason
+
+
+def test_select_replay_run_is_deterministic(tmp_path):
+    """Same inputs, same pin — the whole point of the change."""
+    from ops.rehearsal.replay import select_replay_run
+
+    rows = [
+        ("run-a", "tech_analyst", "2026-09-01 13:30:00"),
+        ("run-a", "portfolio_manager", "2026-09-01 13:34:00"),
+        ("run-b", "tech_analyst", "2026-09-01 13:30:00"),
+        ("run-b", "portfolio_manager", "2026-09-01 13:34:00"),
+    ]
+    db = _history_db(tmp_path, rows)
+    picks = {select_replay_run(db, "morning").run_id for _ in range(5)}
+    assert len(picks) == 1

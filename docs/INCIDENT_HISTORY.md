@@ -606,17 +606,67 @@ it.
 
 **What this means for anyone using the rig as a gate:**
 - An unpinned PASS is not evidence. Two runs of the same code can differ.
-- Always pass `--replay-run` when comparing two commits. Without it you are
-  measuring the pool, not the change.
-- The rig currently CANNOT return PASS on this scenario in either state,
-  because it cannot reproduce full analyst coverage offline. That is a gap in
-  the gate, not in the code.
+- The rig CANNOT return PASS on this scenario in any state, because it cannot
+  reproduce full analyst coverage offline. That is a gap in the gate, not in
+  the code — see "what is still not fixed" below.
 - This is the same family as the already-recorded limitation that the rig
   cannot validate a prompt change. Both come from replaying recorded answers
   into a session that no longer matches them.
 
-**Not fixed.** The rig needs to either pin its replay by default or report
-plainly that it cannot judge. Both are real work and neither was done tonight.
+### Fixed the next day (2026-09-02)
+
+**The replay is pinned by default.** Omitting `--replay-run` no longer means
+"draw on all history"; it now means "the most recent COMPLETE recorded run of
+this session type that had already started by `--as-of`", chosen by
+`select_replay_run` in `ops/rehearsal/replay.py` and **printed under the
+verdict** so a reader knows what was compared. The verdict is now a function
+of (code, session, `--as-of`, database) and nothing else. `--replay-run <id>`
+still overrides; `--replay-run any` asks for the old pool-wide behaviour
+deliberately and says in the report that the result is not reproducible.
+
+Reproduced end to end rather than asserted, on the two commits that
+disagreed, with the same unpinned invocation both times and the checkout
+verified clean inside the runner script:
+
+| commit | before | after |
+|---|---|---|
+| `af266de` | **PASS**, 22 rejections | **FAIL**, 23 rejections |
+| `0bbb69c` | **FAIL** (`ZS`), 21 rejections | **FAIL**, 21 rejections |
+
+Both now auto-pin to `run-64290730` and fail identically on
+`NVDA: claims earnings coverage that does not exist`. The 23 → 21 improvement
+that used to read as a PASS → FAIL regression now reads as what it is.
+
+**A third verdict exists: INCONCLUSIVE.** A replay-coverage mismatch used to
+be printed exactly like a real defect, which is how a red gate got argued
+about for an hour instead of believed or dismissed. `_replay_fidelity`
+(`ops/rehearsal/report.py`) now separates them, and is deliberately narrow —
+it downgrades only when BOTH hold: the answer replayed for the portfolio
+manager came from a different recorded run than the analysts' answers (a
+mechanical fact, and impossible under a pin — so a pinned run can never be
+downgraded), AND the failure names a symbol this session never analysed,
+never rejected and does not hold. Either alone stays FAIL. A hallucinated
+ticker in a faithfully replayed session is still the defect it is. Exit codes
+are now PASS 0, FAIL 1, INCONCLUSIVE 2.
+
+**The report states its own coverage next to the verdict**, not in the log:
+"INCOMPLETE ANALYST COVERAGE: 20 of 56 symbol(s) never got a technical
+analysis in this rehearsal ... Do not read it as 'the session was fully
+exercised'", plus a one-line summary of how far the replayed prompts have
+drifted from the recorded ones (worst overlap 23% on the news seat, 42% on
+the portfolio manager, on both commits above).
+
+**What is still not fixed, and is the more important half.** Pinning makes
+the gate honest, not useful. A pinned morning rehearsal still cannot PASS,
+and the reason is not the code: offline, `macro` and `news` fail outright,
+`smart_money` is degraded and `tech` is partial, so the session reaching the
+decision stage is not the session the recorded portfolio-manager answer was
+grounded in. That answer legitimately cites evidence the rehearsed session
+does not have, and the grounding gate correctly throws it out. **The rig can
+therefore tell you a morning got worse; it cannot yet tell you a morning is
+well.** Nothing in this fix changes that, and the conservative choice was
+made deliberately: that failure reports FAIL, not INCONCLUSIVE, because it
+does not meet the two-part test above.
 
 
 ## Archive — work completed before 2026-09-01

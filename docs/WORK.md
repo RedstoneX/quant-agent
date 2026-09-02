@@ -356,11 +356,28 @@ wants it used properly and routinely, and he wants that written where he
 looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
 
 - What it is: `ops/rehearsal/` runs a full trading session offline against a
-  snapshot of production, replaying recorded model responses. Free,
-  deterministic, about 50 seconds. Blocks outbound network at the process
-  level, then proves the production database is byte-identical afterward.
-  Suppresses operator alerts via `QAMC_REHEARSAL=1` so a rehearsal never
-  pages anyone.
+  snapshot of production, replaying recorded model responses. Free, about
+  50 seconds. Blocks outbound network at the process level, then proves the
+  production database is byte-identical afterward. Suppresses operator
+  alerts via `QAMC_REHEARSAL=1` so a rehearsal never pages anyone.
+- **Deterministic again as of 2026-09-02, and it was not before.** For four
+  days it returned PASS or FAIL on identical code depending on which
+  recorded responses it happened to draw; the incident entry has the
+  measurement. Omitting `--replay-run` now pins the most recent complete
+  recorded run of that session type and prints which one under the verdict.
+  Do not go back to comparing commits without reading that line.
+- **Read the verdict as one of three, not two.** PASS (exit 0), FAIL (exit
+  1), and INCONCLUSIVE (exit 2) — the last means the rig could not
+  reproduce the session faithfully enough to judge it, and is deliberately
+  hard to reach: a pinned run can never return it. It is not a soft FAIL.
+- **A PASS is not "the session was fully exercised."** Offline the rig
+  resolves only part of the batch — 20 of 56 symbols went unresolved on the
+  2026-09-01 morning — and it now says so directly under the verdict. And
+  on the morning scenario it cannot currently PASS at all, in any state:
+  macro and news fail outright offline, so the session that reaches the
+  decision stage is not the one the recorded decision was grounded in. The
+  rig can show you a morning got worse; it cannot yet show you one is
+  well.
 - When to run it: this is the default way to find a bug, not a formality —
   run it before deploying anything touching the session pipeline, and after
   any change to the agents, the risk engine, the cost circuit or execution.
@@ -390,6 +407,23 @@ looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
   `config_overrides` when asked to. It is trustworthy for the one incident
   it has been tested against. What it does not yet have is a track record
   as a standing pre-deploy gate — that starts with this entry.
+- **CORRECTION, 2026-09-02: that acceptance test no longer passes, and this
+  predates today's determinism work.** Re-run against a clean `0bbb69c`
+  checkout with the rig UNMODIFIED: `2 failed in 457s`. Both fail for
+  reasons that have nothing to do with the pinning fix, and the identical
+  failures appear with the fixed rig, so the cause is drift between the
+  code and the 2026-08-28 recording, not the rig:
+  (1) `test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure` —
+  today's pipeline makes more `tech_analyst` chunk calls than
+  `run-be9f8f06` recorded ("all 4 recorded response(s) were already
+  replayed"), so replay starves mid-batch and 23 of 47 symbols go
+  unresolved; (2)
+  `test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block` —
+  the forced pre-fix configuration no longer produces the block at all
+  (`blocked_agents=[]`). **Consequence: the rig currently cannot
+  demonstrate that it still reproduces the incident it was built for.**
+  Reported, not fixed — it is a decision about what the acceptance test
+  should now assert, not a bug with an obvious repair.
 
 **Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
 matches the production box byte for byte. Until this change the box carried
