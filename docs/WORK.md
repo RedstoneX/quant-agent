@@ -1012,6 +1012,49 @@ Belongs with item 14, which the owner has PARKED until the model question is
 settled or the desk goes programmatic. Recorded here only so it is not
 rediscovered a third time.
 
+**17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
+
+Hit live 2026-09-02 while running a benchmark on a scratch copy. A database
+that could not be opened tripped the paid-analysis emergency latch, which is
+DURABLE — it survives restarts and requires a human to clear a file before
+any paid analysis runs again. **And the alert about it failed too**, printing
+"cost-circuit unavailable alert was not delivered to Telegram".
+
+So the failure mode is: desk stops thinking, nobody is told, and it stays
+stopped until a person happens to look. On an unattended desk that is a day
+(or a weekend) of no trading that presents as a quiet market.
+
+**Three distinct defects, and they compound:**
+
+  a. **A transient infrastructure fault latches like a budget breach.**
+     "I cannot read the budget" and "I am over budget" are different events
+     and must not share an outcome. The first should retry with backoff and
+     only latch if it persists; the second should latch immediately. Today
+     both go straight to the durable latch on first occurrence.
+  b. **The alert about the latch can fail, and then nothing else happens.**
+     A notification failure is currently terminal and unrecorded. It must be
+     persisted and retried, and escalate to a second channel — an alert path
+     with no fallback is not an alert path.
+  c. **Nothing watches for SILENCE.** Every alarm we have fires on an event.
+     None fires on the absence of events, which is exactly the shape this
+     failure takes. `quant-agent-alert-heartbeat.timer` exists on the box —
+     **verify whether it actually detects a latched circuit or only a dead
+     process. Do not assume it covers this; it did not shout today.**
+
+**Proposed fix, in dependency order:** (c) first — a heartbeat that alerts on
+"no completed session in N scheduled windows" catches this failure AND every
+future one shaped like it, including ones we have not imagined. Then (a),
+which stops the latch firing for reasons that do not deserve it. Then (b).
+
+**Why (c) leads:** an alert that fires on a known failure can itself fail, as
+it did here. An alarm on silence cannot be defeated by the thing it watches
+going quiet — that IS its trigger. Owner's framing, and it is right: relying
+on alerts firing correctly is a recipe for disaster.
+
+Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
+a stale price list. That path was fixed 2026-09-02; **this one was not** —
+the latch itself is the shared hazard, not any single route into it.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
