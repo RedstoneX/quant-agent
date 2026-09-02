@@ -606,6 +606,32 @@ class RiskConfig(BaseModel):
     # equal nominal risk is not equal real risk — so the same risk
     # allocation opens a SMALLER short than an equivalent long.
     short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
+    # --- Kill switch (2026-09-02 operational safety guard) ---------------
+    # A file whose mere EXISTENCE halts every order this desk would place —
+    # entries, exits, covers, and protective-stop placement/replacement
+    # alike. Read with `Path(...).exists()` and nothing else: no parsing, no
+    # schema, so a malformed or empty file still halts — it cannot fail open
+    # on bad content because it never reads any content. Ops stops the desk
+    # with `touch <path>` and resumes it by deleting the file: no code
+    # change, no deploy, and it takes effect on the NEXT order attempt even
+    # if the process was already mid-session when the file appeared.
+    #
+    # Checked in `src/execution/broker.py` (the deterministic execution
+    # layer), never by an agent or a prompt — a language model has no path
+    # to talk the desk out of a halt it cannot see or reason about.
+    #
+    # UNLIKE every other guard in this file, this ONE also blocks
+    # risk-REDUCING orders. Every other hard block and circuit breaker here
+    # deliberately lets a SELL/COVER through even while it blocks new risk
+    # (`RiskRuleEngine.check`'s `action in ("SELL", "COVER")` exemption
+    # below), precisely so a bad account state can never trap a position.
+    # The kill switch is the one lever that overrides that, for the case
+    # where ops needs EVERYTHING stopped — including an exit that might
+    # otherwise go out into a broken/stale market. It only blocks NEW
+    # broker-bound order flow; a protective stop already resting at the
+    # broker from before the halt is untouched and keeps protecting the
+    # position.
+    kill_switch_path: str = Field(default="data/KILL_SWITCH")
     # --- Spec §9.4 "agreement earns size" --------------------------------
     # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the
     # number of independent seats (of technical/news/earnings/macro/

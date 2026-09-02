@@ -1752,7 +1752,15 @@ def _status_emoji(status: str) -> str:
     if status in ("emergency_sold", "hard_risk_block", "digest_only"):
         return "🟡"
     if ("error" in status or status.startswith("pm_")
-            or status in ("rejected", "failed", "paid_analysis_suspended")):
+            or status in (
+                "rejected", "failed", "paid_analysis_suspended",
+                # Guard 1 (2026-09-02): ops halted the desk with the
+                # kill-switch flag file. This is the one status that fires
+                # even on an intra_check tick, which is otherwise silent —
+                # see the "kill_switch_halted" not being in the
+                # mode == "intra_check" silence tuple above.
+                "kill_switch_halted",
+            )):
         return "🔴"
     return "⚪"
 

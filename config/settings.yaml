@@ -473,6 +473,16 @@ risk:
   # a short can gap through its stop with unbounded loss, so equal nominal
   # risk must not buy equal real risk. Range (1.0, 3.0].
   short_gap_risk_multiple: 1.5
+  # Kill switch (2026-09-02) — a file whose mere existence halts every order
+  # this desk would place, entries AND exits alike. Checked with
+  # path.exists() in src/execution/broker.py, before every broker submit/
+  # replace call, so an operator stops the desk with `touch data/KILL_SWITCH`
+  # (relative to the repo root, same convention as storage.db_path below)
+  # and resumes it by deleting the file — no deploy, and it takes effect on
+  # the process's very next order attempt even if it was already mid-session.
+  # See RiskConfig.kill_switch_path for why this is the one guard that also
+  # blocks a risk-reducing order.
+  kill_switch_path: "data/KILL_SWITCH"
   # Spec §9.4 "agreement earns size" (2026-08-30) — ceiling on
   # risk_allocation_pct by how many independent seats (of technical/news/
   # earnings/macro/smart_money) are directionally aligned with the target.

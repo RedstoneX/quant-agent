@@ -5,6 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import date
+from pathlib import Path
 
 import yfinance as yf
 from alpaca.trading.client import TradingClient
@@ -383,12 +384,22 @@ _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
 
 class AlpacaBroker:
-    def __init__(self, api_key: str, secret_key: str, paper: bool = True):
+    def __init__(self, api_key: str, secret_key: str, paper: bool = True,
+                 kill_switch_path: str | None = None):
         self.api_key = api_key
         self.secret_key = secret_key
         self.client = TradingClient(api_key, secret_key, paper=paper)
         _install_http_timeout(self.client)
         self._data_client = None
+        # Guard 1 (2026-09-02 operational safety guard — see
+        # RiskConfig.kill_switch_path). `None` leaves the guard disabled,
+        # which is only reachable from a construction site that predates
+        # this parameter and never threads a path through (e.g. an isolated
+        # unit test building `AlpacaBroker` directly) — `src/pipeline.py`
+        # always passes the configured path. See `_kill_switch_active`.
+        self._kill_switch_path = (
+            Path(kill_switch_path) if kill_switch_path else None
+        )
         # Per-date cache for is_trading_day. Trading-day status is set by
         # the exchange calendar months in advance — invariant within the
         # day — so a per-date dict that grows unbounded over a multi-year
@@ -404,6 +415,25 @@ class AlpacaBroker:
         # `_shortable_cache`: `fractionable` is an asset-directory fact that
         # does not change intra-session.
         self._fractionable_cache: dict[str, dict] = {}
+
+    def _kill_switch_active(self) -> bool:
+        """Guard 1: True once ops has halted the desk by `touch`-ing the
+        configured flag file.
+
+        `path.exists()` and NOTHING else — no read, no parse, no schema —
+        so a zero-byte file, a file full of garbage, and a file the operator
+        can no longer remember the format of all halt identically. The
+        check cannot fail open on bad content because it never looks at any
+        content.
+
+        Called at the top of every method on this class that places or
+        replaces an order at the broker (`submit_order`,
+        `_submit_stop_limit_order`, `replace_entry_limit`) — deliberately
+        including the exit and protective-stop paths. See
+        RiskConfig.kill_switch_path for why this is the one guard in the
+        codebase that also blocks a risk-reducing order.
+        """
+        return self._kill_switch_path is not None and self._kill_switch_path.exists()
 
     def get_account(self) -> dict:
         acct = self.client.get_account()
@@ -1899,6 +1929,19 @@ class AlpacaBroker:
                      stop_loss_price: float | None = None,
                      take_profit_price: float | None = None,
                      reference_price: float | None = None) -> dict:
+        if self._kill_switch_active():
+            # Guard 1: deliberately unconditional. This is the ONE check in
+            # the order-submission path that does NOT exempt a SELL/COVER —
+            # see RiskConfig.kill_switch_path.
+            logger.error(
+                "KILL SWITCH ACTIVE (%s exists): refusing %s %s %s. Every "
+                "order — entry or exit — is halted until the file is "
+                "removed.", self._kill_switch_path, side.upper(), qty, symbol,
+            )
+            return {
+                "id": None, "status": "kill_switch_halted",
+                "symbol": _internal_symbol(symbol),
+            }
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         internal_symbol = _internal_symbol(symbol)
         alpaca_symbol = _alpaca_symbol(internal_symbol)
@@ -2124,7 +2167,15 @@ class AlpacaBroker:
             FILLED) between the caller's check and this call. The caller must
             re-read the ORIGINAL id, which is still authoritative in that
             case, and must not retry blindly.
+          - 'kill_switch_halted'    — Guard 1: ops has halted the desk. The
+            ORIGINAL id remains authoritative and simply does not chase.
         """
+        if self._kill_switch_active():
+            logger.error(
+                "KILL SWITCH ACTIVE (%s exists): refusing to re-peg entry "
+                "order %s to $%.4f.", self._kill_switch_path, order_id, new_limit_price,
+            )
+            return {"id": None, "status": "kill_switch_halted"}
         price = _quantize_price(new_limit_price)
         if price is None or price <= 0:
             logger.warning(
@@ -2657,6 +2708,18 @@ class AlpacaBroker:
         restore, the partial-sell reprotect, the ex-dividend shift — becomes
         broker-legal at once, and no future path can forget it.
         """
+        if self._kill_switch_active():
+            # Guard 1: a protective stop is risk-REDUCING (it only ever
+            # tightens protection), yet the kill switch still blocks it —
+            # this is the one deliberate exception in the codebase; see
+            # RiskConfig.kill_switch_path. An already-resting stop from
+            # before the halt is untouched; this only refuses a NEW one.
+            logger.error(
+                "KILL SWITCH ACTIVE (%s exists): refusing protective stop "
+                "for %s qty=%s stop=$%.4f.",
+                self._kill_switch_path, symbol, qty, stop_price,
+            )
+            return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         time_in_force = _derive_stop_tif(qty)
         if time_in_force is TimeInForce.DAY:

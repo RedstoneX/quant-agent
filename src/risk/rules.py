@@ -594,14 +594,46 @@ def peak_to_trough_pct(
     recent edge degraded, so halve new BUYs" versus "how far are we off the
     high-water mark, so how much may the book own". Both are drawdown; only
     one sets the ceiling.
+
+    Guard 2 (2026-09-02 operational safety guard): a NaN/inf equity reading
+    can NEVER win the `max()` below and become the high-water mark. Another
+    system's documented failure mode is an incremental "if new > hwm: hwm =
+    new" tracker, where a single NaN reading poisons `hwm` permanently —
+    every later comparison against NaN is False, so it never updates again
+    and the breaker is silently disabled for good. This function structurally
+    cannot do that: the peak is a fresh `max()` over a filtered list on
+    EVERY call, never a variable carried between calls, so a bad reading on
+    one call cannot contaminate the next. A non-finite entry is dropped
+    before `max()` ever sees it (`math.isfinite` below) rather than being
+    excluded by a comparison a NaN could silently fail.
     """
     values = []
+    dropped_non_finite = 0
     for raw in list(equity_history or []) + [current_equity]:
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             continue
         value = float(raw)
-        if math.isfinite(value) and value > 0:
+        if not math.isfinite(value):
+            # Counted, not just skipped: a dropped entry could have been
+            # the TRUE peak, and silently proceeding as if it never existed
+            # is exactly the "NaN reaching a comparison silently passes"
+            # failure mode this guard exists to avoid. The log line below
+            # is the guard — it does not change what gets returned, it
+            # makes sure the loss of data is never invisible.
+            dropped_non_finite += 1
+            continue
+        if value > 0:
             values.append(value)
+    if dropped_non_finite:
+        logger.warning(
+            "peak_to_trough_pct: dropped %d non-finite equity reading(s) "
+            "(NaN/inf) rather than letting one win max() as a fabricated "
+            "high-water mark. Alpaca has been observed to return NaN "
+            "portfolio_value during market-open glitches (see "
+            "RiskRuleEngine.check_daily_loss). The remaining %d reading(s) "
+            "still went into this call's peak.",
+            dropped_non_finite, len(values),
+        )
     if not values:
         return None
     if not (
