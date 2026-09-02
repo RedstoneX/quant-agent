@@ -225,6 +225,10 @@ _PIPELINE_SESSION_FUNCTIONS = (
 _BRIDGE_FUNCTION_NAMES = {
     "_check_late_breach_and_emergency_liquidate", "_risk_stage", "run",
     "_paid_suspended_payload",
+    # 2026-09-02: the kill switch halts all three sessions from a shared
+    # helper rather than at each return site, the same shape as the entries
+    # above. Its status dict lives in `_kill_switch_halt_result`.
+    "_kill_switch_halt_result",
 }
 
 

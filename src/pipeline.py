@@ -462,6 +462,11 @@ def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
 
 
 class TradingPipeline:
+    #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
+    #: instance built without __init__ (tests do this) reads None rather than
+    #: raising: an unconfigured switch is INERT, never armed. Real enforcement
+    #: is at the broker seam, where __init__ always runs in production.
+    _kill_switch_path: "Path | None" = None
     def __init__(self, config: AppConfig):
         self.config = config
         self.market = MarketDataProvider()
@@ -8940,7 +8945,7 @@ class TradingPipeline:
         and keeps protecting its position — only new broker-bound order
         flow is refused.
         """
-        if not self._kill_switch_path.exists():
+        if self._kill_switch_path is None or not self._kill_switch_path.exists():
             return None
         logger.error(
             "KILL SWITCH ACTIVE (%s exists) — halting run %s before any "

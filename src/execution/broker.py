@@ -384,6 +384,10 @@ _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
 
 class AlpacaBroker:
+    #: Set in __init__. Declared here so an instance built without __init__
+    #: reads None rather than raising; `_kill_switch_active` already treats
+    #: None as "no switch configured", i.e. inert.
+    _kill_switch_path: "Path | None" = None
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None):
         self.api_key = api_key
