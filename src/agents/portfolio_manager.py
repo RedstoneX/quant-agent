@@ -159,11 +159,18 @@ class PortfolioManagerAgent(BaseAgent):
         `filing_date` and `is_new` on the floor, so a cached bullish earnings
         stance was a full live corroborating source forever. Nothing in
         `src/risk/rules.py` or `src/portfolio_constructor.py` looked at age.
-        That is reachable, not theoretical: when a symbol has no filing
+        That was reachable, not theoretical: when a symbol has no filing
         inside the provider's 45-day SEC scan window,
-        `EarningsProvider._check_symbol` falls back to
-        `_get_existing_analysis`, which has NO age bound and re-serves
-        whatever is on disk (the store prunes at 1000 days).
+        `EarningsProvider._check_symbol` fell back to
+        `_get_existing_analysis`, which re-served whatever was on disk with
+        no age bound of its own (the store prunes at 1000 days).
+        `_get_existing_analysis` now carries this same bound (2026-09-02,
+        same constant, `src/data/earnings.py`), so that specific route to a
+        stale stance is closed at the source — an over-age analysis is no
+        longer handed to a session at all. This gate stays regardless: it is
+        what actually governs the TALLY for a stance from ANY source, so a
+        stale view that reaches the registry some other way is still caught
+        here rather than relying on every producer to self-police age.
 
         Threshold: `EARNINGS_STANCE_MAX_AGE_DAYS` (90) — the number the
         earnings seat's own prompt and the missed-opportunity scan already

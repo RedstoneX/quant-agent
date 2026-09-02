@@ -427,8 +427,9 @@ source to two and buying it a 3.0% → 4.0% risk allowance — a 33% larger
 allowance on evidence that had confirmed nothing about today. This is reachable
 rather than theoretical: when a symbol has no filing inside the provider's
 45-day SEC scan window, `EarningsProvider._check_symbol` falls back to
-`_get_existing_analysis`, which has **no age bound at all** and re-serves
-whatever is on disk (the store prunes at 1000 days).
+`_get_existing_analysis`, which — until the cause fix below — had **no age
+bound at all** and re-served whatever was on disk (the store prunes at 1000
+days).
 
 `PortfolioManagerAgent.stale_evidence_sources` now gates an earnings stance
 out of the tally past `EARNINGS_STANCE_MAX_AGE_DAYS` (90). **90 is not a new
@@ -460,6 +461,56 @@ fallback, not a correction to today's book. For scale, the same measurement at
 a 45-day threshold — the provider's own scan window — gates 3 stances and drops
 2 symbols a rung (GE and NFLX, 4.0% → 3.0%). **Choosing a threshold below 90
 would be inventing a number; 90 is the one the desk had already written down.**
+
+**The cause fixed too (built 2026-09-02).** The freshness gate above stops a
+stale earnings stance from EARNING SIZE; it deliberately does not remove the
+stance from the evidence registry, because pulling something the PM has
+already been shown out from under it fails `validate_grounding` for the WHOLE
+session, not just that one symbol. That left the cause untouched:
+`_get_existing_analysis` (`src/data/earnings.py`) still hands an over-age
+analysis to a session as if it were current — it just no longer bought that
+analysis extra size once there. `_get_existing_analysis` now refuses to
+re-serve anything past `EARNINGS_STANCE_MAX_AGE_DAYS` (the same constant, not
+a second number): past the bound it returns `None`, and the symbol looks
+exactly like one with no earnings coverage yet at all — a state every
+consumer already handles (a CIK miss, an unlisted name, a first SEC-covered
+run). `stale_evidence_sources` is untouched and still recomputes staleness
+generically for anything that does reach it, so a report arriving through a
+different path is still caught there.
+
+Measured against the local rehearsal data snapshot
+(`/tmp/qamc-rehearsal-hqiel8o1/data/earnings`, 71 symbol directories,
+2026-09-02): 63 symbols currently resolve to a servable analysis via this
+fallback (8 have raw filing HTML but no completed analysis, and already
+return `None` today, unaffected by this change). Age distribution across
+those 63: median 29 days, max 49 days, min 6 days — **zero currently exceed
+the 90-day bound**, so this fix changes no symbol's behavior today, the same
+"guardrail, not a correction" shape the tally gate measured. Confirmed
+independently, not just repeated: three symbols are already past the
+provider's 45-day scan window and therefore already served purely by this
+fallback — NKE (10-K, filed 2026-07-15, 49d), GE (10-Q, filed 2026-07-16,
+48d), NFLX (10-Q, filed 2026-07-17, 47d) — one day older each than the
+values recorded above, consistent with one day of elapsed time since that
+measurement. What changes going forward: the day any symbol's most recent
+on-disk analysis turns 91 days old with no newer filing, it now silently
+drops out of that session's evidence entirely instead of being served as
+current indefinitely (the store still only prunes the file itself at 1000
+days).
+
+**Dissent is counted, not priced (built 2026-09-02).** `count_aligned_sources`
+counts only sources aligned with the trade direction, so on a long a bearish
+earnings stance contributes 0 — arithmetically identical to neutral and to no
+coverage at all. Nothing subtracts, and until now nothing recorded that it had
+happened. `count_opposing_sources` is the exact mirror of the aligned count
+through the same `stance_is_aligned` vocabulary; it is surfaced in the PM
+prompt, logged per sized target, and written into the order note that reaches
+the AI Risk Manager and the persisted `proposed_order` evidence. **It changes
+no ceiling.** Making dissent subtract is a risk-rule change and needs an owner
+decision; this exists so the frequency and the cost of overriding a dissenting
+seat are measurable before that decision is taken. On `run-64290730`, of the 42
+symbols carrying both a technical and an earnings stance, 4 were internally
+split (CAT, GEV, PFE, SLB) — sized identically to a name with one aligned
+source and no dissent.
 
 **Dissent was counted, not priced (built 2026-09-02, superseded the same
 day).** `count_aligned_sources` counted only sources aligned with the trade
