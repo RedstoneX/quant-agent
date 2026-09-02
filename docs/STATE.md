@@ -66,7 +66,10 @@ This file records what is accepted and true **now**. Git history preserves imple
   of this, a new deterministic module `src/data/context.py` computes market context
   per symbol from the same bars — relative strength vs a same-batch benchmark (SPY,
   else QQQ, else IWM), returns across 1w/1m/3m/6m/12m, 52-week range position, ATR
-  as a percentage of price with its 1-year percentile and a volatility state,
+  as a percentage of price with its 1-year percentile and a volatility state
+  (Wilder's ATR from `src/data/technical.py::atr_series`, the same one the risk
+  path sizes and widens stops with — until 2026-09-01 this block used a simple
+  moving average of true range instead, see `docs/QAMC_REMEDIATION_SPEC.md`),
   moving-average slopes, consolidation detection (requires both a narrow range and
   small net drift), average dollar volume, up/down volume ratio, and unfilled gaps
   — rendered into the Tech Analyst prompt via `format_context_block()`
