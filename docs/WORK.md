@@ -23,7 +23,19 @@ while writing "all four were ratified". That is exactly the forbidden move this
 test guards against, and it made a later session believe the model choice was
 settled. Restored:**
 
-- [ ] DECIDE BY 2026-09-02 — Which model runs the `portfolio_manager` seat?
+- [ ] DECIDE BY 2026-09-16 — Which model runs the `portfolio_manager` seat?
+  **DATE MOVED 2026-09-02, reason recorded — not a silent deferral.** The
+  re-measure this decision waits on DOES NOT EXIST: the newest file in
+  `ops/model_policy/results/` is dated 2026-09-01, i.e. pre-rewrite and stale
+  by this block's own terms. Verified by listing the directory, in this repo
+  and on the live desk. Deciding without it would be picking a model from
+  numbers we already wrote down as invalid.
+  **The blocking dependency is a benchmark re-run, and it SPENDS OPENROUTER
+  CREDITS — real money, and the owner's single stated financial concern.** It
+  is therefore an owner call to authorise, not an agent one, and that is why
+  this line moved rather than resolved. Weight it against the fact that the
+  `portfolio_manager` seat is ~93% of the LLM bill, so this is also the
+  largest available saving. See `qamc-llm-cost-concentration`.
   **NOT DECIDED. Do not act on the existing benchmark numbers** — every score in
   `ops/model_policy/results/*2026-09-01*.json` was measured against the OLD
   prompt and is stale (see below). Owner's instruction was to RE-MEASURE after
@@ -31,7 +43,20 @@ settled. Restored:**
   stays until that re-run exists. Re-running is a re-run, not a rebuild — the
   rig reads the prompt from disk.
 
-- [ ] DECIDE BY 2026-09-02 — Level quality bar for Phase 12.1. A stop is now
+- [ ] DECIDE BY 2026-09-09 — Level quality bar for Phase 12.1.
+  **DATE MOVED 2026-09-02, and the item got MORE load-bearing, not less.**
+  `wt/levels-wire` merged the same day and now scores level strength by TOUCH
+  COUNT (the unmeasured 252-session recency half-life is gone), which changes
+  top-6 level selection on 66 of 99 symbols. Touch count is now the primary
+  ranking signal AND the unresolved quality bar, so this compounds.
+  It is deferred only because `wt/rr-geometry` is actively editing stop and
+  level logic and two writers must not collide — start this the moment that
+  branch lands.
+  **This is NOT an owner-picks-a-number question.** Standing project rule:
+  market-structure thresholds come from published technical-analysis
+  literature, never from a model's training-recall, never from speculation,
+  and are never handed to the owner to guess. Research the doctrine, propose
+  the number WITH its source, then ratify. A stop is now
   honoured if it sits on a computed structural level, but a level currently
   qualifies on **two touches ever, anywhere in ~3 years** — so two old swing
   points can justify a very tight stop. **The 3x ATR floor used to hide this
@@ -59,6 +84,23 @@ unreviewed — do not merge any of it without running the suite.**
 | `worktree-agent-a68a5aa21271ccbea` | 11.2 gross cap + de-levering ladder | WIP, interrupted, UNVERIFIED |
 | `worktree-agent-ab445cf7c4b9aa358` | 11.1 fractional sizing + stop guards | WIP, interrupted, UNVERIFIED |
 | `worktree-agent-af17eb92755512448` | sector cap fails loudly on unresolved sector | WIP, interrupted, UNVERIFIED |
+
+**SUPERSEDED 2026-09-02 — `allow_margin` is now `true`.** The condition below
+was met: the gross cap and the ladder merged and were verified, and the PM
+prompt's exposure table moved to 2.0x in the same commit as the flip. Two
+things a reader needs that the paragraph below cannot tell them:
+
+- The flip was INERT for longs for its first day. A third ceiling nobody had
+  listed — the BUY submit loop's clamp against raw broker cash — held gross
+  under 1.0x whatever the setting said. Fixed 2026-09-02; the submit loop now
+  draws on a ladder-derived pool. Spec §11.2 carries the detail.
+- **2.0x is still not reachable, and that one is the owner's call.**
+  `max_total_position_pct: 90` hard-blocks NET exposure, and for a long-only
+  book net IS gross: measured, long-only tops out at 0.90x and a long/short
+  book at about 1.3x. The standing 2.0x rung and the -8% 1.5x rung cannot
+  bind. The PM prompt still asks for 1.60-2.00x on `risk-on`.
+
+The original paragraph, kept for the sequencing it records:
 
 **`allow_margin` is still `false`. It must STAY false** until the gross cap and
 the ladder are merged and verified. The PM prompt's exposure table is at 1.0x
@@ -686,6 +728,290 @@ defect log is append-only and is never trimmed.
 
 ### Ordered backlog — RESUME POINT
 
+## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
+
+**This is the top of the backlog. Work it in order.** It is not a survey of
+good ideas from other projects; every line below is derived from THIS desk's
+own record and carries its own denominator. Do not reorder it from intuition.
+
+**Measured 2026-09-02 from the pre-reset database**
+(`data/resets/20260902T181859Z/quant_agent.db` — the live DB was wiped that
+day, this backup is the only complete copy). Reproduce with
+`scripts/blocked_proposals_census.py`, which is read-only and makes no broker
+calls.
+
+**Denominator: 68 entry proposals, 2026-08-18 to 2026-09-02. 15 filled — 22%.**
+53 blocked. Zero-fill sessions: **6 of 11**.
+
+Each item is classified WORKING AS INTENDED / TOO STRICT / DEFECT / NO RECORD.
+An item is only struck through when the fix is merged AND re-measured against
+the same 68.
+
+---
+
+**1. The reward:risk floor — 17 of 68 (25%). TOO STRICT. IN FLIGHT.**
+
+The single largest cause; nothing else is close. 10 died before an order was
+built, 7 were killed by the AI Risk Manager citing the 1.5 floor by name.
+
+Independently confirmed 2026-09-02, and the count UNDERSTATES it: where the
+floor does not reject outright, the Risk Manager **halves the allocation**
+instead ("Halve allocation per R/R enforcement policy" appears verbatim on
+XLF, XLE x2, XLB). So the floor both blocks and shrinks, and only the blocking
+half is counted above.
+
+It rests on a fake number. Evidence, verbatim from the record: *"PM's reasoning
+assumes R/R 1.67 but the executed order has R/R 1.18"* — the same trade,
+evaluated twice, with different stop geometry. Cause is the ATR stop FLOOR
+overwriting a structural stop, widening the risk denominator and crushing the
+ratio. See `qamc-rr-geometry-defect`.
+
+**The gate fails in BOTH directions, and that is the thing to understand.**
+It refuses good trades on a fabricated ratio (above), AND it waves through
+exactly the wrong names via its own exception clause (below). Fixing one
+without the other just moves the damage.
+
+**The exception clause hands out the key to its own lock.** The rule permits
+a below-floor pick when a named catalyst justifies it. On the NVDA case the
+model complied completely: it named a catalyst, cut size below 1%, stated in
+plain text that the ratio was below floor, and the Risk Manager reviewed and
+agreed. Everyone followed the rule. **The catalyst came from our own news
+feed** — and for any famous name there is always a concrete dated catalyst
+available, so the clause can never bind on precisely the names it most needs
+to bind on. Our own accountability machinery supplies the escape.
+
+This is NOT a model overriding evidence, and any framing that says so is an
+overstatement that has already been made twice in this project and corrected
+twice. Blinding the ticker was run 2026-09-02 (`feat/blind-the-ticker`) and
+changed NOTHING — NVDA picked 5/5 in both arms, quality identical to four
+decimal places. The cause is this gate, not recognition of the name.
+
+Four parts, in this order:
+  a. **Fix the geometry** so every R/R computation uses identical stop
+     geometry and a level-backed stop is honoured however tight. The 1-ATR
+     guard upstream already prevents a stop sitting in pure noise, so the
+     floor is redundant in the level-backed case and destructive in it.
+     Dispatched 2026-09-02 on `wt/rr-geometry`.
+  b. **Make the catalyst CHECKABLE rather than ASSERTABLE.** It must point at
+     a specific dated row we already store, not merely be asserted in prose.
+     Prose is unfalsifiable and the model is not lying — it is citing real
+     news we handed it. Started on `wt/catalyst-loophole` (`e547f04`, WIP
+     checkpoint: real code in the PM, constants and pipeline, plus a
+     480-line gate test — stopped mid-work to conserve budget, NOT finished).
+  c. **Cap any below-floor pick at the smallest starter size IN CODE**, after
+     the model submits. Keeps the capability, costs nothing when the catalyst
+     is genuine, and does not depend on prompt compliance. Same branch.
+  d. **Then** replace the 1.5 hard gate with the already-ratified weighted
+     composite score (see `qamc-weighted-scoring-architecture`). Do NOT do
+     this before (a) — scoring a fabricated ratio more gently is not a fix.
+
+**Blinding the ticker is fourth on this list, not first, and is arguably
+done.** Do not spend more on it; the measured result is a negative one.
+
+**Telling the desk its own record — BUILT AND LIVE, but currently blind.**
+`630da15` shipped 2026-09-02 and IS in production: the PM now receives a
+"Proposal Conversion (last 21d — what you asked for vs what you got)" block
+naming what the machinery keeps refusing and why. **But the book was wiped
+the same day**, and that block reads from the history the reset cleared —
+the live database now holds 1 target and 1 trade, so the section renders
+effectively empty and will stay near-empty until roughly three weeks of new
+proposals accumulate. **The capability is shipped; the evidence it needs was
+erased hours later.** Do not read a quiet Proposal Conversion block as "no
+stuck loops" — read it as "no data yet".
+
+**2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). NO RECORD.**
+
+Second-largest "cause", and it is not a rule at all — it is a hole in the
+record. Nearly a fifth of all ideas vanish with no table row and no surviving
+log line explaining why. One run produced real database rows while emitting
+zero log lines.
+
+Until this is closed, **every percentage on this page has a 19% blind spot**,
+and any future claim that a fix "worked" is unfalsifiable to that margin.
+Treat closing it as a prerequisite for trusting the re-measure, not as
+optional instrumentation.
+
+Also in this bucket: a 9-item `order_not_placed` shape where an order was
+built and then nothing else appears in any record. That looks like an
+interrupted run, not a deliberate no-trade.
+
+**3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
+
+Price protection behaving correctly, but it is a real cost: the slot was
+consumed, the idea aged out, and nothing was bought. Worth revisiting the
+repeg policy rather than the limit itself.
+
+**4. A SECOND reward:risk floor at execution time, set to 1.2 — 4 of 68 (6%). WORKING AS INTENDED, BUT.**
+
+Working as designed, but one quantity has two definitions with two different
+numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
+resolve it separately.
+
+**5. Allocation rounds to zero shares — 3 of 68 (4%). DEFECT (probably).**
+
+An account-scale artifact: a ~$9.9k account against $200+ share prices.
+Fractional sizing is now enabled, so **the open question is why this still
+rounds to zero** — that needs checking before it is written off as scale.
+
+**6. No structural level from which to derive a target — 3 of 68 (4%). TOO NEW TO CLASSIFY.**
+
+All three are from 2026-09-02, i.e. one day old. Re-measure before acting;
+this may be a new regression from that day's ship.
+
+**7. AI Risk Manager vetoes the entire plan for incoherence — 2 of 68 (3%). TOO STRICT.**
+
+Notable because it is reproducing AFTER a fix intended to stop exactly this.
+One veto discards every trade in the plan, so its cost is superlinear.
+
+**8. Stop placed on the wrong side of entry — 2 of 68 (3%). DEFECT, upstream.**
+
+The refusal is correct and must stay. The defect is whatever produced a
+wrong-sided stop in the first place, which is unfixed and unlocated.
+
+**9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.**
+
+Insufficient cash (1), a quote 14.6% off reference rejected as dirty data (1),
+outright broker rejection (1). Not material; do not spend time here.
+
+**10. Slots burned re-proposing names that never fill. NOT YET DIAGNOSED.**
+
+NVDA proposed **9 times, filled once**. JPM, VLO and PATH proposed 3 times
+each and filled **zero**. The desk has no memory of having already been
+refused, so it re-litigates the same names while genuinely new ideas go
+unexamined. Partially addressed on `wt/stuck-loops` (merged 2026-09-02) —
+**re-measure before assuming it is closed.**
+
+**11. Fourteen outright agent failures, ten of them on 2026-08-25 alone. DEFECT.**
+
+The desk produced **zero proposals that entire day** and this was not noticed
+at the time. A day of total silence looks identical to a quiet market from
+every surface we have. Related to item 2 and to the blind-data-day work
+parked on `wt/empty-levels`.
+
+**12. The desk's own funnel reporting misattributes vetoes. DEFECT, pre-existing.**
+
+`_outcome` in `src/pipeline.py` blames every originally-proposed symbol when
+the Risk Manager vetoes a plan — including symbols the constructor had already
+dropped before the Risk Manager ever saw them. The census script corrects for
+this internally; **the source does not**, so the dashboard and any future
+funnel report are wrong in the same direction. Reported, deliberately not
+fixed, because it is out of scope of the census that found it.
+
+**13. One number is carrying three different meanings. DEFECT, latent.**
+
+Not from the census — this one is structural, and it was raised in
+conversation, never written down, and then lost to a context compaction. The
+owner asked for it back by name. Recording it here so that cannot happen a
+second time.
+
+A target weight of **0%** currently means three incompatible things and the
+plumbing cannot tell them apart:
+  1. *"Do not open this"* — a refusal. Nothing should happen.
+  2. *"Close what is held"* — a real exit instruction.
+  3. *"Open a short"* — a new position in the other direction.
+
+A zero-weight entry reads to the delta loop as meaning 2. So a rule that
+refuses to BUY something can silently SELL a position nobody asked to sell.
+It does not error; it just liquidates. The signed-dissent rule shipped
+2026-09-02 works around this by DROPPING a refused target rather than sizing
+it at zero — but that is one caller remembering, and every future rule that
+can refuse a target inherits the same trap.
+
+**The fix is borrowed, not invented.** `pysystemtrade` (Rob Carver) solves
+exactly this with an override algebra: an override is not a number, it is a
+value in a small ordered set, and combining two of them is defined by rule
+rather than by arithmetic. Its order is absorbing —
+
+    no_trading  >  close  >  reduce_only  >  (a plain multiplier)
+
+— so combining any two overrides yields the more restrictive one, always, and
+"do not trade" can never be diluted back into "trade a bit" by multiplication.
+Applied here: make the three intents DISTINCT VALUES with defined combination
+rather than three readings of one float, so the mistake stops being
+expressible instead of relying on each caller to remember. That is the whole
+point of the pattern — the guarantee is structural, not procedural.
+
+Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
+is costing 25% of all proposals now.
+
+**14. The safety budget is priced off a number 2.6x too high — DEFECT. Needs a judgement call, not a patch.**
+
+The only real-money item on this page. Measured 2026-09-02 over a clean
+window (2026-08-27 to 09-02, the first window uncontaminated by the runaway
+loops).
+
+Actual spend is **$0.73–$1.14/day against a $2.75/day ceiling** — comfortable.
+But **the portfolio_manager seat is $4.25 of $4.56 — 93% of the entire bill,
+on 35 of 153 calls.** The eight seats moved to Google-direct on 08-31 now cost
+$0.00. The whole remaining bill is one seat's model choice.
+
+**The defect:** before each call the desk sets aside money to cover it, priced
+at the pinned worst-case rate. The seat's real cost is a **median 0.38x** of
+that across 32 calls — roughly **2.6x over-reserved**. So the budget looks
+spent long before it is, and the desk stops trading on money it never spent.
+On 08-28 a $1.91 hold went against a call that really cost ~$0.25, and the
+response at the time was to raise the daily ceiling 1.80 → 2.60.
+
+**That is the part that matters: a bad estimate quietly loosened the real
+protection.** The ceiling was raised to accommodate spending that was never
+happening, so the guard is now weaker than it was designed to be, for a
+reason that was not true.
+
+**Why the obvious fix is wrong.** Reserving at the cheap flex rate looks
+right and is not: `allow_fallbacks` is on, so a saturated flex tier lands on
+the full $5/$30 rate, and the reservation would then fail to cover the
+dearest outcome — trading a false alarm for a real overrun. Saves $0/day and
+costs ceiling integrity.
+
+The genuine options are (a) turn off fallbacks for this seat so the cheap
+rate is the true worst case, trading uptime for accuracy; (b) lower the daily
+ceiling back toward 1.80 now that the phantom charges below are fixed; or
+(c) move the seat, which is the standing owner decision above and the largest
+saving available. **Do not do (a) or (b) blind — measure a week of real
+settled cost against reservations first.**
+
+Related and already fixed on the same branch: a retry that succeeded after a
+refused first attempt was charged for BOTH (over-charged $0.0223 total —
+pennies, but it is the mechanism that put $1.90 of imaginary spend on the
+ledger and darkened the desk twice in one day), and a pricing gap that could
+have latched the desk off permanently with no way to self-heal.
+
+**Two found and deliberately NOT fixed, reported rather than actioned:**
+a session killed mid-call at day's end leaves a reservation that the NEXT
+morning charges and latches on — so the day it darkens is not the day it
+broke (never observed; read from code). And cache hits record no cost, so
+the alert prints `cost: $?.??` and hides the real figure.
+
+---
+
+### Re-measure gate — TWO different questions, two different costs
+
+**No item above may be struck through on a code review.** But do not confuse
+the fast question with the slow one. Owner's correction, 2026-09-02, and it
+is right: *"we only need maybe a couple of runs in the morning to determine
+if it's still not pulling the trigger on longs or shorts for no reason."*
+
+**THE FAST CHECK — one or two sessions. Use this for item 1.**
+"Is the desk still refusing trades for no good reason?" is BINARY and it is
+answerable the next morning the market is open. A session either produces
+entry proposals that survive to an order, or it kills them at the R/R gate
+again. One clean morning tells you whether the geometry fix worked; two tells
+you it was not a fluke. Do not wait two weeks to learn this.
+  - What to look at: the proposals that session, and for each one whether the
+    R/R gate blocked or halved it. If the gate is still doing the killing,
+    the fix did not work — that is the whole test.
+  - **A zero-proposal session does NOT answer this**, it only means nothing
+    got that far. Distinguish "refused" from "never offered", or you will
+    read item 11's silent-failure mode as a pass.
+
+**THE SLOW CHECK — weeks. Use this for the funnel percentages.**
+Re-running `scripts/blocked_proposals_census.py` and claiming the SHARES
+moved (25% → x%) needs a comparable window, and the book was wiped
+2026-09-02 so that window starts from empty. Until roughly two weeks of
+sessions exist, any restated percentage is an estimate. Say so when making
+one. This is a bookkeeping bar, not a gate on shipping the next fix.
+
+
 **~~A held SHORT makes its sector look SMALLER to the risk engine~~ — DECIDED
 AND BUILT 2026-09-01.** The owner answered the question this item was raised
 to ask: the sector cap measures **concentration, per side**, not net
@@ -859,9 +1185,53 @@ $6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
 several runaway looping incidents that burned tokens — the reason the LLM
 cost circuit breaker was added — so the per-seat shares below are inflated
 by an unknown amount and should not be read as the PM's steady-state share
-of spend. A clean baseline needs to be re-measured once the current tranche
-(flex routing, the `intra_check` fix) is deployed and the circuit breaker
-has had a run without tripping.
+of spend. A clean baseline needed re-measuring once the current tranche (flex
+routing, the `intra_check` fix) was deployed. **It has been — see immediately
+below; use those numbers, not these.**
+
+**CLEAN BASELINE, measured 2026-09-02 from `llm_budget_days` and `agent_logs`
+on the live desk.** Dates used: **2026-08-27 to 2026-09-02**, which is the
+whole post-contamination record. 2026-08-31 is included but its ledger is only
+meaningful after the operator's phantom-charge correction that afternoon;
+2026-09-02 is a partial day (through 14:01 ET). 2026-08-29/30 was a weekend.
+
+| Day | Settled spend | Note |
+|---|---:|---|
+| 2026-08-27 | $1.0200 | |
+| 2026-08-28 | $0.7394 | |
+| 2026-08-31 | $1.4578 | includes three operator-triggered morning re-runs |
+| 2026-09-01 | $0.7793 | |
+| 2026-09-02 | $0.8958 | partial, to 14:01 ET |
+
+**~$0.73–$1.14 on an ordinary day against a $2.75 ceiling — the desk is using
+about a third of its budget.** No trend: the range is flat across the five
+days and the variation is run-count, not per-call drift.
+
+**The concentration is confirmed, and it got MORE concentrated, not less.**
+Over 2026-08-27..09-02: **portfolio_manager is $4.2475 of $4.5646 — 93.0% of
+spend on 35 of 153 calls.** Every other seat combined is $0.3171. The eight
+seats that moved to Google-direct `gemini-3.5-flash-lite` on 2026-08-31 now
+cost **$0.00** (free tier) — 35 calls, zero dollars. So the *entire* remaining
+LLM bill is one seat's model choice plus two small OpenRouter stragglers
+(`tech_analyst` $0.209 pre-migration, `risk_manager` $0.023).
+
+**Do not re-litigate "the research desk is cheap" from this.** It is now
+cheap because it is free, which is a routing fact, not an efficiency one. The
+only lever that moves the bill is the PM seat: its input size, its cadence, or
+its endpoint. A weaker PM model is ruled out by the owner and that ruling
+stands.
+
+**One measurement to act on before any budget change.** Provider-reported cost
+for `openai/gpt-5.5` has been a **median 0.38x** of the pinned $5/$30 estimate
+across the 32 calls since 2026-08-28 (the flex endpoint plus cache reads).
+Reservations and the reserved-exposure ceilings are still sized off the pinned
+rate, so every PM reservation is ~2.7x what the seat is actually billed. That
+is what produced the 2026-08-28 hold at $1.9118 on a call that cost ~$0.25,
+and the response was to raise the ceiling 1.80 -> 2.60. **The ceiling is being
+loosened to accommodate a bad estimate.** Pricing reservations at the flex
+rate is NOT the fix — fallbacks are enabled, so a saturated flex tier lands on
+the $5/$30 endpoint and the reservation would then under-cover the dearest
+possible outcome. Owner decision, not a patch.
 
 | Mode | Runs | Avg/run | Dominated by |
 |---|---:|---:|---|

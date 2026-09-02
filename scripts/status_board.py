@@ -34,6 +34,7 @@ Runs read-only. It never writes to the production checkout or its database.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import html
 import json
 import os
@@ -393,6 +394,154 @@ class PhaseView:
         return "CONFIRMED"
 
 
+# ---------------------------------------------------------------------------
+# The funnel queue — read from docs/WORK.md, never typed in here.
+#
+# The owner asked, plainly: "is that accessible via webpage... there's code
+# that pulls it from stuff that you look at so that I can see it
+# automatically." That is the whole requirement. The ranked list of why
+# trades do not happen lives in `docs/WORK.md` because that is the file a
+# resumed session reads and CI checks; duplicating it here would create a
+# second copy that drifts, which is the exact failure this project keeps
+# hitting. So this parses the real thing.
+#
+# It degrades LOUDLY. If the heading moves or the item shape changes, the
+# section says it could not read the queue rather than rendering empty and
+# looking like there is no work — same principle as the rest of this board:
+# say unknown, never guess.
+# ---------------------------------------------------------------------------
+
+#: The classifications the queue uses. Order matters: longest first, so
+#: "TOO NEW TO CLASSIFY" is not swallowed by a prefix match on a shorter one.
+_QUEUE_CLASSES = (
+    "TOO NEW TO CLASSIFY",
+    "NOT YET DIAGNOSED",
+    "WORKING AS INTENDED",
+    "TOO STRICT",
+    "NO RECORD",
+    "DEFECT",
+)
+
+#: `**3. Title — 6 of 68 (9%). WORKING AS INTENDED.**` — the leading `**N.`
+#: is what makes a line an item; everything after is optional and absent
+#: fields render as blanks rather than failing the parse.
+_QUEUE_ITEM_RE = re.compile(r"^\*\*(?:~~)?(\d+)\.\s+(.+?)\*\*\s*$")
+_QUEUE_SHARE_RE = re.compile(r"(\d+)\s+of\s+(\d+)\s*\((\d+)%\)")
+_QUEUE_HEADING = "## THE FUNNEL QUEUE"
+
+
+@dataclass
+class QueueItem:
+    """One ranked cause of trades not happening."""
+
+    rank: int
+    title: str
+    classification: str
+    share: str
+    pct: int | None
+    done: bool
+
+    @property
+    def state(self) -> str:
+        """Short, owner-facing status. Never a file path or a branch name."""
+        if self.done:
+            return "done"
+        return "open"
+
+
+def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
+    """Parse the ranked funnel queue out of docs/WORK.md.
+
+    Returns `(items, problem)`. `problem` is a plain-English sentence when the
+    queue could not be read, and None when it could — the caller renders the
+    sentence instead of an empty list, so a shape change is visible rather
+    than silently looking like an empty backlog.
+    """
+    if not work_md.exists():
+        return [], "The backlog file is missing, so the queue could not be read."
+    text = work_md.read_text()
+    if _QUEUE_HEADING not in text:
+        return [], (
+            "The backlog no longer has a section headed "
+            f"{_QUEUE_HEADING.lstrip('# ')!r}, so the queue could not be read."
+        )
+    body = text.split(_QUEUE_HEADING, 1)[1]
+    # The queue ends at the re-measure gate; anything after is other backlog.
+    for stop in ("### Re-measure gate", "\n## ", "\n### "):
+        if stop in body:
+            body = body.split(stop, 1)[0]
+
+    items: list[QueueItem] = []
+    for raw in body.splitlines():
+        m = _QUEUE_ITEM_RE.match(raw.strip())
+        if not m:
+            continue
+        rank, rest = int(m.group(1)), m.group(2)
+        done = "~~" in raw
+        classification = next((c for c in _QUEUE_CLASSES if c in rest.upper()), "")
+        share_m = _QUEUE_SHARE_RE.search(rest)
+        share = share_m.group(0) if share_m else ""
+        pct = int(share_m.group(3)) if share_m else None
+        # Title is everything before the first em dash, which is where the
+        # measured share starts. No dash means the whole line is the title.
+        title = rest.split("\u2014", 1)[0]
+        # An item with no em dash carries its classification inline; strip it
+        # so the title stays a plain-English name and never shouts a label.
+        for c in _QUEUE_CLASSES:
+            title = re.sub(re.escape(c) + r"\.?", "", title, flags=re.I)
+        # Stripping a mid-sentence label leaves orphaned punctuation
+        # ("misattributes vetoes. , pre-existing"); tidy it so the board never
+        # shows the seam where a label used to be.
+        title = re.sub(r"\s*[.,]\s*(?=[.,])", "", title)
+        title = re.sub(r"\s{2,}", " ", title).strip().rstrip(".,").strip("~ ").strip()
+        items.append(QueueItem(rank, title, classification, share, pct, done))
+
+    if not items:
+        return [], (
+            "The queue heading is there but no numbered items could be read "
+            "from it, so its shape has changed."
+        )
+    return sorted(items, key=lambda i: i.rank), None
+
+
+#: `- [ ] DECIDE BY 2026-09-16 — question` — the same shape
+#: `test_no_pending_decision_is_overdue` enforces, deliberately, so the board
+#: and the build are reading one format and cannot disagree about it.
+_DECISION_RE = re.compile(r"^- \[ \] DECIDE BY (\d{4})-(\d{2})-(\d{2}) [-\u2014] (.+)$")
+
+
+@dataclass
+class PendingDecision:
+    """A decision waiting on the owner, with how long is left."""
+
+    due: dt.date
+    question: str
+    days_left: int
+
+    @property
+    def overdue(self) -> bool:
+        return self.days_left < 0
+
+
+def load_pending_decisions(work_md: Path, today: dt.date | None = None) -> list[PendingDecision]:
+    """Decisions the owner still owes an answer on, soonest first."""
+    if not work_md.exists():
+        return []
+    today = today or dt.date.today()
+    out: list[PendingDecision] = []
+    for line in work_md.read_text().splitlines():
+        m = _DECISION_RE.match(line.strip())
+        if not m:
+            continue
+        y, mo, d, question = m.groups()
+        try:
+            due = dt.date(int(y), int(mo), int(d))
+        except ValueError:
+            continue  # the build test already fails loudly on a bad date
+        out.append(PendingDecision(due, question.strip(), (due - today).days))
+    return sorted(out, key=lambda p: p.due)
+
+
 def load_phases(manifest: Path, cfg: dict) -> list[PhaseView]:
     raw = yaml.safe_load(manifest.read_text())
     entries = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
@@ -641,6 +790,50 @@ def _row(p: PhaseView) -> str:
     )
 
 
+def _render_queue(items: list[QueueItem], problem: str | None) -> str:
+    """The ranked queue, as the owner reads it: what is being worked, in order.
+
+    Classification is carried by the WORD, never by colour alone — the owner
+    is red/green colour blind, so a hue-only status would be unreadable to
+    him. The pill has a tone, but the text is what says it.
+    """
+    if problem:
+        return f'<div class="note"><b>Queue unavailable.</b> {_esc(problem)}</div>'
+    rows = []
+    for it in items:
+        tone = "t-done" if it.done else ("t-gap" if it.classification in
+                                         ("DEFECT", "NO RECORD", "TOO STRICT") else "")
+        share = (f'<span class="tag">{_esc(it.share)}</span>' if it.share else "")
+        cls = (f'<span class="pill {tone}">{_esc(it.classification.lower())}</span>'
+               if it.classification else "")
+        struck = ' style="opacity:.55;text-decoration:line-through"' if it.done else ""
+        rows.append(
+            f'<div class="item"><span class="dot">{it.rank}</span>'
+            f'<span{struck}>{_esc(it.title)}</span> {share} {cls}</div>'
+        )
+    return "\n".join(rows)
+
+
+def _render_decisions(decisions: list[PendingDecision]) -> str:
+    """Decisions waiting on the owner. Nothing here is an agent's to make."""
+    if not decisions:
+        return '<div class="note">Nothing is waiting on you.</div>'
+    rows = []
+    for d in decisions:
+        if d.overdue:
+            when = f"{abs(d.days_left)} days overdue"
+            tone = "p-urgent"
+        elif d.days_left == 0:
+            when, tone = "due today", "p-urgent"
+        else:
+            when, tone = f"{d.days_left} days left", "p-none"
+        rows.append(
+            f'<div class="item"><span class="pill {tone}">{_esc(when)}</span> '
+            f'<span>{_esc(d.question)}</span></div>'
+        )
+    return "\n".join(rows)
+
+
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> str:
     now = datetime.now(ET)
     total_rules = sum(len(p.results) for p in phases)
@@ -741,6 +934,13 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
                          else f"of the ${limit:.2f} daily limit &mdash; {pct}% used")
                         if pct is not None else "daily spend could not be read")
     body = body.replace("{{SESSIONS}}", _fmt(state.get("sessions_today")))
+    queue_items, queue_problem = load_funnel_queue(REPO_ROOT / "docs" / "WORK.md")
+    decisions = load_pending_decisions(REPO_ROOT / "docs" / "WORK.md")
+    open_count = sum(1 for i in queue_items if not i.done)
+    body = body.replace("{{QUEUE}}", _render_queue(queue_items, queue_problem))
+    body = body.replace("{{DECISIONS}}", _render_decisions(decisions))
+    body = body.replace("{{QUEUE_OPEN}}", str(open_count))
+    body = body.replace("{{QUEUE_TOTAL}}", str(len(queue_items)))
     body = body.replace("{{ROWS}}", rows)
     body = body.replace("{{ALARM}}", alarm)
     body = body.replace("{{RULES_TOTAL}}", str(total_rules))

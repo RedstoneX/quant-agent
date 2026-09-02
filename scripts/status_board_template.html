@@ -171,6 +171,25 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);
   </div>
 
   <section>
+    <h2>What is being worked on, in order</h2>
+    <p class="lede">The desk turned 68 trade ideas into 15 actual buys between
+      18 August and 2 September &mdash; 22%. These are the reasons the other 53
+      died, biggest first, read straight from the work backlog rather than typed
+      in here. {{QUEUE_OPEN}} of {{QUEUE_TOTAL}} are still open.
+      <b>One caveat that applies to every number below:</b> 19% of those ideas
+      died leaving no record at all, so each share carries a blind spot that
+      size.</p>
+    {{QUEUE}}
+  </section>
+
+  <section>
+    <h2>Waiting on you</h2>
+    <p class="lede">Judgement calls that are yours, not the desk&rsquo;s and not an
+      agent&rsquo;s. The build goes red if one of these runs past its date.</p>
+    {{DECISIONS}}
+  </section>
+
+  <section>
     <h2>Where the plan stands</h2>
     <p class="lede">Every line below was re-checked against the system just now &mdash;
       {{RULES_PASS}} of {{RULES_TOTAL}} checks pass, {{RULES_FAIL}} fail,

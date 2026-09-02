@@ -1114,3 +1114,342 @@ def test_resolve_gross_ceiling_normal_drawdown_path_still_works():
     assert ceiling.rung != "bad_read"
     assert ceiling.drawdown_pct == -20.0
     assert ceiling.ceiling_x == 0.5
+
+
+# ===========================================================================
+# THE GATE, PART 6 — the ladder is what BINDS at execution, not settled cash.
+#
+# Everything above proves the ceiling steps and that the sizing/execution
+# GATES enforce it. None of it reached the last gate of all: the BUY submit
+# loop in `ExecutionStage`, which clamped every entry against the broker's
+# RAW CASH figure and was gated on nothing. Raw cash is at most
+# `equity - gross`, so that clamp held gross under 1.0x STRUCTURALLY and the
+# ceiling could never bind on the long side — `allow_margin: true` shipped
+# on 2026-09-02 and changed nothing a long could do.
+#
+# The clamp still exists (with margin on, the broker ACCEPTS a buy beyond
+# cash, so this loop is the last quantitative bound before the order leaves).
+# What it clamps against is now the ladder. These tests are the owner's gate
+# on that swap: the rung binds at EVERY step including the floor, a deeper
+# rung deploys LESS than the settled cash alone would have allowed, one order
+# cannot drain the session, a short is unchanged, and no degraded read ever
+# buys more room than a good one.
+# ===========================================================================
+
+from unittest.mock import MagicMock  # noqa: E402
+
+from src.models import PortfolioDecision, ReasoningChain  # noqa: E402
+from src.pipeline_context import RunContext  # noqa: E402
+from src.pipeline_stages import (  # noqa: E402
+    ExecutionStage,
+    _entry_deployment_budget,
+    _single_name_execution_cap,
+)
+from src.risk.rules import GrossCeiling  # noqa: E402
+
+EXEC_PRICE = 100.0
+
+
+def _execution_pipeline(*, cash, equity, ceiling_x=BASE_X, rung="none",
+                        allow_margin=True, max_position_pct=100.0,
+                        park="SGOV", positions=()):
+    """A pipeline stub whose §11.2 ceiling is REAL and whose sizing is
+    deterministic: whole shares at $100, so every notional below is a plain
+    multiple of the price and nothing hides in a rounding."""
+    pipeline = MagicMock()
+    pipeline.broker.get_latest_price.return_value = EXEC_PRICE
+    pipeline.broker.submit_order.return_value = {"id": "ord", "status": "accepted"}
+    pipeline.broker.get_shortability.return_value = {
+        "shortable": True, "easy_to_borrow": True,
+    }
+    pipeline._order_accepted.return_value = True
+    pipeline._format_qty = lambda q: str(q)
+    # The submit loop re-reads the broker before the BUY phase and adopts
+    # whatever comes back, so the held book has to come through HERE — a
+    # ctx-only book would be discarded and the headroom measured against an
+    # empty one.
+    pipeline._refresh_account_state.return_value = (
+        {"cash": cash, "portfolio_value": equity}, list(positions), {},
+    )
+    pipeline.risk_engine.check_daily_loss.return_value = None
+    pipeline._resolve_gross_ceiling = lambda ctx: GrossCeiling(
+        ceiling_x=ceiling_x, base_x=BASE_X, drawdown_pct=None,
+        alert_owner=False, rung=rung, reason="test rung",
+    )
+    pipeline._sweep_symbol = lambda: park
+    pipeline.config = MagicMock()
+    pipeline.config.risk.allow_margin = allow_margin
+    pipeline.config.risk.max_position_pct = max_position_pct
+    pipeline.config.cash_sweep.min_order_usd = 500.0
+    pipeline.config.execution.fractional_enabled = False   # whole shares
+    return pipeline
+
+
+def _entry(symbol="NVDA", alloc=100.0) -> TradeDecision:
+    """An entry that asks for the whole book, so the BUDGET is what decides
+    the size. The stop sits $0.10 away so the §11.1 risk budget cannot be
+    what binds — this file is about the ceiling, not about risk sizing."""
+    return TradeDecision(
+        action="BUY", symbol=symbol, allocation_pct=alloc,
+        entry_price=EXEC_PRICE, stop_loss=EXEC_PRICE - 0.10,
+        take_profit=EXEC_PRICE + 10.0, reasoning="ladder execution test",
+    )
+
+
+def _exec_ctx(decisions, *, cash, equity, positions=()) -> RunContext:
+    ctx = RunContext.start("morning")
+    ctx.cash = cash
+    ctx.total_value = equity
+    ctx.last_equity = equity
+    ctx.positions = list(positions)
+    ctx.decision_id = "run-x-dec-ladder"
+    ctx.symbols_bars = {}          # no bars -> no ATR stop floor
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="m", news_check="n", earnings_check="e",
+            signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+            cash_target="c",
+        ),
+        decisions=decisions, portfolio_view="t",
+    )
+    return ctx
+
+
+def _submitted_notional(pipeline) -> float:
+    return sum(
+        call.kwargs["qty"] * EXEC_PRICE
+        for call in pipeline.broker.submit_order.call_args_list
+    )
+
+
+def test_a_long_may_now_borrow_up_to_the_ladder_ceiling():
+    """THE DEFECT, stated as behaviour. $500 of settled cash, a $4,000 book
+    on $10,000 of equity, and the standing 2.0x rung: the long goes out at
+    the size the ladder allows, not at the size the cash allows. Before the
+    swap this order was cut to five shares."""
+    held = [_position(symbol="MSFT", qty=40, current_price=100.0)]   # $4,000
+    pipeline = _execution_pipeline(cash=500.0, equity=10_000.0, positions=held)
+    ctx = _exec_ctx([_entry()], cash=500.0, equity=10_000.0, positions=held)
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert _submitted_notional(pipeline) == 10_000.0
+    assert ctx.execution_skips == []
+
+
+@pytest.mark.parametrize("ceiling_x", [2.0, 1.5, 1.0, 0.5])
+def test_the_deployment_budget_steps_with_every_rung_including_the_floor(ceiling_x):
+    """The owner's condition, at the last gate: the ladder must actually
+    step. A batch big enough to exhaust any rung is offered at each rung in
+    turn; the session deploys EXACTLY the headroom that rung leaves and not
+    a share more, floor rung included."""
+    equity, held_gross = 10_000.0, 4_000.0
+    held = [_position(symbol="MSFT", qty=40, current_price=100.0)]
+    pipeline = _execution_pipeline(
+        cash=500.0, equity=equity, ceiling_x=ceiling_x, positions=held,
+    )
+    ctx = _exec_ctx(
+        [_entry("NVDA"), _entry("AMD"), _entry("AAPL")],
+        cash=500.0, equity=equity, positions=held,
+    )
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert _submitted_notional(pipeline) == ceiling_x * equity - held_gross
+
+
+def test_a_deeper_rung_deploys_less_than_settled_cash_alone_would_have():
+    """The property the whole change exists for, and the one the old clamp
+    could never have: a drawdown must be able to REDUCE deployment below
+    what the cash on hand would have bought. $6,000 sits in the account and
+    the floor rung refuses every dollar of it, because the book is already
+    over that rung."""
+    equity = 10_000.0
+    held = [_position(symbol="MSFT", qty=55, current_price=100.0)]   # $5,500
+    pipeline = _execution_pipeline(
+        cash=6_000.0, equity=equity, ceiling_x=0.5, rung="-20%", positions=held,
+    )
+    ctx = _exec_ctx([_entry()], cash=6_000.0, equity=equity, positions=held)
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    pipeline.broker.submit_order.assert_not_called()
+    assert [s["reason"] for s in ctx.execution_skips] == ["insufficient_cash"]
+
+
+def test_no_single_order_can_consume_the_whole_session():
+    """The budget is a POOL. Without a per-order bound the first entry could
+    draw the entire session's headroom, which is a concentration decision
+    nobody made. `max_position_pct` is re-applied to the size EXECUTION
+    chose — same idiom as the §10.3 notional floor beside it."""
+    pipeline = _execution_pipeline(
+        cash=500.0, equity=10_000.0, max_position_pct=20.0,
+    )
+    ctx = _exec_ctx([_entry()], cash=500.0, equity=10_000.0)
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    # 20% of $10,000, not the $20,000 of 2.0x headroom an empty book leaves.
+    assert _submitted_notional(pipeline) == 2_000.0
+
+
+def test_a_short_is_never_sized_or_refused_by_the_budget():
+    """D11 is unchanged. A short spends no settled cash and is never trimmed
+    or refused by this clamp — it goes out in full against a budget of
+    ZERO, exactly as it did before the swap."""
+    equity = 10_000.0
+    held = [_position(symbol="MSFT", qty=50, current_price=100.0)]   # $5,000
+    pipeline = _execution_pipeline(
+        cash=0.0, equity=equity, ceiling_x=0.5, positions=held,
+    )
+    short = TradeDecision(
+        action="SHORT", symbol="XOM", allocation_pct=20.0,
+        entry_price=EXEC_PRICE, stop_loss=EXEC_PRICE + 0.10,
+        take_profit=EXEC_PRICE - 10.0, reasoning="short with no headroom",
+    )
+    ctx = _exec_ctx([short], cash=0.0, equity=equity, positions=held)
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    sides = [c.kwargs.get("side") for c in pipeline.broker.submit_order.call_args_list]
+    assert sides == ["sell_short"]
+    assert _submitted_notional(pipeline) == 2_000.0
+    assert ctx.execution_skips == []
+
+
+def test_a_short_consumes_the_budget_for_the_long_behind_it():
+    """A short OWNS gross exactly as a long does — `gross_exposure` sums the
+    magnitude of both. So it must draw the pool down even though it is never
+    sized by it, or a long behind it in the same batch would be sized
+    against headroom the short has already spent."""
+    equity = 10_000.0
+    held = [_position(symbol="MSFT", qty=50, current_price=100.0)]   # $5,000
+    pipeline = _execution_pipeline(
+        cash=0.0, equity=equity, ceiling_x=1.0, positions=held,
+    )
+    short = TradeDecision(
+        action="SHORT", symbol="XOM", allocation_pct=20.0,   # $2,000
+        entry_price=EXEC_PRICE, stop_loss=EXEC_PRICE + 0.10,
+        take_profit=EXEC_PRICE - 10.0, reasoning="short first",
+    )
+    ctx = _exec_ctx([short, _entry()], cash=0.0, equity=equity, positions=held)
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    buys = [c.kwargs for c in pipeline.broker.submit_order.call_args_list
+            if c.kwargs.get("side") == "buy"]
+    # $5,000 of headroom at 1.0x, minus the $2,000 the short just took.
+    assert len(buys) == 1
+    assert buys[0]["qty"] * EXEC_PRICE == 3_000.0
+
+
+# --- the budget itself, unit-tested at its degraded edges -----------------
+
+def _budget_pipeline(**kwargs):
+    return _execution_pipeline(cash=0.0, equity=0.0, **kwargs)
+
+
+def test_the_budget_is_ladder_headroom_when_margin_is_on():
+    pipeline = _budget_pipeline(ceiling_x=1.5)
+    held = [_position(symbol="MSFT", qty=40, current_price=100.0)]
+    budget, is_gross, note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), held, 10_000.0, 250.0,
+    )
+    assert budget == 1.5 * 10_000.0 - 4_000.0
+    assert is_gross is True
+    assert "ladder headroom" in note
+
+
+def test_settled_cash_still_binds_when_margin_is_off():
+    """Turning the ceiling into the primary limit must not quietly hand a
+    CASH-ONLY account the right to borrow. With `allow_margin` false the
+    tighter of the two governs, which is what shipped before."""
+    pipeline = _budget_pipeline(ceiling_x=2.0, allow_margin=False)
+    budget, _is_gross, note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), [], 10_000.0, 250.0,
+    )
+    assert budget == 250.0
+    assert "margin disabled" in note
+
+
+@pytest.mark.parametrize("bad_equity", [float("nan"), float("inf"), None])
+def test_an_unusable_equity_read_buys_no_room_at_all(bad_equity):
+    """`_resolve_gross_ceiling` already forces the FLOOR rung and alerts the
+    owner on a non-finite equity read. Multiplying that rung by a NaN equity
+    would produce a NaN budget, every `>` against it would be False, and the
+    clamp would grant INFINITE room on exactly the broken-snapshot morning
+    the guard exists for. It must fail closed instead."""
+    pipeline = _budget_pipeline(ceiling_x=GROSS_LADDER[-1][1], rung="bad_read")
+    bad, _is_gross, note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(bad_equity), [], bad_equity, 9_000.0,
+    )
+    good, _g, _n = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), [], 10_000.0, 9_000.0,
+    )
+
+    assert bad == 0.0
+    assert bad <= good, "a bad read must never buy more room than a good one"
+    assert "no usable equity" in note
+
+
+def test_an_unreadable_ladder_falls_back_to_cash_never_to_the_standing_cap():
+    """This is the LAST gate; the constructor may fall back to the standing
+    cap because another gate still runs after it, and nothing runs after
+    this one. An unresolvable ceiling therefore degrades to the pre-margin
+    raw-cash clamp — never to 2.0x of an equity figure nobody vouched for."""
+    pipeline = _budget_pipeline()
+    pipeline._resolve_gross_ceiling = lambda ctx: None    # not a GrossCeiling
+
+    budget, is_gross, note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), [], 10_000.0, 250.0,
+    )
+
+    assert budget == 250.0
+    assert is_gross is False
+    assert "ladder unreadable" in note
+
+
+def test_the_park_vehicle_is_not_charged_against_the_budget():
+    """Same exclusion `gross_exposure` is given everywhere else: parked cash
+    is not exposure, and counting it would consume the allowance doing
+    nothing."""
+    pipeline = _budget_pipeline(ceiling_x=1.0)
+    parked = [_position(symbol="SGOV", qty=50, current_price=100.0)]
+    budget, _is_gross, _note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), parked, 10_000.0, 0.0,
+    )
+    assert budget == 10_000.0
+
+
+@pytest.mark.parametrize("bad_park", [MagicMock(), 123, object()])
+def test_an_unreadable_park_symbol_understates_headroom_rather_than_inflating(bad_park):
+    """A park symbol that is not a string (an unconfigured sweeper, a stub,
+    a mistyped setting) must not reach `gross_exposure` — some of these
+    raise inside it, and a raise here would take the whole submit loop down.
+    It degrades to "no park", which counts the vehicle as gross and
+    UNDER-states the headroom: the safe side to be wrong on."""
+    pipeline = _budget_pipeline(ceiling_x=1.0, park=bad_park)
+    parked = [_position(symbol="SGOV", qty=50, current_price=100.0)]
+    budget, _is_gross, _note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), parked, 10_000.0, 0.0,
+    )
+    assert budget == 5_000.0
+
+
+def test_a_book_already_over_its_rung_has_zero_headroom_never_negative():
+    """A negative budget is not a smaller budget: it would render to the
+    operator as "-$500 still deployable", and would silently absorb the
+    first $500 of anything a later refresh credited."""
+    pipeline = _budget_pipeline(ceiling_x=0.5)
+    over = [_position(symbol="MSFT", qty=55, current_price=100.0)]   # $5,500
+    budget, _is_gross, _note = _entry_deployment_budget(
+        pipeline, _ctx_with_equity(10_000.0), over, 10_000.0, 6_000.0,
+    )
+    assert budget == 0.0
+
+
+def test_the_single_name_execution_cap_falls_back_closed_not_open():
+    pipeline = _budget_pipeline()
+    pipeline.config.risk.max_position_pct = MagicMock()   # unreadable
+    assert _single_name_execution_cap(pipeline, 10_000.0) == 2_000.0   # 20% default
+    assert _single_name_execution_cap(pipeline, float("nan")) == 0.0

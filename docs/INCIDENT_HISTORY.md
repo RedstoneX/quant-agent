@@ -22,6 +22,192 @@ what would catch it next time.
 
 ---
 
+### 2026-09-02 — the full proposal-to-fill census: where every trade idea actually dies, counted, not guessed
+
+**In plain words:** the desk had a stale "23% of proposals become a fill"
+number and no complete breakdown of why. This is the complete count, over
+the whole recorded history, of every proposal and exactly what killed the
+ones that did not fill. The 1.5 reward:risk floor already had a name and a
+paper trail (see the entries below); this is the first time it was counted
+alongside every OTHER cause on the same footing, so it can be ranked instead
+of assumed.
+
+**Data used.** `/home/qamc/quant-agent/data/quant_agent.db` was reset live,
+mid-measurement (2026-09-02 18:18:59Z — `scripts/desk_reset.py`, flattening
+8 positions and wiping `trades`/`intraday_evaluations`/the decision-linked
+half of `specialist_evidence`, citing the reward:risk defect below as why
+that history was "contaminated"). The reset script itself copied the
+pre-wipe database to
+`data/resets/20260902T181859Z/quant_agent.db` before deleting anything —
+that copy is what this census is built from. It carries the full recorded
+history: `specialist_evidence` 2026-08-17 through 2026-09-02 18:01, `trades`
+2026-08-14 through 2026-09-02 17:02, 104 distinct runs. It supersedes the two
+older `data/quant_agent.db.bak-*` files (both stop at 2026-08-28) and is the
+only complete copy left once the reset runs.
+
+**Denominator: 68.** That is every `target` (PM proposal) with a positive
+size — an entry request, not an exit — recorded from 2026-08-18 through
+2026-09-02. 15 of the 68 filled (22%, matching the stale figure — it was
+stale in detail, not in headline). 53 did not.
+
+**Ranked causes (of 53 blocked):**
+
+| n | % of 68 | cause | classification |
+|---|---|---|---|
+| 17 | 25% | reward:risk floor (1.5) — 10 killed before an order was ever built (`PortfolioConstructor._widen_stop_past_noise`), 7 killed by the AI Risk Manager citing the same floor by name in its veto text | RULE TOO STRICT |
+| 13 | 19% | unrecoverable — no table and no surviving log explains the drop | **gap in the record itself, not a rule** |
+| 6 | 9% | order reached the broker, was accepted, never filled, got cancelled | WORKING AS INTENDED (price-protection cancels an order sitting unfilled beyond its window) but a real, material cost |
+| 4 | 6% | execution-time reward:risk re-check (1.2 floor — a DIFFERENT, narrower rule than the 1.5 one above, fires only when execution moved the stop or limit after Risk Manager approval) | WORKING AS INTENDED |
+| 3 | 4% | allocation rounded to zero shares | account-scale artifact (paper account ≈$9.9k against $200+ stocks), not really a rule at all |
+| 3 | 4% | no structural level existed to derive a target from (`[no_level_in_direction]`) — a brand-new check, all 3 on 2026-09-02, one day old | too new to classify with confidence; watching |
+| 2 | 3% | AI Risk Manager vetoed the whole plan for reading as internally inconsistent (not a reward:risk call) | RULE TOO STRICT — the exact failure mode `docs/STATE.md`'s "Removed Before You Saw This" fix (2026-08-31) targeted, still reproducing after that fix shipped |
+| 2 | 3% | analyst supplied a stop on the wrong side of entry; constructor correctly refused rather than inventing one | the REFUSAL is WORKING AS INTENDED; the upstream stop being wrong-sided at all is a DEFECT worth its own look |
+| 1 | 1% | insufficient cash | WORKING AS INTENDED, and not a material cause — 1 of 68 |
+| 1 | 1% | quote 14.6% away from reference, refused rather than crossed | WORKING AS INTENDED against what looks like a bad IEX print (known paper-data limitation, not new) |
+| 1 | 1% | broker explicitly rejected the submitted order | one occurrence, not investigated further |
+
+**Direct answers to the six questions asked of this data:**
+
+1. *Died at the 1.5 reward:risk floor specifically?* **17 of 68 (25%)** —
+   confirmed as the single largest NAMED cause, ahead of every other rule.
+   It is not, however, the majority of blocked proposals (53) the way "the
+   single largest cause" might imply — the unrecoverable-gap bucket (13) is
+   close behind it, and together the two dwarf everything else.
+2. *Died for lack of a structural level to anchor a stop?* **3 of 68**,
+   all on one day (2026-09-02) under a check that shipped 2026-09-01. Real,
+   but currently small next to the reward:risk floor — one day of data is
+   not enough to say whether it stays small.
+3. *Died at the cash/exposure clamp rather than a risk rule?* **1 of 68.**
+   Not a material cause over this window, whatever it may become at larger
+   size.
+4. *Died to something that looks like a bug rather than a rule?* Two
+   patterns qualify: the 2 wrong-sided stops (#8 above — the constructor's
+   refusal is correct, but a stop landing on the wrong side of entry at all
+   means something upstream produced a self-contradictory number), and the
+   9-of-53 `order_not_placed` shape specifically (constructor built the
+   order, nothing in any table or surviving log says what happened next —
+   no trade, no skip, no rejection). The second is the stronger DEFECT
+   candidate: that shape is exactly what an interrupted or crashed run
+   looks like from the outside, not what a deliberate no-trade looks like.
+   Separately, `agent_logs`/`specialist_evidence` record 14 outright agent
+   failures in this window — 10 of them `portfolio_manager:
+   no_valid_grounded_decision` on 2026-08-25 alone, which is why that date
+   produced zero proposals at all rather than merely zero fills.
+5. *Sessions with zero fills, and the dominant cause on each?* **6 of the 11
+   sessions that produced at least one proposal** (55%): 2026-08-18 and
+   2026-08-19 (dominant: unexplained gap), 2026-08-20 and 2026-09-01
+   (dominant: reward:risk-floor veto by the Risk Manager), 2026-08-24
+   (dominant: orders cancelled after submission), 2026-08-28 (dominant:
+   reward:risk floor at the constructor).
+6. *Same symbol repeating across refusals?* NVDA was proposed **9** times
+   and filled **once** — by far the most repeated name, and its 8 misses
+   are spread across nearly every cause on the list above, not one. Three
+   symbols were proposed 3+ times and filled **zero**: JPM, VLO, PATH.
+
+**What could NOT be attributed, and how much of the total that is.** 13 of
+68 proposals (19% of all proposals, 25% of blocked ones) resolve to
+`no_order_built` or `order_not_placed` with no supporting record anywhere —
+not in `specialist_evidence`, not in `trades`, and not in the systemd
+`journalctl --user` history (which otherwise reaches back to 2026-08-09 and
+resolved another 15 of the 68 by cross-referencing the constructor's own log
+lines against proposal timestamps — that cross-reference is what produced
+the #1 reward:risk-floor figure above; the constructor logs no reason to
+any table, only to `logger.info`/`logger.warning`). One specific run
+(`run-5834d319-dec-51d3bf`, 2026-08-31 ~19:06) has ZERO constructor log
+lines in the journal despite producing a real verdict and real trades
+minutes later — either that invocation didn't run under the systemd unit
+this journal captures (a manual/replay run's stdout goes nowhere this
+census can reach), or its logging was lost some other way. This is reported
+as a genuine gap, not resolved further.
+
+**What this does NOT change.** The reward:risk floor's value (1.5) and the
+level-backed-stop exemption (spec §12.1) are unchanged by this entry — see
+the 2026-08-31 and earlier entries below for that history. This entry adds
+the ranking and the complete count; it does not re-litigate the threshold.
+
+**Reusable going forward:** `scripts/blocked_proposals_census.py` — regenerates
+every number above (and the per-day / per-symbol breakdowns) against any
+`quant_agent.db` snapshot. Read-only, no pipeline imports, no broker calls.
+
+---
+### 2026-09-02 — the phantom bill was only half fixed, and a model going out of print could have switched the desk off for good
+
+**In plain words:** two ways the desk could stop itself over money it never
+actually spent. The first was the 2026-08-31 phantom charge, still alive on
+the half nobody looked at. The second was worse: if the model marketplace ever
+stopped listing one of our models, the desk would have shut down and stayed
+shut down, with no way back except a person editing a file by hand.
+
+**Neither was costing much. Both could cost a trading day.** Measured over the
+clean period 2026-08-27 to 2026-09-02 (2026-08-31's own numbers only after the
+operator's ledger correction that afternoon), real spend runs $0.73–$1.14 a
+day against a $2.75 ceiling, and the Portfolio Manager is 93% of it — $4.25 of
+$4.56 on 35 of 153 calls. Nothing found here moves that. What they move is
+uptime, and an unattended desk that stops does not restart itself.
+
+**The phantom charge survived on the branch where the retry works.**
+`fail_call` learned on 2026-08-31 that a 429/400/401/403/404 or a pre-send
+transport failure provably billed nothing. `complete_call` never learned it.
+So when the first attempt was refused and the *second one succeeded*, the
+refusal's conservative reserve was still added on top of the real cost of the
+response we got and paid for. It happened twice in the recorded ledger:
+tech_analyst on 2026-08-28 at 14:31 booked $0.0135 against a real $0.0014
+(9.6x), news_analyst on 2026-08-31 at 14:36 booked $0.0126 against $0.0023
+(5.4x). Two cents in total — and the same mechanism that put $1.90 of
+imaginary spend on the ledger and darkened the desk twice in one day. The
+direction matters and it is worth saying plainly: this error runs AGAINST the
+desk. It never hides spending; it invents it, burns the day's budget with it,
+and stops trading early on money that was never charged.
+
+**Fixed the same way, deliberately: the same allow-list, the same contagious
+ambiguity.** One attempt that might have been billed and the whole reservation
+is charged exactly as before. A caller that cannot say what its attempts
+failed with keeps the old behaviour, so this can only ever forgive more
+genuinely-free attempts, never fewer.
+
+**The pricing latch had a third door, and it was the one that could not be
+walked back through.** The 2026-08-28 grace window fixed a stale price list.
+It did not fix a price list we could read that simply did not carry one of our
+models — and OpenRouter retiring a model id is an ordinary event, not a fault
+(`google/gemini-2.5-flash-lite` is already refused to new Google keys). That
+path returned "no pricing", which suspends paid analysis behind the durable
+operator-reset latch. It could not recover on its own, because a successful
+fetch **writes the cache before the completeness check runs**: every later
+session read the same fresh-but-incomplete file, never re-fetched, never
+reached the grace window, and failed identically. An unattended desk could
+have been switched off indefinitely by a deprecation notice it had no part in.
+
+**What was wrong was the premise, not the number.** That check can only ever
+name a model that is already a row in the pinned baseline table in
+`src/cost_table.py` — a verified, dated, drift-checked rate. "There is no rate
+at all", which is what failing closed asserts, was never true for anything it
+could name. It now prices that one model from its pinned rate, keeps the live
+rate for every model the catalog did price, and shouts. The ceiling is
+untouched: the call is still priced, still reserved, still counted, and a
+model genuinely withdrawn answers 404 — which the zero-cost allow-list already
+accounts at $0, so the seat fails safely per-call while the desk keeps
+trading.
+
+**Deliberately NOT changed, and someone should decide about it.** The pinned
+`openai/gpt-5.5` rate is $5/$30 per million and the PM seat routes to the
+`openai/flex` endpoint — provider-reported cost has been a **median 0.38x** of
+the pinned estimate over 32 calls since 2026-08-28. Reservations, and
+therefore the reserved-exposure ceilings, are sized from the pinned rate, so
+every PM reservation is roughly **2.7x** what the seat actually gets billed.
+That is what produced the 2026-08-28 hold ("would project session cost to
+$1.9118, above ceiling $1.80") on a call that really cost about $0.25 — and
+the response was to raise the ceiling from 1.80 to 2.60. The mis-measurement
+is quietly loosening the real protection. It is NOT safe to just price
+reservations at the flex rate: fallbacks are enabled, so a saturated flex tier
+lands on the $5/$30 endpoint and the reservation would then under-cover
+exactly the call that costs most. This needs an owner decision, not a patch.
+
+**Also found, also not changed.** A session killed mid-call at the end of a
+trading day leaves an attempted reservation that nothing sweeps until the next
+session runs — which is the next morning, when the sweep charges it and raises
+the hard latch. The day it darkens is not the day it broke. Never observed;
+reported because the shape is the same as every incident above.
+
 ### 2026-09-02 — one word the model spelled differently could bin a whole stock analysis, and 118 other fields could do it too
 
 **In plain words:** when an analyst wrote "nothing to say here" as an empty

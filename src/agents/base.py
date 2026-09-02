@@ -1366,6 +1366,13 @@ class BaseAgent(ABC):
             try:
                 self._cost_circuit.complete_call(
                     reservation, cost, actual_model=actual_model,
+                    # Every attempt that did NOT produce this response.
+                    # Empty on a clean first-attempt success; on a retry or a
+                    # successful failover it names what the earlier attempts
+                    # failed with, which is the only evidence the circuit has
+                    # that those attempts billed nothing (see complete_call's
+                    # `failed_attempt_reserve` note -- 2026-09-02).
+                    failed_attempt_errors=list(attempt_errors),
                 )
             except PaidAnalysisSuspended:
                 raise

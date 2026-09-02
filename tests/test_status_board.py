@@ -9,7 +9,9 @@ first live run exposed, where a malformed rule masqueraded as documentation rot.
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -922,3 +924,105 @@ def test_no_pending_decision_is_overdue():
         + "\n\nDecide them and remove the line in the same commit that records "
           "the decision. Do NOT delete the line to make this pass."
     )
+
+
+# ---------------------------------------------------------------------------
+# The funnel queue on the board.
+#
+# The owner asked whether the ranked work queue was visible on the dashboard
+# he already has, "automatically". It now is — but only for as long as the
+# board can still parse `docs/WORK.md`. These tests exist because the failure
+# mode is silent: a heading rename would render an empty section that looks
+# exactly like "no work outstanding", which is the most misleading thing this
+# page could say.
+# ---------------------------------------------------------------------------
+
+def test_the_real_backlog_still_parses():
+    """The shipped docs/WORK.md must actually yield the queue.
+
+    Not a synthetic fixture — the real file, because the thing that breaks is
+    the real file being edited into a shape the parser no longer recognises.
+    """
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    items, problem = sb.load_funnel_queue(work)
+    assert problem is None, problem
+    assert len(items) >= 10, f"only {len(items)} queue items parsed"
+    assert [i.rank for i in items] == sorted(i.rank for i in items)
+    top = items[0]
+    assert top.rank == 1
+    assert "reward:risk" in top.title.lower()
+    assert top.classification == "TOO STRICT"
+    assert top.pct == 25
+
+
+def test_a_renamed_heading_says_so_instead_of_rendering_empty(tmp_path):
+    """A shape change must be LOUD. An empty queue section reads as 'nothing
+    to do', which is the opposite of the truth it would be hiding."""
+    p = tmp_path / "WORK.md"
+    p.write_text("# Work\n\n## Some Other Heading\n\n**1. A thing — 1 of 2 (50%). DEFECT.**\n")
+    items, problem = sb.load_funnel_queue(p)
+    assert items == []
+    assert problem and "could not be read" in problem
+    assert "Queue unavailable" in sb._render_queue(items, problem)
+
+
+def test_a_missing_backlog_file_says_so(tmp_path):
+    items, problem = sb.load_funnel_queue(tmp_path / "nope.md")
+    assert items == []
+    assert problem and "missing" in problem
+
+
+def test_heading_present_but_items_unparseable_is_reported(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text("## THE FUNNEL QUEUE — x\n\nprose only, no numbered items\n")
+    items, problem = sb.load_funnel_queue(p)
+    assert items == []
+    assert problem and "shape has changed" in problem
+
+
+def test_classification_is_carried_by_the_word_not_only_colour():
+    """The owner is red/green colour blind. Every status must be legible with
+    all colour stripped out, so the label text itself has to be in the markup."""
+    items = [
+        sb.QueueItem(1, "A blocked thing", "TOO STRICT", "17 of 68 (25%)", 25, False),
+        sb.QueueItem(2, "A broken thing", "DEFECT", "2 of 68 (3%)", 3, False),
+    ]
+    html_out = sb._render_queue(items, None)
+    text_only = re.sub(r"<[^>]+>", " ", html_out)
+    assert "too strict" in text_only
+    assert "defect" in text_only
+
+
+def test_a_finished_item_reads_as_done():
+    done = sb.QueueItem(1, "Fixed thing", "DEFECT", "", None, True)
+    assert done.state == "done"
+    assert "line-through" in sb._render_queue([done], None)
+
+
+def test_pending_decisions_show_time_remaining_and_overdue(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "- [ ] DECIDE BY 2026-09-09 — Level quality bar\n"
+        "- [ ] DECIDE BY 2026-08-01 — Something long forgotten\n"
+    )
+    got = sb.load_pending_decisions(p, today=dt.date(2026, 9, 2))
+    assert [d.due for d in got] == [dt.date(2026, 8, 1), dt.date(2026, 9, 9)]
+    assert got[0].overdue and got[0].days_left == -32
+    assert not got[1].overdue and got[1].days_left == 7
+    out = sb._render_decisions(got)
+    assert "32 days overdue" in out and "7 days left" in out
+
+
+def test_the_board_and_the_build_read_one_decision_format():
+    """`test_no_pending_decision_is_overdue` and the board must never disagree
+    about what a pending decision looks like — one format, one regex shape."""
+    line = "- [ ] DECIDE BY 2026-09-16 — Which model runs the seat?"
+    build_re = re.compile(r"^- \[ \] DECIDE BY (\d{4})-(\d{2})-(\d{2}) [-—] (.+)$")
+    assert build_re.match(line)
+    assert sb._DECISION_RE.match(line)
+
+
+def test_nothing_waiting_says_so_rather_than_showing_a_blank(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text("no decisions here\n")
+    assert "Nothing is waiting on you" in sb._render_decisions(sb.load_pending_decisions(p))
