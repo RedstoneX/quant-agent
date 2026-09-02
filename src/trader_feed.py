@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from src.notifier import (
+    _append_company_identities,
     _clip_text,
     _DB_PATH as _NOTIFIER_DB_PATH,
     format_session_result as _base_format_session_result,
@@ -27,7 +28,17 @@ logger = logging.getLogger(__name__)
 _DB_PATH = _NOTIFIER_DB_PATH
 _SWEEP_SYMBOLS = frozenset({"SGOV", "BIL"})
 _BASE_ONLY_STATUSES = frozenset(
-    {"market_holiday", "early_close", "broker_error", "analysis_error", "fetch_error"}
+    {
+        "market_holiday", "early_close", "broker_error", "analysis_error",
+        "fetch_error",
+        # Guard 1 (2026-09-02): the kill switch's early check returns before
+        # any of the rich per-mode data (orders/positions/trades) exists to
+        # render, same shape-mismatch reason "broker_error" is here. Routes
+        # to the base notifier.py formatter, which renders a plain
+        # "status: kill_switch_halted" line and — critically — is NOT
+        # silenced for intra_check the way "ok"/"market_holiday" are.
+        "kill_switch_halted",
+    }
 )
 # 2026-08-31 visibility fix (src/pipeline.py's `_run_intraday_opportunity_scan`
 # / `_intraday_opportunity_scan_body`): these three now attach an explicit
@@ -127,7 +138,7 @@ def _status_emoji(status: str) -> str:
         return "🔵"
     if status in {"rejected", "hard_risk_block", "symbol_block", "buys_unfunded"}:
         return "🟡"
-    if "error" in status or status in {"failed", "emergency_sold"}:
+    if "error" in status or status in {"failed", "emergency_sold", "kill_switch_halted"}:
         return "🔴"
     return "⚪"
 
@@ -252,6 +263,83 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
     return snapshot
 
 
+def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
+    """Every symbol worth making tappable in this alert, first-seen order,
+    capped (see `TelegramNotifier._MAX_LINKED_SYMBOLS` in src/notifier.py).
+
+    Deliberately narrow: pulled only from the SAME structured fields the
+    renderers above already iterate for a `symbol` key (PM proposed orders,
+    executed trades, execution skips, stop-coverage gaps, the midday/close
+    reviewer's `result["review"]["actions"]` — including a HOLD or a
+    decided-but-unexecuted action that never became a broker trade — and the
+    top-level `result["orders"]` the base formatter's own
+    `_append_company_identities` uses) — never a scan of the free-text PM/
+    risk rationale, which routinely contains capitalized words ("ALL",
+    "GO", "PASS") that would false-positive as tickers.
+
+    Read-only and fail-soft like the rest of this module: a symbol that
+    can't be determined is just not linked — see
+    `TelegramNotifier._linkify_symbols` for why a bad/missing symbol must
+    never be able to break message delivery.
+    """
+    symbols: list[str] = []
+
+    def _add(raw: Any) -> None:
+        sym = str(raw or "").strip().upper()
+        if sym and sym not in symbols:
+            symbols.append(sym)
+
+    if isinstance(result, dict):
+        for row in result.get("orders") or []:
+            if isinstance(row, dict):
+                _add(row.get("symbol"))
+        for row in result.get("stop_coverage_gaps") or []:
+            if isinstance(row, dict):
+                _add(row.get("symbol"))
+        review = result.get("review")
+        if isinstance(review, dict):
+            for row in review.get("actions") or []:
+                if isinstance(row, dict):
+                    _add(row.get("symbol"))
+
+    try:
+        snap = _read_run(run_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("extract_alert_symbols: run read failed for %s: %s", run_id, exc)
+        snap = _empty_snapshot()
+
+    for key in ("pm_orders", "trades", "skips"):
+        for row in snap.get(key) or []:
+            if isinstance(row, dict):
+                _add(row.get("symbol"))
+
+    return symbols[:10]
+
+
+def _append_identities(lines: list[str], run_id: str | None, result: dict | None) -> None:
+    """`who:` block for the rich trader-feed formatters below — the same
+    `extract_alert_symbols` source already used to decide which tickers get
+    a tap-through link, fed into `src.notifier._append_company_identities`
+    (the ONE place that turns symbols into identity text; see its
+    docstring). Deliberately called LAST by every formatter below, after
+    the footer: `TelegramNotifier._build_payload`'s length-budget fallback
+    truncates from the tail of the message when it must, so whatever is
+    appended last is the first thing a length-pressured alert drops — and
+    identity lines are the least important content here, never the order
+    list, the PM/risk rationale, or the footer.
+
+    Wrapped locally (not left to the `format_session_result` dispatcher's
+    own try/except) because that outer handler's fallback on any exception
+    is the OLD, plainer base formatter for the WHOLE message — losing every
+    section this module adds, not just the identity garnish. A failure here
+    must cost only the `who:` block.
+    """
+    try:
+        _append_company_identities(lines, extract_alert_symbols(run_id, result))
+    except Exception as exc:  # noqa: BLE001 — identities are a garnish, never worth the alert
+        logger.warning("trader-feed: company identities failed: %s", exc)
+
+
 def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     macro = snap.get("macro")
     if not isinstance(macro, dict):
@@ -373,7 +461,17 @@ def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
     scale = risk.get("scale_all_buys")
     scale_text = f" · buy size {scale * 100:.0f}%" if isinstance(scale, (int, float)) else ""
     mods = snap.get("risk_mods") or []
-    lines.append(f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s)")
+    # Phase 10.1: a verdict can now be APPROVED overall and still have refused
+    # individual names. Reading only `approved` would show that run as a clean
+    # approval and never mention the trade that died.
+    rejected = risk.get("rejected_symbols") or []
+    rej_syms = sorted({
+        str(r.get("symbol")) for r in rejected if isinstance(r, dict) and r.get("symbol")
+    }) if isinstance(rejected, list) else []
+    refused_text = f" · refused {', '.join(rej_syms)}" if rej_syms else ""
+    lines.append(
+        f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s){refused_text}"
+    )
     reason = _clip(risk.get("reasoning"), 550)
     if reason:
         lines.append(f"   {reason}")
@@ -484,16 +582,39 @@ def _append_footer(lines: list[str], run_id: str | None, snap: dict[str, Any], e
     lines.append("🧾 " + " · ".join(bits))
 
 
+def _append_coverage_gaps(lines: list[str], result: dict) -> None:
+    """Spec §11.1 guard 3 — two banners, never one merged count.
+
+    A position with NO stop at all and a position whose stop is present but
+    mis-sized are different conditions: the first has nothing standing watch,
+    the second has an order covering most of it. Reporting them as a single
+    "N gaps" line buried the worse condition inside the milder one. Shares
+    `notifier._gap_is_uncovered` so the two feeds can never disagree about
+    which bucket a gap is in.
+    """
+    from src.notifier import _gap_is_uncovered
+
+    gaps = result.get("stop_coverage_gaps")
+    if not isinstance(gaps, list) or not gaps:
+        return
+    rows = [row for row in gaps if isinstance(row, dict)]
+    uncovered = [row for row in rows if _gap_is_uncovered(row)]
+    partial = [row for row in rows if not _gap_is_uncovered(row)]
+    if uncovered:
+        names = ", ".join(str(row.get("symbol", "?")) for row in uncovered[:6])
+        lines.append(f"🚨 NO STOP AT ALL: {len(uncovered)} · {names}")
+    if partial:
+        names = ", ".join(str(row.get("symbol", "?")) for row in partial[:6])
+        lines.append(f"🚨 STOP MIS-SIZED: {len(partial)} · {names}")
+
+
 def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
     status = str(result.get("status", "unknown"))
     lines = [f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
 
-    gaps = result.get("stop_coverage_gaps")
-    if isinstance(gaps, list) and gaps:
-        symbols = ", ".join(str(row.get("symbol", "?")) for row in gaps[:6] if isinstance(row, dict))
-        lines.append(f"🚨 STOP-COVERAGE GAP: {len(gaps)} · {symbols}")
+    _append_coverage_gaps(lines, result)
 
     data_status = result.get("data_status") or {}
     if isinstance(data_status, dict):
@@ -508,6 +629,7 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     _append_risk(lines, snap)
     _append_gate_and_execution(lines, result, snap)
     _append_footer(lines, run_id, snap, elapsed)
+    _append_identities(lines, run_id, result)
     return "\n".join(lines)
 
 
@@ -521,10 +643,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     if status == "emergency_sold":
         lines.append("🚨 DAILY-LOSS CIRCUIT BREAKER — autonomous liquidation triggered")
 
-    gaps = result.get("stop_coverage_gaps")
-    if isinstance(gaps, list) and gaps:
-        symbols = ", ".join(str(row.get("symbol", "?")) for row in gaps[:6] if isinstance(row, dict))
-        lines.append(f"🚨 STOP-COVERAGE GAP: {len(gaps)} · {symbols}")
+    _append_coverage_gaps(lines, result)
 
     positions = result.get("positions")
     risk_level = review.get("risk_level")
@@ -575,6 +694,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
             lines.append("⏸️ NO ACTION — review completed with no broker action")
 
     _append_footer(lines, run_id, snap, elapsed)
+    _append_identities(lines, run_id, result)
     return "\n".join(lines)
 
 
@@ -625,4 +745,8 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     _append_risk(lines, snap)
     _append_gate_and_execution(lines, nested, snap)
     _append_footer(lines, run_id, snap, elapsed)
+    # `nested`, not `outer`: on the intraday path the traded-order evidence
+    # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict —
+    # same source `_append_gate_and_execution` above already reads.
+    _append_identities(lines, run_id, nested)
     return "\n".join(lines)

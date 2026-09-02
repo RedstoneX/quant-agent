@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, RiskModification,
-    RiskVerdict, TechAnalysisResult,
+    RiskVerdict, SymbolRejection, TechAnalysisResult,
 )
 from src.risk.rules import RiskViolation
 
@@ -481,10 +481,19 @@ Review these proposed trades and provide your verdict as JSON."""
         # Per-entry isolation for modifications: a single malformed
         # RiskModification (e.g. non-numeric original_value, wrong field
         # name) must not drop the whole RiskVerdict. The verdict carries
-        # `approved`, `reasoning_chain`, `scale_all_buys`, `reason_category`,
-        # plus the OTHER modifications — losing all of that because one
+        # `approved`, `reasoning_chain`, `rejected_symbols`, `scale_all_buys`,
+        # `reason_category`, plus the OTHER modifications — losing all of that because one
         # mod row is bad means execution stage has no RM guidance and
         # PM's calibration history loses a row. Mirrors PR #74 pattern.
+        #
+        # `rejected_symbols` deliberately gets the OPPOSITE treatment and has
+        # no drop-invalid pass. Dropping a malformed modification loses a
+        # tuning instruction; dropping a malformed refusal would let a symbol
+        # the risk manager explicitly refused go on and trade. So the model
+        # normalizes every shape that still names a symbol
+        # (`SymbolRejection._coerce_shorthand`) and lets anything that does
+        # not fail validation — which, `rejected_symbols` being decision-
+        # bearing, fails the whole verdict closed.
         if isinstance(parsed, dict):
             parsed = self._drop_invalid_modifications(parsed)
         try:
@@ -520,17 +529,19 @@ Review these proposed trades and provide your verdict as JSON."""
                 if not self._decision_fields_unchanged(parsed, reparsed):
                     logger.error(
                         "Risk verdict repair changed decision-bearing "
-                        "content (approved/modifications/scale_all_buys/"
-                        "reason_category) instead of only completing the "
-                        "schema — treating as an unauthorized re-decision "
-                        "and failing closed.",
+                        "content (approved/modifications/rejected_symbols/"
+                        "scale_all_buys/reason_category) instead of only "
+                        "completing the schema — treating as an unauthorized "
+                        "re-decision and failing closed.",
                     )
                     return None, repaired
                 try:
                     verdict = RiskVerdict(**reparsed)
                     logger.info(
-                        "Risk verdict repair succeeded (approved=%s, %d mods)",
+                        "Risk verdict repair succeeded (approved=%s, %d mods, "
+                        "%d per-symbol refusals)",
                         verdict.approved, len(verdict.modifications),
+                        len(verdict.rejected_symbols),
                     )
                     return verdict, repaired
                 except Exception as e2:  # noqa: BLE001
@@ -547,7 +558,50 @@ Review these proposed trades and provide your verdict as JSON."""
             logger.error("Failed to parse risk verdict: %s", e)
             return None, result
 
-    _DECISION_FIELDS = ("approved", "modifications", "scale_all_buys", "reason_category")
+    # `rejected_symbols` (Phase 10.1) belongs here for exactly the reason the
+    # other four do: it is a REFUSAL, not prose. A repair call that adds,
+    # drops or rewrites one has re-decided which trades die, and a validation
+    # failure rooted in it cannot be schema-repaired without the model
+    # re-deciding — both fail closed, refusing the whole plan, which is the
+    # conservative direction.
+    _DECISION_FIELDS = (
+        "approved", "modifications", "rejected_symbols",
+        "scale_all_buys", "reason_category",
+    )
+
+    @staticmethod
+    def _canonical_rejections(rejections) -> list[tuple] | None:
+        """Order-insensitive (symbol, reason) rows for the per-symbol
+        refusals, built by re-validating through `SymbolRejection` so the
+        shorthand coercions (bare string, absent reason) are the schema's own
+        and not a second ad-hoc path.
+
+        Returns None — never `==` to anything — when the shape doesn't
+        validate, so a malformed side fails closed instead of comparing
+        (incorrectly) equal. Mirrors `_canonical_modifications`.
+        """
+        if rejections is None:
+            rejections = []
+        if isinstance(rejections, (str, dict)):
+            # Same container shorthands `RiskVerdict` itself accepts; route
+            # them through the model so both sides canonicalize identically.
+            from src.models import _normalize_rejected_symbols_field
+            rejections = _normalize_rejected_symbols_field(
+                {"rejected_symbols": rejections},
+            )["rejected_symbols"]
+        if not isinstance(rejections, list):
+            return None
+        models: list[SymbolRejection] = []
+        for r in rejections:
+            if not isinstance(r, (dict, str)):
+                return None
+            try:
+                models.append(SymbolRejection.model_validate(r))
+            except Exception:  # noqa: BLE001 — any shape failure fails closed
+                return None
+        return sorted(
+            ((r.symbol, r.reason) for r in models), key=lambda row: row[0],
+        )
 
     @staticmethod
     def _canonical_modifications(mods) -> list[tuple] | None:
@@ -606,6 +660,13 @@ Review these proposed trades and provide your verdict as JSON."""
         orig_mods = cls._canonical_modifications(original.get("modifications"))
         rep_mods = cls._canonical_modifications(repaired.get("modifications"))
         if orig_mods is None or rep_mods is None or orig_mods != rep_mods:
+            return False
+
+        # Phase 10.1: a repair that quietly reinstates a refused symbol, or
+        # newly refuses one, has changed which trades die.
+        orig_rej = cls._canonical_rejections(original.get("rejected_symbols"))
+        rep_rej = cls._canonical_rejections(repaired.get("rejected_symbols"))
+        if orig_rej is None or rep_rej is None or orig_rej != rep_rej:
             return False
 
         orig_scale = original.get("scale_all_buys", 1.0)

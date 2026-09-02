@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import contextlib
+import hashlib
 import importlib
 import json
 import os
@@ -164,6 +165,11 @@ class Trial:
     # must not be read as evidence about `model`.
     actual_model: str = ""
     used_fallback: bool = False
+    # WHICH symbols this run proposed, as "ACTION:SYMBOL", sorted.
+    # quality says whether a run was VALID; this says whether two runs
+    # AGREED. A seat that scores 1.00 twice while naming disjoint books is
+    # not a stable seat, and the score alone cannot show that.
+    picks: list[str] = field(default_factory=list)
 
 
 def _load_agent_cls(path: str):
@@ -244,6 +250,34 @@ class _Meter:
         )
 
 
+def _extract_picks(output) -> list[str]:
+    """The book a trial proposed, flattened to sorted "ACTION:SYMBOL" strings.
+
+    Deliberately duck-typed over the parsed agent output rather than keyed to
+    one agent class: `decisions` (constructed orders) is preferred over
+    `targets` (pre-construction intent) because it is what would reach the
+    broker. Any shape it does not recognise yields [], never an exception —
+    a benchmark must not fail because it could not summarise a result.
+    """
+    if output is None:
+        return []
+    try:
+        decisions = getattr(output, "decisions", None)
+        if decisions:
+            return sorted(
+                f"{getattr(d, 'action', '?')}:{str(getattr(d, 'symbol', '?')).upper()}"
+                for d in decisions
+            )
+        targets = getattr(output, "targets", None)
+        if targets:
+            return sorted(
+                f"TARGET:{str(getattr(x, 'symbol', '?')).upper()}" for x in targets
+            )
+    except Exception:
+        return []
+    return []
+
+
 def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) -> Trial:
     agent_cls = _load_agent_cls(scenario.agent_path)
     agent = agent_cls(
@@ -318,12 +352,64 @@ def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) 
         sample_output=meter.sample_output,
         actual_model=meter.actual_model,
         used_fallback=meter.used_fallback,
+        picks=_extract_picks(output),
     )
 
 
 # --------------------------------------------------------------------------
 # Reporting
 # --------------------------------------------------------------------------
+
+
+def _prompt_conflicts(sources: list[dict]) -> list[str]:
+    """Roles whose prompt sha differs between the files being merged."""
+    by_role: dict[str, dict[str, list[str]]] = {}
+    for src in sources:
+        for role, fp in (src.get("prompts") or {}).items():
+            sha = fp.get("sha256")
+            if sha:
+                by_role.setdefault(role, {}).setdefault(sha, []).append(src["path"])
+    out = []
+    for role, shas in sorted(by_role.items()):
+        if len(shas) > 1:
+            detail = "; ".join(
+                f"{sha[:12]} <- {', '.join(paths)}" for sha, paths in shas.items()
+            )
+            out.append(f"{role}: {detail}")
+    return out
+
+
+def prompt_fingerprints(scenarios) -> dict:
+    """Record WHICH PROMPT produced these scores.
+
+    The harness drives the real agent classes, which load
+    `config/prompts/<role>.md` from disk. The prompt is therefore an INPUT
+    to every grade, not a constant — and until 2026-09-01 no result file
+    recorded which version it was. That is how a full set of PM
+    model-selection numbers stayed on disk for a week after the prompt they
+    were measured against had been rewritten, with nothing to reveal it.
+    Nobody was careless; the file simply could not be asked the question.
+
+    A missing or unreadable prompt is recorded as an explicit error rather
+    than omitted, because a silently absent fingerprint reproduces the exact
+    failure this exists to prevent.
+    """
+    out: dict[str, dict] = {}
+    for role in sorted({s.role for s in scenarios}):
+        rel = f"config/prompts/{role}.md"
+        path = PROJECT_ROOT / rel
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            out[role] = {"path": rel, "error": str(exc)}
+            continue
+        out[role] = {
+            "path": rel,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+            "lines": raw.count(b"\n") + (0 if raw.endswith(b"\n") else 1),
+        }
+    return out
 
 
 def aggregate(trials: list[Trial]) -> dict:
@@ -371,9 +457,28 @@ def aggregate(trials: list[Trial]) -> dict:
         m["quality_mean"] = round(statistics.fmean(m["quality"]), 4) if m["quality"] else 0.0
         m["quality_worst"] = round(min(m["quality"]), 4) if m["quality"] else 0.0
         m["quality_worst_run"] = round(worst_trial.get(model, 0.0), 4)
-        m["cost_total"] = round(sum(m["cost"]), 6) if m["cost"] else None
-        if m["cost_total"]:
-            m["quality_per_dollar"] = round(m["quality_mean"] / m["cost_total"], 2)
+        # `m["cost"]` holds one PER-RUN MEAN per scenario, not per trial, so
+        # summing it never produced a total. It was published as
+        # `cost_total` anyway, and `quality_per_dollar` was derived from it
+        # — which read correctly at one scenario x one repeat and was wrong
+        # by a factor of `repeats` everywhere else. Found 2026-09-01 when a
+        # 10-repeat run reported a $0.06 "total" for $0.69 of real spend.
+        #
+        # Both numbers are now published under names that say what they are.
+        # quality_per_dollar stays keyed to the PER-RUN cost: the decision
+        # it informs is "what does one session cost at this seat", which a
+        # sweep total does not answer.
+        m["cost_per_run_mean"] = (
+            round(statistics.fmean(m["cost"]), 6) if m["cost"] else None
+        )
+        m["cost_total_usd"] = round(
+            sum(t.cost_usd for t in trials
+                if t.model == model and t.cost_usd is not None), 6
+        ) or None
+        if m["cost_per_run_mean"]:
+            m["quality_per_dollar"] = round(
+                m["quality_mean"] / m["cost_per_run_mean"], 2
+            )
         else:
             m["quality_per_dollar"] = None
         del m["quality"], m["cost"]
@@ -398,14 +503,15 @@ def render_markdown(report: dict) -> str:
     ordered = sorted(
         models.items(),
         key=lambda kv: (-kv[1]["quality_mean"], -kv[1]["quality_worst"],
-                        kv[1]["cost_total"] if kv[1]["cost_total"] is not None else 1e9),
+                        kv[1]["cost_per_run_mean"]
+                        if kv[1]["cost_per_run_mean"] is not None else 1e9),
     )
     for model, m in ordered:
         cells = []
         for key in scen_keys:
             e = m["scenarios"].get(key)
             cells.append("—" if e is None else f"{e['quality_mean']:.2f}")
-        cost = m["cost_total"]
+        cost = m["cost_per_run_mean"]
         lines.append(
             f"| `{model}` | " + " | ".join(cells)
             + f" | {m['quality_mean']:.2f} | {m['quality_worst_run']:.2f} | "
@@ -454,7 +560,9 @@ def main(argv: list[str] | None = None) -> int:
         superseded: list[str] = []
         for path in args.report:
             doc = json.loads(Path(path).read_text())
-            sources.append({"path": path, "generated_at": doc.get("generated_at")})
+            sources.append({"path": path,
+                            "generated_at": doc.get("generated_at"),
+                            "prompts": doc.get("prompts")})
             seen_here: set[tuple[str, str]] = set()
             for raw in doc["trials"]:
                 trial = Trial(**raw)
@@ -473,10 +581,30 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             for s in superseded:
                 print(f"  {s}", file=sys.stderr)
+        # Merging trials graded against DIFFERENT prompts is the silent
+        # staleness this fingerprint exists to catch. Say so loudly rather
+        # than averaging across a prompt rewrite.
+        prompt_conflicts = _prompt_conflicts(sources)
+        if prompt_conflicts:
+            print("PROMPT MISMATCH — these files were graded against "
+                  "different prompts. Their scores are NOT comparable:",
+                  file=sys.stderr)
+            for c in prompt_conflicts:
+                print(f"  {c}", file=sys.stderr)
+        missing = [s_["path"] for s_ in sources if not s_.get("prompts")]
+        if missing:
+            print("NO PROMPT FINGERPRINT recorded in "
+                  f"{len(missing)} file(s) — predates this field, so prompt "
+                  "drift CANNOT be ruled out:", file=sys.stderr)
+            for m_ in missing:
+                print(f"  {m_}", file=sys.stderr)
+
         report = {
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "merged_from": sources,
             "superseded_pairs": superseded,
+            "prompt_conflicts": prompt_conflicts,
+            "sources_without_prompt_fingerprint": missing,
             "baseline": BASELINE_MODEL,
             "scenarios": {s.key: {"role": s.role, "description": s.description}
                           for s in SCENARIOS},
@@ -557,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         "repeats": args.repeats,
         "scenarios": {s.key: {"role": s.role, "description": s.description}
                       for s in scenarios},
+        "prompts": prompt_fingerprints(scenarios),
         "pricing_used": {m: pricing.get(m) for m in models},
         "trials": [asdict(t) for t in trials],
         "aggregate": aggregate(trials),

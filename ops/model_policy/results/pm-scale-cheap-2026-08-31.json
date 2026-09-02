@@ -1,0 +1,498 @@
+{
+  "generated_at": "2026-08-31T22:20:32Z",
+  "wiring_source": "environment",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "pm_production_scale": {
+      "role": "portfolio_manager",
+      "description": "30 candidates, 15 holdings and production-sized memory. Grades grounded parse, provenance and phantom exits."
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4-flash-0731": {
+      "input": 0.065,
+      "output": 0.18
+    },
+    "z-ai/glm-5.2": {
+      "input": 1.19,
+      "output": 3.74
+    },
+    "qwen/qwen3.7-max": {
+      "input": 1.475,
+      "output": 4.425
+    },
+    "deepseek/deepseek-v4-pro-0813": {
+      "input": 0.66,
+      "output": 1.9800000000000002
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "2 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "2/2 targets"
+        }
+      ],
+      "input_tokens": 21359,
+      "output_tokens": 12031,
+      "cost_usd": 0.003553915,
+      "latency_s": 281.49,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Regime is risk_on with a bullish equity outlook. Cash at 45% is above the risk-on ceiling of 25%, so deployment is clearly indicated. No prior evening tilt is available [UNSOURCED:no_prior_session]; today's macro is the fresher and governing signal.\",\n    \"news_check\": \"No news intelligence is available for this run, so there are no HIGH state changes or stock-specific catalysts to override the technical/macro alignment. News is treated as neutral and does not conflict with the long targets.\",\n    \"earnings_check\": \"No recent earnings filings and no JUST FILED queue are present, so no earnings-queued 1% cap applies. There is no earnings evidence to raise or lower conviction today.\",\n    \"signal_conflicts\": \"SPY: available=macro=bullish, technical=buy. Conflict: none. Resolution: add to core broad-market exposure. NVDA: available=macro=bullish, technical=buy. Conflict: none. Resolution: add a core tech/semis leader. All other held symbols are omitted, meaning they remain unchanged.\",\n    \"sizing_logic\": \"Both targets are moderate conviction with two aligned sources. Base moderate is 1.5, but I shaded to 1.2 because only macro + technical are present, with no news/earnings catalyst. R/R is 2.0, so no bonus or penalty applies. The 20% notional clamp on a 6% stop means actual risk is roughly 1.2% per name; two additions deploy about $40k of the $45k cash. Total book risk after adds is roughly 3.3% versus the 25% cap. No RM history to ",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "0 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "0/0 targets"
+        }
+      ],
+      "input_tokens": 43293,
+      "output_tokens": 2644,
+      "cost_usd": 0.003289965,
+      "latency_s": 43.15,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Risk-on regime confirmed (VIX 14.9, SMA 16.8, confirmed uptrend). No new decisions without a stop. Holding ~56% in risk assets to balance.\",\n    \"news_check\": \"Risk-on regime confirmed (RSI 56.1, SMA 19.4, MACD positive). No incremental auction tonight. SPY and QQQ both leading day-gainers; biased toward action.\",\n    \"earnings_check\": \"Macro supports growth. Macroeconomics constructive, no individual positions to swing. NVDA correctly resisted yesterday's intraday reversal; continuation today supports. Momentum-friendly.\",\n    \"signal_conflicts\": \"No conflicting target names. JPM no new high-yield in range. GS strong. MSFT no new target.\",\n    \"position_guidance\": \"Open TRX at ~1.5% to capture upside. Partial profit-taking. No full new names.\",\n    \"sizing_logic\": \"Higher-conviction risk-reward with winners. See full reasoning above.\",\n    \"portfolio_balance\": \"Tech strategy unchanged. No new BUYs today. Book closed at former highs.\",\n    \"macro_filter_2\": \"Balanced given overnight follow-through. Tech holdings have generated alpha; success today not impairing action.\",\n    \"continuity_check\": \"No slow grind higher.\",\n    \"pm_reasoning_2\": \"See intraday analysis.\"\n  },\n  \"targets\": []\n}\n```",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false
+    },
+    {
+      "model": "z-ai/glm-5.2",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "8 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "8/8 targets"
+        }
+      ],
+      "input_tokens": 21033,
+      "output_tokens": 9071,
+      "cost_usd": 0.058954809999999996,
+      "latency_s": 106.22,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk_on with bullish outlook. No explicit target_invested_pct provided (N/A), but regime-based cash floor for risk-on is 5-25%, mid ~10%. Current cash is 45% \u2014 well above the 25% ceiling, signaling a significant deployment gap. No sector guidance available, so I am diversifying manually across sectors. No evening insights available to tilt from. [PRIOR] The deployment gap (idle cash as largest P&L drag) was measured on the predecessor account's Apr\u2013Jul 2026 sessions; this account has no own calibration yet ([UNSOURCED:no_calibration]), so I treat the prior as the best available evidence and act on it.\",\n    \"news_check\": \"No news data available this session \u2014 PM Briefing, Macro Narrative, State Changes, and Stock-Specific alerts are all absent. No active news state changes to factor in. I am not reading bearish into silence; news is simply neutral/absent, which means Tech + Macro are the sole current signals.\",\n    \"earnings_check\": \"No earnings filings available for any symbol. No queued or just-filed filings. No earnings-queued 1% risk cap applies. Earnings is absent from all provenance; I am not claiming coverage that does not exist.\",\n    \"signal_conflicts\": \"All targeted symbols have exactly 2 current sources available: macro=bullish and technical=buy, both supporting the long thesis. No conflicts present for any symbol. Resolution: 2/2 aligned with zero conflict \u2192 moderate conviction (not high, since ",
+      "actual_model": "z-ai/glm-5.2",
+      "used_fallback": false
+    },
+    {
+      "model": "z-ai/glm-5.2",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "5 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "5/5 targets"
+        }
+      ],
+      "input_tokens": 21033,
+      "output_tokens": 7219,
+      "cost_usd": 0.052028330000000005,
+      "latency_s": 87.02,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk-on with bullish outlook. All symbols in the evidence registry carry macro=bullish stance. No sector guidance or position guidance specifics provided (N/A), but the regime itself demands deployment \u2014 risk-on cash floor is 5%, ceiling 25%, typical mid ~10%. Current cash at 45% is far above the 25% ceiling, creating a severe deployment gap. [PRIOR] Idle cash was the single largest P&L drag on the predecessor account's Apr\u2013Jul 2026 sessions (book ~39% invested while macro asked for 72\u201375%) \u2014 one window, one regime, not a standing law, but the best available evidence until this account has its own calibration. The gap must be answered explicitly today.\",\n    \"news_check\": \"No news data available for this session. No PM briefing, macro narrative, state changes, or stock-specific alerts. Treating news as neutral \u2014 no HIGH-conviction overrides to apply. [UNSOURCED:no_news_data] means I cannot confirm or deny any catalyst; sizing reflects this absence of news confirmation by staying at moderate conviction.\",\n    \"earnings_check\": \"No recent earnings filings available. No JUST-FILED queued filings detected. [UNSOURCED:no_earnings_data] means no earnings-queued 1% cap is triggered, but also no earnings confirmation to elevate conviction. All sizing based purely on technical + macro alignment.\",\n    \"signal_conflicts\": \"Every targeted symbol shows 2/2 current sources aligned (macro=bullish, technical=buy) with zer",
+      "actual_model": "z-ai/glm-5.2",
+      "used_fallback": false
+    },
+    {
+      "model": "qwen/qwen3.7-max",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "3 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "3/3 targets"
+        }
+      ],
+      "input_tokens": 22130,
+      "output_tokens": 6107,
+      "cost_usd": 0.05966522500000001,
+      "latency_s": 69.89,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Risk-on regime with a bullish outlook. Macro favors broad equity exposure. Current cash at 45% is well above the 25% ceiling for a risk-on regime, indicating a significant deployment gap that must be closed by adding new, diversifying positions.\",\n    \"news_check\": \"No material news, state changes, or symbol-specific alerts available in this run. Relying entirely on macro and technical alignment for new position selection.\",\n    \"earnings_check\": \"No recent earnings filings or queued reports to evaluate for the selected candidates. [UNSOURCED:no_calibration] for trade calibration and [UNSOURCED:no_drawdown_data] for system performance.\",\n    \"signal_conflicts\": \"UNH: available=macro=bullish, technical=buy. Conflict: none. XOM: available=macro=bullish, technical=buy. Conflict: none. BRK-B: available=macro=bullish, technical=buy. Conflict: none. All three candidates have 2/2 aligned sources, yielding moderate conviction.\",\n    \"sizing_logic\": \"Base 1.5% risk (moderate conviction, 2 aligned sources). R/R 2.0:1 yields a 1.0x multiplier (no asymmetric bonus). Raw risk 1.5%. The cash-only constraint ($45k deployable) and the 20% single-name notional cap will deterministically clamp final position sizes to ensure they fit within available cash without margin.\",\n    \"portfolio_balance\": \"The existing 15-position book is heavily weighted toward Tech, Semis, and Mega-cap indices. Adding UNH (Healthcare), XOM (Energy), and BRK-B (Div",
+      "actual_model": "qwen/qwen3.7-max",
+      "used_fallback": false
+    },
+    {
+      "model": "qwen/qwen3.7-max",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "8 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "8/8 targets"
+        }
+      ],
+      "input_tokens": 22130,
+      "output_tokens": 6894,
+      "cost_usd": 0.0631477,
+      "latency_s": 71.93,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Risk-on regime with bullish outlook. Macro supports broad equity exposure. No specific sector tilts provided, so defaulting to broad diversification across sectors to capture the risk-on beta.\",\n    \"news_check\": \"No news data available. Backdrop is neutral, no HIGH conviction state changes to override technicals.\",\n    \"earnings_check\": \"No recent earnings filings available. No queued earnings to cap sizing.\",\n    \"signal_conflicts\": \"LLY, XOM, CAT, V, COST, GE, BRK-B, NEE: available=macro=bullish, technical=buy. Conflict: none. Resolution: open new positions to deploy idle cash and align with the risk-on regime.\",\n    \"sizing_logic\": \"Base 1.5% risk per name for moderate conviction (2 aligned sources: macro and technical). R/R is 2.0:1, so no R/R bonus applied. 8 new names at 1.5% risk = 12% total new portfolio risk. Drawdown gate is not active [UNSOURCED:no_drawdown_data].\",\n    \"portfolio_balance\": \"Adding 8 new names across Healthcare (LLY), Energy (XOM), Industrials (CAT, GE), Financials (V, BRK-B), Consumer Staples (COST), and Utilities (NEE). No sector approaches the 40% cap. Correlation cluster data is MISSING, so I am diversifying by theme and sector manually to avoid hidden clustering.\",\n    \"cash_target\": \"Current cash is 45%, which is above the 25% ceiling for a risk-on regime. [PRIOR] Deployment gap is being addressed by opening 8 new diverse positions to deploy capital and close the gap toward the risk-on ta",
+      "actual_model": "qwen/qwen3.7-max",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro-0813",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "2 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "2/2 targets"
+        }
+      ],
+      "input_tokens": 21281,
+      "output_tokens": 10104,
+      "cost_usd": 0.034051380000000006,
+      "latency_s": 65.09,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro regime is risk_on with bullish outlook. No sector guidance or target invested percentage provided. Risk-on regime implies cash floor 5%, ceiling 25%, typical 10%. Current cash 45% is above the ceiling, so the book is under-deployed and needs to add exposure.\",\n    \"news_check\": \"No news data available. No state changes or stock-specific alerts to factor into decisions.\",\n    \"earnings_check\": \"No recent earnings filings available. No queued filings to trigger the 1% risk cap on new buys.\",\n    \"signal_conflicts\": \"SPY: available=macro=bullish, technical=buy. Conflict: none. Resolution: add 1.5% risk (moderate conviction, two sources aligned). JPM: available=macro=bullish, technical=buy. Conflict: none. Resolution: add 1.0% risk (moderate conviction, shaded to lower end due to only two sources and single-stock idiosyncratic risk).\",\n    \"sizing_logic\": \"Both SPY and JPM have two aligned sources (macro bullish, technical buy), giving moderate conviction. Base moderate = 1.5%. R/R 2.0 gives no bonus. No evening tilt, no stale signal, no earnings cap. SPY sized at base 1.5% (broad market lower idiosyncratic risk); JPM shaded to 1.0% (single stock, only two sources). Both within 5% single-name risk cap and 4.0% agreement ceiling. Total deployed ~$35.7k, leaving cash ~$9.3k (9.3%), within risk-on typical 10%.\",\n    \"portfolio_balance\": \"After adds: SPY weight ~20% (clamped from 1.5% risk due to 20% single-name notional cap), JPM w",
+      "actual_model": "deepseek/deepseek-v4-pro-0813",
+      "used_fallback": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro-0813",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "no_phantom_exits",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "phantom exits=[]"
+        },
+        {
+          "name": "actionable_book",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "2 grounded targets"
+        },
+        {
+          "name": "provenance_present",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "2/2 targets"
+        }
+      ],
+      "input_tokens": 21359,
+      "output_tokens": 10814,
+      "cost_usd": 0.035508660000000004,
+      "latency_s": 170.23,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro Analysis reports regime risk_on with a bullish equity outlook. No target_invested_pct or cash_recommendation_pct was supplied (both N/A). Under the risk-on cash floor of 5%, current cash at 45% is well above the 25% ceiling, so this session should deploy cash rather than raise it.\",\n    \"news_check\": \"No News Intelligence data is available: no PM Briefing, macro narrative, active state changes, or stock-specific alerts. Treat news as neutral with no sizing adjustments.\",\n    \"earnings_check\": \"No recent earnings filings are available for any candidate. No symbol is flagged [JUST FILED \u2014 analysis in progress], so the 1.0% earnings-queued BUY risk cap does not apply.\",\n    \"signal_conflicts\": \"SPY: available=macro=bullish, technical=buy. Conflict: none. Resolution: add to existing long at moderate confidence with both current sources supporting. IWM: available=macro=bullish, technical=buy. Conflict: none. Resolution: add to existing long at moderate confidence with both current sources supporting. No new symbols are targeted because deterministic BUY eligibility lists no permanent or temporary admissions for this run.\",\n    \"sizing_logic\": \"For each add, 2 of 2 currently available sources align (technical buy + macro bullish), supporting moderate conviction and a base risk of 1.5%. R/R is 2.00:1, so no R/R bonus (below 3.0). No prior evening insight is available, so evening tilt is 0. No stale-signal override and no earnings-q",
+      "actual_model": "deepseek/deepseek-v4-pro-0813",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4-flash-0731|pm_production_scale": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "pm_production_scale",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.8,
+        "quality_min": 0.75,
+        "cost_mean": 0.003422,
+        "latency_mean": 162.32,
+        "errors": [],
+        "misattributed": []
+      },
+      "z-ai/glm-5.2|pm_production_scale": {
+        "model": "z-ai/glm-5.2",
+        "scenario": "pm_production_scale",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.055492,
+        "latency_mean": 96.62,
+        "errors": [],
+        "misattributed": []
+      },
+      "qwen/qwen3.7-max|pm_production_scale": {
+        "model": "qwen/qwen3.7-max",
+        "scenario": "pm_production_scale",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.061406,
+        "latency_mean": 70.91,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-pro-0813|pm_production_scale": {
+        "model": "deepseek/deepseek-v4-pro-0813",
+        "scenario": "pm_production_scale",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.85,
+        "quality_min": 0.85,
+        "cost_mean": 0.03478,
+        "latency_mean": 117.66,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4-flash-0731": {
+        "scenarios": {
+          "pm_production_scale": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "pm_production_scale",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.8,
+            "quality_min": 0.75,
+            "cost_mean": 0.003422,
+            "latency_mean": 162.32,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.8,
+        "quality_worst": 0.8,
+        "quality_worst_run": 0.75,
+        "cost_total": 0.003422,
+        "quality_per_dollar": 233.78
+      },
+      "z-ai/glm-5.2": {
+        "scenarios": {
+          "pm_production_scale": {
+            "model": "z-ai/glm-5.2",
+            "scenario": "pm_production_scale",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.055492,
+            "latency_mean": 96.62,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_total": 0.055492,
+        "quality_per_dollar": 18.02
+      },
+      "qwen/qwen3.7-max": {
+        "scenarios": {
+          "pm_production_scale": {
+            "model": "qwen/qwen3.7-max",
+            "scenario": "pm_production_scale",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.061406,
+            "latency_mean": 70.91,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_total": 0.061406,
+        "quality_per_dollar": 16.29
+      },
+      "deepseek/deepseek-v4-pro-0813": {
+        "scenarios": {
+          "pm_production_scale": {
+            "model": "deepseek/deepseek-v4-pro-0813",
+            "scenario": "pm_production_scale",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.85,
+            "quality_min": 0.85,
+            "cost_mean": 0.03478,
+            "latency_mean": 117.66,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.85,
+        "quality_worst": 0.85,
+        "quality_worst_run": 0.85,
+        "cost_total": 0.03478,
+        "quality_per_dollar": 24.44
+      }
+    }
+  }
+}

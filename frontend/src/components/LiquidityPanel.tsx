@@ -2,7 +2,12 @@ import { Badge, Text } from "@tremor/react";
 import { AccountResponse, PositionItem } from "../api/client";
 import { fmtMoneyCompact } from "../lib/format";
 
-/* Item 9 (cockpit trader rework): this used to be six stat tiles (total
+/* The "Total" tile is gone: raw cash + parked IS deployable cash, so it
+ * was the same number under a second name — the miniature of the defect
+ * that made "Deployable" show max(cash - reserve, 0) while the engine
+ * sized against cash + parked, 1.58x apart on the same book.
+ *
+ * Item 9 (cockpit trader rework): this used to be six stat tiles (total
  * liquidity, raw cash, SGOV parked, deployable, reserve, directional
  * risk) — several of them just sums of the others, occupying a full panel
  * of prime real estate for numbers a trader reads once and never again.
@@ -53,15 +58,27 @@ export function LiquidityStrip({
       aria-label="Liquidity"
     >
       <Text className="uppercase tracking-wide">Liquidity</Text>
-      <Stat label="Total" value={fmtMoneyCompact(liq.total_liquidity)} note="Raw cash plus parked cash equivalent" />
+      <Stat
+        label="Deployable"
+        value={fmtMoneyCompact(liq.deployable_cash)}
+        note="Cash plus the parked sweep vehicle, which is sold on demand to fund buys — the exact figure the trading engine sizes against"
+      />
       <Stat label="Cash" value={fmtMoneyCompact(liq.raw_cash)} />
       <Stat
         label={liq.sweep_symbol || "SGOV"}
         value={liq.sweep_enabled ? fmtMoneyCompact(liq.sweep_parked_value) : "disabled"}
         note="Deterministic cash parking"
       />
-      <Stat label="Deployable" value={fmtMoneyCompact(liq.deployable_cash)} note="Immediately available after reserve" />
-      <Stat label="Reserve" value={fmtMoneyCompact(liq.reserve_usd)} note="Held outside deployable cash" />
+      <Stat
+        label="Cash after reserve"
+        value={fmtMoneyCompact(liq.cash_above_reserve)}
+        note="Raw cash spendable without selling the sweep vehicle first — conservative, and not what sizing uses"
+      />
+      <Stat
+        label="Reserve"
+        value={fmtMoneyCompact(liq.reserve_usd)}
+        note="Sweep mechanic: the cushion park_excess leaves behind. Does not reduce deployable cash"
+      />
       <Stat label="Directional" value={fmtMoneyCompact(directionalExposure)} note="Long + bearish hedge; SGOV excluded" />
       {accountError && (
         <Badge color="amber" size="xs" className="ml-auto">

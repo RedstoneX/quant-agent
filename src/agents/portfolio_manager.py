@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from datetime import date
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -9,8 +10,21 @@ from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
     TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
+    parse_telemetry,
 )
-from src.risk.rules import _gross_multiplier, count_aligned_sources, stance_is_aligned
+from src.risk.metrics import unrealized_pnl_pct
+from src.risk.rules import (
+    EARNINGS_STANCE_MAX_AGE_DAYS,
+    _gross_multiplier,
+    book_exposure as _book_exposure,
+    count_aligned_sources,
+    count_opposing_sources,
+    position_weight_pct,
+    signed_source_score,
+    stance_is_aligned,
+    weight_pct_of,
+)
+from src.trading_calendar import et_today
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +109,101 @@ class PortfolioManagerAgent(BaseAgent):
         return rows
 
     @classmethod
+    def _earnings_stance_rows(
+        cls, earnings_analyses: list[dict],
+    ) -> list[tuple[str, str, str]]:
+        """`(SYMBOL, stance, filing_date)` for every earnings entry that
+        produces a registry stance, in input order.
+
+        The filter is exactly the one `build_evidence_registry`'s `put`
+        applies — a dict `analysis`, a non-empty collapsed sentiment, a
+        non-empty symbol — extracted so the freshness gate below and the
+        registry itself cannot drift apart about WHICH entry a symbol's
+        earnings stance came from. Order is preserved because the registry
+        is last-wins per symbol.
+
+        `filing_date` is read from the pipeline wrapper first (the shape
+        `run_earnings_preprocess` / `EarningsAnalystAgent.analyze_reports`
+        emit) and from the validated analysis second. Empty string when
+        neither carries one — an unknowable age, which the gate treats as
+        stale.
+        """
+        rows: list[tuple[str, str, str]] = []
+        for item in earnings_analyses:
+            analysis = item.get("analysis")
+            if not isinstance(analysis, dict):
+                continue
+            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
+            stance = cls._collapse_stances([sentiment])
+            symbol = str(item.get("symbol") or "").strip().upper()
+            if not symbol or not stance:
+                continue
+            filing_date = str(
+                item.get("filing_date") or analysis.get("filing_date") or ""
+            ).strip()
+            rows.append((symbol, stance, filing_date))
+        return rows
+
+    @classmethod
+    def stale_evidence_sources(
+        cls,
+        *,
+        earnings_analyses: list[dict],
+        asof: date | None = None,
+    ) -> dict[str, frozenset[str]]:
+        """`{SYMBOL: {"earnings"}}` for stances too old to earn size.
+
+        §9.4 pays for agreement, and before this gate it paid the same for a
+        view formed yesterday and one formed six months ago: the registry
+        recorded only `investment_implications.sentiment` and dropped
+        `filing_date` and `is_new` on the floor, so a cached bullish earnings
+        stance was a full live corroborating source forever. Nothing in
+        `src/risk/rules.py` or `src/portfolio_constructor.py` looked at age.
+        That was reachable, not theoretical: when a symbol has no filing
+        inside the provider's 45-day SEC scan window,
+        `EarningsProvider._check_symbol` fell back to
+        `_get_existing_analysis`, which re-served whatever was on disk with
+        no age bound of its own (the store prunes at 1000 days).
+        `_get_existing_analysis` now carries this same bound (2026-09-02,
+        same constant, `src/data/earnings.py`), so that specific route to a
+        stale stance is closed at the source — an over-age analysis is no
+        longer handed to a session at all. This gate stays regardless: it is
+        what actually governs the TALLY for a stance from ANY source, so a
+        stale view that reaches the registry some other way is still caught
+        here rather than relying on every producer to self-police age.
+
+        Threshold: `EARNINGS_STANCE_MAX_AGE_DAYS` (90) — the number the
+        earnings seat's own prompt and the missed-opportunity scan already
+        use. See that constant for why it is reused rather than invented.
+
+        A stale stance is REMOVED FROM THE TALLY ONLY. It stays in the
+        canonical registry, so `validate_grounding` still recognises the
+        coverage and a PM that cites it does not fail the session — this is
+        a size reduction, not a new hard block. The prompt marks it so the
+        PM cannot read it as corroborating.
+
+        An absent or unparseable `filing_date` is treated as stale: an
+        unknowable age is not evidence of freshness, and the same call is
+        already made in `TradingPipeline._missed_ops_earnings_signal`.
+        """
+        today = asof or et_today()
+        stale: dict[str, frozenset[str]] = {}
+        for symbol, _stance, filing_date in cls._earnings_stance_rows(earnings_analyses):
+            try:
+                age_days = (today - date.fromisoformat(filing_date)).days
+                is_stale = age_days > EARNINGS_STANCE_MAX_AGE_DAYS
+            except (TypeError, ValueError):
+                is_stale = True
+            # Last-wins, exactly as the registry resolves the stance itself:
+            # a later entry for the same symbol replaces the verdict rather
+            # than merging with it.
+            if is_stale:
+                stale[symbol] = frozenset({"earnings"})
+            else:
+                stale.pop(symbol, None)
+        return stale
+
+    @classmethod
     def build_evidence_registry(
         cls,
         *,
@@ -137,12 +246,13 @@ class PortfolioManagerAgent(BaseAgent):
             for symbol, items in news_intel.stock_news.items():
                 put(symbol, "news", cls._collapse_stances(i.sentiment for i in items))
 
-        for item in earnings_analyses:
-            analysis = item.get("analysis")
-            if not isinstance(analysis, dict):
-                continue
-            sentiment = (analysis.get("investment_implications") or {}).get("sentiment")
-            put(str(item.get("symbol") or ""), "earnings", cls._collapse_stances([sentiment]))
+        # One rule, two readers: `_earnings_stance_rows` decides which
+        # earnings entries produce a stance at all, and `put`'s last-wins
+        # ordering is preserved exactly. `stale_evidence_sources` walks the
+        # SAME rows so the freshness verdict can never attach to a different
+        # filing than the one whose stance actually landed in the registry.
+        for symbol, stance, _filing_date in cls._earnings_stance_rows(earnings_analyses):
+            put(symbol, "earnings", stance)
 
         smart_money_stances: dict[str, list[str]] = {}
         for finding in smart_money_findings or []:
@@ -196,9 +306,32 @@ class PortfolioManagerAgent(BaseAgent):
             smart_money_findings=smart_money_findings,
             symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
+        # §9.4 freshness — which registry entries are real coverage but too
+        # old to EARN size. Computed from the same earnings list the registry
+        # was built from, so the prompt and the constructor gate the same
+        # stances (`pipeline_stages` recomputes both from identical inputs).
+        stale_sources = self.stale_evidence_sources(
+            earnings_analyses=earnings_analyses,
+        )
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
         )
+        if stale_sources:
+            # The registry values themselves stay undecorated — the PM must
+            # copy the stance string EXACTLY for `validate_grounding`, so the
+            # staleness is carried alongside rather than inside them.
+            stale_registry_note = (
+                "\n\nSTALE (still real coverage, still citable as provenance, "
+                "but NOT counted toward the agreement ceiling below — the "
+                f"filing is more than {EARNINGS_STANCE_MAX_AGE_DAYS} days old):\n"
+                + "\n".join(
+                    f"- {symbol}: {', '.join(sorted(sources))}"
+                    for symbol, sources in sorted(stale_sources.items())
+                    if symbol in evidence_registry
+                )
+            )
+            if not stale_registry_note.rstrip().endswith(":"):
+                evidence_registry_text += stale_registry_note
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
         # not chosen one yet when it reads this: a name it takes long
@@ -207,10 +340,37 @@ class PortfolioManagerAgent(BaseAgent):
         # `PortfolioConstructor` re-derives the count from — not a preview
         # of a different number. See 2026-08-20/Phase 2b's incident class:
         # a silent clamp the PM's own stated reasoning disagreed with.
+        #
+        # The NET of the two counts is what sizes the trade (2026-09-02, see
+        # `src/risk/rules.py::signed_source_score`). Both halves are shown
+        # anyway: "3 aligned, 1 opposed" and "net +2" are different facts, and
+        # a PM that only saw the net could not tell a thin unanimous idea from
+        # a broad contested one. Showing the net is not optional — a ceiling
+        # the PM cannot predict is the 2026-08-20 incident class, where the
+        # constructor silently sized against the PM's own stated reasoning.
+        def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
+            ignored = stale_sources.get(symbol)
+            stale_note = (
+                f"; {', '.join(sorted(ignored))} stance NOT counted — filing "
+                f"older than {EARNINGS_STANCE_MAX_AGE_DAYS}d"
+                if ignored and any(s in sources for s in ignored) else ""
+            )
+            long_for = count_aligned_sources(symbol, sources, "long", ignored_sources=ignored)
+            long_against = count_opposing_sources(symbol, sources, "long", ignored_sources=ignored)
+            short_for = count_aligned_sources(symbol, sources, "short", ignored_sources=ignored)
+            short_against = count_opposing_sources(symbol, sources, "short", ignored_sources=ignored)
+            long_net = signed_source_score(symbol, sources, "long", ignored_sources=ignored)
+            short_net = signed_source_score(symbol, sources, "short", ignored_sources=ignored)
+            return (
+                f"- {symbol}: {long_for} aligned / {long_against} opposed = "
+                f"net {long_net:+d} if long, "
+                f"{short_for} aligned / {short_against} opposed = "
+                f"net {short_net:+d} if short "
+                f"(of {len(sources)} source(s) with current coverage{stale_note})"
+            )
+
         agreement_lines = [
-            f"- {symbol}: {count_aligned_sources(symbol, sources, 'long')} aligned "
-            f"if long, {count_aligned_sources(symbol, sources, 'short')} aligned if "
-            f"short (of {len(sources)} source(s) with current coverage)"
+            _agreement_line(symbol, sources)
             for symbol, sources in sorted(evidence_registry.items())
         ]
         agreement_text = (
@@ -267,20 +427,26 @@ class PortfolioManagerAgent(BaseAgent):
             # as its target, which the constructor read as "cut from 18% to
             # 6%" and emitted a 67% SELL the PM never intended.
             gross_mul = _gross_multiplier(p.symbol)
-            weight_pct = (
-                (p.market_value * gross_mul / total_value * 100)
-                if total_value > 0 else 0.0
-            )
+            weight_pct = position_weight_pct(p, total_value)
             lev_note = f" (gross, {gross_mul:g}x leveraged)" if gross_mul != 1.0 else ""
             # Flag drift candidates directly in the line so PM can't miss them.
             # P&L% tells PM whether the weight came from price appreciation (drift)
             # or a large entry.
-            cost_basis = p.avg_entry * p.qty if p.avg_entry and p.qty else 0
-            pnl_pct = (p.unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
-            drift_flag = " ⚠️DRIFT" if weight_pct > 12 and pnl_pct > 10 else ""
+            # `unrealized_pnl_pct` is the single definition (see
+            # src/risk/metrics.py). The `cost_basis > 0` guard this replaces
+            # printed a literal +0.0% for every short — a winning short
+            # rendered `P&L: $1000.00 (+0.0%)`, self-contradicting on one
+            # line. None means genuinely unknowable, and must not drift-flag.
+            pnl_pct = unrealized_pnl_pct(p)
+            pnl_pct_str = f"{pnl_pct:+.1f}%" if pnl_pct is not None else "n/a"
+            drift_flag = (
+                " ⚠️DRIFT"
+                if weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
+                else ""
+            )
             core = (
                 f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | "
-                f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} ({pnl_pct:+.1f}%) | "
+                f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} ({pnl_pct_str}) | "
                 f"Weight: {weight_pct:.1f}%{lev_note} | Sector: {p.sector}{drift_flag}"
             )
             hist = position_history.get(p.symbol) or {}
@@ -476,6 +642,17 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 guidance = analysis.get("guidance", "N/A")
                 filing_label = f"{ea.get('form_type', '?')} ({ea.get('filing_date', '?')})"
                 source_note = " [from cache]" if not ea.get("is_new") else " [new filing]"
+                # §9.4 freshness: `[from cache]` and a filing date were
+                # already here, so the model COULD see the age — but the same
+                # stance was simultaneously being counted as a live
+                # corroborating source in the agreement block below. Say
+                # plainly which way it is, in the section the PM actually
+                # reads the view from.
+                if "earnings" in stale_sources.get(str(sym).strip().upper(), frozenset()):
+                    source_note += (
+                        f" [STALE >{EARNINGS_STANCE_MAX_AGE_DAYS}d — context only; "
+                        "does NOT count toward the agreement ceiling]"
+                    )
 
                 # Strategic direction
                 strat = analysis.get("strategic_direction", {})
@@ -513,8 +690,20 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         else:
             earnings_section = "## Earnings Analysis\nNo recent earnings filings available."
 
-        invested = total_value - cash_balance
-        invested_pct = (invested / total_value * 100) if total_value else 0
+        # Account Status "Invested" reads the SAME `book_exposure` the
+        # PMFacts Book State block and the pre-trade `macro_exposure_deviation`
+        # advisory read. It used to be `total_value - cash_balance`, a third
+        # definition of the same quantity inside this one prompt.
+        #
+        # That subtraction is not merely a different basis, it is wrong in a
+        # specific direction: equity is `cash + sum(market_value)` and a held
+        # short's `market_value` is NEGATIVE, so every short made the book
+        # look LESS invested to the PM — which then deployed more. Deployment
+        # is unsigned: shorting is capital put to work.
+        book = _book_exposure(positions, total_value)
+        invested = book.deployed_usd
+        invested_pct = book.deployed_pct
+        net_exposure_pct = book.net_pct
 
         # Margin policy — when allow_margin is False and cash is already
         # negative, de-lever SELLs are mandatory this session. The risk
@@ -700,6 +889,22 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             "## Recent Loss Pits\n(no repeat failure modes in the last 14 days)"
         )
 
+        # What you asked for and never got. Diagnostic only — nothing here
+        # blocks a name; it tells you which of your asks the machinery keeps
+        # refusing, and with what stored reason.
+        blocked_proposals: str = kwargs.get("blocked_proposals") or ""
+        blocked_section = (
+            f"## Proposal Conversion (last 21d — what you asked for vs what "
+            f"you got)\n{blocked_proposals}\n\n"
+            "A block is cleaner evidence than a loss: it comes with its cause "
+            "attached. If a name is listed here, re-proposing it unchanged "
+            "will fail the same way again — either fix what the reason names "
+            "(geometry, sizing, cash) or drop the name. This is information, "
+            "not a prohibition: none of these symbols is barred."
+            if blocked_proposals else
+            "## Proposal Conversion\n(no proposals on record in the last 21 days)"
+        )
+
         # Self-calibration layers: PM reads RM's recent verdicts on it + its own
         # recent decisions, to avoid oversizing repeatedly and to spot flip-flops.
         rm_recent_verdicts: str = kwargs.get("rm_recent_verdicts") or ""
@@ -751,7 +956,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         return f"""## Account Status
 - Total Value: ${total_value:,.2f}
 - Cash Balance: ${cash_balance:,.2f} (deployable this session, no margin){reserve_line}
-- Invested: ${invested:,.2f} ({invested_pct:.1f}%)
+- Invested: ${invested:,.2f} ({invested_pct:.1f}% of equity — capital at work, unsigned and un-leveraged; a short counts its notional, not a credit)
+- Net direction: {net_exposure_pct:+.1f}% of equity (leverage-aware and signed; negative = net short). This is NOT the number macro's target is set against — `Invested` is.
 
 ## Current Positions (with entry context + signal trajectory)
 {positions_text}
@@ -782,6 +988,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 
 {loss_pits_section}
 
+{blocked_section}
+
 {insights_section}
 
 {macro_section}
@@ -806,10 +1014,28 @@ Memory and narrative sections are context, never current specialist coverage.
 
 ## Independent Source Agreement (deterministic ceiling — Step 5)
 {agreement_text}
-`risk_allocation_pct` is CEILINGED — never raised — by how many independent
-sources above are actually aligned with the direction you propose, computed
-from this registry, not from what you write in provenance. Ask for what the
-idea has earned; the ceiling only ever refuses size it did not earn.
+`risk_allocation_pct` is CEILINGED — never raised — by the NET score above:
+independent sources ALIGNED with the direction you propose, MINUS those
+opposed to it, computed from this registry, not from what you write in
+provenance. Ask for what the idea has earned; the ceiling only ever refuses
+size it did not earn. A source whose stance is marked stale is in neither
+count: an old filing is still worth reading, but it has not confirmed
+anything about today, and it has not contradicted anything either.
+
+A seat arguing the OTHER way SUBTRACTS. Three aligned against one opposed is
+a net +2 and is sized as a two-source idea, not a three-source one.
+**A net score of zero or below produces NO ORDER AT ALL** — not a small
+position, no position. That is the same arithmetic, not an extra veto: the
+schedule's first rung prices one net source, and there is no rung below it.
+Anything already held is left alone; refusing to open is not a decision to
+sell.
+
+So a name your own earnings or macro seat is arguing against needs more
+confirmation elsewhere to reach the same size, and a name with one seat for
+and one against is not tradeable today. If you believe a dissenting seat is
+wrong, say why in your reasoning — but expect the size to reflect the split,
+because the constructor computes this from the registry and cannot read your
+argument.
 
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
 
@@ -839,6 +1065,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                macro_tech_alignment: str = "",
                recent_missed_lessons: str = "",
                recent_loss_pits: str = "",
+               blocked_proposals: str = "",
                facts=None,
                allow_margin: bool = True,
                symbol_sectors: dict[str, str] | None = None,
@@ -869,6 +1096,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             macro_tech_alignment=macro_tech_alignment,
             recent_missed_lessons=recent_missed_lessons,
             recent_loss_pits=recent_loss_pits,
+            blocked_proposals=blocked_proposals,
             facts=facts,
             allow_margin=allow_margin,
             symbol_sectors=symbol_sectors or {},
@@ -1078,7 +1306,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         pos = held.get(symbol)
         current_weight = 0.0
         if pos is not None and total_value > 0:
-            current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
+            current_weight = weight_pct_of(pos.market_value, symbol, total_value)
         if target.risk_allocation_pct is not None:
             if target.is_close:
                 return "sell"
@@ -1389,9 +1617,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 )
                 continue
             try:
-                TargetPosition(**item)
+                # Dry run: the surviving dicts are validated again by
+                # PortfolioDecision, so tallying here would double-count.
+                with parse_telemetry.suspended():
+                    TargetPosition(**item)
             except ValidationError as e:
                 sym = item.get("symbol") or f"<idx {i}>"
+                # A target the PM proposed and the desk then discarded is a
+                # position that will not be opened. Counted for the same
+                # reason the tech-side drop is: an idea lost at parse looks
+                # identical to an idea nobody had.
+                parse_telemetry.record_dropped_item("TargetPosition", str(sym))
                 logger.warning(
                     "Portfolio manager: dropping malformed target for %s: %s",
                     sym, e,

@@ -691,8 +691,16 @@ def test_account_liquidity_breakdown_separates_raw_cash_from_sweep_parked(
     assert liquidity["raw_cash"] == 10_000.0
     assert liquidity["sweep_parked_value"] == 50_000.0
     assert liquidity["reserve_usd"] == pytest.approx(1_000.0)  # 1% of 100k
-    assert liquidity["deployable_cash"] == pytest.approx(9_000.0)  # 10k - 1k reserve
-    assert liquidity["total_liquidity"] == pytest.approx(60_000.0)  # raw + parked
+    # `deployable_cash` is the ENGINE's figure — raw cash + the sweep vehicle
+    # the BUY phase liquidates on demand (src/quantities.py). This assertion
+    # used to expect 9_000.0 (10k cash - 1k reserve), which is a number no
+    # part of the trading engine has ever used: the dashboard was printing a
+    # different quantity under the same word, 1.58x apart on a real book.
+    assert liquidity["deployable_cash"] == pytest.approx(60_000.0)  # raw + parked
+    # The conservative reserve-adjusted figure survives under its own name.
+    assert liquidity["cash_above_reserve"] == pytest.approx(9_000.0)  # 10k - 1k reserve
+    # Deprecated alias of deployable_cash — assigned, never recomputed.
+    assert liquidity["total_liquidity"] == pytest.approx(60_000.0)
 
 
 def test_positions_returns_seeded_position(client, stub_broker):

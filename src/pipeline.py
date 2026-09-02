@@ -11,6 +11,7 @@ from src.trading_calendar import et_now, et_today, session_date_key
 from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
+from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroCoverage, MacroDataProvider
 from src.data.event_calendar import FOMCCalendarProvider, MacroEventCalendarProvider
@@ -34,8 +35,23 @@ from src.agents.meta_reflector import MetaReflectorAgent
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
-from src.risk.rules import RiskRuleEngine
-from src.execution.broker import AlpacaBroker, _get_sector
+from src.risk.metrics import unrealized_pnl_pct
+from src.risk.rules import (
+    GROSS_LADDER,
+    GrossCeiling,
+    RiskRuleEngine,
+    apply_gross_ceiling,
+    distance_to_forced_liquidation_pct,
+    gross_exposure,
+    peak_to_trough_pct,
+    position_weight_pct,
+    resolve_gross_ceiling,
+)
+from src.execution.broker import (
+    AlpacaBroker,
+    _get_sector,
+    _split_protective_qty,
+)
 from src.pipeline_context import PMFacts, RunContext, SessionType
 from src.pipeline_stages import (
     DecisionStage,
@@ -79,12 +95,43 @@ _WAL_SELL_SENTINEL = "__WAL_PENDING__"
 #: identity block into the longest step of the morning session.
 _PM_PROFILE_SYMBOL_CAP = 40
 
+def _optional_risk_number(value) -> float | None:
+    """Read an OPTIONAL numeric risk setting, or None.
+
+    Same defensive posture as `_risk_setting` inside `TradingPipeline.__init__`
+    (many tests build the pipeline against a MagicMock config, where attribute
+    access auto-creates a child mock that pydantic coerces to 1.0), but for a
+    setting whose absence is meaningful rather than an error — `None` lets
+    `RiskConfig` apply its own documented default instead of a number nobody
+    configured.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value > 0 else None
+
+
+def _risk_number(value, default: float) -> float:
+    """`_optional_risk_number` with a documented fallback, for settings that
+    always need a concrete number (§10.3's minimum order size)."""
+    resolved = _optional_risk_number(value)
+    return default if resolved is None else resolved
+
+
 HARD_BLOCK_RULES = {
     "max_daily_loss_pct",
     "max_total_position_pct",
     "max_position_pct",
     "require_stop_loss",
-    "max_sector_pct",
+    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
+    # a hard block and is deliberately absent from this set. It is now the
+    # diversification TARGET — breaching it emits an ADVISORY violation the
+    # AI Risk Manager and the audit trail see, while the constructor shrinks
+    # the order for crowding instead of the pipeline dropping it. The hard
+    # gate moved to `max_sector_hard_pct` below, which fires only past the
+    # absolute ceiling or on an order that never went through that sizing.
+    # Removing it from here is the whole of "concentration is a dial, not a
+    # gate" at the pipeline level; putting it back reinstates the veto.
+    "max_sector_hard_pct",
     "cash_only",
     # Audit §1.1: the drawdown-halve rule used to live only in the PM and RM
     # prompts, where "no deterministic code enforces this" was stated outright.
@@ -100,6 +147,13 @@ HARD_BLOCK_RULES = {
     # inverse ETF is a BULLISH bet and is correctly excluded
     # (src/risk/rules.py).
     "max_gross_bearish_pct",
+    # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
+    # value plus absolute short market value — may not exceed the ladder-
+    # resolved multiple of equity. There was NO gross-exposure ceiling in
+    # this codebase before: `max_portfolio_risk_pct` bounds capital at risk
+    # and `max_total_position_pct` bounds NET exposure, where a hedge
+    # cancels a long. Adding this hard block is a tightening.
+    "max_gross_exposure",
 }
 
 
@@ -226,30 +280,19 @@ def _missed_ops_quality_metrics(
     if not bars or len(bars) < 2:
         return None, None, None
 
-    # Isolate trailing 20 bars for the 20-day volume stats. Insufficient
-    # history → None for that metric only.
-    trailing_20 = bars[-20:] if len(bars) >= 20 else bars
+    # 20-day dollar volume via the single shared definition
+    # (`src.quantities.avg_dollar_volume`) — this digest and the external-
+    # symbol admission gate used to compute the same measure two different
+    # ways (a halted session was dropped here and counted there, 5.26%
+    # apart on a 20-bar window). Only the THRESHOLDS differ now: $5M here,
+    # $10M at admission. `min_bars=5` keeps this caller's deliberate
+    # tolerance for short history; the gate demands a full window.
     avg_dvol_m: float | None = None
     vol_conf_ratio: float | None = None
     try:
-        dollar_vols: list[float] = []
-        for b in trailing_20:
-            close_attr = getattr(b, "close", None)
-            vol_attr = getattr(b, "volume", None)
-            # Strict type check — production OHLCV carries int/float, but
-            # MagicMock objects in tests respond to float() with 1.0 via
-            # __float__, which would smuggle phantom volume into the
-            # dollar-vol math. Require real numerics.
-            if not isinstance(close_attr, (int, float)):
-                continue
-            if not isinstance(vol_attr, (int, float)):
-                continue
-            close = float(close_attr)
-            vol = float(vol_attr)
-            if close > 0 and vol > 0:
-                dollar_vols.append(close * vol)
-        if len(dollar_vols) >= 5:
-            avg_dvol = sum(dollar_vols) / len(dollar_vols)
+        dollar_vols = dollar_volumes(bars)
+        avg_dvol = avg_dollar_volume(bars, min_bars=5)
+        if avg_dvol is not None:
             avg_dvol_m = round(avg_dvol / 1_000_000, 2)
             # Today's dollar volume vs the average. >1.5 = buyers showed up.
             if dollar_vols and avg_dvol > 0:
@@ -296,7 +339,134 @@ def _missed_ops_quality_metrics(
     return avg_dvol_m, vol_conf_ratio, single_day_conc
 
 
+def _market_is_open_now(broker) -> bool:
+    """Is the regular cash session open RIGHT NOW?
+
+    Spec §11.1 hybrid fractional stops. This is the discriminator the
+    whole alerting distinction rests on: a fractional DAY stop that is
+    absent while the market is SHUT is the design working — it lapsed at
+    16:00 ET exactly as intended and the next session re-places it. The
+    same stop absent while the market is OPEN is a placement failure and
+    must wake somebody.
+
+    FAILS TOWARD "OPEN" ON PURPOSE. Every way this can be wrong has an
+    asymmetric cost: believing the market is shut when it is open would
+    SUPPRESS a real naked-position alert, which is the one failure this
+    desk cannot absorb. Believing it is open when it is shut costs a
+    redundant banner. So anything unknown, unreadable or unexpected
+    answers True, and only a confident, positively-established "outside
+    the session" answers False.
+
+    The session-window table (`trading_calendar.SESSION_WINDOWS`) is the
+    weekday 09:30-16:00 ET baseline; `broker.get_session_close()`
+    tightens it on early-close days (Thanksgiving Friday 13:00, July 3),
+    and is best-effort — a calendar failure leaves the baseline answer
+    rather than inventing a closed market.
+
+    Note the callers all sit behind `_is_trading_day()`, so a holiday
+    never reaches here; the weekday check is belt-and-braces for a
+    direct call.
+    """
+    from datetime import datetime as _dt
+
+    try:
+        from src.trading_calendar import in_session_window
+
+        now = et_now()
+        if not in_session_window("intra_check", now):
+            return False
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "market-hours check failed (%s) — assuming the market is OPEN "
+            "so a coverage gap still alerts", exc,
+        )
+        return True
+    try:
+        session_close = broker.get_session_close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("market-hours: get_session_close failed: %s", exc)
+        return True
+    if isinstance(session_close, _dt) and now >= session_close:
+        return False
+    return True
+
+
+def _position_notional(position, qty: float) -> float:
+    """Dollar value of `qty` shares of `position`, or 0.0 if unknowable.
+
+    Spec §11.1 hybrid fractional stops, observability half. The owner's
+    standing objection to invisible risk is that "a number he can look at
+    beats a guarantee he has to trust" — so the overnight sub-share
+    exposure is reported in DOLLARS, not in shares. A share count is
+    meaningless across a book that holds both a $12 name and a $900 one,
+    and the whole reason fractional sizing exists here is the $900 one.
+
+    Uses the price already on the broker's position snapshot rather than
+    a fresh quote: this runs inside the coverage sweep's per-position
+    loop, and an extra round-trip per held name to decorate an alert
+    would be paid on every sweep of every session. Returns 0.0 rather
+    than guessing when the snapshot carries no usable price — an omitted
+    number is honest, an invented one is not.
+    """
+    try:
+        price = float(getattr(position, "current_price", 0) or 0)
+        shares = float(qty)
+    except (TypeError, ValueError):
+        return 0.0
+    if not (math.isfinite(price) and price > 0):
+        return 0.0
+    if not (math.isfinite(shares) and shares > 0):
+        return 0.0
+    return round(price * shares, 2)
+
+
+def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
+    """Name the shortfall between held shares and stop-covered shares.
+
+    Returns ``(coverage, frac_uncovered)`` where `coverage` is one of:
+
+    ``'none'``       zero protective coverage on a position that should
+                     have some. Guard 3's worst condition; escalates.
+    ``'partial'``    some coverage, but the WHOLE-SHARE part of the
+                     position is under-covered. Guard 3's milder
+                     condition; banner, not escalation.
+    ``'fractional'`` the ONLY thing missing is the sub-share remainder —
+                     the durable GTC leg over floor(held) is intact.
+
+    Spec §11.1 hybrid fractional stops. The third value is the whole
+    point: under the hybrid design a sub-share remainder loses its DAY
+    stop at every close, so classifying that as 'none' (which is what a
+    bare `covered <= 0` test does for a position under one share) would
+    fire the NO-STOP-AT-ALL owner alert every single night on a state
+    that is expected, bounded and deliberate. An alert that cries wolf
+    nightly is worse than no alert, because it trains the owner to swipe
+    away the one message that must never be ignored.
+
+    Market hours are deliberately NOT an input here. This answers only
+    "what is missing"; the caller decides what that means at this hour.
+    Keeping the two apart is what makes the overnight suppression
+    auditable — it can only ever soften a gap already known to be
+    'fractional', and it is one branch at one call site rather than a
+    condition smeared through the classifier.
+    """
+    whole_held, frac_held = _split_protective_qty(held)
+    shortfall = max(0.0, held - covered)
+    # The durable leg is intact iff the covered qty reaches the whole-share
+    # floor of the position. Anything less means a GTC stop is missing,
+    # which is never the expected overnight state.
+    durable_leg_intact = covered + 1e-6 >= whole_held
+    only_sub_share_missing = shortfall <= frac_held + 1e-6
+    if frac_held > 0 and durable_leg_intact and only_sub_share_missing:
+        return "fractional", shortfall
+    return ("none" if covered <= 1e-6 else "partial"), 0.0
+
+
 class TradingPipeline:
+    #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
+    #: instance built without __init__ (tests do this) reads None rather than
+    #: raising: an unconfigured switch is INERT, never armed. Real enforcement
+    #: is at the broker seam, where __init__ always runs in production.
+    _kill_switch_path: "Path | None" = None
     def __init__(self, config: AppConfig):
         self.config = config
         self.market = MarketDataProvider()
@@ -399,6 +569,15 @@ class TradingPipeline:
             max_total_position_pct=config.risk.max_total_position_pct,
             max_daily_loss_pct=config.risk.max_daily_loss_pct,
             max_sector_pct=config.risk.max_sector_pct,
+            # Spec §10.3 — the absolute ceiling behind the sector dial.
+            # Read through the same MagicMock guard `_risk_setting` applies
+            # below (many tests build the pipeline against a mock config, and
+            # a child mock coerces to 1.0, which would trip the "ceiling must
+            # sit above the target" validator with a number nobody chose).
+            # `None` means "derive 1.5x the target", which RiskConfig does.
+            max_sector_hard_pct=_optional_risk_number(
+                getattr(getattr(config, "risk", None), "max_sector_hard_pct", None),
+            ),
             require_stop_loss=config.risk.require_stop_loss,
             # Codex r11 P2: previously omitted, defaulting to False even
             # when settings.yaml said True. Prompts + force_delever read
@@ -521,10 +700,24 @@ class TradingPipeline:
             provider_order=config.llm.get_provider_order("meta_reflector"),
         )
         self.earnings_provider = EarningsDataProvider()
+        # Guard 1 (2026-09-02): resolve the kill-switch flag path the same
+        # way storage.db_path resolves a few lines down — relative to the
+        # repo root, absolute paths passed through unchanged — so
+        # `touch data/KILL_SWITCH` from the repo root (run.sh's own cwd) is
+        # the file ops actually touches. Resolved ONCE here so the
+        # broker-level enforcement (AlpacaBroker._kill_switch_active) and
+        # this class's own early, alerting check (_kill_switch_halt_result)
+        # can never disagree about which file they are each looking at.
+        raw_kill_switch_path = config.risk.kill_switch_path
+        kill_switch_path = Path(raw_kill_switch_path)
+        if not kill_switch_path.is_absolute():
+            kill_switch_path = Path(__file__).resolve().parent.parent / kill_switch_path
+        self._kill_switch_path = kill_switch_path
         self.broker = AlpacaBroker(
             api_key=config.api_keys.alpaca_key,
             secret_key=config.api_keys.alpaca_secret,
             paper=config.alpaca.paper,
+            kill_switch_path=str(self._kill_switch_path),
         )
         # Wire the broker as yfinance's fallback so a yfinance outage doesn't
         # blackout the technical analyst. Alpaca's daily bars cover the same
@@ -649,14 +842,71 @@ class TradingPipeline:
             # constructor sizes under the ceiling rather than proposing orders
             # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
             max_position_pct=_risk_setting("max_position_pct", 20.0),
+            # Spec §10.3 "concentration scales size". Read back off the risk
+            # ENGINE's own resolved config rather than re-derived from
+            # settings, so the number the constructor shrinks against is
+            # provably the identical number the engine will enforce — the
+            # drift `max_position_pct`'s "keep in sync" comment can only ask
+            # for, this one gets structurally.
+            max_sector_pct=self.risk_engine.config.max_sector_pct,
+            max_sector_hard_pct=self.risk_engine.config.sector_hard_ceiling_pct,
+            # §10.3's floor — reuses the existing $500 threshold rather than
+            # inventing a second notion of "too small to bother". It lives
+            # under `cash_sweep` because that is where it was first needed;
+            # the number, not the section, is what is being reused.
+            min_order_usd=_risk_number(
+                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
+                500.0,
+            ),
             # Stage 3 (shorts) — same "size under the hard block" pattern as
             # max_position_pct just above, mirrored for the short-specific
             # ceiling and its sizing haircut.
             max_single_short_pct=_risk_setting("max_single_short_pct", 10.0),
             short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
+            # Spec §11.2 — same "size under the hard block" pattern again.
+            # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
+            # breaches the ceiling would be DROPPED rather than taken
+            # smaller without this. The per-session ladder step is passed to
+            # `construct_orders`; this is the standing cap it starts from.
+            max_gross_exposure_x=_risk_setting("max_gross_exposure_x", 2.0),
+            # The cash park is not exposure. Read from the SAME config gate
+            # `_sweeper()` uses (enabled + symbol) so the sizing gate and the
+            # execution gate can never disagree about what counts.
+            cash_park_symbol=(
+                getattr(getattr(config, "cash_sweep", None), "symbol", None)
+                if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
+                else None
+            ),
             min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
+            ),
+            # Spec §12.1 — a stop sitting at a level the system COMPUTED is
+            # honoured whatever the band says, down to a deterministic 1x ATR
+            # floor. Same "wire from the ratified setting, not the
+            # constructor's own default" pattern as every ceiling above.
+            level_match_atr_tolerance=_risk_setting(
+                "level_match_atr_tolerance", 0.25,
+            ),
+            absolute_min_stop_atr_multiple=_risk_setting(
+                "absolute_min_stop_atr_multiple", 1.0,
+            ),
+            # Target derivation (2026-09-01) — the numerator of the ratio
+            # above, computed from bars instead of guessed by the analyst.
+            # Wired from the ratified settings, same pattern as every
+            # ceiling above.
+            min_target_atr_multiple=_risk_setting("min_target_atr_multiple", 1.0),
+            breakout_projection_atr_multiple=_risk_setting(
+                "breakout_projection_atr_multiple", 1.0,
+            ),
+            max_target_reach_atr_multiple=_risk_setting(
+                "max_target_reach_atr_multiple", 1.5,
+            ),
+            max_target_horizon_sessions=int(
+                _risk_setting("max_target_horizon_sessions", 60),
+            ),
+            target_divergence_warn_pct=_risk_setting(
+                "target_divergence_warn_pct", 25.0,
             ),
             # Spec §9.4 "agreement earns size" — same "wire from the
             # ratified setting, not the constructor's own default" pattern
@@ -774,19 +1024,22 @@ class TradingPipeline:
         not authoritative for execution: ExecutionStage still re-reads raw
         broker `cash` after the funding sale and skips any BUY that cash
         does not actually cover. See `CashSweeper.fund_buys`.
+
+        The arithmetic itself lives in `src.quantities.deployable_cash` —
+        one definition, shared with Mission Control's "Deployable" tile,
+        which used to show `max(cash - sweep_reserve, 0)` instead and read
+        1.58x lower than the figure the engine actually sized against.
         """
-        if not isinstance(cash, (int, float)) or not math.isfinite(cash):
-            return 0.0
         sweeper = self._sweeper()
         if sweeper is None:
-            return float(cash)
+            return deployable_cash(cash, 0.0)
         try:
             parked = sweeper.parked_value(positions)
         except Exception as e:  # noqa: BLE001 — unknowable sweep state must not inflate
             logger.warning("deployable cash: parked-value read failed (%s) — "
                            "treating sweep reserve as unavailable", e)
-            return float(cash)
-        return float(cash) + parked
+            parked = 0.0
+        return deployable_cash(cash, parked)
 
     @staticmethod
     def _format_qty(qty: float) -> str:
@@ -990,22 +1243,28 @@ class TradingPipeline:
         recent = bars[-20:]
         try:
             last_price = float(recent[-1].close)
-            avg_dollar_volume = sum(
-                float(bar.close) * float(bar.volume) for bar in recent
-            ) / len(recent)
-        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+        except (AttributeError, TypeError, ValueError, IndexError):
             logger.info("%s admission rejected %s: invalid_market_data", context, symbol)
             return False, "invalid_market_data", {}
+        # Single shared definition (`src.quantities.avg_dollar_volume`);
+        # the threshold below stays this gate's own. None = the window did
+        # not contain a full 20 usable sessions, which fails closed here
+        # rather than admitting on partial data.
+        adv = avg_dollar_volume(recent)
+        if adv is None:
+            logger.info("%s admission rejected %s: invalid_market_data", context, symbol)
+            return False, "invalid_market_data", {}
+        avg_dollar_volume_usd = adv
         if last_price < cfg.min_external_price_usd:
             logger.info(
                 "%s admission rejected %s: price %.2f < %.2f",
                 context, symbol, last_price, cfg.min_external_price_usd,
             )
             return False, "price_below_minimum", {}
-        if avg_dollar_volume < cfg.min_external_avg_dollar_volume_usd:
+        if avg_dollar_volume_usd < cfg.min_external_avg_dollar_volume_usd:
             logger.info(
                 "%s admission rejected %s: avg dollar volume %.0f < %.0f",
-                context, symbol, avg_dollar_volume,
+                context, symbol, avg_dollar_volume_usd,
                 cfg.min_external_avg_dollar_volume_usd,
             )
             return False, "dollar_volume_below_minimum", {}
@@ -1015,7 +1274,7 @@ class TradingPipeline:
             return False, "unresolved_sector", {}
         return True, None, {
             "last_price": round(last_price, 4),
-            "avg_dollar_volume_20d_usd": round(avg_dollar_volume, 2),
+            "avg_dollar_volume_20d_usd": round(avg_dollar_volume_usd, 2),
             "sector": sector,
             "broker": broker_fact,
         }
@@ -1151,12 +1410,18 @@ class TradingPipeline:
         correlation_matrix: dict[str, dict[str, float]] | None = None,
         cash: float | None = None,
         in_drawdown: bool = False,
+        # Spec §11.2. The ladder-resolved gross-exposure ceiling for this
+        # session. None falls back to the configured cap inside the engine —
+        # a caller that forgets it still gets a ceiling, never none.
+        gross_ceiling=None,
     ) -> tuple[list[TradeDecision], list, list[str]]:
         allowed_decisions: list[TradeDecision] = []
         remaining_violations = []
         blocked_reasons: list[str] = []
         pending_investment = 0.0
-        pending_sector_investment: dict[str, float] = {}
+        # Spec §12.2 — keyed by `(sector, side)`. A pending SHORT must not eat
+        # the same sector's LONG budget, and vice versa.
+        pending_sector_investment: dict[tuple[str, str], float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
         # D9 (Stage 3): running total of gross BEARISH notional already
@@ -1168,6 +1433,19 @@ class TradingPipeline:
         # pre-existing book. Renamed from pending_short_gross_investment
         # (2026-08-30) alongside the ceiling itself.
         pending_gross_bearish_investment = 0.0
+        # Spec §11.2: running total of GROSS notional (direction-agnostic,
+        # leverage-adjusted) already allowed earlier in this batch. Without
+        # it two entries in one run would each be measured against only the
+        # pre-existing book and never see each other — the same gap
+        # `pending_investment` closes for net exposure.
+        pending_gross_investment = 0.0
+        # Raw (unsigned, UN-leveraged) notional already approved this batch.
+        # This is the pending leg of `book_exposure`'s `deployed` measure —
+        # capital committed, which is what macro's `target_invested_pct` is
+        # defined against. Distinct from `pending_cash_outflow` (BUYs only,
+        # a funding question) and from `pending_gross_investment` (leverage
+        # multiplied, a ceiling question).
+        pending_raw_investment = 0.0
 
         # Cash-sweep view: the parked T-bill vehicle is cash-equivalent —
         # exclude it from the position list so net-exposure / cluster math
@@ -1268,12 +1546,29 @@ class TradingPipeline:
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
                 pending_gross_bearish_investment=pending_gross_bearish_investment,
+                # Spec §11.2 — the execution half of the gross ceiling. The
+                # sweep vehicle has already been split out of `positions`
+                # above, so `cash_park_symbol` here is belt-and-braces for
+                # any future caller that has not.
+                gross_ceiling=gross_ceiling,
+                pending_gross_investment=pending_gross_investment,
+                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),
             )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
                 messages = [v.message for v in hard_violations]
                 blocked_reasons.extend(messages)
                 logger.warning("Hard risk block for %s %s: %s", decision.action, decision.symbol, "; ".join(messages))
+                # sector_unresolved_* is advisory (never in HARD_BLOCK_RULES)
+                # but must stay visible even when THIS decision is blocked
+                # for a different reason (e.g. the pooled "Unknown" bucket
+                # itself tripping max_sector_hard_pct) — the whole point is
+                # that an unresolved sector must never go quiet, and the
+                # loop `continue`s past the ordinary remaining_violations
+                # .extend below for a blocked decision.
+                remaining_violations.extend(
+                    v for v in violations if v.rule.startswith("sector_unresolved")
+                )
                 continue
 
             remaining_violations.extend(violations)
@@ -1293,6 +1588,10 @@ class TradingPipeline:
             # Sector exposure accumulates GROSS (direction-agnostic magnitude).
             gross_investment = raw_investment * _gross_multiplier(decision.symbol)
             pending_investment += signed_investment
+            # Deployment accumulates RAW notional for BUY *and* SHORT: both
+            # commit capital, and neither leverage nor direction changes how
+            # much of the book stops being idle cash.
+            pending_raw_investment += raw_investment
             if not is_short:
                 # Cash outflow is raw $ notional — leverage/direction don't
                 # change the brokerage cash the BUY consumes. Inverse/
@@ -1313,20 +1612,42 @@ class TradingPipeline:
             # gate in RiskRuleEngine.check.
             if signed_investment < 0:
                 pending_gross_bearish_investment += abs(signed_investment)
+            # Spec §11.2: gross is direction-agnostic — a BUY and a SHORT of
+            # the same size consume the same ceiling. `gross_investment` is
+            # already the leverage-adjusted unsigned magnitude.
+            pending_gross_investment += gross_investment
             pending_symbol_investment[decision.symbol] = (
                 pending_symbol_investment.get(decision.symbol, 0.0) + raw_investment
             )
-            sector = _get_sector(decision.symbol)
-            if sector and sector != "Unknown":
-                pending_sector_investment[sector] = pending_sector_investment.get(sector, 0.0) + gross_investment
+            # Spec §12.2 — books into the `(sector, side)` bucket this order
+            # would actually land in, so a pending SHORT never consumes the
+            # long budget the next BUY in that sector is measured against.
+            from src.risk.rules import accumulate_pending_sector
+            accumulate_pending_sector(
+                pending_sector_investment, _get_sector(decision.symbol),
+                decision.action, gross_investment,
+            )
 
         # Advisory check: projected net exposure vs macro's target_invested_pct.
         # Does NOT block trades; emits a non-hard violation so RiskManager sees it
         # and can either scale_all_buys or override with a reasoning.
         if macro_target_invested_pct is not None and total_value > 0:
-            from src.risk.rules import _effective_multiplier, RiskViolation
-            existing_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)
-            projected_invested_pct = abs(existing_net + pending_investment) / total_value * 100
+            from src.risk.rules import book_exposure, RiskViolation
+            # Read through `book_exposure` — the SAME function that produces
+            # PM's `invested_pct`. Before this, the two seats were judged
+            # against one target using two definitions with opposite signs
+            # (see the measured example on `book_exposure`), and the RM's leg
+            # additionally `abs()`-ed a signed net, so a net-SHORT book read
+            # as positively invested and was indistinguishable from the
+            # equivalent long. `projected` is the book AFTER this batch:
+            # deployment counts every approved order's raw notional (a SHORT
+            # commits capital too), direction counts them signed.
+            projected = book_exposure(
+                positions, total_value,
+                pending_deployed_usd=pending_raw_investment,
+                pending_net_usd=pending_investment,
+            )
+            projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - macro_target_invested_pct
             if abs(deviation) > 15:
                 # RC3: direction matters. The old symmetric message told RM
@@ -1346,7 +1667,8 @@ class TradingPipeline:
                 remaining_violations.append(RiskViolation(
                     rule="macro_exposure_deviation",
                     message=(
-                        f"Projected net exposure {projected_invested_pct:.0f}% deviates "
+                        f"Projected invested {projected_invested_pct:.0f}% (capital at "
+                        f"work; net direction {projected.net_pct:+.0f}%) deviates "
                         f"from Macro target {macro_target_invested_pct:.0f}% by {deviation:+.0f}pp "
                         f"({guidance})"
                     ),
@@ -1594,7 +1916,40 @@ class TradingPipeline:
         reconciler has always refused to make for an unrecorded stop.
         Symbols already queued for WAL recovery are skipped — the drain owns
         them. Returns the list of under-covered ``{symbol, held_qty,
-        covered_qty, repaired}`` for the caller to surface to the operator.
+        covered_qty, coverage, repaired}`` for the caller to surface to the
+        operator.
+
+        SPEC §11.1 HYBRID FRACTIONAL STOPS — this sweep is also the
+        re-placement mechanism, and the alerting distinction lives here.
+
+        A fractional position is covered by two orders: a durable GTC stop
+        over floor(qty) and a DAY stop over the sub-share remainder, which
+        the broker expires at 16:00 ET by design. That means "held qty
+        exceeds covered qty" is now THREE different situations, not one, and
+        reporting them identically would be the worst possible outcome — a
+        nightly red banner on an expected state teaches the owner to ignore
+        the banner that must never be ignored:
+
+          (a) the durable GTC leg is intact, only the sub-share remainder is
+              uncovered, and the market is SHUT. Expected. Stamped
+              ``coverage='fractional_overnight'`` with ``uncovered_qty`` and
+              ``unprotected_value`` so the exposure is a NUMBER the owner can
+              read. No repair (a DAY order into a shut market is a rejection
+              at best), no banner, no escalation.
+          (b) the same shortfall while the market is OPEN. A placement
+              failure. Repaired in place; if the repair lands it is stamped
+              ``'fractional_replaced'`` — this is the ordinary start-of-
+              session heartbeat and stays quiet — and if it does NOT land it
+              falls back onto guard 3's existing ladder and alerts exactly as
+              before.
+          (c) the whole-share GTC leg is missing or short. Never suppressed,
+              never reclassified, market hours irrelevant: 'none' escalates
+              to the owner, 'partial' banners. Unchanged from guard 3.
+
+        The three §11.1 guards are extended by this, not replaced: the retry
+        burst (guard 1) now runs over each hybrid leg, the owner alert (guard
+        2) still fires on a genuine partial cover, and this sweep still
+        separates NO STOP AT ALL from STOP MIS-SIZED (guard 3).
         """
         try:
             positions = self.broker.get_positions()
@@ -1609,6 +1964,12 @@ class TradingPipeline:
             }
         except Exception:  # noqa: BLE001
             pending_syms = set()
+
+        # Spec §11.1 hybrid fractional stops. Read ONCE per pass, not per
+        # position: every gap in this sweep must be judged against the same
+        # clock, or a sweep straddling 16:00 ET could call one symbol's
+        # lapse expected and the next symbol's identical lapse a failure.
+        market_open = _market_is_open_now(self.broker)
 
         gaps: list[dict] = []
         longs_checked = 0
@@ -1652,13 +2013,112 @@ class TradingPipeline:
             covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
             held = abs(qty)
             if covered + 1e-6 < held:
-                gap = {"symbol": symbol, "held_qty": qty, "covered_qty": covered}
-                logger.warning(
-                    "STOP-COVERAGE GAP: %s held=%.4f but only %.4f covered by "
-                    "open protective %s-stops — (partially) unprotected with "
-                    "no WAL recovery row.", symbol, qty, covered,
-                    "buy" if is_short else "sell",
+                # Spec §11.1 guard 3. NO STOP AT ALL and STOP PRESENT BUT
+                # MIS-SIZED were previously one condition with one message.
+                # They are not the same thing and must never read as if they
+                # were: a position stopped at the wrong size still has a
+                # broker order standing watch over most of it, while a
+                # position with zero coverage has nothing between it and the
+                # tape. The second is the state that ends a desk, and it was
+                # being reported in the same sentence as the first.
+                coverage, frac_uncovered = _classify_coverage_gap(
+                    held=held, covered=covered,
                 )
+                gap = {
+                    "symbol": symbol, "held_qty": qty, "covered_qty": covered,
+                    "coverage": coverage,
+                }
+                # ---- Spec §11.1 hybrid fractional stops: case (a) ----
+                # The durable whole-share GTC leg is intact and the only
+                # thing missing is the sub-share remainder, whose DAY stop
+                # the broker expires at 16:00 ET BY DESIGN. Outside session
+                # hours that is not a fault, it is the mechanism working, and
+                # it happens to EVERY fractional position EVERY night. It is
+                # reported as measured overnight exposure — a number the
+                # owner can look at — and it does not touch either red
+                # banner or the owner escalation. Nor is a repair attempted:
+                # a DAY order submitted into a shut market is a rejection at
+                # best and a surprise queued order at worst.
+                if coverage == "fractional" and not market_open:
+                    gap["coverage"] = "fractional_overnight"
+                    gap["uncovered_qty"] = frac_uncovered
+                    gap["unprotected_value"] = _position_notional(
+                        p, frac_uncovered,
+                    )
+                    gap["repaired"] = False
+                    logger.info(
+                        "FRACTIONAL DAY STOP LAPSED (expected): %s held=%.4f, "
+                        "%.4f whole share(s) still covered by the durable GTC "
+                        "stop, %s sub-share remainder unprotected until the "
+                        "next session re-places its DAY stop.",
+                        symbol, qty, covered, frac_uncovered,
+                    )
+                    gaps.append(gap)
+                    continue
+                if coverage == "fractional":
+                    # ---- case (b), first half: session hours ----
+                    # The remainder should be covered RIGHT NOW. Repair it,
+                    # and only if the repair fails does it carry a real
+                    # condition name into the alerting below.
+                    logger.warning(
+                        "FRACTIONAL STOP MISSING DURING SESSION HOURS: %s "
+                        "held=%.4f, %.4f covered — the sub-share DAY stop is "
+                        "absent while the market is OPEN, which is a placement "
+                        "failure, not the expected overnight lapse. Repairing.",
+                        symbol, qty, covered,
+                    )
+                    repaired = (
+                        False if is_short
+                        else self._repair_stop_coverage(symbol, held - covered)
+                    )
+                    gap["repaired"] = repaired
+                    if repaired:
+                        # Re-placed inside the same pass. This is the ordinary
+                        # start-of-session path for every fractional position
+                        # the desk holds, so it must NOT read as a red banner
+                        # — it is the design's daily heartbeat.
+                        gap["coverage"] = "fractional_replaced"
+                        gap["uncovered_qty"] = 0.0
+                        logger.info(
+                            "FRACTIONAL DAY STOP RE-PLACED: %s — the sub-share "
+                            "remainder is covered again for this session.",
+                            symbol,
+                        )
+                    else:
+                        # Could not re-place during session hours. Falls back
+                        # onto guard 3's existing ladder unchanged: zero
+                        # coverage escalates, some coverage banners.
+                        gap["coverage"] = "none" if covered <= 1e-6 else "partial"
+                        gap["uncovered_qty"] = held - covered
+                        gap["unprotected_value"] = _position_notional(
+                            p, held - covered,
+                        )
+                        logger.error(
+                            "FRACTIONAL STOP RE-PLACEMENT FAILED for %s during "
+                            "session hours (held=%.4f, covered=%.4f) — this is "
+                            "case (b) and it alerts.", symbol, qty, covered,
+                        )
+                    gaps.append(gap)
+                    continue
+                # ---- case (c) and every pre-existing condition ----
+                # The whole-share GTC leg is missing or short. Never
+                # suppressed, never reclassified, market hours irrelevant:
+                # that leg is the durable protection and its absence is the
+                # state that ends a desk.
+                if coverage == "none":
+                    logger.critical(
+                        "NO STOP AT ALL: %s held=%.4f with ZERO open "
+                        "protective %s-stops — the position is COMPLETELY "
+                        "unprotected and has no WAL recovery row.",
+                        symbol, qty, "buy" if is_short else "sell",
+                    )
+                else:
+                    logger.warning(
+                        "STOP MIS-SIZED: %s held=%.4f but only %.4f covered by "
+                        "open protective %s-stops — partially unprotected with "
+                        "no WAL recovery row.", symbol, qty, covered,
+                        "buy" if is_short else "sell",
+                    )
                 if is_short:
                     # No order path can open a short yet, so there is no BUY
                     # trade row to reconstruct its original stop level from
@@ -1675,12 +2135,89 @@ class TradingPipeline:
                 "Stop-coverage reconcile: all %d long / %d short position(s) "
                 "adequately stop-covered", longs_checked, shorts_checked,
             )
+        # Spec §11.1 hybrid fractional stops, observability half. Total the
+        # deliberate overnight exposure into ONE line the owner can read at a
+        # glance. The individual gap dicts carry it too (the notifier renders
+        # them), but a running total is what turns "a bounded remainder" from
+        # a promise into a measurement.
+        overnight = [
+            g for g in gaps if g.get("coverage") == "fractional_overnight"
+        ]
+        if overnight:
+            total_value = sum(
+                float(g.get("unprotected_value") or 0) for g in overnight
+            )
+            logger.warning(
+                "OVERNIGHT FRACTIONAL EXPOSURE: %d position(s) carrying a "
+                "sub-share remainder with no live stop until the next session "
+                "— $%.2f total at risk. Expected and bounded by design; the "
+                "whole-share part of each is still covered by its GTC stop.",
+                len(overnight), total_value,
+            )
+        # Spec §11.1 guard 3, escalation half. A gap the auto-repair CLOSED
+        # needs no interruption — the belt did its job. A position still
+        # carrying NO stop at all after the repair attempt is a live naked
+        # position, and the sweep runs on a 30-minute cadence whose
+        # `intra_check` message is silent unless it liquidates: without this,
+        # the worst state this reconciler can find would be reported only in
+        # a log file. Mis-sized gaps stay in the session banner rather than
+        # interrupting the owner — they are real but bounded, and alerting on
+        # both is how a channel gets tuned out.
+        #
+        # Spec §11.1 hybrid fractional stops: the `coverage == "none"` test is
+        # exactly the right filter and needs no exception added to it. An
+        # expected overnight lapse is stamped 'fractional_overnight' and a
+        # re-placed one 'fractional_replaced', so neither can reach this list
+        # — while a sub-share position that could NOT be re-covered during
+        # SESSION hours falls back to 'none' above and escalates here, which
+        # is precisely case (b). The suppression lives in one classifier, not
+        # in a growing list of special cases at the escalation site.
+        naked = [
+            g for g in gaps
+            if g.get("coverage") == "none" and not g.get("repaired")
+        ]
+        if naked:
+            self._alert_owner_no_stop(naked)
         return gaps
 
+    @staticmethod
+    def _alert_owner_no_stop(naked: list[dict]) -> None:
+        """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
+        try:
+            from src import notifier as _notifier
+
+            detail = "\n".join(
+                f"  {g.get('symbol', '?')}: held {g.get('held_qty')}, "
+                f"covered {g.get('covered_qty')}"
+                for g in naked
+            )
+            _notifier.send_owner_alert(
+                "🔴 NO STOP AT ALL\n"
+                f"{len(naked)} position(s) are open at the broker with ZERO "
+                "protective-stop coverage, and the automatic repair could not "
+                "restore one. This is not a mis-sized stop — there is nothing "
+                "standing watch.\n"
+                f"{detail}\n"
+                "Place a protective stop manually or flatten the position.",
+                symbols=[str(g.get("symbol")) for g in naked if g.get("symbol")],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("no-stop owner alert failed: %s", exc)
+
     def _repair_stop_coverage(self, symbol: str, uncovered_qty: float) -> bool:
-        """Best-effort: re-place a GTC protective stop on an uncovered long
-        using the stop level recorded on its last BUY. Returns True when a
-        stop was actually submitted.
+        """Best-effort: re-place protective stop coverage on an uncovered long
+        using the stop level recorded on its last BUY. Returns True when the
+        gap was actually closed.
+
+        Spec §11.1 hybrid fractional stops: this is also THE re-placement
+        path for a sub-share DAY stop that lapsed at yesterday's close. It
+        needs no fractional special-case of its own — it routes through
+        `_submit_protective_stop_retrying`, which splits a fractional
+        `uncovered_qty` into its GTC and DAY legs, so re-placing 0.3456
+        share(s) at the open and protecting a whole fresh 12.3456-share entry
+        are the same one code path. The caller (`_reconcile_stop_coverage`)
+        owns the decision of WHETHER to call this at the current hour; this
+        function does not consult the clock.
 
         Why this is now safe to auto-repair (it deliberately wasn't before):
         the old objection was "the original protective level is unknown for a
@@ -1735,20 +2272,52 @@ class TradingPipeline:
                 symbol, stop_price, price,
             )
             return False
-        try:
-            self.broker._submit_stop_limit_order(
-                symbol=symbol, qty=uncovered_qty, stop_price=stop_price,
-                limit_price=stop_price * (1 - self.broker.STOP_LIMIT_BUFFER_PCT),
-            )
-        except Exception as exc:  # noqa: BLE001
+        # Spec §11.1 guard 1 belongs here too. This was a single bare
+        # `_submit_stop_limit_order` call with NO retry burst at all — a
+        # transient failure (429, dropped connection) cost the position a
+        # full 30-minute cycle instead of clearing in ~2 seconds the way the
+        # entry path does, and for a FRACTIONAL `uncovered_qty` (this repair
+        # is reached with one whenever the gapped position is itself
+        # fractional) there was also no whole-share fallback — the exact gap
+        # guard 1 exists to close on the entry side, left open on the belt
+        # that is supposed to be its backstop. Route through the same
+        # retrying+fallback machinery instead of a second, weaker copy of it.
+        result = self.broker._submit_protective_stop_retrying(
+            symbol=symbol, qty=uncovered_qty, stop_price=stop_price,
+            limit_price=stop_price * (1 - self.broker.STOP_LIMIT_BUFFER_PCT),
+            side="sell",
+        )
+        if result is None:
             logger.error(
-                "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f): %s",
-                symbol, uncovered_qty, stop_price, exc,
+                "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f) — "
+                "retries exhausted", symbol, uncovered_qty, stop_price,
+            )
+            return False
+        residual = 0.0
+        if isinstance(result, dict):
+            try:
+                residual = float(result.get("uncovered_qty") or 0)
+            except (TypeError, ValueError):
+                residual = 0.0
+        if residual > 0:
+            # A whole-share floor stop landed but a sub-share sliver is
+            # still gapped. Reported as NOT repaired — not because nothing
+            # happened, but because the gap is real and smaller, not gone.
+            # The broker snapshot the NEXT sweep takes reflects the partial
+            # cover on its own and reclassifies this symbol "partial" rather
+            # than "none"; this pass keeps escalating instead of going quiet
+            # on a still-real gap.
+            logger.warning(
+                "coverage repair PARTIAL for %s: covered %.4f of %.4f "
+                "uncovered share(s) at stop $%.2f — %.4f share(s) still "
+                "gapped; next sweep will re-check", symbol,
+                uncovered_qty - residual, uncovered_qty, stop_price, residual,
             )
             return False
         logger.warning(
-            "COVERAGE REPAIRED: %s — placed GTC stop-limit for %.4f uncovered "
-            "share(s) at the recorded BUY stop $%.2f",
+            "COVERAGE REPAIRED: %s — placed protective stop-limit coverage for "
+            "%.4f uncovered share(s) at the recorded BUY stop $%.2f (GTC over "
+            "the whole shares, DAY over any sub-share remainder)",
             symbol, uncovered_qty, stop_price,
         )
         return True
@@ -2963,10 +3532,23 @@ class TradingPipeline:
                 return True
 
         side_kwargs = {} if side == "sell" else {"side": side}
+        # Spec §11.1: a FRACTIONAL residual is re-protected by the hybrid
+        # pair (durable GTC over the whole shares, DAY over the sub-share
+        # remainder), not by one fractional order that the broker will only
+        # accept as DAY and that would therefore take the whole position's
+        # protection with it at 16:00 ET. A whole-share residual submits
+        # exactly one GTC order with exactly the same arguments as before.
+        whole, frac = _split_protective_qty(residual_qty)
+        legs = [whole] if whole >= 1 else []
+        if frac > 0:
+            legs.append(frac)
+        if not legs:
+            legs = [residual_qty]
         try:
-            self.broker._submit_stop_limit_order(
-                symbol=symbol, qty=residual_qty, stop_price=best_stop, **side_kwargs,
-            )
+            for leg_qty in legs:
+                self.broker._submit_stop_limit_order(
+                    symbol=symbol, qty=leg_qty, stop_price=best_stop, **side_kwargs,
+                )
             logger.info(
                 "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
                 symbol, self._format_qty(residual_qty), best_stop,
@@ -3863,11 +4445,13 @@ class TradingPipeline:
         for p in positions:
             if p.qty <= 0 or p.avg_entry <= 0:
                 continue
-            cost_basis = p.avg_entry * p.qty
-            if cost_basis <= 0:
-                continue
-            pnl_pct = p.unrealized_pnl / cost_basis * 100
-            if pnl_pct < profit_pct_trigger:
+            # Same `unrealized_pnl_pct` every P&L% in the system now uses.
+            # Long-only here (the `p.qty <= 0` filter above), so the absolute
+            # cost basis is arithmetically identical to the signed one this
+            # replaces — routed through the shared function so a future
+            # short-side auto-TP cannot inherit a fifth denominator.
+            pnl_pct = unrealized_pnl_pct(p)
+            if pnl_pct is None or pnl_pct < profit_pct_trigger:
                 continue
             # Did we already trim this holding? Look at trades newer than the
             # most recent BUY for this symbol. If a TAKE_PROFIT exists there,
@@ -4032,6 +4616,20 @@ class TradingPipeline:
                 mod_syms = sorted({m.get("symbol", "?") for m in mods if isinstance(m, dict)})
                 if mod_syms:
                     extras.append(f"mods on {', '.join(mod_syms)}")
+            # Phase 10.1 — a per-symbol refusal is the sharpest feedback this
+            # loop can carry: `reason_category` alone tells PM the plan had an
+            # R/R problem, this tells it which NAME died for it. Rendered as
+            # plain text from the stored verdict, tolerant of any shape,
+            # because a display line must never raise on a historical row.
+            rejected = data.get("rejected_symbols") or []
+            if isinstance(rejected, list):
+                rej_syms = sorted({
+                    (r.get("symbol") if isinstance(r, dict) else r)
+                    for r in rejected
+                    if isinstance(r, (dict, str))
+                } - {None, ""})
+                if rej_syms:
+                    extras.append(f"refused {', '.join(str(s) for s in rej_syms)}")
             tag = f" [{'; '.join(extras)}]"
             reason = (data.get("reasoning") or "")[:140].strip().replace("\n", " ")
             lines.append(f"- {ts}: {verdict}{tag} — {reason}")
@@ -4073,9 +4671,22 @@ class TradingPipeline:
                     if not isinstance(t, dict):
                         continue
                     sym = t.get("symbol", "?")
-                    w = t.get("target_weight_pct", "?")
+                    # The live schema sizes a target by `risk_allocation_pct`;
+                    # `target_weight_pct` is the legacy notional field older
+                    # logs carry. Reading only the legacy one rendered every
+                    # recent size as "?", and a flip-flop check that cannot
+                    # see the size is not a check. Tag the unit — 1% of risk
+                    # and 1% of notional are not the same number.
+                    risk = t.get("risk_allocation_pct")
+                    weight = t.get("target_weight_pct")
+                    if risk is not None:
+                        w = f"{risk}%r"
+                    elif weight is not None:
+                        w = f"{weight}%w"
+                    else:
+                        w = "?"
                     conv = (t.get("conviction") or "?")[0]
-                    summary_parts.append(f"{sym}→{w}%({conv})")
+                    summary_parts.append(f"{sym}→{w}({conv})")
             elif decisions:
                 for d in decisions[:8]:
                     if not isinstance(d, dict):
@@ -4113,7 +4724,10 @@ class TradingPipeline:
         correlation_cluster advisory). Just current vs projected sector mix.
         """
         from src.execution.broker import _get_sector
-        from src.risk.rules import _effective_multiplier, _gross_multiplier
+        from src.risk.rules import (
+            SECTOR_SIDE_LONG, BookExposure, _effective_multiplier,
+            _gross_multiplier, book_exposure, sector_side_gross,
+        )
         if total_value <= 0:
             return ""
         buy_candidates = [
@@ -4140,35 +4754,57 @@ class TradingPipeline:
                 cached_sectors[symbol] = sector
             return sector
 
-        current_net = sum(p.market_value * _effective_multiplier(p.symbol) for p in positions)
-        current_invested_pct = abs(current_net) / total_value * 100
-        sector_gross: dict[str, float] = {}
-        for p in positions:
-            sec = _resolve_sector(p.symbol, p.sector)
-            gross = p.market_value * _gross_multiplier(p.symbol)
-            sector_gross[sec] = sector_gross.get(sec, 0.0) + gross
+        # Same `book_exposure` the PM's Account Status, the PMFacts Book
+        # State block and the pre-trade advisory read. This preview used to
+        # carry its own `abs(sum(mv * signed_mult))` — a fourth number for
+        # the one quantity, in the same prompt as the other three, and the
+        # `abs()` made a net-SHORT book render as positively invested.
+        current_book = book_exposure(positions, total_value)
+        current_invested_pct = current_book.deployed_pct
+        current_net = current_book.net_usd
+        # Spec §12.2 — GROSS (unsigned) and split by side, keyed
+        # `(sector, side)`. Before §12.2 this summed SIGNED `market_value`
+        # exactly as the gate did, so a held short shrank its sector in the
+        # very preview whose job is to surface concentration.
+        sector_gross: dict[tuple[str, str], float] = sector_side_gross(
+            positions,
+            resolve_sector=lambda p: _resolve_sector(p.symbol, p.sector),
+            include_unknown=True,
+        )
 
         proj_net = current_net
+        proj_deployed = current_book.deployed_usd
         proj_sector = dict(sector_gross)
         unresolved_symbols: list[str] = []
         for a in buy_candidates:
             raw = total_value * (default_buy_pct / 100)
             proj_net += raw * _effective_multiplier(a.symbol)
+            proj_deployed += raw
             sec = _resolve_sector(a.symbol)
             if sec == "Unknown":
                 unresolved_symbols.append(a.symbol)
-            proj_sector[sec] = proj_sector.get(sec, 0.0) + raw * _gross_multiplier(a.symbol)
-        proj_invested_pct = abs(proj_net) / total_value * 100
+            # Every candidate here is BUY-rated, so it lands long-side.
+            key = (sec, SECTOR_SIDE_LONG)
+            proj_sector[key] = proj_sector.get(key, 0.0) + raw * _gross_multiplier(a.symbol)
+        proj_book = BookExposure(
+            equity=total_value, deployed_usd=proj_deployed,
+            net_usd=proj_net, gross_usd=0.0,
+        )
+        proj_invested_pct = proj_book.deployed_pct
         self._last_symbol_sectors = cached_sectors
 
-        def _sector_line(sector_dict: dict[str, float]) -> str:
+        def _sector_line(sector_dict: dict[tuple[str, str], float]) -> str:
             if not sector_dict:
                 return "(empty)"
             sorted_secs = sorted(sector_dict.items(), key=lambda kv: -kv[1])[:5]
-            return ", ".join(f"{s} {v / total_value * 100:.0f}%" for s, v in sorted_secs)
+            return ", ".join(
+                f"{sec} {side} {v / total_value * 100:.0f}%"
+                for (sec, side), v in sorted_secs
+            )
 
         lines = [
-            f"- Current: {current_invested_pct:.0f}% net invested · sectors: {_sector_line(sector_gross)}",
+            f"- Current: {current_invested_pct:.0f}% invested (capital at work) · "
+            f"net direction {current_book.net_pct:+.0f}% · sectors: {_sector_line(sector_gross)}",
         ]
         if buy_candidates:
             n = len(buy_candidates)
@@ -4179,15 +4815,35 @@ class TradingPipeline:
                 f"({', '.join(shown)}{tail}):"
             )
             lines.append(
-                f"    → {proj_invested_pct:.0f}% net invested · sectors: {_sector_line(proj_sector)}"
+                f"    → {proj_invested_pct:.0f}% invested · net direction "
+                f"{proj_book.net_pct:+.0f}% · sectors: {_sector_line(proj_sector)}"
             )
+            # Spec §12.2/§12.3 — this used to carry its own hardcoded `35`,
+            # a fourth sector number unrelated to config and already stale
+            # against the 40 it was shadowing. It now reads the SAME
+            # concentration target the constructor sizes against and the gate
+            # measures against, so the preview cannot warn about a line the
+            # rest of the system does not draw.
+            #
+            # The target, not some band below it, is the meaningful
+            # threshold: at or under it crowding costs a trade nothing
+            # (`sector_size_scale` returns 1.0), so there is nothing
+            # actionable to tell the PM. Above it every further trade in that
+            # sector is shrunk — which is exactly what the PM needs to know
+            # before it writes decisions.
+            target_pct = getattr(
+                getattr(self, "risk_engine", None), "config", None,
+            )
+            target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
             overweight = [
-                s for s, v in proj_sector.items()
-                if v / total_value * 100 > 35 and s != "Unknown"
+                f"{sec} ({side})" for (sec, side), v in proj_sector.items()
+                if v / total_value * 100 > target_pct and sec != "Unknown"
             ]
             if overweight:
                 lines.append(
-                    f"    ⚠ Sectors near/over 35% cap: {', '.join(sorted(overweight))}"
+                    f"    ⚠ Sector sides over the {target_pct:.0f}% concentration "
+                    f"target (each further trade there is scaled down, not "
+                    f"refused): {', '.join(sorted(overweight))}"
                 )
             if unresolved_symbols:
                 unique = list(dict.fromkeys(unresolved_symbols))
@@ -5052,12 +5708,13 @@ class TradingPipeline:
                         days_held = None
                 entry_reasoning = (buy_row.get("reasoning") or "")[:300]
 
-            # P&L% (defensive — avg_entry could be zero for fresh positions)
-            pnl_pct = None
-            if p.avg_entry and p.qty:
-                cost = p.avg_entry * p.qty
-                if cost > 0:
-                    pnl_pct = round(p.unrealized_pnl / cost * 100, 2)
+            # P&L% — the one definition (`src.risk.metrics.unrealized_pnl_pct`),
+            # which returns None when genuinely unknowable. The `cost > 0`
+            # guard this replaces silently returned None for EVERY short
+            # (a short's `avg_entry * qty` is negative), so evening's
+            # thesis-health review saw no P&L on the short book at all.
+            _pnl_pct = unrealized_pnl_pct(p)
+            pnl_pct = None if _pnl_pct is None else round(_pnl_pct, 2)
 
             # Tech trajectory — last 4 ratings for this symbol
             tech_trajectory = tech_map_multi.get(sym, [])[:4]
@@ -5328,6 +5985,214 @@ class TradingPipeline:
             if refs and cause == "macro_warning_ignored":
                 line += f' — ignored: "{refs[0]}"'
             lines.append(line)
+        return "\n".join(lines)
+
+    def _build_blocked_proposals(
+        self,
+        lookback_days: int = 21,
+        min_proposals: int = 3,
+        max_lines: int = 5,
+    ) -> str:
+        """PM memory: names it keeps asking for and never gets, and why.
+
+        Every other per-symbol memory PM reads (loss pits, missed lessons,
+        position history, R-multiples) is keyed on a POSITION, so a symbol
+        that never became a position is invisible to all of them — however
+        many times PM proposed it. This is the only section that can see a
+        block, and a block is the cleanest feedback the desk produces: it
+        arrives with its cause attached, where a filled trade's loss is
+        confounded by whatever the market did next.
+
+        Computed at prompt-build time from existing tables — no schema
+        change. `specialist_evidence` marks each stage of a proposal's life
+        and `decision_id` joins it to `trades`:
+
+            target → proposed_order → verdict → execution_skip | trades.fill
+
+        A `target` is one proposal. Targets sized to zero are EXIT
+        instructions, not requests to get in, so they are excluded — a
+        blocked exit is a different defect and counting it here would
+        overstate the entry-side block rate.
+
+        Every blocking reason is copied VERBATIM out of stored data —
+        `execution_skip.reason` (`qty_zero`, `geometry_rr`,
+        `insufficient_cash`), `verdict.reason_category` (`rr_fail`, …),
+        `trades.fill_status` (`canceled`, …) — so this section and the
+        RM-verdict section name the same failure the same way. Exactly three
+        tokens are ours: `rm_zeroed`, `order_not_placed` and
+        `no_order_built`. Each describes an ABSENCE, which no table records:
+        nothing was written, so nothing can be quoted. They are kept
+        distinct because "the order was never built" and "the order was
+        built and never placed" are different halves of the machinery.
+
+        Conversion is judged on any `filled` trade sharing the proposal's
+        `decision_id`. Today only entry orders carry a `decision_id`, so
+        that is exact; if exits ever carry one, this biases toward calling a
+        proposal converted, which makes the section quieter rather than
+        making it cry wolf.
+
+        Diagnostic only. Nothing here gates, filters or caps anything.
+
+        Returns "" when the window holds no proposals at all — PM's section
+        then shows its own "no proposals on record" default. When there are
+        proposals but no repeat offender, the aggregate line still renders
+        with an explicit "none" so the desk can never mistake a quiet
+        section for a missing one.
+        """
+        import json as _json
+        from datetime import timedelta
+        try:
+            since = (et_today() - timedelta(days=lookback_days)).isoformat()
+            raw = self.db.get_proposal_funnel_rows(since)
+        except Exception as e:
+            logger.warning("blocked_proposals: DB fetch failed: %s", e)
+            return ""
+
+        proposals: list[tuple[str, str, str]] = []   # (ts, decision_id, symbol)
+        ordered: set[tuple[str, str]] = set()        # (decision_id, symbol)
+        skips: dict[tuple[str, str], str] = {}       # → verbatim reason
+        verdicts: dict[str, dict] = {}               # decision_id → verdict
+        for row in raw.get("evidence") or []:
+            kind = row.get("kind")
+            did = row.get("decision_id")
+            if not did:
+                continue
+            try:
+                data = _json.loads(row.get("evidence_json") or "{}")
+            except (TypeError, ValueError) as e:
+                # One unparseable row must not blank the whole section, but a
+                # silent drop hides a proposal PM did make. Same discipline as
+                # the L3d/L3f builders above.
+                logger.warning(
+                    "blocked_proposals: JSON parse failed for %s row %s: %s",
+                    kind, (row.get("timestamp") or "?"), e,
+                )
+                continue
+            if not isinstance(data, dict):
+                continue
+            if kind == "verdict":
+                verdicts[did] = data
+                continue
+            sym = (row.get("symbol") or data.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            if kind == "target":
+                # `risk_allocation_pct` is the live field; `target_weight_pct`
+                # is the legacy one older rows carry. Either can size a
+                # target (see TargetPosition), so read whichever is present.
+                size = data.get("risk_allocation_pct")
+                if size is None:
+                    size = data.get("target_weight_pct")
+                try:
+                    if size is None or float(size) <= 0.0:
+                        continue        # an exit instruction, not a proposal
+                except (TypeError, ValueError):
+                    continue
+                proposals.append((row.get("timestamp") or "", did, sym))
+            elif kind == "proposed_order":
+                ordered.add((did, sym))
+            elif kind == "execution_skip":
+                reason = (data.get("reason") or "").strip()
+                if reason:
+                    skips[(did, sym)] = reason
+
+        if not proposals:
+            return ""
+
+        fills: dict[tuple[str, str], str] = {}
+        for row in raw.get("trades") or []:
+            did = row.get("decision_id")
+            sym = (row.get("symbol") or "").strip().upper()
+            if not did or not sym:
+                continue
+            status = (row.get("fill_status") or "").strip().lower()
+            if not status:
+                continue
+            # A decision can emit more than one order for a symbol (a retry, a
+            # repeg). One fill converts the proposal, so a filled row wins
+            # over any other status regardless of arrival order.
+            if fills.get((did, sym)) == "filled":
+                continue
+            fills[(did, sym)] = status
+
+        def _outcome(did: str, sym: str) -> str | None:
+            """None == converted. Otherwise the verbatim blocking reason."""
+            key = (did, sym)
+            status = fills.get(key)
+            if status == "filled":
+                return None
+            if status:
+                return f"order_{status}"
+            if key in skips:
+                return skips[key]
+            verdict = verdicts.get(did)
+            if isinstance(verdict, dict):
+                if verdict.get("approved") is False:
+                    cat = (verdict.get("reason_category") or "").strip()
+                    return f"rm_rejected:{cat}" if cat else "rm_rejected"
+                for mod in (verdict.get("modifications") or []):
+                    if not isinstance(mod, dict):
+                        continue
+                    if (mod.get("symbol") or "").strip().upper() != sym:
+                        continue
+                    try:
+                        if float(mod.get("new_value")) == 0.0:
+                            return "rm_zeroed"
+                    except (TypeError, ValueError):
+                        continue
+            if key in ordered:
+                return "order_not_placed"
+            return "no_order_built"
+
+        by_symbol: dict[str, list[tuple[str, str | None]]] = {}
+        block_counts: dict[str, int] = {}
+        converted = 0
+        for ts, did, sym in proposals:
+            reason = _outcome(did, sym)
+            by_symbol.setdefault(sym, []).append((ts, reason))
+            if reason is None:
+                converted += 1
+            else:
+                block_counts[reason] = block_counts.get(reason, 0) + 1
+
+        total = len(proposals)
+        pct = (100.0 * converted / total) if total else 0.0
+        top = sorted(block_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+        lines = [
+            f"Conversion: {converted} of {total} proposals reached a fill "
+            f"({pct:.0f}%) in the last {lookback_days} days.",
+        ]
+        if top:
+            lines.append(
+                "Top blocks: "
+                + ", ".join(f"{reason} × {n}" for reason, n in top)
+                + "."
+            )
+
+        repeats = [
+            (sym, rows) for sym, rows in by_symbol.items()
+            if len(rows) >= min_proposals
+            and all(reason is not None for _, reason in rows)
+        ]
+        if not repeats:
+            lines.append(
+                f"Repeat blocked names: none — no symbol was proposed "
+                f"{min_proposals}+ times without a fill in this window."
+            )
+            return "\n".join(lines)
+
+        repeats.sort(key=lambda item: (-len(item[1]), item[0]))
+        lines.append(
+            f"Repeat blocked names ({min_proposals}+ proposals, 0 fills):"
+        )
+        for sym, rows in repeats[:max_lines]:
+            rows = sorted(rows, key=lambda r: r[0], reverse=True)  # newest first
+            sessions = len({ts[:10] for ts, _ in rows if ts})
+            recent = ", ".join(str(reason) for _, reason in rows[:3])
+            lines.append(
+                f"- {sym}: proposed {len(rows)}× across {sessions} sessions, "
+                f"filled 0 — most recent first: {recent}"
+            )
         return "\n".join(lines)
 
     def _build_missed_opportunities_digest(
@@ -5953,7 +6818,6 @@ class TradingPipeline:
         """
         import statistics
         from src.execution.broker import _get_sector as _sector_of
-        from src.risk.rules import _gross_multiplier
 
         f = PMFacts()
 
@@ -5992,26 +6856,57 @@ class TradingPipeline:
             if data.get("modifications"):
                 f.rm_mods_last5 += 1
 
-        # Book state
+        # Book state.
+        #
+        # `invested_pct` comes from `book_exposure` — the SAME function the
+        # pre-trade gate's `macro_exposure_deviation` advisory reads, so PM
+        # and RM can no longer be told opposite things about one book (they
+        # were: 70% "10pp OVER" to PM and 10% "50pp UNDER" to RM on the same
+        # $50k-long/$20k-SQQQ book). `positions` here is already sweep-split
+        # by DecisionStage, and `cash` is `deployable_cash` (raw cash + the
+        # parked vehicle), so the parked T-bills count as cash on both legs.
+        #
+        # `net_exposure_pct` is reported ALONGSIDE rather than substituted:
+        # deployment answers "is the money at work", direction answers "which
+        # way does the book lean", and one number cannot be both.
+        from src.risk.rules import book_exposure
         if total_value > 0:
-            invested = total_value - (cash or 0)
-            f.invested_pct = round(invested / total_value * 100, 1)
+            exposure = book_exposure(positions, total_value)
+            f.invested_pct = round(exposure.deployed_pct, 1)
+            f.net_exposure_pct = round(exposure.net_pct, 1)
             f.cash_pct = round((cash or 0) / total_value * 100, 1)
         f.position_count = len(positions)
 
-        # Sector weights (gross multiplier for leveraged ETFs)
-        for p in positions:
-            # qty != 0 — a short is a real sector exposure (a negative one).
-            # Its market_value is already negative, so the weight it adds is
-            # signed and a short hedge nets against the long book instead of
-            # vanishing from the sector table.
-            if p.qty == 0 or total_value <= 0:
-                continue
-            weight = p.market_value * _gross_multiplier(p.symbol) / total_value * 100
-            sector = p.sector or _sector_of(p.symbol) or "Unknown"
-            f.sector_weights[sector] = round(
-                f.sector_weights.get(sector, 0.0) + weight, 1,
+        # Sector weights — SEPARATE long and short budgets (spec §12.2).
+        #
+        # This REVERSES the netting that shipped with the shorts work: a held
+        # short used to add a NEGATIVE weight, so a long 15% and a short 5% in
+        # Technology rendered as a single 10% line. Owner's ratified reasoning:
+        # *"A long and a short in the same sector is not a hedge... We are
+        # trading opportunities."* Netting also showed the PM a smaller number
+        # than `RiskRuleEngine.check` enforces against — the PM would reason
+        # about concentration from one book while the gate refused on another.
+        #
+        # `sector_side_weights` is the shared definition the gate and the
+        # constructor use, so all three cannot drift apart again. The only
+        # thing local here is sector RESOLUTION: PM facts fall back to
+        # `_sector_of` when the broker left `Position.sector` blank, and
+        # "Unknown" is rendered rather than dropped so the PM can see that a
+        # slice of the book is unclassified.
+        from src.risk.rules import (
+            SECTOR_SIDE_SHORT, sector_side_weights,
+        )
+        for (sector, side), weight in sector_side_weights(
+            positions,
+            total_value,
+            resolve_sector=lambda p: p.sector or _sector_of(p.symbol) or "Unknown",
+            include_unknown=True,
+        ).items():
+            bucket = (
+                f.sector_weights_short if side == SECTOR_SIDE_SHORT
+                else f.sector_weights_long
             )
+            bucket[sector] = round(bucket.get(sector, 0.0) + weight, 1)
 
         # Age buckets + drift flag
         try:
@@ -6029,12 +6924,15 @@ class TradingPipeline:
                 f.positions_5_to_15d += 1
             else:
                 f.positions_over_15d += 1
-            # Drift check
-            if p.avg_entry and p.qty and total_value > 0:
-                weight = p.market_value / total_value * 100
-                cost_basis = p.avg_entry * p.qty
-                pnl_pct = (p.unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0
-                if weight > 12 and pnl_pct > 10:
+            # Drift check — SAME weight and SAME P&L% the PM's own position
+            # line renders (`position_weight_pct` / `unrealized_pnl_pct`).
+            # This block used to carry raw, un-leveraged weight and a
+            # `cost_basis > 0` P&L, so a line reading `Weight: 18.0% DRIFT`
+            # sat three lines above `drift-flagged: 0` in one prompt.
+            if total_value > 0:
+                weight = position_weight_pct(p, total_value)
+                pnl_pct = unrealized_pnl_pct(p)
+                if weight > 12 and pnl_pct is not None and pnl_pct > 10:
                     f.positions_drift_flagged += 1
 
         # Signal freshness
@@ -6249,7 +7147,8 @@ class TradingPipeline:
             return {}
         if not rows:
             return {"rolling_5d_pct": None, "rolling_20d_pct": None,
-                    "in_drawdown": False, "trailing_days": 0}
+                    "in_drawdown": False, "trailing_days": 0,
+                    "peak_to_trough_pct": None}
 
         def _pct_change(start_idx: int) -> float | None:
             if start_idx >= len(rows):
@@ -6270,11 +7169,31 @@ class TradingPipeline:
         if rolling_20d is not None and rolling_20d < -8.0:
             in_drawdown = True
 
+        # Spec §11.2: peak-to-trough drawdown, which drives the de-levering
+        # ladder's gross-exposure ceiling. A SEPARATE measure from
+        # `in_drawdown` above, on purpose — that one asks "has our recent
+        # edge degraded, so halve new BUYs" over a rolling window; this one
+        # asks "how far are we off the high-water mark, so how much may the
+        # book own". A longer window is read because a high-water mark over
+        # 25 sessions is not a high-water mark.
+        try:
+            hwm_rows = self.db.get_daily_pnl(limit=252)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Failed to read the long daily_pnl window for the §11.2 "
+                "high-water mark; falling back to the short one: %s", e,
+            )
+            hwm_rows = rows
+        peak_to_trough = peak_to_trough_pct(
+            [r.get("total_value") for r in (hwm_rows or [])], current_equity,
+        )
+
         return {
             "rolling_5d_pct": rolling_5d,
             "rolling_20d_pct": rolling_20d,
             "in_drawdown": in_drawdown,
             "trailing_days": len(rows),
+            "peak_to_trough_pct": peak_to_trough,
         }
 
     def _refresh_account_state(self):
@@ -6960,24 +7879,39 @@ class TradingPipeline:
             )
             return set(), None
 
+        # Phase 10.1 — the same granularity split as the morning plan, on the
+        # exit side: `approved=False` still vetoes EVERY exit (the book is
+        # what failed), while a per-symbol refusal vetoes only the exit it
+        # names and lets the other exits through. Empty `rejected_symbols`
+        # (every historical verdict, and any model that never emits the
+        # field) reproduces the previous behaviour exactly.
+        rejections = verdict.rejections_by_symbol()
         if verdict.approved:
-            logger.info(
-                "AI Risk approved %d exit(s): %s",
-                len(decisions), (verdict.reasoning or "")[:200],
-            )
-            return set(), verdict
+            veto_reasons = {
+                d.symbol: rejections[d.symbol.strip().upper()]
+                for d in decisions if d.symbol.strip().upper() in rejections
+            }
+            if not veto_reasons:
+                logger.info(
+                    "AI Risk approved %d exit(s): %s",
+                    len(decisions), (verdict.reasoning or "")[:200],
+                )
+                return set(), verdict
+        else:
+            veto_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
 
-        vetoed = {d.symbol for d in decisions}
+        vetoed = set(veto_reasons)
         logger.warning(
-            "AI Risk REJECTED %d exit(s) %s — holding instead. Reason: %s",
-            len(vetoed), sorted(vetoed), (verdict.reasoning or "")[:300],
+            "AI Risk REJECTED %d of %d exit(s) %s — holding instead. Reason: %s",
+            len(vetoed), len(decisions), sorted(vetoed),
+            (verdict.reasoning or "")[:300],
         )
         for symbol in sorted(vetoed):
             try:
                 self.db.record_intraday_evaluation(
                     symbol=symbol, run_id=run_id,
                     status="exit_vetoed_by_ai_risk",
-                    detail=(verdict.reasoning or "")[:400],
+                    detail=(veto_reasons[symbol] or "")[:400],
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("AI Risk exit review: audit write failed: %s", e)
@@ -7564,6 +8498,258 @@ class TradingPipeline:
 
         return orders
 
+    # --- Spec §11.2 — the gross-exposure ceiling and the de-levering ladder
+
+    def _sweep_symbol(self) -> str | None:
+        """The configured cash-park vehicle, or None when sweeping is off.
+
+        Taken from `cash_sweep.symbol` rather than hardcoded to "SGOV" —
+        the setting already exists and an operator who changes the vehicle
+        must not have to change the risk engine too.
+        """
+        sweeper = self._sweeper()
+        return getattr(sweeper, "symbol", None) if sweeper is not None else None
+
+    def _resolve_gross_ceiling(self, ctx: RunContext):
+        """Resolve this session's gross-exposure ceiling from ACCOUNT STATE.
+
+        Nothing the Portfolio Manager produced is an input, and this returns
+        a correct ceiling on a run where the PM returned nothing at all. That
+        is deliberate: a blank/truncated model response is a measured failure
+        mode, and a ceiling that needed a parseable book would leave the desk
+        fully levered at exactly the moment it should be shedding exposure.
+
+        Also records the state on `ctx.leverage` for the morning alert and
+        the dashboard, including distance-to-forced-liquidation — which
+        nothing in this codebase watched before §11.2.
+        """
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        base_x = _risk_number(getattr(risk_cfg, "max_gross_exposure_x", None), 2.0)
+        maintenance_pct = _risk_number(
+            getattr(risk_cfg, "maintenance_margin_pct", None), 25.0,
+        )
+        # Guard 2 (2026-09-02 operational safety guard): a non-finite
+        # CURRENT equity read must not fall through to
+        # `peak_to_trough_pct`'s "unmeasurable" branch, which
+        # `resolve_gross_ceiling` resolves to the STANDING (loosest) cap.
+        # That branch is correct for a genuinely fresh account with no
+        # equity curve yet (see `resolve_gross_ceiling`'s docstring) — but
+        # by inspection `peak_to_trough_pct` only ever returns None when
+        # TODAY's reading itself is unusable: a fresh account's own current
+        # equity is finite, so it always produces a real number (0.0
+        # against an empty history), never None. "Unknown" is therefore
+        # reachable in production ONLY on a bad read, and Alpaca has been
+        # observed to return NaN portfolio_value during market-open
+        # glitches (see `RiskRuleEngine.check_daily_loss`'s docstring).
+        # Silently holding the loosest cap on exactly that kind of
+        # broken-snapshot day is the failure this guard closes: halting new
+        # risk (the ladder's own floor rung) is safer than assuming zero
+        # drawdown, and — unlike the ordinary "unknown" fallback — this
+        # ALSO alerts the owner (`alert_owner=True` below) via the same
+        # leverage-line/Telegram path `GROSS_LADDER_ALERT_PCT` already
+        # uses, rather than staying silent.
+        total_value = ctx.total_value
+        bad_equity_read = (
+            isinstance(total_value, bool)
+            or not isinstance(total_value, (int, float))
+            or not math.isfinite(float(total_value))
+        )
+        if bad_equity_read:
+            floor_x = GROSS_LADDER[-1][1]
+            if base_x > 0:
+                floor_x = min(base_x, floor_x)
+            logger.warning(
+                "§11.2: current equity read is non-finite (%r) — forcing "
+                "the gross-exposure ceiling to its floor rung (%.1fx) and "
+                "alerting the owner instead of assuming zero drawdown.",
+                total_value, floor_x,
+            )
+            ceiling = GrossCeiling(
+                ceiling_x=floor_x, base_x=base_x, drawdown_pct=None,
+                alert_owner=True, rung="bad_read",
+                reason=(
+                    f"Current equity read came back non-finite "
+                    f"({total_value!r}) — a documented Alpaca market-open "
+                    f"glitch, not a fresh account. The book's drawdown "
+                    f"cannot be verified, so gross exposure is held to the "
+                    f"floor rung ({floor_x:.1f}x) until a valid read "
+                    f"arrives."
+                ),
+            )
+        else:
+            drawdown_pct = None
+            performance = ctx.recent_performance or {}
+            if "peak_to_trough_pct" in performance:
+                drawdown_pct = performance.get("peak_to_trough_pct")
+            else:
+                # The preamble runs before DecisionStage populates
+                # `recent_performance`, so read the equity curve directly. One
+                # cheap local DB read; a failure degrades to "unknown drawdown",
+                # which resolves to the standing cap and trims nothing — never
+                # to a wrong number that reads as "no drawdown".
+                try:
+                    rows = self.db.get_daily_pnl(limit=252)
+                    drawdown_pct = peak_to_trough_pct(
+                        [r.get("total_value") for r in (rows or [])], ctx.total_value,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "§11.2: could not read the equity curve for the drawdown "
+                        "ladder — holding the standing %.1fx ceiling and trimming "
+                        "nothing: %s", base_x, e,
+                    )
+            ceiling = resolve_gross_ceiling(drawdown_pct, base_x=base_x)
+        gross = gross_exposure(
+            ctx.positions, cash_park_symbol=self._sweep_symbol(),
+        )
+        equity = ctx.total_value if ctx.total_value else 0.0
+        ctx.leverage = {
+            "gross_usd": gross,
+            "gross_x": (gross / equity) if equity > 0 else None,
+            "ceiling_x": ceiling.ceiling_x,
+            "base_ceiling_x": ceiling.base_x,
+            "drawdown_pct": ceiling.drawdown_pct,
+            "rung": ceiling.rung,
+            "alert_owner": ceiling.alert_owner,
+            "reason": ceiling.reason,
+            "distance_to_forced_liquidation_pct":
+                distance_to_forced_liquidation_pct(
+                    gross, equity, maintenance_margin_pct=maintenance_pct,
+                ),
+        }
+        return ceiling
+
+    def _enforce_gross_ceiling(self, ctx: RunContext) -> list[dict]:
+        """De-lever the HELD book when it is over the §11.2 gross ceiling.
+
+        Runs in the session preamble, beside `_force_delever`, and therefore
+        BEFORE any agent is called. That placement is the requirement, not a
+        convenience: if any part of the ladder depended on the Portfolio
+        Manager returning a usable book, a truncated model response would
+        mean the desk stays levered exactly when it should be shedding
+        exposure. Nothing here reads a PM decision.
+
+        The ordering rule still holds and is enforced inside
+        `apply_gross_ceiling`: this call passes NO decisions, so there is no
+        new exposure to block, and trims are emitted only because the held
+        book alone exceeds the ceiling. New exposure proposed later in the
+        same session is blocked by the sizing gate (the constructor) and the
+        execution gate (`max_gross_exposure`), never by selling something the
+        desk already owns to make room.
+
+        Returns the submitted orders (empty when the book is under its
+        ceiling, which is the ordinary case). `ctx` is refreshed from the
+        broker after fills so downstream stages see truth.
+        """
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        if risk_cfg is None:
+            # Tests that bypass __init__ via TradingPipeline.__new__.
+            return []
+        ceiling = self._resolve_gross_ceiling(ctx)
+        min_order_usd = _risk_number(
+            getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
+            500.0,
+        )
+        outcome = apply_gross_ceiling(
+            [], ctx.positions, ctx.total_value, ceiling,
+            cash_park_symbol=self._sweep_symbol(),
+            min_order_usd=min_order_usd,
+        )
+        if not outcome.trims:
+            return []
+        logger.warning(
+            "GROSS-EXPOSURE DE-LEVER: the book owns $%.0f against a $%.0f "
+            "ceiling (%.2fx equity). %s",
+            outcome.held_gross, outcome.ceiling_usd, ceiling.ceiling_x,
+            ceiling.reason,
+        )
+        # A resting entry order would deepen the breach the moment it fills.
+        try:
+            self.broker.cancel_open_entry_orders()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gross-exposure de-lever: entry-order cancel failed: %s", exc)
+
+        positions_by_symbol = {p.symbol: p for p in ctx.positions}
+        orders: list[dict] = []
+        pending_protections: list[dict] = []
+        for trim in outcome.trims:
+            position = positions_by_symbol.get(trim.symbol)
+            if position is None or not position.current_price:
+                continue
+            held_qty = abs(position.qty)
+            qty = held_qty * (trim.allocation_pct / 100.0)
+            if float(position.qty).is_integer():
+                qty = float(int(qty))
+                if qty <= 0:
+                    qty = 1.0
+            if qty >= held_qty:
+                qty = self._full_sell_qty(held_qty)
+            if qty is None or qty <= 0:
+                continue
+            # Same 1%-through-the-market buffer `_force_delever` uses: when
+            # clearing unintended leverage, fill beats price. A COVER is a
+            # BUY, so it pays UP through the market rather than down.
+            #
+            # `FORCE_DELEVER` is already an EITHER-SIDE exit action in the
+            # ledger (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
+            # deterministic de-lever fires against whatever position is
+            # open" — so the same label correctly retires a short chain
+            # without inventing a second action name.
+            is_cover = trim.action == "COVER"
+            limit_price = round(
+                position.current_price * (1.01 if is_cover else 0.99), 2,
+            )
+            sale = self._submit_protected_sell(
+                symbol=trim.symbol, qty=qty, limit_price=limit_price,
+                reference_price=position.current_price,
+                position_qty_before_sell=abs(position.qty),
+                label="FORCE_DELEVER",
+                side="buy" if is_cover else "sell",
+            )
+            if sale is None:
+                continue
+            order, protection = sale
+            pending_protections.append(protection)
+            orders.append(order)
+            logger.info(
+                "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=$%.2f (%s)",
+                trim.action, trim.symbol, self._format_qty(qty), limit_price,
+                ceiling.reason,
+            )
+            try:
+                self.db.insert_trade(
+                    symbol=trim.symbol,
+                    action="FORCE_DELEVER",
+                    qty=qty,
+                    price=position.current_price,
+                    reasoning=trim.reasoning[:500],
+                    run_id=ctx.run_id,
+                    broker_order_id=order.get("id"),
+                    fill_status="submitted",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "GROSS-EXPOSURE DE-LEVER: trade row for %s failed: %s — "
+                    "the order may still be live at the broker", trim.symbol, e,
+                )
+        if pending_protections:
+            self._finalize_pending_protections(
+                pending_protections, context="GROSS-EXPOSURE DE-LEVER",
+            )
+        try:
+            account = self.broker.get_account()
+            ctx.positions = self.broker.get_positions()
+            ctx.cash = account["cash"]
+            ctx.deployable_cash = self._compute_deployable_cash(ctx.cash, ctx.positions)
+            ctx.total_value = account["portfolio_value"]
+            ctx.last_equity = account.get("last_equity", ctx.total_value)
+            # Re-measure so the alert and the dashboard report the book that
+            # now exists, not the one that triggered the de-lever.
+            self._resolve_gross_ceiling(ctx)
+        except Exception as e:  # noqa: BLE001
+            logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
+        return orders
+
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
         return self.execution_stage.run(ctx)
@@ -7734,6 +8920,45 @@ class TradingPipeline:
             payload.update(extra)
         return payload
 
+    def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
+        """Guard 1's early, VISIBLE half (2026-09-02 operational safety
+        guard). Returns an early-exit result dict when ops has halted the
+        desk, else None.
+
+        The broker-level check (`AlpacaBroker._kill_switch_active`) is what
+        actually GUARANTEES no order reaches Alpaca while the flag file
+        exists — it re-checks on every single submit/replace call, so it
+        stays correct even if the file appears mid-session, after this
+        early check already passed. This method exists only so a halted
+        run (a) does not spend real broker calls and LLM budget on analysis
+        that can place no order, and (b) produces exactly ONE clear alert
+        on the channel the operator actually reads: the returned
+        `status` flows through `format_session_result` to
+        `TelegramNotifier.send()` in `main.py`, the SAME path every other
+        session result already takes — no new alerting mechanism.
+
+        UNLIKE `_paid_suspended_payload` above, nothing NEW is preserved:
+        this is the one guard in the codebase that also blocks a
+        risk-reducing order (see RiskConfig.kill_switch_path), so a new
+        protective stop cannot go out either while it is active. A stop
+        already resting at the broker from before the halt is untouched
+        and keeps protecting its position — only new broker-bound order
+        flow is refused.
+        """
+        if self._kill_switch_path is None or not self._kill_switch_path.exists():
+            return None
+        logger.error(
+            "KILL SWITCH ACTIVE (%s exists) — halting run %s before any "
+            "broker or LLM work. touch/rm that file to stop/resume the "
+            "desk.", self._kill_switch_path, run_id,
+        )
+        payload = {
+            "status": "kill_switch_halted", "run_id": run_id, "orders": [],
+            "kill_switch_path": str(self._kill_switch_path),
+        }
+        payload.update(extra)
+        return payload
+
     def run_morning(self) -> dict:
         ctx = RunContext.start("morning")
         run_id = ctx.run_id
@@ -7743,10 +8968,34 @@ class TradingPipeline:
             logger.info("Morning run skipped: market closed for non-trading day")
             return {"status": "market_holiday", "orders": [], "run_id": run_id}
 
+        halt = self._kill_switch_halt_result(run_id)
+        if halt is not None:
+            return halt
+
         self._activate_cost_session(run_id, "morning")
 
         try:
-            # 0a. Drain orphaned protection-restore intents from prior
+            # 0a. FIRST BROKER ACTION OF THE DAY: broker-truth coverage audit
+            # (independent of the WAL). Catches any long that went naked
+            # WITHOUT leaving a recovery row — and, since spec §11.1's hybrid
+            # fractional stops, RE-PLACES the sub-share DAY stops that the
+            # broker expired at yesterday's close.
+            #
+            # This used to run at 0b, after three drain passes that each make
+            # their own broker round-trips. Every second it spent waiting was
+            # a second the fractional remainder of every held position sat
+            # unprotected into an open market, and the open is exactly when
+            # that matters most. The owner accepted a bounded OVERNIGHT
+            # exposure; he did not accept it bleeding into the session, so
+            # the unprotected window at the open is now as short as this
+            # system can make it.
+            #
+            # Symbols the drain owns are skipped by the reconciler either way
+            # (it reads `get_pending_protection_restores` itself), so moving
+            # ahead of the drain changes nothing for them — the drain still
+            # restores their coverage microseconds later, exactly as before.
+            coverage_gaps = self._reconcile_stop_coverage()
+            # 0b. Drain orphaned protection-restore intents from prior
             # sessions where finalize had to bail (lingering SELL didn't
             # converge, or broker API hiccup). Each drained row brings a
             # symbol's stop coverage back in line with broker reality.
@@ -7755,9 +9004,6 @@ class TradingPipeline:
             # audit F4: resolve BUY write-ahead orphans from a prior
             # crashed session before this run touches positions/cash.
             self._reconcile_orphan_pending_submits()
-            # 0b. Broker-truth coverage audit (independent of the WAL): catch
-            # any long that's gone naked WITHOUT leaving a recovery row.
-            coverage_gaps = self._reconcile_stop_coverage()
             # 0c. Broker-truth EXIT audit (2026-08-28 ONDS/CCJ): a protective
             # stop firing overnight is exactly the case morning must catch
             # first — the position has been closed for hours by the time
@@ -7802,6 +9048,15 @@ class TradingPipeline:
             # this session. Refreshes ctx.cash / positions on completion, so
             # every stage below runs on clean truth.
             forced_orders = self._force_delever(ctx)
+
+            # 1b. Spec §11.2 — the gross-exposure ceiling and its de-levering
+            # ladder. Deliberately here, before ANY agent runs: the ceiling is
+            # computed from account state alone, so a Portfolio Manager that
+            # returns nothing (a measured failure mode — one candidate model
+            # truncated mid-JSON on 1 run in 10) cannot leave the desk levered
+            # during a drawdown. Also populates ctx.leverage for the alert and
+            # the dashboard, including distance-to-forced-liquidation.
+            forced_orders = list(forced_orders) + self._enforce_gross_ceiling(ctx)
             positions = ctx.positions
             cash = ctx.cash
             total_value = ctx.total_value
@@ -7975,6 +9230,9 @@ class TradingPipeline:
                     "status": failure_status, "orders": [], "run_id": run_id,
                     "error": failure_error,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                 }
             if not portfolio_decision.decisions:
@@ -7982,6 +9240,9 @@ class TradingPipeline:
                 return {
                     "status": "no_trades", "orders": [], "run_id": run_id,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                 }
 
@@ -8056,6 +9317,9 @@ class TradingPipeline:
                     "status": "buys_unfunded", "orders": orders,
                     "run_id": run_id,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                     "execution_skips": list(ctx.execution_skips),
                 }
@@ -8068,6 +9332,9 @@ class TradingPipeline:
                     "status": "no_orders", "orders": orders,
                     "run_id": run_id,
                     "data_status": dict(ctx.data_status),
+                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                    # the distance to forced liquidation, for the operator alert.
+                    "leverage": dict(ctx.leverage),
                     "stop_coverage_gaps": coverage_gaps,
                     "execution_skips": list(ctx.execution_skips),
                 }
@@ -8075,6 +9342,9 @@ class TradingPipeline:
             return {
                 "status": "executed", "orders": orders, "run_id": run_id,
                 "data_status": dict(ctx.data_status),
+                # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
+                # the distance to forced liquidation, for the operator alert.
+                "leverage": dict(ctx.leverage),
                 "stop_coverage_gaps": coverage_gaps,
                 "execution_skips": list(ctx.execution_skips),
             }
@@ -8219,20 +9489,24 @@ class TradingPipeline:
             if take_profit and cur > 0:
                 dist_target_pct = (take_profit - cur) / cur * 100
 
-            weight_pct = (p.market_value / total_value * 100) if total_value else 0
+            # GROSS-leverage weight — the one definition (see
+            # `src.risk.rules.weight_pct_of`). Raw here meant the reviewer
+            # was shown a 3x fund at a third of the weight the engine caps
+            # it at, and the drift flag below never fired on one.
+            weight_pct = position_weight_pct(p, total_value)
 
-            # Winner flags.
-            # abs(): cost basis is |entry x qty|. A short's negative qty
-            # flipped the sign, rendering a winning short as a loser (and
-            # feeding parabolic/drift flags the wrong side).
-            pnl_pct = (
-                p.unrealized_pnl / abs(entry * p.qty) * 100
-                if (entry and p.qty) else 0
-            )
+            # Winner flags. `unrealized_pnl_pct` divides by |entry x qty|;
+            # a short's negative qty otherwise flips the sign and feeds the
+            # parabolic/drift flags the wrong side. None = unknowable, which
+            # is not a flag either way.
+            pnl_pct = unrealized_pnl_pct(p)
             parabolic_flag = (
-                pnl_pct >= 15 and days_held is not None and days_held < 3
+                pnl_pct is not None and pnl_pct >= 15
+                and days_held is not None and days_held < 3
             )
-            drift_flag = weight_pct > 12 and pnl_pct > 10
+            drift_flag = (
+                weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
+            )
             target_breach_flag = progress_pct is not None and progress_pct > 150
 
             # Vol-unit context so the reviewer reasons about stop distance
@@ -8417,6 +9691,10 @@ class TradingPipeline:
             logger.info("%s run skipped: market closed for non-trading day", session_type)
             return {"status": "market_holiday", "positions": 0, "orders": [], "run_id": run_id}
 
+        halt = self._kill_switch_halt_result(run_id, positions=0)
+        if halt is not None:
+            return halt
+
         self._activate_cost_session(run_id, session_type)
 
         # Early-close check. On half-day sessions (day after Thanksgiving 13:00
@@ -8494,6 +9772,13 @@ class TradingPipeline:
         # 1a. Cash-only safety net — force-sell if the account drifted into
         # margin. Refreshes ctx fields on completion.
         forced_orders = self._force_delever(ctx)
+
+        # 1b. Spec §11.2 — the gross-exposure ceiling and its de-levering
+        # ladder. Runs on midday and close too, not just the morning: the
+        # ceiling steps down on measured drawdown, and waiting for tomorrow's
+        # session to act on it is the coupling the ladder exists to avoid.
+        # Computed from account state alone — no agent output is an input.
+        forced_orders = list(forced_orders) + self._enforce_gross_ceiling(ctx)
         if forced_orders:
             # Reconcile immediately so the FORCE_DELEVER rows flip from
             # fill_status='submitted' to 'filled' before the reviewer's
@@ -8570,7 +9855,9 @@ class TradingPipeline:
                 where=f"{session_type}-paid-preflight",
                 orders=orders,
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
 
         # 2. News + Earnings update — capture developments since morning.
@@ -8594,7 +9881,9 @@ class TradingPipeline:
                 where=f"{session_type}-paid-news",
                 orders=orders,
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
         if session_news_coverage is not None and session_news_coverage.status != "ok":
             # midday/close have no data_status mechanism of their own (that
@@ -8616,7 +9905,9 @@ class TradingPipeline:
                 where=f"{session_type}-paid-earnings",
                 orders=orders,
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
         except Exception as e:  # noqa: BLE001 — reviewer proceeds without earnings
             logger.error("%s: earnings load failed (continuing without): %s",
@@ -8633,7 +9924,9 @@ class TradingPipeline:
                     str(circuit_state.get("trigger_detail") or "cost circuit opened")
                 ),
                 extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps},
+                       "stop_coverage_gaps": coverage_gaps,
+                       # Spec §11.2 — gross exposure and its ceiling.
+                       "leverage": dict(ctx.leverage)},
             )
 
         # 3. LLM position review — memory-heavy, 6-step CoT.
@@ -8768,7 +10061,9 @@ class TradingPipeline:
                     where=f"{session_type}-paid-reviewer",
                     orders=orders,
                     extra={"session": session_type, "positions": len(positions),
-                           "stop_coverage_gaps": coverage_gaps},
+                           "stop_coverage_gaps": coverage_gaps,
+                           # Spec §11.2 — gross exposure and its ceiling.
+                           "leverage": dict(ctx.leverage)},
                 )
             review_log_kwargs = agent_log_kwargs(md_result)
             if review is None:
@@ -8824,6 +10119,8 @@ class TradingPipeline:
                     "orders": orders,
                     "run_id": run_id,
                     "stop_coverage_gaps": coverage_gaps,
+                    # Spec §11.2 — gross exposure and its ceiling.
+                    "leverage": dict(ctx.leverage),
                 }
             else:
                 # Phase 3.7 — deterministic trailing FIRST, before the LLM's
@@ -8888,6 +10185,9 @@ class TradingPipeline:
             "orders": orders,
             "run_id": run_id,
             "stop_coverage_gaps": coverage_gaps,
+            # Spec §11.2 — gross exposure, its ladder-resolved ceiling and the
+            # distance to forced liquidation, for the operator alert.
+            "leverage": dict(ctx.leverage),
         }
 
     def run_earnings_preprocess(self) -> dict:
@@ -9081,6 +10381,10 @@ class TradingPipeline:
             logger.info("Intra check skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
 
+        halt = self._kill_switch_halt_result(run_id)
+        if halt is not None:
+            return halt
+
         self._activate_cost_session(run_id, "intra_check")
 
         # Drain orphaned protection-restore intents — intra runs every
@@ -9093,8 +10397,14 @@ class TradingPipeline:
         # repair that failed once, otherwise stayed naked until the NEXT
         # session — hours. On the intra cadence the naked window is ≤30 min.
         # Read-only when coverage is fine; ~1 broker call per held long.
+        # Spec §11.1 guard 3: the return value used to be DISCARDED here, so
+        # the 30-minute sweep — the tightest cadence this audit runs on, and
+        # the one the fractional decision leans on — was the one caller whose
+        # findings never reached the operator's feed at all. Carried into the
+        # result dict now, exactly as every other session already does.
+        coverage_gaps: list[dict] = []
         try:
-            self._reconcile_stop_coverage()
+            coverage_gaps = self._reconcile_stop_coverage()
         except Exception as exc:  # noqa: BLE001
             logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
         self._reconcile_orphan_pending_submits()  # audit F4
@@ -9113,7 +10423,8 @@ class TradingPipeline:
             positions = self.broker.get_positions()
         except Exception as e:
             logger.error("Intra check: broker query failed: %s", e)
-            return {"status": "broker_error", "run_id": run_id, "error": str(e)}
+            return {"status": "broker_error", "run_id": run_id, "error": str(e),
+                    "stop_coverage_gaps": coverage_gaps}
 
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
@@ -9139,6 +10450,7 @@ class TradingPipeline:
                 "daily_return_pct": daily_return_pct,
                 "positions": len(positions),
                 "run_id": run_id,
+                "stop_coverage_gaps": coverage_gaps,
             }
             # 2026-08-19 intraday opportunity-discovery fix: bounded new-
             # opportunity scan, gated additionally on `not loss_violation`
@@ -9273,6 +10585,7 @@ class TradingPipeline:
             "daily_return_pct": daily_return_pct,
             "orders": orders,
             "run_id": run_id,
+            "stop_coverage_gaps": coverage_gaps,
         }
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:

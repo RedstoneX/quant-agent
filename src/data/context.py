@@ -32,7 +32,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from src.data.technical import atr_series
 from src.models import OHLCV
+from src.quantities import avg_dollar_volume
 
 # Trading sessions per window. Calendar months are avoided deliberately —
 # indicators are computed on completed bars, so a session count is exact
@@ -141,26 +143,6 @@ def _pct_change(series: np.ndarray, window: int) -> float | None:
     return round((float(series[-1]) - past) / past * 100.0, 2)
 
 
-def _true_ranges(bars: list[OHLCV]) -> np.ndarray:
-    highs = np.array([b.high for b in bars], dtype=float)
-    lows = np.array([b.low for b in bars], dtype=float)
-    closes = np.array([b.close for b in bars], dtype=float)
-    prev_close = np.concatenate([[closes[0]], closes[:-1]])
-    return np.maximum.reduce([
-        highs - lows,
-        np.abs(highs - prev_close),
-        np.abs(lows - prev_close),
-    ])
-
-
-def _atr_series(bars: list[OHLCV], period: int = 14) -> np.ndarray:
-    tr = _true_ranges(bars)
-    if len(tr) < period:
-        return np.array([])
-    kernel = np.ones(period) / period
-    return np.convolve(tr, kernel, mode="valid")
-
-
 def _ma_slope(closes: np.ndarray, period: int, lookback: int) -> float | None:
     """Percent change in the moving average over `lookback` sessions.
 
@@ -259,10 +241,14 @@ def compute_market_context(
     span = high_52w - low_52w
     range_position = round((last_close - low_52w) / span * 100.0, 1) if span > 0 else None
 
-    # Volatility in comparable units.
+    # Volatility in comparable units. `atr_series` is Wilder's, shared with
+    # the risk path — see src/data/technical.py. This block used to convolve
+    # the true ranges with a flat kernel, which is a simple moving average
+    # and not an ATR at all; the analyst was reading one volatility number
+    # while position sizing and stop widening used another.
     atr_pct = atr_percentile = None
     volatility_state = None
-    atr = _atr_series(bars)
+    atr = atr_series(bars)
     if atr.size:
         atr_now = float(atr[-1])
         atr_pct = round(atr_now / last_close * 100.0, 2)
@@ -308,12 +294,15 @@ def compute_market_context(
                         break
                 sessions_in_range = count
 
-    avg_dollar_volume = None
-    if len(bars) >= _W_1M:
-        recent_bars = bars[-_W_1M:]
-        avg_dollar_volume = round(
-            float(np.mean([b.close * b.volume for b in recent_bars])), 2
-        )
+    # 20-day average dollar volume — the SAME definition the two admission
+    # gates use (`src.quantities.avg_dollar_volume`), not a third one. This
+    # site previously averaged `_W_1M` = 21 bars: the generic
+    # one-month-of-sessions constant leaking into a measure whose name, the
+    # config key it is compared against and every log line all say 20. With
+    # one halted session in the window the three implementations read
+    # $11.400M / $12.000M / $11.429M on identical bars.
+    _adv = avg_dollar_volume(bars)
+    avg_dollar_volume_20d_usd = None if _adv is None else round(_adv, 2)
 
     # Accumulation vs distribution.
     up_down_ratio = None
@@ -354,7 +343,7 @@ def compute_market_context(
         consolidation_low=round(cons_low, 2) if cons_low else None,
         consolidation_range_pct=cons_range_pct,
         sessions_in_range=sessions_in_range,
-        avg_dollar_volume_20d=avg_dollar_volume,
+        avg_dollar_volume_20d=avg_dollar_volume_20d_usd,
         up_down_volume_ratio=up_down_ratio,
         unfilled_gaps=_find_unfilled_gaps(bars, _MAX_GAPS_REPORTED),
     )

@@ -47,6 +47,7 @@ __all__ = [
     "position_risk",
     "portfolio_heat",
     "format_heat_block",
+    "unrealized_pnl_pct",
 ]
 
 
@@ -57,6 +58,49 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return out if math.isfinite(out) else None
+
+
+def unrealized_pnl_pct(position) -> float | None:
+    """Unrealized P&L as a percent of the position's ABSOLUTE cost basis.
+
+    **The single definition. Every seat that renders a P&L percent calls
+    this one function** — position_reviewer's position block, the PM's
+    position lines, `_build_position_facts`, `_build_pm_facts`' drift check
+    and `_build_thesis_health_context`. Five call sites previously carried
+    two different denominators.
+
+    The denominator is `abs(avg_entry * qty)`, and the `abs()` is the whole
+    point. `qty` is NEGATIVE for a held short (Alpaca's convention, mirrored
+    throughout this codebase), so a signed `avg_entry * qty` cost basis is
+    negative for every short. Two failure modes followed from that, and both
+    were live:
+
+    - A bare `pnl / cost` FLIPS the sign of every short: a winning short
+      (price fell, `unrealized_pnl > 0`) rendered as a negative percentage
+      and read as a loser.
+    - The `if cost > 0` guard that some call sites used instead of `abs()`
+      does not fix that — it silently substitutes **zero**. A short
+      -100 @ $110 now trading at $100 is +$1,000 of profit and rendered
+      `P&L: $1000.00 (+0.0%)`: a line that contradicts itself, on one line,
+      in the PM's own prompt.
+
+    The sign the reader needs comes from `unrealized_pnl` alone; the
+    denominator's job is the MAGNITUDE of capital committed.
+
+    Returns `None` — never `0.0` — when the percent is genuinely unknowable
+    (no entry, no quantity, a non-finite broker snapshot). Callers render
+    "N/A"/"unknown" rather than a confident zero, and comparisons against a
+    threshold must treat None as "not flagged", not as "below".
+    """
+    entry = _finite(getattr(position, "avg_entry", None))
+    qty = _finite(getattr(position, "qty", None))
+    pnl = _finite(getattr(position, "unrealized_pnl", None))
+    if entry is None or qty is None or pnl is None:
+        return None
+    cost = abs(entry * qty)
+    if not cost or not math.isfinite(cost):
+        return None
+    return pnl / cost * 100
 
 
 def r_multiple(

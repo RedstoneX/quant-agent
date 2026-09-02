@@ -40,12 +40,21 @@ whole message ("can't parse entities"); HTML requires exactly three
 src/config.py::NotificationsConfig) and appends it as a real `<a href>` tap-
 through link. An empty/unset URL means no link is appended, ever — never a
 broken one.
+
+`send()` also accepts an optional `symbols` list — each ticker it names
+that also appears in the message text gets wrapped in its own `<a href>`
+link (see `_linkify_symbols`), pointing at a public quote page (an
+EXTERNAL FALLBACK: the cockpit has no URL routing yet to link a symbol, or
+a run, to our own data — see the comment above `_SYMBOL_QUOTE_URL_TEMPLATE`).
+Symbol linking is best-effort and silently drops rather than risk
+truncating an `<a>` tag mid-markup.
 """
 from __future__ import annotations
 
 import html
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -162,6 +171,79 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
     return window.rstrip() + marker
 
 
+# === Per-symbol tap-through links ===
+#
+# EXTERNAL FALLBACK, not a Mission Control deep link. As of this writing the
+# cockpit (frontend/src/) has no URL routing at all — no react-router, no
+# query-string or #hash parsing, nothing that reads window.location. A
+# per-symbol view already exists INSIDE the running app (App.tsx's
+# chartSymbol / onSelectSymbol wires SearchPanel/TradesPanel clicks to
+# PriceChartPanel), but nothing outside the page can open it directly — the
+# same gap that blocks a per-run deep link (see `mission_control_url`
+# above). Until the cockpit grows real routing, this points at a public
+# quote page instead. That leaves our own evidence behind; it is a
+# deliberate, named trade-off, not a design goal.
+_SYMBOL_QUOTE_URL_TEMPLATE = "https://finance.yahoo.com/quote/{symbol}"
+# Ticker shape only (e.g. "CCJ", "BRK.B") — guards against linkifying
+# something that was never meant to be a symbol if an upstream caller ever
+# passes free text by mistake.
+_SYMBOL_TOKEN_RE = re.compile(r"^[A-Z]{1,6}(?:\.[A-Z]{1,2})?$")
+# Bounds worst-case message growth from linkification (each wrapped mention
+# costs the ~40-50 chars of `<a href="https://finance.yahoo.com/quote/...">`
+# on top of the bare ticker) and keeps the compiled regex small.
+_MAX_LINKED_SYMBOLS = 10
+
+
+def _symbol_quote_url(symbol: str) -> str:
+    return _SYMBOL_QUOTE_URL_TEMPLATE.format(symbol=symbol)
+
+
+def _linkify_symbols(escaped_text: str, symbols: list[str] | None) -> str:
+    """Wrap every mention of a known ticker in `escaped_text` with a
+    tap-through `<a href>` link, so the operator can tap a symbol in an
+    alert the same way he taps the Mission Control link.
+
+    MUST be called on text that has already been through `html.escape()`
+    and BEFORE `link_html`/truncation are applied — see `_build_payload`.
+    Calling it earlier would have the anchor markup itself escaped into
+    literal `&lt;a href...&gt;` text; calling it after truncation risks a
+    ticker mention landing right at the cut.
+
+    Deliberately narrow matching: only symbols the CALLER already knows are
+    real (`symbols`, sourced from structured order/trade/skip data — see
+    `src/trader_feed.py::extract_alert_symbols`) are ever linked, matched
+    whole-word and case-sensitive. This never scans free LLM prose for
+    uppercase words — PM/risk rationale routinely contains words like
+    "ALL", "GO", "GDP" that would false-positive as tickers if it did.
+    """
+    if not symbols or not escaped_text:
+        return escaped_text
+
+    seen: list[str] = []
+    for raw in symbols:
+        sym = str(raw or "").strip().upper()
+        if sym and _SYMBOL_TOKEN_RE.match(sym) and sym not in seen:
+            seen.append(sym)
+        if len(seen) >= _MAX_LINKED_SYMBOLS:
+            break
+    if not seen:
+        return escaped_text
+
+    # Longest-first so a short ticker that happens to be a prefix of a
+    # longer one (rare, but e.g. "A" vs "AA") can't win the alternation
+    # before the longer, more specific match is tried.
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(s) for s in sorted(seen, key=len, reverse=True)) + r")\b"
+    )
+
+    def _wrap(match: "re.Match[str]") -> str:
+        sym = match.group(0)
+        url = html.escape(_symbol_quote_url(sym), quote=True)
+        return f'<a href="{url}">{sym}</a>'
+
+    return pattern.sub(_wrap, escaped_text)
+
+
 class TelegramNotifier:
     """Best-effort Telegram Bot API notifier.
 
@@ -248,6 +330,7 @@ class TelegramNotifier:
         text: str,
         link_url: str | None = None,
         link_label: str | None = None,
+        symbols: list[str] | None = None,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
 
@@ -258,6 +341,10 @@ class TelegramNotifier:
         - Appends a tap-through `<a href>` link when one is available:
           `link_url` if given, else `self.mission_control_url` (from
           config). Neither set → no link, ever — never a broken one.
+        - `symbols`, when given, wraps each matching ticker mentioned in
+          `text` with its own tap-through link (see `_linkify_symbols`) —
+          best-effort: if adding links would push the message over budget,
+          it degrades to plain text rather than risk truncating markup.
         - Auto-truncates messages over MAX_MESSAGE_CHARS on a sentence/word
           boundary (see `_clip_text`) rather than mid-word.
         - Any HTTP / network / Telegram-side error is logged and
@@ -286,7 +373,7 @@ class TelegramNotifier:
             )
             return False
 
-        payload = self._build_payload(text, link_url, link_label)
+        payload = self._build_payload(text, link_url, link_label, symbols)
 
         try:
             response = requests.post(
@@ -313,6 +400,7 @@ class TelegramNotifier:
         text: str,
         link_url: str | None = None,
         link_label: str | None = None,
+        symbols: list[str] | None = None,
     ) -> dict[str, Any]:
         """The exact JSON body `send()` puts on the wire.
 
@@ -343,7 +431,21 @@ class TelegramNotifier:
             link_html = f'\n\n<a href="{safe_url}">{safe_label}</a>'
 
         budget = max(0, self.MAX_MESSAGE_CHARS - len(link_html))
-        if len(escaped) > budget:
+
+        # Symbol links are strictly best-effort. `_clip_text` only
+        # guarantees it never splits an HTML *entity* (`&amp;` has no
+        # whitespace inside it); an anchor tag does (`<a href="...">` has a
+        # space right after "a"), so clipping *linked* text risks shipping
+        # `<a hre` — broken markup Telegram then rejects outright ("can't
+        # parse entities"), losing the whole alert over a ticker link. So:
+        # try the linked text first, but if it doesn't fit budget, fall
+        # back to the plain (safely truncatable) escaped text instead of
+        # truncating the linked one — symbol links disappear, the alert
+        # still ships.
+        linked = _linkify_symbols(escaped, symbols) if symbols else escaped
+        if len(linked) <= budget:
+            body = linked
+        elif len(escaped) > budget:
             # `_clip_text` never splits an HTML entity: it only ever cuts on
             # whitespace, and an entity like '&amp;' has none inside it — so
             # the boundary search always lands on a word start/end, keeping
@@ -351,8 +453,10 @@ class TelegramNotifier:
             # safety net for the rare aggregate message still oversized
             # after every field-level clip below already ran — not the
             # primary fix, which is raising those per-field limits.
-            escaped = _clip_text(escaped, budget, marker="\n[...truncated]")
-        final_text = escaped + link_html
+            body = _clip_text(escaped, budget, marker="\n[...truncated]")
+        else:
+            body = escaped
+        final_text = body + link_html
 
         return {
             "chat_id": self.chat_id,
@@ -480,6 +584,38 @@ class TelegramNotifier:
             return False
 
 
+# === Out-of-band owner alert ===
+
+def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
+    """Push an alert to the owner NOW, outside the session-result message.
+
+    Spec §11.1 guard 2. Some conditions cannot wait for a session to finish
+    and be summarised: a position that is open at the broker with no
+    protective stop on it is the canonical one. The end-of-session Telegram
+    message is the wrong vehicle — an `intra_check` tick is silent unless it
+    liquidates, so a naked position found at 12:30 would produce no message
+    at all, and a session that crashes after the failure never sends one.
+
+    Deliberately mirrors `src/cost_circuit.py`'s escalation shape, which is
+    this desk's established owner-alert path: log at CRITICAL first so a
+    Telegram outage cannot hide the event from the journal or Mission
+    Control, then send. Returns whether the send succeeded; callers treat
+    that as information, never as a reason to abort.
+
+    Never raises. An alerting bug must not be able to break the trading path
+    it is reporting on — see `alert_watchdog`'s "a watchdog that can break
+    the thing it watches is worse than no watchdog".
+    """
+    if not text:
+        return False
+    logger.critical("OWNER ALERT\n%s", text)
+    try:
+        return bool(TelegramNotifier().send(text, symbols=symbols))
+    except Exception:  # noqa: BLE001
+        logger.exception("owner alert delivery failed")
+        return False
+
+
 # === Session result formatting ===
 # Built as a free function (not a TelegramNotifier method) so it's
 # easy to unit-test without the network stub and so main.py can
@@ -529,7 +665,22 @@ def format_session_result(
 
     # === Per-mode noise policy ===
     if mode == "intra_check" and status in ("ok", "market_holiday"):
-        return None  # silent — would otherwise be 14 pings/day
+        # Silent — would otherwise be 14 pings/day. UNLESS the 30-minute
+        # sweep found a stop-coverage gap (spec §11.1 guard 3): "no
+        # deterministic breach fired" is not the same as "nothing is wrong",
+        # and an unprotected position found at 12:30 was previously reported
+        # to a log file and nowhere else, because this is the one mode whose
+        # normal tick sends no message.
+        #
+        # Spec §11.1 hybrid fractional stops: a gap the sweep itself already
+        # closed ('fractional_replaced'), or one the design expects
+        # ('fractional_overnight'), is NOT a reason to break that silence.
+        # This mode ticks 14 times a day; if the routine re-placement of a
+        # sub-share DAY stop pinged the owner, the fractional feature would
+        # turn a deliberately-quiet channel into a noisy one, and the guard
+        # that is supposed to interrupt him would arrive as ping 15.
+        if not _actionable_coverage_gaps(result.get("stop_coverage_gaps")):
+            return None
     if mode == "earnings_preprocess" and status in (
         "market_holiday", "nothing_new", "fetch_error",
     ):
@@ -586,6 +737,7 @@ def format_session_result(
         balance_line = _openrouter_balance_line()
         if balance_line:
             lines.append(balance_line)
+        lines.extend(_margin_interest_lines())
 
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
@@ -613,30 +765,196 @@ def format_session_result(
     return "\n".join(lines)
 
 
+def _actionable_coverage_gaps(gaps) -> list[dict]:
+    """The subset of coverage gaps that a human has to do something about.
+
+    Spec §11.1 hybrid fractional stops. Filters out the two states the hybrid
+    design produces on purpose (see `_gap_is_expected_fractional`) so callers
+    that decide whether to speak at all — chiefly `intra_check`'s silence
+    policy — key off real faults rather than off the daily heartbeat of a
+    sub-share DAY stop lapsing and being re-placed.
+    """
+    if not isinstance(gaps, list):
+        return []
+    return [
+        g for g in gaps
+        if isinstance(g, dict) and not _gap_is_expected_fractional(g)
+    ]
+
+
+def _gap_is_uncovered(gap: dict) -> bool:
+    """Spec §11.1 guard 3 — is this coverage gap "NO STOP AT ALL"?
+
+    `_reconcile_stop_coverage` stamps `coverage` ('none' | 'partial') and
+    that is the authority when present. Derived from `covered_qty` when it
+    is absent, so a gap dict from an older run snapshot (or any caller that
+    predates the field) is still classified rather than silently demoted to
+    the milder banner.
+    """
+    coverage = gap.get("coverage")
+    if coverage:
+        return str(coverage).strip().lower() == "none"
+    try:
+        return float(gap.get("covered_qty") or 0) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
-    """Render the broker-truth stop-coverage gap banner (🔴) when the session-
-    entry reconciler found held longs with less open protective-stop coverage
+    """Render the broker-truth stop-coverage gap banner (🔴) when the
+    reconciler found held positions with less open protective-stop coverage
     than held qty — a (partially) naked position the WAL queue didn't know
-    about. This is operator-actionable: a stop needs manual re-protection."""
+    about. This is operator-actionable: a stop needs manual re-protection.
+
+    Spec §11.1 guard 3: NO STOP AT ALL and STOP PRESENT BUT MIS-SIZED are
+    rendered as two separate banners, never merged into one count. They are
+    different conditions with different urgency — a position stopped at the
+    wrong size still has a broker order standing watch over most of it; a
+    position with no stop has nothing. A single "N under-protected" line
+    made the worse of the two invisible inside the milder one.
+    """
     gaps = result.get("stop_coverage_gaps")
     if not isinstance(gaps, list) or not gaps:
         return
-    parts = []
-    for g in gaps[:6]:
-        if not isinstance(g, dict):
-            continue
-        parts.append(
+
+    def _describe(rows: list[dict]) -> str:
+        return ", ".join(
             f"{g.get('symbol', '?')}"
-            f"({_fmt_qty(g.get('covered_qty', 0) or 0)}/{_fmt_qty(g.get('held_qty', 0) or 0)})"
+            f"({_fmt_qty(g.get('covered_qty', 0) or 0)}/"
+            f"{_fmt_qty(g.get('held_qty', 0) or 0)})"
+            for g in rows[:6]
         )
-    lines.append(
-        f"🔴 STOP-COVERAGE GAP: {len(gaps)} long(s) under-protected "
-        f"(covered/held): {', '.join(parts)}"
+
+    rows = [g for g in gaps if isinstance(g, dict)]
+    # Spec §11.1 hybrid fractional stops. These two classes are NOT faults
+    # and must never be counted into either red banner: 'fractional_overnight'
+    # is a sub-share DAY stop that lapsed at the close exactly as the design
+    # intends, and 'fractional_replaced' is one the session's own sweep has
+    # already put back. Both happen to every fractional position every day.
+    # Rendering them red would put a 🔴 on this alert on every single run,
+    # which is how the owner learns to stop reading the banner that matters.
+    expected = [g for g in rows if _gap_is_expected_fractional(g)]
+    faults = [g for g in rows if not _gap_is_expected_fractional(g)]
+    uncovered = [g for g in faults if _gap_is_uncovered(g)]
+    partial = [g for g in faults if not _gap_is_uncovered(g)]
+    if uncovered:
+        lines.append(
+            f"🔴 NO STOP AT ALL: {len(uncovered)} position(s) with ZERO "
+            f"protective-stop coverage (covered/held): {_describe(uncovered)}"
+        )
+    if partial:
+        lines.append(
+            f"🔴 STOP MIS-SIZED: {len(partial)} position(s) partially "
+            f"under-protected (covered/held): {_describe(partial)}"
+        )
+    _append_fractional_overnight_line(lines, expected)
+
+
+def _gap_is_expected_fractional(gap: dict) -> bool:
+    """Is this gap the hybrid design working rather than failing?
+
+    True for the two states spec §11.1's hybrid fractional stops produce on
+    purpose: a sub-share DAY stop that lapsed overnight, and one the sweep
+    re-placed this session. Neither is operator-actionable.
+    """
+    return str(gap.get("coverage", "")).strip().lower() in (
+        "fractional_overnight", "fractional_replaced",
     )
 
 
-def _append_company_identities(lines: list[str], orders: list) -> None:
-    """One line per traded symbol: who the company is.
+def _append_fractional_overnight_line(lines: list[str], expected: list[dict]) -> None:
+    """Spec §11.1 hybrid fractional stops — make the accepted exposure VISIBLE.
+
+    The owner accepted a bounded overnight exposure on the sub-share
+    remainder of a fractional position, because being locked out of expensive
+    names on a ~$10k account is itself a cost. He accepted it on the explicit
+    condition that it be observable: "a number he can look at beats a
+    guarantee he has to trust."
+
+    So this line reports the DOLLARS actually unprotected right now, not a
+    reassurance that the design bounds them. It is deliberately not a 🔴 —
+    nothing here needs doing — and it is deliberately not silent either.
+    Uses 🌙 rather than a colour: the state is 'overnight', and the owner is
+    red-green colour blind, so hue carries no meaning on this channel.
+
+    Silent when the remainder has already been re-placed for the session
+    (nothing is exposed) — only a live, currently-unprotected remainder
+    prints.
+    """
+    live = [
+        g for g in expected
+        if str(g.get("coverage", "")).strip().lower() == "fractional_overnight"
+    ]
+    if not live:
+        return
+    total = 0.0
+    for gap in live:
+        try:
+            total += float(gap.get("unprotected_value") or 0)
+        except (TypeError, ValueError):
+            continue
+    detail = ", ".join(
+        f"{g.get('symbol', '?')} {_fmt_qty(g.get('uncovered_qty', 0) or 0)}sh"
+        for g in live[:6]
+    )
+    lines.append(
+        f"🌙 overnight fractional remainder unprotected (by design): "
+        f"${total:,.2f} across {len(live)} position(s) — {detail}. "
+        f"Whole-share part still covered by its GTC stop; the DAY stop is "
+        f"re-placed at the next open."
+    )
+
+
+def _append_leverage_line(lines: list[str], result: dict) -> None:
+    """Spec §11.2 — how much the book owns, its ceiling, and how far it could
+    fall before the broker sells without asking.
+
+    Nothing watched the distance to forced liquidation before this. At the
+    ratified 2.0x it reads about 33% — a bad quarter, not an impossibility —
+    which is precisely why it belongs on the alert the operator actually
+    reads rather than in a log.
+
+    Rendered whenever the run measured it. Silent when the block is absent
+    (an older result dict, or a session that never reached the preamble) —
+    an omitted line is honest; an invented "1.0x" would not be.
+    """
+    leverage = result.get("leverage")
+    if not isinstance(leverage, dict) or not leverage:
+        return
+    gross_x = leverage.get("gross_x")
+    ceiling_x = leverage.get("ceiling_x")
+    if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+        return
+    # Colour-blind-safe: the state is carried by the WORD, never by hue alone.
+    de_levered = (
+        isinstance(leverage.get("base_ceiling_x"), (int, float))
+        and ceiling_x < leverage["base_ceiling_x"]
+    )
+    parts = [f"exposure: {gross_x:.2f}x of {ceiling_x:.2f}x allowed"]
+    distance = leverage.get("distance_to_forced_liquidation_pct")
+    if isinstance(distance, (int, float)):
+        parts.append(f"{distance:.0f}% fall to a margin call")
+    drawdown = leverage.get("drawdown_pct")
+    if isinstance(drawdown, (int, float)) and drawdown < 0:
+        parts.append(f"{abs(drawdown):.1f}% below the equity high")
+    prefix = "⚠️ DE-LEVERED" if de_levered else "leverage"
+    lines.append(f"{prefix} — {'  ·  '.join(parts)}")
+    if leverage.get("alert_owner"):
+        # The rung is READ from the resolved ceiling, never restated as a
+        # literal: a hardcoded "0.5x" here would go stale the day the ratified
+        # ladder changes, and an alert that misreports the cap is worse than
+        # no alert. And the wording is exact — at the lowest rung new
+        # positions are refused ONCE THE BOOK REACHES the cap, not
+        # unconditionally; a book already below it may still trade.
+        lines.append(
+            f"🔴 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
+            f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
+            f"new positions are refused once the book reaches it."
+        )
+
+
+def _append_company_identities(lines: list[str], symbols: list) -> None:
+    """One line per relevant symbol: who the company is.
 
     The operator reads `BUY CCJ qty=40 @$58.10` and has to already know that
     CCJ is Cameco. Name and industry only — deliberately NOT the business
@@ -644,31 +962,36 @@ def _append_company_identities(lines: list[str], orders: list) -> None:
     competes for a phone screen; ten paragraphs of company description would
     push the order list itself out of view.
 
+    `symbols` is a plain, already-resolved ticker list — deduplication and
+    upper-casing still happen here so every caller (the base formatter's own
+    order list, and `src/trader_feed.py`'s richer per-mode formatters, via
+    `extract_alert_symbols`) can hand this a raw, unfiltered sequence.
+    Deliberately the ONLY place that turns a symbol list into identity text
+    — do not duplicate this lookup elsewhere; give it a symbol list instead.
+
     `allow_fetch=False` is not an optimisation, it is the contract: an
     operator alert must never sit waiting on a network call. By the time an
     alert goes out the PM path has already warmed the cache for exactly
     these symbols, so this is a dictionary lookup. Symbols the cache does
     not know are silently skipped rather than rendered as unknowns.
     """
-    symbols = []
-    for o in orders:
-        if not isinstance(o, dict):
-            continue
-        symbol = str(o.get("symbol") or "").strip().upper()
-        if symbol and symbol not in symbols:
-            symbols.append(symbol)
-    if not symbols:
+    seen: list[str] = []
+    for raw in symbols or []:
+        symbol = str(raw or "").strip().upper()
+        if symbol and symbol not in seen:
+            seen.append(symbol)
+    if not seen:
         return
     try:
         from src.data.company import CompanyProfileStore
         profiles = CompanyProfileStore().get_many(
-            symbols[:12], allow_fetch=False,
+            seen[:12], allow_fetch=False,
         )
     except Exception as e:  # noqa: BLE001 — never lose an alert over prose
         logger.warning("notifier: company profiles unavailable: %s", e)
         return
     identities = []
-    for symbol in symbols[:12]:
+    for symbol in seen[:12]:
         profile = profiles.get(symbol)
         if profile is None:
             continue
@@ -713,6 +1036,7 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
 
     # System-health first: a naked long is more urgent than the order list.
     _append_coverage_gap_banner(lines, result)
+    _append_leverage_line(lines, result)
     orders = result.get("orders") or []
 
     # FORCE_DELEVER / EMERGENCY_SELL / EMERGENCY_COVER banner — these
@@ -774,7 +1098,9 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         omitted = max(0, len(buys) - 10) + max(0, len(sells) - 10)
         if omitted:
             lines.append(f"  (+{omitted} more — see audit log)")
-        _append_company_identities(lines, orders)
+        _append_company_identities(
+            lines, [o.get("symbol") for o in orders if isinstance(o, dict)],
+        )
     else:
         lines.append("orders: 0")
 
@@ -1200,6 +1526,81 @@ def _openrouter_balance_line() -> str | None:
     )
 
 
+def _margin_interest_lines() -> list[str]:
+    """['💳 margin interest: $X/day ... — ESTIMATE ...', '   broker check: ...']
+    or `[]` — spec §11.2.
+
+    Morning-only, like the balance/day-cost lines above: interest accrues
+    on the OVERNIGHT debit balance, so the morning snapshot — taken before
+    any new trading — is the one honest read of what was actually carried
+    across the close.
+
+    Reads the account's actual cash regardless of `allow_margin` — that
+    flag is QAMC's own risk toggle, not a broker-side guarantee that cash
+    stays non-negative. `cash_only` (src/risk/rules.py) hard-blocks a
+    plain BUY from taking cash negative when `allow_margin` is `False`,
+    but a COVER is exempt from that rule by design (D10), and
+    `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
+    "cash negative AND allow_margin False" as a real, live state — so a
+    debit balance can exist even with margin disabled, and a short-circuit
+    on `allow_margin` alone would silently miss it. On today's actual
+    zero-debit-balance day this still costs one broker round-trip (spent
+    on `overnight_debit_balance()` returning `0.0`) but produces no line —
+    no noise, correctness over the saved call.
+
+    When a debit balance IS present, this also reads the broker's own
+    `INT` account activity and reports whether it confirms, denies, or has
+    not yet settled the question of whether paper trading actually charges
+    this — see `src.margin_interest` for why that is deliberately
+    left open rather than assumed either way.
+
+    Never raises: a broker-read failure here must not be able to block the
+    alert — it degrades to `[]`, same as every other line in this module.
+    Suppressed under QAMC_REHEARSAL, same as every other line here that
+    touches the network.
+    """
+    if _REHEARSAL_MODE:
+        return []
+    try:
+        from src.config import load_config
+        cfg = load_config("config/settings.yaml")
+        rate_pct = cfg.risk.margin_interest_rate_pct
+    except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
+        logger.warning("margin interest config read failed: %s", exc)
+        return []
+
+    try:
+        from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+        from src.execution.broker import AlpacaBroker
+        from src.margin_interest import (
+            build_estimate, compare_estimate_to_broker_activity,
+            format_alert_line, overnight_debit_balance,
+        )
+        key, secret = get_alpaca_credentials()
+        broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+        account = broker.get_account()
+        debit_balance = overnight_debit_balance(account.get("cash"))
+        estimate = build_estimate(debit_balance, rate_pct)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest estimate failed: %s", exc)
+        return []
+
+    estimate_line = format_alert_line(estimate)
+    if not estimate_line:
+        return []  # None/zero debit balance — silent, per spec's noise policy
+    lines = [estimate_line]
+
+    try:
+        activities = broker.get_margin_interest_activities()
+        comparison = compare_estimate_to_broker_activity(estimate, activities)
+        if comparison is not None:
+            lines.append(f"   broker check: {comparison.note}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest INT-activity check failed: %s", exc)
+
+    return lines
+
+
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:
     """Render top-3 winners + top-3 losers by unrealized P&L from the
     live positions table. Read-only DB hit; degrades gracefully on any
@@ -1281,8 +1682,12 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
 
 
 def _append_intra_check_body(lines: list[str], result: dict) -> None:
-    # Only reaches here when status != ok/market_holiday — operator
-    # wants the details of whatever triggered.
+    # Reaches here when a deterministic breach fired, OR (spec §11.1 guard 3)
+    # when an otherwise-OK 30-minute tick found a stop-coverage gap — the
+    # sweep's finding is the whole reason that tick broke silence, so it is
+    # the first thing on the message.
+    _append_coverage_gap_banner(lines, result)
+    # Operator wants the details of whatever triggered.
     emergency = result.get("orders") or result.get("emergency_orders") or []
     if emergency:
         lines.append(f"⚠️ EMERGENCY orders: {len(emergency)}")
@@ -1347,7 +1752,15 @@ def _status_emoji(status: str) -> str:
     if status in ("emergency_sold", "hard_risk_block", "digest_only"):
         return "🟡"
     if ("error" in status or status.startswith("pm_")
-            or status in ("rejected", "failed", "paid_analysis_suspended")):
+            or status in (
+                "rejected", "failed", "paid_analysis_suspended",
+                # Guard 1 (2026-09-02): ops halted the desk with the
+                # kill-switch flag file. This is the one status that fires
+                # even on an intra_check tick, which is otherwise silent —
+                # see the "kill_switch_halted" not being in the
+                # mode == "intra_check" silence tuple above.
+                "kill_switch_halted",
+            )):
         return "🔴"
     return "⚪"
 

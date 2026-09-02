@@ -1,6 +1,7 @@
 import os
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -377,12 +378,60 @@ class ExecutionConfig(BaseModel):
     `repeg_max_attempts * repeg_poll_seconds`, and lands BEFORE
     `place_entry_protection`'s own fill wait."""
 
+    # Spec §11.1 (owner-ratified 2026-09-01), reversing the 2026-08-27
+    # decision to keep fractional off.
+    # The flag is still shipped FALSE — the owner owns the switch and flips
+    # it himself — but the reason has changed. It is no longer "a fractional
+    # position cannot be protected". HYBRID STOP COVERAGE protects one: a GTC
+    # stop over the whole shares plus a DAY stop over the sub-share remainder,
+    # re-placed at the start of every session. See config/settings.yaml for
+    # the measured broker capability and the accepted overnight trade-off.
+    fractional_enabled: bool = True
+    """Master switch for exact (fractional) entry sizing. ON by default —
+    whole-share rounding is a silent, constant tax on every position the
+    desk opens (V wanted 6% of the book and got 3.84%), and the reasoning
+    that kept it off no longer holds: the protective stop has been a
+    SEPARATE post-fill order since the 2026-07-16 OTO/DAY-tif fix, so the
+    fill→stop window this was meant to avoid already exists on every entry.
+
+    Turning this OFF restores whole-share flooring everywhere without a code
+    change. A symbol is still only sized fractionally when the broker
+    confirms `fractionable` for it (`get_fractionability`, which fails
+    CLOSED), so this flag widens nothing on its own.
+
+    The §11.1 open question — whether Alpaca will carry a stop for a
+    fractional quantity — was settled empirically on 2026-09-01: not as a
+    GTC order, but YES as a DAY order. Hence the hybrid: floor(qty) on a
+    durable GTC stop, the sub-share remainder on a DAY stop that lapses at
+    the close and is re-placed at the next open."""
+
+    fractional_share_decimals: int = Field(default=4, ge=1, le=9)
+    """Decimal places an exact share count is FLOORED to (never rounded up —
+    rounding up would spend more risk budget than the sizing math allowed).
+    4dp is under a tenth of a cent of notional on any price this desk
+    trades, so the residual rounding tax is immaterial while the number
+    stays short enough to read in a log line and in a Telegram alert."""
+
 
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)
     max_total_position_pct: float = Field(gt=0)
     max_daily_loss_pct: float = Field(gt=0, le=100)
     max_sector_pct: float = Field(gt=0, le=100)
+    # Spec §10.3 (owner-ratified 2026-09-01). `max_sector_pct` above is no
+    # longer a veto — it is the diversification TARGET, past which further
+    # trades in that sector are progressively SHRUNK rather than refused
+    # (`src/risk/rules.py::sector_size_scale`). This is the absolute ceiling
+    # the shrinking runs into, past which the answer is still no. Without it
+    # a sector could grow without limit through ever-smaller additions.
+    #
+    # Default is 1.5x the target, capped at `SECTOR_HARD_CEILING_MAX` (90,
+    # spec §12.3), deriving from `max_sector_pct` rather than hard-coding a
+    # number so that an operator who tightens or loosens the target moves the
+    # ceiling with it instead of silently leaving the two inconsistent. The
+    # cap exists because 1.5x an already-permissive target stops being a
+    # ceiling: at the §12.3 target of 75 it would give 112.5.
+    max_sector_hard_pct: float | None = Field(default=None, gt=0, le=100)
     require_stop_loss: bool
     # Owner-ratified total at-risk ceiling (2026-08-27): the sum of every
     # position's loss-if-stopped, measured against cost basis, may not exceed
@@ -422,6 +471,65 @@ class RiskConfig(BaseModel):
     # Widening a stop lowers reward:risk, because the target does not move.
     # Under this the setup only ever qualified on a stop too tight to survive.
     min_reward_risk_after_widening: float = Field(default=1.5, ge=0, le=10)
+    # --- Level-backed stops (spec §12.1, 2026-09-01) ---------------------
+    # `min_stop_atr_multiple` above used to OVERWRITE the structural stop
+    # whenever the level sat closer than the band, after which the stop was
+    # at nothing real and `min_reward_risk_after_widening` was judged against
+    # that fabricated number. On 2026-09-01 the desk reviewed 38 qualified
+    # signals and placed zero trades. A stop that sits at a level
+    # `src/data/levels.py::find_structural_levels` actually computed is now
+    # honoured whatever its ATR distance; the band only applies when nothing
+    # computed backs it.
+    #
+    # How close the stop must sit to a computed level to count as "at" it.
+    # ATR-relative, not a percentage: the question is whether the analyst
+    # placed the stop AT this level, and that is a question about price
+    # NOISE. A flat percentage means a different thing on a 1.5%-ATR utility
+    # than on a 9%-ATR small cap — too tight to ever match on the volatile
+    # name, loose enough on the quiet one to match a level the stop is
+    # nowhere near. `find_structural_levels` also clusters pivots within 1%
+    # into one zone, so a level IS a zone; the tolerance has to be at least
+    # that zone's width, expressed in the units every other stop rule here
+    # already speaks.
+    level_match_atr_tolerance: float = Field(default=0.25, gt=0, le=2)
+    # The deterministic backstop under the exemption above. §12.1's safety
+    # argument rests on the 1*ATR hard floor in
+    # `config/prompts/tech_analyst.md` — but that is a PROMPT, and Invariant
+    # 2 requires deterministic Python protections to be the final authority
+    # and to fail closed. A real support level 0.2 ATR under entry is genuine
+    # structure AND a guaranteed whipsaw. So a level-backed stop is honoured
+    # however tight down to this many ATRs; inside it the stop is pushed out
+    # to exactly this floor — never to the full `min_stop_atr_multiple` band.
+    absolute_min_stop_atr_multiple: float = Field(default=1.0, ge=0, le=10)
+    # --- Target derivation (2026-09-01) ---------------------------------
+    # The floor above was dividing a stop computed from measured volatility
+    # by a target a language model guessed. On 2026-09-01's morning run that
+    # rejected 30 of 38 actionable signals (79%) before any judgement was
+    # applied, the two highest-conviction calls among them. The floor is not
+    # the defect; its numerator was. These tune the deterministic target
+    # derivation that replaced it — see the target-derivation section of
+    # src/data/levels.py for the rule and the arithmetic.
+    #
+    # A target inside this many ATRs of entry is not a destination.
+    min_target_atr_multiple: float = Field(default=1.0, gt=0, le=5)
+    # Measured move claimed when no structural level stands in the way, in
+    # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the stated
+    # horizon. NOTE the interaction with `min_stop_atr_multiple`: a stop at
+    # k ATRs and a target at p*ATR*sqrt(H) clear a floor f only when
+    # sqrt(H) >= f*k/p — at k=3.0, p=1.0, f=1.5 that is H >= ~21 sessions.
+    breakout_projection_atr_multiple: float = Field(default=1.0, gt=0, le=5)
+    # How far price can plausibly travel within the horizon, same units.
+    # Looser than the projection on purpose: this asks "could it get there",
+    # the projection asks "how far do I claim it goes".
+    max_target_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
+    # Ceiling on `expected_horizon_sessions` before it enters the sqrt()
+    # travel estimate, so an implausible horizon cannot licence a target far
+    # outside anything the symbol does.
+    max_target_horizon_sessions: int = Field(default=60, ge=1, le=500)
+    # Absolute gap between the computed target and the analyst's guess above
+    # which the disagreement is logged at WARNING. The guess is kept as
+    # evidence, never as arithmetic.
+    target_divergence_warn_pct: float = Field(default=25.0, gt=0, le=200)
     # Cash-only default. When False: no BUY may drive `cash` below zero, and
     # any session that starts with `cash < 0` must de-lever (SELL) before any
     # new BUY. When True: normal margin account behavior, risk engine only
@@ -429,6 +537,51 @@ class RiskConfig(BaseModel):
     # conservative choice — margin leverage amplifies drawdowns and is not
     # the bot's intended mode unless explicitly opted in.
     allow_margin: bool = False
+    # --- Margin interest tracker (spec §11.2, 2026-09-01) ----------------
+    # MEASURES, does not gate — this field feeds an estimate/alert only,
+    # never a risk check. Alpaca's live non-elite margin rate (elite is
+    # 4.75%); a config value rather than a code constant so the desk can
+    # correct it without a deploy if Alpaca's rate moves. Interest accrues
+    # ONLY on the END-OF-DAY (overnight) debit balance — intraday leverage
+    # is free — per `(overnight debit balance x rate) / 360`. See
+    # src/margin_interest.py: whether PAPER trading actually charges
+    # this is UNCONFIRMED (Alpaca's own comparison lists short-borrow fees
+    # as "Coming Soon" and is silent on margin interest either way), so
+    # every figure this produces is a labelled ESTIMATE until the broker's
+    # own `INT` account activity settles it empirically.
+    margin_interest_rate_pct: float = Field(default=6.25, ge=0, le=100)
+    # --- Spec §11.2: the gross-exposure ceiling (owner-ratified 2026-09-01)
+    #
+    # Gross exposure = long market value + ABSOLUTE short market value,
+    # measured against equity. Before this setting existed the codebase had
+    # NO gross-exposure ceiling of any kind: `max_portfolio_risk_pct` bounds
+    # AT-RISK capital (the sum of stop distances) and `max_gross_bearish_pct`
+    # bounds the bearish side only. Nothing stopped the book reaching the
+    # broker's full 4x. Adding this is a TIGHTENING, not a loosening.
+    #
+    # 2.0x is the owner's deliberate paper-account learning setting, taken
+    # against the recommendation to defer — see the §11.2 spec entry and
+    # [[qamc-live-capital-checklist]]. Re-derive it before real money.
+    #
+    # This is the STANDING cap, day AND night. There is deliberately no
+    # separate, lower overnight ceiling: an intraday-only allowance would
+    # force a trim into every close, selling on a clock rather than on merit,
+    # and this desk holds for days so it would almost never use one. The
+    # overnight cushion comes from the de-levering ladder
+    # (`src/risk/rules.py::resolve_gross_ceiling`) instead.
+    #
+    # The ladder can only ever tighten this number, never raise it — so
+    # lowering this setting lowers every rung with it.
+    max_gross_exposure_x: float = Field(default=2.0, gt=0, le=4.0)
+    # Broker maintenance-margin requirement, as a percent of gross exposure,
+    # used ONLY to report distance-to-forced-liquidation
+    # (`src/risk/rules.py::distance_to_forced_liquidation_pct`). It computes
+    # nothing the engine enforces; it answers "how far could the book fall
+    # before the broker sells without asking", which nothing watched before
+    # §11.2. 25% is Alpaca's standard equity maintenance requirement and
+    # reproduces the spec's two published figures exactly: ~33% at 2.0x,
+    # ~55% at 1.5x.
+    maintenance_margin_pct: float = Field(default=25.0, gt=0, lt=100)
     # --- Stage 3 (shorts) -----------------------------------------------
     # The single-short ceiling is deliberately HALF of `max_position_pct`:
     # a long's loss is bounded at -100% of the position, a short's is not,
@@ -453,19 +606,51 @@ class RiskConfig(BaseModel):
     # equal nominal risk is not equal real risk — so the same risk
     # allocation opens a SMALLER short than an equivalent long.
     short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
+    # --- Kill switch (2026-09-02 operational safety guard) ---------------
+    # A file whose mere EXISTENCE halts every order this desk would place —
+    # entries, exits, covers, and protective-stop placement/replacement
+    # alike. Read with `Path(...).exists()` and nothing else: no parsing, no
+    # schema, so a malformed or empty file still halts — it cannot fail open
+    # on bad content because it never reads any content. Ops stops the desk
+    # with `touch <path>` and resumes it by deleting the file: no code
+    # change, no deploy, and it takes effect on the NEXT order attempt even
+    # if the process was already mid-session when the file appeared.
+    #
+    # Checked in `src/execution/broker.py` (the deterministic execution
+    # layer), never by an agent or a prompt — a language model has no path
+    # to talk the desk out of a halt it cannot see or reason about.
+    #
+    # UNLIKE every other guard in this file, this ONE also blocks
+    # risk-REDUCING orders. Every other hard block and circuit breaker here
+    # deliberately lets a SELL/COVER through even while it blocks new risk
+    # (`RiskRuleEngine.check`'s `action in ("SELL", "COVER")` exemption
+    # below), precisely so a bad account state can never trap a position.
+    # The kill switch is the one lever that overrides that, for the case
+    # where ops needs EVERYTHING stopped — including an exit that might
+    # otherwise go out into a broken/stale market. It only blocks NEW
+    # broker-bound order flow; a protective stop already resting at the
+    # broker from before the halt is untouched and keeps protecting the
+    # position.
+    kill_switch_path: str = Field(default="data/KILL_SWITCH")
     # --- Spec §9.4 "agreement earns size" --------------------------------
-    # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the
-    # number of independent seats (of technical/news/earnings/macro/
-    # smart_money) whose canonical stance is directionally aligned with
-    # the target's proposed action — see `src/risk/rules.py::
-    # count_aligned_sources` / `agreement_ceiling_for_count`. Index 0 is
-    # the ceiling for 1 (or 0 — see `agreement_ceiling_for_count`) aligned
-    # source, index 4 is for 5. A REDUCTION only: applied in the
-    # constructor strictly BEFORE `allocate_risk_budget` and the
+    # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the SIGNED
+    # score over the independent seats (of technical/news/earnings/macro/
+    # smart_money): those whose canonical stance is directionally aligned
+    # with the target's proposed action, MINUS those opposed to it, at unit
+    # weight each — see `src/risk/rules.py::signed_source_score` /
+    # `agreement_ceiling_for_score`. Index 0 is the ceiling for a net score
+    # of 1, index 4 for a net of 5; a net at or below zero has no rung and
+    # refuses the target outright (2026-09-02). A REDUCTION only: applied in
+    # the constructor strictly BEFORE `allocate_risk_budget` and the
     # single-name clamps, so it can shrink what a target receives but can
     # never grow it past what the PM asked for or past
     # `max_position_risk_pct` (enforced below and again at the point of
     # use).
+    #
+    # UNANIMOUS cases are unchanged by the 2026-09-02 signing: with nothing
+    # opposed the net score IS the aligned count, so every rung below still
+    # prices exactly what it priced before, and the measurement that chose
+    # these numbers still stands.
     #
     # Measured against production `agent_logs` 2026-08-25 through 08-28 —
     # the pre-nomination "technical-analysis bot" era the spec describes,
@@ -484,15 +669,74 @@ class RiskConfig(BaseModel):
         default_factory=lambda: [3.0, 4.0, 5.0, 5.0, 5.0],
     )
 
+    #: Spec §10.3. Multiple of `max_sector_pct` used as the absolute sector
+    #: ceiling when `max_sector_hard_pct` is not set explicitly. ClassVar, so
+    #: pydantic treats it as a constant rather than a settable field.
+    SECTOR_HARD_MULTIPLE: ClassVar[float] = 1.5
+
+    #: Spec §12.3. The terminal bound on the DERIVED ceiling. With the target
+    #: at 75 (§12.3) the 1.5x multiple gives 112.5, which is not a ceiling at
+    #: all — a dial with no terminal bound bounds nothing. 90 keeps a real
+    #: ceiling while leaving 15 points of scaling range above the target.
+    #:
+    #: NOT IN THE RATIFIED §12.3 TEXT: the spec set the target and left the
+    #: terminal bound unstated. 90 was chosen when §12.3 was built and is open
+    #: for the owner to move. `risk.max_sector_hard_pct` in settings.yaml sets
+    #: it explicitly and overrides this derivation entirely.
+    SECTOR_HARD_CEILING_MAX: ClassVar[float] = 90.0
+
+    @property
+    def sector_hard_ceiling_pct(self) -> float:
+        """The absolute sector ceiling, explicit or derived.
+
+        Every consumer reads this rather than `max_sector_hard_pct` directly,
+        so the derivation rule lives in exactly one place.
+
+        Derived = 1.5x the target, capped at `SECTOR_HARD_CEILING_MAX` (90),
+        and never below the target itself — a ceiling under the target it
+        backstops would make the scaling band run backwards.
+        """
+        if self.max_sector_hard_pct is not None:
+            return self.max_sector_hard_pct
+        derived = min(
+            self.SECTOR_HARD_CEILING_MAX,
+            self.max_sector_pct * self.SECTOR_HARD_MULTIPLE,
+        )
+        return min(100.0, max(self.max_sector_pct, derived))
+
+    @model_validator(mode="after")
+    def _sector_hard_ceiling_is_above_the_target(self):
+        # A hard ceiling below the diversification target would mean the
+        # scaling band runs backwards, and `sector_size_scale` would fall
+        # back to gate behaviour silently. That is a config error worth
+        # failing on rather than absorbing: the operator asked for something
+        # incoherent and would otherwise never find out.
+        if (
+            self.max_sector_hard_pct is not None
+            and self.max_sector_hard_pct < self.max_sector_pct
+        ):
+            raise ValueError(
+                "risk.max_sector_hard_pct "
+                f"({self.max_sector_hard_pct}) must be >= risk.max_sector_pct "
+                f"({self.max_sector_pct}) — the absolute ceiling cannot sit "
+                "below the diversification target it backstops"
+            )
+        return self
+
     @model_validator(mode="after")
     def _agreement_ceiling_is_well_formed(self):
         schedule = self.agreement_ceiling_pct
         if len(schedule) != 5:
             raise ValueError(
                 "risk.agreement_ceiling_pct must have exactly 5 entries "
-                f"(1..5 aligned sources); got {len(schedule)}"
+                f"(net scores 1..5); got {len(schedule)}"
             )
         if any(v <= 0 for v in schedule):
+            # 0.0 is not a configurable rung — it is the value
+            # `agreement_ceiling_for_score` returns for a net score at or
+            # below zero, i.e. the block. A schedule entry of 0 would make a
+            # POSITIVE net score unbuyable, which is a different rule than
+            # anything ratified here.
             raise ValueError("risk.agreement_ceiling_pct entries must be > 0")
         if any(v > self.max_position_risk_pct for v in schedule):
             raise ValueError(

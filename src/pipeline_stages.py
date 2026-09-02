@@ -33,6 +33,7 @@ helpers are the right extraction boundary for a later phase.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -48,7 +49,10 @@ from src.data.event_calendar import (
     format_event_risk_block,
 )
 from src.data.technical import compute_indicators
-from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
+from src.models import (
+    NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
+    parse_telemetry,
+)
 from src.nominations import select_nominations
 from src.pipeline_context import RunContext
 
@@ -96,6 +100,30 @@ def _macro_regime(macro_analysis) -> str | None:
     else:
         value = getattr(macro_analysis, "regime", None)
     return str(value) if value else None
+
+
+def _session_gross_ceiling(pipeline, ctx):
+    """Spec §11.2 — this session's ladder-resolved gross-exposure ceiling.
+
+    The run preamble already resolved it from account state before any agent
+    ran; this re-derives it so the resume lane (where the preamble did not
+    run) sizes against a real ceiling too. Returns None on any failure — the
+    constructor then falls back to the standing cap, which is still a
+    ceiling. It never falls back to "no ceiling".
+    """
+    resolve = getattr(pipeline, "_resolve_gross_ceiling", None)
+    if resolve is None:
+        return None
+    try:
+        from src.risk.rules import GrossCeiling
+        ceiling = resolve(ctx)
+        return ceiling if isinstance(ceiling, GrossCeiling) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "§11.2: could not resolve the gross-exposure ceiling for sizing; "
+            "the constructor falls back to the standing cap: %s", exc,
+        )
+        return None
 
 
 def _book_risk_inputs(ctx, total_value: float):
@@ -530,6 +558,262 @@ def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str
             "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s "
             "scope=%s symbol=%s): %s", agent_name, kind, scope, symbol, e,
         )
+
+
+def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool:
+    """Spec §11.1 — may THIS symbol be sized in fractional shares right now?
+
+    Two independent gates, both of which must say yes:
+
+    1. `execution.fractional_enabled` (default True). The owner's switch, so
+       the feature can be turned off without a code change.
+    2. The BROKER confirms `fractionable` for the symbol. A config flag says
+       what the desk wants; only the asset directory says what Alpaca will
+       accept. An unknown or failed lookup is a NO — fail closed, never
+       fractional-by-assumption.
+
+    A SHORT is always whole-share regardless: a fractional share cannot be
+    borrowed, so this is not a policy choice to expose.
+
+    Any unexpected failure in here returns False. The fallback (whole shares)
+    is the behaviour that shipped for months; there is no failure mode of
+    this function that should be allowed to stop a trade.
+    """
+    if is_short:
+        return False
+    try:
+        execution_cfg = getattr(pipeline.config, "execution", None)
+        if not bool(getattr(execution_cfg, "fractional_enabled", False)):
+            return False
+        info = pipeline.broker.get_fractionability(symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "fractional eligibility check failed for %s (%s) — sizing in "
+            "WHOLE shares (fail closed)", symbol, exc,
+        )
+        return False
+    if not isinstance(info, dict) or not info.get("fractionable"):
+        reason = (
+            info.get("reason", "unknown") if isinstance(info, dict) else "unknown"
+        )
+        logger.info(
+            "fractional sizing NOT available for %s (%s) — whole shares",
+            symbol, reason,
+        )
+        return False
+    return True
+
+
+def _size_shares(pipeline, raw_qty: float, *, fractional: bool) -> float:
+    """Turn a raw, real-valued share count into an ORDERABLE quantity.
+
+    Whole-share mode floors to an integer — the behaviour this desk has
+    always had, and the silent constant tax §11.1 exists to remove (a request
+    for 6% of the book delivered 3.84%).
+
+    Fractional mode floors to `execution.fractional_share_decimals` places.
+    FLOORS, never rounds: rounding up would spend a sliver more risk budget
+    than the sizing math actually allowed, and a sizing rule that can exceed
+    its own budget by any amount is not a budget. The residual left on the
+    table is under a tenth of a cent of notional.
+    """
+    try:
+        value = float(raw_qty)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(value) or value <= 0:
+        return 0.0
+    if not fractional:
+        return float(int(value))
+    try:
+        decimals = int(getattr(
+            getattr(pipeline.config, "execution", None),
+            "fractional_share_decimals", 4,
+        ))
+    except (TypeError, ValueError):
+        decimals = 4
+    decimals = min(max(decimals, 1), 9)
+    scale = 10 ** decimals
+    return math.floor(value * scale) / scale
+
+
+def _fmt_shares(qty: float) -> str:
+    """Render a share count for a human without a spurious `.0` on a whole
+    number or a wall of trailing zeros on a fractional one."""
+    try:
+        value = float(qty)
+    except (TypeError, ValueError):
+        return str(qty)
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.9f}".rstrip("0").rstrip(".")
+
+
+# Spec §11.1 vol-adjusted sizing budget: the fraction of EQUITY a single
+# entry may put at risk between its fill and its stop.
+RISK_BUDGET_PCT = 0.5
+
+
+def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
+                        stop_price: float, is_short: bool,
+                        fractional: bool) -> float | None:
+    """Shares the §11.1 risk budget allows, or None when geometry is unusable.
+
+    ONE definition, two callers — the BUY-submit loop (which sizes the real
+    order) and the cash-sweep preflight (which sizes the funding sale). They
+    were separate before: the preflight funded the ALLOCATION notional while
+    the submit loop spent `min(alloc, risk)`, so on every session where the
+    risk budget bound — the ordinary case — the sweep liquidated more of the
+    vehicle than the BUYs could possibly spend and the bookend re-parked the
+    difference minutes later. Production, 2026-08-27: SWEEP_SELL $3,422.61 at
+    13:35:43, SWEEP_BUY $1,007.60 at 13:36:36. Two crossings of the spread,
+    53 seconds apart, for nothing.
+
+    The preflight passes the RM-approved stop; the submit loop may later
+    ATR-WIDEN that stop, which only increases risk-per-share and therefore
+    only shrinks the final quantity. So the preflight's answer is an upper
+    bound on what will be spent — funding still errs long, never short.
+    """
+    if not (stop_price > 0 and sizing_price > 0):
+        return None
+    # D4: geometry validity is direction-aware — a long's stop must sit
+    # below its entry, a short's strictly above.
+    valid_geometry = (
+        (not is_short and sizing_price > stop_price)
+        or (is_short and stop_price > sizing_price)
+    )
+    if not valid_geometry:
+        return None
+    # D4: unsigned everywhere.
+    risk_per_share = abs(sizing_price - stop_price)
+    if is_short:
+        # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
+        # (the stop is untouched). A short gaps through its stop with no
+        # bound, so this execution-time vol-adjusted-sizing belt must be at
+        # least as conservative for a short as the constructor's own primary
+        # sizing already is.
+        _cfg = getattr(
+            getattr(pipeline.config, "risk", None),
+            "short_gap_risk_multiple", None,
+        )
+        gap_multiple = (
+            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
+            else 1.5
+        )
+        risk_per_share *= gap_multiple
+    if risk_per_share <= 0:
+        return None
+    risk_dollars = total_value * RISK_BUDGET_PCT / 100
+    return _size_shares(
+        pipeline, risk_dollars / risk_per_share, fractional=fractional,
+    )
+
+
+def _min_order_usd(pipeline) -> float:
+    """The §10.3 notional floor — the smallest order worth placing.
+
+    Read from `cash_sweep.min_order_usd` exactly as `apply_gross_ceiling`'s
+    caller (`TradingPipeline._enforce_gross_ceiling`) and the constructor
+    read it, so the floor that refuses a token order in the risk engine is
+    the same number that refuses one after the execution-time cash re-size.
+    An unreadable config falls back to the shared 500.0 default rather than
+    to zero: a floor that silently becomes "no floor" is the defect.
+    """
+    raw = getattr(
+        getattr(getattr(pipeline, "config", None), "cash_sweep", None),
+        "min_order_usd", None,
+    )
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 500.0
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        return 500.0
+    return value
+
+
+def _alert_owner_protection_failed(pipeline, spec: dict, protection,
+                                   entry_order_id: str) -> None:
+    """Spec §11.1 guard 2 — a stop that did not land ALERTS THE OWNER.
+
+    Fires on two states, and says which:
+
+      * no stop at all — `place_entry_protection` exhausted its retries
+        (guard 1) and returned nothing;
+      * a partial cover — the broker took a stop for fewer shares than are
+        held (today: the whole-share fallback for a fractional fill whose
+        exact quantity the broker refused).
+
+    Silent on the third state — protection placed, nothing uncovered — which
+    is the overwhelmingly common one. An alert channel that fires on success
+    is a channel the owner learns to swipe away.
+
+    Deliberately does NOT fire when the entry filled zero shares: there is no
+    position, so there is nothing to protect, and `place_entry_protection`
+    returns None for that too. Waking a human for a BUY that simply did not
+    fill is exactly how guard 2 gets turned off.
+
+    Never raises.
+    """
+    try:
+        symbol = spec.get("symbol", "?")
+        stop_price = spec.get("stop_price")
+        uncovered = 0.0
+        if isinstance(protection, dict):
+            try:
+                uncovered = float(protection.get("uncovered_qty") or 0)
+            except (TypeError, ValueError):
+                uncovered = 0.0
+            if uncovered <= 0:
+                return
+        if protection is None:
+            # Distinguish "no stop" from "no fill". Only the first is an
+            # emergency; the second is a normal, uneventful non-event.
+            filled = None
+            try:
+                info = pipeline.broker.get_order_fill_info(entry_order_id) or {}
+                filled = float(info.get("filled_qty") or 0)
+            except Exception:  # noqa: BLE001
+                filled = None
+            if filled is not None and filled <= 0:
+                return
+            held = _fmt_shares(filled) if filled is not None else "an unknown number of"
+            is_short = str(spec.get("side", "buy")).lower() != "buy"
+            remedy = (
+                "An IMMEDIATE market cover is being submitted — a naked short "
+                "has unbounded loss and is not left to a sweep. Confirm it "
+                "landed."
+                if is_short else
+                "Place a stop manually or flatten the position. The 30-minute "
+                "coverage sweep will also attempt an automatic repair."
+            )
+            body = (
+                "🔴 NO STOP AT ALL\n"
+                f"{symbol}: the entry filled ({held} share(s)) but the "
+                "protective stop could not be placed after every immediate "
+                "retry. The position is open at the broker with NOTHING "
+                "standing watch.\n"
+                f"Intended stop: {stop_price}\n"
+                f"Entry order: {entry_order_id}\n"
+                f"{remedy}"
+            )
+        else:
+            covered = protection.get("covered_qty")
+            body = (
+                "🟠 STOP PARTIALLY COVERS THE POSITION\n"
+                f"{symbol}: a protective stop was placed for "
+                f"{_fmt_shares(covered)} share(s), but {_fmt_shares(uncovered)} "
+                "share(s) of the fill are NOT covered by it — the broker "
+                "refused a stop for the exact filled quantity.\n"
+                f"Stop: {stop_price}\n"
+                f"Entry order: {entry_order_id}\n"
+                "The uncovered remainder is under one share. If this recurs, "
+                "turn `execution.fractional_enabled` off."
+            )
+        from src import notifier as _notifier
+
+        _notifier.send_owner_alert(body, symbols=[str(symbol)])
+    except Exception as exc:  # noqa: BLE001
+        logger.error("protection-failure owner alert failed: %s", exc)
 
 
 def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
@@ -1579,6 +1863,33 @@ class MorningResearchStage:
                 "Morning research degraded: %s | full status=%s",
                 ",".join(sorted(degraded)), data_status,
             )
+        # Parse-level losses are recorded ALONGSIDE data_status, not inside
+        # it — same reasoning as `macro_coverage` in RunContext: data_status
+        # carries the one-word summary per source, this carries the evidence
+        # a single word cannot. Deliberately not a data_status key, because
+        # every key in that dict moves the `data_degraded` advisory's ">= 2
+        # degraded sources" arithmetic and this change must not shift an
+        # existing gate's threshold as a side effect.
+        #
+        # This is the RESEARCH-stage reading, logged here so a postmortem can
+        # tell a research-side loss from a PM-side one. RiskStage takes the
+        # authoritative reading later, after the Portfolio Manager has also
+        # parsed, and that is what reaches the advisory.
+        if parse_telemetry.total_dropped():
+            logger.error(
+                "Analysis items DROPPED at parse during research (%d): %s — "
+                "these candidates were researched and never reached the "
+                "Portfolio Manager",
+                parse_telemetry.total_dropped(), parse_telemetry.describe_dropped(),
+            )
+        if parse_telemetry.total_null_coercions():
+            logger.warning(
+                "Explicit nulls coerced to defaults during research (%d): %s — "
+                "the objects survived, but the model said nothing where the "
+                "prompt asked for something",
+                parse_telemetry.total_null_coercions(),
+                parse_telemetry.describe_null_coercions(),
+            )
         return ctx
 
     def _run_nomination_responder_pass(self, ctx: RunContext, prior_macro_state: dict) -> None:
@@ -1846,7 +2157,14 @@ class DecisionStage:
     """Build PM memory layers → call PM → run Constructor.
 
     Reads:  ctx.positions, ctx.analyses, ctx.news_intel, ctx.earnings_results,
-            ctx.macro_analysis, ctx.total_value, ctx.cash, ctx.last_equity
+            ctx.macro_analysis, ctx.total_value, ctx.deployable_cash,
+            ctx.last_equity
+
+    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan, and the
+    plan may spend the sweep vehicle because `fund_buys` converts it before
+    the BUY phase. Raw broker cash here would hide the parked book from PM
+    and RM and cap the desk at its reserve. The docstring said `ctx.cash`;
+    the code has read `deployable_cash` since the 2026-08-19 tranche.
     Writes: ctx.portfolio_decision (with .targets AND .decisions populated),
             ctx.facts
     """
@@ -1916,6 +2234,10 @@ class DecisionStage:
         # the last 14 days. Empty strings when no recurring pattern found.
         recent_missed_lessons = pipeline._build_recent_missed_lessons()
         recent_loss_pits = pipeline._build_recent_loss_pits()
+        # Names PM keeps proposing and never gets. Every other per-symbol
+        # memory above is keyed on a position, so none of them can see a
+        # symbol that never became one.
+        blocked_proposals = pipeline._build_blocked_proposals()
         # Audit §1.2 — build the correlation matrix HERE, before PM decides,
         # rather than in RiskStage after it already has. RiskStage reuses the
         # memoized matrix, so the deterministic cluster check still judges PM
@@ -1955,6 +2277,7 @@ class DecisionStage:
             macro_tech_alignment=macro_tech_alignment,
             recent_missed_lessons=recent_missed_lessons,
             recent_loss_pits=recent_loss_pits,
+            blocked_proposals=blocked_proposals,
             facts=pm_facts,
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
@@ -2103,6 +2426,15 @@ class DecisionStage:
             smart_money_findings=ctx.smart_money_findings,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
         )
+        # §9.4 freshness — same pure function, same inputs, so the stances
+        # the constructor refuses to pay for are exactly the ones the PM's
+        # prompt marked stale. An earnings view older than
+        # `EARNINGS_STANCE_MAX_AGE_DAYS` stops counting toward the agreement
+        # tally; it stays in the registry above, so grounding still accepts
+        # it as coverage and this can only ever shrink a ceiling.
+        stale_sources = PortfolioManagerAgent.stale_evidence_sources(
+            earnings_analyses=earnings_results,
+        )
         # Conviction ledger (spec §9.5): persist every seat's side on every
         # idea — dissent included — from that same registry, BEFORE the
         # constructor runs so a construction failure cannot lose the record
@@ -2126,6 +2458,12 @@ class DecisionStage:
             # wider for the same ATR reading than a trending one.
             regime=_macro_regime(macro_analysis),
             evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
+            # Spec §11.2 — the session's gross-exposure ceiling, already
+            # resolved from account state in the run preamble (and re-derived
+            # here only on a lane where the preamble did not run). The
+            # constructor sizes UNDER it; it never trims the held book.
+            gross_ceiling=_session_gross_ceiling(pipeline, ctx),
         )
         # Provenance for the AI Risk Manager: which proposed symbols did the
         # deterministic constructor remove? Derived here (targets minus
@@ -2170,6 +2508,33 @@ class DecisionStage:
             )
         ctx.portfolio_decision = portfolio_decision
         return ctx
+
+
+def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
+    """Promote a `sector_unresolved_*` advisory (src/risk/rules.py rule 5)
+    into `data_status["sector"]` — the same generic dict `notifier.py` /
+    `trader_feed.py` already render as a plain "⚠️ degraded: ..." line in
+    the session output, and that output IS the owner's alert (every
+    session ends with a Telegram push). Matches the existing pattern
+    instead of inventing a new alert channel.
+
+    "degraded" (transient — self-heals) beats "partial" (may genuinely
+    have no sector) if a run somehow surfaces both, and never downgrades
+    an alert already raised earlier in the same run.
+    """
+    alerts = [v for v in violations if v.rule.startswith("sector_unresolved")]
+    if not alerts:
+        return
+    status = "degraded" if any(
+        v.rule == "sector_unresolved_lookup_failed" for v in alerts
+    ) else "partial"
+    if data_status.get("sector") == "degraded":
+        status = "degraded"
+    data_status["sector"] = status
+    logger.warning(
+        "Sector cap: unresolved sector affected a trading decision — %s",
+        "; ".join(dict.fromkeys(a.message for a in alerts)),
+    )
 
 
 class RiskStage:
@@ -2373,6 +2738,13 @@ class RiskStage:
                 rm_recent_performance = {}
         in_drawdown = bool(rm_recent_performance.get("in_drawdown"))
 
+        # Spec §11.2 — the session's gross-exposure ceiling, resolved from
+        # ACCOUNT STATE and never from PM output. The run preamble already
+        # acted on it before any agent was called; reading it again here is
+        # what makes the execution gate below measure new orders against the
+        # same rung the constructor sized them under.
+        session_gross_ceiling = _session_gross_ceiling(pipeline, ctx)
+
         # Audit §1.1 — the drawdown-halve is deterministic code now, applied
         # before the hard filter so every downstream consumer (cash budget,
         # sector accumulation, RM, execution) sees the halved size rather than
@@ -2381,6 +2753,7 @@ class RiskStage:
             from src.risk.rules import apply_drawdown_scale
             portfolio_decision.decisions, drawdown_notes = apply_drawdown_scale(
                 portfolio_decision.decisions, in_drawdown=True,
+                ceiling=session_gross_ceiling,
             )
             for note in drawdown_notes:
                 symbol = note.split(" ", 1)[0]
@@ -2404,8 +2777,10 @@ class RiskStage:
                 correlation_matrix=correlation_matrix,
                 cash=ctx.deployable_cash,
                 in_drawdown=in_drawdown,
+                gross_ceiling=session_gross_ceiling,
             )
         )
+        _apply_sector_unresolved_alert(data_status, rule_violations)
         if blocked_reasons:
             reasons = "; ".join(dict.fromkeys(blocked_reasons))
             logger.warning("HARD RISK BLOCK (BUY blocked): %s", reasons)
@@ -2438,6 +2813,79 @@ class RiskStage:
                 limit=1.0,
             ))
             logger.warning("Morning data degradation: %s", data_status)
+
+        # Parse-level losses anywhere in this session (2026-09-02). Before
+        # this, an analysis discarded over one malformed field was a single
+        # ERROR log line nobody counted, and an explicit null silently
+        # replaced by a default left no trace at all. Both are inputs the
+        # analysts produced and the desk then failed to use — invisible
+        # under-deployment, and the expensive kind, because a candidate the
+        # Portfolio Manager never sees cannot be traded and cannot be
+        # measured as a miss either.
+        #
+        # ADVISORY, never blocking — the same non-blocking seam
+        # `data_degraded`, `correlation_coverage_gap` and
+        # `pm_audit_step_missing` above already use. It reaches the Risk
+        # Manager's prompt through `rule_violations` and the operator through
+        # the session log; no order is blocked by it, because a parse loss is
+        # evidence about COVERAGE, not about the soundness of the orders that
+        # did survive.
+        #
+        # Read LIVE rather than from a research-stage snapshot: the Portfolio
+        # Manager parses in DecisionStage, AFTER research, and
+        # `TargetPosition.thesis_invalid_if` is one of the two fields this
+        # whole change is about. A snapshot taken at the end of research would
+        # miss every PM-side loss.
+        ctx.dropped_analyses = parse_telemetry.dropped_snapshot()
+        ctx.null_coerced_fields = parse_telemetry.snapshot()
+        dropped = ctx.dropped_analyses
+        if dropped:
+            from src.risk.rules import RiskViolation as _RV
+            names = ", ".join(
+                f"{model}:{key}" for (model, key), _n in sorted(dropped.items())
+            )
+            n_dropped = sum(dropped.values())
+            rule_violations.append(_RV(
+                rule="analysis_parse_loss",
+                message=(
+                    f"{n_dropped} item(s) were discarded at parse this session "
+                    f"and are absent from the book below: {names} "
+                    f"(TechAnalysisResult = a candidate PM never saw; "
+                    f"TargetPosition = a position PM asked for and the desk "
+                    f"could not read). The plan was therefore built from, or "
+                    f"reduced to, a SMALLER set than the seats produced — "
+                    f"treat a thin list as possibly truncated rather than as a "
+                    f"genuine absence of setups."
+                ),
+                value=float(n_dropped),
+                limit=0.0,
+            ))
+            logger.error(
+                "Analysis parse loss reached the risk stage: %d item(s) — %s",
+                n_dropped, names,
+            )
+
+        nulled = ctx.null_coerced_fields
+        if nulled:
+            from src.risk.rules import RiskViolation as _RV
+            detail = ", ".join(
+                f"{model}.{field}x{n}"
+                for (model, field), n in sorted(nulled.items(), key=lambda kv: -kv[1])
+            )
+            n_nulled = sum(nulled.values())
+            rule_violations.append(_RV(
+                rule="analysis_field_nulled",
+                message=(
+                    f"{n_nulled} field(s) arrived as an explicit null and took "
+                    f"their schema default: {detail}. The analyses were KEPT "
+                    f"(the alternative — dropping them — is worse), but a "
+                    f"nulled `thesis_invalid_if` means that idea has no "
+                    f"soft-exit trigger and will be managed on the hard stop "
+                    f"alone."
+                ),
+                value=float(n_nulled),
+                limit=0.0,
+            ))
 
         has_book_to_check = len(rm_positions) >= 2 or any(
             d.action in ("BUY", "SHORT") for d in portfolio_decision.decisions
@@ -2574,6 +3022,17 @@ class RiskStage:
                     kind="modification", scope="symbol", symbol=mod.symbol,
                     decision_id=ctx.decision_id, evidence_json=mod.model_dump_json(),
                 )
+            # Phase 10.1 — the per-symbol audit trail. Written for EVERY
+            # refusal the verdict carries, including one naming a symbol not
+            # in the plan, so "why was this name refused" stays answerable per
+            # name and not only through the run-scoped verdict blob.
+            for rejection in verdict.rejected_symbols:
+                _persist_evidence(
+                    pipeline.db, run_id=run_id, agent_name="risk_manager",
+                    kind="rejection", scope="symbol", symbol=rejection.symbol,
+                    decision_id=ctx.decision_id,
+                    evidence_json=rejection.model_dump_json(),
+                )
 
         if verdict is None:
             logger.error(
@@ -2598,6 +3057,11 @@ class RiskStage:
                 "reason": "risk_manager_unparseable_output",
             }
 
+        # BOOK-level veto, evaluated FIRST and unchanged. A correlation
+        # cluster, a total-exposure breach or a drawdown state is a property
+        # of the whole account, so when the book is what fails, every leg
+        # dying is the correct outcome — and a verdict that sets this AND
+        # names individual symbols still refuses everything.
         if not verdict.approved:
             logger.info(
                 "Risk manager REJECTED trades: %s",
@@ -2613,6 +3077,59 @@ class RiskStage:
                 "reason": verdict.reasoning,
             }
 
+        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone.
+        # Before this, `approved` was the only refusal the schema had, so a
+        # single sub-floor R/R took the whole plan with it — run-64290730
+        # (2026-09-01) refused the morning citing XLE alone and killed CHPX,
+        # a passing trade in a different sector, with it.
+        rejections = verdict.rejections_by_symbol()
+        refused_decisions: list = []
+        if rejections:
+            surviving: list = []
+            for decision in portfolio_decision.decisions:
+                reason = rejections.get(decision.symbol.strip().upper())
+                if reason is None:
+                    surviving.append(decision)
+                    continue
+                refused_decisions.append(decision)
+                logger.info(
+                    "Risk manager REFUSED %s (the rest of the plan is "
+                    "unaffected): %s", decision.symbol, reason,
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "risk", "rejected", reason,
+                )
+            unmatched = sorted(
+                set(rejections) - {d.symbol.strip().upper() for d in refused_decisions}
+            )
+            if unmatched:
+                logger.warning(
+                    "Risk manager refused %s, which is not in the proposed "
+                    "plan — no-op (evidence still recorded)",
+                    ", ".join(unmatched),
+                )
+            portfolio_decision.decisions = surviving
+
+            # `refused_decisions` guards the case where the refusals matched
+            # nothing: an empty plan plus a stray symbol name is not a
+            # refusal of anything and must not become one.
+            if refused_decisions and not surviving:
+                # Every leg refused individually. Same terminal status as a
+                # book veto because the outcome is the same — no orders — but
+                # each symbol carries its OWN reason above, not one shared
+                # sentence about a different symbol.
+                reasons = "; ".join(
+                    f"{sym}: {rejections[sym]}"
+                    for sym in sorted(
+                        {d.symbol.strip().upper() for d in refused_decisions}
+                    )
+                )
+                logger.info(
+                    "Every proposed trade was refused on its own merits: %s",
+                    reasons,
+                )
+                return {"status": "rejected", "orders": [], "reason": reasons}
+
         if verdict.modifications:
             portfolio_decision.decisions = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
@@ -2622,8 +3139,8 @@ class RiskStage:
             portfolio_decision.decisions, verdict,
         )
 
-        if verdict.modifications or scale < 1.0:
-            portfolio_decision.decisions, _, blocked_reasons = (
+        if verdict.modifications or scale < 1.0 or refused_decisions:
+            portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
                 pipeline._filter_hard_risk_decisions(
                     portfolio_decision.decisions,
                     positions, total_value, daily_pnl,
@@ -2631,8 +3148,10 @@ class RiskStage:
                     macro_target_invested_pct=macro_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
+                    gross_ceiling=session_gross_ceiling,
                 )
             )
+            _apply_sector_unresolved_alert(data_status, post_mod_violations)
             if blocked_reasons:
                 reasons = "; ".join(dict.fromkeys(blocked_reasons))
                 logger.warning("HARD RISK BLOCK AFTER MODIFICATIONS: %s", reasons)
@@ -2969,7 +3488,7 @@ class ExecutionStage:
         # guaranteed to die moments later on stale-entry / no-price / qty-zero
         # checks, creating avoidable sell/re-park churn. The full checks remain
         # in the submit loop below; this preflight only removes names whose
-        # failure is already knowable and computes the actual whole-share
+        # failure is already knowable and computes the actual quantized
         # notional that funding should cover.
         fundable_notional: dict[str, float] = {}
         preflight_survivors = []
@@ -3004,8 +3523,21 @@ class ExecutionStage:
                     )
                     continue
             preflight_price = max(market_price, decision.entry_price or 0)
-            preflight_qty = int(
-                (total_value * decision.allocation_pct / 100) / preflight_price
+            # Spec §11.1: quantized the SAME way the submit loop below will,
+            # or the sweep funds a whole-share notional for an order that is
+            # about to be placed fractionally — under-funding it, and letting
+            # the cash gate re-impose the rounding tax this phase removes.
+            # It is also the difference between skipping a sub-one-share
+            # position as `qty_zero` and taking it, which under exact sizing
+            # is a legitimate position rather than nothing.
+            preflight_short = decision.action == "SHORT"
+            preflight_fractional = _fractional_sizing_allowed(
+                pipeline, decision.symbol, is_short=preflight_short,
+            )
+            preflight_qty = _size_shares(
+                pipeline,
+                (total_value * decision.allocation_pct / 100) / preflight_price,
+                fractional=preflight_fractional,
             )
             if preflight_qty <= 0:
                 _record_execution_skip(
@@ -3014,18 +3546,65 @@ class ExecutionStage:
                     f"${preflight_price:.2f} rounds to zero shares",
                 )
                 continue
-            fundable_notional[decision.symbol] = preflight_qty * preflight_price
+            # Fund what the submit loop will SPEND, not what the allocation
+            # asked for. The loop takes `min(qty_by_alloc, qty_by_risk)`; on
+            # any session where the vol-adjusted budget binds — the ordinary
+            # case — funding the allocation figure over-sells the vehicle and
+            # the bookend re-parks the difference within the minute. Same
+            # helper, same quantization, so the two cannot drift apart.
+            #
+            # UNDER-funding is the one direction that costs a trade rather
+            # than a spread, so the reference price must be the submit
+            # loop's own. It is: for a long the loop takes
+            # `max(market_price, limit_price)` and for a short
+            # `min(market_price, limit_price)` — which is exactly
+            # `preflight_price` above. Every adjustment the loop makes AFTER
+            # that point moves the quantity DOWN, never up: a marketable-
+            # limit ceiling only raises the price, and the ATR floor only
+            # widens the stop, and each of those shrinks the shares the risk
+            # budget allows. So this is an upper bound on what will be
+            # spent, which is the safe side to be wrong on.
+            preflight_risk_qty = _qty_by_risk_budget(
+                pipeline, total_value=total_value,
+                sizing_price=preflight_price,
+                stop_price=decision.stop_loss,
+                is_short=preflight_short, fractional=preflight_fractional,
+            )
+            if preflight_risk_qty is not None and preflight_risk_qty < preflight_qty:
+                preflight_qty = preflight_risk_qty
+            if preflight_qty <= 0:
+                # The risk budget alone cannot carry one orderable unit. The
+                # submit loop will reach the same conclusion and skip; there
+                # is nothing here for the sweep to fund.
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "qty_zero",
+                    f"risk budget at ${preflight_price:.2f} entry / "
+                    f"${decision.stop_loss:.2f} stop rounds to zero shares",
+                )
+                continue
+            # A SHORT is deliberately excluded from the funding total: it
+            # sells borrowed shares and never draws on `available_cash` (see
+            # D11 in the submit loop, where `available_cash` is left untouched
+            # for a short). Funding one liquidates the vehicle to raise cash
+            # that no order can spend — guaranteed churn, not a safety
+            # margin. BUY notionals are still counted in full, so this can
+            # only remove waste, never under-fund a BUY.
+            if not preflight_short:
+                fundable_notional[decision.symbol] = preflight_qty * preflight_price
             preflight_survivors.append(decision)
         buy_decisions = preflight_survivors
 
-        # Cash-sweep funding: a SHORT's notional is folded into
-        # `planned_notional` below alongside real BUYs even though opening a
-        # short does not actually need settled cash (it sells borrowed
-        # shares). That over-funds rather than under-funds a short-only
-        # session — SGOV may get released when it wasn't strictly needed —
-        # which is the safe direction to be wrong in and is not reworked
-        # here; see the sizing loop below for where a SHORT stops treating
-        # cash as a constraint.
+        # Cash-sweep funding. `planned_notional` counts BUYs ONLY, at the
+        # quantity the submit loop will actually reach — allocation capped by
+        # the §11.1 risk budget, quantized by the same helper. A SHORT is
+        # excluded outright: it sells borrowed shares and never draws on
+        # `available_cash` (see D11 in the sizing loop), so funding one
+        # liquidates the vehicle for cash no order can spend. Both were
+        # over-funding, and over-funding is not free: the bookend re-parks
+        # the residue minutes later, which is two crossings of the spread
+        # for no position (2026-08-27: sold $3,422.61, re-bought $1,007.60
+        # 53 seconds later; 2026-08-31: sold $503.47, re-bought $806.40
+        # five seconds later).
         #
         # PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
@@ -3065,6 +3644,25 @@ class ExecutionStage:
                             pipeline, ctx, d.symbol, "funding", "failed",
                             "cash_sweep_exception", detail=str(e),
                         )
+                else:
+                    # Adopt whatever the sweeper refreshed REGARDLESS of the
+                    # confirmed amount. `fund_buys` re-reads the broker into
+                    # ctx before it decides what it can confirm, so on the
+                    # zero-confirmed path ctx already held fresher figures
+                    # than these locals — and the locals, not ctx, govern the
+                    # BUY loop's `available_cash`. Refreshing only on the
+                    # success path meant an unconfirmed funding attempt left
+                    # the loop sizing against a pre-sale cash reading; if
+                    # anything had DRAWN cash in between, that reading is
+                    # stale-HIGH and the clamp stops protecting anything.
+                    # ctx is unchanged when fund_buys bailed early, so this
+                    # is a no-op in the ordinary case.
+                    if isinstance(getattr(ctx, "cash", None), (int, float)):
+                        cash = ctx.cash
+                    if isinstance(getattr(ctx, "total_value", None), (int, float)):
+                        total_value = ctx.total_value
+                    if ctx.positions is not None:
+                        positions = ctx.positions
                 if freed > 0:
                     positions = ctx.positions
                     cash = ctx.cash
@@ -3412,42 +4010,35 @@ class ExecutionStage:
                         )
                         continue
 
-                qty_by_alloc = int((total_value * decision.allocation_pct / 100) / sizing_price)
-                qty_by_risk = None
-                RISK_BUDGET_PCT = 0.5
-                # D4: geometry validity is direction-aware — a long's stop
-                # must sit below its entry, a short's strictly above.
-                valid_geometry = (
-                    (not is_short and stop_price > 0 and sizing_price > stop_price)
-                    or (is_short and stop_price > 0 and stop_price > sizing_price)
+                # Spec §11.1. Exact sizing when the flag is on AND the broker
+                # confirms the symbol is fractionable; whole shares otherwise.
+                # Resolved ONCE per symbol here so every share count below —
+                # allocation, risk budget, cash re-size — is quantized the
+                # same way. Two different roundings inside one sizing decision
+                # is how a stop ends up covering a different number of shares
+                # than the entry bought.
+                fractional = _fractional_sizing_allowed(
+                    pipeline, decision.symbol, is_short=is_short,
                 )
-                if valid_geometry:
-                    # D4: unsigned everywhere.
-                    risk_per_share = abs(sizing_price - stop_price)
-                    if is_short:
-                        # D8: gap-risk sizing haircut — SIZING ONLY, never
-                        # stop placement (the stop above is untouched). A
-                        # short gaps through its stop with no bound, so this
-                        # execution-time vol-adjusted-sizing belt must be at
-                        # least as conservative for a short as the
-                        # constructor's own primary sizing already is.
-                        _cfg = getattr(
-                            getattr(pipeline.config, "risk", None),
-                            "short_gap_risk_multiple", None,
-                        )
-                        gap_multiple = (
-                            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
-                            else 1.5
-                        )
-                        risk_per_share *= gap_multiple
-                    if risk_per_share > 0:
-                        risk_dollars = total_value * RISK_BUDGET_PCT / 100
-                        qty_by_risk = int(risk_dollars / risk_per_share)
+                qty_by_alloc = _size_shares(
+                    pipeline,
+                    (total_value * decision.allocation_pct / 100) / sizing_price,
+                    fractional=fractional,
+                )
+                # Same helper the cash-sweep preflight sized funding with —
+                # one definition, so the dollars released can never drift
+                # from the dollars spent.
+                qty_by_risk = _qty_by_risk_budget(
+                    pipeline, total_value=total_value,
+                    sizing_price=sizing_price, stop_price=stop_price,
+                    is_short=is_short, fractional=fractional,
+                )
                 if qty_by_risk is not None and qty_by_risk < qty_by_alloc:
                     logger.info(
-                        "Vol-adjusted sizing for %s: qty_by_alloc=%d → qty_by_risk=%d "
+                        "Vol-adjusted sizing for %s: qty_by_alloc=%s → qty_by_risk=%s "
                         "(risk %.2f/share, budget $%.0f = %.1f%% of equity)",
-                        decision.symbol, qty_by_alloc, qty_by_risk,
+                        decision.symbol, _fmt_shares(qty_by_alloc),
+                        _fmt_shares(qty_by_risk),
                         abs(sizing_price - stop_price),
                         total_value * RISK_BUDGET_PCT / 100, RISK_BUDGET_PCT,
                     )
@@ -3470,7 +4061,10 @@ class ExecutionStage:
                 # (D9) plus the borrow gate (D6) are the sole control
                 # surface for a short, not a cash re-size here.
                 if not is_short and estimated_cost > available_cash:
-                    affordable_qty = int(available_cash / sizing_price)
+                    affordable_qty = _size_shares(
+                        pipeline, available_cash / sizing_price,
+                        fractional=fractional,
+                    )
                     if affordable_qty <= 0:
                         logger.warning(
                             "Skipping BUY %s: estimated cost $%.2f exceeds available cash $%.2f after sell phase",
@@ -3483,12 +4077,45 @@ class ExecutionStage:
                         )
                         continue
                     logger.warning(
-                        "Resizing BUY %s from %d to %d share(s): confirmed cash "
+                        "Resizing BUY %s from %s to %s share(s): confirmed cash "
                         "$%.2f only partially covers the approved order",
-                        decision.symbol, qty, affordable_qty, available_cash,
+                        decision.symbol, _fmt_shares(qty),
+                        _fmt_shares(affordable_qty), available_cash,
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
+                    # §10.3's floor, re-applied to the size EXECUTION chose.
+                    # `apply_gross_ceiling` and the constructor both refuse a
+                    # trimmed order below `min_order_usd` rather than place a
+                    # token position — but this clamp happens AFTER both of
+                    # them, so it was the one resize with no floor under it.
+                    # With fractional sizing on, `affordable_qty` no longer
+                    # floors to zero shares when cash is short: a $3 residue
+                    # buys 0.0281 shares and the order goes out. A position
+                    # too small to pay for its own risk is not a smaller
+                    # trade, it is a worse one.
+                    floor_usd = _min_order_usd(pipeline)
+                    if estimated_cost < floor_usd:
+                        logger.warning(
+                            "Skipping BUY %s: cash re-size cut the order to "
+                            "$%.2f (%s sh), below the $%.0f minimum worth "
+                            "trading",
+                            decision.symbol, estimated_cost,
+                            _fmt_shares(qty), floor_usd,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "below_min_notional",
+                            f"available cash ${available_cash:.2f} re-sized the "
+                            f"order to ${estimated_cost:.2f}, below the "
+                            f"${floor_usd:,.0f} minimum worth trading",
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "funding", "refused",
+                            "resized_below_min_notional",
+                            resized_notional=estimated_cost,
+                            min_order_usd=floor_usd,
+                        )
+                        continue
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "funding", "resized",
                         "confirmed_cash_partially_funded_order",
@@ -3583,7 +4210,8 @@ class ExecutionStage:
                     )
                     _record_execution_skip(
                         pipeline, ctx, decision.symbol, "broker_rejected",
-                        f"broker rejected {decision.action.lower()} {qty} @ "
+                        f"broker rejected {decision.action.lower()} "
+                        f"{_fmt_shares(qty)} @ "
                         f"{'limit $%.2f' % limit_price if limit_price else 'market'}",
                     )
                     continue
@@ -3607,8 +4235,9 @@ class ExecutionStage:
                     available_cash -= estimated_cost
                 order_type = "limit" if limit_price is not None else "market"
                 logger.info(
-                    "Executed: %s %d %s @ %s $%.2f",
-                    decision.action.lower(), qty, decision.symbol, order_type, executed_price,
+                    "Executed: %s %s %s @ %s $%.2f",
+                    decision.action.lower(), _fmt_shares(qty), decision.symbol,
+                    order_type, executed_price,
                 )
                 # The entry still owes a protective stop: it is placed as a
                 # separate GTC order AFTER the fill, because an OTO leg would
@@ -3675,6 +4304,19 @@ class ExecutionStage:
                     "protective_stop_result",
                     entry_order_id=entry_order_id, stop_price=spec["stop_price"],
                     protective_order_id=(protection or {}).get("id") if isinstance(protection, dict) else None,
+                )
+                # Spec §11.1 guard 2. The broker has already retried hard and
+                # immediately (guard 1) by the time this is reached, so a
+                # falsy `protection` means a position is open at the broker
+                # with NO stop on it, and a non-zero `uncovered_qty` means
+                # part of one is. Neither may be reported as a log line: a log
+                # line is read after the fact, and the whole reason fractional
+                # sizing is acceptable is that the unprotected window is brief
+                # — which is only true if a HUMAN is told the moment it stops
+                # being brief. Never lets an alerting failure abort the
+                # session.
+                _alert_owner_protection_failed(
+                    pipeline, spec, protection, entry_order_id,
                 )
                 # D7 (Stage 3): MANDATORY escalation for a SHORT. A long's
                 # loss is bounded at -100%; a naked short's is not, so

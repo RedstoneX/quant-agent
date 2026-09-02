@@ -59,6 +59,18 @@ This is the second independent confirmation of the EPD defect: on 2026-08-26 it 
 
 **FIXED (2026-08-27, commit `aea82ee`, branch `feat/exit-rework-pace-and-memory`, not yet merged).** Each review now snapshots its per-position metrics to `specialist_evidence` (`agent_name="position_reviewer"`, `kind="review_metrics"`) via new `db.save_position_review_metrics`; the next review reads them back with `db.get_prior_position_review_metrics` and the pipeline's new `_build_review_metric_deltas` / `_persist_review_metrics` (`src/pipeline.py`). New `src/risk/exit_guard.py` (`MetricDeltas`, `compute_deltas`, `is_deterioration_claim`, `veto_contradicted_exit`) then vetoes a SELL/REDUCE whose stated reason is a deterioration claim ("stalling", "not progressing", "momentum fading", etc.) when every metric that moved since the prior review improved — logged as `exit_vetoed_contradicts_own_metrics`. Exits on new information (news, earnings, regime shift, correlation breach, a triggered `thesis_invalid_if`) are never vetoed, and a mixed picture is deliberately not vetoed — that stays the reviewer's judgment call. Landed alongside Phase 3.1 (the pace feedback loop, `QAMC_REMEDIATION_SPEC.md` §3.1); see that document for the pace fix.
 
+### 1.6 The Portfolio Manager has no memory of what it proposed and never got
+
+Every per-symbol memory the PM reads — loss pits, missed lessons, position history, R-multiples — is keyed on a POSITION. A symbol that was proposed repeatedly and never filled never became a position, so it is invisible to all of them, however many times the PM asked for it.
+
+Measured on the production snapshot over the 21 days to 2026-09-01: of 56 entry proposals (`specialist_evidence` `kind='target'`, zero-sized exit targets excluded), 13 reached a fill — a 23% conversion rate the desk had no view of at all. NVDA was asked for 7 times across 7 sessions and filled zero, the most-proposed name in the desk's history, and nothing in the prompt could say so. Three other names show the same pattern: JPM, PATH and VLO, 3 proposals each, no fills.
+
+A block is better evidence than a loss. It arrives with its cause attached, where a filled trade's loss is confounded by whatever the market did next.
+
+**Fix:** compute the funnel at prompt-build time from tables that already exist; surface the cause, not just the count; threshold it so it cannot become wallpaper.
+
+**FIXED (2026-09-02, branch `feat/blocked-trade-memory`).** `_build_blocked_proposals` (`src/pipeline.py`) joins `specialist_evidence` (`target` → `proposed_order` → `verdict` → `execution_skip`) to `trades` via `decision_id`, backed by one new read method `db.get_proposal_funnel_rows`. No schema change. Blocking reasons are copied VERBATIM from `execution_skip.reason` (`qty_zero`, `geometry_rr`, `insufficient_cash`), `verdict.reason_category` (`rr_fail`, …) and `trades.fill_status` (`canceled`, …), so this section and the RM-verdict section name the same failure the same way; exactly three tokens are new — `rm_zeroed`, `order_not_placed`, `no_order_built` — and each names an ABSENCE no table records. Renders as PM's `## Proposal Conversion` section: one aggregate line (conversion rate + top three blocks), then repeat offenders at 3+ proposals with zero fills over a rolling 21 days, capped at 5 lines. On the snapshot that emits four names, under the cap. **Diagnostic only — no gating, no filtering, no size caps.** Whether a repeat block should ever restrict a name is a separate, unmade decision.
+
 ---
 
 ## Severity 2 — analyst coverage
@@ -120,8 +132,9 @@ Correctly filters to transaction codes P/S, non-derivative rows only, with a $10
 
 - **PM has no expectancy feedback by conviction level.** Aggregate 30-day win rate exists, but nothing tests whether "high conviction" has historically outperformed "medium". Until measured, conviction-weighted sizing is an assumption.
 - **No opportunity-cost framing at candidate selection.** Rotation logic only fires when cash is short, so a better candidate never displaces a mediocre holding while cash is ample.
-- **Sector tags only, no theme/factor exposure.** A 40% sector cap does not catch a cross-sector "AI capex" concentration.
+- **Sector tags only, no theme/factor exposure.** A 75% per-side sector cap (spec §12.3; 40% before 2026-09-01) does not catch a cross-sector "AI capex" concentration.
 - **`thesis_invalid_if` is free text**, evaluated by a model reading it. Conditions like "closes below MA50" are structured enough to check in code.
+- **Half the PM's proposals leave no evidence trail.** Measured on the snapshot: 55 `portfolio_manager` rows in `agent_logs`, each with a distinct `run_id`; 41 of those responses carried `targets`, but only 19 run_ids have `kind='target'` rows in `specialist_evidence`. The other 22 runs did write evidence (`analysis`, `pipeline_event`), so they reached the pipeline — the target rows specifically were not written. Consequence: anything reading `specialist_evidence` for proposal history (including §1.6) undercounts asks by roughly half. Counted from `agent_logs` instead, XLE was proposed 21 times and NVDA 16, against 7 each in the evidence table. Not diagnosed; not fixed.
 
 ---
 

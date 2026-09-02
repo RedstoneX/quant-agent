@@ -89,7 +89,8 @@ The Tech Analyst must return, per candidate:
 - Relative strength vs a benchmark drawn from the same batch (SPY, else QQQ, else IWM — no extra fetch), over 1m and 3m.
 - Returns over 1w / 1m / 3m / 6m / 12m.
 - Position within the trailing 52-week range.
-- ATR as a percentage of price, its percentile against its own trailing year, and an `expanding` / `contracting` / `stable` volatility state.
+- ATR as a percentage of price, its percentile against its own trailing year, and an `expanding` / `contracting` / `stable` volatility state (thresholds: 70th / 30th percentile of the trailing 252 sessions).
+  - **Corrected 2026-09-01.** This block originally computed its own "ATR" by convolving the true ranges with a flat 14-wide kernel — a simple moving average of true range, not an ATR. The risk path (`atr_14`, used for stop widening and sizing) has always used Wilder's smoothing via `ta.volatility.AverageTrueRange`, so the analyst was shown one volatility reading while the deterministic layer acted on another. There is now one implementation, `src/data/technical.py::atr_series` (Wilder's, warm-up trimmed), and `context.py` imports it. Measured over the configured 101-symbol universe across 973 real sessions (2022-10-13 to 2026-08-31, 93,712 symbol-days): the two disagreed by a mean absolute **7.05%** (median 5.50%, p90 15.0%, worst +95.9% on GME 2024-07-09), and `volatility_state` changes on **17.20%** of symbol-days — near-symmetrically (49.3% of the changes toward more volatile, 50.7% toward less). The net effect is that `stable` shrinks 2.76 points and both tails grow; it is not a systematic re-rating in one direction. Pinned by `tests/test_atr_is_wilder_everywhere.py`.
 - MA20 / MA50 / MA200 slopes over a 10-session lookback — trend direction of the averages, not merely price's position against them.
 - Consolidation detection: a candidate window must be **both** narrow (≤8% high/low spread over 15 sessions) **and** low-drift (net move ≤50% of the range) to be flagged — a narrow window alone does not distinguish a base from a slow steady trend.
 - 20-day average dollar volume and 20-day up/down volume ratio (accumulation vs. distribution).
@@ -334,7 +335,7 @@ The reasoning is already persisted; it is simply never shown.
 
 ## Phase 9 — The research desk actually deliberates
 
-**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is **owner-ratified scheduled work, PARTIALLY BUILT** — its recording and scoring layer landed on `feat/conviction-ledger-recording`; its operator-facing view has not been built. See §9.5 below for exactly which parts exist.
+**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement — a signed score since 2026-09-02) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is **owner-ratified scheduled work, PARTIALLY BUILT** — its recording and scoring layer landed on `feat/conviction-ledger-recording`; its operator-facing view has not been built. See §9.5 below for exactly which parts exist.
 
 *An earlier version of this note recorded §9.5 as "deliberately not built" with no attribution and no stated reason — an engineering scope decision written as though it were settled truth, the exact pattern AGENTS.md's Governance ratification section exists to prevent. The owner reopened it on 2026-08-31 and ratified the full specification below. Corrected here rather than carried forward.*
 
@@ -414,6 +415,184 @@ bet from a name only Technical likes, and today they size identically at 3-5%.
 This lands naturally on top of Phase 2b, which replaces notional conviction
 sizing with risk allocation: multi-source agreement earns a larger share of
 the risk budget.
+
+**Freshness (built 2026-09-02).** "Independent sources agree" was implemented
+as a headcount with no notion of *when* a source formed its view.
+`build_evidence_registry` read only `investment_implications.sentiment` from an
+earnings analysis and discarded `is_new` and `filing_date`; neither
+`src/risk/rules.py` nor `src/portfolio_constructor.py` looked at age anywhere
+in the sizing path. A cached bullish earnings stance therefore counted as a
+full live corroborating source indefinitely, moving a name from one aligned
+source to two and buying it a 3.0% → 4.0% risk allowance — a 33% larger
+allowance on evidence that had confirmed nothing about today. This is reachable
+rather than theoretical: when a symbol has no filing inside the provider's
+45-day SEC scan window, `EarningsProvider._check_symbol` falls back to
+`_get_existing_analysis`, which — until the cause fix below — had **no age
+bound at all** and re-served whatever was on disk (the store prunes at 1000
+days).
+
+`PortfolioManagerAgent.stale_evidence_sources` now gates an earnings stance
+out of the tally past `EARNINGS_STANCE_MAX_AGE_DAYS` (90). **90 is not a new
+number**: `config/prompts/earnings_analyst.md` already caps the seat's own
+conviction at `low` past 90 days and calls a filing past 180 days one that
+"should not have reached you", and `_missed_ops_earnings_signal` already
+refuses anything older than 90 days as recent earnings evidence. The seat and
+the reflector had a threshold; only the sizing path did not read it.
+
+Two properties are deliberate and tested:
+
+- **Removal from the tally only.** The stance stays in the canonical registry,
+  so `validate_grounding` still recognises the coverage and a PM that cites it
+  does not fail the session. `validate_grounding` fails the WHOLE session on a
+  non-empty error list, so deleting the stance would have converted a stale
+  view from a sizing question into a hard block. This is a size reduction, and
+  it can only ever lower a ceiling.
+- **The PM is told.** The prompt already labelled a cached view `[from cache]`
+  with its filing date and then counted it as live in the agreement block of
+  the same message. The agreement line, the registry block and the earnings
+  section now all say the same thing.
+
+**Measured impact, `run-64290730` (2026-09-01), 65 symbols carrying an earnings
+stance: zero.** No filing in that run is older than 48 days (median 28), so the
+gate removes 0 sources and drops 0 ceiling rungs. Across all 28 runs in the
+snapshot (2026-08-17 → 2026-09-01, 1643 analyses) nothing exceeds 48 days
+either. The gate is a guard against the unbounded `_get_existing_analysis`
+fallback, not a correction to today's book. For scale, the same measurement at
+a 45-day threshold — the provider's own scan window — gates 3 stances and drops
+2 symbols a rung (GE and NFLX, 4.0% → 3.0%). **Choosing a threshold below 90
+would be inventing a number; 90 is the one the desk had already written down.**
+
+**The cause fixed too (built 2026-09-02).** The freshness gate above stops a
+stale earnings stance from EARNING SIZE; it deliberately does not remove the
+stance from the evidence registry, because pulling something the PM has
+already been shown out from under it fails `validate_grounding` for the WHOLE
+session, not just that one symbol. That left the cause untouched:
+`_get_existing_analysis` (`src/data/earnings.py`) still hands an over-age
+analysis to a session as if it were current — it just no longer bought that
+analysis extra size once there. `_get_existing_analysis` now refuses to
+re-serve anything past `EARNINGS_STANCE_MAX_AGE_DAYS` (the same constant, not
+a second number): past the bound it returns `None`, and the symbol looks
+exactly like one with no earnings coverage yet at all — a state every
+consumer already handles (a CIK miss, an unlisted name, a first SEC-covered
+run). `stale_evidence_sources` is untouched and still recomputes staleness
+generically for anything that does reach it, so a report arriving through a
+different path is still caught there.
+
+Measured against the local rehearsal data snapshot
+(`/tmp/qamc-rehearsal-hqiel8o1/data/earnings`, 71 symbol directories,
+2026-09-02): 63 symbols currently resolve to a servable analysis via this
+fallback (8 have raw filing HTML but no completed analysis, and already
+return `None` today, unaffected by this change). Age distribution across
+those 63: median 29 days, max 49 days, min 6 days — **zero currently exceed
+the 90-day bound**, so this fix changes no symbol's behavior today, the same
+"guardrail, not a correction" shape the tally gate measured. Confirmed
+independently, not just repeated: three symbols are already past the
+provider's 45-day scan window and therefore already served purely by this
+fallback — NKE (10-K, filed 2026-07-15, 49d), GE (10-Q, filed 2026-07-16,
+48d), NFLX (10-Q, filed 2026-07-17, 47d) — one day older each than the
+values recorded above, consistent with one day of elapsed time since that
+measurement. What changes going forward: the day any symbol's most recent
+on-disk analysis turns 91 days old with no newer filing, it now silently
+drops out of that session's evidence entirely instead of being served as
+current indefinitely (the store still only prunes the file itself at 1000
+days).
+
+**Dissent is counted, not priced (built 2026-09-02).** `count_aligned_sources`
+counts only sources aligned with the trade direction, so on a long a bearish
+earnings stance contributes 0 — arithmetically identical to neutral and to no
+coverage at all. Nothing subtracts, and until now nothing recorded that it had
+happened. `count_opposing_sources` is the exact mirror of the aligned count
+through the same `stance_is_aligned` vocabulary; it is surfaced in the PM
+prompt, logged per sized target, and written into the order note that reaches
+the AI Risk Manager and the persisted `proposed_order` evidence. **It changes
+no ceiling.** Making dissent subtract is a risk-rule change and needs an owner
+decision; this exists so the frequency and the cost of overriding a dissenting
+seat are measurable before that decision is taken. On `run-64290730`, of the 42
+symbols carrying both a technical and an earnings stance, 4 were internally
+split (CAT, GEV, PFE, SLB) — sized identically to a name with one aligned
+source and no dissent.
+
+**Dissent was counted, not priced (built 2026-09-02, superseded the same
+day).** `count_aligned_sources` counted only sources aligned with the trade
+direction, so on a long a bearish earnings stance contributed 0 —
+arithmetically identical to neutral and to no coverage at all. Nothing
+subtracted. `count_opposing_sources` made that visible: the exact mirror of the
+aligned count through the same `stance_is_aligned` vocabulary, surfaced in the
+PM prompt, logged per sized target, and written into the order note that
+reaches the AI Risk Manager and the persisted `proposed_order` evidence. It
+changed no ceiling. On `run-64290730` (2026-09-01), of the 42 symbols carrying
+both a technical and an earnings stance, 4 were internally split (CAT, GEV,
+PFE, SLB) — sized identically to a name with one aligned source and no dissent.
+
+**Dissent is priced: the ceiling reads a SIGNED SUM (ratified 2026-09-02).**
+
+```
+s_i in {-1, 0, +1}   per seat: +1 aligned with the proposed direction,
+                     -1 opposed, 0 neutral OR silent
+S   = sum(s_i)       equal weight, unit magnitude
+```
+
+`signed_source_score` computes `S` as `aligned - opposed` (the difference of
+the two counts, not a second traversal — one definition of "aligned", the
+`stance_is_aligned` one), and `agreement_ceiling_for_score` indexes the
+existing schedule by `S`. **Doctrine:** counting only agreers has no support in
+any published composite methodology. MSCI-style index construction and Grinold
+& Kahn's `alpha = volatility x IC x score` both admit a disagreeing input as a
+NEGATIVE number in a signed sum. Equal unit weighting is not a placeholder —
+it is what index construction literally does, and what the Grinold & Kahn form
+reduces to when per-source skill is equal.
+
+Three properties, all falling out of the arithmetic rather than bolted on:
+
+- **Unanimous cases are unchanged.** With nothing opposed, `S` IS the aligned
+  count, so `S=1` prices at `schedule[0]`, `S=2` at `schedule[1]`, and so on.
+  The ratified risk envelope and the measurement that chose
+  `[3.0, 4.0, 5.0, 5.0, 5.0]` both still stand.
+- **A dissenter costs exactly one rung.** Three aligned against one opposed is
+  `S=2` and sizes at the two-seat rung, not the three-seat one.
+- **`S <= 0` produces no order at all.** There is deliberately NO standalone
+  veto rule: the schedule's first rung prices one NET source and there is no
+  rung below it, so the same lookup that sizes the trade is the one that
+  refuses it. A separate veto would charge the same dissenter twice. A blocked
+  target leaves any existing position untouched — refusing to open is not a
+  decision to sell, and a zero-weight plan would read to the delta loop as an
+  instruction to liquidate.
+
+**Measured impact** over the 28 sized PM targets carrying registry coverage in
+the 12 most recent runs of the local snapshot (2026-08-28 → 2026-09-02):
+6 targets change ceiling rung and 3 (10.7%) are newly blocked by `S <= 0`
+(ONDS and NVDA on 2026-08-28 intraday, both `technical: buy` against
+`macro: bearish`; UNH short on 2026-09-02, `technical: sell` against
+`macro: bullish`). The ceiling BOUND on 0 of 28 targets before and 3 of 28
+after — every rung change other than the blocks is a ceiling that still sits
+above what the PM asked for, so the size does not actually move. On the most
+recent full run (`run-bba4d4f3`, 2026-09-02) 1 of 9 targets is blocked. This is
+nothing like the 2026-09-01 zero-trade day: that was a rule NO trade could
+satisfy; this one leaves 25 of 28 untouched.
+
+**Open, not built: conviction-weighted agreement.** Every seat emits a
+conviction and the score ignores it entirely — a high-conviction bearish read
+and a weak one are both `-1`. `SEAT_WEIGHT` (`src/risk/rules.py`) pins that at
+unit magnitude and `tests/test_signed_dissent.py` fails if anyone introduces a
+per-seat weight. The reason is the desk's own standing rule, recorded in
+`src/conviction_ledger.py`: a confidence weight may only be DERIVED from
+measured history, never chosen up front, and `_CONVICTION_OUTCOME_MIN_N`
+(`src/storage/db.py`) sets the minimum at 20 resolved calls. The book has 7
+closed equity round-trips and every one carries conviction NULL, so there is
+nothing to derive from. That is precisely why the dissent change could ship
+before this question is settled: with weights pinned at 1, the dissent rule has
+no constant to inherit.
+
+**Correction, 2026-09-02.** The owner removed conviction weighting from the
+ledger's credit on 2026-08-31 for two stated reasons (see §9.5 item 3a).
+Reason 2 — "a confident call already earns a larger position through the §9.4
+agreement ceiling" — **is factually wrong and has been corrected in place** in
+`src/conviction_ledger.py` and `docs/architecture/MISSION_CONTROL_API.md`. §9.4
+has never read a conviction: it collapses each seat to a polarity and nets at
+unit weight, so weighting the ledger's credit would have charged confidence
+once, not twice. Reason 1 (circularity) is sound and stands alone. **The
+decision itself does not change** — no conviction weighting, now for one valid
+reason plus insufficient sample.
 
 ### 9.5 — A conviction ledger per candidate
 
@@ -712,15 +891,16 @@ Verified by reading the current code, not assumed:
 - **Per-seat, per-symbol stance for a session.** Each seat's own structured
   analysis for a symbol is independently persisted
   (`specialist_evidence`, kind `analysis`) and is the exact registry
-  `src/risk/rules.py::count_aligned_sources` reads to compute how many seats
-  agree. This is effectively the raw material for "who confirmed, who
+  `src/risk/rules.py::signed_source_score` reads to compute how many seats
+  net out in favour. This is effectively the raw material for "who confirmed, who
   dissented" — but nothing marks an analysis row as a response *to a
   specific nomination*, so that relationship has to be reconstructed, not
   read.
-- **Seat alignment counting.** `count_aligned_sources` and
-  `agreement_ceiling_for_count` (`src/risk/rules.py`) already turn per-seat
-  stances into a deterministic agreement count and a sizing ceiling (§9.4,
-  shipped in PR #160).
+- **Seat alignment counting.** `count_aligned_sources`,
+  `count_opposing_sources`, `signed_source_score` and
+  `agreement_ceiling_for_score` (`src/risk/rules.py`) already turn per-seat
+  stances into a deterministic signed score and a sizing ceiling (§9.4,
+  shipped in PR #160; signed 2026-09-02).
 - **R computation.** `src/risk/metrics.py::r_multiple` already turns
   current price, entry and initial stop into a signed R-multiple for either
   side (long or short), which is exactly the scoring unit item 3 needs.
@@ -860,6 +1040,924 @@ mattered: a short is a win or a loss on the same side of zero as a long.
 
 Phase 9 depends on Phase 2b, because "agreement earns size" is meaningless
 until size is expressed as risk. Build 2b first.
+
+---
+
+## Phase 10 — One voice must never veto the book (owner-ratified 2026-09-01)
+
+**Status: ratified by Rex on 2026-09-01, not yet implemented.** Four decisions,
+all made by the owner in conversation, all pointing at the same defect: the
+pipeline repeatedly turns a judgement that should ADJUST a trade into a binary
+that BLOCKS it.
+
+**The evidence that produced them.** Morning run `run-64290730`, 2026-09-01.
+59 symbols analysed, 38 actionable, **zero trades**. Reconstructed from the
+run funnel:
+
+- **30 of 38 actionable signals (79%) scored below the 1.5 R/R floor** and were
+  untradeable before any human judgement applied — including the two
+  highest-conviction calls of the day, SLB `strong_buy/high` at 1.28 and AGX
+  `sell/high` at 0.84.
+- Of the 8 that cleared the floor, **5 were shorts** (NKE 2.28, GEV 2.12, UNH
+  1.90, NEE 1.84, FLNC 1.84). The PM proposed **none** of them and put up two
+  longs instead. Macro had called the day `risk-on / bullish / high`. The market
+  closed the session down. 15 bearish candidates reached
+  `technical_analysis_validated` and every one died at
+  `candidate_not_selected_for_target`.
+- Risk rejected the whole plan naming **XLE only** (constructed R/R 1.18).
+  **CHPX went down with it at R/R 3.03**, comfortably inside the floor, on an
+  unrelated technical thesis in a different sector.
+
+### 10.1 The risk verdict becomes per-trade, judged against the live portfolio
+
+`RiskVerdict.approved` is a single `bool` for the entire plan.
+`RiskModification` can retune a symbol's fields but cannot reject one symbol.
+So one failing leg kills every other leg in the same run.
+
+Change the verdict to carry a per-symbol outcome. A failing trade dies alone.
+
+**Owner's framing, which is sharper than the original and governs the design:**
+*the batch is arbitrary — it is whatever happened to be proposed in one run.
+Judging a trade against its accidental co-passengers makes no sense. Judge it
+against what the account actually holds.* Portfolio-level risk (correlation,
+concentration, total exposure) is a property of the **live book**, not of the
+run.
+
+**Not acceptable as a fix:** detecting the rejection and re-running the plan
+without the failing leg. That asks the wrong question twice instead of the
+right question once, and burns a second paid session to hide a schema defect.
+
+**Note for whoever implements this.** `docs/architecture/DECISION_CHAIN_AUDIT.md`
+records F5's veto hierarchy as *intentionally retained* after external review on
+2026-08-14. This is not a careless gate — it is a reviewed decision now being
+revised on evidence that did not exist then. Read that audit before changing the
+hierarchy, and record the supersession there.
+
+**IMPLEMENTED 2026-09-01** (branch `fix/risk-verdict-per-trade`). `RiskVerdict`
+gains `rejected_symbols` — a list of `{symbol, reason}`. The verdict now has
+four levers, narrowest first:
+
+| lever | scope | fires when |
+|---|---|---|
+| `modifications` | one symbol's fields | the trade is sound, sized or stopped wrong |
+| `rejected_symbols` | one symbol, refused | *that name* fails |
+| `scale_all_buys` | every new BUY/SHORT | the entry side is too big for the regime |
+| `approved: false` | the whole plan | the BOOK is what fails |
+
+Book-level risk still refuses broadly and is evaluated FIRST — correlation
+clusters, total exposure and drawdown state are properties of the account, not
+of one name. **No threshold moved**; this is the granularity of refusal only.
+
+**Fail-closed asymmetry.** A malformed `modification` is dropped. A malformed
+`rejection` is NOT — dropping it would let a symbol the risk manager explicitly
+refused go on to trade. Anything naming no symbol fails the whole verdict
+closed, and a repair reprompt that adds, drops or rewrites a rejection is
+treated as an unauthorized re-decision.
+
+The supersession note required above now lives under F5 in
+`docs/architecture/DECISION_CHAIN_AUDIT.md`.
+
+### 10.2 Macro sets exposure. Macro does not select trades.
+
+`config/prompts/portfolio_manager.md` orders the reasoning chain
+`macro_filter · news_check · earnings_check · signal_conflicts`. Macro is first
+and is named *filter*. For an LLM reading top-to-bottom that is an instruction
+to eliminate before considering, and on 2026-09-01 it did exactly that.
+
+- Technical, news, earnings and smart-money **select** what to trade.
+- Macro **sizes**: it sets total and net exposure, nothing else.
+
+A bullish macro call must not be able to suppress a qualified short. Under this
+split there is no conflict to resolve: a bullish macro keeps the book net long
+while an individual short lives inside that exposure. Macro was never asked
+about the single name.
+
+**Owner's correction, accepted:** *if the weighting is real, position in the
+prompt is irrelevant.* Ordering only matters today because there is no
+weighting — the PM is a language model reading prose. Compute the weighting
+deterministically in Python and hand the PM a ranked, scored list; then no
+analyst can dominate by position. This is the same principle as the
+reward:risk fix below and as PR #202: **the number comes from code, the agent
+brings judgement.**
+
+Macro remains authoritative for its own question — index and sector direction.
+It has little to say about a single name falling for months on company-specific
+news, and must not be allowed to answer that question by default.
+
+### 10.3 Concentration scales size. It does not veto.
+
+Sector crowding currently blocks. It should reduce position size. A
+high-conviction opportunity in an already-heavy sector should still be taken,
+smaller. Same defect as 10.2: a dial wired as a gate.
+
+### 10.4 The reward:risk gate is replaced, not relaxed
+
+**Do NOT simply lower the 1.5 floor.** The floor is not the defect; its inputs
+are.
+
+The stop is already derived in code from measured volatility
+(`min_stop_atr_multiple: 3.0`). The **target is the model's guess**. R/R is then
+`(target − entry) / (entry − stop)` — arithmetic performed on an opinion. A
+correctly-sized wide stop plus a modestly-guessed target rejects automatically,
+which is precisely how a `strong_buy/high` breakout (SLB, 7.7% stop) became
+untradeable.
+
+**Derive the target in code**, from the structural levels the system already
+computes from price history (see Phase 1, `feat/tech-analyst-structural-levels`)
+and the distance the symbol actually travels over the intended holding period.
+Then the ratio measures something real and the floor means what its name says.
+
+**Rejected alternative, and why.** An expected-value gate (win-rate × payoff)
+is the theoretically better answer and was proposed first. The owner rejected
+it for now: it requires a body of closed trades this account does not yet have,
+and it replaces one unmeasured number with another. Revisit under Phase 7 once
+there is real outcome history.
+
+**IMPLEMENTED 2026-09-01** (branch `fix/target-from-structure`), as
+`src/data/levels.py::derive_structural_target`. Find the nearest computed
+structural level in the trade's direction, beyond a `min_target_atr_multiple`
+noise floor, then:
+
+| situation | target |
+|---|---|
+| level exists, within reach | **the level** — price must clear the first ceiling before any further one |
+| level exists, beyond reach | **measured move** — nothing structural bounds the trade |
+| no level, `setup_type == "breakout"` | **measured move** — absence of overhead structure is what "breakout" asserts |
+| no level, any other setup | **REFUSE** — chart and analyst's read disagree |
+| no levels / no ATR / no horizon | **REFUSE**, by name |
+
+Reach and the measured move share one estimate of travel:
+`ATR x sqrt(sessions) x multiple`, from the analyst's own
+`expected_horizon_sessions`. Square-root, not linear — daily ranges accumulate
+as a random walk, so `ATR x N` overstates an N-session excursion by ~`sqrt(N)`.
+Fully symmetric for shorts; a short projection running through zero is refused.
+Six named refusal codes — "no trade" without a reason is what let the original
+defect survive. The model's `reference_target` is retained as EVIDENCE, never
+as arithmetic, and the computed-vs-guessed gap is logged.
+
+**The interaction with `min_stop_atr_multiple` is arithmetic and binding.** A
+stop `k` ATRs out and a target `p x ATR x sqrt(H)` clear a floor `f` only when
+`sqrt(H) >= f*k/p`. At the settings shipped on that branch (k=3.45 for a range
+setup, p=1.0, f=1.5) a measured-move trade needs a stated horizon of **~27
+sessions** and a structural-level trade **~12**. **This is precisely why 12.1
+is required and not optional**: honouring a level-backed stop collapses `k`
+from 3.45 to the measured median 1.7, and the required horizon falls with it.
+10.4 and 12.1 are one fix in two halves — shipping 10.4 alone leaves most
+trades refused on horizon geometry.
+
+**Unverified, and must not be quoted as if measured:** how many of the 38
+signals from 2026-09-01 would now pass. The run's per-symbol levels, ATRs and
+horizons are not available offline. The SLB reproduction in
+`tests/test_target_derivation.py::TestSLB` uses **synthetic** level data.
+
+**Pre-existing defect fixed alongside.** `_widen_stop_past_noise` moved a stop
+to `entry +/- multiple x ATR`, which is unconditionally on the correct side of
+entry — so a short handed a stop BELOW its entry came out with a valid-looking
+stop above it, silently repairing the nonsense the caller's side-check exists
+to catch. It now refuses. The existing test passed only because its fixture
+carried no ATR, which is not a state production reaches.
+
+### Ordering
+
+10.1 and 10.3 are contained schema/sizing changes. 10.2 requires the
+deterministic analyst-weighting layer and is the largest. 10.4 depends on
+Phase 1's structural levels being trustworthy. **Nothing here relaxes a risk
+limit** — every change converts a blunt refusal into a proportionate response,
+and the portfolio-level ceilings are untouched.
+
+---
+
+## Phase 11 — Fractional sizing and bounded margin (owner-ratified 2026-09-01)
+
+**Status: ratified by Rex on 2026-09-01. 11.1 NOT implemented. 11.2's gross
+cap, de-levering ladder and liquidation guard IMPLEMENTED 2026-09-01 — see
+the note at the end of 11.2. `allow_margin` remains `false`.**
+Two decisions taken together because they both change how a position is
+sized, and shipping one without the other changes the risk profile in a way
+neither decision intended. The required ordering is therefore satisfied: the
+ceiling exists before borrowing is switched on, and before fractional sizing
+removes the whole-share friction that has been accidentally holding
+deployment down.
+
+### 11.1 Fractional shares are ON — the 2026-08-27 decision is reversed
+
+**What the earlier decision said.** Fractional stays off because Alpaca
+supports fractional for simple orders but not combined with bracket/OCO, and
+QAMC attaches the protective stop as an OTO bracket at entry (invariant 3:
+every position carries a broker-resident stop from the moment it opens).
+Going fractional means placing the stop as a separate order after the fill —
+a window where a position exists unprotected.
+
+**Why it was wrong, in the owner's words: "if the gap is brief upon entry,
+then it's irrelevant to eliminate that option."** He is right, and the
+original reasoning conflated two different risks. A second or two of exposure
+on a liquid name is negligible. The real risk is the stop order **never
+landing at all** — an API error, a rate limit, the process dying between the
+two steps — and that is not a brief gap, it is an indefinite one.
+
+**That failure is already covered.** The intra-session stop-coverage
+reconcile runs every 30 minutes and reports e.g. "all 5 long / 0 short
+position(s) adequately stop-covered". So the true worst case is bounded at
+one reconcile interval, and only when placement failed outright. The
+machinery for attaching a stop to an already-landed fill also exists —
+`place_entry_protection(superseded_filled_qty=...)`, built for the re-peg
+case where a fill lands under a superseded order id.
+
+**Verified live 2026-09-01, not inherited from the note:** the paper account
+returns `fractionable=true` for MSFT, SPY and BRK.B.
+
+**Required before this ships — all three, none optional:**
+1. Stop placement retries immediately and hard on failure.
+2. A stop that still fails alerts the OWNER, not a log line.
+3. The 30-minute sweep gains an explicit check for positions with NO stop at
+   all, distinct from the existing "stop is present but mis-sized" path.
+
+**What it buys.** Exact sizing. Whole-share rounding is a silent, constant
+tax: V wanted 6% of the book and got 3.84%.
+
+**`BRK-B` — CLAIM WEAKENED 2026-09-01, do not treat as established.** I
+verified only that a DIRECT call to `/v2/assets/BRK-B` returns `asset not
+found`, and `/v2/assets/BRK.B` resolves. I then wrote "it fails on every run"
+into this spec and into memory. **That does not follow.** A later session
+pointed out the code has carried a symbol translator since 2026-08-25 that
+rewrites this ticker at the broker boundary, with tests pinning it. So either
+something bypasses that translator on the path that produced the logged error,
+or the every-run claim was never true. **Unproven in both directions — trace it
+before acting.** Recording the overclaim rather than quietly correcting it,
+because it is exactly the failure mode this project keeps hitting: a single
+verified fact generalised into a standing one.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-ab445cf7c4b9aa358`).
+Fractional sizing exists for the first time — it was implemented nowhere, on
+any branch, before this. **No risk threshold or limit moved.**
+
+**The switch: `execution.fractional_enabled`, default `true`**, with
+`execution.fractional_share_decimals` (default 4) setting the resolution. The
+share count is FLOORED to that many places, never rounded up: rounding up
+would spend more risk budget than the sizing math allowed, and a budget that
+can be exceeded is not a budget.
+
+**Eligibility fails closed, twice over.** The flag says what the desk wants;
+only `AlpacaBroker.get_fractionability` — the same asset-directory lookup and
+the same per-run cache `get_shortability` already uses — says what the broker
+will accept. `fractionable` absent, unreadable, or the lookup raising all
+mean **whole shares**. A SHORT is always whole-share and the broker is not
+even asked: a borrowed share cannot be fractional.
+
+**The premise that made the 2026-08-27 objection moot, and it is worth
+stating because it changes the argument.** The protective stop has NOT been
+an OTO bracket leg since the 2026-07-16 audit — an OTO child inherits the
+parent's DAY tif and Alpaca expired it at 16:00 ET, leaving positions naked
+overnight. It has been a separate GTC order placed after the fill ever since.
+**So the fill→stop window fractional was said to introduce already existed on
+every entry this desk has ever placed.** The reversal did not accept a new
+risk; it noticed an old one and put guards on it.
+
+**Guard 1 — retries, immediately and hard.**
+`_submit_protective_stop_retrying` in `src/execution/broker.py`: **three
+attempts over ~2 seconds** (0.5s then 1.5s), inside the same call, at the
+point of failure. Three because every failure worth retrying is transient (a
+429, a 5xx, a dropped connection) and clears in under a second, while a
+failure that survives three attempts is a rejection that retrying will never
+fix. ~2 seconds because the owner's own standard is that the gap is *brief* —
+a retry loop long enough to matter becomes the exposure it was added to
+close, and escalating to a human beats a fourth doomed attempt.
+
+**Guard 2 — the owner is alerted, not the log.** `notifier.send_owner_alert`
+raises it out-of-band the moment it happens, mirroring `src/cost_circuit.py`'s
+established escalation shape (log CRITICAL first so a Telegram outage cannot
+hide it, then send, never raise). The end-of-session message was the wrong
+vehicle: an `intra_check` tick sends nothing unless it liquidates, and a
+session that crashes after the failure sends nothing at all. It fires on a
+stop that never landed and on a stop that covers fewer shares than are held —
+and deliberately **not** on an entry that filled zero, which produces the same
+`None` and is a non-event. Waking a human for a BUY that did not fill is how
+a guard gets switched off.
+
+**Guard 3 — NO STOP AT ALL is now a separate condition from MIS-SIZED.**
+`_reconcile_stop_coverage` stamps `coverage: none | partial`, logs the first
+at CRITICAL in those words, and both Telegram formatters render two banners
+instead of one merged count. Only `none` escalates to the owner; a mis-sized
+stop rides the session banner, because alerting on both is how a channel gets
+tuned out. Two defects were found and fixed alongside it: the 30-minute
+sweep **discarded** the reconciler's return value, so the tightest-cadence
+caller was the one whose findings never reached the operator at all; and an
+`intra_check` tick is silent by policy, so a gap found at 12:30 went to a log
+file and nowhere else. The tick now breaks its own silence when, and only
+when, the sweep found a gap.
+
+**OPEN QUESTION, NOT SETTLED — and the reason the flag exists.** Whether
+Alpaca accepts a **fractional-qty GTC stop-limit** is unverified. The
+alpaca-py request docstrings say fractional quantities are for market orders
+only; that was not confirmed against the live paper account, and no order was
+submitted to find out. If it is false, every fractional entry would leave a
+sub-share remainder the broker refuses to stop. **Contained, not ignored:**
+when the exact quantity is refused through all retries, the stop is re-placed
+for `floor(qty)` — covering 12 of 12.3456 shares beats covering none — and
+the remainder is reported to the owner with `uncovered_qty`. **Settle this
+empirically on the paper account before trusting fractional in production.**
+If it resolves badly, set `execution.fractional_enabled: false`; that is what
+the switch is for.
+
+### 11.2 Margin is ON, capped at 2.0x gross exposure
+
+### 11.2 Margin is ON, capped at 2.0x gross exposure — IMPLEMENTED (the cap, the ladder and the liquidation guard)
+
+**Owner ratified 1.5x, then raised it to 2.0x on 2026-09-01**, against my
+recommendation to defer. His reasoning, recorded because it is the reason the
+higher number is acceptable: it is a PAPER account, leverage amplifies gains as
+well as losses, and there are lessons to be learned that cannot be learned at
+1x. **The 2.0x figure is therefore a deliberate learning setting on paper, NOT
+a number to carry into live capital unexamined** — see
+[[qamc-live-capital-checklist]] and re-derive it before real money.
+My argument was that the desk is 78% cash and refusing to deploy, so leverage
+raises the stakes on the few trades it does take rather than producing more
+of them. He considered it and decided; recorded here so the disagreement is
+visible rather than silently dropped, and so that if 11.2 is later reversed,
+the reason it was tried is legible.
+
+**The account already permits this.** Alpaca reports `multiplier: 4`,
+`buying_power` ~$28.2k against ~$9.88k equity. Margin is not being switched
+on — it is being BOUNDED for the first time.
+
+**This is the part that matters: there is currently NO gross-exposure cap in
+the codebase.** `max_portfolio_risk_pct: 25` bounds AT-RISK capital (the sum
+of stop distances), not gross exposure. Nothing today stops the book reaching
+4x; it sits at 21.7% invested purely by the PM's own choice. **So 11.2 adds a
+ceiling where none existed. Implementing it is a tightening, not a
+loosening** — and shipping fractional sizing (11.1) without it would remove
+the whole-share friction that has been accidentally holding deployment down.
+
+**The rule:**
+- Gross exposure (long market value + absolute short market value) may not
+  exceed **2.0x equity**. Enforced deterministically in Python at the sizing
+  and execution gates, not by asking an agent to respect it.
+- **The cash-park does not count as exposure.** SGOV is parked cash, not a
+  position; counting it would consume the entire allowance doing nothing.
+- Never draw on the 4x intraday allowance — it forces a flat close.
+- **2.0x applies overnight too.** No separate intraday ceiling; see the
+  de-levering ladder below for where the cushion actually comes from.
+
+**Two exposures the current risk envelope does not model, and must before
+this is trusted:**
+1. **Overnight gap.** Stops protect intraday. They do not protect against an
+   open 15% lower, and levered that gap comes out of a thinner cushion. A
+   separate, tighter ceiling on overnight gross exposure is required.
+
+   **2.0x is the standing cap, day AND night. There is no lower overnight
+   ceiling, deliberately.** An intraday-only allowance would force a trim into
+   every close — selling on a clock rather than on merit, dumping whatever is
+   easiest to sell rather than whatever deserves to go. That is a worse risk
+   than the one it removes, and it is doubly pointless here because QAMC holds
+   for days: it would almost never USE an intraday-only allowance, so the
+   overnight number was always the real number. Owner's decision, 2026-09-01:
+   *"I want to go 2x, so you just have to adjust at the 2x to give me enough
+   cushion so we don't have forced selling. And 2x is the actual number then."*
+
+   **The arithmetic.** At 2.0x — equity ~$9,825, gross ~$19,650, borrowed
+   ~$9,825, ~25% maintenance — positions must fall **~33%** before forced
+   liquidation. (At 1.5x it was ~55%.) A 33% drawdown is a bad quarter, not an
+   impossibility, so the cushion cannot be left to chance.
+
+   **The cushion comes from de-levering on drawdown, not from a lower cap.**
+   The ceiling scales DOWN automatically as losses accumulate, so the 33%
+   threshold is never approached, let alone tested:
+
+   | peak-to-trough drawdown | gross exposure ceiling |
+   | --- | --- |
+   | 0% to -8% | 2.0x |
+   | -8% to -15% | 1.5x |
+   | -15% to -20% | 1.0x |
+   | worse than -20% | 0.5x, and alert the owner |
+
+   Enforced deterministically in Python, never as an instruction to an agent.
+   De-levering REDUCES rather than liquidates — it blocks new exposure first
+   and trims only if still over ceiling after that, so a drawdown does not
+   trigger the panic-selling it exists to prevent. A drawdown-scaling mechanism
+   already exists (`src/risk/rules.py::apply_drawdown_scale`); wire the ceiling
+   to it rather than building a second one.
+
+   **Distance-to-forced-liquidation is monitored and reported** in the morning
+   alert and on the dashboard, as a percentage the book could fall before the
+   broker sells. At 2.0x undrawn that reads ~33%.
+
+   **Margin interest is charged ONLY on the end-of-day (overnight) debit
+   balance** — Alpaca's live rate is 6.25% non-elite, 4.75% elite, computed as
+   `(overnight debit balance x rate) / 360`. Intraday leverage is FREE. That
+   is a live design lever, not a footnote: a desk that runs leveraged intraday
+   and trims into the close pays nothing and carries no overnight gap risk.
+   At a sustained 2.0x the cost is ~$1.71/day, ~$614/yr, **6.25% of equity that
+   the book must out-earn before leverage contributes a cent.** Holding 2.0x
+   overnight rather than trimming into the close is what makes that cost real
+   — it is the accepted price of not force-selling on a clock, and the owner
+   accepted it explicitly on the basis that the desk should be clearing well
+   above 7% for the project to be worth doing at all.
+
+   **Paper does NOT simulate short borrow fees** — Alpaca's own paper-trading
+   comparison lists them as "Coming Soon". Whether paper simulates MARGIN
+   INTEREST is not documented either way; secondary sources say it does not,
+   and Alpaca's docs neither confirm nor deny. **Settle this empirically on the
+   first night a debit balance is carried** — the charge either appears in the
+   account's INT activities or it does not. Until then, report it as a clearly
+   labelled ESTIMATE so paper trading does not teach the lesson with its
+   largest recurring cost silently removed.
+
+   **Margin interest tracker IMPLEMENTED 2026-09-01**, in
+   `src/margin_interest.py` — this piece only; the gross-exposure cap
+   and de-levering ladder above remain unbuilt. `overnight_debit_balance()`
+   takes ONLY an end-of-day cash figure as its argument (no intraday
+   variant exists), so intraday leverage with a flat close is zero interest
+   by construction, not by convention — the design lever the owner's
+   reasoning depends on is pinned in the function signature, not left to a
+   caller's discipline. Formula `(debit x rate) / 360` at `risk.
+   margin_interest_rate_pct` (config default 6.25, so a rate change needs
+   no deploy); reproduces the spec's own $9,839-equity example exactly
+   ($1.71/day, $614.94/yr). Every rendering carries `ESTIMATE_LABEL`
+   verbatim — the dataclass field itself, not just the formatted string, so
+   a consumer cannot drop the framing by reformatting. Surfaces on the
+   morning Telegram alert only (silent, zero broker calls, whenever
+   `allow_margin` is `False` — today's actual state) and on `GET /account`'s
+   new `margin_interest` field (`src/api/schemas.py`,
+   `src/api/broker_reads.py::read_margin_interest`) alongside the existing
+   `risk_limits`/`liquidity` figures. The open empirical question is read
+   via a new broker method, `AlpacaBroker.get_margin_interest_activities()`
+   (Alpaca's `/v2/account/activities/INT`, via the SDK's untyped REST
+   passthrough — alpaca-py 0.44.0 has no typed wrapper for this endpoint),
+   compared against the estimate by `compare_estimate_to_broker_activity()`.
+   It does not pre-judge the answer: no `INT` rows reports "not confirmed",
+   not "confirmed absent". **Still unobserved** — `allow_margin` has not
+   been flipped on, so no night has yet carried a real debit balance to
+   check this against.
+
+   **Verified 2026-09-01, one defect found and fixed.** Both wrappers
+   (`read_margin_interest` and the Telegram `_margin_interest_lines`)
+   originally fast-exited to "nothing to report" whenever `allow_margin`
+   was `False`, without ever looking at `cash` — reasoning that cash-only
+   keeps cash non-negative. It does not, in general: `cash_only` hard-
+   blocks a plain BUY, but D10 deliberately exempts COVER from it, and the
+   PM's own DE-LEVER MANDATE already treats "cash negative, `allow_margin`
+   False" as a real state a session can reach. That gate could have
+   silently under-reported exactly the debit balance this tracker exists
+   to catch. Fixed to key off `cash` alone, matching
+   `overnight_debit_balance()`'s own contract; regression tests added
+   (`tests/test_margin_interest.py`, §6-7). Formula and $9,839-example
+   reproduction independently re-derived by hand, not just re-read from
+   the module's own tests — both match. Two spec items above remain
+   short of "done": the estimate is a live read-time snapshot, not
+   accrued daily into storage and reported cumulatively; and it reaches
+   the Telegram alert and `GET /account` only — no dashboard UI panel
+   renders `margin_interest` yet (the frontend's `AccountResponse` type in
+   `frontend/src/api/client.ts` doesn't declare the field). See
+   `docs/WORK.md`'s margin-interest status note for the fuller account.
+2. **Forced liquidation.** Below maintenance margin the broker sells, at the
+   worst moment, without asking. Nothing currently watches the distance to
+   that threshold or alerts on it.
+
+**CORRECTION APPLIED 2026-09-01 during the Phase 12 integration.** The golden
+PM prompt on `feat/golden-pm-prompt` was written as though 11.2 had shipped: it
+told the Portfolio Manager that gross exposure up to **2.0x** was permitted and
+that "the engine de-levers automatically as drawdown deepens". Neither is true.
+`allow_margin` is `false`, `src/pipeline.py` force-delevers on any cash deficit,
+and `apply_drawdown_scale` is a flat 0.5x halving on a binary `in_drawdown`
+flag — not the graduated 2.0/1.5/1.0/0.5 ladder the prompt described as already
+enforced. A prompt that promises capability the deterministic engine does not
+have is the same class of defect as Phase 10's: the agent proposes a book the
+engine then refuses.
+
+The prompt's exposure table and guardrail line were therefore corrected to the
+**1.0x cash-only reality**, keeping the golden rewrite's structure. **This is a
+correction to a description, not a reversal of the owner's 2.0x decision** —
+11.2 remains ratified and unbuilt. When it ships, the prompt's exposure table,
+its guardrail line and rule-priority rows 6 and 9 are what change back.
+
+**Sequencing.** 11.2's gross cap and both gap/liquidation guards land BEFORE
+or WITH 11.1. Fractional sizing plus no gross cap is the one ordering that is
+worse than either change alone.
+
+**IMPLEMENTED 2026-09-01** (the gross cap, the ladder and the liquidation
+guard — *not* 11.1, and *not* the margin-interest tracker, which is separate
+work). `allow_margin` is deliberately still `false`: the ceiling is built
+BEFORE borrowing is enabled, which is the whole sequencing requirement.
+
+**The ceiling.** `risk.max_gross_exposure_x: 2.0`. Gross = long market value
++ absolute short market value, leverage-adjusted, with the cash park
+(`cash_sweep.symbol`) excluded — one measurement, `src/risk/rules.py::
+gross_exposure`, and every consumer calls it. Enforced at BOTH gates, in
+Python, never as an instruction to an agent:
+
+| gate | where | what it does |
+|---|---|---|
+| sizing | `PortfolioConstructor.construct_orders` | shrinks entries to fit; refuses one whose remnant is under `min_order_usd` |
+| execution | `RiskRuleEngine.check` → `max_gross_exposure` (in `HARD_BLOCK_RULES`) | hard-blocks anything that reached the engine without that sizing |
+
+Distinct from `max_total_position_pct`, which bounds NET exposure — a hedge
+cancels a long there and does not here — and from `max_gross_bearish_pct`,
+which bounds only the bearish side. **No previous ceiling answered "how much
+does the book own", which is the question a margin call asks.**
+
+**The ladder** is `resolve_gross_ceiling(drawdown_pct, base_x)` — a PURE
+FUNCTION of peak-to-trough drawdown and the configured cap, returning the
+ratified 2.0/1.5/1.0/0.5 rungs. It can only ever TIGHTEN the configured cap,
+so lowering the setting lowers every rung. **Ties resolve to the tighter
+rung** (exactly -8.00% is 1.5x, not 2.0x); an UNKNOWN drawdown resolves to
+the standing cap and trims nothing, because a fresh account with no equity
+history has not fallen.
+
+**Block first, trim second — enforced structurally, not by convention.**
+`apply_gross_ceiling` counts planned exits, then rations new entries against
+the remaining headroom, and only then tests whether the HELD book ALONE is
+still over. Proposed exposure is not an input to that last test, so the
+engine cannot sell what the desk owns to make room for what it does not.
+
+**Nothing in the ladder depends on the Portfolio Manager.** The ceiling is
+resolved from account state in the run preamble
+(`TradingPipeline._enforce_gross_ceiling`), before any agent is called, and
+the de-lever is engine-authored. A blank or mid-JSON-truncated PM response —
+measured at 1 run in 10 on one candidate model — is a no-trade session, and
+must never also be a no-de-lever session.
+
+**Wired to `apply_drawdown_scale`, not duplicated.** That function keeps its
+ratified flat 0.5x halving of new BUYs on the rolling 5d/20d `in_drawdown`
+flag, unchanged in threshold or magnitude, and now takes the resolved ceiling
+so its note NAMES the rung in force. The two drawdown measures are
+deliberately distinct and documented as such: "has our recent edge degraded,
+so halve new BUYs" is not the same question as "how far are we off the
+high-water mark, so how much may the book own".
+
+**Distance-to-forced-liquidation** is computed by
+`distance_to_forced_liquidation_pct` from the maintenance requirement
+(`risk.maintenance_margin_pct: 25`) and reproduces this section's two
+published figures rather than restating them: 33.3% at 2.0x, 55.6% at 1.5x.
+It is on the session alert. It is deliberately NOT on `/account`: `src/api/`
+is forbidden by a ratified structural guardrail
+(`tests/test_api_safety.py::test_api_source_files_never_import_pipeline_or_risk`)
+from importing `src.risk.*` at all, and re-implementing the arithmetic in the
+API layer was rejected — a second definition of "how much does the book own"
+is the sprawl §12.2 cleaned up. `/account` reports the standing cap only
+(`RiskLimits.max_gross_exposure_x`). Putting the live ladder state on the
+dashboard needs the pure measurement functions moved out of `src.risk` first;
+that is not done and is the one piece of §11.2 left open.
+
+**The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (54 tests)
+asserts the ceiling CHANGES on both sides of all four thresholds, that new
+exposure is blocked before anything is trimmed, that the ladder is applied
+exactly once — per call AND across the sizing-gate/execution-gate chain, with
+trimming structurally restricted to a single caller — and that a blank-PM
+session in drawdown still de-levers. Every property was re-verified by
+mutating the implementation and confirming the tests fail: a constant ladder
+fails 23 of them, a trim-to-make-room ordering fails 4, a compounding
+multiplier fails 1, and a PM-coupled de-lever fails 5 (including the two
+named blank-PM tests). The session alert that renders the rung is pinned too
+— it is the only place a human sees the ladder, now that the dashboard
+cannot.
+
+**Mutation figures, re-measured 2026-09-01** (the numbers in the paragraph
+above were the first pass and understate three of the four; these are the
+ones actually reproduced, each mutation applied to `src/risk/rules.py` and
+reverted):
+
+| mutation | tests failed |
+|---|---|
+| the ladder never steps (rung loop disabled) | 24 of 54 |
+| trim-to-make-room (entries never rationed, trims judged on the *projected* book) | 6 |
+| the rung applied as a compounding multiplier on order size | 2 |
+| the de-lever suppressed when the PM proposed nothing | 5 |
+
+One negative result is worth recording, because it looks like a test hole and
+is not: changing *only* `over` in step 3 from `held_gross_after_exits` to
+`projected_gross` fails nothing. It cannot — step 2 has already capped
+`granted` at the headroom, so `projected_gross` can never exceed the ceiling
+unless the held book alone already does, in which case the two expressions
+are equal. Block-before-trim is enforced by the *sequence*, not by that
+subtraction, and a real trim-to-make-room defect (the row above) is caught 6
+ways.
+
+**Not done here, deliberately:** 11.1 (fractional shares), the margin-
+interest tracker, and flipping `allow_margin`.
+
+**Neither part ships without a rehearsal-rig run** — see the session-start
+rule in `docs/WORK.md`. This changes sizing and execution, which is exactly
+the class the rig exists for.
+
+---
+
+## Phase 12 — Owner decisions ratified 2026-09-01 (end of session)
+
+Four decisions, taken by Rex on 2026-09-01 after the desk placed zero trades.
+**All ratified, none implemented.** Together they are what unblocks trading.
+
+### 12.1 A stop that sits at a verified structural level is honoured, however tight
+
+`min_stop_atr_multiple` (3.0) currently OVERWRITES the level-derived stop
+whenever the level sits closer, after which the stop is not at anything real —
+and `min_reward_risk_after_widening` (1.5) is judged against that fabricated
+number.
+
+**New rule: if the stop sits at a VERIFIED structural level, use it regardless
+of ATR distance. Apply the ATR floor ONLY when no level backs the stop.**
+
+Why this is safe: `config/prompts/tech_analyst.md` already carries a hard floor
+— "never place the stop inside 1*ATR of entry ... a guaranteed whipsaw, not
+protection". A genuine noise-band stop cannot reach the constructor, so the
+case the 3.0 floor was built for is already handled upstream.
+
+Why it is necessary: measured 2026-08-27 and quoted in that same prompt, this
+book's stops sat at a median **1.7x ATR** — above the 1x guard, i.e. legitimate
+structural stops being inflated ~76%. Over a ~15-session hold a stock travels
+~3.9 ATR, so against a 3.0 ATR stop the best achievable ratio is ~1.29 against
+a 1.5 floor: **no trade can pass.** Proof: SLB on 2026-09-01, `strong_buy`/
+`high`, R/R 1.28 against a geometric maximum of 1.29. At 1.7x ATR the same hold
+yields ~2.3 and clears comfortably.
+
+**Explicitly rejected: tuning 3.0 -> 2.0.** It keeps a floor that cannot
+distinguish a level-backed tight stop from an arbitrary one.
+
+**A level must be VERIFIED to earn this** — it comes from `src/data/levels.py`,
+not from the model asserting one. A stop the analyst simply placed close, with
+no level under it, still gets the floor.
+
+**IMPLEMENTED 2026-09-01** (branch `feat/level-backed-stops`), in
+`PortfolioConstructor._widen_stop_past_noise`. The stop rule now has three
+outcomes instead of one, each logged by name:
+
+| the stop | what happens | reward:risk is measured against |
+|---|---|---|
+| at a computed level, ≥ 1x ATR out | **honoured exactly as placed** | the honoured stop |
+| at a computed level, < 1x ATR out | widened to **1x ATR** — never to the band | the 1x ATR stop |
+| not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
+
+**Neither threshold moved.** `min_stop_atr_multiple` is still 3.0 and
+`min_reward_risk_after_widening` is still 1.5. This changes WHICH stop the
+arithmetic is performed on, nothing else — a level-backed trade whose real
+geometry still fails 1.5 is still refused, by a distinctly named code.
+
+**No second data path was built.** §10.4 had already established
+`TechAnalysisResult.computed_levels` — every level `find_structural_levels`
+found, supports and resistances unioned, set in Python by `TechAnalystAgent`
+after the model's response is parsed. That field is what "verified" means
+here, and it is reused rather than duplicated. Its side is re-partitioned
+against the trade's ENTRY, not against the last close, for exactly the reason
+`derive_structural_target` already does so: a ceiling price has broken through
+is a floor, and the entry can sit on the other side of a level from the close.
+
+**The model cannot write the field, and that is now pinned by tests.**
+`computed_levels` appears nowhere in `config/prompts/tech_analyst.md`, and the
+parse path overwrites it unconditionally with what the bars actually produced —
+so a model that emits one anyway has it discarded, including down to an empty
+list when the history is too short to yield levels. Without that, a model could
+assert a level beside its own stop and buy itself an exemption from the noise
+floor, and the verification would be worthless.
+
+**Matching tolerance: `risk.level_match_atr_tolerance`, default 0.25 ATR.**
+ATR-relative rather than a percentage, because "did the analyst place this stop
+AT that level" is a question about the name's own price noise — a flat
+percentage is far too tight on a 9%-ATR small cap and far too loose on a
+1.5%-ATR utility, so the same number would mean two different things. A
+computed level is also a *zone* (`find_structural_levels` clusters pivots
+within 1% into one), so the tolerance must be at least that wide.
+
+**No strength or touches threshold was added on top.**
+`find_structural_levels` already filters: at least 2 touches (`MIN_TOUCHES` —
+"a level touched once is a coincidence, not structure"), within 40% of the last
+close, recency-weighted and distance-penalised, and capped at the 6 strongest
+per side. Stacking a second threshold here would be an unratified risk decision.
+
+### 12.1a The 1x ATR floor — an addition beyond the ratified wording
+
+**Flagged for reversal if the owner disagrees.** §12.1 above argues the
+exemption is safe because `config/prompts/tech_analyst.md` already forbids a
+stop inside 1*ATR of entry. That argument rests on a **prompt** — an
+instruction to a language model — while Invariant 2 of this spec requires
+deterministic Python protections to be the final authority and to fail closed.
+A prompt is not a deterministic guarantee, and the whole point of §12.1 is that
+a tight stop now ships unaltered.
+
+The case that forced this: a genuine support level sitting 0.2 ATR under entry
+is real structure *and* a guaranteed whipsaw. Both are true at once, and
+honouring it would hand the broker a stop that fires on the first ordinary
+tick.
+
+So the implementation adds `risk.absolute_min_stop_atr_multiple` (default 1.0):
+a level-backed stop is honoured however tight **down to 1x ATR**, and inside
+that it is widened to exactly 1x ATR — **not** to the 3.0x band, which is the
+behaviour §12.1 removes. Setting it to 0 restores the ratified wording
+literally, and a test pins that.
+
+**The prompt was corrected, not left to contradict the code.**
+`config/prompts/tech_analyst.md` previously told the analyst that a 3.0x ATR
+floor would widen its stop and could reject the trade on reward:risk. That is
+no longer true and was actively misleading — it taught the model to pad stops
+to survive a floor that no longer applies to a level-backed stop. It now
+describes the three-outcome rule above, tells the analyst to anchor the stop to
+the computed "Structural levels" block it is already shown, and states plainly
+that naming a price in `support_levels` does not make it a verified level.
+
+**Unverified, and must not be quoted as if measured:** how many of the 38
+signals from 2026-09-01 would now pass. That run's per-symbol levels, ATRs and
+horizons are not available offline. The SLB reproduction in
+`tests/test_risk_based_sizing.py::TestSLBStopIsHonoured` uses **synthetic**
+level data, exactly as §10.4's does, and pins the arithmetic to the same
+back-solved ATR so the two reproductions agree: R/R 1.28 against the band stop
+(refused, as it was on the day), 2.59 against the honoured stop at the measured
+1.7x ATR median.
+
+### 12.2 Sector exposure is measured with separate long and short budgets
+
+Today the engine sums sector exposure using SIGNED `market_value`, so a held
+short makes its sector look SMALLER and the book can over-concentrate unseen.
+The code comment above it says "gross ... unsigned"; code and comment disagree.
+
+**New rule: track long sector exposure and short sector exposure
+independently, each against its own limit.** Neither offsets the other.
+
+Owner's reasoning, which governs: *"A long and a short in the same sector is
+not a hedge... We are trading opportunities."* Gross summing was rejected
+because it would block a legitimate pair trade — long the leader, short the
+laggard in the same hot sector.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-aa9554aa2b76e1b3f`).
+Exposure is keyed by `(sector, side)` and summed as an UNSIGNED magnitude.
+`side` is the POSITION SIDE (long vs short), not the bullish/bearish thesis —
+an inverse-ETF LONG is long-side exposure in its sector, and the separate
+`max_gross_bearish_pct` cap answers the directional question. Both sides are
+measured against the SAME `max_sector_pct`; no second config key was added.
+
+**Reconnaissance found THREE implementations of "how much is this sector
+holding", and a fourth.** All four had the same signed bug and all four now
+call one definition — `src/risk/rules.py::sector_side_gross` /
+`sector_side_weights`:
+
+| # | site | what it drives | what changed |
+|---|---|---|---|
+| a | `RiskRuleEngine.check` | the enforcement gate | signed sum → `(sector, side)` unsigned; the lying "gross ... unsigned" comment is now true |
+| b | `PMFacts.sector_weights` | what the PM reads | **deliberate reversal** — `sector_weights_long` / `sector_weights_short`, rendered as two lists and never netted |
+| c | `_build_projected_portfolio` | the pre-decision preview | signed sum → side-split; its hardcoded overweight threshold of `35` now reads `risk.max_sector_pct` |
+| d | `PortfolioConstructor._current_sector_weights` | order sizing | a FOURTH site, found during the build; its §10.3 docstring had explicitly deferred this fix ("not this change's business"). Left alone it would have sized orders against a different book than the gate measures |
+
+Both in-batch accumulators are keyed `(sector, side)` for the same reason — a
+pending SHORT must not consume the next BUY's sector budget:
+`pending_sector_investment` in the pipeline's risk filter, and
+`PortfolioConstructor._accrue_sector` in the sizing loop.
+
+**(b) is a reversal of a previously deliberate decision.**
+`tests/test_shorts_countable.py` pinned NETTING as intended (long 15% + short
+-5% in Technology → one 10% line). It now pins the opposite, and its docstring
+records why. The reason is not taste: the gate enforces per side, so a netted
+PM table showed the Portfolio Manager a *smaller* number than the engine
+refuses on — the same PM-sees-one-thing / engine-enforces-another defect class
+as Phase 10.
+
+**The threshold in (c) was wired to config rather than replaced with a fourth
+number.** It warns at `max_sector_pct` itself, not at some band below it: at or
+under the target, crowding costs a trade nothing (`sector_size_scale` returns
+1.0), so there is nothing actionable to say; above it every further trade in
+that sector is shrunk, which is exactly what the PM needs to know before it
+writes decisions.
+
+**Explicitly NOT changed here, and it was a real exposure.** A held position
+whose sector resolves to `"Unknown"` contributed to no sector bucket, and an
+incoming `"Unknown"` symbol was cap-exempt entirely. **80 of the 101 universe
+symbols depend on a live yfinance `.info` lookup with no static fallback**
+(the other 21 are ETFs covered by `_ETF_SECTORS` / `_INDEX_ETFS` in
+`src/execution/broker.py`). `_get_sector` deliberately does not cache
+`"Unknown"`, so an outage does not permanently exempt a symbol — but for the
+duration of the outage the sector cap was OFF for any of those 80. Reported,
+not fixed, under this task's scope.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-af17eb92755512448`,
+same night — this was the gate the 75%/90%/margin-2.0x combination above was
+shipping behind). `RiskRuleEngine.check` rule 5 now calls
+`sector_side_gross(positions, include_unknown=True)` and no longer skips the
+block when `_get_sector` returns `"Unknown"`; `accumulate_pending_sector`
+pools it the same way for the in-batch accumulator. "Unknown" is treated as
+its own `(sector, side)` bucket, checked against the same soft target / hard
+ceiling as any real sector — conservative, not exempt — so a held or
+incoming unresolved-sector position no longer disappears from exposure or
+skips the cap. Deliberately narrow: `PortfolioConstructor`'s sizing pass
+(`_apply_sector_dial`, site (d) above) still does not pre-shrink for
+`"Unknown"` — that is unrelated, out of scope here, and safe left alone
+because the gate's hard wall is what actually enforces the ceiling
+regardless of whether sizing pre-shrank the order. A resolution failure now
+also raises a `sector_unresolved_lookup_failed` / `sector_unresolved_no_sector`
+advisory (distinguishing a transient lookup miss from a symbol that
+genuinely has no sector) that reaches the Risk Manager via `rule_violations`
+and surfaces as `data_status["sector"]` — the same "degraded" line the news
+and macro feeds already use in the session output and the owner's Telegram
+alert. No offline sector table was built for the 80 uncovered names — see
+`docs/INCIDENT_HISTORY.md` (2026-09-01, "a network blip could silently
+switch off the sector concentration cap") for why that was judged out of
+scope. Pinned by `tests/test_sector_cap_unresolved.py`.
+
+**Independently verified 2026-09-01** against the real production config
+(`max_sector_pct` 75 / `max_sector_hard_pct` 90, not a test sandbox number),
+in `tests/test_sector_cap_unresolved_independent_verification.py` — a
+separately-authored suite that does not import the fixtures above, to avoid
+rubber-stamping a bug shared between the fix and its own tests. Confirms:
+a pooled-Unknown book past the 90% ceiling is REFUSED, not merely logged; a
+small isolated unresolved order well under the ceiling is warned but not
+refused (same treatment a real sector gets at that size); the long/short
+split (§12.2) applies to the Unknown pool exactly as it does to a real
+sector, so an unresolved SHORT is judged against its own empty budget, not
+an unrelated 85%-full unresolved LONG pool; and a broad-market index ETF
+(SPY) resolves deterministically to `"Broad"` via the pre-existing
+`_INDEX_ETFS` table and never enters the unresolved-sector path at all —
+cash-park buys (SGOV/BIL) go further and never reach `RiskRuleEngine.check`
+in the first place (`CashSweeper.split_positions` removes the parked
+vehicle from `positions` before the sector block runs; `park_excess` calls
+only `check_daily_loss`), so neither is at risk of the new hard block
+freezing them.
+
+**Pinned by tests**, in `tests/test_sector_dial.py` unless noted: a held short
+no longer shrinks its sector's measured long exposure; each side is measured
+independently; a pending short does not consume the long budget; the pair
+trade is legal at both the constructor and the gate; an inverse-ETF long is
+long-side; and one test holds a single book against the gate, the constructor,
+`PMFacts` and the projection at once — three implementations drifting apart is
+how this defect survived.
+
+### 12.3 The sector limit rises from 40% to 75%
+
+Owner chose 75% over the recommended 60%. The 40% figure is a
+retirement-portfolio number and does not survive `docs/OUTCOME.md`'s
+trading-desk framing: diversification is not a goal here.
+
+**A sector limit's only remaining job is bounding correlated blow-up risk** —
+several positions dying in one shock. 75% keeps that bound while permitting
+genuine concentration in a hot sector.
+
+**State the consequence honestly rather than burying it:** at 75% in one
+sector, an ordinary 20% sector drawdown costs 15% of equity — five times the 3%
+daily-loss breaker, and it will trip the Phase 11.2 de-levering ladder. That is
+the accepted cost of a concentrated trading desk, not an oversight. Phase
+10.3's scaling still applies underneath: crossing the target shrinks each
+further position rather than refusing it.
+
+**IMPLEMENTED 2026-09-01** (branch `worktree-agent-aa9554aa2b76e1b3f`).
+`risk.max_sector_pct: 40 → 75` in `config/settings.yaml`, and moved everywhere
+it was written down: three sites in `config/prompts/portfolio_manager.md` (the
+caps-summary line, the momentum-sleeve clause, the example JSON), one line of
+static prose in `config/prompts/risk_manager.md`, the text anchor in
+`tests/test_prompts_anchors.py`, `docs/AGENT_ROLE_AUDIT.md`, and the sector
+paragraph in `README.md`.
+
+**Confirmed false positives, deliberately left alone:** the "40%-per-cluster
+risk budget" in the PM prompt (that is `src/risk/budget.py`'s correlated
+-cluster cap, a different mechanism), the "1.5 needs 40%, 2.0 needs 33%"
+hit-rate arithmetic in both the PM and RM prompts, and `_PM_PROFILE_SYMBOL_CAP
+= 40` in `src/pipeline.py`. Most `max_sector_pct=40` occurrences in tests are
+self-contained fixture values passed straight into `RiskConfig(...)`; they do
+not read production config and were left as they are.
+
+**The prompt anchor was re-pointed, not retargeted.** The old anchor was the
+bare string `"40%"`, which still appears in the PM prompt twice for those
+unrelated mechanisms — so a naive `40% → 75%` swap would have left a green test
+guarding nothing. The anchor is now `"75%"` plus a second anchor on
+`"sector notional PER SIDE"`, so §12.2's split is guarded too.
+
+**THE DIAL'S UPPER BOUND — NOT IN THIS RATIFIED TEXT, CHOSEN AT BUILD TIME AND
+OPEN FOR THE OWNER TO MOVE.** §10.3 derived the absolute ceiling as 1.5x the
+target (40 → 60). At a target of 75 that gives **112.5%, which is not a ceiling
+at all**, and a dial with no terminal bound bounds nothing. Shipped:
+**scaling begins at 75, hard refusal at 90** (`risk.max_sector_hard_pct: 90`,
+with the derived default now capped at 90 by
+`RiskConfig.SECTOR_HARD_CEILING_MAX` and never allowed below the target). 90
+keeps a real ceiling while leaving 15 points of scaling range. The 40 → 60
+relationship is unchanged below the cap. **The owner has not ratified 90.**
+
+**The cost is stated where the decision is made, not only here.** The 75%/20%/
+15%-of-equity/five-times-the-breaker arithmetic is written in plain language
+into `config/prompts/portfolio_manager.md` (under "What good judgement looks
+like here"), `config/settings.yaml` next to the setting, `src/risk/rules.py`
+above the dial, and `README.md`. A consequence recorded only in a spec nobody
+reads at decision time is not stated; a test asserts it is present in the PM
+prompt.
+
+**Pinned by tests** in `tests/test_sector_dial.py`: the shipped `risk:` block
+really is 75/90 (parsed from `config/settings.yaml`, not a fixture); the
+derived ceiling is capped at 90 rather than 1.5x; a position crossing 75 is
+SCALED and one past 90 is REFUSED, at both the constructor and the gate.
+
+**Pre-existing breakage repaired alongside, cause recorded because it is a
+merge lesson.** 11 tests in `tests/test_sector_dial.py` were already failing on
+`integration/ship-2026-09-01` before any §12.2/§12.3 work. Cause: that file's
+analyst fixtures carry no `atr_14` / `computed_levels`, which was fine when
+§10.3 was written because the constructor then used the model's
+`reference_target`. §10.4 — merged the same day, from a different branch — made
+the constructor DERIVE the target from structure and REFUSE without an ATR, so
+every order those tests build was refused at `no_volatility_reading` before the
+sector dial was ever reached. The dial was not broken; it was unreachable.
+Neither branch's suite caught it because each passed in isolation. Fixtures
+corrected to the post-§10.4 shape (matching
+`tests/test_portfolio_constructor.py::_analysis`); no assertion was weakened.
+
+### 12.4 Everything ships together, tonight
+
+Owner instruction: implement and deploy all outstanding work in one pass rather
+than staging it. **This is a deliberate acceptance of change risk**, taken
+because the desk currently cannot trade at all and a partial fix leaves it that
+way. The mitigation is not staging — it is the rehearsal rig, which must be run
+against the fully merged result before deploy. See the session-start rule in
+`docs/WORK.md`.
 
 ---
 

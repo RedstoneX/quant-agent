@@ -78,14 +78,55 @@ class LiquidityBreakdown(BaseModel):
     into one ambiguous number (docs/STATE.md 2026-08-18 soak finding: SGOV
     must never present like an ordinary position or invented risk posture).
     Any field is None when the underlying account/positions read failed —
-    never fabricated from a partial read."""
+    never fabricated from a partial read.
+
+    `deployable_cash` is THE ENGINE'S deployable figure — the same
+    `src.quantities.deployable_cash` the Portfolio Manager sizes against,
+    the Risk Manager audits and the pre-trade cash gate enforces. It used
+    to be `max(raw_cash - reserve_usd, 0)`, a definition no part of the
+    engine has ever used: same word, opposite adjustment, measured 1.58x
+    apart on the same book. The reserve-adjusted figure is still reported —
+    under its own name, `cash_above_reserve`, because it answers a
+    different question.
+    """
     sweep_enabled: bool = False
     sweep_symbol: str | None = None
     raw_cash: float | None = None            # broker cash, includes the reserve
     sweep_parked_value: float | None = None  # market value of the held sweep vehicle, 0 if none
-    reserve_usd: float | None = None         # config reserve_pct% of portfolio_value
-    deployable_cash: float | None = None     # max(raw_cash - reserve_usd, 0)
-    total_liquidity: float | None = None     # raw_cash + sweep_parked_value
+    reserve_usd: float | None = None         # sweep MECHANIC: reserve_pct% of portfolio_value
+    # raw_cash + sweep_parked_value — what the engine can actually deploy
+    # without borrowing, because fund_buys sells the sweep vehicle on demand.
+    deployable_cash: float | None = None
+    # max(raw_cash - reserve_usd, 0) — raw cash spendable WITHOUT selling the
+    # sweep vehicle first. Strictly conservative, deliberately a different name.
+    cash_above_reserve: float | None = None
+    # Deprecated alias of `deployable_cash`, kept so an older cockpit build
+    # keeps rendering. Assigned from the same single source — never computed
+    # a second time. Remove once no client reads it.
+    total_liquidity: float | None = None
+
+
+class ExposureBreakdown(BaseModel):
+    """How invested the book is, measured by the engine's own definition.
+
+    Served here because the alternative — the frontend re-deriving it —
+    is what produced the defect this replaces: HeroBand summed long +
+    bearish-hedge market value RAW and UNLEVERAGED, then drew the result
+    against the risk engine's ceiling fetched from this same endpoint. The
+    bar and its fill came from different definitions and read 13.6
+    percentage points apart on a book holding one -3x hedge.
+
+    Computed by `src.quantities.net_exposure_usd/_pct`, the same functions
+    `src.risk.rules`' `max_total_position_pct` rule calls — a dependency-
+    free module outside `src.risk`, so this does not breach the structural
+    guardrail in tests/test_api_safety.py. None when the positions or
+    account read failed; never a fabricated 0."""
+    # sum(market_value * signed ETF multiplier), sweep vehicle excluded.
+    # A hedge SUBTRACTS; a 3x fund counts at 3x.
+    net_exposure_usd: float | None = None
+    # abs(net_exposure_usd) / portfolio_value * 100 — directly comparable to
+    # RiskLimits.max_total_position_pct, which is the ceiling it is drawn against.
+    net_exposure_pct: float | None = None
 
 
 class RiskLimits(BaseModel):
@@ -99,6 +140,38 @@ class RiskLimits(BaseModel):
     max_total_position_pct: float | None = None
     max_daily_loss_pct: float | None = None
     max_sector_pct: float | None = None
+    # Spec §11.2. The STANDING gross-exposure cap as a multiple of equity
+    # (long market value + absolute short market value, cash park excluded).
+    # Distinct from max_total_position_pct, which bounds NET exposure — a
+    # hedge cancels a long there and does not here. The ladder-stepped
+    # ladder-stepped ceiling actually in force this session is NOT exposed
+    # here: computing it needs `src.risk.rules`, which `src/api/` may never
+    # import (tests/test_api_safety.py). It reaches the operator on the
+    # session alert instead.
+    max_gross_exposure_x: float | None = None
+
+
+class MarginInterestEstimate(BaseModel):
+    """Margin interest ESTIMATE (spec §11.2) — MEASURES only, never a risk
+    decision. Every field is `None` when there is nothing to report: a
+    zero/no overnight debit balance (today's actual state — `allow_margin`
+    is `False`, so this is always empty in production right now), or a
+    read failure. `label` carries the ESTIMATE framing verbatim so no
+    consumer of this response can render the figure without it — paper
+    trading's own handling of margin interest is unconfirmed either way,
+    see `src.margin_interest`."""
+    debit_balance: float | None = None
+    rate_pct: float | None = None
+    daily_usd: float | None = None
+    annual_usd: float | None = None
+    label: str | None = None
+    #: Result of comparing the estimate against the broker's own `INT`
+    #: account-activity records — plain-language, e.g. "broker confirmed
+    #: a margin interest charge of $X..." or "no INT activity ... not
+    #: confirmed". `None` until a debit balance has actually been carried
+    #: overnight at least once.
+    broker_check_note: str | None = None
+    error: str | None = None
 
 
 class AccountResponse(BaseModel):
@@ -111,7 +184,9 @@ class AccountResponse(BaseModel):
     source: str = "alpaca_live"
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
     liquidity: LiquidityBreakdown | None = None
+    exposure: ExposureBreakdown | None = None
     risk_limits: RiskLimits | None = None
+    margin_interest: MarginInterestEstimate | None = None
     error: str | None = None             # set (fields above null) when the broker read failed
 
 
@@ -132,8 +207,15 @@ class PositionItem(BaseModel):
     # idle cash, never a Portfolio Manager thesis. See LiquidityBreakdown.
     is_cash_equivalent: bool = False
     # "long" (ordinary equity/ETF) | "bearish_hedge" (an inverse ETF already
-    # in the trading universe — SH/SDS/PSQ/SQQQ) | "cash_equivalent" (the
-    # sweep vehicle). Display labeling only; computes no exposure/risk math.
+    # in the trading universe — see `src.quantities.inverse_etf_symbols()`,
+    # derived from the one leverage table) | "cash_equivalent" (the sweep
+    # vehicle).
+    #
+    # Display labeling ONLY; computes no exposure/risk math — and unlike
+    # before, that is now true on both sides of the wire. The cockpit used
+    # to derive its "% deployed" gauge from this label (long + hedge, raw
+    # and unleveraged); exposure is served on `AccountResponse.exposure`
+    # instead, from the engine's own definition.
     direction: str = "long"
 
 

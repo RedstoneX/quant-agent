@@ -77,8 +77,18 @@ def test_stale_entry_skip_is_recorded():
 
 
 def test_partial_confirmed_cash_resizes_instead_of_dropping_buy():
-    """A partial SGOV funding fill should preserve a smaller safe order."""
-    pipeline = _pipeline(live_price=100.0, cash=145.11)
+    """A partial SGOV funding fill should preserve a smaller safe order.
+
+    The cash figure was $145.11 (a one-share, $100 order) until the §10.3
+    minimum-notional floor was re-applied after the execution-time cash
+    clamp — the one resize that previously had no floor under it. The
+    behaviour this test names is unchanged: a partial fill still resizes
+    rather than dropping the BUY. What changed is that the resized order
+    must now also be worth placing, so the scenario is stated at a size
+    that clears the $500 minimum. The sub-floor case is asserted as a
+    REFUSAL in tests/test_cash_sweep_plumbing.py.
+    """
+    pipeline = _pipeline(live_price=100.0, cash=645.11)
     pipeline.broker.submit_order.return_value = {
         "id": "ord-partial", "status": "accepted",
     }
@@ -86,12 +96,12 @@ def test_partial_confirmed_cash_resizes_instead_of_dropping_buy():
         action="BUY", symbol="XLE", allocation_pct=10,
         entry_price=100.0, stop_loss=95.0, take_profit=115.0,
         reasoning="approved but unfunded",
-    )], cash=145.11)
+    )], cash=645.11)
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
     assert len(orders) == 1
-    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == 1
+    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == 6
     assert ctx.execution_skips == []
 
 

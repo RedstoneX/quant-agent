@@ -23,12 +23,32 @@ def _pos(symbol: str, qty: float, avg_entry: float, current_price: float,
     )
 
 
-def _analysis(symbol: str, entry: float, stop: float, target: float) -> TechAnalysisResult:
+def _analysis(
+    symbol: str, entry: float, stop: float, target: float,
+    horizon: int = 60, atr: float | None = None,
+) -> TechAnalysisResult:
+    """A realistic analyst result — including the two fields production sets
+    in Python rather than asking the model for.
+
+    `atr_14` and `computed_levels` are attached by `TechAnalystAgent` after
+    parsing (from the indicators and from `find_structural_levels` over the
+    full history). A fixture without them is not a thing the pipeline can
+    produce, and since 2026-09-01 the constructor derives the take-profit
+    from `computed_levels` and refuses without them.
+
+    The ATR is set just inside the noise band so the structural stop is left
+    alone — these tests are about sizing, not about stop widening. The long
+    horizon is not decoration: reaching a target W away from a stop R away
+    needs sqrt(sessions) >= 2.3 * W/R once the stop is held at 3.45 ATRs, so
+    a 3:1 fixture payoff genuinely implies a multi-month hold.
+    """
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry,
         stop_loss=stop, reference_target=target, reasoning="test",
         support_levels=[stop], resistance_levels=[target],
-        setup_type="range", expected_horizon_sessions=10,
+        computed_levels=[stop, target],
+        atr_14=(entry - stop) / 3.5 if atr is None else atr,
+        setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
     )
 
@@ -190,7 +210,9 @@ def test_construct_orders_uses_suggested_stop_when_provided():
     targets = [TargetPosition(symbol="NVDA", target_weight_pct=5.0,
                               conviction="medium", thesis="tighter stop",
                               suggested_stop_price=97.5)]
-    analyses = [_analysis("NVDA", entry=100, stop=95, target=110)]
+    # Low ATR so the PM's tighter stop sits OUTSIDE the noise band and is
+    # left alone — this test is about stop precedence, not stop widening.
+    analyses = [_analysis("NVDA", entry=100, stop=95, target=110, atr=0.7)]
 
     decisions = constructor.construct_orders(
         targets=targets, positions=[], analyses=analyses,
@@ -475,12 +497,7 @@ def test_risk_budget_cap_carries_provenance_note_for_rm():
     )
     # Wide stop: entry 100, stop 90 -> risk 10/share. 0.5% risk budget on
     # 10_000 equity = $50 -> 5 shares -> $500 = 5% alloc, well under 15%.
-    analysis = TechAnalysisResult(
-        symbol="XLE", rating="buy", entry_price=100.0, stop_loss=90.0,
-        reference_target=130.0, support_levels=[90.0], resistance_levels=[130.0],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="r", reasoning_chain=_tech_rc(),
-    )
+    analysis = _analysis("XLE", entry=100.0, stop=90.0, target=130.0)
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
         total_value=10_000.0, price_map={"XLE": 100.0},
@@ -502,12 +519,7 @@ def test_uncapped_buy_has_no_provenance_note():
         thesis="Financials steepener.", thesis_invalid_if="", catalyst="",
     )
     # Tight stop: entry 100, stop 99 -> cap = 0.5%*100/1 = 50% >> 5%.
-    analysis = TechAnalysisResult(
-        symbol="XLF", rating="buy", entry_price=100.0, stop_loss=99.0,
-        reference_target=110.0, support_levels=[99.0], resistance_levels=[110.0],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="r", reasoning_chain=_tech_rc(),
-    )
+    analysis = _analysis("XLF", entry=100.0, stop=99.0, target=110.0)
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
         total_value=10_000.0, price_map={"XLF": 100.0},

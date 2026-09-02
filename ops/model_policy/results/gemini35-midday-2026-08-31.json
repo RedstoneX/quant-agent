@@ -1,0 +1,123 @@
+{
+  "generated_at": "2026-08-31T21:57:15Z",
+  "wiring_source": "environment",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "scenarios": {
+    "midday_exit": {
+      "role": "position_reviewer",
+      "description": "One broken thesis pinned to its stop, one working winner. Grades the exit path in both directions."
+    }
+  },
+  "pricing_used": {
+    "google/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5
+    }
+  },
+  "trials": [
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "midday_exit",
+      "role": "position_reviewer",
+      "ok": true,
+      "quality": 0.65,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "PositionReview validated"
+        },
+        {
+          "name": "cot_complete",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "6/6 steps"
+        },
+        {
+          "name": "acts_on_broken_thesis",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "AMD action=HOLD (stop 0.25xATR away, -12% thesis progress in 21d)"
+        },
+        {
+          "name": "does_not_cut_the_winner",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "NVDA action=HOLD (1.8x pace, 11% above stop)"
+        }
+      ],
+      "input_tokens": 7398,
+      "output_tokens": 702,
+      "cost_usd": 0.0039744,
+      "latency_s": 4.3,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_continuity_check\": \"Regime is risk_off with a bearish outlook and VIX at 27.4. Target invested is 55.0% and current allocation is elevated across open positions, requiring close risk scrutiny.\",\n    \"thesis_progress_check\": \"AMD progress is -12% with pace 0.00x, resting right at the broker stop ($151.14 vs price $151.75, to_stop=0.4%, stop_distance=0.25x ATR). NVDA progress is 62% with pace 1.80x, showing strong momentum and healthy distance to stop (11.2%, 5.3x ATR).\",\n    \"thesis_integrity_check\": \"AMD is severely pressured, trading immediately adjacent to its hard stop with weight bloated to 34.3% in a risk_off regime. NVDA remains robust with a solid cushion above its stop and strong relative momentum.\",\n    \"winners_discipline_check\": \"NVDA is up 15.4% at +1.80x pace with no parabolic or drift flags requiring immediate forced trimming, though book concentration is high overall. AMD is an underwater position testing its broker stop.\",\n    \"session_disposition_check\": \"Midday session with 2.5+ hours remaining. AMD's distance-to-stop is 0.4% (0.25 ATR), sitting inside the critical zone where broker execution is imminent; however, pre-empting the stop is discouraged unless a hard trigger is cited. Since AMD is essentially at the broker stop, allow the broker stop to manage the exit or hold if it holds the line.\",\n    \"execution_rationale\": \"AMD is at 0.4% to stop (0.25x ATR) and represents 34.3% weight in a risk-off environment. Ho",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "midday_exit",
+      "role": "position_reviewer",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "PositionReview validated"
+        }
+      ],
+      "input_tokens": 7398,
+      "output_tokens": 750,
+      "cost_usd": 0.0040944,
+      "latency_s": 3.44,
+      "error": "",
+      "sample_output": "```json\n{\n  \"reasoning_chain\": {\n    \"macro_continuity_check\": \"Regime is risk_off with VIX elevated at 27.4 and target invested at 55.0%. Macro backdrop remains challenging, warranting vigilance on risk management across the book.\",\n    \"thesis_progress_check\": \"AMD: thesis_progress at -12%, pace 0.00\u00d7 (stalled), distance to stop is extremely tight at 0.4% ($151.75 vs $151.14 hard stop). NVDA: thesis_progress at 62%, pace 1.80\u00d7 (ahead of schedule, fast mover), distance to stop 11.2% with 5.30 ATRs of breathing room.\",\n    \"thesis_integrity_check\": \"AMD is sitting virtually on its hard broker stop (0.4% away, stop_distance=0.25\u00d7ATR inside noise band) and is heavily oversized at 34.3% weight in a risk-off macro environment. NVDA is performing well as a fast mover (+15.4% P&L, pace 1.80\u00d7) with solid structural buffer.\",\n    \"winners_discipline_check\": \"NVDA is up 15.4% with strong momentum and 5.30 ATRs to stop; weight is high (46.8%) due to AMD's drawdown, but NVDA itself is a healthy winning position that should be held patiently per principle 2.\",\n    \"session_disposition_check\": \"Midday session (13:00 ET): disposition is PATIENT. However, AMD's stop is actively being tested (0.4% to stop), and broker stop proximity combined with heavy concentration (34.3%) requires respecting mechanical risk boundaries without panicking on intraday noise.\",\n    \"execution_rationale\": \"AMD: To_stop is 0.4% (0.25\u00d7ATR), sitting right at the broker hard stop. If the broker stop is hit mechanica",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google/gemini-3.5-flash-lite|midday_exit": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "midday_exit",
+        "role": "position_reviewer",
+        "runs": 2,
+        "quality_mean": 0.325,
+        "quality_min": 0.0,
+        "cost_mean": 0.004034,
+        "latency_mean": 3.87,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "google/gemini-3.5-flash-lite": {
+        "scenarios": {
+          "midday_exit": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "midday_exit",
+            "role": "position_reviewer",
+            "runs": 2,
+            "quality_mean": 0.325,
+            "quality_min": 0.0,
+            "cost_mean": 0.004034,
+            "latency_mean": 3.87,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.325,
+        "quality_worst": 0.325,
+        "quality_worst_run": 0.0,
+        "cost_total": 0.004034,
+        "quality_per_dollar": 80.57
+      }
+    }
+  }
+}

@@ -65,12 +65,16 @@ def _tech_rc() -> TechReasoningChain:
     )
 
 
+# `computed_levels` / `atr_14` are Python-set by TechAnalystAgent, never
+# emitted by the model. The constructor derives the take-profit from them
+# (2026-09-01) and refuses without them.
 def _long_analysis(symbol="NVDA", entry=100.0, stop=95.0, target=120.0) -> TechAnalysisResult:
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[stop], resistance_levels=[target],
-        setup_type="range", expected_horizon_sessions=10,
+        computed_levels=[stop, target], atr_14=abs(entry - stop) / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
     )
 
@@ -80,7 +84,8 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0) -> Tec
         symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[target], resistance_levels=[stop],
-        setup_type="range", expected_horizon_sessions=10,
+        computed_levels=[target, stop], atr_14=abs(entry - stop) / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
     )
 

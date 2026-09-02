@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-09-01T15:19:04Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 1,
+  "scenarios": {
+    "pm_production_scale": {
+      "role": "portfolio_manager",
+      "description": "30 candidates, 15 holdings and production-sized memory. Grades grounded parse, provenance and phantom exits."
+    }
+  },
+  "pricing_used": {
+    "z-ai/glm-5.2": {
+      "input": 1.19,
+      "output": 3.74
+    }
+  },
+  "trials": [
+    {
+      "model": "z-ai/glm-5.2",
+      "scenario": "pm_production_scale",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.55,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation"
+        }
+      ],
+      "input_tokens": 21033,
+      "output_tokens": 16000,
+      "cost_usd": 0.08486927000000001,
+      "latency_s": 345.8,
+      "error": "",
+      "sample_output": "",
+      "actual_model": "z-ai/glm-5.2",
+      "used_fallback": false
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "z-ai/glm-5.2|pm_production_scale": {
+        "model": "z-ai/glm-5.2",
+        "scenario": "pm_production_scale",
+        "role": "portfolio_manager",
+        "runs": 1,
+        "quality_mean": 0.0,
+        "quality_min": 0.0,
+        "cost_mean": 0.084869,
+        "latency_mean": 345.8,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "z-ai/glm-5.2": {
+        "scenarios": {
+          "pm_production_scale": {
+            "model": "z-ai/glm-5.2",
+            "scenario": "pm_production_scale",
+            "role": "portfolio_manager",
+            "runs": 1,
+            "quality_mean": 0.0,
+            "quality_min": 0.0,
+            "cost_mean": 0.084869,
+            "latency_mean": 345.8,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.0,
+        "quality_worst": 0.0,
+        "quality_worst_run": 0.0,
+        "cost_total": 0.084869,
+        "quality_per_dollar": 0.0
+      }
+    }
+  }
+}

@@ -1,9 +1,11 @@
 import logging
+import math
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import date
+from pathlib import Path
 
 import yfinance as yf
 from alpaca.trading.client import TradingClient
@@ -62,6 +64,94 @@ _SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _g
 # while earlier entries are finalized, so 30 seconds is a conservative floor,
 # not a blind per-order sleep added to every order.
 _ENTRY_FILL_TIMEOUT_S = 30.0
+
+# Spec §11.1, guard 1: "stop placement retries immediately and hard on
+# failure". IMMEDIATELY — at the point of failure, inside the same call,
+# not queued for the next sweep. The position is already open by the time
+# this runs; a retry that waits for the 30-minute reconcile is exactly the
+# indefinite gap the guard exists to prevent.
+#
+# THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
+#
+#   * Three, because every failure worth retrying is transient — a 429 rate
+#     limit, a 5xx, a dropped connection, an eventual-consistency blip
+#     between the fill and the order being placeable. Those clear in under a
+#     second. A failure that survives three attempts is a REJECTION (a bad
+#     price, an unsupported qty, a closed venue), and retrying a rejection
+#     forever just delays the owner alert that is the real remedy.
+#   * ~2 seconds, because the owner's own standard for this feature is that
+#     "the gap is brief upon entry". A retry loop long enough to matter
+#     would itself become the exposure it was added to close. Escalating to
+#     a human inside two seconds beats a fourth doomed attempt.
+_STOP_PLACEMENT_MAX_ATTEMPTS = 3
+_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
+
+# Spec §11.1 HYBRID FRACTIONAL STOPS. Measured 2026-09-01 against the live
+# paper account — treat as broker capability, not account state:
+#
+#   * a fractional-quantity order MUST be time_in_force=DAY. A fractional
+#     GTC order is refused outright: "fractional orders must be DAY orders"
+#     (code 42210000).
+#   * a fractional order must be market, limit, stop or stop_limit. A
+#     fractional TRAILING stop is refused at EVERY tif.
+#   * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
+#   * whole-share GTC stops are unaffected (control probe accepted).
+#
+# So a position of N.f shares cannot be covered by one durable order. It is
+# covered by TWO: a GTC stop over floor(N.f) — which survives the close —
+# and a DAY stop over the sub-share remainder, which lapses at 16:00 ET by
+# design and is re-placed at the start of the next session. The remainder is
+# a bounded, deliberate overnight exposure the owner accepted in exchange for
+# being able to hold expensive names at all on a ~$10k account.
+#
+# `_derive_stop_tif` is where that rule is MECHANICALLY enforced: every stop
+# this class submits goes through `_submit_stop_limit_order`, and the tif is
+# derived from the quantity there rather than chosen by each caller. A path
+# that forgets the rule cannot exist, because no path gets to state it.
+_FRACTIONAL_QTY_EPSILON = 1e-9
+
+
+def _split_protective_qty(qty) -> tuple[float, float]:
+    """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
+
+    The whole part is what a durable GTC stop can cover; the remainder is what
+    only a DAY stop can. Both are returned as non-negative magnitudes — a
+    short's signed qty is normalised by its callers long before this.
+
+    The remainder is rounded to 9dp before the epsilon test so that float
+    representation error (10.5 - 10.0 landing at 0.5000000000000007, or a qty
+    of 7.000000000000001 arriving from a fill) cannot mint a phantom
+    sub-share leg for a position that is really whole.
+    """
+    try:
+        value = abs(float(qty))
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if not math.isfinite(value) or value <= 0:
+        return 0.0, 0.0
+    whole = float(math.floor(value))
+    frac = round(value - whole, 9)
+    if frac <= _FRACTIONAL_QTY_EPSILON:
+        return whole, 0.0
+    if frac >= 1.0:  # only reachable via the round() above on a near-integer
+        return whole + 1.0, 0.0
+    return whole, frac
+
+
+def _derive_stop_tif(qty) -> TimeInForce:
+    """The ONLY place a protective stop's time_in_force is decided.
+
+    Whole share count → GTC, the durable order that survives 16:00 ET and is
+    what every pre-fractional path already got. Fractional → DAY, because the
+    broker refuses any other tif for a fractional quantity (see the block
+    comment above). This is derived from the quantity rather than passed in
+    by the caller on purpose: a caller that could ask for a fractional GTC
+    would just be asking for a rejection, and the one thing this desk cannot
+    afford is a protective order that was refused while the code believed it
+    was placed.
+    """
+    _whole, frac = _split_protective_qty(qty)
+    return TimeInForce.DAY if frac > 0 else TimeInForce.GTC
 
 
 def _alpaca_symbol(symbol: str) -> str:
@@ -130,6 +220,42 @@ def _install_http_timeout(client, timeout: float = _BROKER_HTTP_TIMEOUT) -> None
 _sector_cache: dict[str, str] = {}
 _sector_lock = threading.Lock()
 
+# WHY (2026-09-01 audit): a symbol whose sector never resolves reads
+# identically to one with no exception at all — both come back "Unknown"
+# from `_get_sector` with no further detail. That is fine for the two
+# existing consumers (they only needed a sector string), but it is not
+# enough for an owner-facing alert: "the network is having a bad day, this
+# will self-heal" and "this instrument has no sector to find" are different
+# situations and should not read the same. Best-effort, advisory only —
+# NOT part of the caching contract above (an unresolved symbol is still
+# never cached; see `_get_sector`'s docstring), keyed the same way as
+# `_sector_cache`, and simply absent/stale when `_get_sector` itself is
+# mocked out wholesale (tests) — `_sector_resolution_status_for` defaults
+# to "unknown_reason" rather than guessing.
+_sector_resolution_status: dict[str, str] = {}
+
+
+def _sector_resolution_status_for(symbol: str) -> str:
+    """Best-effort reason the last `_get_sector(symbol)` call in THIS
+    process came back "Unknown". One of:
+
+      "resolved"       - moot; the symbol has a real sector.
+      "lookup_failed"  - network error, timeout, or an empty response with
+                          no error — yfinance returning nothing for a real
+                          symbol is usually transient (see
+                          test_sector_canonicalization.py). Will retry.
+      "no_sector"      - the fetch itself succeeded and returned real data,
+                          just no `sector` field — this symbol may
+                          genuinely be unclassifiable (e.g. an ETF outside
+                          `_ETF_SECTORS`), not a network problem.
+      "unknown_reason" - no attempt recorded yet for this symbol in this
+                          process (fresh process, or a test/caller mocked
+                          `_get_sector` directly instead of going through
+                          the real fetch below).
+    """
+    with _sector_lock:
+        return _sector_resolution_status.get(symbol, "unknown_reason")
+
 
 def _canonicalize_sector(raw: str | None) -> str:
     """Normalize yfinance / LLM sector strings to the 12-value canonical enum.
@@ -157,12 +283,21 @@ def _get_sector(symbol: str) -> str:
     a namespace.
 
     Caching policy: only KNOWN sectors are cached. "Unknown" is returned but
-    NOT cached so a transient yfinance outage doesn't permanently exempt the
-    symbol from RiskRuleEngine.max_sector_pct (the engine skips the cap when
-    sector=="Unknown"). Codex r11 P1: a one-shot lookup miss in --mode live
-    used to leave the symbol cap-exempt until process restart. Re-querying
-    yfinance on every call for an unresolved symbol is a small overhead vs.
-    silently disabling a hard risk rule.
+    NOT cached, so a transient yfinance outage gets re-diagnosed on every
+    call instead of freezing a stale verdict. Codex r11 P1: a one-shot
+    lookup miss in --mode live used to leave the symbol cap-exempt until
+    process restart. Re-querying yfinance on every call for an unresolved
+    symbol is a small overhead vs. silently disabling a hard risk rule.
+
+    2026-09-01 audit: "Unknown" used to mean EXEMPT from
+    `RiskRuleEngine.check`'s sector cap (rule 5 skipped the check outright).
+    80 of 101 universe symbols depend on this lookup with no offline
+    fallback, so a network blip silently switched the sector cap off for
+    most of the book. The gate now pools "Unknown" like any other sector
+    (`sector_side_gross(..., include_unknown=True)`) and checks it against
+    the same soft/hard cap pair instead of skipping it — see
+    `_sector_resolution_status_for` below for WHY a given call came back
+    "Unknown", which the gate surfaces as an owner-visible alert.
     """
     # _sector_lock guards ONLY the cache dict — never a network call.
     # audit F3: the old code held _sector_lock for the entire function
@@ -186,10 +321,19 @@ def _get_sector(symbol: str) -> str:
             _sector_cache[symbol] = etf_sector
         return etf_sector
 
+    # Set from inside the worker thread when the fetch itself raises — read
+    # back on the calling thread only after `.result()` returns (timeout
+    # aside, where we already know the answer without consulting this).
+    # Best-effort/advisory like the status table it feeds; not a
+    # correctness dependency of the timeout/lock guarantees below.
+    fetch_error = {"raised": False}
+
     def _fetch():
         try:
             return yf.Ticker(symbol).info or {}
-        except Exception:
+        except Exception as e:
+            logger.warning("yfinance sector fetch raised for %s: %s", symbol, e)
+            fetch_error["raised"] = True
             return {}
 
     # yfinance .info has no hard upper bound — a stuck socket can hang
@@ -201,11 +345,13 @@ def _get_sector(symbol: str) -> str:
     # still-running fetch leaks one worker thread — accepted vs. the
     # prior behaviour of stalling the whole session.
     ex = ThreadPoolExecutor(max_workers=1)
+    timed_out = False
     try:
         info = ex.submit(_fetch).result(timeout=_SECTOR_LOOKUP_TIMEOUT_S)
     except FuturesTimeout:
         logger.warning("yfinance sector lookup timed out for %s", symbol)
         info = {}
+        timed_out = True
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
 
@@ -214,6 +360,20 @@ def _get_sector(symbol: str) -> str:
     if canonical != "Unknown":
         with _sector_lock:
             _sector_cache[symbol] = canonical
+        return canonical
+
+    # Unresolved. Record WHY — never cached (see docstring above), same as
+    # the "Unknown" return itself, so a self-heal on the next call is
+    # re-diagnosed fresh rather than repeating a stale verdict.
+    # `not info` (fetch technically completed, no exception, but returned
+    # nothing) is bucketed with "lookup_failed": per
+    # test_sector_canonicalization.py's own finding, an empty response for
+    # a real symbol is usually transient, not proof the symbol lacks a
+    # sector. "no_sector" is reserved for a fetch that came back with real
+    # data and simply had no `sector` field in it.
+    status = "lookup_failed" if (timed_out or fetch_error["raised"] or not info) else "no_sector"
+    with _sector_lock:
+        _sector_resolution_status[symbol] = status
     return canonical
 
 
@@ -224,12 +384,26 @@ _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
 
 class AlpacaBroker:
-    def __init__(self, api_key: str, secret_key: str, paper: bool = True):
+    #: Set in __init__. Declared here so an instance built without __init__
+    #: reads None rather than raising; `_kill_switch_active` already treats
+    #: None as "no switch configured", i.e. inert.
+    _kill_switch_path: "Path | None" = None
+    def __init__(self, api_key: str, secret_key: str, paper: bool = True,
+                 kill_switch_path: str | None = None):
         self.api_key = api_key
         self.secret_key = secret_key
         self.client = TradingClient(api_key, secret_key, paper=paper)
         _install_http_timeout(self.client)
         self._data_client = None
+        # Guard 1 (2026-09-02 operational safety guard — see
+        # RiskConfig.kill_switch_path). `None` leaves the guard disabled,
+        # which is only reachable from a construction site that predates
+        # this parameter and never threads a path through (e.g. an isolated
+        # unit test building `AlpacaBroker` directly) — `src/pipeline.py`
+        # always passes the configured path. See `_kill_switch_active`.
+        self._kill_switch_path = (
+            Path(kill_switch_path) if kill_switch_path else None
+        )
         # Per-date cache for is_trading_day. Trading-day status is set by
         # the exchange calendar months in advance — invariant within the
         # day — so a per-date dict that grows unbounded over a multi-year
@@ -241,6 +415,29 @@ class AlpacaBroker:
         # flags don't change intra-session, so one asset-directory lookup
         # per symbol per process is enough.
         self._shortable_cache: dict[str, dict] = {}
+        # Spec §11.1. Same shape/lifetime and same reasoning as
+        # `_shortable_cache`: `fractionable` is an asset-directory fact that
+        # does not change intra-session.
+        self._fractionable_cache: dict[str, dict] = {}
+
+    def _kill_switch_active(self) -> bool:
+        """Guard 1: True once ops has halted the desk by `touch`-ing the
+        configured flag file.
+
+        `path.exists()` and NOTHING else — no read, no parse, no schema —
+        so a zero-byte file, a file full of garbage, and a file the operator
+        can no longer remember the format of all halt identically. The
+        check cannot fail open on bad content because it never looks at any
+        content.
+
+        Called at the top of every method on this class that places or
+        replaces an order at the broker (`submit_order`,
+        `_submit_stop_limit_order`, `replace_entry_limit`) — deliberately
+        including the exit and protective-stop paths. See
+        RiskConfig.kill_switch_path for why this is the one guard in the
+        codebase that also blocks a risk-reducing order.
+        """
+        return self._kill_switch_path is not None and self._kill_switch_path.exists()
 
     def get_account(self) -> dict:
         acct = self.client.get_account()
@@ -271,6 +468,55 @@ class AlpacaBroker:
             "last_equity": last_equity,
             "non_marginable_buying_power": non_marginable_buying_power,
         }
+
+    def get_margin_interest_activities(self, after: str | None = None) -> list[dict]:
+        """Broker-truth `INT` (margin interest) account activity records.
+
+        Spec §11.2's empirical check: paper trading's own docs don't say
+        whether margin interest is simulated, so this reads Alpaca's
+        account-activities ledger directly rather than guessing. Feeds
+        `src.margin_interest.compare_estimate_to_broker_activity`,
+        which does the actual "confirmed / not confirmed" judgement — this
+        method only fetches and normalizes the raw records.
+
+        `after` is an optional ISO date/datetime string (Alpaca's
+        `after` query param) to scope the lookup to the relevant
+        overnight period; omitted, Alpaca returns its own recent-activity
+        default window.
+
+        The SDK version pinned here (alpaca-py) has no typed wrapper for
+        the activities endpoint, so this uses the low-level
+        `TradingClient.get()` REST passthrough against
+        `/v2/account/activities/INT` directly. Never raises — a broker
+        read failure here must not be able to break the caller (the
+        morning alert / dashboard read); it degrades to an empty list,
+        which `compare_estimate_to_broker_activity` reports as "not
+        confirmed", never as a fabricated "confirmed absent".
+        """
+        try:
+            params: dict = {}
+            if after:
+                params["after"] = after
+            raw = self.client.get("/account/activities/INT", params or None)
+        except Exception as exc:
+            logger.warning("get_margin_interest_activities failed: %s", exc)
+            return []
+        if not isinstance(raw, list):
+            return []
+        out: list[dict] = []
+        for item in raw:
+            try:
+                if not isinstance(item, dict):
+                    continue
+                out.append({
+                    "date": item.get("date"),
+                    "net_amount": float(item.get("net_amount") or 0.0),
+                    "description": item.get("description", ""),
+                    "activity_type": item.get("activity_type", "INT"),
+                })
+            except (TypeError, ValueError):
+                continue
+        return out
 
     def get_transient_equity_eligibility(self, symbol: str) -> dict:
         """Fail-closed broker eligibility for an out-of-universe candidate.
@@ -388,6 +634,70 @@ class AlpacaBroker:
             "reason": reason, "symbol": canonical,
         }
         self._shortable_cache[canonical] = result
+        return result
+
+    def get_fractionability(self, symbol: str) -> dict:
+        """Spec §11.1: is this symbol tradeable in fractional quantities?
+
+        Alpaca publishes a per-asset `fractionable` flag in the same
+        asset-directory record `get_shortability` reads, and it is cached the
+        same way for the same reason — it does not change intra-session.
+
+        **Fails CLOSED, and that is the whole point.** An API error, an
+        unknown symbol, an asset record with no `fractionable` field at all —
+        every one of those reports `fractionable=False`, and the caller sizes
+        in whole shares. Fractional-by-assumption is the failure this guard
+        exists to prevent: a fractional order on a non-fractionable name is
+        rejected outright by the broker, which turns an approved trade into
+        no trade at all and hides the reason in an order-rejection log.
+
+        `reason` distinguishes the three ways the answer can be no, so the
+        caller can log which one fired rather than a bare False.
+        """
+        canonical = _internal_symbol(_alpaca_symbol(symbol))
+        cached = self._fractionable_cache.get(canonical)
+        if cached is not None:
+            return cached
+
+        alpaca_symbol = _alpaca_symbol(canonical)
+        try:
+            asset = self.client.get_asset(alpaca_symbol)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "fractionability lookup failed for %s: %s — sizing in WHOLE "
+                "shares (fail closed)", canonical, exc,
+            )
+            result = {
+                "fractionable": False, "reason": "asset_lookup_failed",
+                "symbol": canonical,
+            }
+            self._fractionable_cache[canonical] = result
+            return result
+
+        def _field(name, default=None):
+            if isinstance(asset, dict):
+                return asset.get(name, default)
+            return getattr(asset, name, default)
+
+        raw = _field("fractionable", None)
+        if raw is None:
+            # The record came back but carries no flag — an older API shape,
+            # a stub, a mock. "Absent" is not "true".
+            result = {
+                "fractionable": False, "reason": "fractionable_unknown",
+                "symbol": canonical,
+            }
+        elif bool(raw):
+            result = {
+                "fractionable": True, "reason": "fractionable",
+                "symbol": canonical,
+            }
+        else:
+            result = {
+                "fractionable": False, "reason": "not_fractionable",
+                "symbol": canonical,
+            }
+        self._fractionable_cache[canonical] = result
         return result
 
     def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
@@ -1623,6 +1933,19 @@ class AlpacaBroker:
                      stop_loss_price: float | None = None,
                      take_profit_price: float | None = None,
                      reference_price: float | None = None) -> dict:
+        if self._kill_switch_active():
+            # Guard 1: deliberately unconditional. This is the ONE check in
+            # the order-submission path that does NOT exempt a SELL/COVER —
+            # see RiskConfig.kill_switch_path.
+            logger.error(
+                "KILL SWITCH ACTIVE (%s exists): refusing %s %s %s. Every "
+                "order — entry or exit — is halted until the file is "
+                "removed.", self._kill_switch_path, side.upper(), qty, symbol,
+            )
+            return {
+                "id": None, "status": "kill_switch_halted",
+                "symbol": _internal_symbol(symbol),
+            }
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         internal_symbol = _internal_symbol(symbol)
         alpaca_symbol = _alpaca_symbol(internal_symbol)
@@ -1848,7 +2171,15 @@ class AlpacaBroker:
             FILLED) between the caller's check and this call. The caller must
             re-read the ORIGINAL id, which is still authoritative in that
             case, and must not retry blindly.
+          - 'kill_switch_halted'    — Guard 1: ops has halted the desk. The
+            ORIGINAL id remains authoritative and simply does not chase.
         """
+        if self._kill_switch_active():
+            logger.error(
+                "KILL SWITCH ACTIVE (%s exists): refusing to re-peg entry "
+                "order %s to $%.4f.", self._kill_switch_path, order_id, new_limit_price,
+            )
+            return {"id": None, "status": "kill_switch_halted"}
         price = _quantize_price(new_limit_price)
         if price is None or price <= 0:
             logger.warning(
@@ -1856,6 +2187,26 @@ class AlpacaBroker:
                 order_id, new_limit_price,
             )
             return {"id": None, "status": "replace_invalid_price"}
+
+        # Spec §11.1: a FRACTIONAL entry cannot be re-pegged. Alpaca's
+        # ReplaceOrderRequest types `qty` as an int, and the two ways out of
+        # that are both worse than refusing: truncating 1.5625 to 1 silently
+        # SHRINKS a position the risk math already sized, and omitting qty
+        # reintroduces exactly the "how does the endpoint read an omitted qty"
+        # ambiguity this wrapper documents itself as removing. Refusing means
+        # the original order stays authoritative and simply does not chase —
+        # the caller's existing `id=None` path, and the safe direction.
+        try:
+            is_fractional = qty is not None and not float(qty).is_integer()
+        except (TypeError, ValueError):
+            is_fractional = False
+        if is_fractional:
+            logger.info(
+                "replace_entry_limit refused for %s: fractional qty %s cannot "
+                "be re-pegged — the original order remains authoritative",
+                order_id, qty,
+            )
+            return {"id": None, "status": "replace_unsupported_fractional_qty"}
 
         kwargs: dict = {"limit_price": price}
         if qty is not None:
@@ -1935,8 +2286,14 @@ class AlpacaBroker:
 
         Returns the stop order dict, or None when nothing was placed (entry
         filled 0 / stop submit failed). Never raises — a failure here must not
-        abort the session, but it DOES leave the position naked, so it logs
-        at ERROR and relies on the coverage-reconcile auto-repair belt.
+        abort the session.
+
+        Spec §11.1 guard 1: the stop submission now RETRIES immediately and
+        hard before giving up (`_submit_protective_stop_retrying`). A None
+        return therefore means the retries were exhausted, and the position is
+        naked — the CALLER owes an owner alert on it (guard 2); the
+        coverage-reconcile auto-repair belt remains the backstop, not the
+        first line.
         """
         # Fail closed on a side we do not recognise, BEFORE touching the
         # broker. `"sell" if side == "buy" else "buy"` reads harmlessly but is
@@ -2037,23 +2394,179 @@ class AlpacaBroker:
             (1 - self.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell"
             else (1 + self.STOP_LIMIT_BUFFER_PCT)
         )
-        try:
-            stop_order = self._submit_stop_limit_order(
-                symbol=symbol, qty=filled_qty, stop_price=stop_price,
-                limit_price=stop_price * buffer_mult, side=protective_side,
-            )
-            logger.info(
-                "entry protection: GTC %s stop-limit placed for %s qty=%.4f @ stop $%.2f",
-                protective_side, symbol, filled_qty, stop_price,
-            )
-            return stop_order
-        except Exception as exc:  # noqa: BLE001
+        stop_order = self._submit_protective_stop_retrying(
+            symbol=symbol, qty=filled_qty, stop_price=stop_price,
+            limit_price=stop_price * buffer_mult, side=protective_side,
+        )
+        if stop_order is None:
             logger.error(
-                "entry protection FAILED for %s (%.4f shares held, stop $%.2f): %s "
-                "— position is UNPROTECTED; next session's coverage reconcile "
-                "must repair it", symbol, filled_qty, stop_price, exc,
+                "entry protection FAILED for %s (%.4f shares held, stop $%.2f) "
+                "after %d attempt(s) — position is UNPROTECTED; the caller must "
+                "raise an OWNER alert (spec §11.1 guard 2) and the coverage "
+                "reconcile must repair it",
+                symbol, filled_qty, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
             )
             return None
+        return stop_order
+
+    def _submit_stop_leg_retrying(
+        self, *, symbol: str, qty: float, stop_price: float,
+        limit_price: float | None, side: str, leg: str,
+    ) -> dict | None:
+        """One protective-stop LEG, with spec §11.1 guard 1's retry burst.
+
+        Extracted from `_submit_protective_stop_retrying` so the hybrid split
+        can run the identical retry discipline over each of its two legs
+        instead of a second, weaker copy of it. `leg` is log context only
+        ('GTC', 'GTC whole-share', 'DAY fractional') — the tif itself is
+        derived from `qty` inside `_submit_stop_limit_order` and is not a
+        decision made here.
+
+        Returns the broker's response dict, or None when every attempt
+        failed. Never raises.
+        """
+        attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
+        for attempt in range(1, attempts + 1):
+            try:
+                order = self._submit_stop_limit_order(
+                    symbol=symbol, qty=qty, stop_price=stop_price,
+                    limit_price=limit_price, side=side,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protective stop [%s] attempt %d/%d FAILED for %s "
+                    "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
+                    symbol, qty, stop_price, exc,
+                )
+                if attempt < attempts:
+                    delay = _STOP_PLACEMENT_BACKOFF_S[
+                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
+                    ]
+                    time.sleep(delay)
+                continue
+            if attempt > 1:
+                logger.warning(
+                    "protective stop [%s] placed for %s on attempt %d/%d — the "
+                    "position was briefly unprotected and is now covered",
+                    leg, symbol, attempt, attempts,
+                )
+            else:
+                logger.info(
+                    "entry protection: [%s] %s stop-limit placed for %s "
+                    "qty=%.4f @ stop $%.2f", leg, side, symbol, qty, stop_price,
+                )
+            return order
+        return None
+
+    def _submit_protective_stop_retrying(
+        self, *, symbol: str, qty: float, stop_price: float,
+        limit_price: float | None, side: str,
+    ) -> dict | None:
+        """Spec §11.1 guard 1 — submit protective stop coverage for `qty`,
+        retrying immediately and hard on failure. Returns a stop order dict,
+        or None when nothing at all could be placed.
+
+        The retry happens HERE, in the same call, milliseconds after the
+        failure — not queued, not deferred to the next 30-minute sweep. The
+        position is already open; a deferred retry is an open position with
+        no stop for however long the defer lasts, which is the exact failure
+        mode §11.1 was required to bound. See `_STOP_PLACEMENT_MAX_ATTEMPTS`
+        for why the budget is three attempts over ~2 seconds and not more.
+
+        Never raises. Returning None is the signal the CALLER must escalate
+        on — a naked position that nobody is told about is strictly worse
+        than one that fails loudly.
+
+        WHOLE SHARE COUNTS (every short, and every long while
+        `execution.fractional_enabled` is off) take a single GTC stop and
+        this function behaves exactly as it always has, down to the returned
+        shape: the broker's own response, untouched.
+
+        A FRACTIONAL qty takes the HYBRID split instead, because the broker
+        will not carry one durable order over it (measured 2026-09-01; see
+        the `_FRACTIONAL_QTY_EPSILON` block comment):
+
+            leg A   GTC stop over floor(qty)   — durable, survives the close
+            leg B   DAY stop over the sub-share remainder — lapses at 16:00
+                    ET BY DESIGN and is re-placed by the next session's
+                    coverage sweep
+
+        Under one share there is no leg A, so a sub-share position carries a
+        DAY stop only. This REPLACES the old "try the exact fractional qty
+        three times, then fall back to a whole-share stop" path: those three
+        attempts are now known to be three guaranteed rejections costing ~2
+        seconds of naked position each time, and the whole-share fallback
+        they led to is exactly leg A, reached immediately instead.
+
+        The returned dict is leg A's response (leg B's when there is no leg
+        A) annotated with `covered_qty` / `uncovered_qty` / `gtc_qty` /
+        `day_qty` / `hybrid`. `uncovered_qty` keeps the meaning every caller
+        already reads it with: shares the broker is NOT watching right now.
+        It is 0.0 when both legs land, which is the ordinary fractional
+        success — so guard 2 stays silent on success and still fires on a
+        genuine partial cover.
+        """
+        whole, frac = _split_protective_qty(qty)
+        if frac <= 0:
+            # Whole-share: unchanged in every observable way.
+            return self._submit_stop_leg_retrying(
+                symbol=symbol, qty=qty, stop_price=stop_price,
+                limit_price=limit_price, side=side, leg="GTC",
+            )
+
+        logger.info(
+            "protective stop for %s is HYBRID: GTC over %.0f whole share(s) + "
+            "DAY over %s sub-share remainder, both @ stop $%.2f. The DAY leg "
+            "lapses at the close by design and is re-placed at the next "
+            "session's open.", symbol, whole, frac, stop_price,
+        )
+        gtc_order = None
+        if whole >= 1:
+            gtc_order = self._submit_stop_leg_retrying(
+                symbol=symbol, qty=whole, stop_price=stop_price,
+                limit_price=limit_price, side=side, leg="GTC whole-share",
+            )
+            if gtc_order is None:
+                logger.critical(
+                    "protective stop: the DURABLE whole-share GTC leg FAILED "
+                    "for %s (%.0f share(s), stop $%.2f) after %d attempt(s). "
+                    "This is the leg that must never be missing; the caller "
+                    "alerts the owner.",
+                    symbol, whole, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
+                )
+        day_order = self._submit_stop_leg_retrying(
+            symbol=symbol, qty=frac, stop_price=stop_price,
+            limit_price=limit_price, side=side, leg="DAY fractional",
+        )
+        if day_order is None:
+            logger.error(
+                "protective stop: the DAY fractional leg FAILED for %s (%s "
+                "share(s), stop $%.2f) after %d attempt(s) — the sub-share "
+                "remainder is uncovered NOW, during the session, which is not "
+                "the expected overnight lapse.",
+                symbol, frac, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
+            )
+
+        gtc_qty = whole if gtc_order is not None else 0.0
+        day_qty = frac if day_order is not None else 0.0
+        covered = gtc_qty + day_qty
+        if covered <= 0:
+            return None
+        # A COPY — never annotate the broker's own response object in place;
+        # a caller holding that dict must not have its shape changed
+        # underneath it. Leg A is the base when it exists: it is the durable
+        # order, and it is the id worth carrying forward.
+        base = gtc_order if gtc_order is not None else day_order
+        return {
+            **base,
+            "covered_qty": covered,
+            "uncovered_qty": max(0.0, round(qty - covered, 9)),
+            "gtc_qty": gtc_qty,
+            "day_qty": day_qty,
+            "gtc_stop_id": (gtc_order or {}).get("id"),
+            "day_stop_id": (day_order or {}).get("id"),
+            "hybrid": True,
+        }
 
     def close_position(self, symbol: str) -> dict:
         order = self.client.close_position(_alpaca_symbol(symbol))
@@ -2188,8 +2701,38 @@ class AlpacaBroker:
         uses), a BUY's belongs ABOVE it. A SELL limit placed above its stop,
         or a BUY limit placed below its, can never fill — the order looks
         accepted but is dead on arrival.
+
+        TIME IN FORCE IS DERIVED FROM `qty`, NOT PASSED IN (spec §11.1
+        hybrid fractional stops). Whole share counts get GTC exactly as
+        before — every existing call site is byte-identical. A FRACTIONAL
+        qty gets DAY, because the broker refuses a fractional GTC order
+        outright (measured; see `_derive_stop_tif`). Putting the rule here
+        rather than at each call site means every path that can submit a
+        fractional stop — entry protection, the coverage repair, the WAL
+        restore, the partial-sell reprotect, the ex-dividend shift — becomes
+        broker-legal at once, and no future path can forget it.
         """
+        if self._kill_switch_active():
+            # Guard 1: a protective stop is risk-REDUCING (it only ever
+            # tightens protection), yet the kill switch still blocks it —
+            # this is the one deliberate exception in the codebase; see
+            # RiskConfig.kill_switch_path. An already-resting stop from
+            # before the halt is untouched; this only refuses a NEW one.
+            logger.error(
+                "KILL SWITCH ACTIVE (%s exists): refusing protective stop "
+                "for %s qty=%s stop=$%.4f.",
+                self._kill_switch_path, symbol, qty, stop_price,
+            )
+            return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+        time_in_force = _derive_stop_tif(qty)
+        if time_in_force is TimeInForce.DAY:
+            logger.info(
+                "protective stop for %s is FRACTIONAL (qty=%s) — submitting "
+                "DAY, the only tif the broker accepts for a fractional order. "
+                "It lapses at the close and is re-placed by the next session's "
+                "coverage sweep.", symbol, qty,
+            )
         stop_price_q = _quantize_price(stop_price)
         if limit_price and limit_price > 0:
             limit_price_q = _quantize_price(limit_price)
@@ -2203,7 +2746,7 @@ class AlpacaBroker:
             symbol=_alpaca_symbol(symbol),
             qty=qty,
             side=order_side,
-            time_in_force=TimeInForce.GTC,
+            time_in_force=time_in_force,
             stop_price=stop_price_q,
             limit_price=limit_price_q,
         )
@@ -2212,6 +2755,63 @@ class AlpacaBroker:
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
                 "symbol": _internal_symbol(symbol)}
+
+    def _submit_stop_legs(
+        self, *, symbol: str, qty: float, stop_price: float,
+        limit_price: float | None = None, side: str = "sell",
+    ) -> list[dict]:
+        """Submit the protective stop LEG(S) covering `qty`, all-or-nothing.
+
+        A whole share count is ONE GTC stop — byte-identical to the bare
+        `_submit_stop_limit_order` call this replaced. A fractional qty is
+        the spec §11.1 hybrid PAIR: a durable GTC stop over floor(qty) plus a
+        DAY stop over the sub-share remainder, both at the same trigger.
+
+        WHY EVERY RE-PLACEMENT PATH NEEDS THIS, not just entry protection.
+        `replace_stop_loss` (trailing) and the partial-sell reprotect both
+        cancel a position's existing stops and submit ONE order for the whole
+        remaining quantity. On a fractional position that single order is
+        necessarily fractional, therefore necessarily DAY, therefore gone at
+        16:00 ET — and the position would have SILENTLY LOST its durable
+        whole-share GTC leg. The next overnight sweep would then see zero
+        coverage on 12.3456 held shares, correctly call it NO STOP AT ALL,
+        and page the owner. A trailing-stop ratchet must not be able to
+        convert a properly protected position into a nightly false alarm.
+
+        Raises if any leg is rejected, after cancelling any leg that already
+        landed. Callers here have an all-or-nothing rollback contract ("the
+        submit either worked or it raised"); a half-placed pair left behind
+        would be read by the coverage sweep as a mis-sized stop and by the
+        rollback as nothing at all.
+        """
+        whole, frac = _split_protective_qty(qty)
+        legs = [whole] if whole >= 1 else []
+        if frac > 0:
+            legs.append(frac)
+        if not legs:
+            legs = [qty]
+        placed: list[dict] = []
+        for leg_qty in legs:
+            try:
+                placed.append(self._submit_stop_limit_order(
+                    symbol=symbol, qty=leg_qty, stop_price=stop_price,
+                    limit_price=limit_price, side=side,
+                ))
+            except Exception:
+                for done in placed:
+                    try:
+                        self.client.cancel_order_by_id(done.get("id"))
+                    except Exception as cancel_exc:  # noqa: BLE001
+                        logger.error(
+                            "_submit_stop_legs: leg %s failed for %s AND the "
+                            "already-placed leg %s could not be cancelled: %s "
+                            "— the symbol may carry a partial stop the caller "
+                            "does not know about; the coverage sweep will "
+                            "reconcile it.",
+                            leg_qty, symbol, done.get("id"), cancel_exc,
+                        )
+                raise
+        return placed
 
     def _restore_stop_orders(
         self, symbol: str, stop_specs: list[dict],
@@ -2548,12 +3148,18 @@ class AlpacaBroker:
         # short; submitting that raw would hand Alpaca a negative qty.
         qty = abs(fresh_positions[0].qty)
         try:
-            order = self._submit_stop_limit_order(
+            # Spec §11.1: a fractional position is re-protected by the HYBRID
+            # PAIR, not by one fractional order that would be DAY-only and
+            # gone by tomorrow morning. Whole-share positions submit exactly
+            # one GTC order, unchanged.
+            legs = self._submit_stop_legs(
                 symbol=symbol, qty=qty, stop_price=new_stop_price, side=side,
             )
+            order = legs[0]
             logger.info(
-                "Trailing stop placed for %s: replaced %d old stop(s), new %s stop @ $%.2f",
-                symbol, len(cancelled_specs), side, new_stop_price,
+                "Trailing stop placed for %s: replaced %d old stop(s), new %s "
+                "stop @ $%.2f across %d leg(s)",
+                symbol, len(cancelled_specs), side, new_stop_price, len(legs),
             )
             return order
         except Exception as exc:

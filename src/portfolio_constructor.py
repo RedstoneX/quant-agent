@@ -27,9 +27,28 @@ import math
 import logging
 from dataclasses import dataclass
 
+from src.data.levels import TargetDerivation, derive_structural_target
 from src.models import Position, TargetPosition, TechAnalysisResult, TradeDecision
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Named outcomes for the stop rule (spec §12.1, 2026-09-01)
+# ---------------------------------------------------------------------------
+# Same discipline `src/data/levels.py::derive_structural_target` established
+# in §10.4: every path that MOVES or REFUSES a stop says which rule fired, by
+# name. "No trade" without a reason is what let the original defect — the ATR
+# floor silently overwriting a real structural level — survive unnoticed
+# through 38 signals and zero trades on 2026-09-01. The codes are for logs and
+# tests; the message beside each one is written for a reader who does not know
+# the code.
+STOP_RULE_LEVEL_HONOURED = "stop_honoured_at_computed_level"
+STOP_RULE_ABSOLUTE_FLOOR = "stop_widened_to_absolute_atr_floor"
+STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
+STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
+STOP_REFUSAL_GEOMETRY_AT_BAND = "reward_risk_below_floor_at_widened_stop"
+STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
 
 
 @dataclass(frozen=True)
@@ -81,6 +100,27 @@ class ConstructorConfig:
     # and the session trades nothing. Keep in sync with
     # `risk.max_position_pct` — pipeline.py wires them from the same setting.
     max_position_pct: float = 20.0
+    # Spec §10.3 "concentration scales size, it does not veto". The sector
+    # diversification target and the absolute ceiling behind it. Unlike every
+    # other ceiling in this dataclass these do not merely make the constructor
+    # size UNDER a hard block — between the two the block no longer exists at
+    # all, and this is the only place the shrinking happens. See
+    # `src/risk/rules.py::sector_size_scale` for the dial and the reasoning
+    # behind the ceiling. Kept in sync with `risk.max_sector_pct` /
+    # `risk.max_sector_hard_pct` — pipeline.py wires them from the same
+    # settings the risk engine reads; these defaults exist only for callers
+    # that construct a `ConstructorConfig` directly. Spec §12.3 moved them
+    # 40 -> 75 and 60 -> 90.
+    max_sector_pct: float = 75.0
+    max_sector_hard_pct: float = 90.0
+    # Spec §10.3's floor. A position shrunk to near-nothing by sector crowding
+    # still pays commission, still consumes a slot, still needs a stop and
+    # still needs watching — it cannot pay for its own risk. Below this the
+    # honest answer is no trade, not a token trade. Deliberately the SAME
+    # $500 threshold `cash_sweep.min_order_usd` already uses rather than a
+    # second, divergent notion of "too small to bother"; pipeline.py wires it
+    # from that setting.
+    min_order_usd: float = 500.0
     # Stage 3 (shorts). Mirrors `max_position_pct` for a short's single-name
     # ceiling — deliberately HALF of it (see src/config.py for why) — so
     # `_build_short` sizes UNDER the risk engine's hard block instead of
@@ -95,11 +135,12 @@ class ConstructorConfig:
     # `risk.short_gap_risk_multiple`.
     short_gap_risk_multiple: float = 1.5
     # Spec §9.4 "agreement earns size". Ceiling on a risk-based target's
-    # `risk_allocation_pct`, indexed by the number of independent seats
-    # whose canonical stance is directionally aligned with the target
-    # (see `src/risk/rules.py::count_aligned_sources` /
-    # `agreement_ceiling_for_count`, and `RiskConfig.agreement_ceiling_pct`
-    # in `src/config.py` for the measurement behind these numbers).
+    # `risk_allocation_pct`, indexed by the SIGNED source score — aligned
+    # seats less opposed ones (see `src/risk/rules.py::signed_source_score` /
+    # `agreement_ceiling_for_score`, and `RiskConfig.agreement_ceiling_pct`
+    # in `src/config.py` for the measurement behind these numbers). Entry i
+    # prices a net score of i+1; a net score at or below zero has no rung and
+    # refuses the target outright.
     # Applied in `_plan_risk_targets`, strictly BEFORE `allocate_risk_budget`
     # and the single-name clamps below — it can only ever REDUCE what a
     # target receives, never raise it, and never past `risk_budget_pct`.
@@ -140,8 +181,73 @@ class ConstructorConfig:
     # Below this the trade only ever looked good on a stop too tight to
     # survive, so it is rejected rather than taken at a worse payoff.
     min_reward_risk_after_widening: float = 1.5
+    # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
+    # How close the stop must sit to a level `find_structural_levels`
+    # actually COMPUTED before `_widen_stop_past_noise` treats it as sitting
+    # AT that level and honours it whatever the band says.
+    #
+    # ATR-relative rather than a percentage, deliberately. The question is
+    # "did the analyst place this stop at that level?", which is a question
+    # about the name's own price noise — and ATR is the unit every other
+    # stop rule in this file already speaks (`min_stop_atr_multiple`,
+    # `min_target_atr_multiple`, Phase 3's trailing band). A flat percentage
+    # would be too tight to ever match on a 9%-ATR small cap and loose
+    # enough on a 1.5%-ATR utility to match a level the stop is nowhere
+    # near, so the SAME tolerance would mean two different things. A
+    # computed level is also a ZONE, not a number — `find_structural_levels`
+    # clusters pivots within `CLUSTER_TOLERANCE_PCT` (1%) into one level —
+    # so the tolerance has to be at least as wide as that zone.
+    # Kept in sync with `risk.level_match_atr_tolerance`.
+    level_match_atr_tolerance: float = 0.25
+    # The deterministic floor UNDER the exemption above, applying to
+    # level-backed stops too. See `_widen_stop_past_noise` for the reasoning;
+    # in short, §12.1 argues the exemption is safe because
+    # `config/prompts/tech_analyst.md` forbids a sub-1-ATR stop, but that is
+    # a prompt and Invariant 2 requires the deterministic layer to be the
+    # final authority and to fail closed. A level-backed stop is honoured
+    # however tight down to this many ATRs; inside it, it is widened to
+    # exactly this floor — NOT to the `min_stop_atr_multiple` band.
+    # 0 disables the floor entirely. Kept in sync with
+    # `risk.absolute_min_stop_atr_multiple`.
+    absolute_min_stop_atr_multiple: float = 1.0
+    # --- Target derivation (2026-09-01) ---------------------------------
+    # The stop has been computed from measured volatility since 2026-08-27;
+    # the target was still the language model's `reference_target`, so the
+    # reward:risk gate above was dividing a measurement by an opinion. These
+    # tune `src/data/levels.py::derive_structural_target`, which computes the
+    # target from the same bars the stop comes from. See that module's
+    # target-derivation section for the rule and the evidence; the defaults
+    # here deliberately mirror its module-level constants.
+    min_target_atr_multiple: float = 1.0
+    breakout_projection_atr_multiple: float = 1.0
+    max_target_reach_atr_multiple: float = 1.5
+    max_target_horizon_sessions: int = 60
+    # The model's target is not thrown away — it becomes evidence. Above this
+    # absolute percentage gap between the computed target and the model's
+    # guess, the disagreement is logged at WARNING rather than INFO, because
+    # a model that is consistently far from the chart is a finding about the
+    # model, not about the trade.
+    target_divergence_warn_pct: float = 25.0
     # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
     min_trade_weight_delta: float = 0.5
+    # --- Spec §11.2 — the gross-exposure ceiling (2026-09-01) ------------
+    # The SIZING half of the ceiling. `max_gross_exposure` is in
+    # HARD_BLOCK_RULES, so without this clamp an entry that breaches the
+    # ceiling is DROPPED at the execution gate rather than taken smaller —
+    # the same relationship `max_position_pct` already has with its clamp
+    # here, and the same reason: a ceiling that only refuses produces
+    # no-trade sessions instead of right-sized ones.
+    #
+    # This is the STANDING cap. The ladder-resolved ceiling for the session
+    # is passed to `construct_orders` per run, because it depends on live
+    # drawdown and a config default cannot know it. Kept in sync with
+    # `risk.max_gross_exposure_x` — pipeline.py wires them from the same
+    # setting.
+    max_gross_exposure_x: float = 2.0
+    # The cash-park vehicle (`cash_sweep.symbol`, SGOV by default), which is
+    # parked cash and NOT exposure. Taken from config rather than hardcoded;
+    # None when sweeping is off.
+    cash_park_symbol: str | None = None
     # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
     # REMOVED. They were never the intended design — `_resolve_stop` always
     # preferred the analyst's structural level and fell through to
@@ -170,6 +276,8 @@ class PortfolioConstructor:
         clusters: list[list[str]] | None = None,
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
+        stale_sources: dict[str, frozenset[str]] | None = None,
+        gross_ceiling=None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -198,6 +306,24 @@ class PortfolioConstructor:
         guaranteed to agree with what the PM was shown). Drives the agreement
         ceiling in `_plan_risk_targets`. Omitted, that ceiling is not enforced
         — same "no view, don't invent one" posture as `existing_risk_pct`.
+
+        `stale_sources`: spec §9.4 freshness. {symbol: {source}} — registry
+        entries that are real coverage but too old to earn size, from
+        `PortfolioManagerAgent.stale_evidence_sources` (the same pure function
+        the PM's own prompt used, recomputed by the caller from identical
+        inputs). Removed from the agreement tally only, so it can lower a
+        ceiling and never raise one. Omitted, nothing is gated — a caller with
+        no freshness view must not invent one, exactly as above.
+
+        `gross_ceiling`: spec §11.2. The de-levering ladder's resolved
+        `GrossCeiling` for this session — the standing cap, stepped down by
+        measured peak-to-trough drawdown. Entries are shrunk to fit it, and
+        refused outright when what remains is below `min_order_usd`. Omitted,
+        the constructor falls back to the standing cap with no drawdown
+        applied, so a caller that forgets it still sizes under A ceiling
+        rather than none. **This function never trims the held book** — the
+        gross ceiling's de-lever is authored in the session preamble, before
+        any agent runs, so it cannot depend on a model returning a book.
         """
         if total_value <= 0:
             return []
@@ -220,7 +346,14 @@ class PortfolioConstructor:
             clusters=clusters,
             regime=regime,
             evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
         )
+
+        # Spec §10.3. Held GROSS exposure per sector, carried through the
+        # loop and updated as each entry is built, so the second and third
+        # targets in one crowded sector are sized against a book that already
+        # contains the first.
+        sector_weights = self._current_sector_weights(positions, total_value)
 
         sells: list[TradeDecision] = []
         buys: list[TradeDecision] = []
@@ -302,8 +435,10 @@ class PortfolioConstructor:
                         total_value=total_value,
                         market_price=price_map.get(sym),
                         regime=regime,
+                        sector_weights=sector_weights,
                     )
                     if short_decision is not None:
+                        self._accrue_sector(sector_weights, short_decision)
                         sells.append(short_decision)
             else:
                 if current_pct < 0:
@@ -324,8 +459,10 @@ class PortfolioConstructor:
                         total_value=total_value,
                         market_price=price_map.get(sym),
                         regime=regime,
+                        sector_weights=sector_weights,
                     )
                     if buy_decision is not None:
+                        self._accrue_sector(sector_weights, buy_decision)
                         buys.append(buy_decision)
 
         # Canonical ordering: SELLs first (free up cash), then BUYs.
@@ -334,7 +471,49 @@ class PortfolioConstructor:
         # in a tight-cash session prioritizes highest conviction).
         sells.sort(key=lambda d: 0 if d.allocation_pct >= 100 else 1)
         buys.sort(key=lambda d: d.allocation_pct, reverse=True)
-        return sells + buys
+        orders = sells + buys
+
+        # Spec §11.2 — the SIZING half of the gross-exposure ceiling. Runs
+        # last, on the finished order list, because it is the only ceiling
+        # here that is a property of the WHOLE book rather than of one name:
+        # the exits above have already reduced what will be held, and every
+        # entry has to be rationed against the same headroom.
+        #
+        # `emit_trims=False` on purpose. Shrinking an order it is about to
+        # propose is this class's job; authoring a de-lever of the held book
+        # is not. That has exactly one owner — the session preamble, which
+        # runs before any agent and therefore keeps working on a run where
+        # the Portfolio Manager returns nothing at all.
+        from src.risk.rules import (
+            GrossCeiling, apply_gross_ceiling, resolve_gross_ceiling,
+        )
+        # isinstance, not truthiness: a caller (or a Mock pipeline in a test)
+        # that hands over something ceiling-shaped-but-not-a-ceiling must fall
+        # back to the standing cap rather than silently size against a
+        # comparison that raises.
+        ceiling = (
+            gross_ceiling if isinstance(gross_ceiling, GrossCeiling)
+            else resolve_gross_ceiling(
+                None, base_x=self.cfg.max_gross_exposure_x,
+            )
+        )
+        outcome = apply_gross_ceiling(
+            orders, positions, total_value, ceiling,
+            cash_park_symbol=self.cfg.cash_park_symbol,
+            min_order_usd=self.cfg.min_order_usd,
+            emit_trims=False,
+        )
+        for note in outcome.notes:
+            logger.warning("Constructor: %s", note)
+        # An entry rationed to nothing is dropped rather than emitted as a
+        # zero-allocation order — `allocation_pct == 0` means SKIP to the
+        # execution stage, and leaving it in the list would show the operator
+        # a trade that was never going to happen.
+        orders = [
+            d for d in orders
+            if d.action not in ("BUY", "SHORT") or d.allocation_pct > 0
+        ]
+        return orders
 
     def _plan_risk_targets(
         self,
@@ -347,6 +526,7 @@ class PortfolioConstructor:
         clusters: list[list[str]] | None,
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
+        stale_sources: dict[str, frozenset[str]] | None = None,
     ) -> dict[str, RiskPlan]:
         """Turn risk-based targets into notional weights, under the budget.
 
@@ -362,15 +542,19 @@ class PortfolioConstructor:
         book is bounded by construction rather than by a later veto.
 
         Spec §9.4: before EITHER of the above, each request is additionally
-        ceilinged by how many independent sources agree with the target's
-        direction (`evidence_registry` + `count_aligned_sources`). This
-        composes with, and is applied strictly BEFORE, the envelope clamp
-        and `allocate_risk_budget` — a reduction only, never a multiplier:
-        it can only ever refuse size a request did not earn agreement for.
+        ceilinged by the SIGNED source score — aligned seats minus opposed
+        ones (`evidence_registry` + `signed_source_score`). This composes
+        with, and is applied strictly BEFORE, the envelope clamp and
+        `allocate_risk_budget` — a reduction only, never a multiplier: it can
+        only ever refuse size a request did not earn agreement for. A score
+        at or below zero refuses the request entirely, so the target produces
+        no order at all; a held position is left exactly where it is, because
+        refusing to BUY is not a decision to SELL.
         """
         from src.risk.budget import RiskRequest, allocate_risk_budget
         from src.risk.rules import (
-            _gross_multiplier, agreement_ceiling_for_count, count_aligned_sources,
+            _gross_multiplier, agreement_ceiling_for_score, count_aligned_sources,
+            count_opposing_sources, signed_source_score,
         )
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
@@ -388,6 +572,11 @@ class PortfolioConstructor:
         # between PM's stated allocation and the constructed order reads as
         # PM contradicting itself (2026-08-20 incident), not as arithmetic.
         agreement_notes: dict[str, str] = {}
+        # §9.4 dissent. Since 2026-09-02 it IS subtracted (the ceiling reads
+        # the signed score); this note records the split that produced the
+        # score, so an order sized at the 2-seat rung on 3-for/1-against
+        # evidence says so rather than looking like a 2-source idea.
+        dissent_notes: dict[str, str] = {}
 
         for target in targets:
             if target.risk_allocation_pct is None:
@@ -421,31 +610,110 @@ class PortfolioConstructor:
             # (infinite), never silently treated as zero agreement — a
             # missing registry is not evidence of disagreement.
             agreement_count: int | None = None
+            opposing_count: int | None = None
+            source_score: int | None = None
             if evidence_registry is not None:
                 sources = evidence_registry.get(sym.upper(), {})
-                agreement_count = count_aligned_sources(sym, sources, target.direction)
-                agreement_ceiling = agreement_ceiling_for_count(
-                    self.cfg.agreement_ceiling_pct, agreement_count,
+                # §9.4 freshness: a stance the caller has judged too old is
+                # dropped from the TALLY only. It stays in `sources`, so it is
+                # still coverage `validate_grounding` recognises — this can
+                # lower the ceiling, never raise it. One gate, both sides: a
+                # stance too stale to corroborate is too stale to dissent.
+                ignored = (stale_sources or {}).get(sym.upper())
+                agreement_count = count_aligned_sources(
+                    sym, sources, target.direction, ignored_sources=ignored,
+                )
+                opposing_count = count_opposing_sources(
+                    sym, sources, target.direction, ignored_sources=ignored,
+                )
+                # 2026-09-02: the ceiling reads the SIGNED score, not the
+                # aligned count. Before this, a seat that stayed silent, a
+                # seat that rated neutral and a seat that actively disagreed
+                # all contributed the same zero, so the desk could size a name
+                # at the 3-seat rung while one of its own analysts argued the
+                # other way. Netting the dissent off is the whole change —
+                # there is deliberately NO separate veto rule, because that
+                # would charge the same dissenter twice.
+                source_score = signed_source_score(
+                    sym, sources, target.direction, ignored_sources=ignored,
+                )
+                agreement_ceiling = agreement_ceiling_for_score(
+                    self.cfg.agreement_ceiling_pct, source_score,
+                )
+                if ignored:
+                    gated = sorted(s for s in ignored if s in sources)
+                    if gated:
+                        logger.info(
+                            "Constructor: %s — %s stance(s) present but too "
+                            "stale to count toward agreement (%d aligned "
+                            "after the freshness gate)",
+                            sym, ", ".join(gated), agreement_count,
+                        )
+                logger.info(
+                    "Constructor: %s agreement %d aligned / %d opposed = "
+                    "net %+d (direction=%s, %d source(s) with coverage)",
+                    sym, agreement_count, opposing_count, source_score,
+                    target.direction, len(sources),
                 )
             else:
                 agreement_ceiling = float("inf")
             requested_pct = min(envelope_capped, agreement_ceiling)
+            if requested_pct <= 0.0:
+                # Net evidence at or below zero: the schedule has no rung for
+                # this and `agreement_ceiling_for_score` returned 0.0. Drop
+                # the target entirely rather than sizing it at zero — a
+                # zero-weight RiskPlan reads to the delta loop as "PM wants
+                # this position CLOSED", so letting a 0% request through would
+                # turn a refusal to open into a forced liquidation of whatever
+                # is already held. Refusing to BUY is not a decision to SELL.
+                # The two dels are load-bearing, not tidiness: the sizing loop
+                # below iterates `priced` and looks each symbol up in
+                # `requests`, which this target never joins.
+                logger.warning(
+                    "Constructor: %s produces no order — %d aligned / %d "
+                    "opposed = net %+d independent source(s) for this %s. "
+                    "§9.4 prices a signed sum and there is no rung at or "
+                    "below zero: the evidence does not net out in favour of "
+                    "the trade. Any existing position is left untouched.",
+                    sym, agreement_count, opposing_count, source_score,
+                    target.direction,
+                )
+                del priced[sym]
+                del directions[sym]
+                continue
             if agreement_ceiling < envelope_capped:
                 logger.info(
                     "Constructor: %s risk capped by the agreement ceiling "
-                    "(%.2f%% → %.2f%%; %d independent source(s) aligned "
-                    "with this %s)",
-                    sym, envelope_capped, requested_pct, agreement_count,
+                    "(%.2f%% → %.2f%%; net %+d independent source(s) for "
+                    "this %s)",
+                    sym, envelope_capped, requested_pct, source_score,
                     target.direction,
                 )
                 agreement_notes[sym] = (
                     f"[constructor: {sym} risk capped to {requested_pct:.2f}% "
-                    f"by the agreement ceiling — only {agreement_count} "
-                    f"independent source(s) align with this {target.direction}, "
+                    f"by the agreement ceiling — {agreement_count} aligned "
+                    f"less {opposing_count} opposed is a net {source_score:+d} "
+                    f"independent source(s) for this {target.direction}, "
                     f"below the {envelope_capped:.2f}% the envelope alone would "
                     "allow. More independent confirmation earns more of the "
-                    "risk budget; this idea earned less. Deterministic, not "
+                    "risk budget, and a seat arguing the other way subtracts "
+                    "from it; this idea earned less. Deterministic, not "
                     "PM inconsistency]"
+                )
+            if opposing_count:
+                # Carried into the order's reasoning (see `RiskPlan.note`) so
+                # the AI Risk Manager reads it and it lands in the persisted
+                # proposed_order evidence. The SPLIT, not just the net: an
+                # order sized at the 2-seat rung on 3-for/1-against evidence
+                # is a different idea from one with a flat 2 aligned and no
+                # dissent, and the note is the only place that survives.
+                dissent_notes[sym] = (
+                    f"[constructor: {sym} — {opposing_count} independent "
+                    f"source(s) took the OPPOSITE side of this "
+                    f"{target.direction} ({agreement_count} aligned, net "
+                    f"{source_score:+d}). §9.4 prices the SIGNED sum since "
+                    "2026-09-02, so this dissent HAS already been subtracted "
+                    "from the size above — it is not an unpriced warning]"
                 )
             requests.append(RiskRequest(sym, requested_pct))
 
@@ -475,6 +743,8 @@ class PortfolioConstructor:
             # explains why the REQUEST itself was already smaller before
             # the budget allocator ever saw it.
             note_parts = [agreement_notes[sym]] if sym in agreement_notes else []
+            if sym in dissent_notes:
+                note_parts.append(dissent_notes[sym])
             if allocation is not None:
                 grant = allocation.grants.get(sym.upper())
                 granted = grant.granted_pct if grant else 0.0
@@ -517,6 +787,94 @@ class PortfolioConstructor:
                 note=note,
             )
         return plans
+
+    def _derive_target(
+        self,
+        symbol: str,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        direction: str,
+    ) -> TargetDerivation:
+        """Compute the take-profit from structure, or refuse by name.
+
+        This replaces reading `analysis.reference_target` as the trade's
+        target. The model's number is still passed in — as `model_target`,
+        which the derivation never uses to choose an answer and only carries
+        so the disagreement can be logged. See
+        `src/data/levels.py::derive_structural_target`.
+
+        Deterministic and cheap, so it is called from both
+        `_resolve_entry_and_stop` (which needs it for the reward:risk check
+        after widening) and the builders (which need the number itself)
+        rather than being threaded through as state. Same inputs, same
+        answer, both times.
+        """
+        derivation = derive_structural_target(
+            entry_price=entry_price,
+            direction=direction,
+            levels=getattr(analysis, "computed_levels", None) or [],
+            atr=getattr(analysis, "atr_14", None),
+            horizon_sessions=getattr(analysis, "expected_horizon_sessions", None),
+            setup_type=getattr(analysis, "setup_type", None),
+            model_target=getattr(analysis, "reference_target", None),
+            min_target_atr_multiple=self.cfg.min_target_atr_multiple,
+            breakout_projection_atr_multiple=self.cfg.breakout_projection_atr_multiple,
+            max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
+            max_horizon_sessions=self.cfg.max_target_horizon_sessions,
+        )
+        self._log_target_divergence(symbol, derivation)
+        return derivation
+
+    def _log_target_divergence(
+        self, symbol: str, derivation: TargetDerivation,
+    ) -> None:
+        """Record where the model's guess and the computed level disagree.
+
+        The model's target is no longer arithmetic, but it is still the only
+        read available on whether the model's chart-reading is worth
+        anything. A large, one-directional gap across many symbols is a
+        finding about the seat; a large gap on one symbol is a finding about
+        that symbol.
+        """
+        if derivation.price is None or derivation.model_target is None:
+            return
+        gap = derivation.divergence_pct
+        if gap is None:
+            return
+        message = (
+            "Constructor: %s target — computed $%.2f (%s) vs analyst's "
+            "reference_target $%.2f: %+.1f%%"
+        )
+        args = (
+            symbol, derivation.price, derivation.basis,
+            derivation.model_target, gap,
+        )
+        if abs(gap) >= self.cfg.target_divergence_warn_pct:
+            logger.warning(message + " — the model and the chart disagree sharply", *args)
+        else:
+            logger.info(message, *args)
+
+    @staticmethod
+    def _target_note(derivation: TargetDerivation) -> str:
+        """Provenance for the order's reasoning, appended after truncation.
+
+        The AI Risk Manager reads `reasoning`. It must be able to see that
+        the take-profit is a computed level rather than the analyst's number,
+        and where the two differ — otherwise it re-does the comparison in its
+        head, which is the class of error that produced two contradictory
+        reward:risk figures in one response on 2026-08-31.
+        """
+        if derivation.price is None:
+            return ""
+        note = f" [target ${derivation.price:,.2f} — {derivation.basis}]"
+        if derivation.model_target is not None and derivation.divergence_pct is not None:
+            note = (
+                f" [target ${derivation.price:,.2f} computed from "
+                f"{derivation.basis.replace('_', ' ')}; analyst's reference "
+                f"${derivation.model_target:,.2f}, "
+                f"{derivation.divergence_pct:+.1f}%]"
+            )
+        return note
 
     def _resolve_entry_and_stop(
         self,
@@ -561,10 +919,26 @@ class PortfolioConstructor:
         # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
+        # The target is derived BEFORE the stop is finalised, because the
+        # reward:risk check inside `_widen_stop_past_noise` needs a real
+        # target to measure against. It depends only on entry, direction and
+        # the chart — never on the stop — so there is no circularity.
+        derivation = self._derive_target(
+            target.symbol, analysis, entry_price, target.direction,
+        )
+        if derivation.price is None:
+            logger.warning(
+                "Constructor: %s %s rejected — no target could be computed "
+                "from structure [%s]: %s",
+                "SHORT" if is_short else "BUY", target.symbol,
+                derivation.refusal, derivation.detail,
+            )
+            return (None, None)
+
         stop_loss = self._resolve_stop(target, analysis, entry_price)
         stop_loss = self._widen_stop_past_noise(
             target.symbol, analysis, entry_price, stop_loss, regime=regime,
-            direction=target.direction,
+            direction=target.direction, target_price=derivation.price,
         )
         if stop_loss is not None:
             stop_loss = round(stop_loss, 2)
@@ -605,6 +979,93 @@ class PortfolioConstructor:
                 break
         return multiple
 
+    def _level_backing_stop(
+        self,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        stop_loss: float,
+        atr: float,
+        is_short: bool,
+    ) -> float | None:
+        """The computed structural level this stop sits at, or None.
+
+        Spec §12.1. "Verified" means the price came out of
+        `src/data/levels.py::find_structural_levels` and was attached to the
+        analysis IN PYTHON (`TechAnalysisResult.computed_levels`, set by
+        `TechAnalystAgent` after parsing and never emitted by the model). A
+        model asserting a level in `support_levels` / `resistance_levels`
+        earns nothing here — if it could, it would only have to name a level
+        beside its stop to buy itself an exemption from the noise floor,
+        and the verification would be worthless.
+
+        Side is judged against THIS ENTRY, not against the last close.
+        `find_structural_levels` labels a level support or resistance
+        relative to the last close, and its own docstring says a ceiling
+        price has broken through becomes a floor. The trade is entered at a
+        live price that may sit on the other side of a level, so what
+        matters is only whether the level is below entry (it can hold a
+        long up) or above it (it can cap a short). This is the same
+        re-partition `derive_structural_target` performs for the target,
+        for the same reason — see the `levels` note in its docstring.
+
+        Returns the CLOSEST matching level so the log names the one the
+        stop is actually sitting on.
+        """
+        raw_levels = getattr(analysis, "computed_levels", None) or []
+        tolerance = self.cfg.level_match_atr_tolerance * atr
+        if tolerance <= 0:
+            return None
+
+        best: float | None = None
+        best_gap = float("inf")
+        for raw in raw_levels:
+            try:
+                price = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(price) or price <= 0:
+                continue
+            # A long is held up by structure at or below its entry; a short
+            # is capped by structure at or above its entry. A "support"
+            # above a long's entry cannot be what its stop is resting on.
+            if is_short and price < entry_price:
+                continue
+            if not is_short and price > entry_price:
+                continue
+            gap = abs(stop_loss - price)
+            if gap <= tolerance and gap < best_gap:
+                best, best_gap = price, gap
+        return best
+
+    def _reward_risk_at(
+        self,
+        entry_price: float,
+        stop_price: float,
+        target_price: float | None,
+        is_short: bool,
+    ) -> float | None:
+        """Reward:risk measured against the stop that will actually ship.
+
+        None when the target is missing or points the wrong way, which is
+        the existing "cannot judge it, do not invent a judgement" posture —
+        callers treat that as "no opinion", not as a failure.
+        """
+        if not target_price or stop_price <= 0 or entry_price <= 0:
+            return None
+        if is_short:
+            if target_price >= entry_price:
+                return None
+            risk = stop_price - entry_price
+            reward = entry_price - target_price
+        else:
+            if target_price <= entry_price:
+                return None
+            risk = entry_price - stop_price
+            reward = target_price - entry_price
+        if risk <= 0:
+            return None
+        return reward / risk
+
     def _widen_stop_past_noise(
         self,
         symbol: str,
@@ -613,16 +1074,55 @@ class PortfolioConstructor:
         stop_loss: float | None,
         regime: str | None = None,
         direction: str = "long",
+        target_price: float | None = None,
     ) -> float | None:
-        """Push a stop out to `min_stop_atr_multiple` ATRs when structure put
-        it inside ordinary volatility.
+        """Decide the stop that will actually ship, and say which rule did it.
 
-        The stop still comes from structure — this never invents one where
-        none exists, and never pulls a wide stop tighter. It only corrects the
-        case the evidence says was routine: stops a median 1.7 ATRs from
-        entry, which is a coin flip on a normal day's range rather than a
-        thesis invalidation, and which then forced enormous positions to reach
-        any meaningful risk.
+        Spec §12.1 (2026-09-01). **A stop sitting at a level the system
+        COMPUTED is honoured however tight; the ATR band applies only when
+        nothing computed backs it.**
+
+        What this replaced, and why. `min_stop_atr_multiple` used to
+        overwrite the structural stop unconditionally whenever the level sat
+        closer to entry than the band. After that the stop was not at
+        anything real — and `min_reward_risk_after_widening` was then judged
+        against that fabricated number, so the reward was being divided by a
+        risk nobody would ever take. The arithmetic is unforgiving: over a
+        ~15-session hold a stock travels ~3.9 ATR, so against a 3.0-ATR stop
+        the best achievable ratio is ~1.29 against a 1.5 floor. Essentially
+        no trade could pass, and on 2026-09-01 the desk reviewed 38 qualified
+        signals and placed ZERO trades. Tuning the multiple down to 2.0 was
+        considered and explicitly REJECTED by the owner: it keeps a floor
+        that still cannot tell a level-backed tight stop from an arbitrary
+        one. Neither threshold moved. What changed is WHICH stop the
+        arithmetic is performed on.
+
+        "Verified" is doing real work here — see `_level_backing_stop`. The
+        level must have come out of `find_structural_levels` and been
+        attached in Python. A stop the analyst merely placed close, with
+        nothing computed under it, still gets the full band.
+
+        **The 1x ATR floor below is an addition beyond the ratified §12.1
+        wording, and it is deliberate.** §12.1 argues the exemption is safe
+        because `config/prompts/tech_analyst.md` already forbids a stop
+        inside 1*ATR of entry. That is a PROMPT — an instruction to a
+        language model — and Invariant 2 of the spec requires deterministic
+        Python protections to be the final authority and to fail closed. A
+        prompt is not a deterministic guarantee. Meanwhile a genuine support
+        level sitting 0.2 ATR under entry is real structure AND a guaranteed
+        whipsaw; both things are true at once. So a level-backed stop is
+        honoured however tight DOWN TO `absolute_min_stop_atr_multiple`
+        ATRs, and inside that it is widened to exactly that floor — never to
+        the full `min_stop_atr_multiple` band, which is the behaviour being
+        removed.
+
+        For an unbacked stop nothing has changed: it is pushed out to
+        `min_stop_atr_multiple` ATRs, exactly as before. That corrects the
+        case the evidence says was routine — stops a median 1.7 ATRs from
+        entry, a coin flip on a normal day's range rather than a thesis
+        invalidation, which then forced enormous positions to reach any
+        meaningful risk. This never invents a stop where none exists, and
+        never pulls a wide stop tighter.
 
         D5 (Stage 3): direction-aware. A long's stop is pushed DOWN, away
         from entry; a short's stop is pushed UP, away from entry, by the
@@ -634,9 +1134,48 @@ class PortfolioConstructor:
         Returns None when widening would leave a reward:risk the trade cannot
         justify. That is deliberate: a trade that only cleared the bar on a
         stop too tight to survive was never the trade it appeared to be.
+
+        `target_price` (2026-09-01) is the DERIVED target — computed from
+        structure by `_derive_target`. It has to be passed in rather than
+        read off the analysis, because the whole point of the change is that
+        `analysis.reference_target` is the language model's guess and this
+        gate is arithmetic. When it is omitted the old read is kept, for the
+        one caller that legitimately supplies its own structural target: the
+        backtest engine, which computes the nearest level itself and hands it
+        over on a shim (`src/backtest/engine.py`). That path was never
+        exposed to the defect.
         """
         if stop_loss is None or stop_loss <= 0 or entry_price <= 0:
             return stop_loss
+
+        is_short = direction == "short"
+        # A stop on the WRONG side of entry is refused here rather than
+        # widened into validity. Found 2026-09-01: widening moves the stop to
+        # `entry +/- multiple * ATR`, which is unconditionally on the correct
+        # side, so a short handed a stop BELOW its entry came out of this
+        # function with a valid-looking stop above it — silently repairing
+        # exactly the nonsense the caller's side check exists to catch.
+        # `test_short_stop_at_or_below_entry_is_rejected` only passed because
+        # its fixture carried no ATR, which is not a state production reaches
+        # (`atr_14` is Python-set on every analysis). Widening corrects a stop
+        # that is too CLOSE; it must not invent one that is on the wrong side.
+        if is_short and stop_loss <= entry_price:
+            logger.warning(
+                "Constructor: SHORT %s refused [%s] — the stop $%.2f is at or "
+                "below the entry $%.2f, so it protects nothing. Refusing "
+                "rather than widening it into validity.",
+                symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
+            )
+            return None
+        if not is_short and stop_loss >= entry_price:
+            logger.warning(
+                "Constructor: BUY %s refused [%s] — the stop $%.2f is at or "
+                "above the entry $%.2f, so it protects nothing. Refusing "
+                "rather than widening it into validity.",
+                symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
+            )
+            return None
+
         atr = getattr(analysis, "atr_14", None) if analysis else None
         try:
             atr = float(atr) if atr is not None else None
@@ -646,7 +1185,6 @@ class PortfolioConstructor:
             return stop_loss  # no volatility reading — leave structure alone
 
         multiple = self._stop_atr_multiple(analysis, regime)
-        is_short = direction == "short"
         if is_short:
             band_edge = entry_price + multiple * atr
             if stop_loss >= band_edge:
@@ -656,47 +1194,123 @@ class PortfolioConstructor:
             if band_edge <= 0 or stop_loss <= band_edge:
                 return stop_loss  # already outside the noise band
 
-        target_price = getattr(analysis, "reference_target", None) if analysis else None
+        if target_price is None and analysis is not None:
+            target_price = getattr(analysis, "reference_target", None)
         try:
             target_price = float(target_price) if target_price else None
         except (TypeError, ValueError):
             target_price = None
-        if is_short:
-            if target_price and target_price < entry_price:
-                risk = band_edge - entry_price
-                reward = entry_price - target_price
-                reward_risk = reward / risk if risk > 0 else 0.0
-                if risk <= 0 or reward_risk < self.cfg.min_reward_risk_after_widening:
-                    logger.info(
-                        "Constructor: SHORT %s rejected — a stop outside the "
-                        "noise band (%.2f x ATR = $%.2f) leaves reward:risk "
-                        "%.2f, under the %.2f minimum. The setup only "
-                        "qualified on a stop inside one ordinary day's range.",
-                        symbol, multiple, band_edge, reward_risk,
-                        self.cfg.min_reward_risk_after_widening,
-                    )
-                    return None
-        else:
-            if target_price and target_price > entry_price:
-                reward_risk = (target_price - entry_price) / (entry_price - band_edge)
-                if reward_risk < self.cfg.min_reward_risk_after_widening:
-                    logger.info(
-                        "Constructor: %s rejected — a stop outside the noise band "
-                        "(%.2f x ATR = $%.2f) leaves reward:risk %.2f, under the "
-                        "%.2f minimum. The setup only qualified on a stop inside "
-                        "one ordinary day's range.",
-                        symbol, multiple, band_edge, reward_risk,
-                        self.cfg.min_reward_risk_after_widening,
-                    )
-                    return None
+
+        floor = self.cfg.min_reward_risk_after_widening
+        side_word = "above" if is_short else "below"
+
+        # -------------------------------------------------------------
+        # §12.1 — is this stop sitting on something the system computed?
+        # -------------------------------------------------------------
+        level = self._level_backing_stop(
+            analysis, entry_price, stop_loss, atr, is_short,
+        )
+        if level is not None:
+            honoured = stop_loss
+            floor_multiple = self.cfg.absolute_min_stop_atr_multiple
+            hard_floor = (
+                entry_price + floor_multiple * atr if is_short
+                else entry_price - floor_multiple * atr
+            )
+            inside_hard_floor = (
+                floor_multiple > 0
+                and hard_floor > 0
+                and (stop_loss < hard_floor if is_short else stop_loss > hard_floor)
+            )
+            if inside_hard_floor:
+                # Real structure, still too close to survive one ordinary
+                # session. Pushed out to the 1x floor and NOT to the full
+                # band — the band is what §12.1 removed. See the docstring
+                # for why this floor exists in code rather than in a prompt.
+                honoured = hard_floor
+                logger.info(
+                    "Constructor: %s %s stop $%.2f → $%.2f [%s] — it sits at "
+                    "the computed structural level $%.2f, which is real, but "
+                    "only %.2f ATRs from the $%.2f entry. A stop inside one "
+                    "ordinary day's range is a coin flip, so it is moved out "
+                    "to the %.2f x ATR floor — not to the %.2f x ATR noise "
+                    "band, which the level exempts it from.",
+                    "SHORT" if is_short else "BUY", symbol, stop_loss,
+                    honoured, STOP_RULE_ABSOLUTE_FLOOR, level,
+                    abs(entry_price - stop_loss) / atr, entry_price,
+                    floor_multiple, multiple,
+                )
+            else:
+                logger.info(
+                    "Constructor: %s %s stop $%.2f kept [%s] — it sits at the "
+                    "computed structural level $%.2f (%.2f ATRs %s the $%.2f "
+                    "entry). The %.2f x ATR noise band would have moved it to "
+                    "$%.2f, which is not a level anyone is defending, so the "
+                    "band does not apply.",
+                    "SHORT" if is_short else "BUY", symbol, stop_loss,
+                    STOP_RULE_LEVEL_HONOURED, level,
+                    abs(entry_price - stop_loss) / atr, side_word, entry_price,
+                    multiple, band_edge,
+                )
+
+            # The whole point of §12.1: reward:risk is measured against the
+            # stop that will ACTUALLY ship. Judging it against a stop nobody
+            # will ever use is the defect being removed. The floor itself is
+            # untouched at 1.5 — a level-backed trade whose real geometry
+            # still does not work is still refused.
+            reward_risk = self._reward_risk_at(
+                entry_price, honoured, target_price, is_short,
+            )
+            if reward_risk is not None and reward_risk < floor:
+                logger.info(
+                    "Constructor: %s %s refused [%s] — against the stop it "
+                    "will actually use ($%.2f, at the computed level $%.2f) "
+                    "the computed target $%.2f is reward:risk %.2f, under "
+                    "the %.2f minimum. Both numbers are measured, and this "
+                    "is the real geometry of the trade, not a widened one — "
+                    "the entry does not support it.",
+                    "SHORT" if is_short else "BUY", symbol,
+                    STOP_REFUSAL_GEOMETRY_AT_LEVEL, honoured, level,
+                    target_price, reward_risk, floor,
+                )
+                return None
+            return honoured
+
+        # -------------------------------------------------------------
+        # Nothing computed backs this stop — unchanged behaviour.
+        # -------------------------------------------------------------
+        # The refusal below is about GEOMETRY, and says so. Both sides of
+        # the ratio are computed from measured volatility: the stop is
+        # `min_stop_atr_multiple` ATRs out, the target is where structure or
+        # the horizon says price travels. When those two cannot clear the
+        # floor together, the trade is refused because its shape does not
+        # work at this entry — NOT because a model guessed a poor target,
+        # which is what this message used to mean and no longer does.
+        reward_risk = self._reward_risk_at(
+            entry_price, band_edge, target_price, is_short,
+        )
+        if reward_risk is not None and reward_risk < floor:
+            logger.info(
+                "Constructor: %s %s refused [%s] — no computed structural "
+                "level sits at the $%.2f stop, so it is widened to the "
+                "%.2f x ATR noise band at $%.2f. Against that the computed "
+                "target $%.2f is reward:risk %.2f, under the %.2f minimum. "
+                "Both numbers are measured; this entry does not support the "
+                "trade.",
+                "SHORT" if is_short else "BUY", symbol,
+                STOP_REFUSAL_GEOMETRY_AT_BAND, stop_loss, multiple, band_edge,
+                target_price, reward_risk, floor,
+            )
+            return None
 
         logger.info(
-            "Constructor: %s stop widened $%.2f → $%.2f (%.1f%% %s entry) — "
-            "structure placed it inside %.2f x ATR of $%.2f (%s setup, %s tape)",
-            symbol, stop_loss, band_edge,
-            100 * abs(entry_price - band_edge) / entry_price,
-            "above" if is_short else "below",
-            multiple, atr,
+            "Constructor: %s %s stop widened $%.2f → $%.2f (%.1f%% %s entry) "
+            "[%s] — no computed structural level sits at it, and it was "
+            "placed inside %.2f x ATR of $%.2f (%s setup, %s tape). A stop "
+            "nothing on the chart defends does not earn the §12.1 exemption.",
+            "SHORT" if is_short else "BUY", symbol, stop_loss, band_edge,
+            100 * abs(entry_price - band_edge) / entry_price, side_word,
+            STOP_RULE_ATR_BAND, multiple, atr,
             getattr(analysis, "setup_type", None) or "unknown",
             regime or "unknown",
         )
@@ -727,7 +1341,7 @@ class PortfolioConstructor:
             return {}
         # Local import to avoid the cyclic risk -> portfolio_constructor
         # import chain at module load.
-        from src.risk.rules import _gross_multiplier
+        from src.risk.rules import position_weight_pct
         # SIGNED, not absolute. A short has a negative qty and a negative
         # market_value (Alpaca convention), so it lands in the map as a
         # NEGATIVE weight. Signed is the correct choice because every consumer
@@ -745,10 +1359,184 @@ class PortfolioConstructor:
         # the map entirely, so `current_weights.get(sym, 0.0)` reported a held
         # short as unheld and the delta loop would re-open it every session.
         return {
-            p.symbol: (p.market_value * _gross_multiplier(p.symbol) / total_value * 100)
+            p.symbol: position_weight_pct(p, total_value)
             for p in positions
             if p.qty != 0
         }
+
+    @staticmethod
+    def _current_sector_weights(
+        positions: list[Position], total_value: float,
+    ) -> dict[tuple[str, str], float]:
+        """Held GROSS exposure per `(sector, side)`, as % of equity.
+
+        Spec §10.3 (the dial) and §12.2 (the split). Calls the SAME
+        `sector_side_weights` that `RiskRuleEngine.check` measures with,
+        rather than restating the arithmetic — the constructor sizing against
+        a different book than the gate measures is how a scaled order gets
+        blocked anyway, and three hand-written copies of this sum is how the
+        signed-vs-gross defect survived.
+
+        §12.2 CORRECTION: `market_value` used to be summed SIGNED, so a held
+        short REDUCED its sector's measured weight even though the engine's
+        own comment on that block claimed "gross ... unsigned magnitude". It
+        is now an unsigned magnitude booked to the short side's own budget.
+        A long and a short in the same sector do not offset.
+
+        Sector is read off the POSITION's own `sector` field rather than
+        `_get_sector(symbol)` — the engine sums held positions the first way
+        and resolves only the CANDIDATE symbol the second way, so
+        `_apply_sector_dial` does the same.
+        """
+        from src.risk.rules import sector_side_weights
+        return sector_side_weights(positions, total_value)
+
+    def _apply_sector_dial(
+        self,
+        symbol: str,
+        allocation_pct: float,
+        *,
+        sector_weights: dict[tuple[str, str], float],
+        total_value: float,
+        action: str = "BUY",
+    ) -> tuple[float, str]:
+        """Spec §10.3. Shrink a crowded sector's next trade instead of vetoing it.
+
+        Returns `(allocation_pct, note)`. `allocation_pct` is RAW notional
+        percent (the units every downstream consumer spends); the sector
+        budget is GROSS, so the conversion happens here exactly once, the
+        same way the single-name clamp above does it.
+
+        Spec §12.2: the budget consulted is the one for THIS ORDER'S SIDE.
+        A crowded long book in a sector does not shrink a short into it, and
+        the reverse — "a long and a short in the same sector is not a hedge",
+        so neither is it a shared budget. This is what keeps the owner's pair
+        trade (long the leader, short the laggard in one hot sector) legal.
+
+        Returns a NEGATIVE allocation to mean "refuse" — either the sector is
+        at its absolute ceiling, or what crowding leaves is too small to be
+        worth trading. The callers already treat `<= 0` as no order.
+        """
+        from src.risk.rules import (
+            _gross_multiplier, decision_side, sector_allowance_pct,
+            sector_size_scale,
+        )
+        from src.execution.broker import _get_sector
+
+        sector = _get_sector(symbol)
+        if not sector or sector == "Unknown":
+            # Sizing (this pass) still skips the dial for an unresolved
+            # sector — a deliberate, unrelated design choice, not a gap.
+            # 2026-09-01 audit: the ENGINE (RiskRuleEngine.check, rule 5)
+            # no longer matches this — it now pools "Unknown" as its own
+            # bucket and gates it, so an order this pass declines to shrink
+            # still cannot silently over-concentrate; the engine's hard wall
+            # catches what this pass does not pre-shrink. See
+            # src/risk/rules.py rule 5's comment for the full defect.
+            return allocation_pct, ""
+
+        side = decision_side(action)
+        current_pct = sector_weights.get((sector, side), 0.0)
+        scale = sector_size_scale(
+            current_pct,
+            soft_cap_pct=self.cfg.max_sector_pct,
+            hard_cap_pct=self.cfg.max_sector_hard_pct,
+        )
+        allowance_gross = sector_allowance_pct(
+            current_pct,
+            soft_cap_pct=self.cfg.max_sector_pct,
+            hard_cap_pct=self.cfg.max_sector_hard_pct,
+        )
+        gross_mul = _gross_multiplier(symbol)
+        # Below the diversification target the dial is inert (scale == 1.0)
+        # and the allowance is wider than any single name may take anyway —
+        # say nothing, change nothing, so an uncrowded trade's audit trail
+        # is not cluttered with a cap that never bound.
+        scaled = allocation_pct * scale
+        allowance_raw = allowance_gross / gross_mul
+        final = min(scaled, allowance_raw)
+        if final >= allocation_pct:
+            return allocation_pct, ""
+
+        if scale <= 0.0 or allowance_raw <= 0.0:
+            logger.info(
+                "Constructor: %s refused — sector '%s' %s side is at %.1f%% "
+                "gross, at or past the %.0f%% absolute ceiling; no size is "
+                "available.",
+                symbol, sector, side, current_pct, self.cfg.max_sector_hard_pct,
+            )
+            return -1.0, (
+                f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
+                f"at {current_pct:.1f}% of equity, at or past the "
+                f"{self.cfg.max_sector_hard_pct:.0f}% absolute ceiling. "
+                f"Concentration scales size, but not without end]"
+            )
+
+        # The floor. A position this small cannot pay for its own risk.
+        notional = total_value * final / 100
+        if notional < self.cfg.min_order_usd:
+            logger.info(
+                "Constructor: %s refused — sector '%s' at %.1f%% leaves only "
+                "%.2f%% (~$%.0f), under the $%.0f minimum order.",
+                symbol, sector, current_pct, final, notional,
+                self.cfg.min_order_usd,
+            )
+            return -1.0, (
+                f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
+                f"at {current_pct:.1f}% of equity, so crowding leaves only "
+                f"{final:.2f}% (~${notional:,.0f}). That is under the "
+                f"${self.cfg.min_order_usd:,.0f} minimum order: a position "
+                f"this small pays full commission and full attention for an "
+                f"immaterial payoff, so it is not taken at all]"
+            )
+
+        logger.info(
+            "Constructor: %s size scaled for sector crowding "
+            "(%.2f%% → %.2f%%; sector '%s' at %.1f%% gross, target %.0f%%, "
+            "ceiling %.0f%%, dial %.2f)",
+            symbol, allocation_pct, final, sector, current_pct,
+            self.cfg.max_sector_pct, self.cfg.max_sector_hard_pct, scale,
+        )
+        # Provenance for the AI Risk Manager and the owner. A smaller position
+        # than the PM asked for must never be silently applied — someone
+        # seeing an unexpectedly small position has to be able to find out
+        # why, and this is the string that tells them.
+        return final, (
+            f" [constructor: size scaled {allocation_pct:.2f}% → {final:.2f}% "
+            f"because sector '{sector}' ({side} side) is already "
+            f"{current_pct:.1f}% of equity, over the "
+            f"{self.cfg.max_sector_pct:.0f}% concentration "
+            f"target. The idea was judged on its own merits and taken, just "
+            f"smaller; it is refused only past {self.cfg.max_sector_hard_pct:.0f}%. "
+            f"Deterministic, not PM inconsistency]"
+        )
+
+    def _accrue_sector(
+        self,
+        sector_weights: dict[tuple[str, str], float],
+        decision: TradeDecision,
+    ) -> None:
+        """Book an order's GROSS sector consumption so the NEXT order in the
+        same batch sees a book that already contains it.
+
+        Without this, three targets in one crowded sector would each be sized
+        against the same stale starting weight and collectively breach the
+        ceiling — the identical accumulator the pipeline's risk filter keeps
+        in `pending_sector_investment`, for the identical reason.
+        """
+        from src.risk.rules import _gross_multiplier, decision_side
+        from src.execution.broker import _get_sector
+        if decision.action not in ("BUY", "SHORT"):
+            return
+        sector = _get_sector(decision.symbol)
+        if not sector or sector == "Unknown":
+            return
+        # Spec §12.2 — into THIS order's side. A SHORT booked into the long
+        # bucket would shrink the next long for crowding that is not there.
+        key = (sector, decision_side(decision.action))
+        sector_weights[key] = sector_weights.get(key, 0.0) + (
+            decision.allocation_pct * _gross_multiplier(decision.symbol)
+        )
 
     @staticmethod
     def _hold_decision(target: TargetPosition) -> TradeDecision:
@@ -867,6 +1655,7 @@ class PortfolioConstructor:
         market_price: float | None,
         plan: RiskPlan | None = None,
         regime: str | None = None,
+        sector_weights: dict[tuple[str, str], float] | None = None,
     ) -> TradeDecision | None:
         # A risk-based target already resolved its entry and stop in
         # _plan_risk_targets — reusing them keeps the size the budget granted
@@ -881,22 +1670,27 @@ class PortfolioConstructor:
             if entry_price is None or stop_loss is None:
                 return None
 
-        # Take-profit comes from the analyst's structural reference_target, or
-        # there is no trade. The previous `entry * (1 + 2*stop_gap_pct)` branch
-        # manufactured a target whenever the analyst omitted one, and
-        # thesis_progress, pace and TARGET_BREACH were then all measured
-        # against that invention. TechAnalysisResult now requires
-        # reference_target for every actionable rating — structure for a range
-        # setup, a measured move for a breakout — so this is a hard read.
-        if not (analysis and analysis.reference_target and analysis.reference_target > entry_price):
+        # Take-profit is COMPUTED from structure (2026-09-01), not read from
+        # the analyst's `reference_target`. Two earlier stages of the same
+        # argument: `entry * (1 + 2*stop_gap_pct)` manufactured a target when
+        # the analyst omitted one, and was deleted; then the analyst's own
+        # number was made mandatory, which removed the fabrication but left
+        # the reward:risk gate dividing a measured stop by a guessed target.
+        # Now both sides of that ratio come from the bars. The model's guess
+        # survives on `analysis.reference_target` as evidence and is logged
+        # against the computed level by `_derive_target`.
+        derivation = self._derive_target(
+            target.symbol, analysis, entry_price, target.direction,
+        )
+        if derivation.price is None or derivation.price <= entry_price:
             logger.warning(
-                "Constructor: BUY %s rejected — no structural reference_target "
-                "from the technical analyst (entry=$%.2f). Targets are no "
-                "longer synthesized.",
+                "Constructor: BUY %s rejected — no target could be computed "
+                "above entry $%.2f [%s]: %s",
                 target.symbol, entry_price,
+                derivation.refusal or "target_not_above_entry", derivation.detail,
             )
             return None
-        take_profit = float(analysis.reference_target)
+        take_profit = float(derivation.price)
 
         # `target_pct` and `current_pct` are GROSS-leverage weights (see
         # _current_weights), but every consumer of `allocation_pct` spends it
@@ -985,6 +1779,22 @@ class PortfolioConstructor:
             )
             allocation_pct = name_headroom_pct
 
+        # Spec §10.3. Sector crowding scales the size; it does not veto the
+        # trade. Applied LAST, after the risk budget and the single-name
+        # ceiling, because it operates on what this order would actually
+        # deploy — scaling a number the clamps below would then have cut
+        # anyway would understate the position twice. §12.2: measured against
+        # the LONG budget of that sector only.
+        if sector_weights is not None:
+            allocation_pct, sector_note = self._apply_sector_dial(
+                target.symbol, allocation_pct,
+                sector_weights=sector_weights, total_value=total_value,
+                action="BUY",
+            )
+            cap_note += sector_note
+            if allocation_pct < 0:
+                return None
+
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:
             return None
@@ -1009,7 +1819,7 @@ class PortfolioConstructor:
             # the PM contradicting itself.
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
-            ),
+            ) + self._target_note(derivation),
             # Conviction ledger (spec §7.2) — pinned at entry, never
             # recomputed. `plan` is None for a legacy notional target, so
             # `allocated_risk_pct` stays None rather than a fabricated
@@ -1029,6 +1839,7 @@ class PortfolioConstructor:
         market_price: float | None,
         plan: RiskPlan | None = None,
         regime: str | None = None,
+        sector_weights: dict[tuple[str, str], float] | None = None,
     ) -> TradeDecision | None:
         """The BUY-side mirror (Stage 3, D1): open or add to a short.
 
@@ -1046,18 +1857,25 @@ class PortfolioConstructor:
             if entry_price is None or stop_loss is None:
                 return None
 
-        # Take-profit: the analyst's structural reference_target, BELOW
-        # entry for a short (price must FALL for a short to profit) — the
-        # mirror of _build_buy's `reference_target > entry_price` read.
-        if not (analysis and analysis.reference_target and analysis.reference_target < entry_price):
+        # Take-profit: COMPUTED from structure and BELOW entry for a short
+        # (price must FALL for a short to profit) — the exact mirror of
+        # _build_buy, using the same derivation. The direction inversion
+        # lives inside `derive_structural_target`: it draws from levels below
+        # the entry and projects a measured move downward, so nothing here
+        # has to know which way the trade points beyond passing
+        # `target.direction` through.
+        derivation = self._derive_target(
+            target.symbol, analysis, entry_price, target.direction,
+        )
+        if derivation.price is None or derivation.price >= entry_price:
             logger.warning(
-                "Constructor: SHORT %s rejected — no structural "
-                "reference_target below entry from the technical analyst "
-                "(entry=$%.2f). Targets are not synthesized.",
+                "Constructor: SHORT %s rejected — no target could be computed "
+                "below entry $%.2f [%s]: %s",
                 target.symbol, entry_price,
+                derivation.refusal or "target_not_below_entry", derivation.detail,
             )
             return None
-        take_profit = float(analysis.reference_target)
+        take_profit = float(derivation.price)
 
         from src.risk.rules import _gross_multiplier
         gross_mul = _gross_multiplier(target.symbol)
@@ -1124,6 +1942,23 @@ class PortfolioConstructor:
             )
             allocation_pct = name_headroom_pct
 
+        # Spec §10.3, identical to `_build_buy`: a short crowds its sector
+        # exactly as a long does, and gets scaled for crowding exactly as a
+        # long does. Spec §12.2 is what differs — the budget it is measured
+        # against is the SHORT side's own, not a shared gross bucket. That is
+        # what keeps a pair trade (long the leader, short the laggard in one
+        # hot sector) legal: two opportunities that share a label, not a hedge
+        # and not one budget.
+        if sector_weights is not None:
+            allocation_pct, sector_note = self._apply_sector_dial(
+                target.symbol, allocation_pct,
+                sector_weights=sector_weights, total_value=total_value,
+                action="SHORT",
+            )
+            cap_note += sector_note
+            if allocation_pct < 0:
+                return None
+
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:
             return None
@@ -1143,7 +1978,7 @@ class PortfolioConstructor:
             take_profit=take_profit,
             reasoning=reasoning[:500] + cap_note + (
                 f" {plan.note}" if plan is not None and plan.note else ""
-            ),
+            ) + self._target_note(derivation),
             # Conviction ledger (spec §7.2) — mirrors _build_buy's entry
             # pinning; see its comment for what each field means.
             conviction=target.conviction,

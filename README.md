@@ -141,8 +141,13 @@ SELL allocation_pct semantics, ET-everywhere timezone, etc.).
 - Single position: max 20% (gross exposure — SQQQ 3x, SDS 2x counted at full magnitude)
 - Total **net** exposure: max 90% (hedges cancel — e.g. long SPY + short SH ≈ zero net)
 - Daily loss: max 3% of prior-close equity (`equity − last_equity`; includes realized fills from broker-triggered OTO stops, not just marks)
-- Sector concentration: max 40% (gross, cumulative including pending same-sector buys)
+- Sector concentration (gross, cumulative including pending same-sector orders) — **a dial, not a gate** (spec §10.3), with **separate long and short budgets** (spec §12.2) measured against a **75% target** (spec §12.3). All three owner-ratified 2026-09-01.
+  - **Separate sides.** Long sector exposure and short sector exposure are tracked independently, each as an unsigned gross magnitude against the same limit; neither offsets the other. "A long and a short in the same sector is not a hedge — we are trading opportunities." So long the leader and short the laggard in one hot sector is a legal pair, and opening a short buys no room for more longs. (Before §12.2 the sum used SIGNED `market_value`, so a held short made its sector look smaller and the book could over-concentrate unseen.)
+  - **75% is the target, not a veto.** Crossing it SHRINKS the next trade instead of refusing it: `PortfolioConstructor` scales by `(90 − side%) / (90 − 75)`, so a sector side at 80% takes the next idea at two-thirds size and one at 85% at a third. Breaching 75% emits an *advisory* `max_sector_pct` violation the Risk Manager sees.
+  - **90% is the hard block** (`max_sector_hard_pct`, in `HARD_BLOCK_RULES`) — a dial with no terminal bound bounds nothing. **The cost of 75%, stated plainly: an ordinary 20% sector-wide drawdown then costs 15% of equity, five times the 3% daily-loss breaker.** That is the accepted price of a concentrated trading desk (`docs/OUTCOME.md`), not an oversight. The 90 is not in the ratified §12.3 text and is open for the owner to move.
+  - A trade shrunk below `cash_sweep.min_order_usd` ($500) is refused outright rather than placed as a token position: it would pay full commission and consume a slot for an immaterial payoff. Both thresholds are configurable (`risk.max_sector_pct` / `risk.max_sector_hard_pct`); the ceiling defaults to 1.5× the target, capped at 90, when unset.
 - Stop loss required
+- **Gross-exposure ceiling** (blocking, `max_gross_exposure`, spec §11.2, 2026-09-01): gross exposure — long market value **plus the absolute value of shorts**, leverage-adjusted, with the cash-park vehicle excluded because parked T-bills are cash and not a position — may not exceed `risk.max_gross_exposure_x` (2.0) times equity. Deliberately distinct from `max_total_position_pct` above, which bounds **net** exposure where a hedge cancels a long, and from `max_gross_bearish_pct`, which bounds only the bearish side: neither answers "how much does the book own", which is the question a margin call asks. Enforced at **both** the sizing gate (`PortfolioConstructor` shrinks an entry to fit, and refuses one whose remnant falls under `min_order_usd`) and the execution gate (hard block for anything that reached the engine without that sizing). The ceiling **steps down automatically on peak-to-trough drawdown** — 2.0x / 1.5x below −8% / 1.0x below −15% / 0.5x below −20%, with the owner alerted at the last rung — and it **blocks new exposure first, trimming the held book only if that book alone is still over**, so a drawdown does not trigger the panic-selling the ladder exists to prevent. The ceiling is resolved from **account state only**, in the session preamble before any agent runs, so a blank or truncated Portfolio Manager response cannot leave the desk levered through a drawdown. `src/risk/rules.py::resolve_gross_ceiling` / `apply_gross_ceiling`; **distance to forced liquidation** (~33% at 2.0x) is reported on the session alert. It is deliberately NOT on `/account`: Mission Control may not import the risk stack (`tests/test_api_safety.py`), and a second implementation of the same arithmetic would drift from the gate. `/account` reports only the standing cap (`risk_limits.max_gross_exposure_x`). **Non-finite equity read** (2026-09-02): a NaN/inf current-equity read (Alpaca has been observed to return NaN `portfolio_value` on market-open glitches) is not treated as "unmeasurable drawdown, hold the standing cap" the way a genuinely fresh account with no equity history is — `_resolve_gross_ceiling` forces the ladder to its floor rung and alerts the owner (`rung="bad_read"`) instead, since halting new risk is safer than silently assuming zero drawdown.
 - **Cash-only by default** (`risk.allow_margin: false` in settings.yaml) — BUYs cannot drive cash negative; filter pre-sums same-session SELL proceeds so legitimate rotations pass. When cash < 0, PM + midday prompts get a mandatory **DE-LEVER** directive. Flip to `true` to allow margin.
 - Inverse ETFs (SH, SDS, PSQ, SQQQ) carry signed multipliers for net exposure and gross magnitude for sizing/sector caps
 - **Advisory**: if projected net exposure deviates > 15pp from Macro's `target_invested_pct`, emits a non-blocking `macro_exposure_deviation` violation — RiskManager sees it and can respond with `scale_all_buys`
@@ -168,6 +173,7 @@ As of remediation-spec Phase 2b, that ceiling is enforced, not just reported: th
 - **No-price BUY skip**: if neither the broker nor in-memory OHLCV bars can sanity-check the LLM's `entry_price`, the BUY is skipped rather than submitted as a stale limit
 - **Earnings-queued BUY cap**: pipeline hard-clamps any BUY on a symbol whose latest 10-Q/10-K is `queued` (fresh filing, LLM analysis still running) to ≤ 5% allocation, regardless of PM's conviction
 - **Hard-trigger exit gate**: every REDUCE or SELL — the first exit of the day on a symbol included, not just a repeat trim — is blocked by the executor unless the LLM cites a hard trigger keyword in its `reason`, and logged as `exit_blocked_no_named_trigger` — see Position Reviewer row above for the full list. Prevents the mechanical loop where a soft flag (TARGET_BREACH, slowing pace, valuation stretch) keeps re-firing across midday + close on the same name
+- **Kill switch** (2026-09-02): `touch`-ing the file at `risk.kill_switch_path` (default `data/KILL_SWITCH`) halts every broker order submission — checked via `path.exists()` and nothing else (no parsing, so it cannot fail open on a malformed file) in `AlpacaBroker.submit_order` / `_submit_stop_limit_order` / `replace_entry_limit`, the three methods every entry, exit, cover and protective-stop order passes through regardless of caller. It is the one deterministic guard that ALSO blocks a risk-reducing order — every other hard-block rule and circuit breaker deliberately exempts SELL/COVER (`RiskRuleEngine.check`'s first statement; `apply_gross_ceiling`'s BUY/SHORT-only filter) so a bad account state can never trap a position, but the kill switch overrides that when ops needs everything stopped. A protective stop already resting at the broker from before the halt is untouched. `run_morning` / `run_position_review` / `run_intra_check` also check it up front so a halted run skips LLM work and sends exactly one `kill_switch_halted` alert via the existing Telegram path, rather than burning tokens to have every order refused at the end.
 
 ### LLM Risk Manager
 - Mandatory 6-step `reasoning_chain`: rr_audit → signal_fidelity → correlation_check → event_risk → sizing_sanity → overall
@@ -380,6 +386,49 @@ Install: `cp scripts/systemd/quant-agent-alert-heartbeat.* ~/.config/systemd/use
 
 **The bootstrap limit, stated plainly.** Two failure modes, deliberately not conflated. **(A)** The channel is broken while the box is alive — revoked token, wrong chat id, blocked bot, egress rule, a unit that never sourced `.env`. This is the likely failure, it is fully detectable from inside the box, and it is what everything above covers. **(B)** The box itself is dead, off or unreachable. Nothing running on the box can report that, and no local engineering changes it. An out-of-band ping to an external monitoring service would cover (B); that dependency was **refused outright** — this desk does not rely on an outside service to know its own alarm works — so the hook was deleted rather than left switched off, and a test keeps it gone. **If the box dies, you find out when you next look.** That is not fixed here and nothing in this design quietly pretends otherwise.
 
+### Resetting the desk (`scripts/desk_reset.py`)
+
+While the trade logic is still being stabilised the book is wiped and restarted **daily**, so the wipe is a tool with guardrails rather than a sequence someone remembers at 07:00. It is **dry-run by default** — the plain invocation reads the broker and the database, prints every position, every open order and every table with its row count, and changes nothing:
+
+```bash
+python scripts/desk_reset.py                 # dry run: prints the plan, touches nothing
+python scripts/desk_reset.py --execute       # actually do it
+```
+
+`--execute` is the confirmation flag. On a TTY it additionally asks you to type `reset`; scripted use must pass `--yes` explicitly (an `--execute` with no TTY and no `--yes` is refused, so a cron line can never half-confirm).
+
+**It refuses to run against anything it cannot prove is a paper account.** Four independent signals, all of which must agree, because any one of them can be edited or bypassed on its own:
+
+| Check | Catches |
+|---|---|
+| `alpaca.paper` is exactly `True` | the settings edit `AppConfig._enforce_paper_only` already guards — asserted again here so the tool stays safe if that guard is ever removed |
+| `alpaca.base_url` names `paper-api.alpaca.markets` | a config that says paper and points elsewhere |
+| the **resolved** SDK base URL is the paper host | a client built `paper=False`, or `url_override`'d past the config entirely |
+| `account_number` carries Alpaca's `PA` prefix | the account's own answer. `GET /v2/account` has **no** paper/live field (verified against the reference, not assumed) — paper and live are separate hosts, not an account property — so the account number is the only account-level signal that exists |
+
+Plus a fifth, read-only: a single `GET /v2/account` against the **live** host. Paper keys are rejected there; if these credentials *authenticate*, they are live credentials and the run aborts no matter what the config says. A network failure on that probe is inconclusive, so it warns and defers to the four above. `--no-live-probe` skips it.
+
+Every one of those is a **hard refusal with no override flag**, for the same reason `AppConfig` has none: authorising a liquidation against a live account should be a reviewed code change, not a command-line argument.
+
+**Timing.** It refuses while the market is open (`--allow-market-open`) and while one of the desk's own session windows is live (`--allow-session-window`) — two separate flags, because they are two separate risks. The trade-off is real and there is no free window:
+
+- **Market closed** — the safe-looking option, and the default-legal one. But liquidation is a market order and market orders are not extended-hours eligible, so Alpaca **queues them for release at the next open** ([orders-at-alpaca](https://docs.alpaca.markets/us/docs/orders-at-alpaca)). The book reads "flat" only after that open, right on top of the 09:30 morning session. Keep the morning timer masked until the queued sells have filled.
+- **Market open** — fills are immediate and real, but `intra_check` covers the whole 09:30-16:00 session, so the desk can trade against you mid-reset.
+
+There is no window that is both "market open" and "no desk session active". The clean procedure is therefore: stop the desk's timers, run with `--allow-market-open` during regular hours, confirm flat, restart the timers. The tool prints this reasoning on every run rather than leaving it in a document.
+
+It also warns — without touching them — when `data/checkpoints/` holds a post-PM checkpoint younger than `decision_checkpoint.MAX_AGE_MINUTES`. The zero-LLM resume lane will still re-offer that plan, and it was built on the pre-reset book. Only reachable if you reset inside the morning window with the override flags, but silently resuming a plan for positions that no longer exist is not a failure worth discovering live.
+
+**What it does, in order:** prove paper → check timing → **back up** → flatten → clear. The backup is unconditional and has no `--no-backup`: `data/resets/<UTC timestamp>/` gets a consistent SQLite copy (online backup API, WAL-safe), `book_before.json` / `book_after.json`, and a `reset_manifest.json` recording the checks that passed, the plan, and the row counts deleted.
+
+The flatten is `DELETE /v2/positions?cancel_orders=true` (`close_all_positions(cancel_orders=True)`) — cancelling **before** liquidating is required, since a resting protective stop reserves the shares and a naive sell is rejected for insufficient quantity. A second `cancel_orders()` sweeps anything that appeared in the gap.
+
+**If the flatten does not land, the database is not cleared** (exit 5). The local ledger is the only thing linking a still-open position to its history, so wiping it after a failed liquidation would leave the broker holding positions nothing on the box can explain. That covers a broker error, and positions still open after the settle window *with the market open*. Positions still open with the market **closed** are the normal queued case and do not block the clear. The backup and both book snapshots are written either way.
+
+Exit codes: `0` fine, `1` you declined the prompt, `2` bad invocation, `3` **not provably a paper account**, `4` refused on timing, `5` flatten failed so the database was left alone.
+
+**There is no Alpaca API for resetting a paper account to its original funding.** The dashboard no longer resets accounts at all: it creates and deletes them, and a newly created account needs newly generated API keys ([paper-trading](https://docs.alpaca.markets/us/docs/paper-trading)). For this desk that is the expensive path, not the cheap one — the Alpaca credentials are injected by the OneCLI gateway (`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`), so new keys mean an operator edit inside OneCLI, not a `.env` change `dev` can make. Sell-everything keeps the account number, the keys and the gateway wiring intact, which is why it is the implemented path.
+
 ## Trading Universe
 
 101 symbols (source of truth: `config/settings.yaml:trading.universe`):
@@ -464,6 +513,16 @@ pytest tests/ -v    # full suite (see "Tested" above for why no count is pinned 
 - Evening insights (cross-session memory)
 - `pending_protection_restores` — orphaned protective-stop recovery queue, drained at every session entry and TTL-pruned after 30 days
 - `pending_repegs` — bounded entry re-peg write-ahead queue (an Alpaca replacement mints a NEW order id; this row is what lets a crash mid-replace be recovered), drained at every session entry and TTL-pruned after 30 days
+
+**What the daily reset clears, and what it keeps.** `scripts/desk_reset.py` works from an explicit allowlist (`TABLE_POLICY`) — it only ever `DELETE`s rows, never drops a table and never deletes a file, and a table it has never heard of is **kept** and reported rather than silently emptied.
+
+| | Tables | Why |
+|---|---|---|
+| **Cleared** | `trades`, `positions`, `daily_pnl`, `insights`, `intraday_evaluations`, `pending_protection_restores`, `pending_repegs` | The contaminated record: the trade ledger, the book mirror, the equity curve, the evening lessons grading those trades, and two write-ahead queues whose order ids die with the flatten |
+| **Kept** | `agent_logs`, `alert_channel_checks`, `llm_budget_*`, `llm_circuit_*`, `llm_quota_holds` | Spend accounting and alerting health, not trading decisions. `src/token_budget.py` fits its per-model size estimates from `agent_logs` (`MIN_SAMPLES = 8`), so wiping it would reset the desk's budget fits along with its cost history |
+| **Partly cleared** | `specialist_evidence` | The counts are real but the PM/RM rows carry reasons derived from the reward:risk geometry defect. Default `--evidence analysis-only` keeps paid specialist *observation* (`analysis`, `finding`, `admission`, `scan_summary`, `coverage`) and drops every decision-shaped row (`target`, `proposed_order`, `reasoning`, `verdict`, `modification`, `review_metrics`, `seat_stance`, `execution_skip`, `pipeline_event`, …). `--evidence none` empties it; `--evidence all` leaves it alone. Nothing in the trading pipeline reads this table, so the choice is a forensic-display one, not a safety one |
+
+Everything file-based below is **untouched** — the reset does not delete files at all. That is deliberate: `data/pricing_cache.json`, `data/openrouter_pricing_cache.json`, `data/company_profiles.json` and the news/macro/earnings/tech/smart-money stores are expensive to rebuild in time and money, and none of them is a trading decision.
 
 **File-based** (`data/news/`):
 - `macro_narrative.json` — persistent grand backdrop, evolves daily

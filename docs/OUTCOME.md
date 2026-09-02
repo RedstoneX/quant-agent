@@ -4,6 +4,62 @@ This file states the result QAMC is trying to achieve. It is intentionally less 
 
 ## Outcome
 
+## This is a trading desk, not a retirement portfolio
+
+**Owner correction, 2026-09-01. Read this before applying any received wisdom
+about portfolio construction.** Much of the risk framework in this repo was
+written using the vocabulary of long-horizon investing, and several rules quietly
+inherited that frame's goals. They are not this project's goals.
+
+His words: *"This isn't my 401k / RRSP. This is leverage trading for profit. If
+one sector is hot and we're looking at a short-term horizon, I don't see a
+problem with that... This is a trading desk, not a long-term retirement desk."*
+
+**What follows from that, concretely:**
+
+- **Sector diversification is not a goal here.** Spreading across sectors
+  protects a decades-long compounding portfolio from a sector's structural
+  decline. That risk is irrelevant over a multi-day hold. Concentration in a
+  hot sector is a legitimate and often correct trade. A sector limit's ONLY
+  defensible job here is bounding correlated blow-up risk — one shock taking
+  several positions at once — and it should be sized for that, not for
+  diversification. **The current 40% target is a retirement-portfolio number
+  and should be revisited on those grounds.**
+- **A long and a short in the same sector are NOT a hedge.** They are two
+  separate opportunity trades that happen to share a sector label. Treating
+  them as offsetting imports a portfolio-construction assumption that does not
+  hold for a desk trading opportunities. See the signed-vs-gross exposure
+  decision in `docs/WORK.md`.
+- **Holding period is an OUTPUT, not a setting.** A position is held while its
+  thesis is progressing and the capital cannot do better elsewhere — judged on
+  ATR, velocity, realised progress toward target, and opportunity cost. A fixed
+  horizon is a retirement-frame artefact. Owner: *"depending on the stock's
+  performance is how long we should be holding the stock."* Where the system
+  currently uses a stated `expected_horizon_sessions` as an input to arithmetic,
+  that is a modelling convenience, not a strategy, and it is now known to
+  distort reward:risk (see below).
+- **Idle cash is a cost, not safety.** Preservation is not the objective;
+  risk-adjusted return is.
+
+**None of this loosens a risk limit.** Stops, per-trade risk, total risk
+budget, drawdown de-levering and correlated-cluster limits all exist to stop
+the account being destroyed, and they stay. What changes is that rules
+justified by *diversification* rather than by *survival* must re-earn their
+place on trading-desk grounds.
+
+**Why this is written down.** Rules built on the retirement frame have already
+cost real money here. On 2026-09-01 the desk reviewed 38 qualified signals and
+placed zero trades, and the deepest cause was two individually sensible rules
+that were never checked against each other: stops are widened to a minimum of
+3x ATR, while reward:risk must clear 1.5. Over a ~15-session hold a stock
+travels roughly 3.9 ATR, so the best achievable ratio is ~1.29 — below the
+floor, always. SLB that morning scored 1.28 against a geometric maximum of
+1.29. **The analyst was producing the best number arithmetic allows and the
+system rejected it.** `config/settings.yaml` even documents the mechanism next
+to the setting — "a widened stop lowers reward:risk because the target does not
+move" — and the floor was set anyway.
+
+
 Build an autonomous AI-assisted **Alpaca trading system** whose purpose is to **make money**.
 
 QAMC is a systematic trading desk, not an experiment in model quality. Every design decision serves risk-adjusted return; nothing here is justified by being interesting.

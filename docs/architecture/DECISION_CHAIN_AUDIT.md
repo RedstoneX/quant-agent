@@ -17,7 +17,7 @@ F5.
 | | |
 |---|---|
 | **Fixed** | F6 (risk evidence completeness), F5 (PM/RM independence — RM's *information*, and after PR #30's review the *model split* too), F4 (premortem observability), F7b's detector, F8 (prior provenance) |
-| **Intentionally retained** | F5's veto hierarchy, F4's permissive schema, F7b's decision not to route price data, every sizing threshold under F8 |
+| **Intentionally retained** | F5's veto hierarchy (**partly superseded 2026-09-01 on new evidence — see the note under F5**), F4's permissive schema, F7b's decision not to route price data, every sizing threshold under F8 |
 | **Unproven until paper trading** | whether better-informed and now model-independent RM review changes verdicts for the better; whether the inherited long bias is right for this account; whether the `pm_audit_step_missing` advisory ever fires in practice |
 
 **No deterministic risk or execution semantics changed.** No threshold moved,
@@ -145,8 +145,59 @@ The prompt now says "independence does not mean disagreeing more often" and
 failure mode of the opposite instruction is a veto layer that manufactures
 objections. Pinned by `test_f5_veto_hierarchy_is_unchanged`.
 
+**Supersession (2026-09-01, spec Phase 10.1 — owner-ratified).** The
+retained decision above rests on one sentence: *"a rejection kills the whole
+plan and PM learns only a one-word `reason_category`, whereas `modifications`
+are surgical and carry a per-symbol reason."* That reasoning was correct and
+still is. What it did not say — because nobody had noticed it yet — is that
+the two options it compares are the ONLY two the schema offered. There was no
+lever between "retune this symbol's fields" and "kill everything", so the
+question "can this one trade be refused?" had no expressible answer.
+
+The evidence that did not exist on 2026-08-14 arrived on 2026-09-01. Run
+`run-64290730`: the verdict rejected the whole morning citing XLE alone
+(constructed R/R 1.18, under the 1.5 floor). CHPX died with it — R/R 3.03, a
+different sector, an unrelated technical thesis, nothing said against it. Zero
+trades. That is not the veto being used too readily; it is the veto being the
+only instrument available for a per-name finding.
+
+**What is superseded:** the claim that the veto hierarchy's two rungs are
+sufficient. `RiskVerdict` gains `rejected_symbols` — a per-symbol refusal that
+kills one leg and leaves the rest of the plan standing, carrying a per-symbol
+`reason` into the evidence trail exactly as `modifications` already did.
+
+**What is NOT superseded, and is now pinned by test rather than by prose:**
+
+- *No threshold moved.* This changes the granularity of refusal and nothing
+  else. `≥ 5 modifications`, the 1.5 R/R floor, `max_position_pct`, every
+  short cap — all unchanged.
+- *The book-level veto is untouched.* `approved: false` still refuses the
+  entire plan and is evaluated first. Correlation clusters, total exposure and
+  drawdown state are properties of the whole account, so when the BOOK is what
+  fails, refusing everything remains correct. Only per-SYMBOL findings became
+  per-symbol.
+- *Independence is still about what RM knows.* The audit's core principle —
+  "change what RM knows, never what it may do" — is bent here, deliberately
+  and narrowly: RM may now refuse ONE trade. It gains no power to approve
+  anything it could not approve before, and every new lever is strictly more
+  restrictive than the alternative it replaces (a refused trade does not
+  trade). The governing rule the prompt now states, in the owner's words:
+  *"The batch is arbitrary — it is whatever happened to be proposed in one
+  run. Judging a trade against its accidental co-passengers makes no sense.
+  Judge it against what the account actually holds."*
+- *"Independence does not mean disagreeing more often"* stays in the prompt,
+  and `test_f5_veto_hierarchy_is_unchanged` still passes unmodified — all four
+  of its anchors survive verbatim.
+
+Explicitly rejected as a fix: detecting a rejection and re-running the plan
+without the failing leg. That asks the wrong question twice and spends a
+second paid session papering over a schema defect.
+
 **Evidence/tests.** `test_f5_*` — six tests, including an explicit assertion
-on the *ordering* of the five section headers.
+on the *ordering* of the five section headers — all still passing unchanged.
+The supersession has its own file, `tests/test_risk_verdict_per_symbol.py`,
+which reproduces the XLE/CHPX case by name and pins the book-level veto in
+both directions.
 
 **Correction (PR #30 review).** This section previously said the structural
 option — a different model at the RM seat — "was measured and rejected on

@@ -1,7 +1,11 @@
+import html
 import json
 import sqlite3
+from unittest.mock import patch
 
 from src import trader_feed
+from src.data.company import CompanyProfile, CompanyProfileStore
+from src.notifier import TelegramNotifier
 
 
 def _make_db(tmp_path, monkeypatch):
@@ -461,3 +465,429 @@ def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
     after = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
     conn.close()
     assert after == before
+
+
+# === extract_alert_symbols (feeds TelegramNotifier's per-symbol links) ===
+
+def test_extract_alert_symbols_collects_pm_orders_trades_and_skips(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-symbols"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8}, symbol="SQQQ",
+    )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "MSFT", "reason": "no_cash"}, symbol="MSFT",
+    )
+
+    symbols = trader_feed.extract_alert_symbols(run, {"status": "executed", "run_id": run})
+
+    assert symbols == ["SQQQ", "CCJ", "MSFT"]
+
+
+def test_extract_alert_symbols_includes_result_level_orders_and_gaps(tmp_path, monkeypatch):
+    """The `result` dict itself (not just the DB) is a source: covers the
+    base formatter's own `orders` list and stop-coverage-gap alerts, which
+    don't necessarily have a run_id worth reading from the DB."""
+    _make_db(tmp_path, monkeypatch)  # empty DB is fine; run_id is None below
+    symbols = trader_feed.extract_alert_symbols(
+        None,
+        {
+            "orders": [{"symbol": "AAPL"}],
+            "stop_coverage_gaps": [{"symbol": "TSLA", "covered_qty": 0, "held_qty": 10}],
+        },
+    )
+    assert symbols == ["AAPL", "TSLA"]
+
+
+def test_extract_alert_symbols_dedupes_and_caps_at_ten(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-many"
+    for i in range(12):
+        _trade(db, run, f"SYM{i}", "BUY", qty=1, price=10)
+    # A repeat of an already-seen symbol must not create a second entry.
+    _trade(db, run, "SYM0", "BUY", qty=1, price=10)
+
+    symbols = trader_feed.extract_alert_symbols(run, {"status": "executed", "run_id": run})
+
+    assert len(symbols) == 10
+    assert len(symbols) == len(set(symbols))
+
+
+def test_extract_alert_symbols_handles_missing_run_and_result(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    assert trader_feed.extract_alert_symbols(None, None) == []
+    assert trader_feed.extract_alert_symbols("no-such-run", {}) == []
+
+
+# === Company identities in the real alerts the operator receives ===
+#
+# The dead-code defect (2026-09-01): `src/notifier.py::_append_company_identities`
+# was only ever wired into the BASE formatter's `_append_trade_session_body`,
+# which real trading sessions never reach — `run_morning`/`run_position_review`
+# emit "executed"/"no_trades"/"reviewed", none of which are in
+# `_BASE_ONLY_STATUSES`, start with "pm_", or equal "paid_analysis_suspended",
+# so `format_session_result` above always routed to the richer
+# `_format_decision_session` / `_format_position_review` / `_format_intraday`
+# formatters instead — and none of those ever called `CompanyProfileStore`.
+# A test that only calls `_append_company_identities` (or
+# `_append_trade_session_body`) directly — see tests/test_company_profiles.py
+# — would pass while this bug shipped for good; every test below goes through
+# `trader_feed.format_session_result`, the exact function `src/scheduler.py`
+# calls to build a live alert.
+
+CAMECO = CompanyProfile(symbol="CCJ", name="Cameco Corporation", industry="Uranium")
+NVIDIA = CompanyProfile(symbol="NVDA", name="NVIDIA Corporation", industry="Semiconductors")
+
+
+def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-morning"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
+         "reasoning": "Uranium demand tailwind"},
+        symbol="CCJ",
+    )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert "who:" in msg
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+    # Identities render after the real decision content, not instead of it.
+    assert msg.index("who:") > msg.index("BUY CCJ")
+
+
+def test_midday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-midday"
+    _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [{"symbol": "CCJ"}],
+        "review": {"actions": [{"action": "REDUCE", "symbol": "CCJ",
+                                 "reason": "trim the winner"}]},
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("midday", result, 9.0)
+
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+
+
+def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-close"
+    _trade(db, run, "CCJ", "SELL", qty=10, price=61.0)
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 0,
+        "orders": [{"symbol": "CCJ"}], "review": None,
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("close", result, 7.0)
+
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+
+
+def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-intra"
+    _trade(db, run, "CCJ", "BUY", qty=15, price=59.0)
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": -5.0, "daily_return_pct": -0.05,
+        "intraday_scan": {
+            "status": "intraday_executed", "run_id": run,
+            "candidates": ["CCJ"], "orders": [{"symbol": "CCJ"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("intra_check", outer, 4.0)
+
+    assert "CCJ — Cameco Corporation · Uranium" in msg
+
+
+def test_missing_profile_degrades_cleanly_through_the_real_formatter(tmp_path, monkeypatch):
+    """A symbol the cache has never seen must not break, blank, or shrink
+    the rest of the alert — it is simply absent from a `who:` section that
+    itself may not appear at all."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-unknown"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "ZZZZ", "allocation_pct": 5,
+         "reasoning": "Speculative small-cap entry"},
+        symbol="ZZZZ",
+    )
+    _trade(db, run, "ZZZZ", "BUY", qty=100, price=2.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "ZZZZ"}]}
+
+    # Cold cache: get_many still returns an entry per requested symbol (real
+    # CompanyProfileStore.get_many behaviour with allow_fetch=False) but with
+    # every field None — the identity-worthy `bits` list ends up empty.
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {
+            s: CompanyProfile(symbol=s) for s in symbols
+        },
+    ):
+        msg = trader_feed.format_session_result("morning", result, 11.0)
+
+    assert "who:" not in msg
+    assert "BUY ZZZZ" in msg
+
+
+def test_missing_profile_lookup_exception_still_ships_the_alert(tmp_path, monkeypatch):
+    """Mirrors the existing `_append_company_identities` failure posture
+    (see its try/except) end-to-end: a broken profile store must not cost
+    the operator the whole rich alert, and must not fall back to the old,
+    plainer base formatter either — only the `who:` garnish is lost."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-identity-explode"
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    def _explode(self, symbols, allow_fetch=True):
+        raise RuntimeError("cache exploded")
+
+    with patch.object(CompanyProfileStore, "get_many", _explode):
+        msg = trader_feed.format_session_result("morning", result, 5.0)
+
+    assert "who:" not in msg
+    assert "Cameco" not in msg
+    # Still the rich trader-feed formatter, not the old base fallback.
+    assert "MORNING" in msg
+    assert "BUY CCJ" in msg
+
+
+def test_length_pressure_drops_identities_before_decision_content(tmp_path, monkeypatch):
+    """Telegram's real length budget (`TelegramNotifier.MAX_MESSAGE_CHARS`,
+    `_build_payload`'s tail truncation) is exercised for real here — not
+    reimplemented. `_append_identities` in src/trader_feed.py appends the
+    `who:` block LAST in every formatter, after the footer, specifically so
+    that when the aggregate message must be cut, the existing tail-cut in
+    `_build_payload` removes identities first. Shrinking
+    `MAX_MESSAGE_CHARS` down to exactly the length of everything BEFORE the
+    `who:` section proves that: the cut must land at or before the `who:`
+    boundary, never inside the PM/risk decision content that precedes it."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-tight-budget"
+    _evidence(
+        db, run, "portfolio_manager", "reasoning",
+        {"portfolio_view": "Only one clean setup survives the morning screen"},
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
+         "reasoning": "Uranium demand tailwind, clean breakout"},
+        symbol="CCJ",
+    )
+    _evidence(
+        db, run, "risk_manager", "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
+         "reasoning": "Sizing acceptable given current exposure"},
+    )
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    # Sanity: with a generous budget, identities really are in the message —
+    # otherwise the truncation test below would trivially pass for the
+    # wrong reason (nothing to drop).
+    assert "Cameco" in msg
+    core_text, _, _ = msg.partition("\nwho:")
+    assert core_text != msg
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    # Exactly the escaped length of everything before "who:" — no slack for
+    # even one character of the identity section to survive.
+    monkeypatch.setattr(
+        TelegramNotifier, "MAX_MESSAGE_CHARS", len(html.escape(core_text)),
+    )
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    payload = notifier._build_payload(msg, symbols=symbols)
+    final_text = payload["text"]
+
+    assert "who:" not in final_text
+    assert "Cameco" not in final_text
+    # Real decision content — PM section, risk rationale — survives even
+    # though the message as a whole had to be cut.
+    assert "🧠 PM/Constructor" in final_text
+    assert "Sizing acceptable" in final_text
+
+
+# === Review-only symbols (2026-09-01 gap fix) ===
+#
+# `extract_alert_symbols` used to pull only from `result["orders"]`,
+# `result["stop_coverage_gaps"]`, and the run snapshot's `pm_orders`/
+# `trades`/`skips` — never `result["review"]["actions"]`. On a midday/close
+# alert that meant a HOLD, or a decided-but-unexecuted SELL, showed up in
+# the `_format_position_review` decision list as bare text: no company
+# identity line, no tap-through link — while symbols that did trade got
+# both. Every test below goes through `trader_feed.format_session_result`
+# for the identity line, and separately through `extract_alert_symbols` fed
+# into `TelegramNotifier._build_payload` for the real link — the exact two
+# consumers `src/scheduler.py`/`main.py` wire together for a live alert.
+
+def test_midday_hold_only_symbol_gets_linked_and_identified(tmp_path, monkeypatch):
+    """The reported gap, reproduced: a HOLD that never became a broker
+    trade must still surface in extract_alert_symbols — same identity and
+    tap-through link treatment as a symbol that did trade."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-hold-only"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [],
+        "review": {
+            "risk_level": "low",
+            "overall_assessment": "Thesis intact, no action needed.",
+            "actions": [{"action": "HOLD", "symbol": "NVDA", "reason": "Thesis intact"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"NVDA": NVIDIA},
+    ):
+        msg = trader_feed.format_session_result("midday", result, 9.0)
+
+    assert "HOLD NVDA" in msg
+    assert "NVDA — NVIDIA Corporation · Semiconductors" in msg
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    assert symbols == ["NVDA"]
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=symbols)
+    assert '<a href="https://finance.yahoo.com/quote/NVDA">NVDA</a>' in payload["text"]
+
+
+def test_close_decided_but_unexecuted_sell_gets_linked_and_identified(tmp_path, monkeypatch):
+    """A close-review SELL the reviewer decided on, where execution never
+    completed (no broker order), must still be linked and identified —
+    it is often the one the operator most wants to look up."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-sell-unexecuted"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [],
+        "review": {
+            "risk_level": "elevated",
+            "overall_assessment": "Thesis broken, exit recommended.",
+            "actions": [{"action": "SELL", "symbol": "NVDA", "reason": "Thesis broken"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"NVDA": NVIDIA},
+    ):
+        msg = trader_feed.format_session_result("close", result, 9.0)
+
+    assert "SELL NVDA" in msg
+    assert "NVDA — NVIDIA Corporation · Semiconductors" in msg
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    assert symbols == ["NVDA"]
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=symbols)
+    assert '<a href="https://finance.yahoo.com/quote/NVDA">NVDA</a>' in payload["text"]
+
+
+def test_traded_symbol_named_in_both_orders_and_review_appears_once(tmp_path, monkeypatch):
+    """A symbol that DID trade is present in both `result["orders"]` and
+    `review["actions"]` (the reviewer's REDUCE led to the broker order) —
+    it must appear once in the symbol list, not twice, and once in the
+    identity block, not twice."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-dedupe"
+    _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [{"symbol": "CCJ"}],
+        "review": {
+            "actions": [{"action": "REDUCE", "symbol": "CCJ", "reason": "trim the winner"}],
+        },
+    }
+
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    assert symbols == ["CCJ"]
+    assert symbols.count("CCJ") == 1
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("midday", result, 9.0)
+
+    assert msg.count("CCJ — Cameco Corporation · Uranium") == 1
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=symbols)
+    assert "<a href" in payload["text"]
+
+
+def test_symbol_order_is_stable_across_repeated_calls(tmp_path, monkeypatch):
+    """Same alert, called repeatedly, must produce the same symbol list in
+    the same order every time — a set/dict-iteration reorder would make
+    both the tests and the live messages flaky."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-order-stable"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 3,
+        "orders": [{"symbol": "AAPL"}],
+        "review": {
+            "actions": [
+                {"action": "HOLD", "symbol": "MSFT", "reason": "steady"},
+                {"action": "SELL", "symbol": "NVDA", "reason": "thesis broken"},
+            ],
+        },
+    }
+
+    first = trader_feed.extract_alert_symbols(run, result)
+    second = trader_feed.extract_alert_symbols(run, result)
+    third = trader_feed.extract_alert_symbols(run, result)
+
+    assert first == ["AAPL", "MSFT", "NVDA"]
+    assert first == second == third
+
+
+def test_extract_alert_symbols_direct_call_includes_review_actions(tmp_path, monkeypatch):
+    """Direct unit test as a supplement — NOT the proof on its own (see the
+    end-to-end tests above), because a direct-call-only test is exactly how
+    this gap shipped unnoticed the first time."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-direct"
+    result = {
+        "status": "reviewed", "run_id": run,
+        "orders": [{"symbol": "aapl"}],
+        "review": {"actions": [
+            {"action": "hold", "symbol": "msft"},
+            {"action": "SELL", "symbol": "nvda"},
+        ]},
+    }
+    assert trader_feed.extract_alert_symbols(run, result) == ["AAPL", "MSFT", "NVDA"]

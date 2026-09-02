@@ -197,12 +197,110 @@ execution:
   repeg_enabled: false
   repeg_max_attempts: 2
   repeg_poll_seconds: 5
+  # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
+  # count the risk math produced is used as-is instead of being floored to a
+  # whole number. Whole-share rounding is a silent, constant tax — V wanted
+  # 6% of the book and got 3.84%.
+  #
+  # ON by default. A symbol is still sized fractionally ONLY when Alpaca
+  # confirms `fractionable` for it; an unknown or failed lookup falls back to
+  # whole shares (fail closed, never fractional-by-assumption). Shorts are
+  # always whole-share — a borrowed share cannot be fractional.
+  #
+  # Set to false to turn exact sizing off without a code change.
+  #
+  # BROKER CAPABILITY, measured 2026-09-01 against the live paper account:
+  #     * a fractional GTC order is REFUSED — "fractional orders must be DAY
+  #       orders" (code 42210000). This fires before the quantity-
+  #       availability check, so it is a capability limit, not account state.
+  #     * a fractional TRAILING stop is REFUSED at every tif.
+  #     * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
+  #     * whole-share GTC stops are unaffected (control probe accepted).
+  #
+  # HYBRID STOP COVERAGE is how a fractional position is protected given
+  # that. A position of N.f shares carries TWO protective orders at the SAME
+  # stop price:
+  #     * a GTC stop over floor(N.f) — durable, survives 16:00 ET;
+  #     * a DAY stop over the sub-share remainder — lapses at the close BY
+  #       DESIGN and is re-placed by the first coverage sweep of the next
+  #       session (`_reconcile_stop_coverage`, hoisted to the very first
+  #       broker action of the morning run so the window at the open is as
+  #       short as this system can make it).
+  # Under one share there is no whole part, so it is a DAY stop only.
+  #
+  # THE ACCEPTED TRADE. The remainder is unprotected overnight. Owner ratified
+  # 2026-09-02: without fractional sizing a ~$9,800 account is simply excluded
+  # from the expensive names its own analysts keep picking, and being locked
+  # out is itself a cost — one that applies to live capital too, not just paper.
+  #
+  # "BOUNDED UNDER ONE SHARE" IS WRONG AND WAS CORRECTED BEFORE HE DECIDED.
+  # That holds only when a stock costs LESS than one position slot. When it
+  # costs more, the ENTIRE position is sub-one-share, so 100% of it lapses
+  # overnight rather than a sliver. Measured against the real universe:
+  #   worst single position  ~$1,536
+  #   worst whole book       ~$8,820 — the entire invested book at the ceiling
+  #   typical, >= 1 share    ~$90
+  # Six names already exceed one slot at 10 positions: SNDK, LLY, EQIX, GS,
+  # COST, MU — exactly the names fractional exists to reach. A gap fills at the
+  # open rather than at the stop, so realised exposure runs below that ceiling,
+  # but the ceiling is the honest number and it is what he accepted.
+  #
+  # The lever if this is revisited: size fractionally only at >= 1 share. That
+  # removes the 100% case and costs those six names. Owner declined that trade
+  # — do not reintroduce it silently.
+  #
+  # Exposure is REPORTED IN DOLLARS on the session alert rather than trusted.
+  #
+  # ALERTING. A lapsed overnight DAY stop is EXPECTED and does not alert —
+  # alerting nightly on a healthy system would destroy the credibility of the
+  # one alert that must never be ignored. A stop that cannot be placed or
+  # re-placed DURING MARKET HOURS alerts exactly as guard 2 always has, and a
+  # missing whole-share GTC leg alerts at any hour. See
+  # `_classify_coverage_gap` and `_reconcile_stop_coverage` in src/pipeline.py.
+  fractional_enabled: true
+  fractional_share_decimals: 4
 
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
   max_daily_loss_pct: 3
-  max_sector_pct: 40
+  # Spec §10.3 (owner-ratified 2026-09-01) — this is the concentration
+  # TARGET, not a veto. A sector at or over it no longer refuses the next
+  # trade in it; the constructor SHRINKS that trade instead, progressively,
+  # so a high-conviction idea in a crowded sector is taken smaller rather
+  # than dropped. "Each trade opportunity is an opportunity on its own."
+  #
+  # Spec §12.3 (owner-ratified 2026-09-01) raised it 40 -> 75. The owner
+  # chose 75 over the recommended 60. 40 was a retirement-portfolio number
+  # and does not survive docs/OUTCOME.md: "This is a trading desk, not a
+  # long-term retirement desk." Sector diversification is not a goal here;
+  # this limit's ONLY remaining job is bounding correlated blow-up risk.
+  #
+  # THE COST, STATED PLAINLY: at 75% of equity in one sector, an ordinary
+  # 20% sector-wide drawdown costs 15% of equity — FIVE TIMES the 3%
+  # max_daily_loss_pct circuit breaker below, and it will trip the
+  # de-levering ladder. That is the accepted price of a concentrated
+  # trading desk, not an oversight.
+  #
+  # Spec §12.2: LONG and SHORT exposure in a sector are measured against
+  # this limit INDEPENDENTLY. Neither offsets the other, and neither
+  # consumes the other's budget — a long and a short in the same sector are
+  # two opportunities that share a label, not a hedge.
+  max_sector_pct: 75
+  # ...and this is where the shrinking stops and the answer is still no.
+  # Without an absolute ceiling a sector could grow without limit through an
+  # infinite series of ever-smaller additions: a dial with no terminal bound
+  # bounds nothing.
+  #
+  # NOT IN THE RATIFIED §12.3 TEXT — the spec set the target and left the
+  # terminal bound unstated. 90 was chosen when §12.3 was built: the 1.5x
+  # multiple that gave 60 from 40 gives a meaningless 112.5 from 75, so the
+  # ceiling is now an absolute number rather than a multiple. 90 keeps a real
+  # ceiling while leaving 15 points of scaling range. OPEN FOR THE OWNER TO
+  # MOVE.
+  # A trade shrunk below cash_sweep.min_order_usd is refused outright rather
+  # than placed as a token position (see portfolio_constructor).
+  max_sector_hard_pct: 90
   # Owner-ratified total at-risk ceiling: sum of (shares x distance from entry
   # to stop) across the book, as a % of equity. NOT a notional cap — full
   # deployment is intended; risk is what gets rationed. ENFORCED as of
@@ -240,12 +338,125 @@ risk:
   # A widened stop lowers reward:risk because the target does not move. Under
   # this, the setup only ever qualified on a stop too tight to survive.
   min_reward_risk_after_widening: 1.5
+  # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
+  # The floor above used to OVERWRITE the structural stop whenever the level
+  # sat closer than the band. The stop then pointed at nothing real, and the
+  # reward:risk floor was judged against that fabricated number — which is why
+  # 38 qualified signals produced zero trades on 2026-09-01. A stop that sits
+  # at a level src/data/levels.py::find_structural_levels actually COMPUTED is
+  # now honoured whatever its ATR distance. The band still applies to every
+  # stop nothing computed backs. Neither number above moved: this changes
+  # WHICH stop the arithmetic is done on, nothing else.
+  #
+  # How close the stop must sit to a computed level to count as sitting AT it,
+  # in ATRs. ATR-relative rather than a percentage on purpose: "did the analyst
+  # place this stop at that level" is a question about the name's own price
+  # noise, and a flat percentage is far too tight on a volatile name and far
+  # too loose on a quiet one. A computed level is also a ZONE (pivots within 1%
+  # are clustered into one), so the tolerance must be at least that wide.
+  level_match_atr_tolerance: 0.25
+  # The deterministic backstop under that exemption. A level-backed stop is
+  # honoured however tight DOWN TO this many ATRs; inside it, the stop is
+  # pushed out to exactly this floor and never to the full band above. The
+  # ratified §12.1 text leans on the 1*ATR floor written into
+  # config/prompts/tech_analyst.md, but a prompt is an instruction to a model,
+  # not a guarantee, and Invariant 2 requires the deterministic layer to be the
+  # final authority. A genuine support level 0.2 ATR under entry is real
+  # structure and still a guaranteed whipsaw.
+  absolute_min_stop_atr_multiple: 1.0
+  # --- Target derivation (2026-09-01) ---------------------------------------
+  # The floor above used to divide a stop computed from measured volatility by
+  # a target the language model guessed. The morning run of 2026-09-01 rejected
+  # 30 of 38 actionable signals (79%) on that arithmetic, including the two
+  # highest-conviction calls of the day, and placed no trades. The floor stays
+  # at 1.5 — it was never the defect. The target is now computed from the same
+  # bars the stop comes from. The rule, and why each number is what it is:
+  # src/data/levels.py, "Deriving the TARGET from structure".
+  #
+  # A target inside this many ATRs of entry is not a destination — price is
+  # already there and the reward is one ordinary session's noise.
+  min_target_atr_multiple: 1.0
+  # Measured move claimed when nothing structural stands in the way, in
+  # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the analyst's
+  # stated horizon, and nothing more. This interacts with min_stop_atr_multiple
+  # by arithmetic: a stop k ATRs out and a target p*ATR*sqrt(H) clear a floor f
+  # only when sqrt(H) >= f*k/p. With p=1.0, f=1.5 and k=3.0 scaled by setup
+  # (3.45 range, 2.55 breakout), a measured-move trade needs a stated horizon
+  # of ~15 sessions on a breakout and ~27 on a range. A trade whose target is a
+  # real level is looser — about 12 sessions — because the level need not be a
+  # full projection away. Raising this is the lever if the desk decides too
+  # much is being refused. Lowering min_reward_risk_after_widening is NOT.
+  breakout_projection_atr_multiple: 1.0
+  # How far price can plausibly get inside the horizon, same units. Looser than
+  # the projection on purpose: a trade that works is an above-typical move, so
+  # "could it reach that level at all" is a wider question than "how far do I
+  # claim it goes when no level says otherwise".
+  max_target_reach_atr_multiple: 1.5
+  # Guard on the analyst's expected_horizon_sessions before it enters sqrt().
+  max_target_horizon_sessions: 60
+  # The model's target is kept as EVIDENCE, never as arithmetic. Above this
+  # absolute gap from the computed target the disagreement is logged loudly —
+  # a model consistently far from the chart is a finding about the seat.
+  target_divergence_warn_pct: 25.0
   require_stop_loss: true
   # Cash-only by default. Flip to true to allow margin — BUYs can then spend
   # beyond available cash. When false (default) the risk engine hard-blocks
   # any BUY that would drive cash negative, and the PM + midday prompts get
   # a mandatory de-lever directive when cash is already negative.
-  allow_margin: false
+  # ENABLED 2026-09-02, owner ratified: "change to two x. We're pushing it.
+  # This is important. Remember, it's still paper trading. We're not even in
+  # beta yet." Deliberately flipped only AFTER the gross-exposure ceiling and
+  # the de-levering ladder were merged and verified, which was the ratified
+  # sequencing. The PM prompt's exposure table moved to 2.0x in the same
+  # commit — the two must never diverge.
+  allow_margin: true
+  # --- Margin interest tracker (spec §11.2, 2026-09-01) ------------------
+  # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
+  # is 4.75%); kept here so it can be corrected without a code change.
+  # Charged ONLY on the overnight debit balance, (balance x rate) / 360 —
+  # intraday leverage is free. See src/margin_interest.py for the
+  # formula and the still-open question of whether paper trading charges
+  # this at all — every figure surfaced from this rate is a labelled
+  # ESTIMATE until the broker's own INT activity confirms or denies it.
+  margin_interest_rate_pct: 6.25
+  # --- Spec §11.2 — the gross-exposure ceiling (owner-ratified 2026-09-01)
+  #
+  # Gross exposure = long market value + ABSOLUTE short market value, as a
+  # MULTIPLE of equity. Before this setting there was no gross-exposure cap
+  # in the codebase at all — max_portfolio_risk_pct bounds capital AT RISK
+  # (the sum of stop distances), not exposure, and max_gross_bearish_pct
+  # bounds only the bearish side. Nothing stopped the book reaching the
+  # broker's full 4x. This is a NEW CEILING, i.e. a tightening.
+  #
+  # It is enforced in two places, both deterministic Python and never as an
+  # instruction to an agent: the SIZING gate (portfolio_constructor shrinks
+  # or refuses entries that would breach it) and the EXECUTION gate
+  # (risk engine hard-block `max_gross_exposure`).
+  #
+  # The cash-sweep vehicle (cash_sweep.symbol, e.g. SGOV) does NOT count as
+  # exposure — it is parked cash, and counting it would consume the whole
+  # allowance doing nothing.
+  #
+  # 2.0x applies day AND night. There is deliberately no lower overnight
+  # ceiling: it would force a trim into every close, selling on a clock
+  # rather than on merit. The overnight cushion comes from the de-levering
+  # ladder instead (src/risk/rules.py::resolve_gross_ceiling), which steps
+  # the ceiling DOWN as peak-to-trough drawdown deepens:
+  #     0% to  -8%  ->  2.0x
+  #    -8% to -15%  ->  1.5x
+  #   -15% to -20%  ->  1.0x
+  #   worse than -20% -> 0.5x, and the owner is alerted
+  # The ladder only ever TIGHTENS this number, so lowering it here lowers
+  # every rung with it.
+  #
+  # NOTE: this ceiling does nothing on its own while allow_margin is false —
+  # the cash-only rule already binds gross below ~1.0x. It is built FIRST, on
+  # purpose: the ceiling must exist before borrowing is switched on.
+  max_gross_exposure_x: 2.0
+  # Broker maintenance-margin requirement (% of gross), used ONLY to report
+  # how far the book could fall before forced liquidation. Enforces nothing.
+  # 25 is Alpaca's standard equity requirement; at 2.0x it reads ~33%.
+  maintenance_margin_pct: 25
   # --- Stage 3 (shorts) -------------------------------------------------
   # Deliberately half of max_position_pct: a short's loss is unbounded
   # while a long's is capped at -100%, so one short's concentration budget
@@ -262,11 +473,23 @@ risk:
   # a short can gap through its stop with unbounded loss, so equal nominal
   # risk must not buy equal real risk. Range (1.0, 3.0].
   short_gap_risk_multiple: 1.5
-  # Spec §9.4 "agreement earns size" (2026-08-30) — ceiling on
-  # risk_allocation_pct by how many independent seats (of technical/news/
-  # earnings/macro/smart_money) are directionally aligned with the target.
-  # Entry i = ceiling for (i+1) aligned sources; see src/risk/rules.py
-  # (count_aligned_sources / agreement_ceiling_for_count) and
+  # Kill switch (2026-09-02) — a file whose mere existence halts every order
+  # this desk would place, entries AND exits alike. Checked with
+  # path.exists() in src/execution/broker.py, before every broker submit/
+  # replace call, so an operator stops the desk with `touch data/KILL_SWITCH`
+  # (relative to the repo root, same convention as storage.db_path below)
+  # and resumes it by deleting the file — no deploy, and it takes effect on
+  # the process's very next order attempt even if it was already mid-session.
+  # See RiskConfig.kill_switch_path for why this is the one guard that also
+  # blocks a risk-reducing order.
+  kill_switch_path: "data/KILL_SWITCH"
+  # Spec §9.4 "agreement earns size" (2026-08-30; signed 2026-09-02) —
+  # ceiling on risk_allocation_pct by the NET number of independent seats
+  # (of technical/news/earnings/macro/smart_money) backing the target:
+  # aligned seats MINUS opposed ones, each at unit weight.
+  # Entry i = ceiling for a net score of (i+1); a net score at or below
+  # zero has no rung and refuses the target outright. See src/risk/rules.py
+  # (signed_source_score / agreement_ceiling_for_score) and
   # src/config.py::RiskConfig for the full measurement this is based on.
   # Measured against production agent_logs 2026-08-25..28 (pre-nomination
   # era): 67% of opening/increasing targets carried exactly ONE aligned

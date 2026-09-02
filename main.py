@@ -245,7 +245,15 @@ def main():
             # defensive: notifier code in finally must NEVER mask the
             # original exception.
             try:
-                notifier.send(message)
+                symbols = None
+                try:
+                    from src.trader_feed import extract_alert_symbols
+
+                    run_id = result.get("run_id") if isinstance(result, dict) else None
+                    symbols = extract_alert_symbols(run_id, result if isinstance(result, dict) else None)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("extract_alert_symbols failed in finally: %s", exc)
+                notifier.send(message, symbols=symbols)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("notifier crashed in finally: %s", exc)
     logger.info("Result: %s", result)

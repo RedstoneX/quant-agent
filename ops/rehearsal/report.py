@@ -21,8 +21,11 @@ every time, not tucked into a README.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
+
+from ops.rehearsal.replay import SESSION_RUN_PREFIX as REPLAY_PREFIX
 
 # --------------------------------------------------------------- phrasebook
 
@@ -317,7 +320,22 @@ SKIP_PLAIN = {
 # Deterministic risk rules that drop a trade before the risk manager sees it.
 RULE_PLAIN = {
     "max_position_pct": "it would have made one position too large a share of the account",
-    "max_total_position_pct": "it would have pushed total invested money above the ceiling",
+    # NOT "total invested money" — that raw-notional reading is what the
+    # cockpit's "% deployed" gauge used to show, and it disagreed with this
+    # rule by 13.6 percentage points on a book holding one -3x hedge. The
+    # rule measures NET exposure: a bearish hedge SUBTRACTS from the total
+    # (that is what makes it a hedge) and a leveraged fund counts at its
+    # multiple, not its sticker price. `max_gross_exposure` below is the
+    # rule that does bound what the book owns outright.
+    "max_total_position_pct": (
+        "it would have pushed the account's net market exposure above the "
+        "ceiling — that is holdings after hedges are netted off, counting "
+        "leveraged funds at their true multiple"
+    ),
+    "max_gross_exposure": (
+        "it would have pushed the total value the account holds outright — "
+        "hedges added, not netted — above the borrowing-safety ceiling"
+    ),
     "max_sector_pct": "it would have concentrated too much money in one sector",
     "max_daily_loss_pct": "the account had already lost too much for one day",
     "require_stop_loss": "it had no protective stop attached",
@@ -380,6 +398,21 @@ def plain_agent(name: str) -> str:
 
 # ------------------------------------------------------------------ model
 
+# Findings that describe the RIG's inability to reproduce the session rather
+# than anything about the code under test. They are printed under the verdict,
+# not buried with the rest, because a reader who does not see them will read a
+# red gate as a defect and a green one as coverage — which is exactly the
+# hour-long argument of 2026-09-02.
+_CANNOT_JUDGE_FINDINGS = frozenset({
+    "replay_session_mismatch",
+    "missing_recorded_response",
+    "low_confidence_match",
+})
+
+# The one finding that means "this rehearsal did not reproduce the session at
+# all, so its failure says nothing about the code". See `_replay_fidelity`.
+_INCONCLUSIVE_FINDING = "replay_session_mismatch"
+
 
 @dataclass
 class RehearsalReport:
@@ -392,6 +425,16 @@ class RehearsalReport:
     status: str
     completed: bool = False
     verdict: str = "FAIL"
+
+    # How the recorded run being replayed was chosen, and in one sentence why
+    # — printed directly under the verdict. A reader cannot judge a comparison
+    # without knowing what was compared (see `select_replay_run`).
+    replay_pin: str = ""
+    replay_pin_mode: str = "auto"
+    # What share of the session the rig actually managed to exercise offline:
+    # {"analysed": n, "unresolved": k, "unresolved_symbols": [...]}. Printed
+    # beside the verdict so a PASS is never read as "fully exercised".
+    coverage: dict = field(default_factory=dict)
 
     candidates: int = 0
     proposed: int = 0
@@ -420,6 +463,9 @@ class RehearsalReport:
             "source_run_id": self.source_run_id,
             "status": self.status,
             "verdict": self.verdict,
+            "replay_pin": self.replay_pin,
+            "replay_pin_mode": self.replay_pin_mode,
+            "coverage": self.coverage,
             "completed": self.completed,
             "candidates": self.candidates,
             "proposed": self.proposed,
@@ -465,7 +511,32 @@ class RehearsalReport:
         add("=" * len(title))
         add("")
         add(f"VERDICT: {self.verdict}")
+        if self.verdict == "INCONCLUSIVE":
+            add("")
+            for line in _wrap(
+                "This is NOT a judgement on the code. The rehearsal could not "
+                "reproduce the session faithfully enough to judge it, so "
+                "neither a pass nor a failure can be claimed. The reason is "
+                "under COULD THIS REHEARSAL JUDGE THE CODE? below. Re-run "
+                "with an explicit --replay-run before drawing any conclusion."
+            ):
+                add("  " + line)
         add("")
+
+        # Directly under the verdict, never buried: what was replayed, and
+        # how much of the session the rig actually got to exercise.
+        add("COULD THIS REHEARSAL JUDGE THE CODE?")
+        add("------------------------------------")
+        for line in _wrap(self.replay_pin or "replay source not recorded"):
+            add("  " + line)
+        for line in self._coverage_lines():
+            for wrapped in _wrap(line):
+                add("  " + wrapped)
+        for line in self._cannot_judge_lines():
+            for wrapped in _wrap(line):
+                add("  " + wrapped)
+        add("")
+
         add(self.headline())
         add("")
 
@@ -575,6 +646,73 @@ class RehearsalReport:
 
         return "\n".join(lines)
 
+    def _cannot_judge_lines(self) -> list[str]:
+        """Everything about the RIG's fidelity, said next to the verdict.
+
+        The decisive ones (a transplanted answer, a call with no recording at
+        all) are quoted in full. Low-confidence matches are summarised into
+        one line: on a real morning there are six to eight of them and
+        repeating the same sentence eight times buries the two findings that
+        actually change what the verdict means.
+        """
+        lines: list[str] = []
+        low: list[tuple[float, str]] = []
+        for finding in self.findings:
+            kind = finding.get("kind")
+            if kind == "low_confidence_match":
+                low.append((
+                    float(finding.get("similarity") or 0.0),
+                    str(finding.get("agent", "an agent")),
+                ))
+            elif kind in _CANNOT_JUDGE_FINDINGS:
+                lines.append(f"!! {finding['detail']}")
+        if low:
+            low.sort()
+            seats = ", ".join(dict.fromkeys(name for _, name in low))
+            lines.append(
+                f"!! {len(low)} replayed answer(s) were matched to a prompt "
+                f"this rehearsal no longer asks — worst overlap "
+                f"{low[0][0] * 100:.0f}%, across {seats}. The further these "
+                f"fall, the more the session is a recording played over a "
+                f"different question; a prompt rewrite cannot be judged here "
+                f"at all."
+            )
+        return lines
+
+    def _coverage_lines(self) -> list[str]:
+        """How much of the session the rig actually exercised, in plain words.
+
+        Printed beside the verdict on purpose. A rehearsal is offline: it has
+        no live market data and no provider, so a batch of symbols routinely
+        fails to resolve and never reaches the decision stage at all. A PASS
+        earned over a third of the intended coverage is not the same claim as
+        a PASS over all of it, and the difference must not be something a
+        reader has to go digging in the log for.
+        """
+        if not self.coverage:
+            return []
+        analysed = int(self.coverage.get("analysed", 0))
+        unresolved = int(self.coverage.get("unresolved", 0))
+        total = analysed + unresolved
+        if not total:
+            return []
+        symbols = self.coverage.get("unresolved_symbols") or []
+        if not unresolved:
+            return [
+                f"Analyst coverage: all {analysed} symbol(s) the session "
+                f"looked at resolved offline."
+            ]
+        shown = ", ".join(symbols[:12])
+        more = f" and {len(symbols) - 12} more" if len(symbols) > 12 else ""
+        return [
+            f"INCOMPLETE ANALYST COVERAGE: {unresolved} of {total} symbol(s) "
+            f"never got a technical analysis in this rehearsal and were "
+            f"dropped before the decision stage ({shown}{more}). Whatever "
+            f"this verdict says, it was reached over the remaining "
+            f"{analysed}. Do not read it as 'the session was fully "
+            f"exercised'."
+        ]
+
     def _limits(self) -> list[str]:
         limits = []
         if self.fill_model == "immediate":
@@ -645,6 +783,7 @@ def collect(
     fill_model: str,
     duration_s: float,
     error: str | None = None,
+    replay_choice=None,
 ) -> RehearsalReport:
     """Turn a finished rehearsal into a report, reading the sandbox for truth.
 
@@ -682,7 +821,11 @@ def collect(
         duration_s=duration_s,
         error=(error or nested_error or (result.get("error") if result else None)),
     )
+    if replay_choice is not None:
+        report.replay_pin = getattr(replay_choice, "reason", "") or ""
+        report.replay_pin_mode = getattr(replay_choice, "mode", "auto")
 
+    fidelity: list[dict] = []
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -690,12 +833,14 @@ def collect(
         _collect_blocked(conn, run_id, report)
         _collect_rejections(conn, run_id, report, result or {})
         _collect_counts(conn, run_id, report, result or {})
+        _collect_coverage(conn, run_id, report)
         report.provider_cost_usd = float(
             conn.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0) FROM agent_logs WHERE run_id = ?",
                 (run_id,),
             ).fetchone()[0] or 0.0
         )
+        fidelity = _replay_fidelity(conn, run_id, report, library, session)
     finally:
         conn.close()
 
@@ -704,7 +849,7 @@ def collect(
         o for o in report.orders_recorded if o["side"] in ("buy", "sell")
         and "stop" not in (o.get("type") or "")
     ])
-    report.findings = list(getattr(library, "findings", []))
+    report.findings = list(getattr(library, "findings", [])) + fidelity
 
     # For intra_check sessions, note when the intraday_scan outcome is not
     # visible in the result at all (no `intraday_scan` key).
@@ -890,14 +1035,185 @@ def _collect_counts(conn, run_id: str, report: RehearsalReport, result: dict) ->
         report.proposed = len(orders)
 
 
-def _verdict(report: RehearsalReport) -> str:
-    """PASS only when the session reached a truthful, complete conclusion.
+_SYMBOL_IN_ERROR = re.compile(r"(?:^|[;,]\s*)([A-Z][A-Z0-9.\-]{0,6})\s*:")
 
-    A session that stops because the market is shut, or because the portfolio
+
+def _collect_coverage(conn, run_id: str, report: RehearsalReport) -> None:
+    """How many symbols actually got a technical analysis, and how many did not.
+
+    Read from the evidence the pipeline itself wrote, not from the log: the
+    resolved side is `specialist_evidence` tech_analyst analysis rows, the
+    unresolved side is the session's own rejections naming a technical-analysis
+    check. Offline, with no provider and no market data, the unresolved side is
+    routinely large — 18 to 22 symbols on the 2026-09-01 morning — and a
+    verdict reached over the remainder must say so.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT symbol FROM specialist_evidence "
+        "WHERE run_id = ? AND agent_name = 'tech_analyst' "
+        "AND kind = 'analysis' AND symbol IS NOT NULL",
+        (run_id,),
+    ).fetchall()
+    analysed = {str(r["symbol"]).upper() for r in rows if r["symbol"]}
+    unresolved = {
+        str(item["symbol"]).upper()
+        for item in report.rejections
+        if item.get("symbol") and "technical_analysis" in str(item.get("reason", ""))
+    }
+    report.coverage = {
+        "analysed": len(analysed),
+        "unresolved": len(unresolved),
+        "unresolved_symbols": sorted(unresolved),
+        "analysed_symbols": sorted(analysed),
+    }
+
+
+def _replay_fidelity(
+    conn, run_id: str, report: RehearsalReport, library, session: str,
+) -> list[dict]:
+    """Did this rehearsal reproduce ONE real session, or stitch several together?
+
+    THE DEFECT THIS EXISTS FOR (docs/INCIDENT_HISTORY.md, 2026-09-02). An
+    unpinned replay draws each agent's answer from the whole recorded pool
+    independently, so the decision stage can be handed a portfolio-manager
+    answer recorded in a DIFFERENT session from the one that produced the
+    analyst answers. The grounding check then compares a decision about `ZS`
+    against a morning that never analysed `ZS`, and reports `pm_grounding_
+    error` — indistinguishable, in the report, from the code genuinely
+    producing an ungrounded plan. On 2026-09-02 that cost an hour of argument
+    about a red gate that was not a defect at all.
+
+    WHY THE TEST IS DELIBERATELY NARROW. A genuine defect must never be
+    downgraded, so this asks for two independent things at once, and reports
+    nothing unless BOTH hold:
+
+      1. MECHANICAL — the answer replayed for the portfolio manager came from
+         a recorded run that is not the one the analysts' answers came from,
+         or from a run of a different session type altogether. This is a fact
+         about the harness, checkable without any opinion about the code, and
+         it is IMPOSSIBLE under a pinned replay: one run cannot disagree with
+         itself. A pinned rehearsal therefore can never be downgraded here.
+
+      2. SYMPTOMATIC — the failure names at least one symbol that this
+         rehearsed session has no evidence for anywhere: no analysis, no
+         rejection, no position. A symbol the session never touched cannot
+         have entered the decision except through a transplanted answer.
+
+      3. ATTRIBUTED — that same symbol DOES have evidence in the recorded run
+         the portfolio manager's answer came from. This is the transplant
+         caught in the act, and it is what keeps the symbol extraction
+         honest: a stray capitalised word scraped out of an error message is
+         not a symbol in anyone's `specialist_evidence`, so it can never
+         reach this branch.
+
+    Any one alone stays FAIL. A hallucinated ticker in a faithfully replayed
+    session (one run, all seats) fails 1 and is still reported as the defect
+    it is. Evidence pruned from the source run fails 3, which also fails to
+    FAIL — the safe direction.
+    """
+    status = str(report.status or "")
+    if not status.startswith("pm_") or not report.error:
+        return []
+
+    matches = list(getattr(library, "matches", []))
+    if not matches:
+        return []
+    pm_runs = {
+        str(m.get("run_id"))
+        for m in matches
+        if _base_agent(str(m.get("agent", ""))) == "portfolio_manager"
+    }
+    other_runs = {
+        str(m.get("run_id"))
+        for m in matches
+        if _base_agent(str(m.get("agent", ""))) != "portfolio_manager"
+    }
+    if not pm_runs:
+        return []
+    expected_prefix = REPLAY_PREFIX.get(session)
+    stitched = bool(pm_runs - other_runs) or (
+        expected_prefix is not None
+        and any(not r.startswith(f"{expected_prefix}-") for r in pm_runs)
+    )
+    if not stitched:
+        return []
+
+    named = {m.group(1) for m in _SYMBOL_IN_ERROR.finditer(str(report.error))}
+    if not named:
+        return []
+    covered = {
+        str(r["symbol"]).upper()
+        for r in conn.execute(
+            "SELECT DISTINCT symbol FROM specialist_evidence "
+            "WHERE run_id = ? AND symbol IS NOT NULL", (run_id,),
+        ).fetchall()
+        if r["symbol"]
+    }
+    covered |= {
+        str(item["symbol"]).upper()
+        for item in report.rejections if item.get("symbol")
+    }
+    covered |= {str(s).upper() for s in report.coverage.get("analysed_symbols", [])}
+    covered |= {str(s).upper() for s in report.coverage.get("unresolved_symbols", [])}
+    orphans = sorted(s for s in named if s not in covered)
+    if not orphans:
+        return []
+
+    # (3) and the source run must actually own them. `IN` over a handful of
+    # symbols and a handful of run ids; both lists are built here, never from
+    # the error text, so there is nothing to inject.
+    placeholders = ",".join("?" for _ in orphans)
+    run_slots = ",".join("?" for _ in pm_runs)
+    transplanted = sorted({
+        str(r["symbol"]).upper()
+        for r in conn.execute(
+            f"SELECT DISTINCT symbol FROM specialist_evidence "
+            f"WHERE run_id IN ({run_slots}) AND symbol IN ({placeholders})",
+            (*sorted(pm_runs), *orphans),
+        ).fetchall()
+        if r["symbol"]
+    })
+    if not transplanted:
+        return []
+    orphans = transplanted
+
+    return [{
+        "kind": _INCONCLUSIVE_FINDING,
+        "agent": "portfolio_manager",
+        "detail": (
+            f"THE RIG COULD NOT JUDGE THIS SESSION. The session ended "
+            f"'{status}' over {', '.join(orphans)}, which this rehearsal "
+            f"never analysed, never rejected and does not hold. The portfolio "
+            f"manager's answer was replayed from "
+            f"{', '.join(sorted(pm_runs))} while the analysts' answers came "
+            f"from {', '.join(sorted(other_runs)) or 'nowhere else'} — two "
+            f"different recorded sessions stitched into one. The failure "
+            f"belongs to the replay, not to the code. Re-run pinned "
+            f"(--replay-run, or simply drop --replay-run any) before "
+            f"concluding anything"
+        ),
+        "orphan_symbols": orphans,
+        "pm_source_runs": sorted(pm_runs),
+    }]
+
+
+def _verdict(report: RehearsalReport) -> str:
+    """PASS, FAIL, or INCONCLUSIVE — and the third is not a softer FAIL.
+
+    PASS only when the session reached a truthful, complete conclusion. A
+    session that stops because the market is shut, or because the portfolio
     manager genuinely proposed nothing, is a working session. A session that
     is cut off by the spending circuit, loses an agent, or cannot read its own
     plan is not — those are the mornings that arrive broken.
+
+    INCONCLUSIVE is reserved for the case where the harness failed, not the
+    code: the rehearsal did not reproduce a single real session, so its
+    failure is not evidence about anything. `_replay_fidelity` above is the
+    only thing that can raise it, and it demands two independent proofs
+    first. Everything else in doubt stays FAIL.
     """
+    if any(f.get("kind") == _INCONCLUSIVE_FINDING for f in report.findings):
+        return "INCONCLUSIVE"
     if report.error and not report.status:
         return "FAIL"
     if report.blocked_agents:
