@@ -679,6 +679,40 @@ def test_format_morning_degraded_data_flagged():
     assert "earnings" in msg
 
 
+def test_format_morning_truncated_smart_money_flagged_as_degraded():
+    """A smart_money_analyst call that hit finish_reason=length must show up
+    in the degraded banner distinctly from "ok"/"empty" — it must never be
+    silently swallowed the way a genuinely quiet day (empty) or a clean run
+    (ok) would be."""
+    result = {
+        "status": "executed", "run_id": "run-trunc", "orders": [],
+        "data_status": {
+            "macro": "ok", "news": "ok", "tech": "ok", "earnings": "ok",
+            "smart_money": "truncated",
+        },
+    }
+    msg = format_session_result("morning", result, 5.0)
+    assert msg is not None
+    assert "degraded" in msg
+    assert "smart_money" in msg
+
+
+def test_format_morning_empty_smart_money_not_flagged_as_degraded():
+    """Sanity check on the other side of the distinction: a real "no
+    signal today" (empty) must NOT be flagged degraded — only truncation
+    (or another failure) should be."""
+    result = {
+        "status": "executed", "run_id": "run-empty", "orders": [],
+        "data_status": {
+            "macro": "ok", "news": "ok", "tech": "ok", "earnings": "ok",
+            "smart_money": "empty",
+        },
+    }
+    msg = format_session_result("morning", result, 5.0)
+    assert msg is not None
+    assert "degraded" not in msg
+
+
 def test_format_morning_force_delever_triggers_autonomous_intervention_banner():
     """FORCE_DELEVER is the system's hardest safety net (auto-sells
     biggest-loser-first when cash < -$1, margin disabled). Without the
