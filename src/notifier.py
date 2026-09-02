@@ -616,6 +616,50 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
         return False
 
 
+# === Data-quality alert (own message, not bundled) ===
+#
+# Before this existed, a bad analyst seat (`data_status` anything but "ok"
+# or "empty" — degraded, truncated, parse_error, failed, partial) only ever
+# showed up as one line INSIDE the routine session-result message (see
+# `_append_trade_session_body`'s "degraded:" line below). That is exactly
+# what the owner's alert-design rule forbids: "alerts get their OWN
+# Telegram message, never bundled into a run summary." A bundled line is
+# easy to miss inside a normal-looking "session OK" message, and this
+# desk's whole thesis depends on the analysts' data being trustworthy — see
+# docs/OUTCOME.md. This fires a SEPARATE, standalone alert through the same
+# `send_owner_alert` path already used for a naked position with no stop.
+#
+# Severity is carried in TEXT, never colour, per the owner's rule (he is
+# red/green colour blind) — no emoji standing in as the only signal here.
+#
+# Deliberately NOT deduplicated: if the same seat is still broken next run,
+# it alerts again. A repeated alert on a genuinely unresolved problem is
+# correct, not noise — silence is what let this go unnoticed before.
+def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
+    """Fire a standalone alert when any agent's data this session was not
+    clean, so a bad analyst seat can never hide inside an otherwise-normal
+    run summary. Returns whether an alert was sent.
+    """
+    if not isinstance(result, dict):
+        return False
+    data_status = result.get("data_status") or {}
+    if not isinstance(data_status, dict):
+        return False
+    bad = {k: v for k, v in data_status.items() if v not in ("ok", "empty")}
+    if not bad:
+        return False
+    detail = ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))
+    run_id = result.get("run_id", "unknown")
+    text = (
+        f"DATA QUALITY ALERT — {mode} (run {run_id})\n"
+        f"Not clean this session: {detail}\n"
+        f"PM and Risk Manager may be sizing or deciding off incomplete or "
+        f"invalid input from these seats this run. Check Mission Control "
+        f"or the run log before trusting this session's decisions."
+    )
+    return send_owner_alert(text)
+
+
 # === Session result formatting ===
 # Built as a free function (not a TelegramNotifier method) so it's
 # easy to unit-test without the network stub and so main.py can

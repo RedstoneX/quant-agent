@@ -194,6 +194,18 @@ class TradingScheduler:
                         logger.warning(
                             "[%s] alert watchdog failed in _run_safe: %s", name, exc,
                         )
+                    # Parity with main.py: a bad analyst seat gets its OWN
+                    # Telegram message, never a line buried inside the
+                    # routine summary above. See
+                    # notifier.maybe_alert_data_quality's docstring.
+                    try:
+                        from src.notifier import maybe_alert_data_quality
+
+                        maybe_alert_data_quality(result, mode=name)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[%s] data-quality alert failed in _run_safe: %s", name, exc,
+                        )
                     if message:
                         symbols = None
                         try:
