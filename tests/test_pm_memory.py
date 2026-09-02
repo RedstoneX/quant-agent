@@ -777,6 +777,48 @@ def test_pm_decisions_builder_parses_own_history(tmp_path):
     assert "consistent with 5-day risk-on narrative" in out
 
 
+def test_pm_decisions_builder_tags_the_unit_on_targets_schema(tmp_path):
+    """Phase 2's `targets` schema sizes by `risk_allocation_pct`; older rows
+    carry the legacy `target_weight_pct`. Reading only the legacy field
+    rendered every current size as '?' (live output stopped emitting
+    `target_weight_pct` on 2026-08-28) -- a flip-flop check that cannot see
+    the size is not a check. Fixed 2026-09-02; this test is the regression
+    guard the fix shipped without. Pins all three branches: risk-tagged,
+    legacy-weight-tagged, and the true-unknown fallback when neither field
+    is present.
+    """
+    import json
+    from src.pipeline import TradingPipeline
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_agent_log(
+        agent_name="portfolio_manager", run_id="p1",
+        input_summary="", input_message="", output_summary="targets",
+        full_response=json.dumps({
+            "targets": [
+                {"symbol": "NVDA", "risk_allocation_pct": 1.2, "conviction": "high"},
+                {"symbol": "JPM", "target_weight_pct": 5.0, "conviction": "medium"},
+                {"symbol": "XLE", "conviction": "low"},
+            ],
+        }),
+        model="gpt-5.4", tokens_used=100,
+    )
+    db.conn.execute(
+        "UPDATE agent_logs SET timestamp = datetime('now', '-1 day') "
+        "WHERE agent_name = 'portfolio_manager'"
+    )
+    db.conn.commit()
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    out = pipeline._build_pm_recent_decisions(limit=3)
+    assert "NVDA→1.2%r(h)" in out
+    assert "JPM→5.0%w(m)" in out
+    assert "XLE→?(l)" in out
+
+
 def test_pm_renders_weight_pct_and_drift_flag():
     """Each position line shows weight_pct; drift flag appears on concentrated winners."""
     with patch("anthropic.Anthropic"):
