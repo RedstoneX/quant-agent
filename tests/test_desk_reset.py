@@ -846,6 +846,70 @@ def test_execute_flattens_and_summarises(dr, wired, tmp_path, capsys):
     assert "Open orders   : 5  ->  0" in out
 
 
+def test_a_failed_flatten_does_not_wipe_the_ledger(dr, wired, tmp_path):
+    """If the liquidation errors, the trade history that explains the
+    still-open positions must survive."""
+    class Broken(FakeClient):
+        def close_all_positions(self, cancel_orders=None):
+            self.writes.append("close_all_positions(attempted)")
+            raise RuntimeError("503 from broker")
+
+    wired.client = Broken()
+    import alpaca.trading.client as ac
+    ac.TradingClient = lambda *a, **k: wired.client
+
+    before = _counts(wired.db_path)
+    backup_root = tmp_path / "resets"
+    rc = dr.run(_base_argv(wired.db_path, backup_root)
+                + ["--execute", "--yes", "--settle-seconds", "0"])
+
+    assert rc == 5
+    assert _counts(wired.db_path) == before      # ledger intact
+    stamp_dir = next(iter(backup_root.iterdir()))
+    manifest = json.loads((stamp_dir / "reset_manifest.json").read_text())
+    assert "503 from broker" in manifest["aborted"]
+    assert (stamp_dir / "quant_agent.db").exists()   # backup still taken
+
+
+def test_positions_left_open_with_the_market_open_aborts_the_clear(dr, wired, tmp_path):
+    class NoOp(FakeClient):
+        def close_all_positions(self, cancel_orders=None):
+            self.writes.append("close_all_positions(no-op)")
+            return []          # broker accepted nothing; positions remain
+
+    wired.client = NoOp(market_open=True)
+    import alpaca.trading.client as ac
+    ac.TradingClient = lambda *a, **k: wired.client
+
+    before = _counts(wired.db_path)
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
+                + ["--execute", "--yes", "--settle-seconds", "0",
+                   "--allow-market-open"])
+    assert rc == 5
+    assert _counts(wired.db_path) == before
+
+
+def test_positions_queued_with_the_market_closed_still_clears(dr, wired, tmp_path):
+    """The normal daily path: the market is shut, the sells are queued to the
+    next open, and the desk's own history is cleared anyway."""
+    class Queued(FakeClient):
+        def close_all_positions(self, cancel_orders=None):
+            self.writes.append("close_all_positions(queued)")
+            self._orders = []
+            return [SimpleNamespace(symbol=p.symbol, status=200,
+                                    order_id=f"q-{p.symbol}", body=None)
+                    for p in self._positions]      # positions NOT gone yet
+
+    wired.client = Queued(market_open=False)
+    import alpaca.trading.client as ac
+    ac.TradingClient = lambda *a, **k: wired.client
+
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
+                + ["--execute", "--yes", "--settle-seconds", "0"])
+    assert rc == 0
+    assert _counts(wired.db_path)["trades"] == 0
+
+
 def test_skip_broker_leaves_the_book_alone(dr, wired, tmp_path):
     rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
                 + ["--execute", "--yes", "--skip-broker"])

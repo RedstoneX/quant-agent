@@ -1043,6 +1043,41 @@ def run(argv: list[str] | None = None) -> int:
         flatten = flatten_book(client, settle_seconds=args.settle_seconds)
         manifest["flatten"] = flatten
 
+    # ---- did the flatten actually work? ----
+    # The local ledger is the only thing linking a still-open position to its
+    # history. Clearing it after a flatten that did not land would leave the
+    # broker holding positions nothing on this box can explain, so the clear
+    # is abandoned and the operator gets told exactly why. The backup and both
+    # book snapshots are already on disk either way.
+    abort_reason = None
+    if not args.skip_broker:
+        residual = client.get_all_positions()
+        if flatten["errors"]:
+            abort_reason = (
+                "the broker reported errors during the flatten: "
+                + "; ".join(flatten["errors"])
+            )
+        elif residual and book["market_open"] is True:
+            abort_reason = (
+                f"{len(residual)} position(s) still open after "
+                f"{args.settle_seconds:g}s with the market OPEN — the "
+                "liquidation did not complete"
+            )
+
+    if abort_reason:
+        after = read_book(client)
+        (backup_dir / "book_after.json").write_text(json.dumps(after, indent=2))
+        manifest["aborted"] = abort_reason
+        (backup_dir / "reset_manifest.json").write_text(json.dumps(manifest, indent=2))
+        print(f"\nDATABASE NOT CLEARED — {abort_reason}", file=sys.stderr)
+        print(
+            "  The book was NOT left clean, so the trade ledger that explains "
+            "it has been kept.\n  Fix the broker side, then re-run. Backup: "
+            f"{backup_dir}",
+            file=sys.stderr,
+        )
+        return 5
+
     # ---- clear ----
     deleted: dict[str, int] = {}
     if not args.skip_db:

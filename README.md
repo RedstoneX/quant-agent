@@ -422,6 +422,10 @@ It also warns — without touching them — when `data/checkpoints/` holds a pos
 
 The flatten is `DELETE /v2/positions?cancel_orders=true` (`close_all_positions(cancel_orders=True)`) — cancelling **before** liquidating is required, since a resting protective stop reserves the shares and a naive sell is rejected for insufficient quantity. A second `cancel_orders()` sweeps anything that appeared in the gap.
 
+**If the flatten does not land, the database is not cleared** (exit 5). The local ledger is the only thing linking a still-open position to its history, so wiping it after a failed liquidation would leave the broker holding positions nothing on the box can explain. That covers a broker error, and positions still open after the settle window *with the market open*. Positions still open with the market **closed** are the normal queued case and do not block the clear. The backup and both book snapshots are written either way.
+
+Exit codes: `0` fine, `1` you declined the prompt, `2` bad invocation, `3` **not provably a paper account**, `4` refused on timing, `5` flatten failed so the database was left alone.
+
 **There is no Alpaca API for resetting a paper account to its original funding.** The dashboard no longer resets accounts at all: it creates and deletes them, and a newly created account needs newly generated API keys ([paper-trading](https://docs.alpaca.markets/us/docs/paper-trading)). For this desk that is the expensive path, not the cheap one — the Alpaca credentials are injected by the OneCLI gateway (`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`), so new keys mean an operator edit inside OneCLI, not a `.env` change `dev` can make. Sell-everything keeps the account number, the keys and the gateway wiring intact, which is why it is the implemented path.
 
 ## Trading Universe
