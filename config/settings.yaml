@@ -228,13 +228,28 @@ execution:
   #       short as this system can make it).
   # Under one share there is no whole part, so it is a DAY stop only.
   #
-  # THE ACCEPTED TRADE. The remainder is unprotected overnight. The owner
-  # ratified that on 2026-09-01: without fractional sizing a ~$10k account is
-  # simply excluded from expensive names the analysts keep picking, and being
-  # locked out of the market is itself a cost for a desk whose purpose is to
-  # participate and to learn. The exposure is bounded by construction (always
-  # under one share per position) and is REPORTED IN DOLLARS on the session
-  # alert rather than left to trust.
+  # THE ACCEPTED TRADE. The remainder is unprotected overnight. Owner ratified
+  # 2026-09-02: without fractional sizing a ~$9,800 account is simply excluded
+  # from the expensive names its own analysts keep picking, and being locked
+  # out is itself a cost — one that applies to live capital too, not just paper.
+  #
+  # "BOUNDED UNDER ONE SHARE" IS WRONG AND WAS CORRECTED BEFORE HE DECIDED.
+  # That holds only when a stock costs LESS than one position slot. When it
+  # costs more, the ENTIRE position is sub-one-share, so 100% of it lapses
+  # overnight rather than a sliver. Measured against the real universe:
+  #   worst single position  ~$1,536
+  #   worst whole book       ~$8,820 — the entire invested book at the ceiling
+  #   typical, >= 1 share    ~$90
+  # Six names already exceed one slot at 10 positions: SNDK, LLY, EQIX, GS,
+  # COST, MU — exactly the names fractional exists to reach. A gap fills at the
+  # open rather than at the stop, so realised exposure runs below that ceiling,
+  # but the ceiling is the honest number and it is what he accepted.
+  #
+  # The lever if this is revisited: size fractionally only at >= 1 share. That
+  # removes the 100% case and costs those six names. Owner declined that trade
+  # — do not reintroduce it silently.
+  #
+  # Exposure is REPORTED IN DOLLARS on the session alert rather than trusted.
   #
   # ALERTING. A lapsed overnight DAY stop is EXPECTED and does not alert —
   # alerting nightly on a healthy system would destroy the credibility of the
@@ -242,7 +257,7 @@ execution:
   # re-placed DURING MARKET HOURS alerts exactly as guard 2 always has, and a
   # missing whole-share GTC leg alerts at any hour. See
   # `_classify_coverage_gap` and `_reconcile_stop_coverage` in src/pipeline.py.
-  fractional_enabled: false
+  fractional_enabled: true
   fractional_share_decimals: 4
 
 risk:

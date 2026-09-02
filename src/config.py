@@ -386,7 +386,7 @@ class ExecutionConfig(BaseModel):
     # stop over the whole shares plus a DAY stop over the sub-share remainder,
     # re-placed at the start of every session. See config/settings.yaml for
     # the measured broker capability and the accepted overnight trade-off.
-    fractional_enabled: bool = False
+    fractional_enabled: bool = True
     """Master switch for exact (fractional) entry sizing. ON by default —
     whole-share rounding is a silent, constant tax on every position the
     desk opens (V wanted 6% of the book and got 3.84%), and the reasoning
