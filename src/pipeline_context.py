@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
+from src.models import parse_telemetry
+
 if TYPE_CHECKING:
     from src.data.event_calendar import EventCalendarCoverage, FOMCCoverage
     from src.data.macro import MacroCoverage
@@ -128,6 +130,29 @@ class RunContext:
     symbols_bars: dict = field(default_factory=dict)  # {sym: list[OHLCV]}
     valuations: dict = field(default_factory=dict)  # {sym: {trailing_pe, ...}}
     data_status: dict[str, str] = field(default_factory=dict)
+    # What this session's LLM-response parsing lost or papered over
+    # (src.models.parse_telemetry). Same relationship to `data_status` as
+    # `macro_coverage` above: data_status carries the one-word verdict per
+    # source, these carry the evidence behind it.
+    #
+    #   dropped_analyses    {(model, symbol): count} — a parsed item that was
+    #                       discarded outright. The desk researched the name
+    #                       and the Portfolio Manager never saw it. Recorded
+    #                       even when a retry later recovers the symbol, which
+    #                       is the case data_status cannot show at all.
+    #   null_coerced_fields {(model, field): count} — a defaulted field
+    #                       arrived as an explicit null and took its default.
+    #                       The object survived; a real input did not. On
+    #                       `thesis_invalid_if` that input is the soft-exit
+    #                       signal, so the coercion is not free.
+    #
+    # WRITTEN BY RiskStage (not by the research stage): the Portfolio
+    # Manager parses after research, so a reading taken any earlier would miss
+    # every PM-side loss. RiskStage turns a non-empty pair into the
+    # `analysis_parse_loss` / `analysis_field_nulled` advisories. The counters
+    # behind them are zeroed at the top of MorningResearchStage.
+    dropped_analyses: dict[tuple[str, str], int] = field(default_factory=dict)
+    null_coerced_fields: dict[tuple[str, str], int] = field(default_factory=dict)
 
     # === Populated by the decision stage ===
     # Memory layers built for PM that the RiskStage also needs. Before the
@@ -198,6 +223,13 @@ class RunContext:
         Run ID prefix matches legacy formatting so log greps like
         'run-abcd1234' and 'midday-abcd1234' keep working.
         """
+        # Zero the parse counters here rather than in any one stage: this is
+        # the single factory every session goes through, and RiskStage — which
+        # reads them — also runs on the intraday scan path, which never
+        # touches MorningResearchStage. Resetting in a stage would have made
+        # the afternoon re-report the morning's losses in a long-lived
+        # scheduler process.
+        parse_telemetry.reset()
         rid_prefix = "run" if session == "morning" else session
         return cls(
             run_id=f"{rid_prefix}-{uuid.uuid4().hex[:8]}",

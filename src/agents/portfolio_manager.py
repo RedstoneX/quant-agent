@@ -9,6 +9,7 @@ from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
     TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
+    parse_telemetry,
 )
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
@@ -1436,9 +1437,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 )
                 continue
             try:
-                TargetPosition(**item)
+                # Dry run: the surviving dicts are validated again by
+                # PortfolioDecision, so tallying here would double-count.
+                with parse_telemetry.suspended():
+                    TargetPosition(**item)
             except ValidationError as e:
                 sym = item.get("symbol") or f"<idx {i}>"
+                # A target the PM proposed and the desk then discarded is a
+                # position that will not be opened. Counted for the same
+                # reason the tech-side drop is: an idea lost at parse looks
+                # identical to an idea nobody had.
+                parse_telemetry.record_dropped_item("TargetPosition", str(sym))
                 logger.warning(
                     "Portfolio manager: dropping malformed target for %s: %s",
                     sym, e,

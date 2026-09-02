@@ -22,6 +22,90 @@ what would catch it next time.
 
 ---
 
+### 2026-09-02 — one word the model spelled differently could bin a whole stock analysis, and 118 other fields could do it too
+
+**In plain words:** when an analyst wrote "nothing to say here" as an empty
+blank, the system accepted it. When it wrote the same thing as the word
+`null`, the system threw the *entire* analysis away — the rating, the entry
+price, the stop, all of it — and only a log line said so. The specific field
+this was found on had already been patched. The problem was that 118 more
+fields could do exactly the same thing, and nobody was counting the losses.
+
+**What was measured, not assumed.** Against the production response log for
+2026-08-14..2026-09-01:
+
+| field | explicit nulls | occurrences | status before |
+|---|---|---|---|
+| `TechAnalysisResult.thesis_invalid_if` | 42 | 2,021 | patched 2026-09-01 |
+| `MissedOpportunity.theme_durability` | 25 | 50 | **still exposed** |
+| `MissedOpportunity.universe_addition_reason` | 11 | 50 | **still exposed** |
+
+The evening pair is the sharper case: half of all `theme_durability` slots
+came back null, and each one silently deleted that whole missed-opportunity
+entry from the quarterly theme aggregation. Replaying the stored responses,
+12 entries that the desk had discarded now parse.
+
+**What it actually cost, and what was RULED OUT.** The 42 nulls fall across
+28 distinct symbols in 4 responses. Of those 28, **4 were lost permanently** —
+EQNR on 2026-08-20, and AMT, EQIX and PLD on 2026-08-25. Those two batches
+logged `90/91 symbols analyzed, 1 failed` and `84/87, 3 failed`, and the failed
+symbols are exactly the null-carrying ones the retry did not rescue. The
+remaining 24 were recovered by a bounded retry — a paid extra LLM call each
+time, and invisible afterwards because a rescued batch reports `data_status`
+"ok".
+
+**What does NOT hold up** is the causal link to the zero-trade morning of
+2026-09-01. Every one of the 42 null-carrying analyses — including all ten
+that morning — was rated `neutral`, verified from the raw stored JSON
+independent of the models, and that batch logged `58/58 symbols analyzed`
+with nothing lost. A `neutral` read proposes no trade, so **no tradeable
+candidate has been shown lost to this defect**, and the zero-trade day has a
+different cause. What the defect demonstrably cost is 4 analyses, some paid
+retry round-trips, and a failure mode that would have been invisible had it
+landed on a `buy`. The fix is justified by that plus the exposure — not by a
+lost trade, and it should not be described as one.
+
+**The real cause.** Pydantic checks a field's declared type before any
+whole-object rule runs, so an explicit null on a field that is not marked
+optional is fatal even when that field declares a perfectly good default. An
+omitted key and a null key mean the same thing to the model writing the JSON;
+they meant opposite things to the parser. Fixing them one at a time loses by
+attrition — there were 119 such fields.
+
+**What was ruled IN, and what deliberately was not.** Every model parsed from
+an LLM response now treats an explicit null on a *defaulted* field as an
+absent key. That is a state the schema already declares legal and production
+already exercises constantly. It does **not** apply to required fields (a null
+`symbol`, `rating`, `stop_loss` or `sell_price` still rejects the object,
+correctly — no default exists to fall back on), and two defaulted fields are
+explicitly exempted because their defaults are affirmative instructions rather
+than "nothing was said": a position's `direction` (defaults `long` — a null
+must never quietly flip a short) and the Risk Manager's `scale_all_buys`
+(defaults `1.0` — a null must never quietly release a brake it meant to pull).
+The whole-object rules are untouched, so an actionable analysis still cannot
+survive without an entry, a stop, a target, a setup type and a structural
+level.
+
+**Counting, because recovering it quietly is its own failure.**
+`thesis_invalid_if` is the soft-exit signal. Blanking it keeps the analysis
+but throws away the trigger that would exit before the hard stop fires, and
+nothing anywhere said how often that happened. Two counts now reach the Risk
+Manager's prompt and the session log as non-blocking advisories, on the same
+seam `data_degraded` and `pm_audit_step_missing` already use:
+`analysis_field_nulled` (kept the object, lost an input) and
+`analysis_parse_loss` (lost the object entirely). The second one fires even
+when a retry later recovers the symbol — the case that was previously
+invisible, because `data_status["tech"]` reads "ok" and the only trace was an
+INFO line.
+
+**What would catch it next time.** A test that walks every model in
+`src/models.py` and fails if one is parsed from LLM output, has a defaulted
+field that rejects null, and has not opted into the rule. A new model cannot
+reintroduce this by omission — which is the point, because the previous
+approach depended on somebody remembering.
+
+---
+
 ### 2026-09-01 — a network blip could silently switch off the sector concentration cap
 
 **In plain words:** when the system couldn't figure out which industry a

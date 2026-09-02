@@ -49,7 +49,10 @@ from src.data.event_calendar import (
     format_event_risk_block,
 )
 from src.data.technical import compute_indicators
-from src.models import NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators
+from src.models import (
+    NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
+    parse_telemetry,
+)
 from src.nominations import select_nominations
 from src.pipeline_context import RunContext
 
@@ -1860,6 +1863,33 @@ class MorningResearchStage:
                 "Morning research degraded: %s | full status=%s",
                 ",".join(sorted(degraded)), data_status,
             )
+        # Parse-level losses are recorded ALONGSIDE data_status, not inside
+        # it — same reasoning as `macro_coverage` in RunContext: data_status
+        # carries the one-word summary per source, this carries the evidence
+        # a single word cannot. Deliberately not a data_status key, because
+        # every key in that dict moves the `data_degraded` advisory's ">= 2
+        # degraded sources" arithmetic and this change must not shift an
+        # existing gate's threshold as a side effect.
+        #
+        # This is the RESEARCH-stage reading, logged here so a postmortem can
+        # tell a research-side loss from a PM-side one. RiskStage takes the
+        # authoritative reading later, after the Portfolio Manager has also
+        # parsed, and that is what reaches the advisory.
+        if parse_telemetry.total_dropped():
+            logger.error(
+                "Analysis items DROPPED at parse during research (%d): %s — "
+                "these candidates were researched and never reached the "
+                "Portfolio Manager",
+                parse_telemetry.total_dropped(), parse_telemetry.describe_dropped(),
+            )
+        if parse_telemetry.total_null_coercions():
+            logger.warning(
+                "Explicit nulls coerced to defaults during research (%d): %s — "
+                "the objects survived, but the model said nothing where the "
+                "prompt asked for something",
+                parse_telemetry.total_null_coercions(),
+                parse_telemetry.describe_null_coercions(),
+            )
         return ctx
 
     def _run_nomination_responder_pass(self, ctx: RunContext, prior_macro_state: dict) -> None:
@@ -2773,6 +2803,79 @@ class RiskStage:
                 limit=1.0,
             ))
             logger.warning("Morning data degradation: %s", data_status)
+
+        # Parse-level losses anywhere in this session (2026-09-02). Before
+        # this, an analysis discarded over one malformed field was a single
+        # ERROR log line nobody counted, and an explicit null silently
+        # replaced by a default left no trace at all. Both are inputs the
+        # analysts produced and the desk then failed to use — invisible
+        # under-deployment, and the expensive kind, because a candidate the
+        # Portfolio Manager never sees cannot be traded and cannot be
+        # measured as a miss either.
+        #
+        # ADVISORY, never blocking — the same non-blocking seam
+        # `data_degraded`, `correlation_coverage_gap` and
+        # `pm_audit_step_missing` above already use. It reaches the Risk
+        # Manager's prompt through `rule_violations` and the operator through
+        # the session log; no order is blocked by it, because a parse loss is
+        # evidence about COVERAGE, not about the soundness of the orders that
+        # did survive.
+        #
+        # Read LIVE rather than from a research-stage snapshot: the Portfolio
+        # Manager parses in DecisionStage, AFTER research, and
+        # `TargetPosition.thesis_invalid_if` is one of the two fields this
+        # whole change is about. A snapshot taken at the end of research would
+        # miss every PM-side loss.
+        ctx.dropped_analyses = parse_telemetry.dropped_snapshot()
+        ctx.null_coerced_fields = parse_telemetry.snapshot()
+        dropped = ctx.dropped_analyses
+        if dropped:
+            from src.risk.rules import RiskViolation as _RV
+            names = ", ".join(
+                f"{model}:{key}" for (model, key), _n in sorted(dropped.items())
+            )
+            n_dropped = sum(dropped.values())
+            rule_violations.append(_RV(
+                rule="analysis_parse_loss",
+                message=(
+                    f"{n_dropped} item(s) were discarded at parse this session "
+                    f"and are absent from the book below: {names} "
+                    f"(TechAnalysisResult = a candidate PM never saw; "
+                    f"TargetPosition = a position PM asked for and the desk "
+                    f"could not read). The plan was therefore built from, or "
+                    f"reduced to, a SMALLER set than the seats produced — "
+                    f"treat a thin list as possibly truncated rather than as a "
+                    f"genuine absence of setups."
+                ),
+                value=float(n_dropped),
+                limit=0.0,
+            ))
+            logger.error(
+                "Analysis parse loss reached the risk stage: %d item(s) — %s",
+                n_dropped, names,
+            )
+
+        nulled = ctx.null_coerced_fields
+        if nulled:
+            from src.risk.rules import RiskViolation as _RV
+            detail = ", ".join(
+                f"{model}.{field}x{n}"
+                for (model, field), n in sorted(nulled.items(), key=lambda kv: -kv[1])
+            )
+            n_nulled = sum(nulled.values())
+            rule_violations.append(_RV(
+                rule="analysis_field_nulled",
+                message=(
+                    f"{n_nulled} field(s) arrived as an explicit null and took "
+                    f"their schema default: {detail}. The analyses were KEPT "
+                    f"(the alternative — dropping them — is worse), but a "
+                    f"nulled `thesis_invalid_if` means that idea has no "
+                    f"soft-exit trigger and will be managed on the hard stop "
+                    f"alone."
+                ),
+                value=float(n_nulled),
+                limit=0.0,
+            ))
 
         has_book_to_check = len(rm_positions) >= 2 or any(
             d.action in ("BUY", "SHORT") for d in portfolio_decision.decisions
