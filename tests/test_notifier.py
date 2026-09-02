@@ -1833,3 +1833,70 @@ def test_daily_brake_and_prepaid_balance_are_labelled_differently(monkeypatch, t
     day, bal = n._day_cost_line(), n._openrouter_balance_line()
     assert "daily limit" in day and "left of" not in day
     assert "left of" in bal and "daily limit" not in bal
+
+
+# ===========================================================================
+# maybe_alert_data_quality — a bad analyst seat must get its OWN Telegram
+# message, never a line buried inside the routine session summary. Owner's
+# ratified rule, reiterated 2026-09-02: separate message, severity in text.
+# ===========================================================================
+
+def test_bad_data_status_fires_a_standalone_alert():
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-abc123",
+        "data_status": {"tech": "ok", "earnings": "ok", "smart_money": "truncated"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    alert.assert_called_once()
+    body = alert.call_args.args[0]
+    assert "DATA QUALITY ALERT" in body
+    assert "smart_money=truncated" in body
+    assert "run-abc123" in body
+    assert "morning" in body
+
+
+def test_clean_data_status_does_not_alert():
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-clean",
+        "data_status": {"tech": "ok", "news": "ok", "macro": "ok",
+                         "earnings": "ok", "smart_money": "empty"},
+    }
+    with patch("src.notifier.send_owner_alert") as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is False
+    alert.assert_not_called()
+
+
+def test_multiple_bad_seats_are_all_named_in_one_alert():
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-multi",
+        "data_status": {"tech": "partial", "news": "parse_error", "macro": "ok"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="close")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "news=parse_error" in body
+    assert "tech=partial" in body
+
+
+def test_missing_or_malformed_result_never_raises():
+    from src.notifier import maybe_alert_data_quality
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        assert maybe_alert_data_quality(None, mode="morning") is False
+        assert maybe_alert_data_quality({}, mode="morning") is False
+        assert maybe_alert_data_quality({"data_status": "not-a-dict"}, mode="morning") is False
+
+    alert.assert_not_called()
