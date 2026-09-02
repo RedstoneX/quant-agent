@@ -576,6 +576,49 @@ refused.
 
 ---
 
+## 2026-09-02 — the rehearsal rig's verdict was a coin flip
+
+**The pre-deploy gate has been giving PASS or FAIL on the same code depending
+on which recorded responses it happened to draw. A green light from it meant
+less than anyone believed.**
+
+Found while gating the 2026-09-01 ship. The merged tip returned FAIL where the
+starting commit returned PASS, so the merges were bisected one at a time with
+the rig, each checkout verified clean before running.
+
+Bisect result: the flip appeared at `b8d5986`, the fix that stopped a null
+`thesis_invalid_if` binning an entire technical analysis. That fix is
+demonstrably correct — it eliminated all 10 parse failures in the run and
+recovered 2 more symbols.
+
+**Then the variable was controlled.** With `--replay-run` pinned to a single
+recorded session, BOTH commits FAIL identically, and the fix reduces rejections
+from 23 to 21. Unpinned, the rig draws on ALL recorded responses; any change to
+how many analyses parse consumes that shared pool differently, a different
+recorded PM decision gets replayed, and the grounding check then compares that
+decision against a session whose analyst coverage does not match it. The
+verdict tracks pool consumption, not correctness.
+
+Symptom to recognise: `pm_grounding_error` naming a symbol that is NOT in the
+tech batch's unresolved list — on 2026-09-02 it was `ZS`, a real target from
+the previous afternoon's session, replayed into a morning that never analysed
+it.
+
+**What this means for anyone using the rig as a gate:**
+- An unpinned PASS is not evidence. Two runs of the same code can differ.
+- Always pass `--replay-run` when comparing two commits. Without it you are
+  measuring the pool, not the change.
+- The rig currently CANNOT return PASS on this scenario in either state,
+  because it cannot reproduce full analyst coverage offline. That is a gap in
+  the gate, not in the code.
+- This is the same family as the already-recorded limitation that the rig
+  cannot validate a prompt change. Both come from replaying recorded answers
+  into a session that no longer matches them.
+
+**Not fixed.** The rig needs to either pin its replay by default or report
+plainly that it cannot judge. Both are real work and neither was done tonight.
+
+
 ## Archive — work completed before 2026-09-01
 
 Moved out of `docs/WORK.md` on 2026-09-01 under the rule at the top of that
