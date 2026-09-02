@@ -11,6 +11,7 @@ from src.agents.base import (
     provider_attempt_budget,
     resolve_provider,
 )
+from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
 
 
 class ApiKeysConfig(BaseModel):
@@ -454,7 +455,9 @@ class RiskConfig(BaseModel):
     # Below this an idea is not worth trading: a token position pays full
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.
-    min_position_risk_pct: float = Field(default=0.5, ge=0, le=100)
+    min_position_risk_pct: float = Field(
+        default=STARTER_POSITION_RISK_PCT, ge=0, le=100,
+    )
     # Spec §2.2. The most of the total at-risk ceiling any ONE correlated
     # cluster may take. Without it "total risk is under 25%" says nothing
     # about diversification — a book holding one theme four times over
@@ -470,7 +473,20 @@ class RiskConfig(BaseModel):
     min_stop_atr_multiple: float = Field(default=3.0, gt=0, le=10)
     # Widening a stop lowers reward:risk, because the target does not move.
     # Under this the setup only ever qualified on a stop too tight to survive.
-    min_reward_risk_after_widening: float = Field(default=1.5, ge=0, le=10)
+    #
+    # **The name is now historical: since 2026-09-02 this applies to EVERY
+    # entry, not only ones this code widened** (spec §12.1b). It used to sit
+    # inside the two widening branches, behind early returns for "stop
+    # already outside the noise band" and "no ATR reading", so a stop that
+    # was wide enough to begin with was never checked against it at all.
+    # Measured on the pre-reset production DB: 14 of 49 constructed entry
+    # orders shipped under this floor, one of them FILLED at 0.81. The key
+    # was left in place rather than renamed — every deployment's
+    # settings.yaml carries it and a silent rename is how a risk threshold
+    # goes missing.
+    min_reward_risk_after_widening: float = Field(
+        default=REWARD_RISK_FLOOR, ge=0, le=10,
+    )
     # --- Level-backed stops (spec §12.1, 2026-09-01) ---------------------
     # `min_stop_atr_multiple` above used to OVERWRITE the structural stop
     # whenever the level sat closer than the band, after which the stop was

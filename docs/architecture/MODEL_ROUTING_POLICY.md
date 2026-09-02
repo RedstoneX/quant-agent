@@ -565,6 +565,71 @@ modes this system has actually produced: a deterioration claim contradicted by
 its own improving metrics, a target citing provenance that does not exist, a
 macro conflict that must be adjudicated rather than logged.
 
+#### `pm_selection` — built 2026-09-01, NOT YET RUN against any model
+
+The scenario this section asks for now exists, from exactly the material this
+section recommends: a failure the system actually produced. It replays
+production run `run-64290730` — 59 technical reads, 38 actionable signals,
+zero trades placed, `bearish_hedge_considered=false` on a day fifteen
+validated bearish candidates were on the table. See
+`ops/model_policy/README.md` for the design and the run command.
+
+It measures WHICH candidates a model picks against DIFFERENTIATED evidence,
+which `pm_constrained` and `pm_production_scale` cannot: `_PM_PRODUCTION_
+ANALYSES` builds all 30 candidates by looping over a ticker list and handing
+every one an identical `buy`/`medium` analysis at entry 100 / stop 94 /
+target 112. Any five of them score the same, so what that scenario captures
+when it records a choice is the model's PRIOR over tickers, not selection
+skill — there is nothing in the input to be skilful about.
+
+That distinction is the whole point of the two scenarios existing side by
+side, and it is now load-bearing, because the priors turn out to differ
+sharply between models. See the next section.
+
+**No model has been benchmarked against `pm_selection` yet**, so no claim in
+this document rests on it and no seat assignment changes because of it. The
+grader itself is covered by `tests/test_pm_selection_scenario.py`, which
+drives it with hand-built decisions and spends nothing.
+
+It grades quality of selection. It does **not** grade profitability — nobody
+has measured that for this system, and this scenario must not be cited as if
+it had.
+
+### Measured: models carry ticker priors that identical data does not override
+
+Because `pm_production_scale` feeds 30 byte-identical candidates, whatever a
+model picks there is its PRIOR. Two runs, on two different versions of the PM
+prompt, record it. The universe holds 3 index ETFs (SPY/QQQ/IWM) among 30
+names, so ~10% is the chance rate.
+
+| model | index-ETF picks / total | rate | prompts covered |
+| --- | --- | --- | --- |
+| `openai/gpt-5.5` | **17 / 28** | **61%** | old and rewritten |
+| `qwen/qwen3.7-max` | 0 / 43 | 0% | old and rewritten |
+| `z-ai/glm-5.2` | 0 / 20 | 0% | old only |
+
+Sources: `ops/model_policy/results/pm-agreement-2026-09-01.json` (16:37 UTC,
+old prompt, `picks` on 15/15 trials) and the af266de gate run (21:07 UTC,
+rewritten prompt). Every OTHER file in `results/` predates the `Trial.picks`
+field and records only a target count, which is why a scan for this evidence
+comes back looking empty — that single file is the committed exception.
+
+**The prior survived the prompt rewrite.** `gpt-5.5` took SPY in 5 of 5 runs
+on the old prompt and QQQ in 5 of 5 on the rewritten one, with IWM in 4 of 5.
+It changed ticker, not habit. **Do not cite the fall in SPY frequency as
+evidence that the rewrite reduced index anchoring — it did not.**
+
+Both non-OpenAI models picked zero ETFs across 63 combined picks against ~6
+expected by chance, so this is not an artefact of a small sample on either
+side.
+
+**Consequence for this document:** model choice partly determines what the
+desk buys before any analysis happens. That is a seat-assignment input, not a
+curiosity. But note the limit — a prior is only a defect if real evidence
+fails to override it, and `pm_production_scale` cannot answer that, because
+its candidates carry no evidence to override anything with. **`pm_selection`
+is the scenario that can.** That is what the two exist to separate.
+
 ### 3. Then the challengers, against the strict contract
 
 The 2026-08-25 strict PM grounding rerun covers `gpt-5.5`, `gemini-2.5-flash`

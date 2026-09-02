@@ -133,7 +133,13 @@ def test_single_name_risk_is_clamped_to_the_ratified_envelope():
     constructor = PortfolioConstructor(ConstructorConfig(risk_budget_pct=3.0))
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 5.0)], positions=[],
-        analyses=[_analysis("NVDA", entry=100, stop=70, target=140)],
+        # Target $160, not $140: the 30-wide stop is deliberately far
+        # outside the noise band, and since 2026-09-02 that path is gated
+        # on reward:risk like every other. (140-100)/30 = 1.33 is under the
+        # 1.5 floor and would be refused on GEOMETRY, which is not what
+        # this test is about. At $160 the ratio is 2.0 and the sizing clamp
+        # is once again the only thing under test.
+        analyses=[_analysis("NVDA", entry=100, stop=70, target=160)],
         total_value=EQUITY, price_map={"NVDA": 100.0},
     )
     # Clamped to 3% risk → 3000/30 = 100 shares → $10k → 10%. The 30%-wide
@@ -274,7 +280,11 @@ def test_released_risk_frees_budget_for_a_new_position():
     constructor = PortfolioConstructor()
     common = dict(
         targets=[_risk_target("NVDA", 5.0)], positions=[],
-        analyses=[_analysis("NVDA", entry=100, stop=70, target=140)],
+        # $160 for the same reason as
+        # `test_single_name_risk_is_clamped_to_the_ratified_envelope`: the
+        # 30-wide stop clears the noise band, and the reward:risk floor now
+        # applies on that path too. This test is about the risk BUDGET.
+        analyses=[_analysis("NVDA", entry=100, stop=70, target=160)],
         total_value=EQUITY, price_map={"NVDA": 100.0}, clusters=[],
     )
     blocked = constructor.construct_orders(existing_risk_pct={"WINNER": 25.0}, **common)
@@ -956,3 +966,222 @@ class TestSLBStopIsHonoured:
             total_value=EQUITY, price_map={"SLB": self.ENTRY},
         )
         assert decisions == []
+
+
+# --------------------------------------------------------------------------
+# One reward:risk gate, on the geometry that ships (2026-09-02)
+#
+# What these pin, and why they are not a threshold change: until 2026-09-02
+# `min_reward_risk_after_widening` was evaluated ONLY inside the two widening
+# branches, behind unnamed early returns for "already outside the noise band"
+# and "no ATR reading". A stop that was wide enough to begin with reached the
+# broker with no deterministic reward:risk check at all.
+#
+# Measured on the pre-reset production database (data/resets/20260902T181859Z),
+# 2026-08-18 to 2026-09-02: 14 of 49 constructed entry orders shipped under the
+# 1.5 floor, and the floor's refusal message appears zero times in the whole
+# production log history before 2026-09-02. Two reached the broker; XLE on
+# 2026-08-21 FILLED 9 shares at $64.26 on a reward:risk of 0.81.
+# --------------------------------------------------------------------------
+
+# XLE, 2026-09-01, run-64290730 — the real numbers off the evidence rows.
+_XLE_TA_ENTRY = 63.96     # tech_analyst snapshot price
+_XLE_LIVE_ENTRY = 64.51   # what the constructor actually priced
+_XLE_STOP = 61.54         # IDENTICAL in both — no stop ever moved
+_XLE_TARGET = 68.00
+_XLE_ATR = 1.21
+
+
+def test_xle_the_1_67_versus_1_18_divergence_is_entry_drift_not_stop_geometry():
+    """The rejection that started this, reproduced from production evidence.
+
+    The Risk Manager killed the whole 2026-09-01 plan saying *"PM's reasoning
+    assumes R/R 1.67 but the executed order has R/R 1.18"*. Both numbers were
+    right. The STOP never moved — $61.54 on the tech analyst's row and $61.54
+    on the proposed order. What moved was the ENTRY, $63.96 to $64.51, because
+    the analyst measures at its snapshot price and the constructor prices the
+    live market. Same trade, same stop, two entries.
+
+    So the divergence is not a stop-geometry defect, and widening was never
+    involved. It is one ratio computed at two different entries — which is why
+    the division now lives in exactly one function.
+    """
+    from src.models import reward_to_risk
+
+    analyst = reward_to_risk(_XLE_TA_ENTRY, _XLE_STOP, _XLE_TARGET, is_short=False)
+    order = reward_to_risk(_XLE_LIVE_ENTRY, _XLE_STOP, _XLE_TARGET, is_short=False)
+    assert round(analyst, 2) == 1.67
+    assert round(order, 2) == 1.18
+    # The stop is the one thing that is NOT different between them.
+    assert analyst != order
+
+
+def test_xle_is_now_refused_by_code_rather_than_by_the_risk_managers_prose():
+    """On the day, the constructor SHIPPED this order at 1.18 and an LLM
+    stopped it. The 1.5 floor never ran, because $61.54 was already outside
+    the 2.42x ATR band (breakout setup, risk-on tape) and that path returned
+    early. It runs now, and the refusal names the rule that placed the stop."""
+    constructor = PortfolioConstructor()
+    assert constructor._widen_stop_past_noise(
+        "XLE",
+        _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, _XLE_TARGET,
+                      atr=_XLE_ATR, setup="breakout"),
+        entry_price=_XLE_LIVE_ENTRY, stop_loss=_XLE_STOP,
+        regime="risk-on", direction="long", target_price=_XLE_TARGET,
+    ) is None
+
+
+def test_a_wide_stop_that_clears_the_floor_still_ships_untouched():
+    """The gate is a floor, not a tax. The same already-outside-the-band path
+    with geometry that works returns the structural stop unchanged — the fix
+    refuses trades, it never moves a stop it did not previously move."""
+    constructor = PortfolioConstructor()
+    # Stop $61.54 (2.45 ATR out, outside the 2.42x breakout band), target
+    # $73.00 → reward 8.49 / risk 2.97 = 2.86.
+    assert constructor._widen_stop_past_noise(
+        "XLE",
+        _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, 73.0,
+                      atr=_XLE_ATR, setup="breakout"),
+        entry_price=_XLE_LIVE_ENTRY, stop_loss=_XLE_STOP,
+        regime="risk-on", direction="long", target_price=73.0,
+    ) == _XLE_STOP
+
+
+def test_a_level_backed_tight_stop_is_honoured_and_a_bare_one_is_not():
+    """§12.1's rule, asserted as the contrast it actually is, on ONE fixture
+    pair that differs only in whether Python computed the level.
+
+    Both stops sit at $96.00, $4.00 (1.70 ATR) under a $100 entry — inside
+    the 3.45x ATR band. The level-backed one ships at $96.00; the bare one is
+    pushed to the band edge, and here that kills the trade on geometry."""
+    constructor = PortfolioConstructor()
+
+    def stop_for(computed):
+        return constructor._widen_stop_past_noise(
+            "MSFT",
+            _vol_analysis("MSFT", _ENTRY, 96.0, 130.0, atr=_ATR,
+                          computed=computed),
+            entry_price=_ENTRY, stop_loss=96.0, target_price=130.0,
+        )
+
+    assert stop_for([96.0, 130.0]) == 96.0            # level backs it
+    assert round(stop_for([130.0]), 2) == _BAND_EDGE  # nothing does
+
+
+def test_both_reward_risk_computations_agree_on_one_trade():
+    """The constructor's gate and `TradeDecision.reward_risk` must be the
+    same arithmetic on the same geometry, or the Risk Manager is shown a
+    ratio the floor did not judge. That gap is what the 1.67-vs-1.18
+    rejection actually was."""
+    from src.models import reward_to_risk
+
+    constructor = PortfolioConstructor()
+    analysis = _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+                             computed=[96.0, _UPPER_LEVEL])
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[], analyses=[analysis],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert len(decisions) == 1
+    d = decisions[0]
+    gate = constructor._reward_risk_at(
+        d.entry_price, d.stop_loss, d.take_profit, False,
+    )
+    assert d.reward_risk == round(gate, 2)
+    assert d.reward_risk == round(reward_to_risk(
+        d.entry_price, d.stop_loss, d.take_profit, is_short=False), 2)
+    assert gate >= constructor.cfg.min_reward_risk_after_widening
+
+
+def test_the_shipped_order_records_the_rule_that_placed_its_stop():
+    """The execution stage must be able to tell a level-honoured stop from
+    any other, without recomputing levels from different bars. It reads
+    `TradeDecision.stop_rule`, which the constructor sets here."""
+    from src.portfolio_constructor import (
+        LEVEL_BACKED_STOP_RULES, STOP_RULE_LEVEL_HONOURED,
+    )
+
+    constructor = PortfolioConstructor()
+    backed = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+                                computed=[96.0, _UPPER_LEVEL])],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert backed[0].stop_rule == STOP_RULE_LEVEL_HONOURED
+    assert backed[0].stop_rule in LEVEL_BACKED_STOP_RULES
+
+    # A stop nothing computed backs: widened to the band, and the band edge
+    # is not a level, so no exemption is recorded and the execution-time ATR
+    # floor still applies to it.
+    bare = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis("MSFT", _ENTRY, 96.0, 130.0, atr=_ATR,
+                                computed=[130.0])],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert bare[0].stop_rule not in LEVEL_BACKED_STOP_RULES
+
+
+# --------------------------------------------------------------------------
+# Fail-closed: non-finite inputs must refuse, never permit
+#
+# The hazard is specific and has bitten this codebase before: `nan <= 0`,
+# `nan >= entry` and `nan < floor` are ALL False, so a NaN passes every
+# ordering check silently and comes out the far side looking valid.
+# --------------------------------------------------------------------------
+
+def test_a_non_finite_stop_is_refused_not_passed_through():
+    """Before this, a NaN stop went through `_widen_stop_past_noise`
+    untouched AND through the caller's `stop_loss >= entry_price` validity
+    check, reaching `TradeDecision` intact."""
+    constructor = PortfolioConstructor()
+    nan = float("nan")
+    for bad in (nan, float("inf"), float("-inf")):
+        assert constructor._widen_stop_past_noise(
+            "MSFT",
+            _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
+            entry_price=_ENTRY, stop_loss=bad, target_price=_UPPER_LEVEL,
+        ) is None
+
+
+def test_a_non_finite_entry_price_is_refused():
+    constructor = PortfolioConstructor()
+    assert constructor._widen_stop_past_noise(
+        "MSFT",
+        _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
+        entry_price=float("nan"), stop_loss=96.0, target_price=_UPPER_LEVEL,
+    ) is None
+
+
+def test_a_non_finite_target_refuses_rather_than_clearing_the_floor():
+    """The permissive direction is the dangerous one. `nan < 1.5` is False,
+    so an unguarded NaN target would have PASSED the floor rather than
+    failed it. A target that was supplied but cannot be measured is a
+    refusal."""
+    constructor = PortfolioConstructor()
+    assert constructor._widen_stop_past_noise(
+        "MSFT",
+        _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
+        entry_price=_ENTRY, stop_loss=96.0, target_price=float("nan"),
+    ) is None
+
+
+def test_reward_to_risk_returns_none_for_every_malformed_geometry():
+    """The one definition, and its fail-closed contract."""
+    from src.models import reward_to_risk
+
+    nan, inf = float("nan"), float("inf")
+    assert reward_to_risk(100.0, 90.0, 130.0, is_short=False) == 3.0
+    assert reward_to_risk(100.0, 110.0, 70.0, is_short=True) == 3.0
+    # Non-finite, on any leg.
+    assert reward_to_risk(nan, 90.0, 130.0, is_short=False) is None
+    assert reward_to_risk(100.0, nan, 130.0, is_short=False) is None
+    assert reward_to_risk(100.0, 90.0, nan, is_short=False) is None
+    assert reward_to_risk(inf, 90.0, 130.0, is_short=False) is None
+    # Missing, non-positive, or pointing the wrong way for the side.
+    assert reward_to_risk(None, 90.0, 130.0, is_short=False) is None
+    assert reward_to_risk(100.0, 0.0, 130.0, is_short=False) is None
+    assert reward_to_risk(100.0, 110.0, 130.0, is_short=False) is None  # stop above a long
+    assert reward_to_risk(100.0, 90.0, 90.0, is_short=False) is None    # target below entry
+    assert reward_to_risk(100.0, 100.0, 130.0, is_short=False) is None  # zero risk

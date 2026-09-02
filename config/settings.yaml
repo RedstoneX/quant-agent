@@ -355,6 +355,13 @@ risk:
   min_stop_atr_multiple: 3.0
   # A widened stop lowers reward:risk because the target does not move. Under
   # this, the setup only ever qualified on a stop too tight to survive.
+  #
+  # The name is historical. Since 2026-09-02 (spec 12.1b) this is checked on
+  # EVERY entry against the stop that will actually ship, not only ones the
+  # constructor widened. It previously sat behind two early returns, so a stop
+  # that was already wide enough was never checked at all — 14 of 49 orders in
+  # the pre-reset production database shipped under this floor, and one filled
+  # at 0.81. The number did not change; where it is applied did.
   min_reward_risk_after_widening: 1.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level

@@ -1217,6 +1217,88 @@ stop above it, silently repairing the nonsense the caller's side-check exists
 to catch. It now refuses. The existing test passed only because its fixture
 carried no ATR, which is not a state production reaches.
 
+#### 10.4a The floor's catalyst exception was assertable. It is now checked.
+
+**IMPLEMENTED 2026-09-02** (branch `wt/catalyst-loophole`), in
+`PortfolioManagerAgent._apply_subfloor_catalyst_rule`.
+
+The floor has always carried an escape hatch: a below-floor pick is allowed
+if it names a catalyst. Nothing checked the name. Benchmarked 2026-09-01 on
+the real opportunity set of the zero-trade day (`run-64290730`), both
+candidate models picked NVDA at R/R 1.03 in 9 of 9 runs and passed over GEV,
+which cleared the floor — **without disobeying anything**. Each sub-floor pick
+named a catalyst, cut size under 1%, and stated in plain text that the ratio
+was below floor. The rule-compliance grader passed them; the risk manager
+agreed.
+
+**The defect is in the rule, not in the model.** For any heavily-covered name
+the news feed always carries a concrete, dated, real catalyst, so an
+*assertable* exception is a null constraint on exactly the names it most needs
+to bind — and the desk's own `active_state_changes` block was supplying the
+catalyst that justified the exception. Note this is **not** a name-recognition
+story: blinding the ticker was actually run (2026-09-02,
+`feat/blind-the-ticker`) and changed nothing, NVDA being picked 5/5 in both
+blinded arms. See `docs/architecture/MODEL_ROUTING_POLICY.md`.
+
+Two deterministic changes, both applied **after the PM submits** — a tenth
+firmly worded sentence in a 52KB prompt whose ninth was already obeyed is not
+a design:
+
+1. **The catalyst must resolve to a stored row.** It is cited by the ISO date
+   of an `Active News State Changes` row, and that row must name the symbol.
+   Those rows are already persisted (`news_store.recent_state_changes` over
+   the dated daily reports) and already rendered into the PM's prompt with
+   their date and affected symbols — no new data source. A citation that
+   resolves to no such row means the exception does not apply and **the target
+   is dropped**.
+2. **A resolving sub-floor pick is capped in code** at
+   `STARTER_POSITION_RISK_PCT` (0.5%), whatever size the model asked for.
+   Not a new number: it is `RiskConfig.min_position_risk_pct`, the floor
+   `allocate_risk_budget` already denies requests beneath. The capability is
+   preserved at the smallest size the desk can express.
+
+**Refusal DROPS the target; it never sizes it at zero.** A zero weight on a
+held symbol is read downstream as *close the position*, so expressing this
+refusal as a zero would silently liquidate a name we merely declined to add
+to. It would not error — it would sell.
+
+**Fail-closed throughout.** `risk_reward` of `None` (neutral rating, malformed
+geometry) and NaN both land on the sub-floor branch — NaN is reachable, since
+`reference_target` accepts it and every comparison against NaN is False. An
+empty or unparseable state-change block, a row naming no symbols, a row older
+than `ACTIVE_STATE_CHANGE_WINDOW_DAYS`, a future-dated row, or an unreadable
+clock all make the exception *unavailable* rather than unbounded.
+
+**Scope is deliberately asymmetric**: only opening and increasing targets are
+gated. Exits and reductions are exempt — this desk must never find it harder
+to cut risk than to add it.
+
+**Measured blast radius, and read this before claiming the fix is decisive.**
+Against the pre-reset production database (reset `20260902T181859Z`), 76 PM
+targets were stored, 8 of which claimed a catalyst; all 8 were sub-floor.
+Replaying the resolver over each session's real state-change block:
+
+| verdict | count | symbols |
+|---|---|---|
+| still passes (citation resolves as written) | 2 | NVDA (08-28), ZS (09-01) |
+| refused | 6 | CRM ×2 (08-28), NVDA (08-31, 09-01, 09-02), AUGO (09-02) |
+
+**That 2-of-8 overstates the gate's bite and must not be quoted alone.** Those
+six were written before the rule existed, so most fail only on *formatting* —
+they assert prose with no ISO date. Asking the stronger question, *could a
+correctly formatted citation have been found?*, **7 of the 8 were backable by
+a real row naming the symbol**; only AUGO, a small cap with no state-change
+coverage at all, is refused structurally. Tightening the recency bound does
+not recover this: sweeping the maximum row age from 14 days down to 1 removes
+only ZS (6 of 8 still backable), and only a same-session-only rule cuts it to
+2 — a threshold with no doctrinal support, so it was not adopted.
+
+**So the honest reading is that the CAP, not the resolution requirement, is
+what binds on the mega-caps.** Resolution removes the unfalsifiable assertion
+and makes every claimed exception auditable against a row a human can read;
+it does not, on this evidence, remove many trades. The size cap applies to all
+7 regardless.
+
 ### Ordering
 
 10.1 and 10.3 are contained schema/sizing changes. 10.2 requires the
@@ -1741,14 +1823,16 @@ not from the model asserting one. A stop the analyst simply placed close, with
 no level under it, still gets the floor.
 
 **IMPLEMENTED 2026-09-01** (branch `feat/level-backed-stops`), in
-`PortfolioConstructor._widen_stop_past_noise`. The stop rule now has three
+`PortfolioConstructor._widen_stop_past_noise`. The stop rule now has five
 outcomes instead of one, each logged by name:
 
 | the stop | what happens | reward:risk is measured against |
 |---|---|---|
+| already ≥ `min_stop_atr_multiple` ATRs out | **left exactly where structure put it** | the kept stop |
 | at a computed level, ≥ 1x ATR out | **honoured exactly as placed** | the honoured stop |
 | at a computed level, < 1x ATR out | widened to **1x ATR** — never to the band | the 1x ATR stop |
 | not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
+| no ATR reading at all | left alone | the kept stop |
 
 **Neither threshold moved.** `min_stop_atr_multiple` is still 3.0 and
 `min_reward_risk_after_widening` is still 1.5. This changes WHICH stop the
@@ -1824,6 +1908,91 @@ level data, exactly as §10.4's does, and pins the arithmetic to the same
 back-solved ATR so the two reproductions agree: R/R 1.28 against the band stop
 (refused, as it was on the day), 2.59 against the honoured stop at the measured
 1.7x ATR median.
+
+### 12.1b The reward:risk floor was not a floor (fixed 2026-09-02)
+
+**Rows 1 and 5 of §12.1's table are a correction.** As shipped on 2026-09-01
+the reward:risk check lived INSIDE the two widening branches, behind two
+unnamed early returns — "already outside the noise band" and "no ATR
+reading". A stop that was wide enough to begin with was returned before the
+check was reached, so **the 1.5 floor was never applied to it**. The
+config key `min_reward_risk_after_widening` recorded that as if it were the
+design; it was not, and it fails OPEN and silently.
+
+Measured on the pre-reset production database
+(`data/resets/20260902T181859Z/quant_agent.db`), 2026-08-18 to 2026-09-02:
+
+* **14 of the 49 constructed entry orders — 29% — shipped with a
+  reward:risk below 1.5.** Lowest: XLB 0.43 (2026-09-02), NET 0.50
+  (2026-08-27), ZS 0.56, XLE 0.57.
+* The constructor's own refusal message appears **zero times** in the
+  entire production log history before 2026-09-02.
+* **Two of the 14 reached the broker.** XLE on 2026-08-21 FILLED — 9 shares
+  at $64.26, reward:risk 0.81. VLO the same run at 1.19 was submitted and
+  cancelled at the broker, not by us.
+* Everything else was stopped by the **Risk Manager's prose** or by the
+  1.2 execution-time belt in `src/pipeline_stages.py`. A deterministic
+  floor was being enforced by a language model, which Invariant 2 forbids.
+
+The floor now runs once, on the stop that will actually ship, whichever
+rule placed it, and the refusal names that rule
+(`reward_risk_below_floor_at_kept_stop` for the two paths above). **The
+threshold did not move and no path became more permissive.** Rerun over the
+same 49 orders it refuses exactly those 14 at construction and admits
+nothing new. Of the 14, **7 had nothing downstream cite reward:risk at
+all** — XLE 0.57 and XLF 1.31 (08-18), XLE 0.65 (08-20), VLO 1.19 and COP
+1.40 (08-21), NET 0.50 and ZS 0.56 (08-27) — so for those the fix is not
+"dies earlier", it is "dies at all". The one that FILLED, XLE 0.81 on
+08-21, was not among them but was not saved either: the RM cited "R/R =
+1.22", which is the ANALYST's geometry, and merely halved the allocation.
+The rest were caught late by the RM's prose or the execution belt, and now
+die deterministically at the stage that owns the rule.
+
+**A missing or unmeasurable ratio is now a refusal, not a pass.** `nan <
+1.5` is False, so an unguarded non-finite price cleared the floor rather
+than failing it. Non-finite entry and stop prices are refused at the top of
+`_widen_stop_past_noise` — a NaN stop previously passed both that function
+and the caller's `stop_loss >= entry_price` validity check and reached
+`TradeDecision` intact.
+
+### 12.1c One definition of reward:risk, and one stop geometry
+
+The division itself now lives in `models.reward_to_risk` and nowhere else.
+It had been re-derived by hand in four places, which disagreed.
+
+The rejection that exposed it, verbatim from the Risk Manager on
+2026-09-01: *"PM's reasoning assumes R/R 1.67 but the executed order has R/R
+1.18."* **Both numbers were correct and no stop had moved** — $61.54 on the
+tech analyst's row and $61.54 on the proposed order. The ENTRY moved,
+$63.96 (analysis snapshot) to $64.51 (live). On this trade the analyst's
+guess and the derived target happened to coincide at $68.00, so the entry
+drift was the WHOLE of the gap. The same seat caught the same thing on
+2026-08-31: *"entry price degradation from TechAnalyst's $62.29 to
+$63.76."* **The ATR stop floor was not involved in either case** — a
+correction to the earlier reading of this defect.
+
+So the two remaining differences are handled where they actually are:
+
+* **Arithmetic** — one function, used by `TechAnalysisResult.risk_reward`,
+  `TradeDecision.reward_risk`, the constructor's floor and the 1.2
+  execution-time re-check. Fail-closed on non-finite input.
+* **Inputs** — the analyst's R/R and the order's R/R answer different
+  questions and will legitimately differ. The Risk Manager prompt now says
+  which of them the floor is judged on, instead of leaving the seat to
+  infer a defect from an unexplained gap.
+
+**The execution stage could still undo §12.1, and no longer can.**
+`src/pipeline_stages.py` carries a second, execution-time 1x ATR stop floor
+(BUY-only) applied with no knowledge of levels, against an ATR recomputed
+from `ctx.symbols_bars` rather than the `analysis.atr_14` the constructor
+used. Two readings of one quantity, the larger silently winning, moving a
+level-honoured stop off its level and shrinking the R/R the 1.2 re-check
+then judges. **This is a mechanism, not an observed event** — no production
+instance of it firing on a level-honoured stop was found, and §12.1 has
+only been live since 2026-09-02, so there was barely a window for one. It
+now reads `TradeDecision.stop_rule` — set by the constructor, the stage
+that can see `computed_levels` — and skips a stop honoured at a computed
+level. No second level-detection path was built.
 
 ### 12.2 Sector exposure is measured with separate long and short budgets
 
