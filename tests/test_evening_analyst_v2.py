@@ -629,3 +629,185 @@ def test_drop_invalid_missed_opportunities_logs_bad_entries(caplog):
     assert any("CMCSA" in rec.message for rec in caplog.records), (
         f"warning must mention CMCSA; got {[r.message for r in caplog.records]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Scope guard for buy_grades / sell_grades (2026-09-02 incident)
+#
+# The evening prompt gives the LLM a short "Recent BUY decisions to grade"
+# list (the actual recent_buys candidates) AND a much larger "Thesis Health
+# Review" section covering every held position, with similar "entry $X ->
+# $Y" framing. The model can confuse the two and emit buy_grades entries
+# for symbols pulled from the Thesis Health Review — using wrong field
+# shapes (sell_date/sell_price instead of buy_date/buy_price/
+# pct_move_since_buy) that fail BuyGrade validation. On a real production
+# night (2026-09-02) this cost the ONE legitimate BUY candidate (RSG) too,
+# because it was in a corrupted slot of a list whose failures all got
+# logged identically as "malformed" — indistinguishable from genuine
+# schema mistakes. This guard drops out-of-scope entries BEFORE schema
+# validation, with a distinct log message, so a legitimate candidate never
+# gets confused for one. It does NOT fix the prompt ambiguity that causes
+# the confusion in the first place — that needs prompt iteration verified
+# by a paid LLM benchmark, out of scope for this guard.
+# ---------------------------------------------------------------------------
+
+def _rsg_shaped_buy_grade() -> dict:
+    """A well-formed BuyGrade entry for the one legitimate candidate."""
+    return {
+        "symbol": "RSG",
+        "buy_date": "2026-08-28",
+        "buy_price": 210.50,
+        "current_price": 213.10,
+        "pct_move_since_buy": 1.24,
+        "grade": "correct",
+        "reason": "Entered on pullback to support; thesis intact.",
+        "thesis_trajectory": "intact",
+    }
+
+
+def _thesis_health_confused_entry(symbol: str = "GOOGL") -> dict:
+    """Sell-shaped entry the LLM pulled from Thesis Health Review instead
+    of the short BUY-grading list — the exact confusion class from the
+    2026-09-02 incident. Uses sell_date/sell_price fields, which fail
+    BuyGrade validation (missing buy_date/buy_price/pct_move_since_buy)."""
+    return {
+        "symbol": symbol,
+        "sell_date": "2026-08-15",
+        "sell_price": 195.00,
+        "current_price": 201.30,
+        "grade": "correct",
+        "reason": "Thesis strengthening on ad revenue beat.",
+    }
+
+
+def test_out_of_scope_buy_grade_dropped_legitimate_one_kept():
+    """RSG-shaped repro: recent_buys has exactly one legitimate candidate
+    (RSG). The parsed buy_grades list has a well-formed entry for RSG AND
+    an extra, sell-shaped entry for GOOGL (not in recent_buys, and not
+    schema-valid as a BuyGrade either). The extra must be dropped via the
+    new scope guard with the distinct out-of-scope log message, and RSG
+    must survive untouched."""
+    import logging
+    from src.agents.evening_analyst import EveningAnalystAgent
+
+    recent_buys = [{
+        "symbol": "RSG",
+        "buy_date": "2026-08-28",
+        "buy_price": 210.50,
+        "current_price": 213.10,
+        "pct_move_since_buy": 1.24,
+    }]
+    allowed = {b["symbol"] for b in recent_buys}
+
+    parsed = {
+        "buy_grades": [
+            _rsg_shaped_buy_grade(),
+            _thesis_health_confused_entry("GOOGL"),
+        ],
+    }
+
+    caplog_records = []
+
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record):
+            caplog_records.append(record.getMessage())
+
+    logger = logging.getLogger("src.agents.evening_analyst")
+    handler = _CaptureHandler()
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    try:
+        out = EveningAnalystAgent._drop_invalid_entries(
+            parsed, "buy_grades", BuyGrade, allowed_symbols=allowed,
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    syms = [g["symbol"] for g in out["buy_grades"]]
+    assert syms == ["RSG"], f"expected only RSG to survive; got {syms}"
+
+    out_of_scope_msgs = [m for m in caplog_records if "out of scope" in m]
+    assert out_of_scope_msgs, (
+        f"expected a distinct out-of-scope warning; got {caplog_records}"
+    )
+    assert "GOOGL" in out_of_scope_msgs[0]
+    # Must be distinguishable from a plain schema-validation failure message.
+    assert "Thesis Health Review" in out_of_scope_msgs[0]
+    # Must NOT be logged as an ordinary "dropping malformed" schema failure —
+    # that's the confusion this guard exists to prevent.
+    assert not any(
+        "dropping malformed buy_grades entry for GOOGL" in m for m in caplog_records
+    )
+
+    # The surviving RSG entry must still validate cleanly end-to-end.
+    validated = BuyGrade(**out["buy_grades"][0])
+    assert validated.symbol == "RSG"
+    assert validated.grade == "correct"
+
+
+def test_scope_guard_does_not_drop_legitimate_grade_when_no_allowed_symbols_given():
+    """Backward compatibility / no-regression check: when allowed_symbols is
+    not passed (None), the scope guard must be a complete no-op — every
+    existing call site that doesn't pass it (or any future one) must behave
+    exactly as before. This pins that the guard can never fire unless a
+    caller explicitly opts in with a candidate set."""
+    from src.agents.evening_analyst import EveningAnalystAgent
+
+    parsed = {"buy_grades": [_rsg_shaped_buy_grade()]}
+    out = EveningAnalystAgent._drop_invalid_entries(parsed, "buy_grades", BuyGrade)
+    assert len(out["buy_grades"]) == 1
+    assert out["buy_grades"][0]["symbol"] == "RSG"
+
+
+def test_scope_guard_is_case_insensitive_on_symbol():
+    """A legitimate grade must not be dropped merely because the LLM cased
+    the symbol differently than the candidate list (defensive — tickers are
+    normalized uppercase elsewhere, but the guard itself must not add a new
+    false-drop risk on casing)."""
+    from src.agents.evening_analyst import EveningAnalystAgent
+
+    parsed = {"buy_grades": [dict(_rsg_shaped_buy_grade(), symbol="rsg")]}
+    out = EveningAnalystAgent._drop_invalid_entries(
+        parsed, "buy_grades", BuyGrade, allowed_symbols={"RSG"},
+    )
+    assert len(out["buy_grades"]) == 1
+
+
+def test_analyze_end_to_end_scope_guard_keeps_rsg_drops_googl_confusion(monkeypatch):
+    """Full analyze() path: mock the LLM call to return the exact
+    RSG-shaped confusion, and confirm the persisted EveningReport keeps the
+    RSG grade while the GOOGL confusion entry never reaches EveningReport
+    construction (so it can't corrupt the whole report the way the
+    2026-05-01 missed_opportunities incident did)."""
+    from src.agents.evening_analyst import EveningAnalystAgent
+
+    agent = EveningAnalystAgent.__new__(EveningAnalystAgent)
+
+    recent_buys = [{
+        "symbol": "RSG",
+        "buy_date": "2026-08-28",
+        "buy_price": 210.50,
+        "current_price": 213.10,
+        "pct_move_since_buy": 1.24,
+    }]
+
+    llm_response = _valid_evening_json()
+    llm_response["buy_grades"] = [
+        _rsg_shaped_buy_grade(),
+        _thesis_health_confused_entry("GOOGL"),
+    ]
+
+    class _FakeResult:
+        def parse_json(self):
+            return llm_response
+
+    monkeypatch.setattr(agent, "run", lambda **kwargs: _FakeResult())
+
+    report, _result = agent.analyze(
+        positions=[], macro_summary={}, total_value=100_000.0,
+        daily_pnl=0.0, daily_return_pct=0.0,
+        recent_buys=recent_buys, recent_sells=[],
+    )
+    assert report is not None
+    syms = [g.symbol for g in report.buy_grades]
+    assert syms == ["RSG"], f"expected only RSG in final report; got {syms}"

@@ -557,8 +557,38 @@ upcoming events that bear on held theses. Respond as JSON matching
         # One malformed grade must not vaporize the whole evening report
         # (the 2026-05-01 failure mode, previously fixed only for
         # missed_opportunities).
-        parsed = self._drop_invalid_entries(parsed, "sell_grades", SellGrade)
-        parsed = self._drop_invalid_entries(parsed, "buy_grades", BuyGrade)
+        # Scope guard (2026-09-02 incident): the prompt gives the LLM a
+        # short, explicit "Recent BUY/SELL decisions to grade" list AND a
+        # much larger "Thesis Health Review" section covering every held
+        # position, which uses similar "entry $X -> $Y" framing but is
+        # narrative context only. The model sometimes confuses the two and
+        # emits buy_grades/sell_grades entries for symbols pulled from the
+        # Thesis Health Review, using the wrong field shapes (e.g.
+        # sell_date/sell_price on what should be a BuyGrade). Those fail
+        # schema validation and get dropped by _drop_invalid_entries below —
+        # but on 2026-09-02 that included the one legitimate BUY candidate
+        # that night (RSG), so the feedback loop got nothing usable.
+        #
+        # This does NOT fix the underlying prompt ambiguity (that needs
+        # prompt iteration + a paid LLM benchmark to verify — out of scope
+        # here). It only stops out-of-scope entries from being logged and
+        # tallied as ordinary schema-validation failures, which confused the
+        # operator into thinking every grade that night was malformed rather
+        # than "the model graded the wrong list."
+        recent_sell_symbols = {
+            str(s.get("symbol")).upper()
+            for s in (recent_sells or []) if isinstance(s, dict) and s.get("symbol")
+        }
+        recent_buy_symbols = {
+            str(b.get("symbol")).upper()
+            for b in (recent_buys or []) if isinstance(b, dict) and b.get("symbol")
+        }
+        parsed = self._drop_invalid_entries(
+            parsed, "sell_grades", SellGrade, allowed_symbols=recent_sell_symbols,
+        )
+        parsed = self._drop_invalid_entries(
+            parsed, "buy_grades", BuyGrade, allowed_symbols=recent_buy_symbols,
+        )
         try:
             report = EveningReport(**parsed)
         except ValidationError as e:
@@ -567,13 +597,28 @@ upcoming events that bear on held theses. Respond as JSON matching
         return report, result
 
     @staticmethod
-    def _drop_invalid_entries(parsed: dict, key: str, model_cls) -> dict:
+    def _drop_invalid_entries(
+        parsed: dict, key: str, model_cls, allowed_symbols: set | None = None,
+    ) -> dict:
         """Per-entry pre-validation for a list-of-models field (audit
         round 2 #53). Validates each item individually against
         `model_cls`; drops malformed ones with a warning naming the
         symbol so operators can correlate against the trade tables.
         Mutates `parsed` in place for `key`; non-list shapes normalize
-        to []. Mirrors _drop_invalid_missed_opportunities (PR #73)."""
+        to []. Mirrors _drop_invalid_missed_opportunities (PR #73).
+
+        `allowed_symbols`, when given, is the set of symbols from THIS
+        run's actual recent_buys/recent_sells candidate list (2026-09-02
+        scope guard — see the call site comment in `analyze`). An entry
+        whose symbol isn't in that set is out of scope — the model likely
+        pulled it from the much larger Thesis Health Review section
+        instead of the short grading list — and is dropped with a distinct
+        log message BEFORE schema validation, so it's never confused with
+        (and never double-counted alongside) a genuine schema failure.
+        This is a noise/diagnosis guard only: it does not stop the model
+        from confusing the two sections, it just keeps the confusion from
+        also corrupting a legitimate candidate's slot in the logs/telemetry.
+        """
         raw = parsed.get(key)
         if raw is None:
             return parsed
@@ -592,6 +637,17 @@ upcoming events that bear on held theses. Respond as JSON matching
                     "index %d: %r", key, i, item,
                 )
                 continue
+            if allowed_symbols is not None:
+                sym = item.get("symbol")
+                sym_norm = str(sym).upper() if sym else None
+                if sym_norm not in allowed_symbols:
+                    logger.warning(
+                        "evening: %s entry for %s is out of scope (not in "
+                        "this run's recent_buys/recent_sells candidates) — "
+                        "likely Thesis Health Review confusion, dropping",
+                        key, sym or f"<idx {i}>",
+                    )
+                    continue
             try:
                 # Dry run: this same dict is validated again by EveningReport
                 # below, so tallying here would double-count it.
