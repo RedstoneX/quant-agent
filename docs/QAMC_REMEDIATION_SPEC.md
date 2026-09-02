@@ -335,7 +335,7 @@ The reasoning is already persisted; it is simply never shown.
 
 ## Phase 9 — The research desk actually deliberates
 
-**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement count) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is **owner-ratified scheduled work, PARTIALLY BUILT** — its recording and scoring layer landed on `feat/conviction-ledger-recording`; its operator-facing view has not been built. See §9.5 below for exactly which parts exist.
+**Status note (2026-08-31):** §9.1/§9.2 (any seat may nominate, Technical becomes a responder) are DONE and deployed (PR #153). §9.3 (disagreement adjudication) and §9.4 (sizing by agreement — a signed score since 2026-09-02) are NOW DONE and deployed (PR #160, merged during this audit window). §9.5 (conviction ledger per candidate) is **owner-ratified scheduled work, PARTIALLY BUILT** — its recording and scoring layer landed on `feat/conviction-ledger-recording`; its operator-facing view has not been built. See §9.5 below for exactly which parts exist.
 
 *An earlier version of this note recorded §9.5 as "deliberately not built" with no attribution and no stated reason — an engineering scope decision written as though it were settled truth, the exact pattern AGENTS.md's Governance ratification section exists to prevent. The owner reopened it on 2026-08-31 and ratified the full specification below. Corrected here rather than carried forward.*
 
@@ -461,32 +461,87 @@ a 45-day threshold — the provider's own scan window — gates 3 stances and dr
 2 symbols a rung (GE and NFLX, 4.0% → 3.0%). **Choosing a threshold below 90
 would be inventing a number; 90 is the one the desk had already written down.**
 
-**Dissent is counted, not priced (built 2026-09-02).** `count_aligned_sources`
-counts only sources aligned with the trade direction, so on a long a bearish
-earnings stance contributes 0 — arithmetically identical to neutral and to no
-coverage at all. Nothing subtracts, and until now nothing recorded that it had
-happened. `count_opposing_sources` is the exact mirror of the aligned count
-through the same `stance_is_aligned` vocabulary; it is surfaced in the PM
-prompt, logged per sized target, and written into the order note that reaches
-the AI Risk Manager and the persisted `proposed_order` evidence. **It changes
-no ceiling.** Making dissent subtract is a risk-rule change and needs an owner
-decision; this exists so the frequency and the cost of overriding a dissenting
-seat are measurable before that decision is taken. On `run-64290730`, of the 42
-symbols carrying both a technical and an earnings stance, 4 were internally
-split (CAT, GEV, PFE, SLB) — sized identically to a name with one aligned
-source and no dissent.
+**Dissent was counted, not priced (built 2026-09-02, superseded the same
+day).** `count_aligned_sources` counted only sources aligned with the trade
+direction, so on a long a bearish earnings stance contributed 0 —
+arithmetically identical to neutral and to no coverage at all. Nothing
+subtracted. `count_opposing_sources` made that visible: the exact mirror of the
+aligned count through the same `stance_is_aligned` vocabulary, surfaced in the
+PM prompt, logged per sized target, and written into the order note that
+reaches the AI Risk Manager and the persisted `proposed_order` evidence. It
+changed no ceiling. On `run-64290730` (2026-09-01), of the 42 symbols carrying
+both a technical and an earnings stance, 4 were internally split (CAT, GEV,
+PFE, SLB) — sized identically to a name with one aligned source and no dissent.
+
+**Dissent is priced: the ceiling reads a SIGNED SUM (ratified 2026-09-02).**
+
+```
+s_i in {-1, 0, +1}   per seat: +1 aligned with the proposed direction,
+                     -1 opposed, 0 neutral OR silent
+S   = sum(s_i)       equal weight, unit magnitude
+```
+
+`signed_source_score` computes `S` as `aligned - opposed` (the difference of
+the two counts, not a second traversal — one definition of "aligned", the
+`stance_is_aligned` one), and `agreement_ceiling_for_score` indexes the
+existing schedule by `S`. **Doctrine:** counting only agreers has no support in
+any published composite methodology. MSCI-style index construction and Grinold
+& Kahn's `alpha = volatility x IC x score` both admit a disagreeing input as a
+NEGATIVE number in a signed sum. Equal unit weighting is not a placeholder —
+it is what index construction literally does, and what the Grinold & Kahn form
+reduces to when per-source skill is equal.
+
+Three properties, all falling out of the arithmetic rather than bolted on:
+
+- **Unanimous cases are unchanged.** With nothing opposed, `S` IS the aligned
+  count, so `S=1` prices at `schedule[0]`, `S=2` at `schedule[1]`, and so on.
+  The ratified risk envelope and the measurement that chose
+  `[3.0, 4.0, 5.0, 5.0, 5.0]` both still stand.
+- **A dissenter costs exactly one rung.** Three aligned against one opposed is
+  `S=2` and sizes at the two-seat rung, not the three-seat one.
+- **`S <= 0` produces no order at all.** There is deliberately NO standalone
+  veto rule: the schedule's first rung prices one NET source and there is no
+  rung below it, so the same lookup that sizes the trade is the one that
+  refuses it. A separate veto would charge the same dissenter twice. A blocked
+  target leaves any existing position untouched — refusing to open is not a
+  decision to sell, and a zero-weight plan would read to the delta loop as an
+  instruction to liquidate.
+
+**Measured impact** over the 28 sized PM targets carrying registry coverage in
+the 12 most recent runs of the local snapshot (2026-08-28 → 2026-09-02):
+6 targets change ceiling rung and 3 (10.7%) are newly blocked by `S <= 0`
+(ONDS and NVDA on 2026-08-28 intraday, both `technical: buy` against
+`macro: bearish`; UNH short on 2026-09-02, `technical: sell` against
+`macro: bullish`). The ceiling BOUND on 0 of 28 targets before and 3 of 28
+after — every rung change other than the blocks is a ceiling that still sits
+above what the PM asked for, so the size does not actually move. On the most
+recent full run (`run-bba4d4f3`, 2026-09-02) 1 of 9 targets is blocked. This is
+nothing like the 2026-09-01 zero-trade day: that was a rule NO trade could
+satisfy; this one leaves 25 of 28 untouched.
 
 **Open, not built: conviction-weighted agreement.** Every seat emits a
-conviction and the tally ignores it entirely — a high-conviction bearish read
-and a weak one are the same number. This interacts directly with the dissent
-question above (how much a dissenter subtracts is meaningless without knowing
-how strongly it dissents) and the two need deciding together. See §9.5 item 3a:
-the owner removed conviction weighting from the ledger's credit on 2026-08-31
-for two stated reasons, and **one of them is factually wrong about this
-section** — "a confident call already earns a larger position through the §9.4
-agreement ceiling" is not true of the code, which is a pure headcount. The
-circularity objection stands on its own; the double-counting objection does
-not, and the owner should know that before ruling here.
+conviction and the score ignores it entirely — a high-conviction bearish read
+and a weak one are both `-1`. `SEAT_WEIGHT` (`src/risk/rules.py`) pins that at
+unit magnitude and `tests/test_signed_dissent.py` fails if anyone introduces a
+per-seat weight. The reason is the desk's own standing rule, recorded in
+`src/conviction_ledger.py`: a confidence weight may only be DERIVED from
+measured history, never chosen up front, and `_CONVICTION_OUTCOME_MIN_N`
+(`src/storage/db.py`) sets the minimum at 20 resolved calls. The book has 7
+closed equity round-trips and every one carries conviction NULL, so there is
+nothing to derive from. That is precisely why the dissent change could ship
+before this question is settled: with weights pinned at 1, the dissent rule has
+no constant to inherit.
+
+**Correction, 2026-09-02.** The owner removed conviction weighting from the
+ledger's credit on 2026-08-31 for two stated reasons (see §9.5 item 3a).
+Reason 2 — "a confident call already earns a larger position through the §9.4
+agreement ceiling" — **is factually wrong and has been corrected in place** in
+`src/conviction_ledger.py` and `docs/architecture/MISSION_CONTROL_API.md`. §9.4
+has never read a conviction: it collapses each seat to a polarity and nets at
+unit weight, so weighting the ledger's credit would have charged confidence
+once, not twice. Reason 1 (circularity) is sound and stands alone. **The
+decision itself does not change** — no conviction weighting, now for one valid
+reason plus insufficient sample.
 
 ### 9.5 — A conviction ledger per candidate
 
@@ -785,15 +840,16 @@ Verified by reading the current code, not assumed:
 - **Per-seat, per-symbol stance for a session.** Each seat's own structured
   analysis for a symbol is independently persisted
   (`specialist_evidence`, kind `analysis`) and is the exact registry
-  `src/risk/rules.py::count_aligned_sources` reads to compute how many seats
-  agree. This is effectively the raw material for "who confirmed, who
+  `src/risk/rules.py::signed_source_score` reads to compute how many seats
+  net out in favour. This is effectively the raw material for "who confirmed, who
   dissented" — but nothing marks an analysis row as a response *to a
   specific nomination*, so that relationship has to be reconstructed, not
   read.
-- **Seat alignment counting.** `count_aligned_sources` and
-  `agreement_ceiling_for_count` (`src/risk/rules.py`) already turn per-seat
-  stances into a deterministic agreement count and a sizing ceiling (§9.4,
-  shipped in PR #160).
+- **Seat alignment counting.** `count_aligned_sources`,
+  `count_opposing_sources`, `signed_source_score` and
+  `agreement_ceiling_for_score` (`src/risk/rules.py`) already turn per-seat
+  stances into a deterministic signed score and a sizing ceiling (§9.4,
+  shipped in PR #160; signed 2026-09-02).
 - **R computation.** `src/risk/metrics.py::r_multiple` already turns
   current price, entry and initial stop into a signed R-multiple for either
   side (long or short), which is exactly the scoring unit item 3 needs.

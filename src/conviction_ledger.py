@@ -49,14 +49,31 @@ own declared conviction (high 1.0 / medium 0.6 / low 0.3). **Owner decision,
    has already seen high-conviction trades underperform low-conviction ones at
    small sample (see `_CONVICTION_OUTCOME_MIN_N` in `src/storage/db.py`);
    under weighting that finding would have been hidden inside the score.
-2. **It double-counts.** A confident call already earns a larger position
+2. ~~**It double-counts.** A confident call already earns a larger position
    through the §9.4 agreement ceiling, and a larger position already produces
-   a proportionally larger R. Weighting the credit again charges confidence a
-   second time for the same fact.
+   a proportionally larger R.~~ **WRONG, corrected 2026-09-02.** This was
+   false when it was written and is still false. §9.4 never read a conviction:
+   `count_aligned_sources` / `count_opposing_sources` collapse each seat to
+   `stance_is_aligned`, a pure polarity test, and `signed_source_score` nets
+   them at unit weight. A `high`-conviction bullish stance and a `low`-
+   conviction one are the same `+1`. Nothing in the sizing path has ever
+   multiplied by a declared confidence, so weighting the credit here would
+   have charged confidence ONCE, not twice — the objection does not hold.
+
+**The decision does not change.** Reason 1 stands on its own and is sufficient:
+a measurement that multiplies a seat's credit by that seat's own confidence
+assumes the answer it exists to discover. There is now also a second, harder
+reason — there is no sample to derive a weight FROM. Deriving one needs
+`_CONVICTION_OUTCOME_MIN_N` (20, `src/storage/db.py`) resolved calls per seat;
+the book has 7 closed equity round-trips and every one carries conviction NULL.
+So: no conviction weighting, for one valid reason plus insufficient sample.
 
 A confidence weight could legitimately be introduced later — but only one
 DERIVED from an analyst's own measured history, never one chosen up front.
 Deriving it needs the breakdown below to exist first, which is the point of it.
+The same rule now binds the §9.4 sizing path: `src/risk/rules.py::SEAT_WEIGHT`
+pins every seat at unit magnitude and `tests/test_signed_dissent.py` fails if
+anyone introduces a per-seat weight while the sample is still missing.
 
 **Confidence is reported, not applied.** The declared conviction is still
 recorded on every credit row; it simply stops multiplying anything. Instead,

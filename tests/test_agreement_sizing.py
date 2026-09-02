@@ -1,19 +1,26 @@
 """Spec §9.4 — "agreement earns size".
 
-`TargetPosition.risk_allocation_pct` is ceilinged — never raised — by how
-many independent seats (of technical/news/earnings/macro/smart_money) are
-directionally aligned with the target's proposed action. The ceiling is
-computed deterministically from the canonical evidence registry (reusing
-`validate_grounding`'s own polarity rule, not a second one), applied in
-`PortfolioConstructor` strictly BEFORE `allocate_risk_budget` and the
-single-name clamps, and can never exceed the ratified 5% per-trade envelope.
+`TargetPosition.risk_allocation_pct` is ceilinged — never raised — by the
+SIGNED score over the independent seats (of technical/news/earnings/macro/
+smart_money): those aligned with the target's proposed action MINUS those
+opposed to it. The ceiling is computed deterministically from the canonical
+evidence registry (reusing `validate_grounding`'s own polarity rule, not a
+second one), applied in `PortfolioConstructor` strictly BEFORE
+`allocate_risk_budget` and the single-name clamps, and can never exceed the
+ratified 5% per-trade envelope.
+
+The signed sum landed 2026-09-02. `tests/test_signed_dissent.py` holds the
+acceptance criterion for that change (unanimous cases must price exactly as
+the old aligned-count rule did) and the mechanical pin on seat weights; this
+file is the rule's own behaviour, end to end.
 """
 
 from src.config import RiskConfig
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.rules import (
-    agreement_ceiling_for_count, count_aligned_sources, stance_is_aligned,
+    agreement_ceiling_for_score, count_aligned_sources, signed_source_score,
+    stance_is_aligned,
 )
 
 import pytest
@@ -92,33 +99,46 @@ def test_macro_polarity_flips_for_inverse_etf():
 
 
 # --------------------------------------------------------------------------
-# agreement_ceiling_for_count — the schedule lookup
+# agreement_ceiling_for_score — the schedule lookup
 # --------------------------------------------------------------------------
 
 SCHEDULE = [3.0, 4.0, 5.0, 5.0, 5.0]
 
 
-def test_ceiling_schedule_zero_and_one_share_the_strictest_tier():
-    assert agreement_ceiling_for_count(SCHEDULE, 0) == 3.0
-    assert agreement_ceiling_for_count(SCHEDULE, 1) == 3.0
+def test_ceiling_schedule_one_net_source_is_the_strictest_tier():
+    assert agreement_ceiling_for_score(SCHEDULE, 1) == 3.0
+
+
+def test_ceiling_schedule_zero_or_negative_is_a_block():
+    """The schedule's first rung prices ONE net source and there is no rung
+    below it. Zero (or negative) net evidence therefore returns 0.0, which
+    the constructor reads as "no order" — the same lookup that sizes the
+    trade is the one that refuses it, so a dissenter is never charged twice."""
+    assert agreement_ceiling_for_score(SCHEDULE, 0) == 0.0
+    assert agreement_ceiling_for_score(SCHEDULE, -1) == 0.0
+    assert agreement_ceiling_for_score(SCHEDULE, -5) == 0.0
 
 
 def test_ceiling_schedule_two():
-    assert agreement_ceiling_for_count(SCHEDULE, 2) == 4.0
+    assert agreement_ceiling_for_score(SCHEDULE, 2) == 4.0
 
 
 def test_ceiling_schedule_three_or_more_is_the_full_envelope():
-    assert agreement_ceiling_for_count(SCHEDULE, 3) == 5.0
-    assert agreement_ceiling_for_count(SCHEDULE, 4) == 5.0
-    assert agreement_ceiling_for_count(SCHEDULE, 5) == 5.0
+    assert agreement_ceiling_for_score(SCHEDULE, 3) == 5.0
+    assert agreement_ceiling_for_score(SCHEDULE, 4) == 5.0
+    assert agreement_ceiling_for_score(SCHEDULE, 5) == 5.0
 
 
-def test_ceiling_schedule_count_past_schedule_length_uses_last_entry():
-    assert agreement_ceiling_for_count(SCHEDULE, 99) == 5.0
+def test_ceiling_schedule_score_past_schedule_length_uses_last_entry():
+    assert agreement_ceiling_for_score(SCHEDULE, 99) == 5.0
 
 
-def test_ceiling_schedule_empty_is_inert():
-    assert agreement_ceiling_for_count([], 1) == float("inf")
+def test_ceiling_schedule_empty_is_inert_including_its_block():
+    """An unconfigured schedule must not silently become the STRICTEST rule.
+    A desk that switched the ceiling off did not ask for a dissent veto."""
+    assert agreement_ceiling_for_score([], 1) == float("inf")
+    assert agreement_ceiling_for_score([], 0) == float("inf")
+    assert agreement_ceiling_for_score([], -3) == float("inf")
 
 
 # --------------------------------------------------------------------------
@@ -501,13 +521,16 @@ def test_count_aligned_sources_ignores_a_gated_source():
 # End to end: the stale bullish view no longer buys the higher ceiling
 # --------------------------------------------------------------------------
 
-def _stale_ceiling_decision(stale_sources):
+def _stale_ceiling_decisions(stale_sources):
     """One full-envelope long on NVDA with technical + earnings both bullish.
 
     Geometry: entry 100 / stop 70 / target 160. Risk-per-share $30, so a
     ceiling of 4.0% risk is a 13.33% weight and 3.0% is a 10.00% weight —
     both far below the 20% single-name cap, which therefore cannot be what
     moves the number.
+
+    Returns the raw decision LIST, because gating every aligned source now
+    leaves a net score of zero and produces no order at all.
     """
     constructor = PortfolioConstructor()
     target = TargetPosition(
@@ -515,12 +538,16 @@ def _stale_ceiling_decision(stale_sources):
         thesis="Technical and earnings both bullish.",
     )
     registry = _registry(NVDA={"technical": "bullish", "earnings": "bullish"})
-    decisions = constructor.construct_orders(
+    return constructor.construct_orders(
         targets=[target], positions=[],
         analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
         total_value=100_000.0, price_map={"NVDA": 100.0},
         evidence_registry=registry, stale_sources=stale_sources,
     )
+
+
+def _stale_ceiling_decision(stale_sources):
+    decisions = _stale_ceiling_decisions(stale_sources)
     assert len(decisions) == 1
     return decisions[0]
 
@@ -542,12 +569,18 @@ def test_a_stale_bullish_earnings_view_no_longer_earns_the_higher_ceiling():
 
 
 def test_the_freshness_gate_can_only_ever_reduce():
-    """Gating a source can never raise the ceiling, whatever it gates."""
+    """Gating a source can never raise the ceiling, whatever it gates.
+
+    Gating EVERYTHING leaves a net score of zero, which is now a refusal
+    rather than the strictest rung — still a reduction, just the largest one
+    available. Asserted as "no order", not as a smaller order."""
     fresh = _stale_ceiling_decision(None).allocation_pct
     for gated in ({"NVDA": frozenset({"earnings"})},
-                  {"NVDA": frozenset({"technical"})},
-                  {"NVDA": frozenset({"technical", "earnings"})}):
+                  {"NVDA": frozenset({"technical"})}):
         assert _stale_ceiling_decision(gated).allocation_pct <= fresh + 1e-9
+    assert _stale_ceiling_decisions(
+        {"NVDA": frozenset({"technical", "earnings"})}
+    ) == []
 
 
 def test_no_stale_map_leaves_the_ceiling_exactly_as_it_was():
@@ -558,14 +591,16 @@ def test_no_stale_map_leaves_the_ceiling_exactly_as_it_was():
 
 
 # ==========================================================================
-# §9.4 DISSENT — counted and visible, deliberately NOT priced
+# §9.4 DISSENT — counted, visible, and SUBTRACTED (2026-09-02)
 # ==========================================================================
 #
-# `count_aligned_sources` counts only sources aligned with the trade. On a
-# long, a bearish earnings stance contributes 0 — arithmetically identical to
-# neutral and to no coverage at all. Nothing subtracts, and nothing recorded
-# that it had happened. Making dissent SUBTRACT is a risk-rule change and is
-# the owner's call; making it countable is not.
+# `count_aligned_sources` counts only sources aligned with the trade, so on a
+# long a bearish earnings stance contributes 0 to it — arithmetically
+# identical to neutral and to no coverage at all. That is still true OF THAT
+# COUNT; what changed is that the count is no longer what sizes the trade.
+# `signed_source_score` nets the opposed seats off, and
+# `agreement_ceiling_for_score` prices the net. Both counts are still reported
+# because "2 for, 1 against" and "net +1" are different facts.
 
 def test_count_opposing_sources_on_a_long():
     sources = {"technical": "bullish", "earnings": "bearish",
@@ -589,6 +624,17 @@ def test_neutral_is_in_neither_count():
     assert count_opposing_sources("NVDA", sources, "long") == 0
 
 
+def test_a_silent_a_neutral_and_a_dissenting_seat_are_no_longer_one_number():
+    """The defect in one assertion. All three used to score the same zero;
+    only the first two still do."""
+    silent = {"technical": "bullish"}
+    neutral = {"technical": "bullish", "earnings": "neutral"}
+    dissenting = {"technical": "bullish", "earnings": "bearish"}
+    assert signed_source_score("NVDA", silent, "long") == 1
+    assert signed_source_score("NVDA", neutral, "long") == 1
+    assert signed_source_score("NVDA", dissenting, "long") == 0
+
+
 def test_opposing_count_honours_the_freshness_gate_too():
     """A stance too stale to corroborate is also too stale to dissent —
     one freshness rule, not two."""
@@ -608,59 +654,114 @@ def test_opposing_count_flips_with_macro_polarity_on_an_inverse_etf():
     assert count_opposing_sources("SQQQ", sources, "long") == 1
 
 
-def test_dissent_does_not_move_the_size_across_a_ceiling_rung():
-    """The subtraction test that actually bites. 1-aligned/1-opposed cannot
-    detect a dissent penalty, because `agreement_ceiling_for_count` prices 0
-    and 1 aligned sources identically by design. 2-aligned/1-opposed can: if
-    dissent were netted off the tally the ceiling would drop 4.0% -> 3.0%."""
+def _dissent_decisions(registry, *, risk_pct: float = 5.0):
+    """One NVDA long, entry 100 / stop 70 / target 160 (risk-per-share $30).
+
+    At that geometry 5.0% risk is a 16.67% weight, 4.0% is 13.33% and 3.0% is
+    10.00% — all under the 20% single-name cap, so any movement here is the
+    agreement ceiling and nothing else.
+    """
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
-        thesis="Two seats for, one against.",
+        symbol="NVDA", risk_allocation_pct=risk_pct, conviction="high",
+        thesis="Seats disagree about this one.",
     )
-    decisions = constructor.construct_orders(
+    return constructor.construct_orders(
         targets=[target], positions=[],
         analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
         total_value=100_000.0, price_map={"NVDA": 100.0},
-        evidence_registry=_registry(NVDA={
-            "technical": "bullish", "earnings": "bullish", "macro": "bearish",
-        }),
+        evidence_registry=registry,
     )
+
+
+def test_dissent_moves_the_size_down_a_ceiling_rung():
+    """The subtraction test that actually bites. 2-aligned/1-opposed nets to
+    +1, so the ceiling drops 4.0% -> 3.0% and the weight 13.33% -> 10.00%.
+    (1-aligned/1-opposed cannot distinguish a rung drop from a block, which
+    is why this case and not that one.)"""
+    decisions = _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bullish", "macro": "bearish",
+    }))
     assert len(decisions) == 1
     d = decisions[0]
-    # 2 aligned (dissent NOT netted off) -> 4.0% risk -> 13.33% weight.
-    assert abs(d.allocation_pct - 13.333) < 0.05
+    assert abs(d.allocation_pct - 10.0) < 0.05
     assert "1 independent source(s) took the OPPOSITE side" in d.reasoning
-    assert "did NOT reduce the size" in d.reasoning
+    assert "already been subtracted" in d.reasoning
 
 
-def test_dissent_is_recorded_on_the_order_but_does_not_shrink_it():
-    """The whole point: the number appears, and the size does not move."""
+def test_three_aligned_and_one_opposed_sizes_at_the_two_seat_rung():
+    """The consequence stated in the ratified change, checked as arithmetic
+    rather than as a special case: S = 3 - 1 = 2, so it prices where a flat
+    two-source idea prices, not where a three-source one does."""
+    contested = _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bullish", "news": "bullish",
+        "macro": "bearish",
+    }))
+    flat_two = _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bullish",
+    }))
+    flat_three = _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bullish", "news": "bullish",
+    }))
+    assert len(contested) == len(flat_two) == len(flat_three) == 1
+    assert contested[0].allocation_pct == pytest.approx(
+        flat_two[0].allocation_pct, abs=1e-9,
+    )
+    assert contested[0].allocation_pct < flat_three[0].allocation_pct
+
+
+def test_a_net_score_of_zero_produces_no_order_at_all():
+    """One for, one against is not a small idea — it is not an idea. And it
+    must come from the ceiling arithmetic itself: there is no standalone
+    dissent veto anywhere in the constructor to charge the seat twice."""
+    assert _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bearish",
+    })) == []
+
+
+def test_a_net_score_below_zero_produces_no_order_at_all():
+    assert _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bearish", "macro": "bearish",
+    })) == []
+
+
+def test_blocking_a_target_leaves_a_held_position_alone():
+    """A refusal to BUY is not a decision to SELL. A zero-weight plan would
+    read to the delta loop as "PM wants this closed", so a blocked target has
+    to vanish from the plan entirely rather than be sized at zero."""
     constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        thesis="Adding to a name the earnings seat is bearish on.",
+    )
+    held = Position(
+        symbol="NVDA", qty=100.0, avg_entry=90.0, current_price=100.0,
+        market_value=10_000.0, unrealized_pnl=1_000.0, sector="Technology",
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[held],
+        analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
+        total_value=100_000.0, price_map={"NVDA": 100.0},
+        evidence_registry=_registry(NVDA={
+            "technical": "bullish", "earnings": "bearish",
+        }),
+    )
+    assert [d.action for d in decisions if d.action in ("SELL", "BUY")] == []
 
-    def _decide(registry):
-        target = TargetPosition(
-            symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
-            thesis="Overriding a dissenting seat.",
-        )
-        decisions = constructor.construct_orders(
-            targets=[target], positions=[],
-            analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
-            total_value=100_000.0, price_map={"NVDA": 100.0},
-            evidence_registry=registry,
-        )
-        assert len(decisions) == 1
-        return decisions[0]
 
-    with_dissent = _decide(_registry(
-        NVDA={"technical": "bullish", "earnings": "bearish"}))
-    without_dissent = _decide(_registry(
-        NVDA={"technical": "bullish", "earnings": "neutral"}))
-
-    # 1 aligned either way -> 3.0% ceiling -> 10.00% weight, unchanged.
-    assert abs(with_dissent.allocation_pct - without_dissent.allocation_pct) < 1e-9
-    assert "OPPOSITE side" in with_dissent.reasoning
-    assert "OPPOSITE side" not in without_dissent.reasoning
+def test_dissent_is_recorded_on_the_order_that_survives_it():
+    """The number still appears in the order note — and now says plainly that
+    it has already been paid for, so a reader does not double-count it."""
+    with_dissent = _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bullish", "macro": "bearish",
+    }))
+    without_dissent = _dissent_decisions(_registry(NVDA={
+        "technical": "bullish", "earnings": "bullish", "macro": "neutral",
+    }))
+    assert len(with_dissent) == len(without_dissent) == 1
+    assert with_dissent[0].allocation_pct < without_dissent[0].allocation_pct
+    assert "OPPOSITE side" in with_dissent[0].reasoning
+    assert "OPPOSITE side" not in without_dissent[0].reasoning
 
 
 # ==========================================================================
@@ -692,7 +793,7 @@ def test_a_gated_stance_is_not_shown_to_the_pm_as_corroborating():
     # The tally the PM is quoted, the agreement line's own caveat, the
     # registry block, and the earnings section must ALL say the same thing —
     # each is asserted separately because each is written separately.
-    assert "- NVDA: 1 aligned / 0 opposed if long" in msg
+    assert "- NVDA: 1 aligned / 0 opposed = net +1 if long" in msg
     assert "earnings stance NOT counted — filing older than 90d" in msg
     assert "STALE (still real coverage, still citable as provenance" in msg
     assert "does NOT count toward the agreement ceiling" in msg
@@ -700,12 +801,15 @@ def test_a_gated_stance_is_not_shown_to_the_pm_as_corroborating():
 
 def test_a_fresh_stance_is_shown_as_corroborating():
     msg = _pm_message(age_days=10)
-    assert "- NVDA: 2 aligned / 0 opposed if long" in msg
+    assert "- NVDA: 2 aligned / 0 opposed = net +2 if long" in msg
     assert "NOT counted" not in msg
     assert "STALE" not in msg
 
 
-def test_the_pm_is_shown_the_opposing_count():
+def test_the_pm_is_shown_the_opposing_count_and_the_net():
+    """The net is what the constructor will actually price, so the PM must
+    see it before it sizes — a ceiling the PM cannot predict reads as the
+    constructor contradicting PM's own reasoning (2026-08-20 incident)."""
     agent = _pm_agent()
     msg = agent.build_user_message(
         analyses=[_analysis("NVDA")],
@@ -713,5 +817,11 @@ def test_the_pm_is_shown_the_opposing_count():
         earnings_analyses=[_earnings("NVDA", "bearish", age_days=10)],
         cash_balance=100_000.0, total_value=100_000.0,
     )
-    assert "- NVDA: 1 aligned / 1 opposed if long" in msg
-    assert "1 aligned / 1 opposed if short" in msg
+    assert "- NVDA: 1 aligned / 1 opposed = net +0 if long" in msg
+    assert "1 aligned / 1 opposed = net +0 if short" in msg
+
+
+def test_the_pm_is_told_a_non_positive_net_produces_no_order():
+    """Standing rule of this desk: the PM is never sized against silently."""
+    msg = _pm_message(age_days=10)
+    assert "net score of zero or below produces NO ORDER AT ALL" in msg

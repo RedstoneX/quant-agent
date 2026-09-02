@@ -473,11 +473,13 @@ risk:
   # a short can gap through its stop with unbounded loss, so equal nominal
   # risk must not buy equal real risk. Range (1.0, 3.0].
   short_gap_risk_multiple: 1.5
-  # Spec §9.4 "agreement earns size" (2026-08-30) — ceiling on
-  # risk_allocation_pct by how many independent seats (of technical/news/
-  # earnings/macro/smart_money) are directionally aligned with the target.
-  # Entry i = ceiling for (i+1) aligned sources; see src/risk/rules.py
-  # (count_aligned_sources / agreement_ceiling_for_count) and
+  # Spec §9.4 "agreement earns size" (2026-08-30; signed 2026-09-02) —
+  # ceiling on risk_allocation_pct by the NET number of independent seats
+  # (of technical/news/earnings/macro/smart_money) backing the target:
+  # aligned seats MINUS opposed ones, each at unit weight.
+  # Entry i = ceiling for a net score of (i+1); a net score at or below
+  # zero has no rung and refuses the target outright. See src/risk/rules.py
+  # (signed_source_score / agreement_ceiling_for_score) and
   # src/config.py::RiskConfig for the full measurement this is based on.
   # Measured against production agent_logs 2026-08-25..28 (pre-nomination
   # era): 67% of opening/increasing targets carried exactly ONE aligned
