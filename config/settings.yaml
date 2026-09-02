@@ -140,7 +140,19 @@ llm:
   news_analyst_max_tokens: 16000
   macro_analyst_max_tokens: 16000
   earnings_analyst_max_tokens: 16000
-  smart_money_analyst_max_tokens: 1200
+  # Measured from production quant_agent.log/.log.1 (2026-08-26 to
+  # 2026-09-02, 7 real calls): 6 completed cleanly with out= 438-650 tokens;
+  # 1 hit finish_reason=length at exactly the old ceiling of 1200 (that run's
+  # input was an outlier at in=23722, ~4x the typical ~5-7K). The schema caps
+  # output structurally (at most 8 findings, summary/why_now <=24 words
+  # each), so the theoretical max is roughly 750-900 tokens — yet the
+  # measured max observed (650, n=6) already sits close to that, and a real
+  # call still truncated at 1200. Set to 3000: ~2.5x the ceiling that just
+  # truncated in production, comfortably above both the observed max and the
+  # schema's structural cap, without inflating to the 16K sized for the
+  # free-text analyst seats (different task shape — this seat returns a
+  # short bounded JSON list, not prose).
+  smart_money_analyst_max_tokens: 3000
   portfolio_manager_max_tokens: 16000
   risk_manager_max_tokens: 16000
   position_reviewer_max_tokens: 16000

@@ -1687,6 +1687,14 @@ class MorningResearchStage:
                 )
             if sm_result is None and not provider_error:
                 data_status["smart_money"] = "ok" if findings else "empty"
+            # A finish_reason=length truncation must never be indistinguishable
+            # from "empty" (no signal found) or "ok" (clean run). The model can
+            # still emit syntactically valid-but-incomplete JSON when cut off
+            # mid-generation, which would otherwise silently pass through as
+            # "ok"/"empty" above. Truncation always wins so operators can see
+            # it separately from a genuine quiet day or a provider failure.
+            if sm_result is not None and getattr(sm_result, "truncated", False):
+                data_status["smart_money"] = "truncated"
         except Exception as e:
             logger.warning("Smart-money branch failed: %s", e)
             ctx.smart_money_provider_error = f"analysis_error:{type(e).__name__}"
