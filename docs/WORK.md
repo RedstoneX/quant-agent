@@ -744,6 +744,65 @@ calls.
 53 blocked. Zero-fill sessions: **6 of 11**.
 
 Each item is classified WORKING AS INTENDED / TOO STRICT / DEFECT / NO RECORD.
+
+---
+
+**0. Nobody has traced what actually reaches the model — AUDIT. OWNER MADE THIS PRIORITY ONE, 2026-09-02.**
+
+**This outranks item 1. Start here, before touching anything else.** The
+reward:risk work below is real and stays queued, but it is a fix to a gate
+whose INPUTS nobody has ever inspected. Do not tune a gate you have not
+traced.
+
+Owner's instruction, 2026-09-02: a complete audit of what is fed to the
+portfolio manager. **This is the top of the next session.**
+
+**Why it matters more than it sounds.** Every intervention aimed at the
+model's BEHAVIOUR has measured as no-change: blinding the tickers (5/5
+identical, quality to four decimals), the checkable-catalyst gate (still
+picks NVDA and MSFT, `rr_floor_discipline` PASSES every run), prompt
+rewrites. Five benchmark runs on the fixed code scored 0.85/0.85/0.85/0.60/
+0.85 and failed the SAME check every time — `familiarity_bias`: NVDA and
+MSFT taken while GEV, NEE and UNH were passed over.
+
+The model passes every other check. It is following instructions. So the
+question is no longer "why does it misbehave" — it is **"what are we
+actually handing it, and do our own rules determine an answer at all?"**
+
+**Two parts. Neither costs an LLM call.**
+
+  a. **Trace the pipeline end to end.** Raw data → each analyst → evidence
+     scoring → eligibility filter → prompt assembly → what the model
+     literally receives. Every stage can drop, reshape or re-rank
+     something, and NOBODY HAS WALKED IT. Produce the actual list of stages
+     and what each one changes. **Do not summarise from the code comments —
+     they have been wrong repeatedly. Render a real prompt from a real
+     fixture and read what is in it.**
+  b. **Write the selection rules as plain Python and run them on the same
+     fixture** (`ops/model_policy/fixtures/run_64290730_pm_input.json`,
+     the day already measured). Two possible outcomes, both valuable:
+       - The rules produce a clear pick → **the rules are complete, and the
+         model is not needed for this step.** Use the code.
+       - The rules do NOT determine an answer — names tie, nothing clears
+         the floor, "best" is undefined → **we have been blaming the model
+         for a choice we never specified.** The gap is where NVDA enters,
+         and the fix is to specify it, not to instruct harder.
+
+**The owner's framing, and it is the right one:** if the rules are complete,
+the model is not needed here at all.
+
+**Do not repeat the discredited claim.** "The model already knows what it
+will choose before it reads anything" was asserted twice in this project and
+corrected twice. Blinding disproved it. Anyone picking this up should treat
+a model-behaviour explanation as the LAST hypothesis, not the first.
+
+**Also queued from the same conversation:** setting a spend cap on the
+OpenRouter key is MINE to do via browser access, not the owner's — check
+first whether the provider exposes it via API rather than a dashboard. See
+item 14(a).
+
+---
+
 An item is only struck through when the fix is merged AND re-measured against
 the same 68.
 
@@ -1098,55 +1157,6 @@ on alerts firing correctly is a recipe for disaster.
 Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
 a stale price list. That path was fixed 2026-09-02; **this one was not** —
 the latch itself is the shared hazard, not any single route into it.
-
-**18. Nobody has traced what actually reaches the model. AUDIT — do this before any further model work.**
-
-Owner's instruction, 2026-09-02: a complete audit of what is fed to the
-portfolio manager. **This is the top of the next session.**
-
-**Why it matters more than it sounds.** Every intervention aimed at the
-model's BEHAVIOUR has measured as no-change: blinding the tickers (5/5
-identical, quality to four decimals), the checkable-catalyst gate (still
-picks NVDA and MSFT, `rr_floor_discipline` PASSES every run), prompt
-rewrites. Five benchmark runs on the fixed code scored 0.85/0.85/0.85/0.60/
-0.85 and failed the SAME check every time — `familiarity_bias`: NVDA and
-MSFT taken while GEV, NEE and UNH were passed over.
-
-The model passes every other check. It is following instructions. So the
-question is no longer "why does it misbehave" — it is **"what are we
-actually handing it, and do our own rules determine an answer at all?"**
-
-**Two parts. Neither costs an LLM call.**
-
-  a. **Trace the pipeline end to end.** Raw data → each analyst → evidence
-     scoring → eligibility filter → prompt assembly → what the model
-     literally receives. Every stage can drop, reshape or re-rank
-     something, and NOBODY HAS WALKED IT. Produce the actual list of stages
-     and what each one changes. **Do not summarise from the code comments —
-     they have been wrong repeatedly. Render a real prompt from a real
-     fixture and read what is in it.**
-  b. **Write the selection rules as plain Python and run them on the same
-     fixture** (`ops/model_policy/fixtures/run_64290730_pm_input.json`,
-     the day already measured). Two possible outcomes, both valuable:
-       - The rules produce a clear pick → **the rules are complete, and the
-         model is not needed for this step.** Use the code.
-       - The rules do NOT determine an answer — names tie, nothing clears
-         the floor, "best" is undefined → **we have been blaming the model
-         for a choice we never specified.** The gap is where NVDA enters,
-         and the fix is to specify it, not to instruct harder.
-
-**The owner's framing, and it is the right one:** if the rules are complete,
-the model is not needed here at all.
-
-**Do not repeat the discredited claim.** "The model already knows what it
-will choose before it reads anything" was asserted twice in this project and
-corrected twice. Blinding disproved it. Anyone picking this up should treat
-a model-behaviour explanation as the LAST hypothesis, not the first.
-
-**Also queued from the same conversation:** setting a spend cap on the
-OpenRouter key is MINE to do via browser access, not the owner's — check
-first whether the provider exposes it via API rather than a dashboard. See
-item 14(a).
 
 ---
 
