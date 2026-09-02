@@ -55,6 +55,7 @@ from src.models import (
 )
 from src.nominations import select_nominations
 from src.pipeline_context import RunContext
+from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
 
 if TYPE_CHECKING:
     from src.agents.earnings_analyst import EarningsAnalystAgent
@@ -2288,6 +2289,19 @@ class DecisionStage:
                 if str(symbol).strip()
             } | set(ctx.admitted_symbols),
             transient_admitted_symbols=set(ctx.admitted_symbols),
+            # The sub-floor catalyst gate reads the SAME two numbers the
+            # deterministic risk layer downstream does, threaded rather than
+            # re-defaulted: the PM must be gated on the floor the
+            # constructor will actually enforce, and capped at the size
+            # `allocate_risk_budget` will actually grant.
+            rr_floor=float(getattr(
+                pipeline.config.risk, "min_reward_risk_after_widening",
+                REWARD_RISK_FLOOR,
+            )),
+            starter_risk_pct=float(getattr(
+                pipeline.config.risk, "min_position_risk_pct",
+                STARTER_POSITION_RISK_PCT,
+            )),
         )
 
         if portfolio_decision and portfolio_decision.reasoning_chain:

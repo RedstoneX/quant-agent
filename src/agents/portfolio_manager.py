@@ -12,6 +12,7 @@ from src.models import (
     TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
     parse_telemetry,
 )
+from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     EARNINGS_STANCE_MAX_AGE_DAYS,
@@ -35,6 +36,26 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "port
 # `exit_blocked_no_named_trigger` (src/pipeline.py). Logs and tests key on
 # this exact string.
 CONFLICT_UNADJUDICATED_STATUS = "pm_conflict_unadjudicated"
+
+# 2026-09-01 (measured 2026-09-02) — greppable status keys for the sub-floor
+# catalyst gate, same naming convention as the two above. See
+# `_apply_subfloor_catalyst_rule` for what each one means. Logs and tests key
+# on these exact strings.
+SUBFLOOR_CATALYST_UNVERIFIED_STATUS = "pm_subfloor_catalyst_unverified"
+SUBFLOOR_SIZE_CAPPED_STATUS = "pm_subfloor_size_capped"
+
+#: One rendered `active_state_changes` row, as
+#: `TradingPipeline._build_active_state_changes` emits it:
+#:     - [2026-08-31] Anthropic signs a cloud deal with Lambda → NVDA
+#: The date and the affected-symbol list are the two fields the catalyst gate
+#: resolves a citation against; the event prose is deliberately NOT matched
+#: (see `_catalyst_cites_state_change`).
+_STATE_CHANGE_ROW_RE = re.compile(r"^\s*-\s*\[(\d{4}-\d{2}-\d{2})\]\s*(?P<rest>.+)$")
+
+#: Any ISO date appearing anywhere in a `catalyst` string. The PM cites a row
+#: by its date; the symbol half of the pair is the target's own symbol, which
+#: it cannot misstate without the target being about a different name.
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class PortfolioManagerAgent(BaseAgent):
@@ -864,10 +885,21 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             if macro_trajectory else
             "## Macro Regime Trajectory\nNo prior snapshots yet."
         )
+        # The `[date]` prefix on each row is not decoration: it is the
+        # citation key the sub-floor catalyst gate resolves against
+        # (`_apply_subfloor_catalyst_rule`). Saying so HERE, next to the rows
+        # themselves, is what makes the requirement actionable — the rule
+        # itself is enforced in Python after submission either way.
         active_changes_section = (
-            f"## Active News State Changes (HIGH conviction, last 14d)\n{active_state_changes}"
+            "## Active News State Changes (HIGH conviction, last 14d)\n"
+            "Cite a row by its `[date]` in a target's `catalyst` field. That is "
+            "the ONLY way to claim the sub-floor R/R exception, and the row must "
+            "name the symbol.\n"
+            f"{active_state_changes}"
             if active_state_changes else
-            "## Active News State Changes\n(none surfaced in the rolling 14-day window)"
+            "## Active News State Changes\n(none surfaced in the rolling 14-day "
+            "window — with no rows to cite, the sub-floor R/R exception is "
+            "unavailable today)"
         )
         missed_lessons_section = (
             f"## Recurring Missed Themes (last 14d — themes evening repeatedly "
@@ -1072,6 +1104,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                session_type: str = "morning",
                allowed_buy_symbols: set[str] | None = None,
                transient_admitted_symbols: set[str] | None = None,
+               # The sub-floor catalyst gate's two thresholds. Defaults are
+               # the shared constants `RiskConfig` itself defaults to, so a
+               # caller that does not thread config (the model-policy
+               # harness, most tests) gates on exactly the production
+               # numbers rather than on a second opinion about them.
+               rr_floor: float = REWARD_RISK_FLOOR,
+               starter_risk_pct: float = STARTER_POSITION_RISK_PCT,
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         result = self.run(
             analyses=analyses,
@@ -1163,6 +1202,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             decision = self._drop_unadjudicated_conflicts(
                 decision, positions=positions, total_value=total_value,
             )
+            # The sub-floor catalyst gate. Same per-target-prune contract as
+            # the conflict drop above and applied in the same place, before
+            # grounding: a target this rule removes must not be able to fail
+            # the whole session on its way out.
+            decision = self._apply_subfloor_catalyst_rule(
+                decision, analyses=analyses, positions=positions,
+                total_value=total_value,
+                active_state_changes=active_state_changes,
+                rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+            )
             errors = self.validate_grounding(
                 decision, analyses=analyses, positions=positions,
                 news_intel=news_intel,
@@ -1240,6 +1289,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     # first-attempt path, applied before grounding here too.
                     decision = self._drop_unadjudicated_conflicts(
                         decision, positions=positions, total_value=total_value,
+                    )
+                    # Same sub-floor catalyst gate as the first-attempt path.
+                    # A schema repair must not be a way around it.
+                    decision = self._apply_subfloor_catalyst_rule(
+                        decision, analyses=analyses, positions=positions,
+                        total_value=total_value,
+                        active_state_changes=active_state_changes,
+                        rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
                     )
                     errors = self.validate_grounding(
                         decision, analyses=analyses, positions=positions,
@@ -1584,6 +1641,210 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     unaddressed, signal_conflicts[:300],
                 )
                 continue
+            kept.append(target)
+        decision.targets = kept
+        return decision
+
+    # --- The sub-floor catalyst gate (2026-09-02) -------------------------
+    #
+    # WHAT WENT WRONG. The prompt sets a reward:risk floor and permits a
+    # below-floor pick that names a catalyst. Benchmarked 2026-09-01 on the
+    # real opportunity set of the zero-trade day (`run-64290730`), both
+    # candidate models picked NVDA at R/R 1.03 in 9 of 9 runs and passed over
+    # GEV, which cleared the floor. THE MODELS DID NOT DISOBEY: every
+    # sub-floor pick named a catalyst, cut size, and said in plain text that
+    # the ratio was below floor. The rule-compliance grader passed them and
+    # the risk manager agreed.
+    #
+    # The hole is in the RULE. For any mega-cap the news feed always carries
+    # a concrete catalyst, so an assertable exception is a null constraint on
+    # exactly the names it most needs to bind. Worse, the desk's own
+    # `active_state_changes` block fed the PM two HIGH-conviction bullish
+    # NVDA items that morning, which became the catalyst justifying the
+    # exception — the accountability machinery supplying the key to its own
+    # lock. The live run's recorded NVDA catalyst was a $3B SB Energy
+    # investment that appears in NO state-change row at all.
+    #
+    # So this is a code problem, not a model problem, and a tenth firmly
+    # worded sentence in a 52KB prompt whose ninth was obeyed is not a
+    # design. Two deterministic changes, both AFTER the PM submits:
+    #   1. the catalyst must RESOLVE to a specific `active_state_changes`
+    #      row (this table already carries dates and symbols), or the
+    #      exception does not apply and the target is dropped;
+    #   2. a sub-floor pick that does resolve is capped at the smallest
+    #      starter size the desk can hold.
+    # Costs nothing when the catalyst is real; costs the slot when it is
+    # decorative.
+
+    @staticmethod
+    def _state_change_symbols_by_date(active_state_changes: str) -> dict[str, set[str]]:
+        """Parse the rendered `active_state_changes` block into
+        `{iso_date: {SYMBOL, ...}}`.
+
+        The block the PM is shown is built by
+        `TradingPipeline._build_active_state_changes`, which is the only
+        producer of this format, so parsing its own output back is a
+        round-trip over a format this repo owns end to end — not an attempt
+        to read arbitrary prose. A line that does not match is skipped
+        rather than raising: an unparseable row must narrow what can be
+        cited, never fail the session.
+
+        Rows sharing a date are UNIONED. A citation therefore proves "a
+        HIGH-conviction state change affecting this symbol was recorded on
+        this date", which is the checkable claim; it does not distinguish
+        two same-day rows about the same name, and it does not need to.
+        """
+        by_date: dict[str, set[str]] = {}
+        for line in (active_state_changes or "").splitlines():
+            match = _STATE_CHANGE_ROW_RE.match(line)
+            if match is None:
+                continue
+            # Split on the LAST arrow: the event prose can contain one, the
+            # symbol list cannot.
+            rest = match.group("rest")
+            if "→" not in rest:
+                continue
+            _event, _, symbol_text = rest.rpartition("→")
+            symbols = {
+                part.strip().upper()
+                for part in symbol_text.split(",")
+                if part.strip() and part.strip() != "—"
+            }
+            if not symbols:
+                # `_build_active_state_changes` writes an em dash when the
+                # news analyst attached no affected symbols. A market-wide
+                # row names nobody, so it can back nobody.
+                continue
+            by_date.setdefault(match.group(1), set()).update(symbols)
+        return by_date
+
+    @classmethod
+    def _catalyst_cites_state_change(
+        cls, catalyst: str, symbol: str, by_date: dict[str, set[str]],
+    ) -> bool:
+        """Does `catalyst` resolve to a state-change row that names `symbol`?
+
+        The citation is a DATE + SYMBOL pair, because that is what the table
+        already carries — there is no row id to cite (`news_store.
+        recent_state_changes` dedupes on the event string and has never
+        emitted one). The symbol half is the target's own symbol, which a
+        target cannot misstate without being about a different name, so the
+        model only has to supply the date.
+
+        HONESTY NOTE, and read it before describing this anywhere: this
+        proves the cited row EXISTS and COVERS THIS NAME. It does not prove
+        the row is bullish for a long or bearish for a short — the rendered
+        block carries no direction — and it does not prove the PM's prose
+        about the row is any good. Same posture as `_conflict_is_named`:
+        specificity of reference, not quality of reasoning. What it removes
+        is the free-text assertion that no reader could ever check.
+        """
+        text = (catalyst or "").strip()
+        if not text:
+            return False
+        symbol = symbol.strip().upper()
+        return any(
+            symbol in by_date.get(cited, set())
+            for cited in _ISO_DATE_RE.findall(text)
+        )
+
+    @classmethod
+    def _apply_subfloor_catalyst_rule(
+        cls, decision: PortfolioDecision, *,
+        analyses: list[TechAnalysisResult],
+        positions: list[Position],
+        total_value: float,
+        active_state_changes: str,
+        rr_floor: float,
+        starter_risk_pct: float,
+    ) -> PortfolioDecision:
+        """Gate and cap every target whose Technical read is below the
+        reward:risk floor.
+
+        Sub-floor with an unresolvable catalyst -> the target is DROPPED.
+        Sub-floor with a resolvable one        -> kept, risk capped at
+                                                  `starter_risk_pct`.
+
+        Deliberately a per-target prune plus a size adjustment, NOT an entry
+        in `validate_grounding`'s error list — `decide()` treats any non-empty
+        error list as total session failure, which is the right penalty for
+        fabricated evidence and the wrong one for one decorative catalyst.
+        Same reasoning, and the same shape, as `_drop_unadjudicated_conflicts`
+        directly above.
+
+        SCOPE, deliberately asymmetric, mirroring §3.4 and §9.3: only targets
+        `_target_intent` classifies as "buy"/"short" — opening or increasing
+        — are gated. Exits and reductions are exempt; this desk must never
+        find it harder to cut risk than to add it.
+
+        WHICH RATIO. `TechAnalysisResult.risk_reward` — Python's arithmetic
+        over the analyst's own entry/stop/target, computed in `src/models.py`
+        and never trusted to a model's claim about its own ratio. It is also
+        the exact number rendered into the prompt as `R/R x.xx:1`, so the PM
+        is held to the figure it was shown. `None` (neutral rating, or
+        malformed geometry) counts as sub-floor: the prompt already says
+        "R/R n/a — treat as low-R/R", and a target with no computable payoff
+        is precisely the case a checkable catalyst has to justify.
+
+        WHY THE CAP EXISTS EVEN WHEN THE CATALYST IS REAL. A verified
+        catalyst makes the trade permissible, not good — the payoff geometry
+        is unchanged and still breaks even only at a hit rate this desk has
+        never measured. The starter size is the smallest position the risk
+        budget will actually grant (`allocate_risk_budget` denies anything
+        under its floor), so this preserves the capability at the least the
+        desk can express rather than removing it.
+        """
+        by_date = cls._state_change_symbols_by_date(active_state_changes)
+        rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
+        held = {p.symbol.upper(): p for p in positions}
+        kept: list[TargetPosition] = []
+        for target in decision.targets:
+            intent = cls._target_intent(target, held, total_value)
+            if intent not in ("buy", "short"):
+                kept.append(target)  # exits/reductions are exempt on purpose
+                continue
+            symbol = target.symbol.upper()
+            reward_risk = rr_by_symbol.get(symbol)
+            if reward_risk is not None and reward_risk >= rr_floor:
+                kept.append(target)
+                continue
+
+            if not cls._catalyst_cites_state_change(
+                target.catalyst, symbol, by_date,
+            ):
+                logger.warning(
+                    "%s: dropping %s (%s) — R/R %s is under the %.2f floor and "
+                    "its catalyst resolves to no Active News State Change row "
+                    "naming %s. A sub-floor pick may only claim the catalyst "
+                    "exception by citing the ISO date of a row that covers the "
+                    "symbol; an asserted-in-prose catalyst is not checkable and "
+                    "does not qualify. The rest of this session's decision is "
+                    "unaffected. catalyst was: %r",
+                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
+                    "n/a" if reward_risk is None else f"{reward_risk:.2f}",
+                    rr_floor, symbol, (target.catalyst or "")[:200],
+                )
+                continue
+
+            # Verified. Cap the size, never raise it. A legacy notional-only
+            # target (`risk_allocation_pct is None`) is converted onto the
+            # risk path rather than left uncapped: the constructor prefers
+            # risk over weight whenever both are present (see
+            # `TargetPosition`), so setting it here is what actually binds,
+            # and leaving the weight alone would be a way around this rule.
+            previous = target.risk_allocation_pct
+            if previous is None or previous > starter_risk_pct:
+                target.risk_allocation_pct = starter_risk_pct
+                logger.info(
+                    "%s: %s capped to %.2f%% risk (was %s) — R/R %s is under "
+                    "the %.2f floor with a state change dated in its catalyst. "
+                    "Deterministic, not PM inconsistency.",
+                    SUBFLOOR_SIZE_CAPPED_STATUS, target.symbol,
+                    starter_risk_pct,
+                    "unsized by risk" if previous is None else f"{previous:.2f}%",
+                    "n/a" if reward_risk is None else f"{reward_risk:.2f}",
+                    rr_floor,
+                )
             kept.append(target)
         decision.targets = kept
         return decision
