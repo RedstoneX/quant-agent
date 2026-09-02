@@ -1239,7 +1239,7 @@ class PortfolioConstructor:
             return {}
         # Local import to avoid the cyclic risk -> portfolio_constructor
         # import chain at module load.
-        from src.risk.rules import _gross_multiplier
+        from src.risk.rules import position_weight_pct
         # SIGNED, not absolute. A short has a negative qty and a negative
         # market_value (Alpaca convention), so it lands in the map as a
         # NEGATIVE weight. Signed is the correct choice because every consumer
@@ -1257,7 +1257,7 @@ class PortfolioConstructor:
         # the map entirely, so `current_weights.get(sym, 0.0)` reported a held
         # short as unheld and the delta loop would re-open it every session.
         return {
-            p.symbol: (p.market_value * _gross_multiplier(p.symbol) / total_value * 100)
+            p.symbol: position_weight_pct(p, total_value)
             for p in positions
             if p.qty != 0
         }

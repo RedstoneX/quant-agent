@@ -10,7 +10,15 @@ from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
     TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
 )
-from src.risk.rules import _gross_multiplier, count_aligned_sources, stance_is_aligned
+from src.risk.metrics import unrealized_pnl_pct
+from src.risk.rules import (
+    _gross_multiplier,
+    book_exposure as _book_exposure,
+    count_aligned_sources,
+    position_weight_pct,
+    stance_is_aligned,
+    weight_pct_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -267,20 +275,26 @@ class PortfolioManagerAgent(BaseAgent):
             # as its target, which the constructor read as "cut from 18% to
             # 6%" and emitted a 67% SELL the PM never intended.
             gross_mul = _gross_multiplier(p.symbol)
-            weight_pct = (
-                (p.market_value * gross_mul / total_value * 100)
-                if total_value > 0 else 0.0
-            )
+            weight_pct = position_weight_pct(p, total_value)
             lev_note = f" (gross, {gross_mul:g}x leveraged)" if gross_mul != 1.0 else ""
             # Flag drift candidates directly in the line so PM can't miss them.
             # P&L% tells PM whether the weight came from price appreciation (drift)
             # or a large entry.
-            cost_basis = p.avg_entry * p.qty if p.avg_entry and p.qty else 0
-            pnl_pct = (p.unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
-            drift_flag = " ⚠️DRIFT" if weight_pct > 12 and pnl_pct > 10 else ""
+            # `unrealized_pnl_pct` is the single definition (see
+            # src/risk/metrics.py). The `cost_basis > 0` guard this replaces
+            # printed a literal +0.0% for every short — a winning short
+            # rendered `P&L: $1000.00 (+0.0%)`, self-contradicting on one
+            # line. None means genuinely unknowable, and must not drift-flag.
+            pnl_pct = unrealized_pnl_pct(p)
+            pnl_pct_str = f"{pnl_pct:+.1f}%" if pnl_pct is not None else "n/a"
+            drift_flag = (
+                " ⚠️DRIFT"
+                if weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
+                else ""
+            )
             core = (
                 f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | "
-                f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} ({pnl_pct:+.1f}%) | "
+                f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} ({pnl_pct_str}) | "
                 f"Weight: {weight_pct:.1f}%{lev_note} | Sector: {p.sector}{drift_flag}"
             )
             hist = position_history.get(p.symbol) or {}
@@ -513,8 +527,20 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         else:
             earnings_section = "## Earnings Analysis\nNo recent earnings filings available."
 
-        invested = total_value - cash_balance
-        invested_pct = (invested / total_value * 100) if total_value else 0
+        # Account Status "Invested" reads the SAME `book_exposure` the
+        # PMFacts Book State block and the pre-trade `macro_exposure_deviation`
+        # advisory read. It used to be `total_value - cash_balance`, a third
+        # definition of the same quantity inside this one prompt.
+        #
+        # That subtraction is not merely a different basis, it is wrong in a
+        # specific direction: equity is `cash + sum(market_value)` and a held
+        # short's `market_value` is NEGATIVE, so every short made the book
+        # look LESS invested to the PM — which then deployed more. Deployment
+        # is unsigned: shorting is capital put to work.
+        book = _book_exposure(positions, total_value)
+        invested = book.deployed_usd
+        invested_pct = book.deployed_pct
+        net_exposure_pct = book.net_pct
 
         # Margin policy — when allow_margin is False and cash is already
         # negative, de-lever SELLs are mandatory this session. The risk
@@ -751,7 +777,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         return f"""## Account Status
 - Total Value: ${total_value:,.2f}
 - Cash Balance: ${cash_balance:,.2f} (deployable this session, no margin){reserve_line}
-- Invested: ${invested:,.2f} ({invested_pct:.1f}%)
+- Invested: ${invested:,.2f} ({invested_pct:.1f}% of equity — capital at work, unsigned and un-leveraged; a short counts its notional, not a credit)
+- Net direction: {net_exposure_pct:+.1f}% of equity (leverage-aware and signed; negative = net short). This is NOT the number macro's target is set against — `Invested` is.
 
 ## Current Positions (with entry context + signal trajectory)
 {positions_text}
@@ -1078,7 +1105,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         pos = held.get(symbol)
         current_weight = 0.0
         if pos is not None and total_value > 0:
-            current_weight = pos.market_value * _gross_multiplier(symbol) / total_value * 100
+            current_weight = weight_pct_of(pos.market_value, symbol, total_value)
         if target.risk_allocation_pct is not None:
             if target.is_close:
                 return "sell"

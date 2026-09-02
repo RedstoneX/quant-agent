@@ -31,6 +31,7 @@ from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, Position, PositionAction, PositionReview,
 )
+from src.risk.metrics import unrealized_pnl_pct
 
 logger = logging.getLogger(__name__)
 
@@ -177,18 +178,15 @@ class PositionReviewerAgent(BaseAgent):
 
         # Positions block — surfaces deterministic metrics alongside the raw numbers.
         def _pnl_pct(p: Position) -> str:
-            # Stage 3 (shorts): `p.qty` (and therefore `cost = avg_entry *
-            # qty`) is NEGATIVE for a held short — Alpaca's own sign
-            # convention, mirrored throughout this codebase (see
-            # tests/test_shorts_countable.py). `unrealized_pnl` is signed the
-            # same way, so `pnl / cost` — dividing by a NEGATIVE cost basis —
-            # flips the sign of every short's P&L%: a winning short
-            # (unrealized_pnl > 0, price fell) rendered as a NEGATIVE
-            # percentage, reading as a loss to the reviewer. The denominator
-            # must be the magnitude of capital at risk, not its sign; the
-            # sign the reviewer needs comes from `unrealized_pnl` alone.
-            cost = abs(p.avg_entry * p.qty)
-            return f"{p.unrealized_pnl / cost * 100:.1f}%" if cost else "N/A"
+            # `unrealized_pnl_pct` is the ONE definition of this quantity
+            # (src/risk/metrics.py) — the reviewer, the PM's position lines,
+            # `_build_position_facts`, the PM facts drift check and evening's
+            # thesis-health context all now render the same number. The
+            # denominator is |avg_entry x qty|, because a held short's `qty`
+            # is negative (Alpaca's convention) and a signed cost basis flips
+            # every short's P&L% into reading as its own opposite.
+            pct = unrealized_pnl_pct(p)
+            return f"{pct:.1f}%" if pct is not None else "N/A"
 
         positions_lines = []
         for p in positions:

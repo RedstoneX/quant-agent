@@ -180,7 +180,9 @@ That example is the case this field exists for. On 2026-09-01 the same situation
 
 ### `scale_all_buys` — portfolio-level sizing control (0.0-1.0)
 
-Use this when the macro backdrop (or a `macro_exposure_deviation` advisory from the hard engine) says PM is **too aggressive overall**, rather than wrong on any specific name. Multiplies every BUY's AND every SHORT's `allocation_pct` uniformly after per-symbol `modifications` are applied — both open new risk, so one knob covers opening new exposure on either side. SELL, COVER and HOLD are never scaled: de-risking is always allowed through.
+Use this when the macro backdrop (or a `macro_exposure_deviation` advisory from the hard engine) says PM is **too aggressive overall**, rather than wrong on any specific name.
+
+The `macro_exposure_deviation` advisory reports `Projected invested N%` — CAPITAL AT WORK: unsigned and un-leveraged, so a short counts its own notional and a 3x fund counts its sticker price. That is the basis macro's `target_invested_pct` is set on, and it is the SAME number the portfolio manager was shown before it sized. The `net direction` figure in the same message is the separate, signed and leverage-aware question of which way the book leans (negative = net short); it is reported so you can see the direction, and it is never what the deviation is measured on. Multiplies every BUY's AND every SHORT's `allocation_pct` uniformly after per-symbol `modifications` are applied — both open new risk, so one knob covers opening new exposure on either side. SELL, COVER and HOLD are never scaled: de-risking is always allowed through.
 
 - `1.0` (default) = no change
 - `0.7` = cut all new BUYs/SHORTs to 70% of proposed size
