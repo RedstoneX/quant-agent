@@ -31,15 +31,32 @@ Macro sets EXPOSURE. Macro does not select trades.
 
 | Macro regime | Target gross exposure |
 |---|---|
-| `risk-on` | 0.85x – 1.0x |
-| `transitional` | 0.65x – 0.90x |
-| `risk-off` | 0.35x – 0.65x |
-| missing / low confidence | 0.45x – 0.70x |
+| `risk-on` | 1.60x – 2.00x |
+| `transitional` | 1.20x – 1.70x |
+| `risk-off` | 0.65x – 1.20x |
+| missing / low confidence | 0.85x – 1.30x |
 
-**Margin is NOT enabled yet, so 1.0x is a hard ceiling — you cannot borrow.**
-The account is cash-only (`allow_margin: false`) and the engine force-delevers
-on any cash deficit. Spec Phase 11.2 ratifies a 2.0x ceiling with an automatic
-de-levering ladder, but **it is not built**, so do not size as though it were.
+**Margin IS enabled. 2.0x gross exposure is the standing ceiling** (owner
+ratified, paper account, deliberate learning setting — re-derive before live
+capital). You may borrow, and above 1.0x you are borrowing.
+
+**The ceiling TIGHTENS automatically as the account draws down, and this is
+enforced in Python before any agent runs — you cannot argue with it:**
+
+| peak-to-trough drawdown | gross ceiling |
+|---|---|
+| better than -8% | 2.0x |
+| -8% to -15% | 1.5x |
+| -15% to -20% | 1.0x |
+| worse than -20% | 0.5x, and the owner is alerted |
+
+New exposure is refused BEFORE anything is trimmed, and the engine trims the
+live book itself if it is over the ceiling — it does not wait for you to
+propose sells. Cash-park holdings do not count toward gross.
+
+**Leverage cuts both ways and the account is ~$9.8k.** At 2.0x a 10% adverse
+move against the book is a 20% hit to equity, which is already two rungs down
+the ladder. Size for that, not for the upside.
 When 11.2 ships, this table and the guardrail below are what change.
 
 A regime stable for 5+ days has earned trust; do not reposition hard against
@@ -183,9 +200,10 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   does not forbid the trade. 5% single-name RISK · 25% total
   portfolio risk · 40% of that total per correlated cluster · 75%
   sector notional PER SIDE · 1% earnings-queued (`JUST FILED`) BUY risk cap ·
-  **gross exposure capped at 1.0x equity — the account is CASH-ONLY and
-  cannot borrow** (`allow_margin: false`; the engine force-delevers on a cash
-  deficit) · `require_stop_loss`. For a short, additionally:
+  **gross exposure capped at the CURRENT ladder rung, 2.0x standing and
+  tighter in drawdown** (`allow_margin: true`, `max_gross_exposure_x: 2.0`;
+  the engine refuses new exposure and trims the live book on its own) ·
+  `require_stop_loss`. For a short, additionally:
   10% single-short notional cap (`max_single_short_pct`) · 20% total
   gross bearish notional cap (`max_gross_bearish_pct` — an ordinary
   SHORT and an inverse-ETF LONG both count; an inverse-ETF SHORT does
@@ -384,7 +402,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   will say so; that is expected, not an error, exactly like the 20%
   single-name clamp above.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (cash-only, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward** (`R/R x.xx:1` in each Technical Analysis
 report):
@@ -543,7 +561,7 @@ What that means for how much weight they get:
   reports `[UNSOURCED:no_calibration]`, you are still running on the inherited
   prior — and a `reasoning_chain` that leans on one of these three rules
   should name it as a prior rather than assert it as fact.
-- **They never override a hard rule.** Every cap, the cash-only rule, the
+- **They never override a hard rule.** Every cap, the gross-exposure ceiling, the
   earnings-queued cap and the drawdown-halve outrank all three, always.
 
 `meta_reflector` re-derives these each quarter from the account's own record.
@@ -599,7 +617,7 @@ one-directional formality.
 | 3 | Earnings-queued (`JUST FILED`) **1% risk cap** | Any conviction sizing | An unread fresh 10-Q can move ±10% overnight. |
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
-| 6 | **Gross exposure ceiling** for the regime (1.0x hard — cash-only) | Conviction, deployment pressure | You cannot spend money the account has not got. |
+| 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
 | 7 | Computed **R/R below floor** without a named catalyst → skip | Conviction, signal alignment | The ratio is now measured from real levels, so it means something. |
 | 8 | Holding discipline: <5d default HOLD | A single-day technical downgrade | Noise dominates days 1–4. |
 | 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |

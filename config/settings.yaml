@@ -403,7 +403,13 @@ risk:
   # beyond available cash. When false (default) the risk engine hard-blocks
   # any BUY that would drive cash negative, and the PM + midday prompts get
   # a mandatory de-lever directive when cash is already negative.
-  allow_margin: false
+  # ENABLED 2026-09-02, owner ratified: "change to two x. We're pushing it.
+  # This is important. Remember, it's still paper trading. We're not even in
+  # beta yet." Deliberately flipped only AFTER the gross-exposure ceiling and
+  # the de-levering ladder were merged and verified, which was the ratified
+  # sequencing. The PM prompt's exposure table moved to 2.0x in the same
+  # commit — the two must never diverge.
+  allow_margin: true
   # --- Margin interest tracker (spec §11.2, 2026-09-01) ------------------
   # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
   # is 4.75%); kept here so it can be corrected without a code change.
