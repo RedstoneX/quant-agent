@@ -135,11 +135,12 @@ class ConstructorConfig:
     # `risk.short_gap_risk_multiple`.
     short_gap_risk_multiple: float = 1.5
     # Spec §9.4 "agreement earns size". Ceiling on a risk-based target's
-    # `risk_allocation_pct`, indexed by the number of independent seats
-    # whose canonical stance is directionally aligned with the target
-    # (see `src/risk/rules.py::count_aligned_sources` /
-    # `agreement_ceiling_for_count`, and `RiskConfig.agreement_ceiling_pct`
-    # in `src/config.py` for the measurement behind these numbers).
+    # `risk_allocation_pct`, indexed by the SIGNED source score — aligned
+    # seats less opposed ones (see `src/risk/rules.py::signed_source_score` /
+    # `agreement_ceiling_for_score`, and `RiskConfig.agreement_ceiling_pct`
+    # in `src/config.py` for the measurement behind these numbers). Entry i
+    # prices a net score of i+1; a net score at or below zero has no rung and
+    # refuses the target outright.
     # Applied in `_plan_risk_targets`, strictly BEFORE `allocate_risk_budget`
     # and the single-name clamps below — it can only ever REDUCE what a
     # target receives, never raise it, and never past `risk_budget_pct`.
@@ -541,16 +542,19 @@ class PortfolioConstructor:
         book is bounded by construction rather than by a later veto.
 
         Spec §9.4: before EITHER of the above, each request is additionally
-        ceilinged by how many independent sources agree with the target's
-        direction (`evidence_registry` + `count_aligned_sources`). This
-        composes with, and is applied strictly BEFORE, the envelope clamp
-        and `allocate_risk_budget` — a reduction only, never a multiplier:
-        it can only ever refuse size a request did not earn agreement for.
+        ceilinged by the SIGNED source score — aligned seats minus opposed
+        ones (`evidence_registry` + `signed_source_score`). This composes
+        with, and is applied strictly BEFORE, the envelope clamp and
+        `allocate_risk_budget` — a reduction only, never a multiplier: it can
+        only ever refuse size a request did not earn agreement for. A score
+        at or below zero refuses the request entirely, so the target produces
+        no order at all; a held position is left exactly where it is, because
+        refusing to BUY is not a decision to SELL.
         """
         from src.risk.budget import RiskRequest, allocate_risk_budget
         from src.risk.rules import (
-            _gross_multiplier, agreement_ceiling_for_count, count_aligned_sources,
-            count_opposing_sources,
+            _gross_multiplier, agreement_ceiling_for_score, count_aligned_sources,
+            count_opposing_sources, signed_source_score,
         )
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
@@ -568,8 +572,10 @@ class PortfolioConstructor:
         # between PM's stated allocation and the constructed order reads as
         # PM contradicting itself (2026-08-20 incident), not as arithmetic.
         agreement_notes: dict[str, str] = {}
-        # §9.4 dissent, recorded alongside — never subtracted. See the
-        # opposing-count block below.
+        # §9.4 dissent. Since 2026-09-02 it IS subtracted (the ceiling reads
+        # the signed score); this note records the split that produced the
+        # score, so an order sized at the 2-seat rung on 3-for/1-against
+        # evidence says so rather than looking like a 2-source idea.
         dissent_notes: dict[str, str] = {}
 
         for target in targets:
@@ -605,30 +611,34 @@ class PortfolioConstructor:
             # missing registry is not evidence of disagreement.
             agreement_count: int | None = None
             opposing_count: int | None = None
+            source_score: int | None = None
             if evidence_registry is not None:
                 sources = evidence_registry.get(sym.upper(), {})
                 # §9.4 freshness: a stance the caller has judged too old is
                 # dropped from the TALLY only. It stays in `sources`, so it is
                 # still coverage `validate_grounding` recognises — this can
-                # lower the ceiling, never raise it.
+                # lower the ceiling, never raise it. One gate, both sides: a
+                # stance too stale to corroborate is too stale to dissent.
                 ignored = (stale_sources or {}).get(sym.upper())
                 agreement_count = count_aligned_sources(
                     sym, sources, target.direction, ignored_sources=ignored,
                 )
-                # Dissent, counted but NOT priced. §9.4 pays for agreement and
-                # says nothing about opposition, so a seat arguing the other
-                # way scores the same zero as a seat with no view — the desk
-                # could size a name one of its own analysts was bearish on and
-                # leave no number behind saying so. Recorded here, on every
-                # sized target, so how often that happens is measurable before
-                # anyone decides what it should cost. Feeding it into
-                # `agreement_ceiling_for_count` would be a risk-rule change
-                # and needs the owner, not this function.
                 opposing_count = count_opposing_sources(
                     sym, sources, target.direction, ignored_sources=ignored,
                 )
-                agreement_ceiling = agreement_ceiling_for_count(
-                    self.cfg.agreement_ceiling_pct, agreement_count,
+                # 2026-09-02: the ceiling reads the SIGNED score, not the
+                # aligned count. Before this, a seat that stayed silent, a
+                # seat that rated neutral and a seat that actively disagreed
+                # all contributed the same zero, so the desk could size a name
+                # at the 3-seat rung while one of its own analysts argued the
+                # other way. Netting the dissent off is the whole change —
+                # there is deliberately NO separate veto rule, because that
+                # would charge the same dissenter twice.
+                source_score = signed_source_score(
+                    sym, sources, target.direction, ignored_sources=ignored,
+                )
+                agreement_ceiling = agreement_ceiling_for_score(
+                    self.cfg.agreement_ceiling_pct, source_score,
                 )
                 if ignored:
                     gated = sorted(s for s in ignored if s in sources)
@@ -640,43 +650,70 @@ class PortfolioConstructor:
                             sym, ", ".join(gated), agreement_count,
                         )
                 logger.info(
-                    "Constructor: %s agreement %d aligned / %d opposed "
-                    "(direction=%s, %d source(s) with coverage)",
-                    sym, agreement_count, opposing_count,
+                    "Constructor: %s agreement %d aligned / %d opposed = "
+                    "net %+d (direction=%s, %d source(s) with coverage)",
+                    sym, agreement_count, opposing_count, source_score,
                     target.direction, len(sources),
                 )
             else:
                 agreement_ceiling = float("inf")
             requested_pct = min(envelope_capped, agreement_ceiling)
+            if requested_pct <= 0.0:
+                # Net evidence at or below zero: the schedule has no rung for
+                # this and `agreement_ceiling_for_score` returned 0.0. Drop
+                # the target entirely rather than sizing it at zero — a
+                # zero-weight RiskPlan reads to the delta loop as "PM wants
+                # this position CLOSED", so letting a 0% request through would
+                # turn a refusal to open into a forced liquidation of whatever
+                # is already held. Refusing to BUY is not a decision to SELL.
+                # The two dels are load-bearing, not tidiness: the sizing loop
+                # below iterates `priced` and looks each symbol up in
+                # `requests`, which this target never joins.
+                logger.warning(
+                    "Constructor: %s produces no order — %d aligned / %d "
+                    "opposed = net %+d independent source(s) for this %s. "
+                    "§9.4 prices a signed sum and there is no rung at or "
+                    "below zero: the evidence does not net out in favour of "
+                    "the trade. Any existing position is left untouched.",
+                    sym, agreement_count, opposing_count, source_score,
+                    target.direction,
+                )
+                del priced[sym]
+                del directions[sym]
+                continue
             if agreement_ceiling < envelope_capped:
                 logger.info(
                     "Constructor: %s risk capped by the agreement ceiling "
-                    "(%.2f%% → %.2f%%; %d independent source(s) aligned "
-                    "with this %s)",
-                    sym, envelope_capped, requested_pct, agreement_count,
+                    "(%.2f%% → %.2f%%; net %+d independent source(s) for "
+                    "this %s)",
+                    sym, envelope_capped, requested_pct, source_score,
                     target.direction,
                 )
                 agreement_notes[sym] = (
                     f"[constructor: {sym} risk capped to {requested_pct:.2f}% "
-                    f"by the agreement ceiling — only {agreement_count} "
-                    f"independent source(s) align with this {target.direction}, "
+                    f"by the agreement ceiling — {agreement_count} aligned "
+                    f"less {opposing_count} opposed is a net {source_score:+d} "
+                    f"independent source(s) for this {target.direction}, "
                     f"below the {envelope_capped:.2f}% the envelope alone would "
                     "allow. More independent confirmation earns more of the "
-                    "risk budget; this idea earned less. Deterministic, not "
+                    "risk budget, and a seat arguing the other way subtracts "
+                    "from it; this idea earned less. Deterministic, not "
                     "PM inconsistency]"
                 )
             if opposing_count:
                 # Carried into the order's reasoning (see `RiskPlan.note`) so
                 # the AI Risk Manager reads it and it lands in the persisted
-                # proposed_order evidence — a dissent count nobody can query
-                # is not a measurement.
+                # proposed_order evidence. The SPLIT, not just the net: an
+                # order sized at the 2-seat rung on 3-for/1-against evidence
+                # is a different idea from one with a flat 2 aligned and no
+                # dissent, and the note is the only place that survives.
                 dissent_notes[sym] = (
                     f"[constructor: {sym} — {opposing_count} independent "
                     f"source(s) took the OPPOSITE side of this "
-                    f"{target.direction} ({agreement_count} aligned). This did "
-                    "NOT reduce the size: §9.4 prices agreement only. Recorded "
-                    "so the cost of overriding a dissenting seat is "
-                    "measurable]"
+                    f"{target.direction} ({agreement_count} aligned, net "
+                    f"{source_score:+d}). §9.4 prices the SIGNED sum since "
+                    "2026-09-02, so this dissent HAS already been subtracted "
+                    "from the size above — it is not an unpriced warning]"
                 )
             requests.append(RiskRequest(sym, requested_pct))
 

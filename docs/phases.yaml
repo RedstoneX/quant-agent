@@ -785,8 +785,16 @@ phases:
         note: "§9.3: targets carrying unadjudicated conflicts are dropped before grounding (deterministic filter, punishment fits offence)"
       - kind: symbol_in_file
         path: "src/risk/rules.py"
-        symbol: "def agreement_ceiling_for_count"
-        note: "§9.4: indexed ceiling on risk_allocation_pct by independent source alignment count"
+        symbol: "def agreement_ceiling_for_score"
+        note: "§9.4: indexed ceiling on risk_allocation_pct by the SIGNED independent-source score (2026-09-02; replaced agreement_ceiling_for_count). A net score at or below zero has no rung and refuses the target."
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "def signed_source_score"
+        note: "§9.4: S = aligned seats minus opposed seats, unit weight each. The quantity the ceiling is indexed by."
+      - kind: symbol_in_file
+        path: "src/risk/rules.py"
+        symbol: "SEAT_WEIGHT"
+        note: "§9.4: every seat enters the signed sum at unit magnitude. A derived weight needs a measured sample the desk does not have; tests/test_signed_dissent.py enforces the pin."
       - kind: symbol_in_file
         path: "src/risk/rules.py"
         symbol: "def count_aligned_sources"
@@ -806,11 +814,11 @@ phases:
       - kind: symbol_in_file
         path: "src/risk/rules.py"
         symbol: "def count_opposing_sources"
-        note: "§9.4: how many seats took the OPPOSITE side. Surfaced in the PM prompt, the constructor log and the order note; prices nothing. Making dissent subtract is an open owner decision."
+        note: "§9.4: how many seats took the OPPOSITE side. Surfaced in the PM prompt, the constructor log and the order note, and SUBTRACTED from the aligned count by signed_source_score since 2026-09-02."
       - kind: setting_present
         path: "config/settings.yaml"
         key: "risk.agreement_ceiling_pct"
-        note: "§9.4: indexed ceiling schedule applied by agreement count (default [3.0, 4.0, 5.0, 5.0, 5.0]%, not pinned — expected to be re-tuned as agreement rises)"
+        note: "§9.4: indexed ceiling schedule applied by the signed source score (default [3.0, 4.0, 5.0, 5.0, 5.0]%, not pinned — expected to be re-tuned as agreement rises)"
       - kind: test_exists
         path: "tests/test_conflict_adjudication.py"
         test: "test_unadjudicated_conflict_drops_only_its_own_target"
@@ -841,8 +849,16 @@ phases:
         note: "§9.4 freshness: the gate must not delete coverage — validate_grounding fails the WHOLE session on any error, so removing the stance would turn a stale view into a hard block instead of a size reduction."
       - kind: test_exists
         path: "tests/test_agreement_sizing.py"
-        test: "test_dissent_does_not_move_the_size_across_a_ceiling_rung"
-        note: "§9.4: dissent is recorded and deliberately does NOT subtract. Uses 2-aligned/1-opposed because 1-aligned/1-opposed cannot detect a penalty — the schedule prices 0 and 1 identically."
+        test: "test_dissent_moves_the_size_down_a_ceiling_rung"
+        note: "§9.4: dissent SUBTRACTS (2026-09-02). Uses 2-aligned/1-opposed because 1-aligned/1-opposed cannot distinguish a rung drop from a block."
+      - kind: test_exists
+        path: "tests/test_signed_dissent.py"
+        test: "test_unanimous_cases_reproduce_the_old_aligned_count_ceiling_exactly"
+        note: "§9.4: the acceptance criterion for signing the sum — with nothing opposed, the new rule must price every rung exactly as the aligned-count rule did, so the ratified risk envelope is unchanged."
+      - kind: test_exists
+        path: "tests/test_signed_dissent.py"
+        test: "test_every_seat_enters_the_signed_sum_at_unit_magnitude"
+        note: "§9.4: the mechanical pin on seat weights. A confidence weight may only be DERIVED from measured history (>= 20 resolved calls); the book has 7 closed equity round-trips, so any weight today would be a chosen one."
       - kind: manual
         note: "Sequencing note in the spec itself: Phase 9 depends on Phase 2b (risk-based sizing) being live, because 'agreement earns size' requires size to already be expressed as risk. Phase 2b is DONE AND LIVE (see phase_2), which is what unblocked §9.1/§9.2 landing, and in turn §9.3/§9.4."
       - kind: file_exists

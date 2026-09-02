@@ -263,12 +263,20 @@ broken row is absence of evidence, not a break-even call.
 
 **Credit is raw signed R, unweighted (owner decision, 2026-08-31).** An
 earlier design multiplied each analyst's credit by its own declared conviction
-(high 1.0 / medium 0.6 / low 0.3). That was removed: it is circular (the ledger
-exists to find out whether declared confidence predicts anything, and weighting
-by it assumes the answer) and it double-counts (a confident call already earns a
-larger position through the §9.4 agreement ceiling, and a larger position
-already produces a proportionally larger R). `ScorecardIdeaAnalyst.weight` is
-gone from the response.
+(high 1.0 / medium 0.6 / low 0.3). That was removed because it is circular: the
+ledger exists to find out whether declared confidence predicts anything, and
+weighting by it assumes the answer. `ScorecardIdeaAnalyst.weight` is gone from
+the response.
+
+A second reason was originally given — that it double-counts, because "a
+confident call already earns a larger position through the §9.4 agreement
+ceiling". **That was factually wrong and was corrected on 2026-09-02**: §9.4
+collapses every seat to a polarity through `stance_is_aligned` and nets them at
+unit weight, so a declared conviction has never entered the sizing path at all.
+The circularity reason stands alone, and is now joined by a sample reason —
+deriving a weight needs `_CONVICTION_OUTCOME_MIN_N` (20) resolved calls per
+seat and the book has 7 closed equity round-trips. See
+`src/conviction_ledger.py` for the full correction.
 
 What replaced it is `AnalystScorecardItem.by_confidence`
 (`ScorecardConfidenceBreakdown`): the same settled calls split by the confidence

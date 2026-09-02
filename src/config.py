@@ -607,18 +607,24 @@ class RiskConfig(BaseModel):
     # allocation opens a SMALLER short than an equivalent long.
     short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
     # --- Spec §9.4 "agreement earns size" --------------------------------
-    # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the
-    # number of independent seats (of technical/news/earnings/macro/
-    # smart_money) whose canonical stance is directionally aligned with
-    # the target's proposed action — see `src/risk/rules.py::
-    # count_aligned_sources` / `agreement_ceiling_for_count`. Index 0 is
-    # the ceiling for 1 (or 0 — see `agreement_ceiling_for_count`) aligned
-    # source, index 4 is for 5. A REDUCTION only: applied in the
-    # constructor strictly BEFORE `allocate_risk_budget` and the
+    # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the SIGNED
+    # score over the independent seats (of technical/news/earnings/macro/
+    # smart_money): those whose canonical stance is directionally aligned
+    # with the target's proposed action, MINUS those opposed to it, at unit
+    # weight each — see `src/risk/rules.py::signed_source_score` /
+    # `agreement_ceiling_for_score`. Index 0 is the ceiling for a net score
+    # of 1, index 4 for a net of 5; a net at or below zero has no rung and
+    # refuses the target outright (2026-09-02). A REDUCTION only: applied in
+    # the constructor strictly BEFORE `allocate_risk_budget` and the
     # single-name clamps, so it can shrink what a target receives but can
     # never grow it past what the PM asked for or past
     # `max_position_risk_pct` (enforced below and again at the point of
     # use).
+    #
+    # UNANIMOUS cases are unchanged by the 2026-09-02 signing: with nothing
+    # opposed the net score IS the aligned count, so every rung below still
+    # prices exactly what it priced before, and the measurement that chose
+    # these numbers still stands.
     #
     # Measured against production `agent_logs` 2026-08-25 through 08-28 —
     # the pre-nomination "technical-analysis bot" era the spec describes,
@@ -697,9 +703,14 @@ class RiskConfig(BaseModel):
         if len(schedule) != 5:
             raise ValueError(
                 "risk.agreement_ceiling_pct must have exactly 5 entries "
-                f"(1..5 aligned sources); got {len(schedule)}"
+                f"(net scores 1..5); got {len(schedule)}"
             )
         if any(v <= 0 for v in schedule):
+            # 0.0 is not a configurable rung — it is the value
+            # `agreement_ceiling_for_score` returns for a net score at or
+            # below zero, i.e. the block. A schedule entry of 0 would make a
+            # POSITIVE net score unbuyable, which is a different rule than
+            # anything ratified here.
             raise ValueError("risk.agreement_ceiling_pct entries must be > 0")
         if any(v > self.max_position_risk_pct for v in schedule):
             raise ValueError(

@@ -265,6 +265,12 @@ def sector_allowance_pct(
 
 # --- Spec §9.4 "agreement earns size" -------------------------------------
 #
+# Since 2026-09-02 the quantity that earns size is a SIGNED SUM, not a
+# headcount: `signed_source_score` nets opposed seats off aligned ones and
+# `agreement_ceiling_for_score` prices the result. The two counts below are
+# still computed and still reported — a reader wants "2 for, 1 against", not
+# only "net +1" — but neither of them sizes anything on its own.
+#
 # Shared polarity vocabulary. `PortfolioManagerAgent.validate_grounding`
 # (src/agents/portfolio_manager.py) uses this to decide whether a
 # provenance claim's stance "supports" a target's direction; the
@@ -380,16 +386,10 @@ def count_opposing_sources(
     vocabulary (inverse-ETF macro flip included). Neutral and mixed stances
     are in NEITHER count — a seat with no view took no side.
 
-    **This number sizes nothing.** §9.4 pays for agreement and is silent on
-    dissent: a bearish earnings stance on a long contributes 0 to the
-    agreement count, which is arithmetically identical to neutral and to no
-    coverage at all, and nothing subtracts. That was invisible rather than
-    decided — the desk could size up a name one of its own seats was
-    actively bearish on and no number anywhere said so. This function exists
-    to make that visible and countable (PM prompt, constructor log, order
-    note) so the owner can decide what, if anything, dissent should cost.
-    Wiring it into the ceiling would be a risk-rule change and needs a
-    ratified decision first.
+    Reported on its own (PM prompt, constructor log, order note) as well as
+    consumed by `signed_source_score`, because "2 for, 1 against" and
+    "net +1" are different facts about the same evidence and a reader wants
+    both. The SIZING consumer is the score, never this count alone.
     """
     return _count_sources(
         symbol, sources,
@@ -398,25 +398,106 @@ def count_opposing_sources(
     )
 
 
-def agreement_ceiling_for_count(schedule: list[float] | tuple[float, ...], count: int) -> float:
-    """The risk-allocation ceiling for `count` aligned sources.
+#: §9.4 signed sum. Every seat enters the score at UNIT magnitude — +1 when it
+#: is aligned with the proposed direction, -1 when it is opposed, 0 when it is
+#: neutral or silent. Equal weighting is not a placeholder for a better number:
+#: it is what published composite-index construction literally does, and what
+#: Grinold & Kahn's `alpha = volatility x IC x score` reduces to when per-source
+#: skill is equal.
+#:
+#: **Do not replace this with a per-seat weight table.** `src/conviction_ledger.py`
+#: records the desk's standing rule (owner, 2026-08-31): a confidence weight may
+#: only be DERIVED from an analyst's own measured history, never chosen up front,
+#: and `_CONVICTION_OUTCOME_MIN_N` (`src/storage/db.py`) puts the minimum sample
+#: at 20 resolved calls. The book has 7 closed equity round-trips, all carrying
+#: conviction NULL — there is no sample to derive from, so any weight introduced
+#: today would be a chosen one. `tests/test_signed_dissent.py` enforces this
+#: mechanically rather than by memory.
+SEAT_WEIGHT: int = 1
 
-    `schedule[i]` is the ceiling for `i + 1` aligned sources. A count of
-    zero is treated exactly like one: the technical analysis mandatory for
-    any BUY/SHORT (`validate_grounding`'s "lacks a current-run Technical
-    analysis" rule) is always itself a registry entry, but it can rate
-    neutral or opposite to what the PM proposes — so zero aligned sources
-    is a real case, not a hypothetical one, and it is not punished any
-    harder than one. A count past the end of the schedule uses the last
-    (least restrictive) entry — this book has never measured more than
-    `len(schedule)` independent seats agreeing on one symbol, and the
-    ratified per-trade envelope (`RiskConfig.max_position_risk_pct`) is
-    the hard ceiling regardless, enforced independently of this schedule.
+
+def signed_source_score(
+    symbol: str,
+    sources: dict[str, str],
+    direction: str,
+    *,
+    ignored_sources: frozenset[str] | set[str] | None = None,
+) -> int:
+    """`S` — the §9.4 signed sum: aligned seats minus opposed seats.
+
+    `S = sum(s_i)` over the five evidence seats, where `s_i` is `+SEAT_WEIGHT`
+    for a seat pointing the way `direction` proposes, `-SEAT_WEIGHT` for one
+    pointing the other way, and 0 for a seat that is neutral or absent.
+
+    Expressed as the DIFFERENCE of the two counts rather than as a second
+    traversal, on purpose: the aligned and opposed counts are what the PM is
+    shown and what the order note records, so the number that sizes the trade
+    is arithmetically the same number the reader was given. A second walk over
+    `sources` here would be a second definition of "aligned" — the exact defect
+    `stance_is_aligned`'s one-vocabulary comment exists to prevent.
+
+    WHAT THIS REPLACED (2026-09-02). §9.4 used to ceiling size on the aligned
+    count alone, so a seat that stayed SILENT, a seat that rated NEUTRAL and a
+    seat that ACTIVELY DISAGREED all contributed exactly zero. `three aligned`
+    and `three aligned, one against` bought identical size. No published
+    composite methodology counts only agreers: a disagreeing input enters a
+    composite as a negative number in a signed sum, and that is what this is.
+    """
+    return SEAT_WEIGHT * (
+        count_aligned_sources(
+            symbol, sources, direction, ignored_sources=ignored_sources,
+        )
+        - count_opposing_sources(
+            symbol, sources, direction, ignored_sources=ignored_sources,
+        )
+    )
+
+
+def agreement_ceiling_for_score(schedule: list[float] | tuple[float, ...], score: int) -> float:
+    """The risk-allocation ceiling for a signed source score of `score`.
+
+    `schedule[i]` is the ceiling for a net score of `i + 1`. UNANIMOUS
+    evidence therefore prices exactly as it did before the signed sum landed
+    — with nothing opposed, `S` IS the aligned count, so `S=1` reads
+    `schedule[0]`, `S=2` reads `schedule[1]`, and so on. The existing risk
+    envelope is unchanged for every case the old rule and this one agree
+    about; what moved is only the cases where a seat was arguing the other
+    way. Three aligned against one opposed is `S=2` and sizes at the 2-seat
+    rung, because that is what the arithmetic says, not because a separate
+    penalty was added.
+
+    **A score at or below zero returns 0.0, which is a block** — the request
+    is refused outright rather than sized at the strictest rung. This is not
+    a veto rule bolted on top of the ceiling; it is the same schedule lookup
+    running off the bottom of its own domain. The schedule's first entry
+    prices ONE net seat of evidence, and a book with no net evidence for a
+    direction has not earned a position in it. Charging the dissenter twice —
+    once by netting it off `S` and again through a standalone veto — is
+    exactly what this shape avoids.
+
+    NOTE this is a behaviour change for `S = 0` with nothing opposed, i.e. a
+    symbol whose every seat is neutral. The old `agreement_ceiling_for_count`
+    deliberately priced a zero count identically to one ("not punished any
+    harder than one"). Under a signed sum it cannot: zero net evidence and one
+    net seat of evidence are different numbers, and the rung that prices the
+    second cannot also price the first. Measured over the 28 sized targets in
+    the 2026-08-28..2026-09-02 snapshot, no target ever had zero aligned
+    sources; every case the change actually reaches is a real dissent.
+
+    A score past the end of the schedule uses the last (least restrictive)
+    entry — this book has never measured more than `len(schedule)` independent
+    seats agreeing on one symbol, and the ratified per-trade envelope
+    (`RiskConfig.max_position_risk_pct`) is the hard ceiling regardless,
+    enforced independently of this schedule.
     """
     if not schedule:
-        return float("inf")  # no schedule configured — this ceiling is inert
-    index = max(0, min(count, len(schedule)) - 1)
-    return schedule[index]
+        # No schedule configured — this ceiling is inert, INCLUDING its block.
+        # An unconfigured dial must not silently become the strictest possible
+        # rule; a desk that switched the schedule off did not ask for a veto.
+        return float("inf")
+    if score <= 0:
+        return 0.0
+    return schedule[min(score, len(schedule)) - 1]
 
 
 # --- Spec §11.2 — gross exposure, its ceiling, and the de-levering ladder --
@@ -471,7 +552,7 @@ def _positive_float(value, default: float = 0.0) -> float:
     MagicMock config fixture auto-creates a child mock for any attribute
     access, and `mock > 0` raises rather than returning False. A ceiling that
     cannot be read is INERT (default 0.0 switches the rule off) rather than
-    blocking, matching `agreement_ceiling_for_count`'s "no schedule
+    blocking, matching `agreement_ceiling_for_score`'s "no schedule
     configured — this ceiling is inert". Production config always carries the
     validated field, so this path is a test/misconfiguration guard only.
     """

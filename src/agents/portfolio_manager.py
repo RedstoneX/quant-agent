@@ -20,6 +20,7 @@ from src.risk.rules import (
     count_aligned_sources,
     count_opposing_sources,
     position_weight_pct,
+    signed_source_score,
     stance_is_aligned,
     weight_pct_of,
 )
@@ -333,12 +334,13 @@ class PortfolioManagerAgent(BaseAgent):
         # of a different number. See 2026-08-20/Phase 2b's incident class:
         # a silent clamp the PM's own stated reasoning disagreed with.
         #
-        # The OPPOSED count sizes nothing (see
-        # `src/risk/rules.py::count_opposing_sources`). It is here because a
-        # seat arguing the other way was previously indistinguishable from a
-        # seat with no view and from no coverage at all — the PM could size a
-        # name its own earnings or macro seat was bearish on and read
-        # "1 aligned" as the whole story.
+        # The NET of the two counts is what sizes the trade (2026-09-02, see
+        # `src/risk/rules.py::signed_source_score`). Both halves are shown
+        # anyway: "3 aligned, 1 opposed" and "net +2" are different facts, and
+        # a PM that only saw the net could not tell a thin unanimous idea from
+        # a broad contested one. Showing the net is not optional — a ceiling
+        # the PM cannot predict is the 2026-08-20 incident class, where the
+        # constructor silently sized against the PM's own stated reasoning.
         def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
             ignored = stale_sources.get(symbol)
             stale_note = (
@@ -350,9 +352,13 @@ class PortfolioManagerAgent(BaseAgent):
             long_against = count_opposing_sources(symbol, sources, "long", ignored_sources=ignored)
             short_for = count_aligned_sources(symbol, sources, "short", ignored_sources=ignored)
             short_against = count_opposing_sources(symbol, sources, "short", ignored_sources=ignored)
+            long_net = signed_source_score(symbol, sources, "long", ignored_sources=ignored)
+            short_net = signed_source_score(symbol, sources, "short", ignored_sources=ignored)
             return (
-                f"- {symbol}: {long_for} aligned / {long_against} opposed if long, "
-                f"{short_for} aligned / {short_against} opposed if short "
+                f"- {symbol}: {long_for} aligned / {long_against} opposed = "
+                f"net {long_net:+d} if long, "
+                f"{short_for} aligned / {short_against} opposed = "
+                f"net {short_net:+d} if short "
                 f"(of {len(sources)} source(s) with current coverage{stale_note})"
             )
 
@@ -1001,18 +1007,28 @@ Memory and narrative sections are context, never current specialist coverage.
 
 ## Independent Source Agreement (deterministic ceiling — Step 5)
 {agreement_text}
-`risk_allocation_pct` is CEILINGED — never raised — by how many independent
-sources above are actually ALIGNED with the direction you propose, computed
-from this registry, not from what you write in provenance. Ask for what the
-idea has earned; the ceiling only ever refuses size it did not earn. A source
-whose stance is marked stale is not in the aligned count: an old filing is
-still worth reading, but it has not confirmed anything about today.
+`risk_allocation_pct` is CEILINGED — never raised — by the NET score above:
+independent sources ALIGNED with the direction you propose, MINUS those
+opposed to it, computed from this registry, not from what you write in
+provenance. Ask for what the idea has earned; the ceiling only ever refuses
+size it did not earn. A source whose stance is marked stale is in neither
+count: an old filing is still worth reading, but it has not confirmed
+anything about today, and it has not contradicted anything either.
 
-The OPPOSED count is a seat arguing the OTHER way. It currently changes no
-ceiling — a name with 2 aligned and 2 opposed is sized exactly like one with
-2 aligned and 0 opposed. It is shown because those two are not the same idea
-and you should not treat them as one: say in your reasoning why you are
-overriding a seat that disagrees, or ask for less.
+A seat arguing the OTHER way SUBTRACTS. Three aligned against one opposed is
+a net +2 and is sized as a two-source idea, not a three-source one.
+**A net score of zero or below produces NO ORDER AT ALL** — not a small
+position, no position. That is the same arithmetic, not an extra veto: the
+schedule's first rung prices one net source, and there is no rung below it.
+Anything already held is left alone; refusing to open is not a decision to
+sell.
+
+So a name your own earnings or macro seat is arguing against needs more
+confirmation elsewhere to reach the same size, and a name with one seat for
+and one against is not tradeable today. If you believe a dissenting seat is
+wrong, say why in your reasoning — but expect the size to reflect the split,
+because the constructor computes this from the registry and cannot read your
+argument.
 
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
 
