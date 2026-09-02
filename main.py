@@ -240,6 +240,17 @@ def main():
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("alert watchdog failed in finally: %s", exc)
+        # Owner's ratified rule: a bad analyst seat gets its OWN Telegram
+        # message, never a line buried inside the routine session summary
+        # above. Fires independently of whether `message` exists at all, so
+        # it can't be suppressed by a mode's normal noise policy. See
+        # notifier.maybe_alert_data_quality's docstring for why.
+        try:
+            from src.notifier import maybe_alert_data_quality
+
+            maybe_alert_data_quality(result, mode=args.mode)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("data-quality alert failed in finally: %s", exc)
         if message:
             # Wrapped in its own try/except inside send(), but be doubly
             # defensive: notifier code in finally must NEVER mask the
