@@ -317,7 +317,22 @@ SKIP_PLAIN = {
 # Deterministic risk rules that drop a trade before the risk manager sees it.
 RULE_PLAIN = {
     "max_position_pct": "it would have made one position too large a share of the account",
-    "max_total_position_pct": "it would have pushed total invested money above the ceiling",
+    # NOT "total invested money" — that raw-notional reading is what the
+    # cockpit's "% deployed" gauge used to show, and it disagreed with this
+    # rule by 13.6 percentage points on a book holding one -3x hedge. The
+    # rule measures NET exposure: a bearish hedge SUBTRACTS from the total
+    # (that is what makes it a hedge) and a leveraged fund counts at its
+    # multiple, not its sticker price. `max_gross_exposure` below is the
+    # rule that does bound what the book owns outright.
+    "max_total_position_pct": (
+        "it would have pushed the account's net market exposure above the "
+        "ceiling — that is holdings after hedges are netted off, counting "
+        "leveraged funds at their true multiple"
+    ),
+    "max_gross_exposure": (
+        "it would have pushed the total value the account holds outright — "
+        "hedges added, not netted — above the borrowing-safety ceiling"
+    ),
     "max_sector_pct": "it would have concentrated too much money in one sector",
     "max_daily_loss_pct": "the account had already lost too much for one day",
     "require_stop_loss": "it had no protective stop attached",

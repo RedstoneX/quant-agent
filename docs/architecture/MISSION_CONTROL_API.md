@@ -65,14 +65,42 @@ state, no broker-write surface, no new external dependency.
   `read_positions()` + narrow `cash_sweep` config accessors
   (`src.api.deps.get_cash_sweep_*`); `None` whenever the underlying
   account/config read fails, never fabricated.
+- `deployable_cash` is **the engine's figure**, not a dashboard-only one:
+  `src.quantities.deployable_cash` (raw cash + the parked sweep vehicle,
+  which `CashSweeper.fund_buys` liquidates before the BUY phase) — the
+  same function `TradingPipeline._compute_deployable_cash` calls, so what
+  the operator reads is what Portfolio Manager sizing, the Risk Manager
+  audit and the pre-trade cash gate use. It previously held
+  `max(raw_cash - reserve_usd, 0)`, a figure no part of the engine has
+  ever used: same word, opposite adjustment, measured $54,000 vs $34,100
+  on one book. That conservative figure survives as `cash_above_reserve`
+  under its own name. `total_liquidity` is now a **deprecated alias** of
+  `deployable_cash` (it was always the same quantity) — assigned from the
+  one source, never recomputed.
+- `/account` also carries `exposure` (`ExposureBreakdown`):
+  `net_exposure_usd` and `net_exposure_pct` from
+  `src.quantities.net_exposure_usd/_pct` — the very functions
+  `src/risk/rules.py`'s `max_total_position_pct` rule calls. The cockpit
+  used to re-derive "% deployed" itself as `(long + hedge) / equity`
+  (hedges ADDED, leverage ignored) and draw it against the engine's
+  ceiling served from this same endpoint: 40.68% vs 54.24% on one book.
+  The read surface serves the measurement now; the UI only renders it.
+- The structural guardrail is intact. `src/api/` still may not import
+  `src.pipeline`/`src.pipeline_stages`/`src.risk`
+  (`tests/test_api_safety.py`). The seam is `src/quantities.py` — a
+  dependency-free, stdlib-only module of pure measurement functions that
+  lives OUTSIDE `src.risk` and that `src.risk.rules` imports. That is the
+  extraction the §11.2 note in `routes_live.py` named as the precondition
+  for reporting exposure here at all. The de-levering ladder still is not
+  reported: it is session state, not arithmetic.
 - `/positions` items gain `is_cash_equivalent` (true only for the
   configured sweep symbol) and `direction`
   (`"long" | "bearish_hedge" | "cash_equivalent"`). `direction` labels an
-  inverse ETF already in the trading universe (`SH`/`SDS`/`PSQ`/`SQQQ`,
-  `src.api.deps.INVERSE_ETF_SYMBOLS`) — display labeling only, computes no
-  exposure/sizing/risk math, and is a hand-kept display-only duplicate of
-  `src/risk/rules.py::_ETF_LEVERAGE`'s negative-multiplier entries since
-  `src/api` may never import `src.risk`.
+  inverse ETF already in the trading universe
+  (`src.api.deps.INVERSE_ETF_SYMBOLS`, now DERIVED from
+  `src.quantities.ETF_LEVERAGE`'s negative entries rather than
+  hand-copied) — display labeling only, computing no exposure/sizing/risk
+  math on either side of the wire.
 - `GET /runs/{run_id}/funnel` (`RunFunnelResponse`): the structural
   decision funnel for one run — how many candidates were considered,
   reached a PM target, reached a PM proposed order, and executed; whether

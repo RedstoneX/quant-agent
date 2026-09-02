@@ -18,15 +18,19 @@ from functools import lru_cache
 from pathlib import Path
 
 from src.config import AGENT_NAMES, AppConfig, RiskConfig, load_config
+from src.quantities import inverse_etf_symbols
 
-# Display-only duplicate of src/risk/rules.py::_ETF_LEVERAGE's negative-
-# multiplier entries (the inverse/short ETFs already in the trading
-# universe). src/api may never import src.risk (tests/test_api_safety.py
-# enforces this structurally), so this small labeling set is reimplemented
-# here rather than shared — it only tags directional character for
-# display, it computes no exposure/sizing/risk math. Keep in sync by hand
-# if the risk-engine list changes.
-INVERSE_ETF_SYMBOLS: frozenset[str] = frozenset({"SH", "SDS", "PSQ", "SQQQ"})
+# The inverse/short ETFs already in the trading universe, DERIVED from the
+# one leverage table (`src.quantities.ETF_LEVERAGE`, which src/risk/rules.py
+# also imports) rather than hand-copied.
+#
+# This used to be a literal set with a comment instructing a human to keep
+# it in sync, standing next to a rules.py comment promising that new funds
+# were "picked up automatically". Both could not be true, and the copy is
+# the one that would have silently gone stale. `src.quantities` is
+# dependency-free and outside `src.risk`, so sharing it does not breach the
+# structural guardrail in tests/test_api_safety.py.
+INVERSE_ETF_SYMBOLS: frozenset[str] = inverse_etf_symbols()
 
 # Agent roles are a static, documented fact about the system (CLAUDE.md's
 # "Agent CoT structure" table) — safe to hardcode here rather than derive.

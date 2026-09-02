@@ -111,12 +111,22 @@ export function HeroBand({
     .reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0);
   const liquidity = account.liquidity;
   const total = account.portfolio_value || 0;
+  // longMv / hedgeMv are DISPLAY sums only — a breakdown of where the money
+  // sits, using `direction` for exactly the labeling it is documented for.
   const longMv = positions.filter((p) => p.direction === "long").reduce((sum, p) => sum + (p.market_value || 0), 0);
   const hedgeMv = positions
     .filter((p) => p.direction === "bearish_hedge")
     .reduce((sum, p) => sum + (p.market_value || 0), 0);
   const cashMv = Math.max(total - longMv - hedgeMv, 0);
-  const riskDeployedPct = total > 0 ? ((longMv + hedgeMv) / total) * 100 : 0;
+  // "% deployed" comes from the SERVER, computed by the same function the
+  // risk engine's max_total_position_pct rule uses. This used to be
+  // (longMv + hedgeMv) / total — hedges ADDED instead of netted, leverage
+  // ignored — and was then drawn against the engine's ceiling fetched from
+  // /account, so the bar and its fill came from different definitions and
+  // read 13.6 percentage points apart. Null means "not measurable", which
+  // is rendered as such rather than as a confident 0%.
+  const riskDeployedPct = account.exposure?.net_exposure_pct ?? null;
+  const deployedLabel = riskDeployedPct === null ? "—" : `${riskDeployedPct.toFixed(0)}%`;
   const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
   const history = equityHistorySeries(account);
 
@@ -150,7 +160,7 @@ export function HeroBand({
           {fmtMoney(unrealized)} unrealized
         </span>
         <span className="text-[length:var(--fs-meta)] text-dim">
-          {riskDeployedPct.toFixed(0)}% deployed
+          {deployedLabel} net exposure
           {maxTotalPct !== null ? ` / ${maxTotalPct.toFixed(0)}% ceiling` : ""}
         </span>
         {regime?.macro.regime && (
@@ -207,7 +217,13 @@ export function HeroBand({
         )}
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-dim">
           <span>
-            Deployable <strong className="font-mono text-ink">{fmtMoneyCompact(liquidity?.deployable_cash)}</strong>
+            Deployable{" "}
+            <strong
+              className="font-mono text-ink"
+              title="Cash plus the sweep vehicle the engine liquidates on demand — the figure position sizing actually uses."
+            >
+              {fmtMoneyCompact(liquidity?.deployable_cash)}
+            </strong>
           </span>
           <span>
             Sweep parked{" "}
@@ -224,11 +240,16 @@ export function HeroBand({
         <div className="flex items-start justify-between gap-3">
           <div>
             <Text className="uppercase tracking-wide">Portfolio exposure</Text>
-            <Title className="mt-1 font-mono !text-2xl text-ink">{riskDeployedPct.toFixed(0)}% deployed</Title>
+            <Title
+              className="mt-1 font-mono !text-2xl text-ink"
+              title="Net exposure: holdings after hedges are netted off, leveraged funds at their true multiple. Same measure as the ceiling beside it."
+            >
+              {deployedLabel} net exposure
+            </Title>
           </div>
           {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
         </div>
-        <ProgressBar value={riskDeployedPct} color="cyan" className="mt-3" />
+        <ProgressBar value={riskDeployedPct ?? 0} color="cyan" className="mt-3" />
         <Grid numItems={3} className="mt-3 gap-2">
           <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
           <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>

@@ -49,6 +49,8 @@ import logging
 import math
 import time
 
+from src.quantities import sweep_reserve_usd
+
 logger = logging.getLogger(__name__)
 
 # Raw-cash cushion added on top of planned BUY notional when deciding how
@@ -129,10 +131,15 @@ class CashSweeper:
         return mv if math.isfinite(mv) and mv > 0 else 0.0
 
     def reserve_usd(self, total_value: float) -> float:
+        """The reserve floor in dollars. Arithmetic in
+        `src.quantities.sweep_reserve_usd` — the same function the API's
+        `/account` liquidity breakdown and the branch-preview shim call, so
+        the percent-of-book arithmetic is written once instead of three
+        times."""
         cfg = self._cfg
-        if cfg is None or not math.isfinite(total_value) or total_value <= 0:
+        if cfg is None:
             return 0.0
-        return total_value * cfg.reserve_pct / 100.0
+        return sweep_reserve_usd(total_value, getattr(cfg, "reserve_pct", 0.0))
 
     # ---------- funding (un-park before BUYs) ----------
 
