@@ -1536,8 +1536,9 @@ worse than either change alone.
 
 **IMPLEMENTED 2026-09-01** (the gross cap, the ladder and the liquidation
 guard — *not* 11.1, and *not* the margin-interest tracker, which is separate
-work). `allow_margin` is deliberately still `false`: the ceiling is built
-BEFORE borrowing is enabled, which is the whole sequencing requirement.
+work). The ceiling was built BEFORE borrowing was enabled, which was the
+whole sequencing requirement. **`allow_margin` went `true` on 2026-09-02**
+(owner ratified, PM prompt moved to the 2.0x table in the same commit).
 
 **The ceiling.** `risk.max_gross_exposure_x: 2.0`. Gross = long market value
 + absolute short market value, leverage-adjusted, with the cash park
@@ -1548,7 +1549,8 @@ Python, never as an instruction to an agent:
 | gate | where | what it does |
 |---|---|---|
 | sizing | `PortfolioConstructor.construct_orders` | shrinks entries to fit; refuses one whose remnant is under `min_order_usd` |
-| execution | `RiskRuleEngine.check` → `max_gross_exposure` (in `HARD_BLOCK_RULES`) | hard-blocks anything that reached the engine without that sizing |
+| pre-trade | `RiskRuleEngine.check` → `max_gross_exposure` (in `HARD_BLOCK_RULES`) | hard-blocks anything that reached the engine without that sizing |
+| submit | `ExecutionStage` → `_entry_deployment_budget` | the pool every entry actually draws from, sized at the rung in force (added 2026-09-02 — see below) |
 
 Distinct from `max_total_position_pct`, which bounds NET exposure — a hedge
 cancels a long there and does not here — and from `max_gross_bearish_pct`,
@@ -1598,7 +1600,9 @@ is the sprawl §12.2 cleaned up. `/account` reports the standing cap only
 dashboard needs the pure measurement functions moved out of `src.risk` first;
 that is not done and is the one piece of §11.2 left open.
 
-**The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (54 tests)
+**The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (54 tests
+at the time of writing; 92 as of 2026-09-02, the 21 added being the submit
+gate below)
 asserts the ceiling CHANGES on both sides of all four thresholds, that new
 exposure is blocked before anything is trimmed, that the ladder is applied
 exactly once — per call AND across the sizing-gate/execution-gate chain, with
@@ -1634,6 +1638,66 @@ ways.
 
 **Not done here, deliberately:** 11.1 (fractional shares), the margin-
 interest tracker, and flipping `allow_margin`.
+
+#### 2026-09-02 — the ceiling was INERT for longs, and a third gate now exists
+
+`allow_margin: true` shipped on the morning of 2026-09-02 and changed nothing
+a long could do. The two gates in the table above were correct and both ran;
+a THIRD gate nobody had listed sat behind them, in the BUY submit loop, and
+it was the one that actually decided the size:
+
+    available_cash = cash                    # broker's RAW cash figure
+    ...
+    if not is_short and estimated_cost > available_cash:   # gated on nothing
+
+Raw cash is at most `equity - gross`, so this held gross under 1.0x
+STRUCTURALLY: however high `max_gross_exposure_x` was set, a long could never
+cost more than settled money. Shorts were exempt (D11) and unaffected.
+
+**The clamp was NOT removed — deleting it was considered and rejected.** With
+margin on the broker ACCEPTS a buy that exceeds cash, so this loop is the last
+quantitative bound before an order leaves. What it clamps against changed:
+`_entry_deployment_budget` returns `ceiling_x x equity - held_gross`, so the
+ladder is the one number that governs how much the desk deploys. The pool
+decrements per entry, and a SHORT decrements it too (a short OWNS gross) while
+never being sized or refused by it, which keeps D11 exactly as it shipped.
+`max_position_pct` is re-applied to the size execution chose so one order
+cannot drain the session's pool — same idiom as the §10.3 notional floor
+beside it.
+
+Fail-closed in all three degraded directions, because nothing runs after this
+gate: an unresolvable ceiling falls back to the pre-margin RAW-CASH clamp
+(never to the standing cap — the constructor may do that because another gate
+still follows it); an unusable equity read yields a ZERO budget, since the
+floor rung the bad-read guard forces would otherwise be multiplied by a NaN
+equity and every `>` against the result would be False, granting infinite
+room on exactly the broken-snapshot morning that guard exists for; and an
+unreadable cash-park symbol counts parked cash as gross, understating the
+headroom.
+
+**With `allow_margin` false the tighter of ladder-headroom and settled cash
+still governs**, so turning the ceiling into the primary limit did not quietly
+hand a cash-only account the right to borrow.
+
+**The magnitude, stated plainly.** On the live book of 2026-09-02 (equity
+$9,822.37, gross $3,819.72 = 0.39x, raw cash $580.09, $5,422.56 parked, rung
+`none` = 2.0x) the maximum new entry notional in one session moves from
+$6,002.65 (cash + convertible park) to $15,825.02 (ladder headroom) — **2.64x
+more deployable per session, and the largest book the desk can hold doubles
+from 1.0x to 2.0x of equity.** No order in the recorded 2026-09-02 runs was
+trimmed or refused by the old clamp, so the change deploys nothing extra
+retrospectively; it raises a ceiling that had not yet been reached.
+
+**OPEN, and it is the owner's call: 2.0x is still not reachable.**
+`max_total_position_pct: 90` is a hard block on NET exposure, and for a
+long-only book net IS gross. Measured against the live settings, the highest
+long-only gross that still admits a BUY is **0.90x**; with shorts run up to
+their own `max_gross_bearish_pct: 20` cap the ceiling is about **1.3x**. So
+the standing 2.0x rung and the -8% 1.5x rung can never bind — only the -15%
+(1.0x) and -20% (0.5x) rungs can. The PM prompt's `risk-on` target of
+1.60-2.00x gross is therefore still telling the model something the engine
+will refuse. Moving `max_total_position_pct` is a risk-limit change and is
+not made here.
 
 **Neither part ships without a rehearsal-rig run** — see the session-start
 rule in `docs/WORK.md`. This changes sizing and execution, which is exactly
