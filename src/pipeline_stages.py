@@ -51,9 +51,10 @@ from src.data.event_calendar import (
 from src.data.technical import compute_indicators
 from src.models import (
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
-    parse_telemetry,
+    parse_telemetry, reward_to_risk,
 )
 from src.nominations import select_nominations
+from src.portfolio_constructor import LEVEL_BACKED_STOP_RULES
 from src.pipeline_context import RunContext
 
 if TYPE_CHECKING:
@@ -3953,8 +3954,32 @@ class ExecutionStage:
                 # code ever sees it; this is a SECOND, execution-time-only
                 # belt that was never extended to shorts as part of this
                 # stage.
+                #
+                # 2026-09-02: it is now also skipped for a stop the
+                # constructor HONOURED at a computed structural level. This
+                # belt was the last place spec §12.1 was being undone. §12.1
+                # says the ATR floor applies only when nothing computed
+                # backs the stop, and the constructor implements that — but
+                # this code then re-applied a 1x ATR floor to the result,
+                # against an ATR recomputed here from `ctx.symbols_bars`
+                # rather than the `analysis.atr_14` the constructor used. Two
+                # readings of the same quantity, and the larger one silently
+                # won, moving the stop off the level and shrinking the R/R
+                # the re-check below then judges. The constructor already
+                # applies `absolute_min_stop_atr_multiple` (1x ATR) to a
+                # level-backed stop, so the protection is not lost — it is
+                # applied once, by the stage that can see the levels.
                 stop_price = decision.stop_loss
-                if not is_short and stop_price > 0 and sizing_price > stop_price:
+                level_backed = decision.stop_rule in LEVEL_BACKED_STOP_RULES
+                if level_backed and not is_short:
+                    logger.info(
+                        "BUY %s: execution-time ATR stop floor skipped — the "
+                        "constructor honoured this stop at a computed "
+                        "structural level [%s]. Re-widening it here would "
+                        "undo §12.1 against a second ATR reading.",
+                        decision.symbol, decision.stop_rule,
+                    )
+                if not is_short and not level_backed and stop_price > 0 and sizing_price > stop_price:
                     try:
                         bars = ctx.symbols_bars.get(decision.symbol) or []
                         atr14 = None
@@ -3984,26 +4009,45 @@ class ExecutionStage:
                 # nested check could never see). If the honest geometry
                 # collapses below a sane floor, the setup RM approved never
                 # existed — skip rather than execute a trade nobody reviewed.
+                #
+                # The ratio comes from `models.reward_to_risk`, the single
+                # definition the constructor's own floor and
+                # `TradeDecision.reward_risk` both use. It used to be a
+                # fourth hand-rolled division here. On 2026-09-01 two of
+                # those copies were rendered to the Risk Manager on the same
+                # XLE trade — 1.67 and 1.18 — and the unexplained gap
+                # between them is what rejected it.
                 geometry_changed = (
                     stop_price != decision.stop_loss
                     or (decision.entry_price > 0 and sizing_price > decision.entry_price)
                 )
-                if (not is_short and geometry_changed and decision.take_profit > 0
-                        and stop_price > 0 and sizing_price > stop_price):
-                    reward = decision.take_profit - sizing_price
-                    risk = sizing_price - stop_price
-                    if risk > 0 and reward / risk < 1.2:
+                if not is_short and geometry_changed and decision.take_profit > 0:
+                    executed_rr = reward_to_risk(
+                        sizing_price, stop_price, decision.take_profit,
+                        is_short=False,
+                    )
+                    # FAIL CLOSED. None means the executed geometry is not
+                    # measurable at all — a non-finite price, a stop at or
+                    # above the entry, a target below it. That is strictly
+                    # worse than a low ratio, not better, and it used to
+                    # fall through this gate untouched because the old
+                    # `risk > 0` guard simply skipped the check.
+                    if executed_rr is None or executed_rr < 1.2:
+                        rr_text = (
+                            "unmeasurable" if executed_rr is None
+                            else f"{executed_rr:.2f}"
+                        )
                         logger.warning(
-                            "BUY %s skipped: executed geometry makes R/R %.2f "
+                            "BUY %s skipped: executed geometry makes R/R %s "
                             "(<1.2) — RM approved entry $%.2f / stop $%.2f, "
                             "execution moved it to $%.2f / $%.2f.",
-                            decision.symbol, reward / risk,
+                            decision.symbol, rr_text,
                             decision.entry_price, decision.stop_loss,
                             sizing_price, stop_price,
                         )
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol, "geometry_rr",
-                            f"executed geometry R/R {reward / risk:.2f} < 1.2 "
+                            f"executed geometry R/R {rr_text} < 1.2 "
                             f"(RM approved ${decision.entry_price:.2f}/"
                             f"${decision.stop_loss:.2f}, execution moved to "
                             f"${sizing_price:.2f}/${stop_price:.2f})",

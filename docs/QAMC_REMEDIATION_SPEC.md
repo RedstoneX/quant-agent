@@ -1677,14 +1677,16 @@ not from the model asserting one. A stop the analyst simply placed close, with
 no level under it, still gets the floor.
 
 **IMPLEMENTED 2026-09-01** (branch `feat/level-backed-stops`), in
-`PortfolioConstructor._widen_stop_past_noise`. The stop rule now has three
+`PortfolioConstructor._widen_stop_past_noise`. The stop rule now has five
 outcomes instead of one, each logged by name:
 
 | the stop | what happens | reward:risk is measured against |
 |---|---|---|
+| already ≥ `min_stop_atr_multiple` ATRs out | **left exactly where structure put it** | the kept stop |
 | at a computed level, ≥ 1x ATR out | **honoured exactly as placed** | the honoured stop |
 | at a computed level, < 1x ATR out | widened to **1x ATR** — never to the band | the 1x ATR stop |
 | not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
+| no ATR reading at all | left alone | the kept stop |
 
 **Neither threshold moved.** `min_stop_atr_multiple` is still 3.0 and
 `min_reward_risk_after_widening` is still 1.5. This changes WHICH stop the
@@ -1760,6 +1762,91 @@ level data, exactly as §10.4's does, and pins the arithmetic to the same
 back-solved ATR so the two reproductions agree: R/R 1.28 against the band stop
 (refused, as it was on the day), 2.59 against the honoured stop at the measured
 1.7x ATR median.
+
+### 12.1b The reward:risk floor was not a floor (fixed 2026-09-02)
+
+**Rows 1 and 5 of §12.1's table are a correction.** As shipped on 2026-09-01
+the reward:risk check lived INSIDE the two widening branches, behind two
+unnamed early returns — "already outside the noise band" and "no ATR
+reading". A stop that was wide enough to begin with was returned before the
+check was reached, so **the 1.5 floor was never applied to it**. The
+config key `min_reward_risk_after_widening` recorded that as if it were the
+design; it was not, and it fails OPEN and silently.
+
+Measured on the pre-reset production database
+(`data/resets/20260902T181859Z/quant_agent.db`), 2026-08-18 to 2026-09-02:
+
+* **14 of the 49 constructed entry orders — 29% — shipped with a
+  reward:risk below 1.5.** Lowest: XLB 0.43 (2026-09-02), NET 0.50
+  (2026-08-27), ZS 0.56, XLE 0.57.
+* The constructor's own refusal message appears **zero times** in the
+  entire production log history before 2026-09-02.
+* **Two of the 14 reached the broker.** XLE on 2026-08-21 FILLED — 9 shares
+  at $64.26, reward:risk 0.81. VLO the same run at 1.19 was submitted and
+  cancelled at the broker, not by us.
+* Everything else was stopped by the **Risk Manager's prose** or by the
+  1.2 execution-time belt in `src/pipeline_stages.py`. A deterministic
+  floor was being enforced by a language model, which Invariant 2 forbids.
+
+The floor now runs once, on the stop that will actually ship, whichever
+rule placed it, and the refusal names that rule
+(`reward_risk_below_floor_at_kept_stop` for the two paths above). **The
+threshold did not move and no path became more permissive.** Rerun over the
+same 49 orders it refuses exactly those 14 at construction and admits
+nothing new. Of the 14, **7 had nothing downstream cite reward:risk at
+all** — XLE 0.57 and XLF 1.31 (08-18), XLE 0.65 (08-20), VLO 1.19 and COP
+1.40 (08-21), NET 0.50 and ZS 0.56 (08-27) — so for those the fix is not
+"dies earlier", it is "dies at all". The one that FILLED, XLE 0.81 on
+08-21, was not among them but was not saved either: the RM cited "R/R =
+1.22", which is the ANALYST's geometry, and merely halved the allocation.
+The rest were caught late by the RM's prose or the execution belt, and now
+die deterministically at the stage that owns the rule.
+
+**A missing or unmeasurable ratio is now a refusal, not a pass.** `nan <
+1.5` is False, so an unguarded non-finite price cleared the floor rather
+than failing it. Non-finite entry and stop prices are refused at the top of
+`_widen_stop_past_noise` — a NaN stop previously passed both that function
+and the caller's `stop_loss >= entry_price` validity check and reached
+`TradeDecision` intact.
+
+### 12.1c One definition of reward:risk, and one stop geometry
+
+The division itself now lives in `models.reward_to_risk` and nowhere else.
+It had been re-derived by hand in four places, which disagreed.
+
+The rejection that exposed it, verbatim from the Risk Manager on
+2026-09-01: *"PM's reasoning assumes R/R 1.67 but the executed order has R/R
+1.18."* **Both numbers were correct and no stop had moved** — $61.54 on the
+tech analyst's row and $61.54 on the proposed order. The ENTRY moved,
+$63.96 (analysis snapshot) to $64.51 (live). On this trade the analyst's
+guess and the derived target happened to coincide at $68.00, so the entry
+drift was the WHOLE of the gap. The same seat caught the same thing on
+2026-08-31: *"entry price degradation from TechAnalyst's $62.29 to
+$63.76."* **The ATR stop floor was not involved in either case** — a
+correction to the earlier reading of this defect.
+
+So the two remaining differences are handled where they actually are:
+
+* **Arithmetic** — one function, used by `TechAnalysisResult.risk_reward`,
+  `TradeDecision.reward_risk`, the constructor's floor and the 1.2
+  execution-time re-check. Fail-closed on non-finite input.
+* **Inputs** — the analyst's R/R and the order's R/R answer different
+  questions and will legitimately differ. The Risk Manager prompt now says
+  which of them the floor is judged on, instead of leaving the seat to
+  infer a defect from an unexplained gap.
+
+**The execution stage could still undo §12.1, and no longer can.**
+`src/pipeline_stages.py` carries a second, execution-time 1x ATR stop floor
+(BUY-only) applied with no knowledge of levels, against an ATR recomputed
+from `ctx.symbols_bars` rather than the `analysis.atr_14` the constructor
+used. Two readings of one quantity, the larger silently winning, moving a
+level-honoured stop off its level and shrinking the R/R the 1.2 re-check
+then judges. **This is a mechanism, not an observed event** — no production
+instance of it firing on a level-honoured stop was found, and §12.1 has
+only been live since 2026-09-02, so there was barely a window for one. It
+now reads `TradeDecision.stop_rule` — set by the constructor, the stage
+that can see `computed_levels` — and skips a stop honoured at a computed
+level. No second level-detection path was built.
 
 ### 12.2 Sector exposure is measured with separate long and short budgets
 
