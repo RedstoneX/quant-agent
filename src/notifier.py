@@ -671,7 +671,15 @@ def format_session_result(
         # and an unprotected position found at 12:30 was previously reported
         # to a log file and nowhere else, because this is the one mode whose
         # normal tick sends no message.
-        if not result.get("stop_coverage_gaps"):
+        #
+        # Spec §11.1 hybrid fractional stops: a gap the sweep itself already
+        # closed ('fractional_replaced'), or one the design expects
+        # ('fractional_overnight'), is NOT a reason to break that silence.
+        # This mode ticks 14 times a day; if the routine re-placement of a
+        # sub-share DAY stop pinged the owner, the fractional feature would
+        # turn a deliberately-quiet channel into a noisy one, and the guard
+        # that is supposed to interrupt him would arrive as ping 15.
+        if not _actionable_coverage_gaps(result.get("stop_coverage_gaps")):
             return None
     if mode == "earnings_preprocess" and status in (
         "market_holiday", "nothing_new", "fetch_error",
@@ -757,6 +765,23 @@ def format_session_result(
     return "\n".join(lines)
 
 
+def _actionable_coverage_gaps(gaps) -> list[dict]:
+    """The subset of coverage gaps that a human has to do something about.
+
+    Spec §11.1 hybrid fractional stops. Filters out the two states the hybrid
+    design produces on purpose (see `_gap_is_expected_fractional`) so callers
+    that decide whether to speak at all — chiefly `intra_check`'s silence
+    policy — key off real faults rather than off the daily heartbeat of a
+    sub-share DAY stop lapsing and being re-placed.
+    """
+    if not isinstance(gaps, list):
+        return []
+    return [
+        g for g in gaps
+        if isinstance(g, dict) and not _gap_is_expected_fractional(g)
+    ]
+
+
 def _gap_is_uncovered(gap: dict) -> bool:
     """Spec §11.1 guard 3 — is this coverage gap "NO STOP AT ALL"?
 
@@ -801,8 +826,17 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
         )
 
     rows = [g for g in gaps if isinstance(g, dict)]
-    uncovered = [g for g in rows if _gap_is_uncovered(g)]
-    partial = [g for g in rows if not _gap_is_uncovered(g)]
+    # Spec §11.1 hybrid fractional stops. These two classes are NOT faults
+    # and must never be counted into either red banner: 'fractional_overnight'
+    # is a sub-share DAY stop that lapsed at the close exactly as the design
+    # intends, and 'fractional_replaced' is one the session's own sweep has
+    # already put back. Both happen to every fractional position every day.
+    # Rendering them red would put a 🔴 on this alert on every single run,
+    # which is how the owner learns to stop reading the banner that matters.
+    expected = [g for g in rows if _gap_is_expected_fractional(g)]
+    faults = [g for g in rows if not _gap_is_expected_fractional(g)]
+    uncovered = [g for g in faults if _gap_is_uncovered(g)]
+    partial = [g for g in faults if not _gap_is_uncovered(g)]
     if uncovered:
         lines.append(
             f"🔴 NO STOP AT ALL: {len(uncovered)} position(s) with ZERO "
@@ -813,6 +847,62 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
             f"🔴 STOP MIS-SIZED: {len(partial)} position(s) partially "
             f"under-protected (covered/held): {_describe(partial)}"
         )
+    _append_fractional_overnight_line(lines, expected)
+
+
+def _gap_is_expected_fractional(gap: dict) -> bool:
+    """Is this gap the hybrid design working rather than failing?
+
+    True for the two states spec §11.1's hybrid fractional stops produce on
+    purpose: a sub-share DAY stop that lapsed overnight, and one the sweep
+    re-placed this session. Neither is operator-actionable.
+    """
+    return str(gap.get("coverage", "")).strip().lower() in (
+        "fractional_overnight", "fractional_replaced",
+    )
+
+
+def _append_fractional_overnight_line(lines: list[str], expected: list[dict]) -> None:
+    """Spec §11.1 hybrid fractional stops — make the accepted exposure VISIBLE.
+
+    The owner accepted a bounded overnight exposure on the sub-share
+    remainder of a fractional position, because being locked out of expensive
+    names on a ~$10k account is itself a cost. He accepted it on the explicit
+    condition that it be observable: "a number he can look at beats a
+    guarantee he has to trust."
+
+    So this line reports the DOLLARS actually unprotected right now, not a
+    reassurance that the design bounds them. It is deliberately not a 🔴 —
+    nothing here needs doing — and it is deliberately not silent either.
+    Uses 🌙 rather than a colour: the state is 'overnight', and the owner is
+    red-green colour blind, so hue carries no meaning on this channel.
+
+    Silent when the remainder has already been re-placed for the session
+    (nothing is exposed) — only a live, currently-unprotected remainder
+    prints.
+    """
+    live = [
+        g for g in expected
+        if str(g.get("coverage", "")).strip().lower() == "fractional_overnight"
+    ]
+    if not live:
+        return
+    total = 0.0
+    for gap in live:
+        try:
+            total += float(gap.get("unprotected_value") or 0)
+        except (TypeError, ValueError):
+            continue
+    detail = ", ".join(
+        f"{g.get('symbol', '?')} {_fmt_qty(g.get('uncovered_qty', 0) or 0)}sh"
+        for g in live[:6]
+    )
+    lines.append(
+        f"🌙 overnight fractional remainder unprotected (by design): "
+        f"${total:,.2f} across {len(live)} position(s) — {detail}. "
+        f"Whole-share part still covered by its GTC stop; the DAY stop is "
+        f"re-placed at the next open."
+    )
 
 
 def _append_leverage_line(lines: list[str], result: dict) -> None:
