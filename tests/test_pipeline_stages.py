@@ -1018,6 +1018,63 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
     assert kwargs["macro_analysis"] == macro_model.model_dump()
 
 
+def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
+    """The sub-floor catalyst gate must run on the SAME two numbers the
+    deterministic risk layer downstream uses — the floor the constructor will
+    actually enforce, and the size `allocate_risk_budget` will actually grant.
+    Re-defaulting them inside the agent would let a settings.yaml override
+    move one and not the other (2026-09-02)."""
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.db.get_latest_insights.return_value = None
+    p._sweeper = MagicMock(return_value=None)
+    p._compute_recent_performance = MagicMock(return_value={})
+    p._build_position_history = MagicMock(return_value={})
+    p._build_weekly_narrative = MagicMock(return_value="")
+    p._build_macro_trajectory = MagicMock(return_value="")
+    p._build_active_state_changes = MagicMock(return_value="")
+    p._build_rm_recent_verdicts = MagicMock(return_value="")
+    p._build_pm_recent_decisions = MagicMock(return_value="")
+    p._build_projected_portfolio = MagicMock(return_value="")
+    p._build_calibration_note = MagicMock(return_value="")
+    p._build_macro_tech_alignment = MagicMock(return_value="")
+    p._build_recent_missed_lessons = MagicMock(return_value="")
+    p._build_recent_loss_pits = MagicMock(return_value="")
+    p._build_pm_facts = MagicMock(return_value=MagicMock())
+    p._ensure_correlation_matrix = MagicMock(return_value={})
+    p.config = MagicMock()
+    p.config.risk.allow_margin = False
+    # Deliberately NOT the defaults, so a hardcoded number cannot pass.
+    p.config.risk.min_reward_risk_after_widening = 1.9
+    p.config.risk.min_position_risk_pct = 0.3
+    p.config.trading.universe = []
+    p._last_symbol_sectors = {}
+    p.portfolio_manager = MagicMock()
+    p.portfolio_manager.decide.return_value = (
+        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                        input_tokens=1, output_tokens=1, cost_usd=0.0,
+                        model="test-model"),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.analyses = []
+    ctx.macro_analysis = None
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.deployable_cash = 50_000.0
+    ctx.admitted_symbols = set()
+
+    DecisionStage(pipeline=p).run(ctx)
+
+    kwargs = p.portfolio_manager.decide.call_args.kwargs
+    assert kwargs["rr_floor"] == 1.9
+    assert kwargs["starter_risk_pct"] == 0.3
+
+
 def test_morning_research_stage_constructs_with_all_deps():
     """Stage wiring — all required dependencies exposed as constructor kwargs."""
     stage = MorningResearchStage(

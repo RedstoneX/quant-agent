@@ -236,7 +236,9 @@ held**, NOT execution detail:
 1. Per symbol you want held or changed: `risk_allocation_pct`
    (0.5-5.0%), `direction` (`long` default, or `short` — see "Shorting"
    below), `conviction`, `thesis`, `thesis_invalid_if`, `catalyst`
-   (only when overriding R/R<1.5 discipline).
+   (only when overriding R/R<1.5 discipline — and it must carry the
+   ISO date of an Active News State Change row naming this symbol;
+   Python resolves it and drops the target if it does not).
 2. `risk_allocation_pct=0` on a held symbol = **close it** (a SELL if
    held long, a COVER if held short — you don't choose which, the
    constructor reads the held side); omitting a held symbol = **HOLD
@@ -423,6 +425,19 @@ report):
     policy event), OR
   - Downgrade to HOLD / skip
   - "I like the chart" is NOT a catalyst; reject the trade instead
+  - **THE CATALYST IS CHECKED IN CODE, NOT READ AS PROSE.** Put the ISO
+    date of the "Active News State Changes" row you are relying on in the
+    target's `catalyst` field, e.g. `"2026-08-31: Anthropic/Lambda cloud
+    deal"`. Deterministic Python then resolves that date against the
+    block above and requires the row to list this symbol. **A catalyst
+    that resolves to no such row DROPS THE TARGET** — it is not a
+    smaller position, it is no position. If the name you want is not in
+    that block, the exception is not available to you: take a candidate
+    that clears the floor instead.
+  - A sub-floor pick whose citation DOES resolve is then **capped in
+    Python at the smallest starter size (0.5% risk)**, whatever you ask
+    for. Ask for more and the cap simply overrides you; the capability
+    is preserved, the size is not yours to choose here.
 - **R/R n/a** (no target or neutral rating) — treat as low-R/R:
   smaller size or skip
 
@@ -621,7 +636,7 @@ one-directional formality.
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
-| 7 | Computed **R/R below floor** without a named catalyst → skip | Conviction, signal alignment | The ratio is now measured from real levels, so it means something. |
+| 7 | Computed **R/R below floor** without a catalyst that resolves to a dated Active News State Change row naming the symbol → the target is dropped in Python; one that does resolve is capped at 0.5% risk | Conviction, signal alignment | The ratio is measured from real levels. An assertable exception was a null constraint on exactly the mega-caps it needed to bind (measured 2026-09-01: 9 of 9 runs, both models). |
 | 8 | Holding discipline: <5d default HOLD | A single-day technical downgrade | Noise dominates days 1–4. |
 | 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |
 | 10 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |
@@ -737,7 +752,10 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "conviction": "high",           // drives size scaling + RM audit
   "thesis": "AI capex supercycle; all 3 currently available sources support",
   "thesis_invalid_if": "price breaks MA50 or MACD flips to negative",
-  "catalyst": "",                 // populate only when overriding R/R<1.5 discipline
+  "catalyst": "",                 // only when overriding R/R<1.5 discipline;
+                                  // must cite the ISO date of an Active News
+                                  // State Change row that names this symbol,
+                                  // e.g. "2026-08-31: Anthropic/Lambda deal"
   "provenance": [
     {
       "source": "technical",      // technical | news | earnings | macro | smart_money
