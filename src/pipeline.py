@@ -37,6 +37,8 @@ from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
+    GROSS_LADDER,
+    GrossCeiling,
     RiskRuleEngine,
     apply_gross_ceiling,
     distance_to_forced_liquidation_pct,
@@ -693,10 +695,24 @@ class TradingPipeline:
             provider_order=config.llm.get_provider_order("meta_reflector"),
         )
         self.earnings_provider = EarningsDataProvider()
+        # Guard 1 (2026-09-02): resolve the kill-switch flag path the same
+        # way storage.db_path resolves a few lines down — relative to the
+        # repo root, absolute paths passed through unchanged — so
+        # `touch data/KILL_SWITCH` from the repo root (run.sh's own cwd) is
+        # the file ops actually touches. Resolved ONCE here so the
+        # broker-level enforcement (AlpacaBroker._kill_switch_active) and
+        # this class's own early, alerting check (_kill_switch_halt_result)
+        # can never disagree about which file they are each looking at.
+        raw_kill_switch_path = config.risk.kill_switch_path
+        kill_switch_path = Path(raw_kill_switch_path)
+        if not kill_switch_path.is_absolute():
+            kill_switch_path = Path(__file__).resolve().parent.parent / kill_switch_path
+        self._kill_switch_path = kill_switch_path
         self.broker = AlpacaBroker(
             api_key=config.api_keys.alpaca_key,
             secret_key=config.api_keys.alpaca_secret,
             paper=config.alpaca.paper,
+            kill_switch_path=str(self._kill_switch_path),
         )
         # Wire the broker as yfinance's fallback so a yfinance outage doesn't
         # blackout the technical analyst. Alpaca's daily bars cover the same
@@ -8507,28 +8523,77 @@ class TradingPipeline:
         maintenance_pct = _risk_number(
             getattr(risk_cfg, "maintenance_margin_pct", None), 25.0,
         )
-        drawdown_pct = None
-        performance = ctx.recent_performance or {}
-        if "peak_to_trough_pct" in performance:
-            drawdown_pct = performance.get("peak_to_trough_pct")
+        # Guard 2 (2026-09-02 operational safety guard): a non-finite
+        # CURRENT equity read must not fall through to
+        # `peak_to_trough_pct`'s "unmeasurable" branch, which
+        # `resolve_gross_ceiling` resolves to the STANDING (loosest) cap.
+        # That branch is correct for a genuinely fresh account with no
+        # equity curve yet (see `resolve_gross_ceiling`'s docstring) — but
+        # by inspection `peak_to_trough_pct` only ever returns None when
+        # TODAY's reading itself is unusable: a fresh account's own current
+        # equity is finite, so it always produces a real number (0.0
+        # against an empty history), never None. "Unknown" is therefore
+        # reachable in production ONLY on a bad read, and Alpaca has been
+        # observed to return NaN portfolio_value during market-open
+        # glitches (see `RiskRuleEngine.check_daily_loss`'s docstring).
+        # Silently holding the loosest cap on exactly that kind of
+        # broken-snapshot day is the failure this guard closes: halting new
+        # risk (the ladder's own floor rung) is safer than assuming zero
+        # drawdown, and — unlike the ordinary "unknown" fallback — this
+        # ALSO alerts the owner (`alert_owner=True` below) via the same
+        # leverage-line/Telegram path `GROSS_LADDER_ALERT_PCT` already
+        # uses, rather than staying silent.
+        total_value = ctx.total_value
+        bad_equity_read = (
+            isinstance(total_value, bool)
+            or not isinstance(total_value, (int, float))
+            or not math.isfinite(float(total_value))
+        )
+        if bad_equity_read:
+            floor_x = GROSS_LADDER[-1][1]
+            if base_x > 0:
+                floor_x = min(base_x, floor_x)
+            logger.warning(
+                "§11.2: current equity read is non-finite (%r) — forcing "
+                "the gross-exposure ceiling to its floor rung (%.1fx) and "
+                "alerting the owner instead of assuming zero drawdown.",
+                total_value, floor_x,
+            )
+            ceiling = GrossCeiling(
+                ceiling_x=floor_x, base_x=base_x, drawdown_pct=None,
+                alert_owner=True, rung="bad_read",
+                reason=(
+                    f"Current equity read came back non-finite "
+                    f"({total_value!r}) — a documented Alpaca market-open "
+                    f"glitch, not a fresh account. The book's drawdown "
+                    f"cannot be verified, so gross exposure is held to the "
+                    f"floor rung ({floor_x:.1f}x) until a valid read "
+                    f"arrives."
+                ),
+            )
         else:
-            # The preamble runs before DecisionStage populates
-            # `recent_performance`, so read the equity curve directly. One
-            # cheap local DB read; a failure degrades to "unknown drawdown",
-            # which resolves to the standing cap and trims nothing — never
-            # to a wrong number that reads as "no drawdown".
-            try:
-                rows = self.db.get_daily_pnl(limit=252)
-                drawdown_pct = peak_to_trough_pct(
-                    [r.get("total_value") for r in (rows or [])], ctx.total_value,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "§11.2: could not read the equity curve for the drawdown "
-                    "ladder — holding the standing %.1fx ceiling and trimming "
-                    "nothing: %s", base_x, e,
-                )
-        ceiling = resolve_gross_ceiling(drawdown_pct, base_x=base_x)
+            drawdown_pct = None
+            performance = ctx.recent_performance or {}
+            if "peak_to_trough_pct" in performance:
+                drawdown_pct = performance.get("peak_to_trough_pct")
+            else:
+                # The preamble runs before DecisionStage populates
+                # `recent_performance`, so read the equity curve directly. One
+                # cheap local DB read; a failure degrades to "unknown drawdown",
+                # which resolves to the standing cap and trims nothing — never
+                # to a wrong number that reads as "no drawdown".
+                try:
+                    rows = self.db.get_daily_pnl(limit=252)
+                    drawdown_pct = peak_to_trough_pct(
+                        [r.get("total_value") for r in (rows or [])], ctx.total_value,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "§11.2: could not read the equity curve for the drawdown "
+                        "ladder — holding the standing %.1fx ceiling and trimming "
+                        "nothing: %s", base_x, e,
+                    )
+            ceiling = resolve_gross_ceiling(drawdown_pct, base_x=base_x)
         gross = gross_exposure(
             ctx.positions, cash_park_symbol=self._sweep_symbol(),
         )
@@ -8850,6 +8915,45 @@ class TradingPipeline:
             payload.update(extra)
         return payload
 
+    def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
+        """Guard 1's early, VISIBLE half (2026-09-02 operational safety
+        guard). Returns an early-exit result dict when ops has halted the
+        desk, else None.
+
+        The broker-level check (`AlpacaBroker._kill_switch_active`) is what
+        actually GUARANTEES no order reaches Alpaca while the flag file
+        exists — it re-checks on every single submit/replace call, so it
+        stays correct even if the file appears mid-session, after this
+        early check already passed. This method exists only so a halted
+        run (a) does not spend real broker calls and LLM budget on analysis
+        that can place no order, and (b) produces exactly ONE clear alert
+        on the channel the operator actually reads: the returned
+        `status` flows through `format_session_result` to
+        `TelegramNotifier.send()` in `main.py`, the SAME path every other
+        session result already takes — no new alerting mechanism.
+
+        UNLIKE `_paid_suspended_payload` above, nothing NEW is preserved:
+        this is the one guard in the codebase that also blocks a
+        risk-reducing order (see RiskConfig.kill_switch_path), so a new
+        protective stop cannot go out either while it is active. A stop
+        already resting at the broker from before the halt is untouched
+        and keeps protecting its position — only new broker-bound order
+        flow is refused.
+        """
+        if not self._kill_switch_path.exists():
+            return None
+        logger.error(
+            "KILL SWITCH ACTIVE (%s exists) — halting run %s before any "
+            "broker or LLM work. touch/rm that file to stop/resume the "
+            "desk.", self._kill_switch_path, run_id,
+        )
+        payload = {
+            "status": "kill_switch_halted", "run_id": run_id, "orders": [],
+            "kill_switch_path": str(self._kill_switch_path),
+        }
+        payload.update(extra)
+        return payload
+
     def run_morning(self) -> dict:
         ctx = RunContext.start("morning")
         run_id = ctx.run_id
@@ -8858,6 +8962,10 @@ class TradingPipeline:
         if not self._is_trading_day():
             logger.info("Morning run skipped: market closed for non-trading day")
             return {"status": "market_holiday", "orders": [], "run_id": run_id}
+
+        halt = self._kill_switch_halt_result(run_id)
+        if halt is not None:
+            return halt
 
         self._activate_cost_session(run_id, "morning")
 
@@ -9578,6 +9686,10 @@ class TradingPipeline:
             logger.info("%s run skipped: market closed for non-trading day", session_type)
             return {"status": "market_holiday", "positions": 0, "orders": [], "run_id": run_id}
 
+        halt = self._kill_switch_halt_result(run_id, positions=0)
+        if halt is not None:
+            return halt
+
         self._activate_cost_session(run_id, session_type)
 
         # Early-close check. On half-day sessions (day after Thanksgiving 13:00
@@ -10263,6 +10375,10 @@ class TradingPipeline:
         if not self._is_trading_day():
             logger.info("Intra check skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
+
+        halt = self._kill_switch_halt_result(run_id)
+        if halt is not None:
+            return halt
 
         self._activate_cost_session(run_id, "intra_check")
 

@@ -28,7 +28,17 @@ logger = logging.getLogger(__name__)
 _DB_PATH = _NOTIFIER_DB_PATH
 _SWEEP_SYMBOLS = frozenset({"SGOV", "BIL"})
 _BASE_ONLY_STATUSES = frozenset(
-    {"market_holiday", "early_close", "broker_error", "analysis_error", "fetch_error"}
+    {
+        "market_holiday", "early_close", "broker_error", "analysis_error",
+        "fetch_error",
+        # Guard 1 (2026-09-02): the kill switch's early check returns before
+        # any of the rich per-mode data (orders/positions/trades) exists to
+        # render, same shape-mismatch reason "broker_error" is here. Routes
+        # to the base notifier.py formatter, which renders a plain
+        # "status: kill_switch_halted" line and — critically — is NOT
+        # silenced for intra_check the way "ok"/"market_holiday" are.
+        "kill_switch_halted",
+    }
 )
 # 2026-08-31 visibility fix (src/pipeline.py's `_run_intraday_opportunity_scan`
 # / `_intraday_opportunity_scan_body`): these three now attach an explicit
@@ -128,7 +138,7 @@ def _status_emoji(status: str) -> str:
         return "🔵"
     if status in {"rejected", "hard_risk_block", "symbol_block", "buys_unfunded"}:
         return "🟡"
-    if "error" in status or status in {"failed", "emergency_sold"}:
+    if "error" in status or status in {"failed", "emergency_sold", "kill_switch_halted"}:
         return "🔴"
     return "⚪"
 
