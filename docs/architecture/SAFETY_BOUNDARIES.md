@@ -27,5 +27,18 @@
   analysis, PM grounding, AI Risk, deterministic risk/funding rules, broker
   protection or Alpaca Paper authorization. The configured universe is not
   mutated, and any uncertainty fails closed.
+- `scripts/desk_reset.py` is the only operator tool that issues broker
+  liquidations (`DELETE /v2/positions?cancel_orders=true`). It is outside the
+  trading pipeline and outside the risk engine, so it carries its own
+  fail-closed paper check rather than inheriting one: `alpaca.paper`, the
+  configured `base_url`, the SDK client's **resolved** base URL, and the
+  account's own `PA` account-number prefix must all say paper, and a read-only
+  probe of the live host must **not** authenticate. Any single failure aborts.
+  Note the qualifier above — `alpaca.base_url` is not a live-safety switch for
+  the *pipeline*; inside this tool it is one of four independent signals, none
+  of which is trusted alone. There is deliberately no override flag: a
+  liquidation against a live account should require a reviewed code change,
+  the same bar as `AppConfig._enforce_paper_only`. The tool never drops a
+  table and never deletes a file; unknown tables are kept, not emptied.
 
 Detailed verification remains in Git history. The last pre-ultra-lean working-tree snapshot is commit `02e20e6ac1c5c7e65b7f512f76c568328c990e3c`. Current authorization is always controlled by `docs/STATE.md` + `docs/WORK.md`.
