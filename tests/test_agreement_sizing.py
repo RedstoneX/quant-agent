@@ -360,3 +360,358 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
     assert "cluster" in buys["OKLO"].reasoning
     assert "single-name ceiling" not in buys["OKLO"].reasoning
     assert buys["OKLO"].allocation_pct == pytest.approx(10.0, abs=0.05)
+
+
+# ==========================================================================
+# §9.4 FRESHNESS — a stale view must not earn live size
+# ==========================================================================
+#
+# `build_evidence_registry` read `investment_implications.sentiment` and threw
+# `filing_date` / `is_new` away, and nothing in `src/risk/rules.py` or
+# `src/portfolio_constructor.py` ever looked at the age of an earnings stance.
+# A bullish earnings view therefore counted as a full live corroborating
+# source forever: one stale stance moved a name from 1 aligned source to 2 and
+# bought it a 3.0% -> 4.0% risk allowance, a 33% larger allowance, on evidence
+# that had confirmed nothing about today.
+#
+# The gate is a REMOVAL FROM THE TALLY only. The stance stays in the canonical
+# registry, so `validate_grounding` still sees the coverage and a PM that
+# cites it does not fail the session — this can shrink a ceiling and can never
+# raise one, matching the constructor's standing posture that it may only
+# refuse size a request did not earn.
+
+from datetime import date, timedelta       # noqa: E402
+from unittest.mock import patch            # noqa: E402
+
+from src.agents.portfolio_manager import PortfolioManagerAgent   # noqa: E402
+from src.risk.rules import (                                     # noqa: E402
+    EARNINGS_STANCE_MAX_AGE_DAYS, count_opposing_sources,
+)
+
+_ASOF = date(2026, 9, 1)
+
+
+def _earnings(symbol: str, sentiment: str, *, age_days: int,
+              is_new: bool = False, asof: date = _ASOF) -> dict:
+    """One entry in the `earnings_analyses` list, in the shape the pipeline
+    actually hands the PM (`run_earnings_preprocess` / `analyze_reports`)."""
+    filing_date = (asof - timedelta(days=age_days)).isoformat()
+    return {
+        "symbol": symbol,
+        "form_type": "10-Q",
+        "filing_date": filing_date,
+        "is_new": is_new,
+        "analysis": {
+            "symbol": symbol,
+            "filing_date": filing_date,
+            "investment_implications": {"sentiment": sentiment},
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# The threshold itself, at the boundary
+# --------------------------------------------------------------------------
+
+def test_freshness_threshold_reuses_the_earnings_seat_s_own_90_days():
+    """Not a number invented here: the earnings prompt already caps its own
+    conviction at `low` past 90 days, and `_missed_ops_earnings_signal`
+    already refuses anything older than 90 days as recent evidence."""
+    assert EARNINGS_STANCE_MAX_AGE_DAYS == 90
+
+
+def test_stance_exactly_at_the_threshold_is_still_fresh():
+    """90 days old is NOT stale — the gate fires strictly past the
+    threshold, so the boundary day is paid for like any other."""
+    stale = PortfolioManagerAgent.stale_evidence_sources(
+        earnings_analyses=[_earnings("NVDA", "bullish", age_days=90)],
+        asof=_ASOF,
+    )
+    assert stale == {}
+
+
+def test_stance_one_day_past_the_threshold_is_stale():
+    stale = PortfolioManagerAgent.stale_evidence_sources(
+        earnings_analyses=[_earnings("NVDA", "bullish", age_days=91)],
+        asof=_ASOF,
+    )
+    assert stale == {"NVDA": frozenset({"earnings"})}
+
+
+def test_a_filing_with_no_date_is_treated_as_stale():
+    """An unknowable age is not evidence of freshness. Same call
+    `_missed_ops_earnings_signal` already makes on an unparseable date."""
+    entry = _earnings("NVDA", "bullish", age_days=1)
+    entry["filing_date"] = ""
+    entry["analysis"].pop("filing_date")
+    stale = PortfolioManagerAgent.stale_evidence_sources(
+        earnings_analyses=[entry], asof=_ASOF,
+    )
+    assert stale == {"NVDA": frozenset({"earnings"})}
+
+
+def test_freshness_verdict_follows_the_same_last_wins_rule_as_the_stance():
+    """Two filings for one symbol: the registry keeps the LAST one's stance,
+    so the freshness verdict must attach to that same filing and not to an
+    earlier one that happens to be fresher."""
+    analyses = [
+        _earnings("NVDA", "bullish", age_days=200),
+        _earnings("NVDA", "bullish", age_days=5),
+    ]
+    registry = PortfolioManagerAgent.build_evidence_registry(
+        analyses=[], positions=[], news_intel=None,
+        earnings_analyses=analyses, macro_analysis=None,
+    )
+    assert registry["NVDA"]["earnings"] == "bullish"
+    assert PortfolioManagerAgent.stale_evidence_sources(
+        earnings_analyses=analyses, asof=_ASOF,
+    ) == {}
+    # ...and reversed, the stale one wins and is gated.
+    assert PortfolioManagerAgent.stale_evidence_sources(
+        earnings_analyses=list(reversed(analyses)), asof=_ASOF,
+    ) == {"NVDA": frozenset({"earnings"})}
+
+
+def test_a_gated_stance_stays_in_the_registry():
+    """The gate must not delete coverage. `validate_grounding` fails the
+    WHOLE session on any error, so removing a stale earnings stance from the
+    registry would turn a PM citation of it into a session failure — a hard
+    block, not the size reduction this is meant to be."""
+    analyses = [_earnings("NVDA", "bullish", age_days=200)]
+    registry = PortfolioManagerAgent.build_evidence_registry(
+        analyses=[], positions=[], news_intel=None,
+        earnings_analyses=analyses, macro_analysis=None,
+    )
+    assert registry["NVDA"]["earnings"] == "bullish"
+
+
+# --------------------------------------------------------------------------
+# The tally: a stale stance stops counting
+# --------------------------------------------------------------------------
+
+def test_count_aligned_sources_ignores_a_gated_source():
+    sources = {"technical": "bullish", "earnings": "bullish"}
+    assert count_aligned_sources("NVDA", sources, "long") == 2
+    assert count_aligned_sources(
+        "NVDA", sources, "long", ignored_sources=frozenset({"earnings"}),
+    ) == 1
+
+
+# --------------------------------------------------------------------------
+# End to end: the stale bullish view no longer buys the higher ceiling
+# --------------------------------------------------------------------------
+
+def _stale_ceiling_decision(stale_sources):
+    """One full-envelope long on NVDA with technical + earnings both bullish.
+
+    Geometry: entry 100 / stop 70 / target 160. Risk-per-share $30, so a
+    ceiling of 4.0% risk is a 13.33% weight and 3.0% is a 10.00% weight —
+    both far below the 20% single-name cap, which therefore cannot be what
+    moves the number.
+    """
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        thesis="Technical and earnings both bullish.",
+    )
+    registry = _registry(NVDA={"technical": "bullish", "earnings": "bullish"})
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[],
+        analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
+        total_value=100_000.0, price_map={"NVDA": 100.0},
+        evidence_registry=registry, stale_sources=stale_sources,
+    )
+    assert len(decisions) == 1
+    return decisions[0]
+
+
+def test_a_fresh_second_source_earns_the_two_source_ceiling():
+    d = _stale_ceiling_decision(None)
+    # 2 aligned -> 4.0% risk / $30 rps * $100 = 13.33% weight
+    assert abs(d.allocation_pct - 13.333) < 0.05
+
+
+def test_a_stale_bullish_earnings_view_no_longer_earns_the_higher_ceiling():
+    """The defect, priced. Same registry, same trade — the only difference
+    is that the earnings filing is older than the threshold, and the risk
+    allowance drops a rung from 4.0% to 3.0%."""
+    d = _stale_ceiling_decision({"NVDA": frozenset({"earnings"})})
+    # 1 aligned -> 3.0% risk / $30 rps * $100 = 10.00% weight
+    assert abs(d.allocation_pct - 10.0) < 0.05
+    assert "agreement ceiling" in d.reasoning
+
+
+def test_the_freshness_gate_can_only_ever_reduce():
+    """Gating a source can never raise the ceiling, whatever it gates."""
+    fresh = _stale_ceiling_decision(None).allocation_pct
+    for gated in ({"NVDA": frozenset({"earnings"})},
+                  {"NVDA": frozenset({"technical"})},
+                  {"NVDA": frozenset({"technical", "earnings"})}):
+        assert _stale_ceiling_decision(gated).allocation_pct <= fresh + 1e-9
+
+
+def test_no_stale_map_leaves_the_ceiling_exactly_as_it_was():
+    """A caller with no freshness view must not have one invented for it —
+    the same posture `evidence_registry=None` already takes."""
+    assert (_stale_ceiling_decision(None).allocation_pct
+            == _stale_ceiling_decision({}).allocation_pct)
+
+
+# ==========================================================================
+# §9.4 DISSENT — counted and visible, deliberately NOT priced
+# ==========================================================================
+#
+# `count_aligned_sources` counts only sources aligned with the trade. On a
+# long, a bearish earnings stance contributes 0 — arithmetically identical to
+# neutral and to no coverage at all. Nothing subtracts, and nothing recorded
+# that it had happened. Making dissent SUBTRACT is a risk-rule change and is
+# the owner's call; making it countable is not.
+
+def test_count_opposing_sources_on_a_long():
+    sources = {"technical": "bullish", "earnings": "bearish",
+               "macro": "neutral", "news": "bearish"}
+    assert count_aligned_sources("NVDA", sources, "long") == 1
+    assert count_opposing_sources("NVDA", sources, "long") == 2
+
+
+def test_count_opposing_sources_on_a_short():
+    """The exact mirror: on a short the bullish seats are the dissenters."""
+    sources = {"technical": "bearish", "earnings": "bullish",
+               "macro": "neutral", "news": "bullish"}
+    assert count_aligned_sources("NVDA", sources, "short") == 1
+    assert count_opposing_sources("NVDA", sources, "short") == 2
+
+
+def test_neutral_is_in_neither_count():
+    """A seat with no view took no side — it must not read as dissent."""
+    sources = {"technical": "bullish", "macro": "neutral", "news": "mixed"}
+    assert count_aligned_sources("NVDA", sources, "long") == 1
+    assert count_opposing_sources("NVDA", sources, "long") == 0
+
+
+def test_opposing_count_honours_the_freshness_gate_too():
+    """A stance too stale to corroborate is also too stale to dissent —
+    one freshness rule, not two."""
+    sources = {"technical": "bullish", "earnings": "bearish"}
+    assert count_opposing_sources("NVDA", sources, "long") == 1
+    assert count_opposing_sources(
+        "NVDA", sources, "long", ignored_sources=frozenset({"earnings"}),
+    ) == 0
+
+
+def test_opposing_count_flips_with_macro_polarity_on_an_inverse_etf():
+    """`count_opposing_sources` must use the SAME polarity vocabulary as the
+    aligned count, inverse-ETF macro flip included — a second notion of
+    "opposed" would let the two disagree about identical evidence."""
+    sources = {"macro": "risk_on"}          # bullish tape
+    assert count_aligned_sources("SQQQ", sources, "long") == 0
+    assert count_opposing_sources("SQQQ", sources, "long") == 1
+
+
+def test_dissent_does_not_move_the_size_across_a_ceiling_rung():
+    """The subtraction test that actually bites. 1-aligned/1-opposed cannot
+    detect a dissent penalty, because `agreement_ceiling_for_count` prices 0
+    and 1 aligned sources identically by design. 2-aligned/1-opposed can: if
+    dissent were netted off the tally the ceiling would drop 4.0% -> 3.0%."""
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        thesis="Two seats for, one against.",
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[],
+        analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
+        total_value=100_000.0, price_map={"NVDA": 100.0},
+        evidence_registry=_registry(NVDA={
+            "technical": "bullish", "earnings": "bullish", "macro": "bearish",
+        }),
+    )
+    assert len(decisions) == 1
+    d = decisions[0]
+    # 2 aligned (dissent NOT netted off) -> 4.0% risk -> 13.33% weight.
+    assert abs(d.allocation_pct - 13.333) < 0.05
+    assert "1 independent source(s) took the OPPOSITE side" in d.reasoning
+    assert "did NOT reduce the size" in d.reasoning
+
+
+def test_dissent_is_recorded_on_the_order_but_does_not_shrink_it():
+    """The whole point: the number appears, and the size does not move."""
+    constructor = PortfolioConstructor()
+
+    def _decide(registry):
+        target = TargetPosition(
+            symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+            thesis="Overriding a dissenting seat.",
+        )
+        decisions = constructor.construct_orders(
+            targets=[target], positions=[],
+            analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
+            total_value=100_000.0, price_map={"NVDA": 100.0},
+            evidence_registry=registry,
+        )
+        assert len(decisions) == 1
+        return decisions[0]
+
+    with_dissent = _decide(_registry(
+        NVDA={"technical": "bullish", "earnings": "bearish"}))
+    without_dissent = _decide(_registry(
+        NVDA={"technical": "bullish", "earnings": "neutral"}))
+
+    # 1 aligned either way -> 3.0% ceiling -> 10.00% weight, unchanged.
+    assert abs(with_dissent.allocation_pct - without_dissent.allocation_pct) < 1e-9
+    assert "OPPOSITE side" in with_dissent.reasoning
+    assert "OPPOSITE side" not in without_dissent.reasoning
+
+
+# ==========================================================================
+# What the PM is shown
+# ==========================================================================
+
+def _pm_agent():
+    with patch("anthropic.Anthropic"):
+        return PortfolioManagerAgent(api_key="test", model="claude-sonnet-4-6")
+
+
+def _pm_message(age_days: int) -> str:
+    agent = _pm_agent()
+    with patch("src.agents.portfolio_manager.et_today", return_value=_ASOF):
+        return agent.build_user_message(
+            analyses=[_analysis("NVDA")],
+            positions=[],
+            earnings_analyses=[_earnings("NVDA", "bullish", age_days=age_days)],
+            cash_balance=100_000.0,
+            total_value=100_000.0,
+        )
+
+
+def test_a_gated_stance_is_not_shown_to_the_pm_as_corroborating():
+    """The prompt already labelled a cached view `[from cache]` with its
+    filing date — and then counted it as a live aligned source in the same
+    message. Both halves must now say the same thing."""
+    msg = _pm_message(age_days=200)
+    # The tally the PM is quoted, the agreement line's own caveat, the
+    # registry block, and the earnings section must ALL say the same thing —
+    # each is asserted separately because each is written separately.
+    assert "- NVDA: 1 aligned / 0 opposed if long" in msg
+    assert "earnings stance NOT counted — filing older than 90d" in msg
+    assert "STALE (still real coverage, still citable as provenance" in msg
+    assert "does NOT count toward the agreement ceiling" in msg
+
+
+def test_a_fresh_stance_is_shown_as_corroborating():
+    msg = _pm_message(age_days=10)
+    assert "- NVDA: 2 aligned / 0 opposed if long" in msg
+    assert "NOT counted" not in msg
+    assert "STALE" not in msg
+
+
+def test_the_pm_is_shown_the_opposing_count():
+    agent = _pm_agent()
+    msg = agent.build_user_message(
+        analyses=[_analysis("NVDA")],
+        positions=[],
+        earnings_analyses=[_earnings("NVDA", "bearish", age_days=10)],
+        cash_balance=100_000.0, total_value=100_000.0,
+    )
+    assert "- NVDA: 1 aligned / 1 opposed if long" in msg
+    assert "1 aligned / 1 opposed if short" in msg

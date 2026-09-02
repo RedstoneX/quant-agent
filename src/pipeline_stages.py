@@ -2426,6 +2426,15 @@ class DecisionStage:
             smart_money_findings=ctx.smart_money_findings,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
         )
+        # §9.4 freshness — same pure function, same inputs, so the stances
+        # the constructor refuses to pay for are exactly the ones the PM's
+        # prompt marked stale. An earnings view older than
+        # `EARNINGS_STANCE_MAX_AGE_DAYS` stops counting toward the agreement
+        # tally; it stays in the registry above, so grounding still accepts
+        # it as coverage and this can only ever shrink a ceiling.
+        stale_sources = PortfolioManagerAgent.stale_evidence_sources(
+            earnings_analyses=earnings_results,
+        )
         # Conviction ledger (spec §9.5): persist every seat's side on every
         # idea — dissent included — from that same registry, BEFORE the
         # constructor runs so a construction failure cannot lose the record
@@ -2449,6 +2458,7 @@ class DecisionStage:
             # wider for the same ATR reading than a trending one.
             regime=_macro_regime(macro_analysis),
             evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
             # Spec §11.2 — the session's gross-exposure ceiling, already
             # resolved from account state in the run preamble (and re-derived
             # here only on a lane where the preamble did not run). The
