@@ -646,6 +646,88 @@ def _fmt_shares(qty: float) -> str:
     return f"{value:.9f}".rstrip("0").rstrip(".")
 
 
+# Spec §11.1 vol-adjusted sizing budget: the fraction of EQUITY a single
+# entry may put at risk between its fill and its stop.
+RISK_BUDGET_PCT = 0.5
+
+
+def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
+                        stop_price: float, is_short: bool,
+                        fractional: bool) -> float | None:
+    """Shares the §11.1 risk budget allows, or None when geometry is unusable.
+
+    ONE definition, two callers — the BUY-submit loop (which sizes the real
+    order) and the cash-sweep preflight (which sizes the funding sale). They
+    were separate before: the preflight funded the ALLOCATION notional while
+    the submit loop spent `min(alloc, risk)`, so on every session where the
+    risk budget bound — the ordinary case — the sweep liquidated more of the
+    vehicle than the BUYs could possibly spend and the bookend re-parked the
+    difference minutes later. Production, 2026-08-27: SWEEP_SELL $3,422.61 at
+    13:35:43, SWEEP_BUY $1,007.60 at 13:36:36. Two crossings of the spread,
+    53 seconds apart, for nothing.
+
+    The preflight passes the RM-approved stop; the submit loop may later
+    ATR-WIDEN that stop, which only increases risk-per-share and therefore
+    only shrinks the final quantity. So the preflight's answer is an upper
+    bound on what will be spent — funding still errs long, never short.
+    """
+    if not (stop_price > 0 and sizing_price > 0):
+        return None
+    # D4: geometry validity is direction-aware — a long's stop must sit
+    # below its entry, a short's strictly above.
+    valid_geometry = (
+        (not is_short and sizing_price > stop_price)
+        or (is_short and stop_price > sizing_price)
+    )
+    if not valid_geometry:
+        return None
+    # D4: unsigned everywhere.
+    risk_per_share = abs(sizing_price - stop_price)
+    if is_short:
+        # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
+        # (the stop is untouched). A short gaps through its stop with no
+        # bound, so this execution-time vol-adjusted-sizing belt must be at
+        # least as conservative for a short as the constructor's own primary
+        # sizing already is.
+        _cfg = getattr(
+            getattr(pipeline.config, "risk", None),
+            "short_gap_risk_multiple", None,
+        )
+        gap_multiple = (
+            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
+            else 1.5
+        )
+        risk_per_share *= gap_multiple
+    if risk_per_share <= 0:
+        return None
+    risk_dollars = total_value * RISK_BUDGET_PCT / 100
+    return _size_shares(
+        pipeline, risk_dollars / risk_per_share, fractional=fractional,
+    )
+
+
+def _min_order_usd(pipeline) -> float:
+    """The §10.3 notional floor — the smallest order worth placing.
+
+    Read from `cash_sweep.min_order_usd` exactly as `apply_gross_ceiling`'s
+    caller (`TradingPipeline._enforce_gross_ceiling`) and the constructor
+    read it, so the floor that refuses a token order in the risk engine is
+    the same number that refuses one after the execution-time cash re-size.
+    An unreadable config falls back to the shared 500.0 default rather than
+    to zero: a floor that silently becomes "no floor" is the defect.
+    """
+    raw = getattr(
+        getattr(getattr(pipeline, "config", None), "cash_sweep", None),
+        "min_order_usd", None,
+    )
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 500.0
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        return 500.0
+    return value
+
+
 def _alert_owner_protection_failed(pipeline, spec: dict, protection,
                                    entry_order_id: str) -> None:
     """Spec §11.1 guard 2 — a stop that did not land ALERTS THE OWNER.
@@ -2045,7 +2127,14 @@ class DecisionStage:
     """Build PM memory layers → call PM → run Constructor.
 
     Reads:  ctx.positions, ctx.analyses, ctx.news_intel, ctx.earnings_results,
-            ctx.macro_analysis, ctx.total_value, ctx.cash, ctx.last_equity
+            ctx.macro_analysis, ctx.total_value, ctx.deployable_cash,
+            ctx.last_equity
+
+    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan, and the
+    plan may spend the sweep vehicle because `fund_buys` converts it before
+    the BUY phase. Raw broker cash here would hide the parked book from PM
+    and RM and cap the desk at its reserve. The docstring said `ctx.cash`;
+    the code has read `deployable_cash` since the 2026-08-19 tranche.
     Writes: ctx.portfolio_decision (with .targets AND .decisions populated),
             ctx.facts
     """
@@ -3328,13 +3417,14 @@ class ExecutionStage:
             # It is also the difference between skipping a sub-one-share
             # position as `qty_zero` and taking it, which under exact sizing
             # is a legitimate position rather than nothing.
+            preflight_short = decision.action == "SHORT"
+            preflight_fractional = _fractional_sizing_allowed(
+                pipeline, decision.symbol, is_short=preflight_short,
+            )
             preflight_qty = _size_shares(
                 pipeline,
                 (total_value * decision.allocation_pct / 100) / preflight_price,
-                fractional=_fractional_sizing_allowed(
-                    pipeline, decision.symbol,
-                    is_short=(decision.action == "SHORT"),
-                ),
+                fractional=preflight_fractional,
             )
             if preflight_qty <= 0:
                 _record_execution_skip(
@@ -3343,18 +3433,65 @@ class ExecutionStage:
                     f"${preflight_price:.2f} rounds to zero shares",
                 )
                 continue
-            fundable_notional[decision.symbol] = preflight_qty * preflight_price
+            # Fund what the submit loop will SPEND, not what the allocation
+            # asked for. The loop takes `min(qty_by_alloc, qty_by_risk)`; on
+            # any session where the vol-adjusted budget binds — the ordinary
+            # case — funding the allocation figure over-sells the vehicle and
+            # the bookend re-parks the difference within the minute. Same
+            # helper, same quantization, so the two cannot drift apart.
+            #
+            # UNDER-funding is the one direction that costs a trade rather
+            # than a spread, so the reference price must be the submit
+            # loop's own. It is: for a long the loop takes
+            # `max(market_price, limit_price)` and for a short
+            # `min(market_price, limit_price)` — which is exactly
+            # `preflight_price` above. Every adjustment the loop makes AFTER
+            # that point moves the quantity DOWN, never up: a marketable-
+            # limit ceiling only raises the price, and the ATR floor only
+            # widens the stop, and each of those shrinks the shares the risk
+            # budget allows. So this is an upper bound on what will be
+            # spent, which is the safe side to be wrong on.
+            preflight_risk_qty = _qty_by_risk_budget(
+                pipeline, total_value=total_value,
+                sizing_price=preflight_price,
+                stop_price=decision.stop_loss,
+                is_short=preflight_short, fractional=preflight_fractional,
+            )
+            if preflight_risk_qty is not None and preflight_risk_qty < preflight_qty:
+                preflight_qty = preflight_risk_qty
+            if preflight_qty <= 0:
+                # The risk budget alone cannot carry one orderable unit. The
+                # submit loop will reach the same conclusion and skip; there
+                # is nothing here for the sweep to fund.
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "qty_zero",
+                    f"risk budget at ${preflight_price:.2f} entry / "
+                    f"${decision.stop_loss:.2f} stop rounds to zero shares",
+                )
+                continue
+            # A SHORT is deliberately excluded from the funding total: it
+            # sells borrowed shares and never draws on `available_cash` (see
+            # D11 in the submit loop, where `available_cash` is left untouched
+            # for a short). Funding one liquidates the vehicle to raise cash
+            # that no order can spend — guaranteed churn, not a safety
+            # margin. BUY notionals are still counted in full, so this can
+            # only remove waste, never under-fund a BUY.
+            if not preflight_short:
+                fundable_notional[decision.symbol] = preflight_qty * preflight_price
             preflight_survivors.append(decision)
         buy_decisions = preflight_survivors
 
-        # Cash-sweep funding: a SHORT's notional is folded into
-        # `planned_notional` below alongside real BUYs even though opening a
-        # short does not actually need settled cash (it sells borrowed
-        # shares). That over-funds rather than under-funds a short-only
-        # session — SGOV may get released when it wasn't strictly needed —
-        # which is the safe direction to be wrong in and is not reworked
-        # here; see the sizing loop below for where a SHORT stops treating
-        # cash as a constraint.
+        # Cash-sweep funding. `planned_notional` counts BUYs ONLY, at the
+        # quantity the submit loop will actually reach — allocation capped by
+        # the §11.1 risk budget, quantized by the same helper. A SHORT is
+        # excluded outright: it sells borrowed shares and never draws on
+        # `available_cash` (see D11 in the sizing loop), so funding one
+        # liquidates the vehicle for cash no order can spend. Both were
+        # over-funding, and over-funding is not free: the bookend re-parks
+        # the residue minutes later, which is two crossings of the spread
+        # for no position (2026-08-27: sold $3,422.61, re-bought $1,007.60
+        # 53 seconds later; 2026-08-31: sold $503.47, re-bought $806.40
+        # five seconds later).
         #
         # PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
@@ -3394,6 +3531,25 @@ class ExecutionStage:
                             pipeline, ctx, d.symbol, "funding", "failed",
                             "cash_sweep_exception", detail=str(e),
                         )
+                else:
+                    # Adopt whatever the sweeper refreshed REGARDLESS of the
+                    # confirmed amount. `fund_buys` re-reads the broker into
+                    # ctx before it decides what it can confirm, so on the
+                    # zero-confirmed path ctx already held fresher figures
+                    # than these locals — and the locals, not ctx, govern the
+                    # BUY loop's `available_cash`. Refreshing only on the
+                    # success path meant an unconfirmed funding attempt left
+                    # the loop sizing against a pre-sale cash reading; if
+                    # anything had DRAWN cash in between, that reading is
+                    # stale-HIGH and the clamp stops protecting anything.
+                    # ctx is unchanged when fund_buys bailed early, so this
+                    # is a no-op in the ordinary case.
+                    if isinstance(getattr(ctx, "cash", None), (int, float)):
+                        cash = ctx.cash
+                    if isinstance(getattr(ctx, "total_value", None), (int, float)):
+                        total_value = ctx.total_value
+                    if ctx.positions is not None:
+                        positions = ctx.positions
                 if freed > 0:
                     positions = ctx.positions
                     cash = ctx.cash
@@ -3756,39 +3912,14 @@ class ExecutionStage:
                     (total_value * decision.allocation_pct / 100) / sizing_price,
                     fractional=fractional,
                 )
-                qty_by_risk = None
-                RISK_BUDGET_PCT = 0.5
-                # D4: geometry validity is direction-aware — a long's stop
-                # must sit below its entry, a short's strictly above.
-                valid_geometry = (
-                    (not is_short and stop_price > 0 and sizing_price > stop_price)
-                    or (is_short and stop_price > 0 and stop_price > sizing_price)
+                # Same helper the cash-sweep preflight sized funding with —
+                # one definition, so the dollars released can never drift
+                # from the dollars spent.
+                qty_by_risk = _qty_by_risk_budget(
+                    pipeline, total_value=total_value,
+                    sizing_price=sizing_price, stop_price=stop_price,
+                    is_short=is_short, fractional=fractional,
                 )
-                if valid_geometry:
-                    # D4: unsigned everywhere.
-                    risk_per_share = abs(sizing_price - stop_price)
-                    if is_short:
-                        # D8: gap-risk sizing haircut — SIZING ONLY, never
-                        # stop placement (the stop above is untouched). A
-                        # short gaps through its stop with no bound, so this
-                        # execution-time vol-adjusted-sizing belt must be at
-                        # least as conservative for a short as the
-                        # constructor's own primary sizing already is.
-                        _cfg = getattr(
-                            getattr(pipeline.config, "risk", None),
-                            "short_gap_risk_multiple", None,
-                        )
-                        gap_multiple = (
-                            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
-                            else 1.5
-                        )
-                        risk_per_share *= gap_multiple
-                    if risk_per_share > 0:
-                        risk_dollars = total_value * RISK_BUDGET_PCT / 100
-                        qty_by_risk = _size_shares(
-                            pipeline, risk_dollars / risk_per_share,
-                            fractional=fractional,
-                        )
                 if qty_by_risk is not None and qty_by_risk < qty_by_alloc:
                     logger.info(
                         "Vol-adjusted sizing for %s: qty_by_alloc=%s → qty_by_risk=%s "
@@ -3840,6 +3971,38 @@ class ExecutionStage:
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
+                    # §10.3's floor, re-applied to the size EXECUTION chose.
+                    # `apply_gross_ceiling` and the constructor both refuse a
+                    # trimmed order below `min_order_usd` rather than place a
+                    # token position — but this clamp happens AFTER both of
+                    # them, so it was the one resize with no floor under it.
+                    # With fractional sizing on, `affordable_qty` no longer
+                    # floors to zero shares when cash is short: a $3 residue
+                    # buys 0.0281 shares and the order goes out. A position
+                    # too small to pay for its own risk is not a smaller
+                    # trade, it is a worse one.
+                    floor_usd = _min_order_usd(pipeline)
+                    if estimated_cost < floor_usd:
+                        logger.warning(
+                            "Skipping BUY %s: cash re-size cut the order to "
+                            "$%.2f (%s sh), below the $%.0f minimum worth "
+                            "trading",
+                            decision.symbol, estimated_cost,
+                            _fmt_shares(qty), floor_usd,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "below_min_notional",
+                            f"available cash ${available_cash:.2f} re-sized the "
+                            f"order to ${estimated_cost:.2f}, below the "
+                            f"${floor_usd:,.0f} minimum worth trading",
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "funding", "refused",
+                            "resized_below_min_notional",
+                            resized_notional=estimated_cost,
+                            min_order_usd=floor_usd,
+                        )
+                        continue
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "funding", "resized",
                         "confirmed_cash_partially_funded_order",
