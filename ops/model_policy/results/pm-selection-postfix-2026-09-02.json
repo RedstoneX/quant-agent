@@ -1,0 +1,274 @@
+{
+  "generated_at": "2026-09-02T20:15:17Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 5,
+  "scenarios": {
+    "pm_selection": {
+      "role": "portfolio_manager",
+      "description": "The REAL 2026-09-01 opportunity set (run-64290730): 59 technical reads, 38 actionable, 30 of them below the 1.5 R/R floor, 5 qualified shorts, and every famous mega-cap weak. Grades WHICH candidates the model picks \u2014 including a familiarity_bias number reported on every run. Does NOT measure profitability. Opt-in: ~56k input tokens per call (the live session billed 61,557 and cost $0.24 on gpt-5.5)."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "d956e4a1d7bc3f85257fd0b7aa1558055ef7b7725ddb7fe10471599240b8a241",
+      "bytes": 56245,
+      "lines": 948
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.5": {
+      "input": 5.0,
+      "output": 30.0
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "opens_a_position",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "7 opening/adding target(s): XLE long rr=1.67 buy/high; CHPX long rr=3.03 buy/low; NVDA long rr=1.03 buy/medium; PATH long rr=1.32 buy/medium; COP long rr=0.76 buy/medium; NKE short rr=2.28 sell/medium; FLNC short rr=1.84 sell/medium"
+        },
+        {
+          "name": "selection_from_qualified_set",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "4/7 picks clear the 1.5 R/R floor (57%); qualified set was ['CHPX', 'FLNC', 'GEV', 'NEE', 'NKE', 'PFE', 'UNH', 'XLE']"
+        },
+        {
+          "name": "takes_a_qualified_short",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "qualified shorts taken=['NKE', 'FLNC'] other shorts=[] (available: ['FLNC', 'GEV', 'NEE', 'NKE', 'UNH'])"
+        },
+        {
+          "name": "rr_floor_discipline",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "every sub-floor pick names a catalyst"
+        },
+        {
+          "name": "familiarity_bias",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "famous-but-weak picks 1/7 (14%)=['NVDA']; qualified candidates passed over=['GEV', 'NEE', 'PFE', 'UNH']"
+        }
+      ],
+      "input_tokens": 58699,
+      "output_tokens": 8208,
+      "cost_usd": 0.539735,
+      "latency_s": 152.67,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro is risk-on with high confidence and a 90.0% target invested posture, while the account is only 21.6% invested with 78.4% cash; that 68.4 percentage-point deployment gap must be answered. The regime has been risk-on for 2 consecutive sessions in the Macro Regime Trajectory, so I am adding risk rather than waiting, while respecting the user-stated cash-only account constraint and letting the constructor/cash gate determine final executable size.\",\n    \"news_check\": \"News is internally split: the PM briefing is bearish overall due to the 2026-09-01 global bond selloff and crude/yield pressure, but active HIGH state changes still support selective energy and AI-infrastructure exposure. I am using dated catalysts only where R/R is below 1.5: NVDA via the 2026-08-31 Anthropic/Lambda cloud deal, PATH via the 2026-08-27 cybersecurity-spending state change, and COP via the 2026-08-27 Middle East escalation row; I am not using non-registry news as provenance where the Canonical Registry does not list news coverage.\",\n    \"earnings_check\": \"Targeted earnings reads are supportive for COP and NVDA longs, bearish-confirming for NKE and FLNC shorts, and absent or not current for XLE, CHPX, and PATH. RSG remains a HOLD rather than an add because it is held only 1d, has a JUST FILED 10-Q still in progress, and today\u2019s TA R/R is 1.42, below the 1.5 floor; MAIR is also JUST FILED but neutral technically and is not targeted.\",\n    \"signal_confl",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:CHPX",
+        "TARGET:COP",
+        "TARGET:FLNC",
+        "TARGET:NKE",
+        "TARGET:NVDA",
+        "TARGET:PATH",
+        "TARGET:XLE"
+      ]
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation"
+        },
+        {
+          "name": "opens_a_position",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "9 opening/adding target(s): XLE long rr=1.67 buy/high; CHPX long rr=3.03 buy/low; PFE long rr=1.5 buy/medium; NVDA long rr=1.03 buy/medium; PATH long rr=1.32 buy/medium; CRM long rr=0.48 buy/low; COP long rr=0.76 buy/medium; NKE short rr=2.28 sell/medium; FLNC short rr=1.84 sell/medium"
+        },
+        {
+          "name": "selection_from_qualified_set",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "5/9 picks clear the 1.5 R/R floor (56%); qualified set was ['CHPX', 'FLNC', 'GEV', 'NEE', 'NKE', 'PFE', 'UNH', 'XLE']"
+        },
+        {
+          "name": "takes_a_qualified_short",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "qualified shorts taken=['NKE', 'FLNC'] other shorts=[] (available: ['FLNC', 'GEV', 'NEE', 'NKE', 'UNH'])"
+        },
+        {
+          "name": "rr_floor_discipline",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "every sub-floor pick names a catalyst"
+        },
+        {
+          "name": "familiarity_bias",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "famous-but-weak picks 1/9 (11%)=['NVDA']; qualified candidates passed over=['GEV', 'NEE', 'UNH']"
+        }
+      ],
+      "input_tokens": 58699,
+      "output_tokens": 9128,
+      "cost_usd": 0.567335,
+      "latency_s": 162.26,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro is risk-on with high confidence and a 90.0% target invested posture, while Account Status shows only 21.6% invested; the regime has been risk-on for the last two listed sessions, so I am treating the deployment gap as the main portfolio problem while respecting that margin is disabled and BUYs must fit within the $7,705.34 cash balance.\",\n    \"news_check\": \"News is conflicted with macro: the PM Briefing says overall sentiment is bearish with a HIGH state change from the 2026-09-01 global bond selloff and crude pressure, but stock-specific NVDA news remains HIGH bullish and energy/geopolitical state changes remain active for XLE and COP; this argues for selective deployment rather than staying idle.\",\n    \"earnings_check\": \"RSG and MAIR are JUST FILED, so I am not adding to RSG despite its technical buy because its R/R is 1.42 and the unread filing remains a blocker. Earnings support NVDA, COP, and NKE/FLNC short theses where relevant, conflict with PFE and SLB, and are neutral for CRM, DIS, CMCSA, and MSFT.\",\n    \"signal_conflicts\": \"XLE: available=<macro=bullish, technical=buy>. Conflict: none in the registry, though news backdrop is crude-supportive but broad-equity cautious. Resolution: open a risk-on energy long with normal R/R-clearing size. CHPX: available=<macro=bullish, technical=buy>. Conflict: none in the registry; Tech itself flags low liquidity and high ATR. Resolution: small speculative starter despite R/R 3.03.",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:CHPX",
+        "TARGET:COP",
+        "TARGET:CRM",
+        "TARGET:FLNC",
+        "TARGET:NKE",
+        "TARGET:NVDA",
+        "TARGET:PATH",
+        "TARGET:PFE",
+        "TARGET:XLE"
+      ]
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.01,
+      "error": "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": []
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.01,
+      "error": "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": []
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_selection",
+      "role": "portfolio_manager",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.01,
+      "error": "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": []
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.5|pm_selection": {
+        "model": "openai/gpt-5.5",
+        "scenario": "pm_selection",
+        "role": "portfolio_manager",
+        "runs": 5,
+        "quality_mean": 0.34,
+        "quality_min": 0.0,
+        "cost_mean": 0.553535,
+        "latency_mean": 62.99,
+        "errors": [
+          "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+          "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+          "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60"
+        ],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.5": {
+        "scenarios": {
+          "pm_selection": {
+            "model": "openai/gpt-5.5",
+            "scenario": "pm_selection",
+            "role": "portfolio_manager",
+            "runs": 5,
+            "quality_mean": 0.34,
+            "quality_min": 0.0,
+            "cost_mean": 0.553535,
+            "latency_mean": 62.99,
+            "errors": [
+              "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+              "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60",
+              "PaidAnalysisSuspended: paid analysis suspended: next portfolio_manager call would project session cost to $2.6943, above reserved-exposure ceiling $2.60"
+            ],
+            "misattributed": []
+          }
+        },
+        "quality_mean": 0.34,
+        "quality_worst": 0.34,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.553535,
+        "cost_total_usd": 1.10707,
+        "quality_per_dollar": 0.61
+      }
+    }
+  }
+}
