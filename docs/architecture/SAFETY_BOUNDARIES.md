@@ -14,6 +14,24 @@
 
 ## Verified caveats that matter
 
+- **Kill switch** (2026-09-02): `risk.kill_switch_path` (default
+  `data/KILL_SWITCH`) halts order flow via `path.exists()` in
+  `AlpacaBroker` — no parsing, so it cannot fail open on a malformed file.
+  It is the one deterministic check that ALSO blocks a risk-reducing order
+  (an exit, a cover, a new protective stop): every other hard-block rule
+  and circuit breaker deliberately exempts SELL/COVER
+  (`RiskRuleEngine.check`'s first statement; `apply_gross_ceiling`'s
+  BUY/SHORT-only filter) so a bad account state can never trap a position.
+  A protective stop already resting at the broker from before the halt is
+  untouched — only new order flow is refused. Verified by
+  `tests/test_kill_switch.py`.
+- **Non-finite equity read** (2026-09-02): a NaN/inf current-equity read
+  (Alpaca has been observed to return NaN `portfolio_value` on market-open
+  glitches) forces the §11.2 gross-exposure ladder to its floor rung and
+  alerts the owner (`_resolve_gross_ceiling`'s `bad_read` rung), instead of
+  falling through to the standing cap the way a genuinely fresh account
+  with no equity history does. Verified by
+  `tests/test_gross_exposure_ladder.py`.
 - `cash_sweep` `SWEEP_BUY` intentionally bypasses the shared hard-risk gate. It is deterministic, config-fixed and treated as cash-equivalent; its own bounds govern it.
 - The shared deterministic gate runs before AI Risk and again after AI-applied modifications; AI cannot loosen a hard limit.
 - AI Risk can widen a positive `stop_loss`; that widening is not separately re-audited for reward/risk. This is a known narrow behavior, not permission to redesign risk during unrelated work.
