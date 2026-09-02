@@ -1253,6 +1253,82 @@ def test_morning_research_stage_records_admission_reason_without_collision():
     assert admission_event["transaction_value_usd"] == 87_980_000.0
 
 
+def test_morning_research_stage_smart_money_truncated_marks_status_truncated():
+    """2026-09-02: smart_money_analyst_max_tokens was measured against real
+    production truncations (finish_reason=length). A truncated response can
+    still parse to syntactically valid-but-incomplete JSON, which must not
+    be silently recorded as "ok" (clean run) or "empty" (no signal) —
+    those are both currently-reachable branches in this stage's status
+    logic. It must land as its own "truncated" status so the notifier's
+    degraded banner picks it up.
+    """
+    from types import SimpleNamespace
+
+    from src.agents.base import AgentResult
+
+    config = SimpleNamespace(
+        trading=SimpleNamespace(universe=["SPY"], lookback_days=30),
+        smart_money=SimpleNamespace(enabled=True),
+    )
+    market = MagicMock()
+    market.get_ohlcv.return_value = []
+    macro = MagicMock()
+    macro.get_macro_summary.return_value = {}
+    macro_analyst = MagicMock()
+    macro_analyst.analyze.return_value = (
+        None,
+        AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
+    )
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+
+    smart_money_provider = MagicMock()
+    smart_money_provider.fetch.return_value = ([SimpleNamespace(symbol="RSG")], None)
+
+    truncated_result = AgentResult(
+        raw_text='{"findings":[]}', tokens_used=3000, model="test",
+        user_message="x", output_tokens=3000, finish_reason="length",
+        truncated=True,
+    )
+    smart_money_analyst = MagicMock()
+    # Findings list is empty (as a truncated call would plausibly look
+    # like "no signal") and there's no analysis_error — the parse
+    # succeeded on the incomplete-but-valid JSON.
+    smart_money_analyst.analyze.return_value = ([], truncated_result, None)
+
+    db = MagicMock()
+
+    stage = MorningResearchStage(
+        config=config,
+        db=db,
+        market=market,
+        macro=macro,
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_analyst,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        smart_money_provider=smart_money_provider,
+        smart_money_analyst=smart_money_analyst,
+        admit_smart_money_candidates_fn=lambda _observations: (set(), {}),
+        has_actionable_signal_fn=lambda *args, **kwargs: False,
+        run_news_update_fn=lambda *args, **kwargs: (None, None),
+        load_earnings_analyses_fn=lambda *args, **kwargs: ([], []),
+    )
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["smart_money"] == "truncated"
+
+
 @patch("src.pipeline_stages.compute_indicators")
 def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_compute_indicators):
     """2026-08-19 Tech batch-response symbol-loss fix, pipeline-level: when
