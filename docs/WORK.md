@@ -114,6 +114,26 @@ normal run summary, and severity is carried in TEXT, never colour — the
 owner is red/green colour blind.** Deliberately not deduplicated: a
 still-broken seat should keep alerting, not go quiet.
 
+**ITEM 0 CONTINUED — PM-INPUT ARCHITECTURE, owner priority 2026-09-02, NOT
+YET IMPLEMENTED, recorded so it isn't lost.** PM must receive concise
+recommendation + conviction only, never raw reasoning. The earnings fix
+above does NOT cover this — that fixed data GROUNDING, not the
+VOLUME/SHAPE reaching the PM.
+
+**Precedent (not invented):** standard buy-side equity-research hand-off
+to a PM is bounded — recommendation, conviction, short thesis, named
+risks. Full reasoning stays in supporting workpapers, not the PM's copy.
+
+**Measured same day:** `portfolio_manager.py`'s macro section renders
+macro's full 6-paragraph `reasoning_chain` verbatim into the PM prompt
+("audit these for logic errors" — deliberate, not an oversight, but still
+full reasoning not a conclusion). Other seats not yet measured.
+
+**Next, in order:** (1) quantify what every seat forwards to the PM
+today, (2) redesign each to the bounded shape above, (3) any prompt
+change needs a real paid benchmark — the rig can't verify one (item 1's
+own lesson) — so no prompt edit here is "done" without one.
+
 **STATE AT 2026-09-01 END OF SESSION — read this before the older handoff below.**
 
 **SHIPPED AND VERIFIED, on `integration/ship-2026-09-01` (tip `af266de`), pushed:**
