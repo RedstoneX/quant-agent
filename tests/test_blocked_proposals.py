@@ -66,6 +66,27 @@ def _skip(db, run_id, decision_id, symbol, reason, days_ago=1):
     db.conn.commit()
 
 
+def _constructor_drop(db, run_id, decision_id, symbol, detail="widened past noise band",
+                       days_ago=1):
+    """The `pipeline_event` row `DecisionStage` persists when the
+    deterministic constructor drops a target before it ever becomes a
+    `proposed_order` row — see `PortfolioConstructor.last_drop_reasons`.
+    """
+    row_id = db.insert_specialist_evidence(
+        run_id=run_id, decision_id=decision_id, agent_name="pipeline",
+        kind="pipeline_event", scope="symbol", symbol=symbol,
+        evidence_json=json.dumps({
+            "stage": "deterministic_gate", "outcome": "blocked",
+            "reason": "constructor_dropped", "detail": detail,
+        }),
+    )
+    db.conn.execute(
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
+        "WHERE id = ?", (f"-{days_ago} days", row_id),
+    )
+    db.conn.commit()
+
+
 def _verdict(db, run_id, decision_id, *, approved, category="rr_fail",
              modifications=None, days_ago=1):
     row_id = db.insert_specialist_evidence(
@@ -357,6 +378,51 @@ def test_constructor_dropped_symbol_is_not_blamed_for_a_rm_veto(tmp_path):
            "recent first: rm_rejected" not in out
     assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most " \
            "recent first: rm_rejected" not in out
+
+
+def test_constructor_dropped_symbol_gets_its_own_reason_not_no_order_built(tmp_path):
+    """A constructor drop carries its OWN reason, not the generic bucket.
+
+    `pipeline_stages.DecisionStage` now persists a `pipeline_event` row
+    (stage='deterministic_gate', outcome='blocked', reason=
+    'constructor_dropped') for every target the constructor drops before
+    it ever becomes a `proposed_order` row, recovered from
+    `PortfolioConstructor.last_drop_reasons` (2026-09-03, funnel-queue item
+    2). Before this test, `_outcome` had no way to see that row at all —
+    `get_proposal_funnel_rows` never fetched it — so a constructor-dropped
+    symbol fell into the generic `no_order_built` bucket even though the
+    constructor's own reason was sitting right there in the database.
+
+    Scenario: PM proposes A, B and C. The constructor drops A before
+    building any order for it. B and C survive to `proposed_order`, and
+    the Risk Manager then vetoes the smaller remaining plan. Only B and C
+    were ever reviewed by the Risk Manager — A must be attributed to the
+    constructor's drop, not to the Risk Manager's veto, and not to the
+    unexplained `no_order_built` bucket either.
+    """
+    pipeline, db = _pipeline(tmp_path)
+    _target(db, "r1", "d1", "A", days_ago=2)
+    _target(db, "r1", "d1", "B", days_ago=2)
+    _target(db, "r1", "d1", "C", days_ago=2)
+    _constructor_drop(db, "r1", "d1", "A", detail="stop widened past noise band")
+    _proposed_order(db, "r1", "d1", "B", days_ago=2)
+    _proposed_order(db, "r1", "d1", "C", days_ago=2)
+    _verdict(db, "r1", "d1", approved=False, category="rr_fail", days_ago=2)
+
+    out = pipeline._build_blocked_proposals(min_proposals=1)
+
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
+           "first: constructor_dropped" in out
+    assert "B: proposed 1× across 1 sessions, filled 0 — most recent " \
+           "first: rm_rejected:rr_fail" in out
+    assert "C: proposed 1× across 1 sessions, filled 0 — most recent " \
+           "first: rm_rejected:rr_fail" in out
+    # A must not be blamed on the Risk Manager, and must not fall into the
+    # unexplained generic bucket either.
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
+           "first: rm_rejected" not in out
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
+           "first: no_order_built" not in out
 
 
 def test_unfilled_order_status_is_rendered_verbatim(tmp_path):

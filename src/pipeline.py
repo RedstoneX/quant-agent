@@ -6052,6 +6052,7 @@ class TradingPipeline:
         ordered: set[tuple[str, str]] = set()        # (decision_id, symbol)
         skips: dict[tuple[str, str], str] = {}       # → verbatim reason
         verdicts: dict[str, dict] = {}               # decision_id → verdict
+        constructor_drops: dict[tuple[str, str], str] = {}  # → constructor's own reason
         for row in raw.get("evidence") or []:
             kind = row.get("kind")
             did = row.get("decision_id")
@@ -6095,6 +6096,21 @@ class TradingPipeline:
                 reason = (data.get("reason") or "").strip()
                 if reason:
                     skips[(did, sym)] = reason
+            elif kind == "pipeline_event":
+                # The deterministic constructor's own reason for dropping a
+                # target before it ever became a `proposed_order` row (see
+                # `pipeline_stages.DecisionStage`, which persists this via
+                # `PortfolioConstructor.last_drop_reasons`). Mirrors
+                # `scripts/blocked_proposals_census.py::_load_constructor_drops`
+                # — without it, a constructor drop falls through to the
+                # generic `no_order_built` bucket below with no explanation,
+                # even though the real reason was captured at drop time.
+                if (data.get("stage") == "deterministic_gate"
+                        and data.get("outcome") == "blocked"
+                        and data.get("reason") == "constructor_dropped"):
+                    constructor_drops[(did, sym)] = (
+                        data.get("detail") or "constructor_dropped"
+                    )
 
         if not proposals:
             return ""
@@ -6125,6 +6141,17 @@ class TradingPipeline:
                 return f"order_{status}"
             if key in skips:
                 return skips[key]
+            if key in constructor_drops:
+                # Checked before the verdict/`ordered` logic below, so a
+                # symbol the deterministic constructor dropped before the
+                # Risk Manager ever saw the plan is attributed to the
+                # constructor, never to the RM's veto of whatever plan
+                # survived. A fixed category (not the per-symbol detail
+                # text) so this still aggregates in `top` below; the real
+                # sentence lives in `constructor_drops[key]` for anyone
+                # who wants it. Mirrors
+                # `scripts/blocked_proposals_census.py::classify`.
+                return "constructor_dropped"
             # A verdict rejection/zeroing is only attributed to a symbol
             # confirmed to have reached the constructor's own order list
             # (`ordered`). Without this guard every ORIGINALLY-proposed

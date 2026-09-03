@@ -2943,10 +2943,12 @@ class Database:
     def get_proposal_funnel_rows(self, since_ts: str) -> dict[str, list[dict]]:
         """Raw rows for the proposal→fill funnel, from `since_ts` onward.
 
-        Returns the four `specialist_evidence` kinds that mark each stage of
+        Returns the five `specialist_evidence` kinds that mark each stage of
         a proposal's life (`target` = PM asked, `proposed_order` = an order
         was built, `verdict` = RM ruled on the plan, `execution_skip` = the
-        executor refused it) plus the `trades` rows that carry a
+        executor refused it, `pipeline_event` = a typed lifecycle fact such
+        as the deterministic constructor dropping a target before it ever
+        became a `proposed_order` row) plus the `trades` rows that carry a
         `decision_id`, which is the only join key linking an order back to
         the decision that asked for it.
 
@@ -2961,7 +2963,8 @@ class Database:
                 "SELECT decision_id, kind, symbol, evidence_json, timestamp "
                 "FROM specialist_evidence "
                 "WHERE kind IN ('target','proposed_order','verdict',"
-                "'execution_skip') AND timestamp >= ? ORDER BY id",
+                "'execution_skip','pipeline_event') AND timestamp >= ? "
+                "ORDER BY id",
                 (since_ts,),
             ).fetchall()
             trades = self.conn.execute(

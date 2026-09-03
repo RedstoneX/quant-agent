@@ -714,14 +714,11 @@ at the time. A day of total silence looks identical to a quiet market from
 every surface we have. Related to item 2 and to the blind-data-day work
 parked on `wt/empty-levels`.
 
-**12. The desk's own funnel reporting misattributes vetoes. DEFECT, pre-existing.**
+**12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.**
 
-`_outcome` in `src/pipeline.py` blames every originally-proposed symbol when
-the Risk Manager vetoes a plan — including symbols the constructor had already
-dropped before the Risk Manager ever saw them. The census script corrects for
-this internally; **the source does not**, so the dashboard and any future
-funnel report are wrong in the same direction. Reported, deliberately not
-fixed, because it is out of scope of the census that found it.
+`_outcome` in `src/pipeline.py` now matches the census script: a constructor
+drop is attributed to the constructor, never to a Risk Manager veto of
+whatever plan survived it. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
 **13. One number is carrying three different meanings. DEFECT, latent.**
 
