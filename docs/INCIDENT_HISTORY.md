@@ -22,6 +22,40 @@ what would catch it next time.
 
 ---
 
+### 2026-09-02/03 — funnel item 8 ("stop on the wrong side of entry") checked, not a code defect
+
+**In plain words:** the census found 2 of 68 proposals refused because the
+stop price was on the wrong side of the entry price — a stop that could
+never actually protect the trade. The refusal itself is correct and stays;
+the question was what produced a broken stop in the first place.
+
+**Why:** nothing produces a broken stop. Traced backward from the refusal,
+through `_resolve_stop`, to the technical analyst's own output validator
+(`src/models.py`), which already guarantees a proposal's stop sits on the
+correct side of its OWN entry price at the moment it's created — the
+analyst never emits a self-contradictory pair. No sign-flip, unit-conversion,
+or rounding bug anywhere in that chain.
+
+**What actually happens:** `PortfolioConstructor` prices the trade off a
+live quote fetched fresh at construction time — after macro, news, earnings
+and the portfolio manager have all already run, so real time has passed.
+Measured against a production database snapshot, that live price can land
+seconds to minutes and several percent away from the price the analyst's
+entry/stop pair was computed against. One real case (DIS) moved -1.8% in
+108 seconds against a stop only 2.2% from entry, landing $0.48 from
+flipping outright. Ordinary price movement in that window can carry the
+market through a perfectly sound stop level before the trade is ever
+constructed. That is not a data-quality bug to fix upstream — it is the
+refusal correctly catching a stop that is no longer valid by the time the
+trade would be placed.
+
+**New test** `tests/test_shorts_stage3.py::test_long_stop_breached_by_live_price_since_analysis_is_rejected`
+covers the live-quote path (the existing test only covered the synthetic
+`suggested_stop_price` path). No source change — this is a documented
+non-fix.
+
+---
+
 ### 2026-09-02 — the full proposal-to-fill census: where every trade idea actually dies, counted, not guessed
 
 **In plain words:** the desk had a stale "23% of proposals become a fill"

@@ -552,8 +552,6 @@ Each item is classified WORKING AS INTENDED / TOO STRICT / DEFECT / NO RECORD.
 
 ---
 
----
-
 An item is only struck through when the fix is merged AND re-measured against
 the same 68.
 
@@ -673,10 +671,11 @@ this may be a new regression from that day's ship.
 Notable because it is reproducing AFTER a fix intended to stop exactly this.
 One veto discards every trade in the plan, so its cost is superlinear.
 
-**8. Stop placed on the wrong side of entry — 2 of 68 (3%). DEFECT, upstream.**
+**8. Stop placed on the wrong side of entry — 2 of 68 (3%). CHECKED, NOT A DEFECT.**
 
-The refusal is correct and must stay. The defect is whatever produced a
-wrong-sided stop in the first place, which is unfixed and unlocated.
+Full reasoning + test: `docs/INCIDENT_HISTORY.md` ("funnel item 8"). Stop is
+sided correctly at ingestion; the quote moves before construction —
+refusal stands.
 
 **9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.**
 
