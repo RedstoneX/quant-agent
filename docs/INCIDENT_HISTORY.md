@@ -181,6 +181,62 @@ asserts the 12-name set, the three refused shorts, and the block census, so a
 rule or config edit that changes the shape of the day fails in CI without
 spending anything.
 
+**(c) The missing ranking step, built at the ratified equal weight —
+2026-09-03. NOT WIRED INTO ANYTHING.**
+
+`rank_eligible()` in the same script fills the gap (b) found, using only the
+owner-ratified default: a weighted composite **starting equal-weight**. No
+weight was tuned, no threshold introduced, no signal invented.
+
+Which of `evaluate()`'s per-candidate numbers are admissible as score inputs,
+and why the rest are not:
+
+| field | in? | why |
+|---|---|---|
+| `rr` | yes | primitive, continuous |
+| `net_sources` | yes | primitive, integer |
+| conviction | yes | ordinal, encoded by the desk's OWN `CONVICTION_BANDS` band tops (low/medium/high → 1/2/3). Not a new number. |
+| `aligned`, `opposed` | no | `net_sources` IS aligned − opposed; scoring all three counts one piece of evidence three times |
+| `agreement_ceiling_pct` | no | a pure function of `net_sources` (the §9.4 lookup) — double-weights evidence |
+| `max_risk_pct` | no | a function of conviction, the ceiling and the sub-floor cap; it re-imports the R/R gate the ranking must be independent of |
+| `subfloor_catalyst`, `held`, `eligible` | no | booleans restating gate outcomes, not candidate strength |
+
+So three independent signals, min-max normalised across the eligible set onto
+0..1, summed at weight 1.0 each, ties broken on symbol. All three span the
+full range on this day, so none is a dead input.
+
+**The output on run-64290730, highest to lowest:**
+
+| # | symbol | score | rr | net | conviction |
+|---:|---|---:|---:|---:|---:|
+| 1 | XLE | 1.9848 | 0.4848 | 0.5000 | 1.0000 |
+| 2 | NVDA | 1.7424 | 0.2424 | 1.0000 | 0.5000 |
+| 3 | COP | 1.6402 | 0.1402 | 1.0000 | 0.5000 |
+| 4 | CHPX | 1.5000 | 1.0000 | 0.5000 | 0.0000 |
+| 5 | PATH | 1.3523 | 0.3523 | 0.5000 | 0.5000 |
+| 6 | NKE | 1.2159 | 0.7159 | 0.0000 | 0.5000 |
+| 7 | MSFT | 1.1742 | 0.1742 | 0.5000 | 0.5000 |
+| 8 | TSM | 1.1667 | 0.1667 | 0.5000 | 0.5000 |
+| 9 | FLNC | 1.0492 | 0.5492 | 0.0000 | 0.5000 |
+| 10 | CVX | 1.0000 | 0.0000 | 0.5000 | 0.5000 |
+| 11 | PFE | 0.9205 | 0.4205 | 0.0000 | 0.5000 |
+| 12 | CRM | 0.5341 | 0.0341 | 0.5000 | 0.0000 |
+
+Reported plainly and NOT claimed to be better than the model's book. For
+reference only: across the five recorded `pm_selection` trials on this
+fixture the model opened baskets of 7–11 of the 12, so it never ordered them
+and never chose one; the six names it took in all five runs were XLE, CHPX,
+NVDA, PATH, NKE, FLNC, five of which are in this ranking's top six (it ranks
+COP 3rd and FLNC 9th). Whether that agreement means anything is unmeasured.
+
+**Status: audit artefact. Nothing in `src/` calls it.** Wiring it into the
+selection path would be a production-behaviour change and is explicitly NOT
+done here. Before it could ever gate a real trade it needs the project's own
+paid-benchmark verification rule run against it, and the owner's review of the
+order above. Equal weight is a ratified STARTING point; only an out-of-sample
+measurement may justify moving it. `tests/test_deterministic_selection.py`
+pins the order and the scores, so the table cannot rot silently.
+
 ---
 
 ### 2026-09-02/03 — funnel item 8 ("stop on the wrong side of entry") checked, not a code defect
