@@ -1222,6 +1222,16 @@ same read, applied one layer earlier). Full detail on all six:
 `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
 audit".
 
+**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — DEFECT, blocks a clean full-suite baseline.**
+
+It still configures `llm_cost_circuit.reservation_min_history_samples`
+and `...session_reserved_exposure_limit_usd`, both deleted by item 14's
+2026-09-02 rewrite. `AppConfig` now rejects them outright, so both tests
+in the file error before running instead of testing anything. Confirmed
+against a clean `origin/main` checkout, independent of any in-flight PR.
+Needs the fixture's config dict updated to the post-item-14 shape
+(`max_calls_per_session`); not yet fixed.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs

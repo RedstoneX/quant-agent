@@ -22,6 +22,26 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — a leftover test broke the moment another fix shipped
+
+**In plain words:** a test file that checks the desk's cost-runaway
+protection was still written against two settings that got deleted the day
+before, when that same protection was rebuilt. Nobody updated the test to
+match, so instead of testing anything it just crashes on startup. Found
+while verifying an unrelated fix — the test failure was traced to a clean
+copy of `main` with nothing else applied, confirming it predates and is
+unrelated to that fix.
+
+**Detail:** item 14 (2026-09-02) removed
+`llm_cost_circuit.reservation_min_history_samples` and
+`...session_reserved_exposure_limit_usd` from the config schema, replacing
+that layer with `max_calls_per_session`. `tests/test_rehearsal_reproduces_cost_ceiling.py`
+still builds a config dict using the two removed keys; `AppConfig` now
+rejects the dict outright, so both tests in the file error before they run.
+Not fixed yet — logged as `docs/WORK.md` item 28.
+
+---
+
 ### 2026-09-03 — the risk manager and order-construction audit: six findings, after reading the code end to end for the first time
 
 **In plain words:** on the same day the Portfolio Manager's decision code got
