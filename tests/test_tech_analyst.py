@@ -673,12 +673,14 @@ def test_chunked_batch_composes_with_session_retry_circuit(
             enabled=True,
             session_cost_limit_usd=100.0,
             daily_cost_limit_usd=200.0,
-            max_free_failure_sessions_per_mode=2,
+            # Item 14 (2026-09-02): the runaway-loop backstop is now a
+            # plain call count, not a reservation-era retry-attempts
+            # budget. 4 admits the 3 primary chunk calls plus exactly one
+            # recovery -- the same "one of the session's slots" shape the
+            # old max_retry_attempts_per_session=2 config produced here.
+            max_calls_per_session=4,
             max_provider_attempts_per_call=2,
-            max_retry_attempts_per_session=2,
-            reservation_ttl_minutes=30,
             input_chars_per_token=3.5,
-            reservation_multiplier=1.05,
             require_telegram_alerts=False,
         ),
         MagicMock(enabled=True),
@@ -731,22 +733,18 @@ def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
             enabled=True,
             session_cost_limit_usd=100.0,
             daily_cost_limit_usd=200.0,
-            max_free_failure_sessions_per_mode=2,
+            # Item 14 (2026-09-02): "retry budget already spent" is now
+            # modeled as the plain call-count cap being exhausted by the 3
+            # primary chunk calls alone, leaving no room for any recovery
+            # -- replacing the old direct `retry_attempts=2` DB seed.
+            max_calls_per_session=3,
             max_provider_attempts_per_call=2,
-            max_retry_attempts_per_session=2,
-            reservation_ttl_minutes=30,
             input_chars_per_token=3.5,
-            reservation_multiplier=1.05,
             require_telegram_alerts=False,
         ),
         MagicMock(enabled=True),
     )
     circuit.activate_session("run-tech-spent-retries", "morning")
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET retry_attempts=2 WHERE run_id=?",
-            ("run-tech-spent-retries",),
-        )
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     agent.set_cost_circuit(circuit)
@@ -766,7 +764,10 @@ def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
             "FROM llm_budget_sessions WHERE run_id=?",
             ("run-tech-spent-retries",),
         ).fetchone()
-    assert row == (3, 3, 2, "active")
+    # No recovery call was ever admitted -- the 3 primaries alone exhaust
+    # the call-count cap -- so retry_attempts stays 0, not the old
+    # pre-seeded reservation-era counter value.
+    assert row == (3, 3, 0, "active")
 
 
 # ==========================================================================

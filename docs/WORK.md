@@ -65,6 +65,17 @@ settled. Restored:**
   recency and/or touch-count requirement. Risk judgement, owner's call, NOT an
   agent decision — no agent may pick a threshold here.
 
+**RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
+instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
+real production data (worst COMPLETE session on record made 14 calls,
+almost all of it `tech_analyst` chunking the symbol universe, not the
+`portfolio_manager` — see `docs/INCIDENT_HISTORY.md`, "item 14"). Owner
+approved shipping this as a first number, not a final one. Once a few more
+days of live sessions exist, re-pull `llm_budget_sessions.logical_calls` and
+confirm 40 still sits comfortably above the real ceiling — raise it if a
+legitimate session ever gets close, do not lower it on a hunch. Not a
+blocking decision; the mechanism is live either way.
+
 **DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
 garbage out) must work before anything else.**
 
@@ -738,97 +749,18 @@ point of the pattern — the guarantee is structural, not procedural.
 Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
 is costing 25% of all proposals now.
 
-**14. Replace the budget guard — OWNER-APPROVED 2026-09-02. Design decided, not a tuning exercise.**
+**14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
 
-**The decision: stop predicting what a call will cost. Delete the per-call
-reservation layer.** Replace it with three things:
+Per-call cost reservation deleted entirely (it held ~2.6x what it actually
+spent, stopping the desk on money never spent — full reasoning in
+`docs/INCIDENT_HISTORY.md`, "item 14"). Replaced with (b) a settled-cost cap
+checked before and after each call, and (c) a plain per-session call-count
+cap as the real defence against a runaway loop. (a), an API-key-level spend
+cap outside our code, is NOT built — flagged in `cost_circuit.py` pointing
+back here, needs the provider's exact limit options verified first.
 
-  a. **A spend cap on the OpenRouter API key itself.** Outside our code, so
-     no bug of ours can defeat it. **VERIFY the exact limit options the
-     provider offers before relying on this** — I have not confirmed them.
-     Do this FIRST: it is independent, costs nothing, and turns everything
-     below into a tuning question rather than a safety one.
-  b. **Stop when real money actually spent today hits the cap.** Settled
-     cost only. No estimate, so nothing to be wrong about.
-  c. **Stop when one session exceeds N calls.** This is the real defence
-     against the runaway loop that burned money in August — a loop is
-     defined by call COUNT, not call price, and counting cannot be wrong
-     about a rate.
-
-**Why the current design has to go rather than be retuned.** It reserves
-money before each call at a price it has to guess. The token estimate was
-fixed 2026-08-28 (`3153c87`, merged and live) — but the PRICE per token is
-still the pinned worst-case rate, and real calls settle at a median 0.38x
-of it. So it holds ~2.6x what it spends and stops the desk on money that was
-never spent.
-
-**The evidence it is net negative.** Measured spend is ~$1/day against a
-$2.75 ceiling. This guard has never once prevented a real overspend. On
-2026-09-02 it stopped the desk THREE times in one hour — once on a durable
-latch needing a manual reset, twice on a projection ($2.69 projected against
-$0.55 actually spent). A guard that causes more outages than it prevents
-losses is costing money, not saving it.
-
-**The objection, and why it does not hold.** A settled-cost check is
-lagging: you only know after the call returns. But the maximum overshoot is
-ONE call — under a dollar. Weigh that against a desk switched off for a day.
-
-**Do not price reservations at the cheap flex rate as a shortcut.**
-`allow_fallbacks` is on, so a saturated flex tier lands on the full rate and
-the reserve would under-cover exactly the dearest outcome. That is the trap
-that makes this a redesign rather than a one-line change.
-
-Sequence with item 17 — both are about a guard that stops the desk for
-reasons that were never true, and (a) above removes the need for the latch
-that item 17 is about.
-
-
-
-The only real-money item on this page. Measured 2026-09-02 over a clean
-window (2026-08-27 to 09-02, the first window uncontaminated by the runaway
-loops).
-
-Actual spend is **$0.73–$1.14/day against a $2.75/day ceiling** — comfortable.
-But **the portfolio_manager seat is $4.25 of $4.56 — 93% of the entire bill,
-on 35 of 153 calls.** The eight seats moved to Google-direct on 08-31 now cost
-$0.00. The whole remaining bill is one seat's model choice.
-
-**The defect:** before each call the desk sets aside money to cover it, priced
-at the pinned worst-case rate. The seat's real cost is a **median 0.38x** of
-that across 32 calls — roughly **2.6x over-reserved**. So the budget looks
-spent long before it is, and the desk stops trading on money it never spent.
-On 08-28 a $1.91 hold went against a call that really cost ~$0.25, and the
-response at the time was to raise the daily ceiling 1.80 → 2.60.
-
-**That is the part that matters: a bad estimate quietly loosened the real
-protection.** The ceiling was raised to accommodate spending that was never
-happening, so the guard is now weaker than it was designed to be, for a
-reason that was not true.
-
-**Why the obvious fix is wrong.** Reserving at the cheap flex rate looks
-right and is not: `allow_fallbacks` is on, so a saturated flex tier lands on
-the full $5/$30 rate, and the reservation would then fail to cover the
-dearest outcome — trading a false alarm for a real overrun. Saves $0/day and
-costs ceiling integrity.
-
-The genuine options are (a) turn off fallbacks for this seat so the cheap
-rate is the true worst case, trading uptime for accuracy; (b) lower the daily
-ceiling back toward 1.80 now that the phantom charges below are fixed; or
-(c) move the seat, which is the standing owner decision above and the largest
-saving available. **Do not do (a) or (b) blind — measure a week of real
-settled cost against reservations first.**
-
-Related and already fixed on the same branch: a retry that succeeded after a
-refused first attempt was charged for BOTH (over-charged $0.0223 total —
-pennies, but it is the mechanism that put $1.90 of imaginary spend on the
-ledger and darkened the desk twice in one day), and a pricing gap that could
-have latched the desk off permanently with no way to self-heal.
-
-**Two found and deliberately NOT fixed, reported rather than actioned:**
-a session killed mid-call at day's end leaves a reservation that the NEXT
-morning charges and latches on — so the day it darkens is not the day it
-broke (never observed; read from code). And cache hits record no cost, so
-the alert prints `cost: $?.??` and hides the real figure.
+**(c)'s number is a placeholder, not measured — see the DECIDE BY line
+above.** Everything else in this item is implemented and tested.
 
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
@@ -842,15 +774,11 @@ owner decision on which of two competing `read_price_bars` implementations
 wins (see the rescued `rescue/price-provenance` branch's `.rej` files), which
 is a real architecture choice, not a mechanical merge.
 
-**16. The afternoon spending reserve was built and never connected.**
+**16. The afternoon spending reserve — MOOT, deleted with item 14.**
 
-37 lines on `fix/dollar-based-session-cap` (2026-08-29), whose own commit
-message says "NOT wired in". It reserves budget for the afternoon rather
-than letting the morning spend the day's allowance.
-
-Belongs with item 14, which the owner has PARKED until the model question is
-settled or the desk goes programmatic. Recorded here only so it is not
-rediscovered a third time.
+Was 37 unwired lines on `fix/dollar-based-session-cap` (2026-08-29). Item
+14's rewrite deleted the entire projection-based reservation layer this
+belonged to, so there is nothing left to wire in. Nothing to do.
 
 **17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
 

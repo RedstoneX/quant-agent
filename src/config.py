@@ -1025,72 +1025,27 @@ class LLMCostCircuitConfig(BaseModel):
     require_telegram_alerts: bool = True
     session_cost_limit_usd: float = Field(default=0.90, gt=0, allow_inf_nan=False)
     daily_cost_limit_usd: float = Field(default=1.50, gt=0, allow_inf_nan=False)
-    session_reserved_exposure_limit_usd: float = Field(
-        default=1.80, gt=0, allow_inf_nan=False,
-    )
-    daily_reserved_exposure_limit_usd: float = Field(
-        default=1.90, gt=0, allow_inf_nan=False,
-    )
-    # Counts sessions in one mode that made a provider attempt and settled
-    # at zero cost -- a RUNAWAY BACKSTOP, not the working budget (Defect 4,
-    # 2026-08-28). Until the Defect 4 fix it was 2 and it WAS the binding
-    # constraint on every trading day: intra_check fires 14 times between
-    # 09:30 and 16:00 ET,
-    # two of those could think and the other twelve suspended. Measured
-    # 2026-08-25/26/27: 4, 7 and 6 suspensions per day while only $1.02 of a
-    # $2.75 daily budget was spent -- the 2026-08-28 11:30 ET stop hit this
-    # at 17 cents of actual spend. max_mode_daily_exposure_pct below is the
-    # real, dollar-based per-mode limit; this exists only to stop a retry
-    # loop spinning forever within one mode without ever spending real money
-    # (a provably-zero-cost failure loop, now possible after the Defect 2
-    # fix, would never trip a dollar-based check at all) -- an infinite-loop
-    # backstop, not a budget.
+    # Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the per-call cost
+    # RESERVATION layer -- and every exposure ceiling / per-mode allowance /
+    # afternoon reserve / free-failure-session backstop that existed only
+    # to manage a reservation's over-holding -- is deleted. Real calls
+    # settled at a median 0.38x of the pinned worst-case reservation rate,
+    # so that machinery held ~2.6x what was ever spent and stopped the desk
+    # on money that was never spent. What replaces it, exactly:
+    #   (a) a spend cap on the OpenRouter API key itself -- outside this
+    #       codebase; see docs/WORK.md item 14(a). NOT implemented here.
+    #   (b) `session_cost_limit_usd` / `daily_cost_limit_usd` above, checked
+    #       against REAL SETTLED cost only (no projection) by
+    #       `LLMCostCircuitBreaker._enforce_settled_limits_locked`.
+    #   (c) `max_calls_per_session` below -- a count-based runaway-loop
+    #       backstop, independent of price.
     #
-    # Defect 4.1 (2026-08-29): raising this number was never the fix,
-    # because the counting query itself was wrong -- it counted every
-    # session that did ANY work (`logical_calls>0 OR provider_attempts>0`),
-    # including successful, money-spending ones, so a normal trading day
-    # burned the backstop down on its own. Operators kept raising it (2 ->
-    # 8 -> 40 in config/settings.yaml) to keep the desk running, which
-    # disabled the guard instead of fixing it. `LLMCostCircuitBreaker.
-    # begin_call` now counts only sessions that made provider attempts and
-    # settled at zero cost (see its comment at the check site) -- under
-    # that corrected count, 8 means "eight entirely free, entirely failed
-    # sessions in one mode in one day", which is unambiguous breakage. 40
-    # was never a real ceiling; it was the old counter's false-positive
-    # rate.
-    max_free_failure_sessions_per_mode: int = Field(default=8, ge=1)
-    # Bounded cooling-off window for the backstop above (Defect 4.1,
-    # 2026-08-29): a zero-cost failure loop is almost always a transient
-    # provider outage, and latching a mode dark for the rest of the ET day
-    # on a transient is exactly the 2026-08-28 failure this remediation
-    # exists to stop. The dollar ceilings above are what actually protect
-    # money; this guard only needs to stop a spin for a while, then get out
-    # of the way -- see LLMCostCircuitBreaker.begin_call. 5..720 minutes
-    # (5 minutes .. 12 hours) keeps it from being tuned into either a no-op
-    # or a de-facto day-long latch again.
-    backstop_cooloff_minutes: int = Field(default=60, ge=5, le=720)
-    # Defect 4 operative per-mode limit: the fraction of
-    # daily_reserved_exposure_limit_usd any ONE mode may reserve/spend in a
-    # single ET day. A fraction of the existing day-wide exposure ceiling
-    # (not an independent dollar figure) so it stays proportionate if that
-    # ceiling is ever retuned, and because a mode's own call cost varies too
-    # much for a flat count to fit every mode (an intra_check tick can be a
-    # few cents; a morning portfolio_manager call can be tens of cents).
-    # 100 disables the per-mode ceiling (falls back to the day-wide one).
-    max_mode_daily_exposure_pct: float = Field(default=60.0, gt=0.0, le=100.0)
-    # Phase 6.1 afternoon reserve: the fraction of daily_reserved_exposure_
-    # limit_usd that is NOT spendable by any session before
-    # afternoon_reserve_release_et_hour, regardless of mode. The morning is
-    # where the cheap, plentiful setups look most attractive and where a
-    # retry storm is most likely; the afternoon is where every exit decision
-    # lives (position_reviewer, risk_manager, the close pass). A day that
-    # spends itself out by noon has funded entries and defunded exits, which
-    # is exactly backwards for capital preservation. 0 disables the reserve.
-    afternoon_reserve_pct: float = Field(default=40.0, ge=0.0, le=90.0)
-    # ET hour (0-23, local wall clock) at which the reserve above releases
-    # and the full daily_reserved_exposure_limit_usd becomes spendable again.
-    afternoon_reserve_release_et_hour: int = Field(default=12, ge=0, le=23)
+    # Set 2026-09-03 from real production data: the worst COMPLETE session
+    # ever recorded made 14 calls, almost all of it tech_analyst chunking
+    # the symbol universe, not the portfolio_manager (always exactly 1 call
+    # per session). 40 is ~3x that measured ceiling -- a first number, not
+    # a final one; see the DECIDE BY line in docs/WORK.md.
+    max_calls_per_session: int = Field(default=40, ge=1)
     # Ceiling on provider attempts within ONE logical agent call, counting
     # the initial request. NOT an independent number: it must cover what
     # `BaseAgent.run()`'s retry loop can actually spend, or the circuit trips
@@ -1107,46 +1062,6 @@ class LLMCostCircuitConfig(BaseModel):
         default_factory=lambda: provider_attempt_budget(failover_available=True),
         ge=1,
     )
-    # Aggregate retries across parallel specialist calls in one run.
-    max_retry_attempts_per_session: int = Field(default=2, ge=0)
-    reservation_ttl_minutes: int = Field(default=30, ge=5, le=180)
-    reservation_multiplier: float = Field(
-        default=1.05, ge=1.0, le=2.0, allow_inf_nan=False,
-    )
-    # Defect 1 (2026-08-28): the pre-fix reservation treated one UTF-8 byte
-    # of the prompt as one token and always reserved the full
-    # max_output_tokens ceiling. On the production 09:32 ET portfolio_manager
-    # call that reserved $1.8657 against a call that actually cost ~$0.11 --
-    # ~3.2x the worst real portfolio_manager call ever recorded (measured
-    # $0.5783) and ~11x the average ($0.1718). Below this, the reservation
-    # is instead derived from that agent+model's own recent history in
-    # agent_logs (see LLMCostCircuitBreaker._measure_reservation_tokens).
-    # Below the minimum sample count, or on any unknown model/agent or
-    # error reading history, the ORIGINAL byte=token / max_output_tokens
-    # formula is still the fallback -- conservative, unchanged, and now
-    # exercised only as a fail-closed floor rather than every call.
-    #
-    # Minimum number of (agent, model) rows in agent_logs required before
-    # trusting measured history at all. Below this, guessing from a
-    # handful of calls is worse than the conservative fallback.
-    reservation_min_history_samples: int = Field(default=20, ge=10, le=1000)
-    # Percentile of the observed prompt-bytes-per-token ratio used to
-    # convert this call's prompt size into a token estimate. A LOW ratio
-    # means MORE tokens per byte -- denser text, therefore a HIGHER cost --
-    # so the low percentile is the conservative end; bounded well below the
-    # median (lt=0.5) so a misconfiguration can't quietly pick the cheap
-    # end of the distribution.
-    reservation_conservative_percentile: float = Field(
-        default=0.10, gt=0.0, lt=0.5, allow_inf_nan=False,
-    )
-    # Safety margin applied to the maximum output tokens observed for this
-    # agent+model's history; the result is still capped at that call's own
-    # max_output_tokens, so this can only ever narrow the old
-    # always-reserve-the-ceiling behaviour, never widen past it.
-    reservation_output_margin: float = Field(
-        default=1.20, ge=1.0, le=3.0, allow_inf_nan=False,
-    )
-
     # === OpenRouter pricing staleness grace window (SPOF fix, 2026-08-28) ===
     # Before this fix, `cost_table.refresh_openrouter_pricing()` accepted a
     # cached rate ONLY while under 24h old. Past that boundary it had to
@@ -1168,49 +1083,65 @@ class LLMCostCircuitConfig(BaseModel):
     #
     # A price that turned stale five minutes ago is a different fact from a
     # price nobody has ever fetched: OpenRouter's routed rates change on the
-    # order of once a quarter, not hour to hour, and the figure only ever
-    # BOUNDS a reservation that already carries `reservation_multiplier` on
-    # top. So: within this many hours PAST the 24h freshness boundary, a
-    # cache that can't be refreshed live is used rather than latched --
-    # widened per `openrouter_pricing_stale_multiplier_max` below and logged
-    # loudly on every call -- and only a cache older than 24h + this grace,
-    # or no cache at all, or a cache missing a rate for a model actually
+    # order of once a quarter, not hour to hour. So: within this many hours
+    # PAST the 24h freshness boundary, a cache that can't be refreshed live
+    # is used rather than latched -- widened per
+    # `openrouter_pricing_stale_multiplier_max` below and logged loudly on
+    # every call -- and only a cache older than 24h + this grace, or no
+    # cache at all, or a cache missing a rate for a model actually
     # configured, still fails closed exactly as before. 0 restores the
     # pre-fix behaviour (fail the instant the cache turns stale) for anyone
-    # who wants it back.
+    # who wants it back. Independent of item 14: this bounds the pricing
+    # CATALOG's own staleness, not a call's dollar reservation (deleted).
     openrouter_pricing_grace_period_hours: float = Field(
         default=24.0, ge=0.0, le=168.0, allow_inf_nan=False,
     )
-    # Reservation multiplier applied at the FAR edge of the grace window
-    # above (`cost_table.openrouter_pricing_reservation_multiplier` scales
-    # linearly from `reservation_multiplier` itself -- i.e. no widening at
-    # all -- the instant the cache turns stale, up to this value once the
-    # cache is about to age out of grace entirely). Deliberately allowed
-    # above `reservation_multiplier`'s own 2.0 ceiling: the entire point is
-    # a WIDER margin than an in-hours call gets, proportional to how old the
-    # bound actually is, never a narrower one.
+    # Multiplier applied to a stale-but-in-grace rate at the FAR edge of the
+    # grace window above (`cost_table.openrouter_pricing_reservation_
+    # multiplier` scales linearly up to this value as the cache ages toward
+    # the end of grace) -- still used for the estimated-cost fallback in
+    # `estimate_cost()` when a provider does not report its own cost, even
+    # though item 14 removed the per-call reservation this was originally
+    # sized for.
     openrouter_pricing_stale_multiplier_max: float = Field(
         default=1.50, ge=1.0, le=5.0, allow_inf_nan=False,
     )
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_renamed_free_failure_key(cls, data):
-        # `max_paid_sessions_per_mode_per_day` was renamed to
-        # `max_free_failure_sessions_per_mode` (2026-08-29) once the
-        # counting query it gates stopped counting paid sessions at all --
-        # it now counts sessions that made a provider attempt and settled
-        # at zero cost. BaseModel's default `extra="ignore"` would let a
-        # settings.yaml still carrying the old key load silently, quietly
-        # dropping whatever value an operator set and falling back to the
-        # field default -- exactly the doc-versus-behaviour drift this
-        # rename exists to stop. Fail loudly instead.
-        if isinstance(data, dict) and "max_paid_sessions_per_mode_per_day" in data:
-            raise ValueError(
-                "llm_cost_circuit.max_paid_sessions_per_mode_per_day has been "
-                "renamed to llm_cost_circuit.max_free_failure_sessions_per_mode "
-                "-- update the settings file (no alias is provided)"
-            )
+    def _reject_deleted_reservation_keys(cls, data):
+        # Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the per-call
+        # cost reservation layer -- and every key below that existed only
+        # to manage its over-holding -- is deleted. BaseModel's default
+        # `extra="ignore"` would let a settings.yaml still carrying one of
+        # these load silently, quietly dropping whatever an operator set.
+        # Fail loudly instead of drifting doc-versus-behaviour again.
+        removed_keys = {
+            "max_paid_sessions_per_mode_per_day",  # pre-2026-08-29 name
+            "session_reserved_exposure_limit_usd",
+            "daily_reserved_exposure_limit_usd",
+            "max_free_failure_sessions_per_mode",
+            "backstop_cooloff_minutes",
+            "max_mode_daily_exposure_pct",
+            "afternoon_reserve_pct",
+            "afternoon_reserve_release_et_hour",
+            "max_retry_attempts_per_session",
+            "reservation_ttl_minutes",
+            "reservation_multiplier",
+            "reservation_min_history_samples",
+            "reservation_conservative_percentile",
+            "reservation_output_margin",
+        }
+        if isinstance(data, dict):
+            present = sorted(removed_keys & set(data))
+            if present:
+                raise ValueError(
+                    "llm_cost_circuit no longer supports: " + ", ".join(present)
+                    + " -- item 14 (2026-09-02, docs/WORK.md) deleted the "
+                    "per-call cost reservation layer these configured. Remove "
+                    "them from the settings file; see max_calls_per_session "
+                    "for the replacement runaway-loop backstop."
+                )
         return data
 
     @model_validator(mode="after")
@@ -1226,26 +1157,6 @@ class LLMCostCircuitConfig(BaseModel):
             )
         if self.daily_cost_limit_usd < self.session_cost_limit_usd:
             raise ValueError("daily_cost_limit_usd must be >= session_cost_limit_usd")
-        if self.session_reserved_exposure_limit_usd < self.session_cost_limit_usd:
-            raise ValueError(
-                "session_reserved_exposure_limit_usd must be >= session_cost_limit_usd"
-            )
-        if self.daily_reserved_exposure_limit_usd < self.daily_cost_limit_usd:
-            raise ValueError(
-                "daily_reserved_exposure_limit_usd must be >= daily_cost_limit_usd"
-            )
-        if (self.daily_reserved_exposure_limit_usd
-                < self.session_reserved_exposure_limit_usd):
-            raise ValueError(
-                "daily_reserved_exposure_limit_usd must be >= "
-                "session_reserved_exposure_limit_usd"
-            )
-        if self.openrouter_pricing_stale_multiplier_max < self.reservation_multiplier:
-            raise ValueError(
-                "openrouter_pricing_stale_multiplier_max must be >= reservation_multiplier "
-                "-- a reservation built on stale pricing must never be LESS conservative "
-                "than one built on fresh pricing"
-            )
         return self
 
 

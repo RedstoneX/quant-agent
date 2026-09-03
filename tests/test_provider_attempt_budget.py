@@ -59,14 +59,15 @@ def _config(**overrides):
         "enabled": True,
         "session_cost_limit_usd": 10.0,
         "daily_cost_limit_usd": 20.0,
-        "max_free_failure_sessions_per_mode": 8,
+        # Item 14 (2026-09-02): the runaway-loop backstop is now a plain
+        # call count (docs/WORK.md item 14c), not a reservation-era
+        # free-failure-session count. High by default so tests not
+        # exercising the cap itself never hit it.
+        "max_calls_per_session": 1000,
         "max_provider_attempts_per_call": provider_attempt_budget(
             failover_available=True
         ),
-        "max_retry_attempts_per_session": 2,
-        "reservation_ttl_minutes": 30,
         "input_chars_per_token": 3.5,
-        "reservation_multiplier": 1.05,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -264,10 +265,12 @@ def test_attempt_limit_holds_the_session_instead_of_latching_the_desk(tmp_path):
     """Defect 5: `provider_attempt_limit` was the only trip code of its family
     left on the durable operator-reset latch, so a transient upstream fault
     cost a whole trading day and needed a human to clear. It is now scoped to
-    the session that caused it, like its wider sibling
-    `session_retry_attempt_limit` — later sessions stay eligible."""
+    the session that caused it -- later sessions stay eligible. (Its wider
+    sibling `session_retry_attempt_limit`, part of the reservation-era
+    retry-budget machinery, was deleted outright by item 14, 2026-09-02 --
+    see `test_session_count_cap_triggers_on_the_next_call` in
+    tests/test_cost_circuit.py for its call-count-based replacement.)"""
     assert _trigger_scope("provider_attempt_limit") == "session"
-    assert _trigger_scope("session_retry_attempt_limit") == "session"
 
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), notifier)
@@ -734,10 +737,14 @@ def test_the_refused_call_neither_charges_nor_latches_the_desk(tmp_path):
     assert exact, "nor make the day's accounting inexact"
 
 
-def test_an_ambiguous_failure_still_charges_and_still_latches(tmp_path):
+def test_an_ambiguous_failure_still_latches_without_inventing_a_charge(tmp_path):
     """The guard is unchanged where it matters: a stream cut after generation
-    may really have been billed, so it is still charged and still stops the
-    desk for an operator to look at."""
+    may really have been billed, so it still stops the desk for an operator
+    to look at. Item 14 (2026-09-02) changed HOW: there is no reservation
+    left to convert into a dollar charge, so it marks the day inexact
+    (`unknown_cost_rows`) instead of booking a guessed amount -- renamed
+    from `..._still_charges_and_still_latches`, which pinned the deleted
+    reservation charge."""
     from src.agents.base import LLMStreamInterruptedError
 
     circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), _Notifier())
@@ -749,8 +756,11 @@ def test_an_ambiguous_failure_still_charges_and_still_latches(tmp_path):
     circuit.fail_call(reservation, cut, attempt_errors=[cut])
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        spend, = conn.execute(
-            "SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?",
+        spend, unknown_rows = conn.execute(
+            "SELECT incremental_cost_usd, unknown_cost_rows "
+            "FROM llm_budget_days WHERE day=?",
             (_current_day(),),
         ).fetchone()
-    assert spend > 0, "an attempt that may have been billed is still charged"
+    assert spend == 0, "no reservation exists to convert into a dollar charge"
+    assert unknown_rows > 0, "an attempt that may have been billed still fails closed"
+    assert circuit.status()["suspended"] is True

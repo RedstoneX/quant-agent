@@ -66,6 +66,68 @@ inside a worktree).
 
 ---
 
+### 2026-09-03 — item 14: the budget guard was stopping the desk on money it never spent
+
+**In plain words:** before every LLM call, the desk set aside cash to cover
+it, priced at a worst-case rate. The real bill came in at roughly a third of
+that estimate, so the desk was holding 2.6x what it actually spent — and
+would shut itself off on money that was never really gone. On 2026-09-02 this
+stopped the desk three times in one hour: once on a stuck latch needing a
+manual reset, twice on a projection ($2.69 "reserved" against $0.55 actually
+spent). Actual daily spend is $0.73-$1.14 against a $2.75 ceiling — this
+guard never once caught a real overspend, only phantom ones.
+
+**Why the old design couldn't be tuned, only replaced.** The token estimate
+per call was already fixed once (2026-08-28); the remaining error was the
+PRICE per token, pinned to the worst case because `allow_fallbacks` means a
+saturated cheap tier can silently land on the full rate. Reserving at the
+cheap rate "to fix the padding" would have traded a false alarm for a real
+uncovered overrun on exactly the days it matters. There was no honest number
+to tune it to.
+
+**What shipped, owner-approved 2026-09-02, on `feat/replace-budget-reservation`.**
+Deleted the entire per-call reservation layer along with the projection-based
+triggers built on it (including a never-wired afternoon spending reserve —
+docs/WORK.md item 16, now moot). Replaced with two independent checks: a
+settled-cost cap against real spend only (nothing to estimate, nothing to be
+wrong about — the maximum overshoot is one call, under a dollar), and a plain
+per-session call-count cap, since a runaway loop is a rate of calls, not a
+dollar figure, and a count cannot mis-price anything. A third layer, an
+API-key-level spend cap enforced by the provider outside our code, was
+approved but is NOT built — the exact limit options OpenRouter offers were
+never verified.
+
+**Also found and fixed on the same branch:** a retry that succeeded after an
+initially-refused attempt was being charged for both attempts (real overcharge
+was pennies, but this exact mechanism put $1.90 of imaginary spend on the
+ledger and darkened the desk twice in one day back in August); and a pricing
+gap that could have latched the desk off permanently with no self-heal path.
+A failed call that can't be proven to cost $0 no longer gets an invented
+dollar figure — it now marks the day/session as inexact so the settled-cost
+check fails closed instead of guessing.
+
+**Found and deliberately left alone, reported not fixed:** a session killed
+mid-call at day's end could leave a stale reservation that the next morning
+charges and latches on, so the day it darkens isn't the day it broke (read
+from code, never observed live). Cache hits record no cost, so an alert can
+print `cost: $?.??` and hide the real figure.
+
+**The call-count number, set from real data, owner-approved 2026-09-03.**
+Shipped first with a 60 placeholder because no measured figure existed. Owner
+asked whether it could be pulled from logs before shipping instead of
+guessed. Queried the live desk's `llm_budget_sessions` table directly (real
+production data, not the benchmark): the worst COMPLETE, successful session
+ever recorded made 14 calls, and crashed/halted sessions in the same table
+show FEWER calls, not more — they got cut off early, so they don't hide a
+higher real ceiling. That volume is almost entirely `tech_analyst` chunking
+the ~101-symbol universe; the `portfolio_manager` makes exactly one call
+every session, no exceptions, so a call-count runaway would come from the
+cheap analyst layer, not the PM. Shipped at **40** — roughly 3x the measured
+ceiling — with an explicit reconfirm-after-a-few-days-live note in
+`docs/WORK.md` rather than treating 40 as final either.
+
+---
+
 ### 2026-09-03 — item 18a/18b: the pipeline traced, and the desk's own rules run as code
 
 **In plain words:** we finally read the whole of what the model is handed,
