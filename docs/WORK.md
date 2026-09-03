@@ -1126,6 +1126,73 @@ severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
 writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
 colour".
 
+**22. A hard-coded 0.5% risk cap silently overrides the ratified 5% envelope — DEFECT, live, binds on nearly every trade.**
+
+Found reading `src/portfolio_constructor.py`/`src/pipeline_stages.py` end to
+end (not testing outputs — reading the actual rule code). `RISK_BUDGET_PCT =
+0.5` (`pipeline_stages.py`, not wired to `config.max_position_risk_pct:
+5.0`) takes `min(qty_by_alloc, qty_by_risk)` at execution, re-shrinking
+almost every entry the constructor already sized correctly under the
+owner-ratified 5% envelope (invariant #4 below). Confirmed against real
+trade rows (NVDA/ORCL/RSG) risking ~$49 on a ~$9.85k book where the
+ratified rule would allow ~$490. Predates QAMC (upstream 2026-04-18
+commit); the two envelopes were never reconciled when 5% was ratified
+2026-08-27. Not yet fixed — dispatched, see `docs/INCIDENT_HISTORY.md`.
+
+**23. Risk Manager edits to a trade are trusted for shape, never for substance — DEFECT, live, observed cancelling real exits.**
+
+`pipeline.py::_apply_risk_modifications` accepts any RM-proposed change to
+allocation/entry/stop/target that merely passes normal field validation —
+nothing checks the edit actually makes the trade safer, despite the
+function's own docstring asserting that is the RM's job. Observed live
+2026-08-24: RM set two SELL orders' `allocation_pct` to 0, which execution
+reads as "skip" — a real exit the Portfolio Manager wanted got silently
+cancelled, with only a prompt sentence ("never set to 0") as the guard.
+Also possible and unobserved: RM widens a stop past the 1.5 reward:risk
+floor or past the noise band, and neither floor re-runs afterward because
+both compare the modified decision against itself. Not yet fixed.
+
+**24. The drawdown position cap can be skipped after a Risk Manager edit — DEFECT, real but conditional, never observed.**
+
+The risk-filter re-check that runs after an RM modification
+(`pipeline_stages.py`) omits the `in_drawdown` flag the pre-modification
+check has, so the drawdown-halving backstop is not re-applied to a
+modified decision. Requires the RM to INCREASE a size during a drawdown,
+which has never happened in the retained record. Recorded so it isn't
+rediscovered; not yet fixed.
+
+**25. "Don't sell a protected position without a named reason" is prompt-only at the Risk Manager, same shape as the PM's catalyst gap — DESIGN, not yet decided.**
+
+`risk_manager.md` asks the RM to confirm a sell trigger was named and to
+cross-check it itself; no Python compares days-held against the sell or
+verifies the named trigger against real data. Same "citation exists,
+substance unchecked" shape as item 18's catalyst-door finding, one seat
+over. Whether this should be made deterministic is an owner call, not
+decided here.
+
+**26. Risk Manager modification matching is case-sensitive — minor, fail-open, never observed.**
+
+`RiskModification.symbol` isn't normalised the way `SymbolRejection` is;
+an exact-string mismatch logs "no matching decision" and the trade ships
+UNMODIFIED — the opposite of the fail-closed treatment used elsewhere.
+Not yet fixed; low priority.
+
+**27. The risk budget can treat the held book as carrying less risk than it does when heat data is partially unavailable — DEFECT, real, conditional.**
+
+`allocate_risk_budget` runs whenever EITHER heat or cluster data is
+available, but if heat specifically fails while clusters succeed, the
+25%/cluster ceilings get measured against new requests only — the
+existing book's risk silently drops out of the sum. The module's own
+docstring names exactly this failure mode as the one thing it must never
+do. Not yet fixed.
+
+All six found in the same 2026-09-03 pass that read the Portfolio Manager,
+order-construction and Risk Manager code end to end for the first time
+(item 18's catalyst-door and missing-tiebreaker findings came from the
+same read, applied one layer earlier). Full detail on all six:
+`docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
+audit".
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
