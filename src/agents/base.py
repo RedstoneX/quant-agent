@@ -670,12 +670,51 @@ class AgentResult:
             if key in keys
         )
 
+    @staticmethod
+    def _repair_unquoted_keys(text: str) -> str:
+        """Fix one specific, narrow JSON syntax defect: an object key missing
+        its OPENING quote while the closing quote survives, e.g.
+        `  pm_briefing": "value"` instead of `  "pm_briefing": "value"`.
+
+        Confirmed from a real production payload (news_analyst,
+        2026-09-02 19:30 ET — see docs/INCIDENT_HISTORY.md): the model
+        dropped exactly one opening quote on an interior top-level key.
+        Because Anthropic's pretty-printed JSON always starts a key on its
+        own line, and a JSON string can never contain a literal newline, any
+        line beginning with a bare identifier immediately followed by `":`
+        is unambiguously a key position — never the middle of a string
+        value. Deliberately does NOT attempt to repair anything else
+        (trailing commas, unescaped quotes inside values, etc.) — those are
+        different defects with different failure signatures we have not
+        observed in production; guessing a fix for an unobserved failure
+        mode is exactly what docs/WORK.md's DATA QUALITY AUDIT warned
+        against.
+        """
+        return re.sub(
+            r'(?m)^([ \t]*)([A-Za-z_][A-Za-z0-9_]*)":',
+            r'\1"\2":',
+            text,
+        )
+
     def parse_json(self) -> dict | list | None:
         text = self.raw_text.strip()
         try:
             parsed = json.loads(text)
             # Full-text parse wins outright if it's a dict/list; no candidate
             # search needed. This is the happy path — LLM returned clean JSON.
+            return parsed
+        except json.JSONDecodeError:
+            pass
+
+        # One narrow, evidence-backed repair attempt on the full text before
+        # falling back to fragment scanning below. A repaired FULL parse
+        # recovers the whole report; the fragment scanner below can only
+        # ever recover the largest surviving PIECE of a broken object —
+        # exactly what turned a single missing quote character into a
+        # "4 required top-level fields missing" structural failure in
+        # production (2026-09-02).
+        try:
+            parsed = json.loads(self._repair_unquoted_keys(text))
             return parsed
         except json.JSONDecodeError:
             pass
@@ -687,10 +726,14 @@ class AgentResult:
         idx = 0
         # Fenced ```json blocks — highest trust.
         for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", self.raw_text, re.DOTALL):
+            fenced = match.group(1).strip()
             try:
-                parsed = json.loads(match.group(1).strip())
+                parsed = json.loads(fenced)
             except json.JSONDecodeError:
-                continue
+                try:
+                    parsed = json.loads(self._repair_unquoted_keys(fenced))
+                except json.JSONDecodeError:
+                    continue
             candidates.append((
                 self._shape_score(parsed), len(json.dumps(parsed)), idx,
                 match.span(1), parsed,
