@@ -39,7 +39,21 @@ two should always agree, but nothing checked that they actually did. A
 constructed test proved the gap was real (the ranking silently attributed
 a reading to the wrong stock when the two disagreed), not theoretical.
 Fixed: the pipeline's own record now wins, and a disagreement drops that
-one earnings reading rather than trusting either side blindly.
+one earnings reading rather than trusting either side blindly. A follow-up
+pass with no wrapper symbol to check against at all was also caught and
+closed the same way, rather than trusting the AI's claim unverified.
+
+**A second, more consequential bug, caught by an independent adversarial
+review before this shipped, not by the original testing:** nothing stopped
+the SAME analyst from voting twice on the SAME stock in one run — a real
+case, since two filings for one ticker can legitimately land in one
+session. That analyst's influence then silently doubled: a concrete
+example moved earnings' effective say in a two-analyst tiebreak from half
+to two-thirds, with nobody deciding it should. Fixed with the same rule
+already used elsewhere on this desk for "which of several records about
+the same thing counts": the newest one wins, the rest don't count twice.
+Proven with a test that fails without the fix and passes with it, not
+just written and trusted.
 
 **What's honestly still open, not hidden:** macro's read is applied the
 same way to every stock this run, not adjusted per sector the way the

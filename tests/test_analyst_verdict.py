@@ -430,6 +430,33 @@ def test_a_single_seat_verdict_is_unaffected_by_its_own_weight():
     assert c.score == score_verdict(tech)
 
 
+def test_two_verdicts_from_the_same_seat_do_not_double_that_seats_weight():
+    """Found by adversarial review, 2026-09-03: two earnings filings for one
+    symbol in the same run (nothing upstream enforces one filing per symbol
+    per run) used to push earnings' 1.2 weight from 50% of a two-seat group
+    to 66.7%, silently. `rank_verdicts` must count at most ONE verdict per
+    (symbol, seat) — last one wins, matching the same convention already
+    used for the evidence registry."""
+    tech = _tech("XLE", "buy", "high").to_verdict()          # weight 1.2
+    first_earnings = AnalystVerdict(
+        seat="earnings", symbol="XLE", direction="bullish", magnitude=0.2,
+        conviction="low", evidence=_evidence(), invalidation="x",
+    )
+    second_earnings = AnalystVerdict(
+        seat="earnings", symbol="XLE", direction="bullish", magnitude=0.9,
+        conviction="high", evidence=_evidence(), invalidation="y",
+    )
+    [with_one] = rank_verdicts([tech, first_earnings])
+    [with_duplicate] = rank_verdicts([tech, first_earnings, second_earnings])
+    # The duplicate must be treated as a REPLACEMENT (last wins), not an
+    # ADDITION — group size, and therefore each seat's share of the total
+    # weight, must be identical whether one or two earnings verdicts arrive.
+    assert with_one.seats == with_duplicate.seats == ["earnings", "technical"]
+    [with_second_only] = rank_verdicts([tech, second_earnings])
+    assert with_duplicate.score == with_second_only.score
+    assert with_duplicate.score != score_verdict(tech)  # earnings still counts, just once
+
+
 def test_seats_disagreeing_on_direction_are_not_ranked():
     tech = _tech("XLE", "buy", "high").to_verdict()
     other = AnalystVerdict(
@@ -539,6 +566,24 @@ def test_rank_candidates_survives_a_malformed_earnings_entry():
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["AAA"]
     assert ranked[0].seats == ["technical"]  # earnings silently dropped, not crashed
+
+
+def test_rank_candidates_drops_earnings_with_no_wrapper_symbol_at_all():
+    """A blank/missing wrapper symbol means there's no ground truth to check
+    the LLM's own claimed symbol against — must drop, not trust it anyway.
+    Matches `_earnings_stance_rows`'s identical handling of this case."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    no_symbol_wrapper = [{
+        "symbol": "", "analysis": _earnings("bullish", "high").model_dump(),
+    }]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        earnings_analyses=no_symbol_wrapper,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]
 
 
 def test_rank_candidates_drops_earnings_on_a_wrapper_vs_analysis_symbol_mismatch():

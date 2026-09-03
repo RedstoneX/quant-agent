@@ -1268,6 +1268,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             if not isinstance(raw, dict):
                 continue
             wrapper_symbol = str(item.get("symbol") or "").strip().upper()
+            if not wrapper_symbol:
+                # No ground truth to check against at all — dropped rather
+                # than trusting the LLM's own `EarningsAnalysis.symbol`
+                # unverified. Matches `_earnings_stance_rows` above, which
+                # drops on the identical missing-wrapper-symbol case rather
+                # than falling back to the embedded one. Found in adversarial
+                # review 2026-09-03: the mismatch check below only fires
+                # when BOTH sides are present, which silently let an
+                # unverified symbol through when the wrapper's was blank.
+                continue
             try:
                 earnings = EarningsAnalysis.model_validate(raw)
                 # The wrapper's symbol is pipeline-set ground truth (the
@@ -1279,7 +1289,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 # mismatch here is treated as malformed input, not silently
                 # resolved either way, matching this codebase's fail-closed
                 # posture on divergent ground-truth sources.
-                if wrapper_symbol and earnings.symbol.upper() != wrapper_symbol:
+                if earnings.symbol.upper() != wrapper_symbol:
                     logger.warning(
                         "Phase 13: earnings symbol mismatch, wrapper=%s "
                         "analysis=%s — dropped", wrapper_symbol, earnings.symbol,
@@ -1289,7 +1299,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             except Exception:
                 logger.warning(
                     "Phase 13: earnings verdict failed for %s",
-                    wrapper_symbol or "?", exc_info=True,
+                    wrapper_symbol, exc_info=True,
                 )
 
         for finding in smart_money_findings or []:
