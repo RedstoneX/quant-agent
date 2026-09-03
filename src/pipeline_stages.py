@@ -3337,9 +3337,21 @@ class RiskStage:
                 return {"status": "rejected", "orders": [], "reason": reasons}
 
         if verdict.modifications:
-            portfolio_decision.decisions = pipeline._apply_risk_modifications(
+            portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
+                symbols_bars=getattr(ctx, "symbols_bars", None),
             )
+            # A modification this method refused (exit silently zeroed, or a
+            # stop/target edit that would have shipped a reward:risk / noise-
+            # band floor breach) must be a visible, distinguishable event —
+            # not an edit that just vanishes. See `_apply_risk_modifications`
+            # docstring, guards 1 and 2 (2026-09-03 audit).
+            for rejected in rejected_mods:
+                _record_pipeline_event(
+                    pipeline, ctx, rejected["symbol"], "risk",
+                    "modification_rejected", rejected["reason"],
+                    field=rejected["field"],
+                )
 
         portfolio_decision.decisions, scale = _apply_scale_all_buys(
             portfolio_decision.decisions, verdict,
@@ -3354,6 +3366,7 @@ class RiskStage:
                     macro_target_invested_pct=macro_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
+                    in_drawdown=in_drawdown,
                     gross_ceiling=session_gross_ceiling,
                 )
             )

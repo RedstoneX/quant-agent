@@ -561,6 +561,23 @@ finished incidents were being deleted to make room for new work — which meant
 the record of what went wrong disappeared exactly as it became history. The
 defect log is append-only and is never trimmed.
 
+### Landed 2026-09-03 — RM-modification safety guards, FIXED
+
+A risk-manager "modification" could silently cancel a SELL/COVER exit
+(zeroed `allocation_pct` reads as skip at execution — hit live 2026-08-24,
+two symbols) or ship a stop/target edit that broke the same 1.5 R/R floor
+or noise-band check a fresh decision has to clear, because both re-checks
+compared the edited decision only against itself. Both guards now live in
+`_apply_risk_modifications`; an exit can no longer be zeroed by an edit
+(a real refusal goes through `rejected_symbols` instead, visibly), and a
+stop/target edit is re-measured against `REWARD_RISK_FLOOR` and (when bars
+are available) the ATR noise-band floor before it ships. Also fixed in the
+same pass: the post-modification hard-risk re-filter was dropping the
+`in_drawdown` flag the pre-modification call already computes. Full detail
+and the tests added: `docs/INCIDENT_HISTORY.md`, 2026-09-03, "a
+risk-manager 'modification' could silently cancel an exit or ship a trade a
+fresh one would have been refused."
+
 ### Ordered backlog — RESUME POINT
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost

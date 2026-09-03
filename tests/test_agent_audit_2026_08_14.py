@@ -274,7 +274,7 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
     pipeline._filter_hard_risk_decisions = MagicMock(
         return_value=(decisions, [], []),
     )
-    pipeline._apply_risk_modifications = MagicMock(return_value=decisions)
+    pipeline._apply_risk_modifications = MagicMock(return_value=(decisions, []))
 
     def _seam(value):
         if isinstance(value, BaseException):

@@ -672,11 +672,12 @@ def test_pipeline_drops_decision_when_risk_modification_invalid():
         )
     ]
 
-    updated = pipeline._apply_risk_modifications([decision], modifications)
+    updated, rejected = pipeline._apply_risk_modifications([decision], modifications)
 
     # The SPY decision is dropped — RM tried to change it, schema rejected
     # the change, so we don't execute the trade at all.
     assert updated == []
+    assert rejected == []
 
 
 def test_pipeline_drops_only_the_decision_with_bad_mod_keeps_rest():
@@ -703,11 +704,205 @@ def test_pipeline_drops_only_the_decision_with_bad_mod_keeps_rest():
         ),
     ]
 
-    updated = pipeline._apply_risk_modifications([spy, qqq], modifications)
+    updated, rejected = pipeline._apply_risk_modifications([spy, qqq], modifications)
 
     syms = [d.symbol for d in updated]
     assert syms == ["QQQ"]
     assert updated[0].allocation_pct == 5
+    assert rejected == []
+
+
+def test_risk_mod_cannot_silently_zero_a_sell_allocation():
+    """2026-09-03 audit: an RM modification that zeros a SELL's
+    allocation_pct must NOT be applied — that reads as "skip" at execution
+    (see pipeline_stages.py's `RiskStage.run`) and a real exit vanishes with
+    no distinguishable trace. Matches the two live 2026-08-24 incidents.
+    The exit must still ship at its pre-modification size, and the refusal
+    must be visible via the returned `rejected` list."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    sell = TradeDecision(
+        action="SELL", symbol="XLE", allocation_pct=100,
+        entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
+    )
+    modifications = [
+        RiskModification(
+            symbol="XLE", field="allocation_pct",
+            original_value=100, new_value=0,
+            reason="RM thinks this exit is unnecessary",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
+
+    assert len(updated) == 1
+    assert updated[0].symbol == "XLE"
+    assert updated[0].allocation_pct == 100  # exit still ships, unmodified
+    assert len(rejected) == 1
+    assert rejected[0]["symbol"] == "XLE"
+    assert rejected[0]["field"] == "allocation_pct"
+    assert "silently cancelling" in rejected[0]["reason"]
+
+
+def test_risk_mod_cannot_zero_a_cover_allocation():
+    """Same guard, COVER side — D10 says a cover can never be blocked by the
+    hard-risk gate, and it must not be cancellable through a modification
+    either."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    cover = TradeDecision(
+        action="COVER", symbol="XLB", allocation_pct=50,
+        entry_price=0, stop_loss=0, take_profit=0, reasoning="cover half",
+    )
+    modifications = [
+        RiskModification(
+            symbol="XLB", field="allocation_pct",
+            original_value=50, new_value=0, reason="trim to nothing",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([cover], modifications)
+
+    assert updated[0].allocation_pct == 50
+    assert len(rejected) == 1
+
+
+def test_risk_mod_partial_sell_trim_still_applies():
+    """A SELL trim that does NOT reach zero is a legitimate size edit and
+    must still apply exactly as before — this guard only catches the
+    zero-allocation case."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    sell = TradeDecision(
+        action="SELL", symbol="NET", allocation_pct=100,
+        entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
+    )
+    modifications = [
+        RiskModification(
+            symbol="NET", field="allocation_pct",
+            original_value=100, new_value=40, reason="partial trim",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
+
+    assert updated[0].allocation_pct == 40
+    assert rejected == []
+
+
+def test_risk_mod_stop_widening_below_rr_floor_is_rejected():
+    """2026-09-03 audit: an RM stop_loss widening that drops the resulting
+    reward:risk below the constructor's own 1.5 floor must be caught and
+    reverted, not shipped. Before this fix, both the pre-RM and post-RM
+    hard-risk re-filters compared the modified decision only against
+    itself, so nothing caught this."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    buy = TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=500, stop_loss=490, take_profit=530,  # R/R = 3.0
+        reasoning="test",
+    )
+    modifications = [
+        RiskModification(
+            symbol="SPY", field="stop_loss",
+            original_value=490, new_value=470,  # R/R -> 1.0, below 1.5 floor
+            reason="give it more room",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+
+    assert len(updated) == 1
+    assert updated[0].stop_loss == 490  # reverted to pre-modification value
+    assert len(rejected) == 1
+    assert rejected[0]["symbol"] == "SPY"
+    assert rejected[0]["field"] == "stop_loss"
+    assert "reward:risk" in rejected[0]["reason"]
+
+
+def test_risk_mod_short_stop_widening_below_rr_floor_is_rejected():
+    """Mirror of the BUY case for a SHORT — the floor applies identically."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    short = TradeDecision(
+        action="SHORT", symbol="XLB", allocation_pct=10,
+        entry_price=100, stop_loss=104, take_profit=88,  # R/R = 3.0
+        reasoning="test",
+    )
+    modifications = [
+        RiskModification(
+            symbol="XLB", field="stop_loss",
+            original_value=104, new_value=112,  # R/R -> 1.0
+            reason="give it more room",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([short], modifications)
+
+    assert updated[0].stop_loss == 104
+    assert len(rejected) == 1
+
+
+def test_risk_mod_stop_inside_noise_band_is_rejected_when_bars_available():
+    """A tightening RM edit can still be unsafe: pulling a stop inside the
+    ATR noise band all but guarantees a whipsaw exit. When bars are
+    available to compute a real ATR, this must be caught even though the
+    edit looks "more protective" (smaller nominal risk)."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = MagicMock()
+    pipeline.config.risk.absolute_min_stop_atr_multiple = 1.0
+
+    buy = TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=500, stop_loss=480, take_profit=560,  # R/R healthy
+        reasoning="test",
+    )
+    modifications = [
+        RiskModification(
+            symbol="SPY", field="stop_loss",
+            original_value=480, new_value=498,  # 2 points from entry
+            reason="tighten it up",
+        )
+    ]
+    # Bars with a clear $20 daily true range -> ATR14 well above the $2
+    # noise-band edge (1x ATR floor) the modified stop lands inside.
+    from src.models import OHLCV
+    from datetime import date as _date, timedelta as _td
+    bars = [
+        OHLCV(
+            date=_date.today() - _td(days=20 - i),
+            open=490, high=500, low=480, close=490, volume=1_000_000,
+        )
+        for i in range(20)
+    ]
+    symbols_bars = {"SPY": bars}
+
+    updated, rejected = pipeline._apply_risk_modifications(
+        [buy], modifications, symbols_bars=symbols_bars,
+    )
+
+    assert updated[0].stop_loss == 480  # reverted
+    assert len(rejected) == 1
+    assert "noise band" in rejected[0]["reason"]
+
+
+def test_risk_mod_genuine_protective_tighten_still_applies():
+    """Do not regress the happy path: RM tightening allocation size or a
+    stop that stays outside the noise band and above the R/R floor must
+    still apply exactly as before."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    buy = TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=500, stop_loss=480, take_profit=560,
+        reasoning="test",
+    )
+    modifications = [
+        RiskModification(
+            symbol="SPY", field="allocation_pct",
+            original_value=10, new_value=5, reason="reduce size",
+        ),
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+
+    assert updated[0].allocation_pct == 5
+    assert rejected == []
 
 
 def test_fractional_sell_helpers_preserve_position_size():

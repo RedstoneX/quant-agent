@@ -166,6 +166,76 @@ seat-keyed weight table in the ranking module.
 
 ### 2026-09-03 — item 17(a)/(b): a database hiccup shouldn't need a human, and a failed alert shouldn't vanish
 
+---
+
+### 2026-09-03 — a risk-manager "modification" could silently cancel an exit or ship a trade a fresh one would have been refused
+
+**In plain words:** the Risk Manager is allowed to edit a trade to make it
+safer — trim the size, tighten the stop. Nothing ever checked that an edit
+actually did that. Two ways that went wrong in real trading, both now closed.
+First: the Risk Manager can edit a SELL or COVER's size down to zero, and at
+execution a size of zero silently means "don't do this" — so an edit that
+was supposed to just resize an exit could make the exit disappear entirely,
+with no visible record that anything had been cancelled. This happened live
+on 2026-08-24 on two symbols. Second: the Risk Manager can also widen a
+stop-loss or move a target, and nothing re-checked whether the RESULT still
+cleared the same two safety floors a brand-new trade has to clear — the
+reward-to-risk ratio staying above 1.5, and the stop staying far enough from
+entry that it isn't a coin-flip on ordinary daily noise. An edit that broke
+either floor still shipped, because both checks only ever compared the
+edited trade against itself, never against what it looked like before the
+edit.
+
+**The fix, `_apply_risk_modifications` (`src/pipeline.py`).** Two guards
+added, both inside the same function that already applies field edits and
+already drops a decision outright when an edit fails schema validation
+(that part was correct and unchanged):
+
+1. **An exit's allocation can never be silently zeroed by an edit.** If a
+   SELL/COVER's `allocation_pct` would be edited down to zero, the edit is
+   refused and the exit ships at its PRE-edit size instead — a real
+   refusal of the trade has its own, separate mechanism already
+   (`RiskVerdict.rejected_symbols` / `SymbolRejection`, handled earlier in
+   `RiskStage.run`), so a modification is not overloaded to mean "cancel
+   this," and the refusal is written to the same visible pipeline-event
+   stream every other risk outcome already uses (`kind="pipeline_event"`,
+   `outcome="modification_rejected"`) instead of vanishing.
+2. **A stop/target edit is re-measured against the real floors before it
+   ships**, using the exact same arithmetic the constructor itself uses
+   (`TradeDecision.reward_risk`, which is `models.reward_to_risk` — the one
+   ratio definition this codebase already shares end to end) against the
+   same `REWARD_RISK_FLOOR` (1.5) constant, plus — only when real price bars
+   are available to compute a genuine ATR reading — the same configured
+   noise-band floor (`RiskConfig.absolute_min_stop_atr_multiple`) the
+   constructor's `_widen_stop_past_noise` enforces. Either breach reverts
+   the single field edit (the rest of the modification, if any, and the
+   rest of the plan, are unaffected) rather than shipping a trade a fresh
+   decision would never have been allowed to reach. When bars aren't
+   available to compute a real noise-band check, that half is skipped
+   rather than guessed at — the R/R floor half still runs regardless.
+
+Deliberately NOT touched: the Risk Manager's real authority to make a trade
+safer (tighten a stop, shrink a size, refuse a trade outright via
+`rejected_symbols`) — those paths are unchanged and still apply exactly as
+before. This is narrowly about an edit that looks like a change but behaves
+like an uncaught refusal or an uncaught loosening.
+
+**Also fixed in the same pass, item 24-equivalent:** the post-modification
+re-filter call to `_filter_hard_risk_decisions` (`pipeline_stages.py`,
+`RiskStage.run`) was dropping the `in_drawdown` flag the pre-modification
+call one screen above it already computes and passes — defaulting to
+`False` regardless of the account's real drawdown state, for no reason tied
+to what the Risk Manager did. Now both calls pass the same `in_drawdown`
+value.
+
+**What would have caught it sooner:** a test asserting a modification
+result is MORE protective than the input, not merely schema-valid — none
+existed. Six new tests now cover both guards plus the untouched happy path
+(genuine tightening still applies exactly as before), and one test asserts
+the `in_drawdown` value matches across both filter calls in the same run.
+
+
+
 **In plain words:** two related gaps closed. First, a brief database hiccup
 ("I cannot read the budget right now") used to shut off all paid analysis
 just as hard and just as permanently as a real, measured overspend ("I am

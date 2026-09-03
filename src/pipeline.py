@@ -35,6 +35,7 @@ from src.agents.meta_reflector import MetaReflectorAgent
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
+from src.risk.constants import REWARD_RISK_FLOOR
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
@@ -1742,7 +1743,12 @@ class TradingPipeline:
         "alloc": "allocation_pct",
     }
 
-    def _apply_risk_modifications(self, decisions: list[TradeDecision], modifications) -> list[TradeDecision]:
+    def _apply_risk_modifications(
+        self,
+        decisions: list[TradeDecision],
+        modifications,
+        symbols_bars: dict | None = None,
+    ) -> tuple[list[TradeDecision], list[dict]]:
         """Apply RM-proposed field modifications to decisions.
 
         When a mod fails Pydantic validation, the decision is **dropped** rather
@@ -1751,9 +1757,55 @@ class TradingPipeline:
         the un-modified decision is safe — the safest invariant is "RM tried to
         change this, we couldn't, so don't execute it". Previously a break left
         the original decision in place, silently dropping RM's protective intent.
+
+        Two further guards (2026-09-03 audit), both because a field-valid
+        `TradeDecision` is not the same thing as a MORE PROTECTIVE one, and
+        this function's whole job is the latter:
+
+        1. **An exit can never be silently cancelled by an edit.** A SELL or
+           COVER's `allocation_pct` reaching 0 through an RM modification
+           reads as "skip" at execution (see `pipeline_stages.py`'s
+           `RiskStage.run`, "CLAUDE.md convention: allocation_pct=0 means
+           SKIP") — a real exit vanishes with no distinguishable trace.
+           Observed live 2026-08-24 on two symbols. If the RM genuinely
+           believes an exit should not happen, it already has a real
+           mechanism for that — `RiskVerdict.rejected_symbols`
+           (`SymbolRejection`, handled in `RiskStage.run` before this method
+           ever runs) — a REFUSAL, distinguishable from an edit. A
+           modification is not that mechanism, so this method refuses the
+           EDIT (keeps the exit at its pre-modification size) rather than
+           refusing the trade itself: reverting is the closer match to "RM
+           tried to protect this and couldn't", the same invariant already
+           governing the validation-failure branch below, and it does not
+           require inventing a new rejection channel for something the
+           schema already has one for.
+        2. **A stop/target edit cannot bypass the floors a fresh decision
+           would have to clear.** The constructor enforces `REWARD_RISK_FLOOR`
+           and a noise-band stop distance before a decision ever reaches the
+           Risk Manager; both checks compared a modified decision only
+           against itself, so an RM edit that widened a stop or pulled in a
+           target could ship a BUY/SHORT with a reward:risk the constructor
+           itself would have refused, or a stop resting inside the ATR noise
+           band. This reuses the SAME arithmetic (`TradeDecision.reward_risk`,
+           which is `models.reward_to_risk` — the one ratio definition every
+           other gate in this codebase already shares) and the SAME
+           configured floor (`RiskConfig.absolute_min_stop_atr_multiple`) the
+           constructor uses, rather than re-deriving either. The noise-band
+           half only runs when `symbols_bars` is supplied and yields a usable
+           ATR reading; when it can't be computed the edit is refused rather
+           than guessed at ("reject outright if it can't be safely
+           re-verified" — the same posture as the noise-band check itself,
+           which does not invent a stop distance it cannot measure).
+
+        Returns `(decisions, rejected_mods)`. `rejected_mods` records every
+        modification this method refused to apply — as opposed to a decision
+        DROPPED outright by a validation failure — so the caller can persist
+        a visible pipeline event for each one instead of the edit just
+        disappearing.
         """
         updated_decisions: list[TradeDecision | None] = list(decisions)
         modifiable_fields = {"allocation_pct", "entry_price", "stop_loss", "take_profit"}
+        rejected_mods: list[dict] = []
 
         for mod in modifications:
             field = self._FIELD_ALIASES.get(mod.field, mod.field)
@@ -1768,6 +1820,34 @@ class TradingPipeline:
                 if decision is None or decision.symbol != mod.symbol:
                     continue
 
+                # Guard 1 — an exit's allocation must never be silently
+                # zeroed through a "modification". This is checked BEFORE
+                # the candidate is even built: a valid-but-zero
+                # allocation_pct would sail straight through Pydantic.
+                if (
+                    decision.action in ("SELL", "COVER")
+                    and mod.field == "allocation_pct"
+                    and decision.allocation_pct > 0
+                    and float(mod.new_value) <= 0
+                ):
+                    reason = (
+                        f"RM modification would zero {mod.symbol}'s exit "
+                        f"allocation_pct ({decision.allocation_pct:.2f} -> "
+                        f"{mod.new_value:.2f}), silently cancelling a "
+                        f"{decision.action}. Reverted — an exit is not "
+                        f"skipped by edit; a real refusal belongs in "
+                        f"rejected_symbols. RM reason given: {mod.reason!r}"
+                    )
+                    logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
+                    rejected_mods.append({
+                        "symbol": mod.symbol,
+                        "field": mod.field,
+                        "reason": reason,
+                    })
+                    # updated_decisions[idx] already holds the unmodified
+                    # decision — nothing to change, the exit still ships.
+                    break
+
                 candidate = decision.model_dump()
                 candidate[mod.field] = mod.new_value
                 try:
@@ -1781,6 +1861,26 @@ class TradingPipeline:
                     updated_decisions[idx] = None
                     break
 
+                # Guard 2 — a stop/target edit on a BUY/SHORT must not ship
+                # a reward:risk the constructor would have refused, or (when
+                # verifiable) a stop inside the ATR noise band.
+                if decision.action in ("BUY", "SHORT") and mod.field in (
+                    "stop_loss", "take_profit",
+                ):
+                    floor_reason = self._risk_mod_floor_breach(
+                        decision, updated_decision, mod, symbols_bars,
+                    )
+                    if floor_reason is not None:
+                        logger.warning(
+                            "Risk mod REJECTED for %s: %s", mod.symbol, floor_reason,
+                        )
+                        rejected_mods.append({
+                            "symbol": mod.symbol,
+                            "field": mod.field,
+                            "reason": floor_reason,
+                        })
+                        break
+
                 logger.info(
                     "Risk mod applied: %s.%s %.4f -> %.4f (%s)",
                     mod.symbol, mod.field, mod.original_value, mod.new_value, mod.reason,
@@ -1790,7 +1890,81 @@ class TradingPipeline:
             else:
                 logger.warning("Risk mod ignored: no matching decision for '%s'", mod.symbol)
 
-        return [d for d in updated_decisions if d is not None]
+        return [d for d in updated_decisions if d is not None], rejected_mods
+
+    def _risk_mod_floor_breach(
+        self,
+        original: TradeDecision,
+        modified: TradeDecision,
+        mod,
+        symbols_bars: dict | None,
+    ) -> str | None:
+        """Return a refusal reason if `modified` breaches a floor a freshly
+        constructed decision would have to clear, else None.
+
+        Reuses `TradeDecision.reward_risk` (== `models.reward_to_risk`, the
+        one ratio definition this codebase shares end to end) against
+        `REWARD_RISK_FLOOR` — the exact floor the constructor itself
+        enforces before a decision ever reaches the Risk Manager. Does not
+        re-derive the ratio or the number.
+        """
+        new_rr = modified.reward_risk
+        if new_rr is None or new_rr < REWARD_RISK_FLOOR:
+            rr_text = "unmeasurable" if new_rr is None else f"{new_rr:.2f}"
+            return (
+                f"modified geometry (entry ${modified.entry_price:.2f}, stop "
+                f"${modified.stop_loss:.2f}, target ${modified.take_profit:.2f}) "
+                f"reward:risk={rr_text} < {REWARD_RISK_FLOOR} floor — the "
+                f"constructor would have refused this trade at these prices. "
+                f"RM reason given: {mod.reason!r}"
+            )
+
+        if mod.field != "stop_loss" or not symbols_bars:
+            return None
+
+        # Noise-band check — only attempted when bars are available to
+        # compute a real ATR reading. `RiskConfig.absolute_min_stop_atr_multiple`
+        # is the same configured floor `PortfolioConstructor._widen_stop_past_noise`
+        # enforces; this does not invent a new number.
+        bars = symbols_bars.get(original.symbol)
+        if not bars or len(bars) < 15:
+            return None
+        try:
+            atr14 = compute_indicators(original.symbol, bars).atr_14
+        except Exception as exc:
+            logger.warning(
+                "Risk mod noise-band check skipped for %s: ATR unavailable (%s)",
+                original.symbol, exc,
+            )
+            return None
+        if atr14 is None or not math.isfinite(atr14) or atr14 <= 0:
+            return None
+
+        # Same defensive posture as `_optional_risk_number` above: tests
+        # build this pipeline against `TradingPipeline.__new__`, which never
+        # ran `__init__` and carries no `self.config` at all. Absence of a
+        # real config means the floor cannot be verified — skip rather than
+        # crash or guess at a multiple nobody configured.
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        floor_multiple = _optional_risk_number(
+            getattr(risk_cfg, "absolute_min_stop_atr_multiple", None)
+        )
+        if floor_multiple is None:
+            return None
+
+        is_short = modified.action == "SHORT"
+        entry = modified.entry_price
+        new_stop = modified.stop_loss
+        distance = (entry - new_stop) if not is_short else (new_stop - entry)
+        band_edge = floor_multiple * atr14
+        if distance < band_edge:
+            return (
+                f"modified stop ${new_stop:.2f} sits {distance:.2f} from "
+                f"entry ${entry:.2f} — inside the {floor_multiple}x ATR14 "
+                f"(${atr14:.2f}) noise band (${band_edge:.2f} minimum) the "
+                f"constructor enforces. RM reason given: {mod.reason!r}"
+            )
+        return None
 
     @staticmethod
     def _has_actionable_signal_fn(indicators, symbol: str, bars, positions) -> bool:
