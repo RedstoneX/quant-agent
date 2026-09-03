@@ -587,10 +587,16 @@ def check_thesis_invalid_if(
 # Even a provable false claim is only ever LOGGED and recorded as a pipeline
 # event here — never used to veto or drop the trade. Two reasons: first, the
 # claim-detection is phrase matching over free text (see the two regexes
-# below), which cannot distinguish "regime flipped to risk-off" from
-# "market is NOT showing a regime flip to risk-off" — a negation would be
-# misread as an assertion, and a veto on a misread would be exactly the kind
-# of wrongly-blocked-legitimate-exit failure this fix must not introduce.
+# below plus `_is_negated`'s short negation-cue guard). Adversarial review
+# (2026-09-03) produced a concrete reproducing sentence — "No regime shift
+# to risk-off has occurred; exiting purely on thesis_invalid_if" was matched
+# as CLAIMING a flip before the negation guard existed, which would have
+# produced a wrong "contradiction" finding against a decision whose
+# reasoning never actually asserted one. `_is_negated` closes that specific,
+# demonstrated case; it is a short common-word list, not a general negation
+# parser, and does not claim to close every case phrase-matching over free
+# text can get wrong. A veto on a misread would be exactly the kind of
+# wrongly-blocked-legitimate-exit failure this fix must not introduce.
 # Second, even a correctly-read false claim about (b)/(c) does not itself
 # prove the SELL is wrong — (a) might still independently justify it, and
 # this module cannot tell. FLAGGED FOR REVIEW: whether this should ever
@@ -624,15 +630,54 @@ _BEARISH_STATE_CHANGE_CLAIM_RE = re.compile(
 #: is exactly as trustworthy as "ok" for this purpose.
 TRUSTED_MACRO_STATUSES = frozenset({"ok", "carried_from_morning"})
 
+#: A negation cue in the ~6 words immediately before a matched phrase flips
+#: what the phrase means — "regime shift to risk-off" asserts one, "NO
+#: regime shift to risk-off has occurred" denies it, and the bare pattern
+#: cannot tell them apart. Found by adversarial review (2026-09-03) with a
+#: concrete reproducing sentence, not a theoretical gap: without this guard,
+#: a SELL reasoning that explicitly DENIES a regime flip or a bearish state
+#: change gets misread as CLAIMING one, and — if today's real data happens
+#: to disagree with the denied claim — produces a "contradiction" finding
+#: for a decision whose reasoning never actually contradicted anything.
+#: Deliberately a short, common word list, not a general negation parser:
+#: this module already stops short of veto power precisely because
+#: phrase-matching cannot fully understand text, and a fancier negation
+#: detector would just move the same risk to different sentences rather
+#: than remove it. This closes the demonstrated case; it does not claim to
+#: close every case.
+_NEGATION_CUE_RE = re.compile(
+    r"\b(?:no|not|never|isn'?t|wasn'?t|hasn'?t|didn'?t|doesn'?t|without|"
+    r"lack(?:ing|s)? of|absent(?:\s+any)?|no\s+evidence\s+of)\b",
+    re.IGNORECASE,
+)
+
+#: How many characters before a matched claim to scan for a negation cue.
+#: ~6 words at typical reasoning-sentence length; wide enough to catch "no
+#: regime shift to risk-off has occurred" (cue precedes the match by ~28
+#: chars) without reaching back into an unrelated prior clause.
+_NEGATION_LOOKBACK_CHARS = 40
+
+
+def _is_negated(text: str, match: re.Match) -> bool:
+    window = text[max(0, match.start() - _NEGATION_LOOKBACK_CHARS):match.start()]
+    return bool(_NEGATION_CUE_RE.search(window))
+
 
 def claims_regime_flip(reason: str) -> bool:
-    """True when `reason` asserts a regime flip to risk-off."""
-    return bool(reason) and bool(_REGIME_FLIP_CLAIM_RE.search(reason))
+    """True when `reason` asserts (not denies) a regime flip to risk-off."""
+    if not reason:
+        return False
+    match = _REGIME_FLIP_CLAIM_RE.search(reason)
+    return bool(match) and not _is_negated(reason, match)
 
 
 def claims_bearish_state_change(reason: str) -> bool:
-    """True when `reason` asserts a HIGH-conviction bearish state_change."""
-    return bool(reason) and bool(_BEARISH_STATE_CHANGE_CLAIM_RE.search(reason))
+    """True when `reason` asserts (not denies) a HIGH-conviction bearish
+    state_change."""
+    if not reason:
+        return False
+    match = _BEARISH_STATE_CHANGE_CLAIM_RE.search(reason)
+    return bool(match) and not _is_negated(reason, match)
 
 
 def holding_discipline_false_claim(

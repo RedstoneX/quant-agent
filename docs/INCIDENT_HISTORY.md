@@ -175,6 +175,17 @@ provably false claim is written to the record for review, not used to
 cancel the trade — flagged for a second look before this graduates to
 actually blocking anything.
 
+**Update, same day, from independent review:** the "can't always tell a
+claim from its denial" risk above was real, not theoretical — a reviewer
+found a concrete sentence ("No regime shift to risk-off has occurred...")
+that got misread as CLAIMING a flip before this fix, which would have
+wrongly flagged an honest exit. A short negation check (a small list of
+words like "no"/"not"/"without" appearing just before the matched phrase)
+now catches this specific case. It is not a general fix for every possible
+way free text can be misread — just this demonstrated one — which is
+exactly why this still only ever writes to the record rather than blocking
+a trade.
+
 ---
 
 ### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in
