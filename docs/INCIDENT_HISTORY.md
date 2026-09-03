@@ -3163,14 +3163,22 @@ usual fail-closed posture for a mismatch like this. Never observed live;
 found in the same 2026-09-03 read that produced item 27 in `docs/WORK.md`
 (item 26 there).
 
-**The mechanism.** `TradingPipeline._apply_risk_modifications` in
-`src/pipeline.py` compared `decision.symbol` to `mod.symbol` directly.
-`SymbolRejection` (the RM's per-symbol refusal mechanism, `src/models.py`)
-already normalizes its `symbol` field on construction via
-`_normalize_symbol` (`strip().upper()`); `RiskModification` carries no such
-field validator, so its `symbol` reaches this comparison exactly as the RM
-wrote it. Fixed by normalizing both sides of the comparison with the same
-`.strip().upper()` idiom already used throughout `src/pipeline_stages.py`
-for this exact kind of symbol matching, rather than inventing a new
-convention. Covered by
-`tests/test_bugfixes.py::test_risk_mod_matches_decision_symbol_case_insensitively`.
+**The mechanism, and why the fix moved after a first pass.** The first
+pass fixed the obvious comparison — `TradingPipeline
+._apply_risk_modifications` in `src/pipeline.py`, which compared
+`decision.symbol` to `mod.symbol` directly — by normalizing both sides at
+that one comparison site. Checking for other readers of `mod.symbol`
+before calling this closed found a SECOND, independent case-sensitive
+comparison in `src/pipeline_stages.py` (`decision.symbol in
+modified_symbols`, which decides whether a symbol's funnel outcome reads
+"modified" or "approved") that the first pass would have left equally
+wrong. Rather than patch a second site (and risk a third going
+unnoticed), the fix moved to the model boundary: `RiskModification` now
+carries the same normalizing field validator `SymbolRejection` already
+has (`src/models.py`, `_normalize_symbol`, `strip().upper()`) — every
+current and future reader of `RiskModification.symbol` gets a normalized
+value automatically, the same "one definition" discipline already applied
+elsewhere in this codebase. Covered by
+`tests/test_bugfixes.py::test_risk_mod_matches_decision_symbol_case_insensitively`
+and `::test_risk_mod_symbol_normalized_at_the_model_boundary` (the second
+comparison site, proven directly).
