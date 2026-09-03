@@ -378,7 +378,7 @@ _UP_WORDS_RE = re.compile(r"\b(?:above|over|reclaims|clears)\b", re.IGNORECASE)
 #: elsewhere in this pipeline, so anything else is UNPARSEABLE rather than
 #: guessed at.
 _MA_REF_RE = re.compile(
-    r"\b(?:MA|SMA|EMA)[\s-]?(\d{2,3})\b|(\d{2,3})-day\s+(?:moving average|MA|SMA|EMA)\b",
+    r"\b(?:MA|SMA|EMA)[\s-]?(\d{2,3})\b|(\d{2,3})-day\s+(?:moving\s+)?(?:average|MA|SMA|EMA)\b",
     re.IGNORECASE,
 )
 

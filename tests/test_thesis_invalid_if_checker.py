@@ -73,6 +73,21 @@ def test_ma_reference_unsupported_period_is_unparseable():
     assert result.status == "UNPARSEABLE"
 
 
+def test_bare_day_average_phrasing_is_recognized():
+    """Found by adversarial review, 2026-09-03: the module's own docstring
+    cites "the 50-day average" as a covered example, but the regex only
+    matched "...moving average" — the bare phrasing silently fell through
+    to UNPARSEABLE. Fixed by making "moving" optional. Confirmed against
+    real recorded data this exact phrasing doesn't appear yet (so nothing
+    was actually miscovered in production), but it's a real, cheap gap to
+    close before it does."""
+    result = check_thesis_invalid_if(
+        "Thesis invalid if price closes below the 50-day average.",
+        current_price=100.0, ma_50=105.0,
+    )
+    assert result.status == "TRIGGERED"
+
+
 # ---------------------------------------------------------------------------
 # Bucket (a): bare numeric price level — second real bucket (38/1028, 3.7%).
 # ---------------------------------------------------------------------------
