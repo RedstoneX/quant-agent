@@ -1209,6 +1209,43 @@ class SmartMoneyObservation(LLMOutputModel):
         return self
 
 
+#: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.conviction`. NEW
+#: JUDGMENT, not a restatement (the finding carries no confidence field to
+#: read off). The ordering is not invented here: `_ROLE_RANK` in
+#: `src/agents/smart_money_analyst.py` already ranks these four labels
+#: actionable(3) > confirmatory(2) > contradictory(1) > historical(0) to
+#: decide which fact the seat surfaces first, and the seat's own prompt
+#: explains WHY — "actionable" is present-tense, source-backed trading
+#: evidence; "confirmatory" is thematic context (congressional/13F, filed
+#: up to 45 days late); "historical" is stale and cannot support a target
+#: (`build_evidence_registry`/`stance_is_aligned` refuse it); "contradictory"
+#: describes a fact's RELATIONSHIP to the current thesis, not its own
+#: strength, so folding it in at the bottom alongside "historical" is the
+#: more conservative of two readings, not the only defensible one. Squeezed
+#: onto the desk's 3-rung high/medium/low scale, contradictory and
+#: historical collapse to the same "low" rung. Flag for review.
+_SMART_MONEY_ROLE_CONVICTION: dict[str, str] = {
+    "actionable": "high",
+    "confirmatory": "medium",
+    "contradictory": "low",
+    "historical": "low",
+}
+
+#: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.magnitude` for a
+#: directional (non-neutral) stance. Also NEW JUDGMENT: no field on this
+#: model measures how far the seat leans. Reuses the same conviction-style
+#: ordering as `_SMART_MONEY_ROLE_CONVICTION` above, equal-spaced in the
+#: style of `RATING_MAGNITUDE` (Phase 13 §13.3: start equal, adjust only on
+#: out-of-sample proof) — nothing here has been measured either. Flag for
+#: review.
+_SMART_MONEY_ROLE_MAGNITUDE: dict[str, float] = {
+    "actionable": 1.0,
+    "confirmatory": 0.6,
+    "contradictory": 0.3,
+    "historical": 0.3,
+}
+
+
 class SmartMoneyFinding(LLMOutputModel):
     symbol: str
     stance: Literal["bullish", "bearish", "neutral", "mixed"]
@@ -1264,6 +1301,76 @@ class SmartMoneyFinding(LLMOutputModel):
             for o in self.observations
         )
         return self
+
+    def to_verdict(self) -> "AnalystVerdict":
+        """This finding, restated in the shared Phase 13 verdict shape.
+
+        UNLIKE `TechAnalysisResult.to_verdict`, this is only a PARTIAL
+        restatement — see `_SMART_MONEY_ROLE_CONVICTION` and
+        `_SMART_MONEY_ROLE_MAGNITUDE` above for the two fields that are new
+        judgment, not a value already sitting on this model. Flagged for
+        review.
+
+        direction    — `stance`, with "mixed" folded into "neutral". This
+                       is a restatement of existing desk convention, not a
+                       new call: `PortfolioManagerAgent._collapse_stances`
+                       and `_stance_matches_source`
+                       (src/agents/portfolio_manager.py,
+                       src/agents/smart_money_analyst.py) already treat
+                       "mixed" and "neutral" as the same non-directional
+                       bucket — conflicting buy/sell activity supports
+                       neither a bullish nor a bearish call.
+        magnitude    — 0.0 for neutral (including former "mixed"); else
+                       `_SMART_MONEY_ROLE_MAGNITUDE[economic_role]`. New
+                       judgment.
+        conviction   — `_SMART_MONEY_ROLE_CONVICTION[economic_role]`. New
+                       judgment.
+        evidence     — `summary` and `why_now`, each as one labelled item
+                       when present, plus up to 5 observations (most recent
+                       transaction_date first) summarized as text.
+        invalidation — SmartMoneyFinding has no invalidation-style field to
+                       restate. Left "" for a neutral verdict (allowed).
+                       For a directional verdict the base model REQUIRES a
+                       non-empty invalidation, so one is constructed from
+                       `why_now`, framed as a condition: the call stands
+                       only while that stated reasoning holds. This is
+                       genuinely invented, not read off the model — flagged
+                       for review, not presented as a restatement.
+        """
+        stance = "neutral" if self.stance in ("neutral", "mixed") else self.stance
+        magnitude = 0.0 if stance == "neutral" else _SMART_MONEY_ROLE_MAGNITUDE[self.economic_role]
+        conviction = _SMART_MONEY_ROLE_CONVICTION[self.economic_role]
+
+        evidence: list[VerdictEvidence] = []
+        if self.summary.strip():
+            evidence.append(VerdictEvidence(label="summary", text=self.summary.strip()))
+        if self.why_now.strip():
+            evidence.append(VerdictEvidence(label="why_now", text=self.why_now.strip()))
+        most_recent = sorted(
+            self.observations, key=lambda o: o.transaction_date, reverse=True,
+        )[:5]
+        for obs in most_recent:
+            detail = f"{obs.actor}: {obs.direction}"
+            if obs.amount_range:
+                detail += f" {obs.amount_range}"
+            detail += f" on {obs.transaction_date.isoformat()}"
+            evidence.append(VerdictEvidence(label="observation", text=detail))
+
+        invalidation = ""
+        if stance != "neutral":
+            invalidation = (
+                f"the why-now premise no longer holds: {self.why_now.strip()}"
+            )
+
+        return AnalystVerdict(
+            seat="smart_money",
+            symbol=self.symbol,
+            direction=stance,
+            magnitude=magnitude,
+            conviction=conviction,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
 
 
 class TargetPosition(LLMOutputModel):
