@@ -22,6 +22,74 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — the risk manager and order-construction audit: six findings, after reading the code end to end for the first time
+
+**In plain words:** on the same day the Portfolio Manager's decision code got
+read line by line for the first time (rather than only testing its output),
+two more layers got the same treatment — the code that turns a decision into
+an actual order, and the separate AI ("Risk Manager") that reviews a trade
+before it ships. Two independent reviews, run separately so they couldn't
+copy each other, found the same top problem and five smaller ones.
+
+**1. The biggest one — trades have been sized far below what the owner
+actually approved.** The owner set the real per-trade risk limit to 5% of
+the account, on the record, 2026-08-27. A much older number — 0.5%, ten
+times smaller — was left over from a very early version of this code and
+quietly wins every time the two are compared, with nothing connecting it to
+any setting a person could change. Confirmed against real trade history:
+trades that should have risked roughly $490 on this account instead risked
+about $49, consistently, going back weeks. This predates the QAMC project
+itself — the number is inherited from the original template this desk was
+built on, from before the 5% rule ever existed, and nobody reconciled the
+two when 5% was decided.
+
+**2. The Risk Manager can edit a trade without anyone checking the edit is
+actually safer.** The code that applies its changes only checks the edit is
+formatted correctly — not that it tightens rather than loosens anything.
+Observed directly in the trade history: the Risk Manager set two sell orders'
+size to zero, which the system reads as "do nothing" — silently cancelling
+two real exits the decision-maker had chosen, with only a sentence in the
+AI's own instructions (not code) telling it not to do that. Also possible,
+not yet observed: it could loosen a stop-loss past the minimum safety math
+and nothing would catch it, because the safety checks compare the edited
+trade against itself, not against the original.
+
+**3. One safety net can be skipped after an edit.** A rule meant to shrink
+new trades automatically during a losing streak doesn't get re-checked if
+the Risk Manager increases a trade's size afterward. Never observed in
+practice — the Risk Manager increasing a size has never happened in the
+retained record — but real if it ever does.
+
+**4. Same blind spot as the Portfolio Manager's, one level over.** When a
+protected position is being sold, the Risk Manager is only asked to confirm
+a reason was written down — not that the reason is actually true. Same shape
+as the "catalyst door" problem found in the Portfolio Manager the same day.
+A design question, not decided here.
+
+**5. A small, low-risk bug.** A text-matching comparison is case-sensitive
+where it shouldn't be — in the rare case of a formatting mismatch, an edit
+the Risk Manager intended would silently not apply, and the trade would ship
+as originally planned instead. Never observed live.
+
+**6. A narrower calculation gap.** In an unusual situation where one kind of
+market data is temporarily unavailable but another kind isn't, the system
+can briefly forget that existing positions already carry risk, and approve
+more new risk than the real limit allows. Documented as the exact failure
+mode to avoid in the code's own design notes — it happened anyway, in a
+partial-data case nobody had tested.
+
+**What was checked and found solid, both reviews, independently:**
+stop-loss placement, the math that rations money and risk across multiple
+trades, and the mechanics of actually sending an order to the broker. No
+gaps found in any of those.
+
+**What would catch this next time:** none of these six had a test asserting
+the two size limits agree, or that a Risk Manager edit is re-checked against
+the same floors a fresh decision would face. Tests for both are part of the
+fix work already dispatched for finding #1 and #2.
+
+---
+
 ### 2026-09-03 — item 17(a)/(b): a database hiccup shouldn't need a human, and a failed alert shouldn't vanish
 
 **In plain words:** two related gaps closed. First, a brief database hiccup
@@ -115,6 +183,30 @@ failed alert send is durably recorded and successfully retried by a later
 process; and repeated alert failures across several simulated process
 restarts keep accumulating in the durable record (and on `status()`)
 instead of silently disappearing after the first attempt.
+
+---
+
+### 2026-09-03 — the silence-alarm timing was set to owner instruction, not a placeholder
+
+**In plain words:** the silence watchdog (item 17c) shipped with a one-full-day
+placeholder — the desk would have to be dark for an entire trading day before
+anyone was told. The owner rejected that on sight: every hour the desk sits
+silent is an hour of open positions nobody is watching, real money at risk,
+not an abstract number. He set it to roughly one hour instead.
+
+**Why one hour is still a reliable signal, not a false-alarm risk.** The
+check is desk-wide — it only counts silence when EVERY one of the six daily
+jobs has gone quiet at once, not just one. A single job skipping is normal
+and happens for mundane reasons; the whole desk going quiet across two
+independent scheduled slots in a row is not something that happens by
+accident on a healthy desk. Shortening the window from a full day to about an
+hour trades away tolerance for a genuinely unusual event that was already
+rare, in exchange for finding out about a real outage in an hour instead of
+by the end of the day.
+
+**What changed:** `DEFAULT_SILENT_WINDOW_THRESHOLD` in `src/silence_watchdog.py`
+went from 6 to 2. The `DECIDE BY` line this shipped with in `docs/WORK.md` is
+resolved and removed accordingly.
 
 ### 2026-09-03 — item 17c: a watchdog for the desk going silent, not just the alarm breaking
 
