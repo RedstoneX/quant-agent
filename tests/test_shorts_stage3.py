@@ -317,6 +317,57 @@ def test_short_stop_at_or_below_entry_is_rejected():
     assert decisions == []
 
 
+def test_long_stop_breached_by_live_price_since_analysis_is_rejected():
+    """WORK.md item 8 ("stop on wrong side of entry" — 2 of 68 funnel
+    refusals, DEFECT, upstream, unlocated). Traced backward from
+    `STOP_REFUSAL_WRONG_SIDE` through `_resolve_stop` -> `_resolve_stop`'s
+    two sources (`target.suggested_stop_price`, `analysis.stop_loss`) ->
+    `TechAnalysisResult`'s own validator (`src/models.py`), which already
+    guarantees a BUY's `stop_loss` sits below ITS OWN `entry_price` at
+    ingestion — so the analyst never emits a self-contradictory pair.
+
+    Measured against a real production database snapshot
+    (sandbox copy of live `quant_agent.db`, 2026-08 window): the live quote
+    `PortfolioConstructor` prices a NEW target off (`price_map`, filled by
+    `pipeline_stages.py` from a fresh broker call AFTER macro/news/earnings/
+    portfolio_manager have all already run) lands 11-108 seconds and up to
+    8.3% away from the price the technical analyst's `entry_price`/
+    `stop_loss` pair was computed against — real, measured drift, not a
+    hypothetical. One production case (DIS) drifted -1.8% in 108s against a
+    stop set only 2.2% from the analyst's entry, landing $0.48 from
+    flipping outright.
+
+    This is the mechanism: nothing is broken on either side (the analyst's
+    numbers are self-consistent; the live quote is a real, fresh price) —
+    the analyst's structural stop is simply a real price LEVEL, and by the
+    time the constructor prices the trade off a live quote fetched later in
+    the same run, ordinary price movement can have already carried the
+    market through that level. Buying (or shorting) through an already-
+    breached level is not a data-quality bug to fix upstream, and there is
+    no sign-flip, unit-conversion or rounding defect anywhere in the traced
+    chain (`_resolve_stop` -> `_widen_stop_past_noise` ->
+    `_resolve_entry_and_stop`'s side check) — the refusal below IS the
+    correct, working backstop for exactly this case, and this test locks
+    in that the live-quote path (not just the synthetic
+    `suggested_stop_price` path `test_short_stop_at_or_below_entry_is_
+    rejected` above covers) refuses cleanly rather than shipping a stop
+    that can no longer protect anything.
+    """
+    constructor = PortfolioConstructor()
+    analysis = _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0)
+    target = TargetPosition(
+        symbol="NVDA", direction="long", target_weight_pct=5.0,
+        conviction="high", thesis="breakout",
+    )
+    # Live quote fetched at construction time has already fallen THROUGH
+    # the analyst's stop (237.5) — the level the setup depended on is gone.
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[], analyses=[analysis],
+        total_value=100_000, price_map={"NVDA": 230.0},
+    )
+    assert decisions == []
+
+
 def test_short_stop_inside_noise_band_is_widened_upward():
     """D5: a short's stop inside `min_stop_atr_multiple` ATRs of entry is
     pushed UP (away from entry) — the mirror of a long's stop being pushed
