@@ -3544,6 +3544,50 @@ class RiskStage:
                 )
                 return {"status": "rejected", "orders": [], "reason": reasons}
 
+        # Holding-discipline compliance — spec item 25 (2026-09-03). RM's own
+        # checklist (config/prompts/risk_manager.md, "Holding-discipline
+        # compliance") asks it to itself verify that a SELL/REDUCE/COVER on a
+        # <5d position names a real trigger; nothing in Python checked that
+        # the trigger claimed is real. `holding_discipline_false_claim` is
+        # deliberately narrow — it can only ever catch a PROVABLY FALSE claim
+        # about (b) a regime flip or (c) a same-day HIGH-conviction bearish
+        # state_change, never (a) thesis_invalid_if, which it does not (and
+        # cannot reliably) check — see that function's module docstring for
+        # why, and why even a caught false claim is only ever logged/recorded
+        # here, never used to veto or drop the decision.
+        if portfolio_decision.decisions:
+            from src.risk.exit_guard import holding_discipline_false_claim
+            macro_regime_today = _macro_regime(macro_analysis)
+            macro_status = data_status.get("macro") if data_status else None
+            try:
+                hd_active_state_changes = pipeline._build_active_state_changes()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "RiskStage: holding-discipline state-change lookup failed "
+                    "(%s) — bearish-state-change claims go unverified this run",
+                    e,
+                )
+                hd_active_state_changes = ""
+            for decision in portfolio_decision.decisions:
+                if decision.action not in ("SELL", "REDUCE", "COVER"):
+                    continue
+                hist = rm_position_history.get(decision.symbol) or {}
+                finding = holding_discipline_false_claim(
+                    action=decision.action,
+                    reason=decision.reasoning,
+                    symbol=decision.symbol,
+                    days_held=hist.get("days_held"),
+                    macro_regime_today=macro_regime_today,
+                    macro_status=macro_status,
+                    active_state_changes=hd_active_state_changes,
+                )
+                if finding:
+                    logger.warning("Holding discipline: %s", finding)
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "risk",
+                        "holding_discipline_claim_unverified", finding,
+                    )
+
         if verdict.modifications:
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,

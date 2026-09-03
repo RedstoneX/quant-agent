@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Literal
 
 __all__ = [
@@ -44,6 +45,10 @@ __all__ = [
     "NOISE_BAND_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
     "check_thesis_invalid_if",
+    "TRUSTED_MACRO_STATUSES",
+    "claims_regime_flip",
+    "claims_bearish_state_change",
+    "holding_discipline_false_claim",
 ]
 
 
@@ -528,4 +533,201 @@ def check_thesis_invalid_if(
     status = "TRIGGERED" if fired else "NOT_TRIGGERED"
     return ThesisInvalidationCheck(
         status, f"price {cur} vs level {threshold}, condition was '{direction}'",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Holding-discipline compliance — spec item 25 (2026-09-03)
+# ---------------------------------------------------------------------------
+#
+# WHAT WENT WRONG. `config/prompts/risk_manager.md` ("Holding-discipline
+# compliance") asks the AI Risk Manager to itself verify, for every position
+# held under 5 days, that a proposed SELL/REDUCE/COVER names one of exactly
+# three allowed triggers: (a) a triggered `thesis_invalid_if`, (b) a regime
+# flip to risk-off TODAY, or (c) a HIGH-conviction bearish state_change dated
+# today that names the symbol. Nothing in Python checked any of this — the
+# prompt told the model to grade its own homework against real data it was
+# handed in the same message, with no deterministic pass afterward. This is
+# the same "citation exists vs. citation is real" shape as the sub-floor
+# catalyst gate (`PortfolioManagerAgent._catalyst_cites_state_change`) fixed
+# the same day.
+#
+# SCOPE — (b) and (c) ONLY. (a) is explicitly NOT verified here: evaluating
+# an arbitrary free-text `thesis_invalid_if` condition against live price
+# data is a real, separate feature (parsing "closes below the 50-day" or
+# "loses the $142 level" into an executable check), and guessing at it would
+# be worse than not attempting it. The only (a)-adjacent question this module
+# *could* safely answer — "was a non-empty thesis_invalid_if actually
+# recorded at entry, as opposed to fabricated after the fact" — turned out to
+# have no reliable answer either: the only place an entry's
+# `thesis_invalid_if` survives is embedded as free text inside the BUY's
+# stored `TradeDecision.reasoning` (`PortfolioConstructor._build_buy` writes
+# "... (invalid if: <text>)"; `_build_short`/`_build_sell` use a *different*
+# "(thesis_invalid_if: <text>)" phrasing — the two builders do not even agree
+# on the marker string), and that whole field is truncated to 500 characters
+# at write time and again to 280 by `TradingPipeline._build_position_history`
+# before anything downstream ever sees it. A long thesis can push the
+# marker past either truncation point, which would make "no invalid_if
+# found" indistinguishable from "one was recorded but cut off" — exactly the
+# false-negative a discipline check must not manufacture. So (a) stays
+# entirely unaddressed here, deliberately, and a SELL relying on it is never
+# penalized by anything below for that reason alone.
+#
+# DESIGN — because (a) cannot be checked, a SELL that fails to prove (b) or
+# (c) is NOT thereby suspect: it may be a perfectly legitimate (a)-based
+# exit this module simply has no visibility into. Blocking on "(b) and (c)
+# both come up empty" would veto every honest invalidation-based exit, which
+# is worse than the discipline gap this fixes. The only thing this module
+# ever acts on is a POSITIVELY CONTRADICTED claim: the decision's own
+# reasoning text asserts a specific, checkable fact ("regime flipped to
+# risk-off", "high-conviction bearish state change") and the verifiable data
+# for TODAY says otherwise. That is provable dishonesty, not an unprovable
+# gap, and is the only thing `holding_discipline_false_claim` flags.
+#
+# Even a provable false claim is only ever LOGGED and recorded as a pipeline
+# event here — never used to veto or drop the trade. Two reasons: first, the
+# claim-detection is phrase matching over free text (see the two regexes
+# below), which cannot distinguish "regime flipped to risk-off" from
+# "market is NOT showing a regime flip to risk-off" — a negation would be
+# misread as an assertion, and a veto on a misread would be exactly the kind
+# of wrongly-blocked-legitimate-exit failure this fix must not introduce.
+# Second, even a correctly-read false claim about (b)/(c) does not itself
+# prove the SELL is wrong — (a) might still independently justify it, and
+# this module cannot tell. FLAGGED FOR REVIEW: whether this should ever
+# escalate to a veto (once claim-detection is more than phrase matching) is
+# a judgment call left to a human, not resolved here.
+
+#: Phrases that assert a regime flip to risk-off. Deliberately the same two
+#: patterns `EXTERNAL_INFORMATION_PATTERNS` already uses for the identical
+#: concept (regime shift / risk-off), so "does this reason claim a regime
+#: flip" is answered identically everywhere in this module rather than by a
+#: second, silently-diverging definition.
+_REGIME_FLIP_CLAIM_RE = re.compile(
+    r"\bregime (?:shift|flip|flipped)\b|\brisk[- ]off\b", re.IGNORECASE,
+)
+
+#: Phrases that assert a HIGH-conviction bearish state_change. Same two
+#: "high[-]conviction bearish" / "high bearish" patterns as
+#: `EXTERNAL_INFORMATION_PATTERNS`, plus the literal "bearish state change"
+#: phrasing the risk_manager.md checklist item itself uses.
+_BEARISH_STATE_CHANGE_CLAIM_RE = re.compile(
+    r"\bhigh[- ]?conviction bearish\b|\bhigh bearish\b|\bbearish state change\b",
+    re.IGNORECASE,
+)
+
+#: `data_status["macro"]` values that mean "this run's macro_analysis is a
+#: real reading dated TODAY" — as opposed to absent, failed, or parse-error.
+#: Reuses `TradingPipeline._carry_forward_macro` / `build_evidence_registry`'s
+#: own distinction (see their docstrings) rather than inventing a second one:
+#: "carried_from_morning" is explicitly this morning's read of TODAY, refused
+#: by the producer itself whenever the stored state is not dated today, so it
+#: is exactly as trustworthy as "ok" for this purpose.
+TRUSTED_MACRO_STATUSES = frozenset({"ok", "carried_from_morning"})
+
+
+def claims_regime_flip(reason: str) -> bool:
+    """True when `reason` asserts a regime flip to risk-off."""
+    return bool(reason) and bool(_REGIME_FLIP_CLAIM_RE.search(reason))
+
+
+def claims_bearish_state_change(reason: str) -> bool:
+    """True when `reason` asserts a HIGH-conviction bearish state_change."""
+    return bool(reason) and bool(_BEARISH_STATE_CHANGE_CLAIM_RE.search(reason))
+
+
+def holding_discipline_false_claim(
+    *,
+    action: str,
+    reason: str,
+    symbol: str,
+    days_held: int | None,
+    macro_regime_today: str | None,
+    macro_status: str | None,
+    active_state_changes: str = "",
+    asof: date | None = None,
+) -> str | None:
+    """Return a finding string when `reason` makes a PROVABLY FALSE holding-
+    discipline claim about a `<5d` position's exit, else None.
+
+    Checks ONLY:
+      (b) a claimed regime flip to risk-off, contradicted when today's macro
+          read (`macro_status` in `TRUSTED_MACRO_STATUSES`) shows a DIFFERENT,
+          non-risk-off regime;
+      (c) a claimed HIGH-conviction bearish state_change, contradicted when a
+          same-day `active_state_changes` row DOES name the symbol but with a
+          recorded direction that is NOT bearish (parsed via
+          `PortfolioManagerAgent._state_change_symbols_by_date`, the exact
+          function that already owns this parsing for the sub-floor catalyst
+          gate — not reimplemented here).
+
+    Never flags:
+      - an action other than SELL/REDUCE/COVER;
+      - a position with `days_held` unknown or >= 5 (outside the protection
+        period this checklist item governs);
+      - a reason that makes neither claim;
+      - a claim that cannot be checked at all (macro status not trusted, or
+        no same-day row names the symbol) — absence of proof is not proof of
+        a false claim, and in particular a missing state-change row is much
+        weaker evidence than a definite non-matching macro regime: the news
+        pipeline can simply not have logged a real catalyst as a formal
+        `state_change` row yet, so treating "not found" as "false" here
+        would manufacture false positives on legitimate exits;
+      - (a) `thesis_invalid_if` — not evaluated at all, by design (see the
+        module-level note above), so a SELL resting entirely on (a) is never
+        flagged just because (b) and (c) are absent or unverifiable.
+
+    This is a FINDING for the audit trail, not a veto: see the module-level
+    note above for why a provable false claim still is not, by itself, made
+    to block the trade here.
+    """
+    if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
+        return None
+    if days_held is None or days_held >= 5:
+        return None
+    reason = reason or ""
+    symbol_u = symbol.strip().upper()
+    findings: list[str] = []
+
+    if claims_regime_flip(reason):
+        if macro_status in TRUSTED_MACRO_STATUSES and macro_regime_today:
+            if macro_regime_today != "risk-off":
+                findings.append(
+                    f"claims a regime flip to risk-off today, but today's "
+                    f"macro read ({macro_status}) shows regime="
+                    f"{macro_regime_today!r}, not risk-off"
+                )
+        # else: macro unavailable/untrusted this run — cannot verify, so
+        # this claim is silently left unchecked rather than flagged.
+
+    if claims_bearish_state_change(reason):
+        from src.agents.portfolio_manager import PortfolioManagerAgent
+
+        by_date = PortfolioManagerAgent._state_change_symbols_by_date(
+            active_state_changes, asof,
+        )
+        try:
+            from src.trading_calendar import et_today
+            today_iso = str(asof) if asof is not None else str(et_today())
+        except Exception:  # pragma: no cover - clock/tz failure
+            today_iso = None
+        directions = by_date.get(today_iso) if today_iso else None
+        symbol_directions = directions.get(symbol_u) if directions else None
+        if symbol_directions is not None and "bearish" not in symbol_directions:
+            rendered = ", ".join(sorted(symbol_directions)) or "no recorded direction"
+            findings.append(
+                f"claims a HIGH-conviction bearish state change today, but "
+                f"today's Active News State Change block names {symbol_u} "
+                f"with direction(s) {rendered} instead of bearish"
+            )
+        # symbol_directions is None (no same-day row names the symbol at
+        # all) -> unverifiable, not flagged; see docstring.
+
+    if not findings:
+        return None
+    return (
+        f"{symbol_u}: {action} on a position held {days_held}d (<5d "
+        f"protection period) — reasoning " + "; and ".join(findings) +
+        f". This is a provable contradiction of a checkable claim, not a "
+        f"veto — thesis_invalid_if (which this module cannot verify either "
+        f"way) may independently justify this exit. Recorded for review."
     )

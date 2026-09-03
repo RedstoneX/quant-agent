@@ -133,6 +133,50 @@ the logic is recorded in the same session's work, not repeated here.
 
 ---
 
+### 2026-09-03 — item 25: the Risk Manager's "did PM really have a reason to sell early" check was 100% prompt-only; now the two checkable parts are, one is not, and the fix only ever catches a proven-false claim
+
+**In plain words:** the desk tells its AI Risk Manager to police an early
+exit (a position sold before 5 days old, "protection period") by checking
+that PM's stated reason is one of three real things — a triggered
+invalidation, a market-wide flip to risk-off that day, or a genuinely
+bearish news event about that stock that day — and to check the real News
+and Macro data itself before agreeing. Nothing in code ever checked that it
+did. The AI was grading its own homework, same shape as the sub-floor
+catalyst gate fixed earlier today (§ above): a citation existing is not the
+same thing as a citation being real.
+
+**What's fixed and what isn't.** Two of the three triggers are now checked
+in Python: (1) a claimed market-wide flip to risk-off is checked against the
+day's own real macro reading; (2) a claimed bearish stock-specific news
+event is checked against the day's own real news record. The third —
+whether a stop-loss condition set at the time of the original purchase has
+actually been triggered — is NOT checked. That would mean teaching code to
+read an arbitrary written condition ("closes below the 50-day average") and
+test it against a live chart, which is a much bigger, separate piece of
+work, and a rough guess at it would be worse than admitting it isn't done.
+Investigation also found that even the narrower question — "was a stop-loss
+condition honestly written down at purchase time, not invented after the
+fact" — cannot currently be answered reliably: the only place that record
+survives is buried inside a length-capped free-text note, written two
+different ways by two different parts of the code, and both are cut off
+before the full note is guaranteed to fit. That gap is flagged for the
+owner, not fixed here.
+
+**Why a proven-false claim only gets logged, not blocked.** Whether the
+market flipped to risk-off, or whether a specific bearish story broke on a
+stock, are both checkable against real, single-source-of-truth data, so a
+mismatch there is provable, not a guess. But the check still can't fully
+trust its own reading of PM's sentence — matching words in free text cannot
+always tell "the regime flipped" from "the regime did NOT flip," so a
+wrongly-read sentence could look like a lie when it isn't. And even a
+correctly caught false claim about these two triggers doesn't rule out the
+third (the stop-loss one), which nothing here can check either way. So a
+provably false claim is written to the record for review, not used to
+cancel the trade — flagged for a second look before this graduates to
+actually blocking anything.
+
+---
+
 ### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in
 
 **In plain words:** the desk's tiebreak among tied stock picks only ever
