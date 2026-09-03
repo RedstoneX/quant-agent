@@ -53,6 +53,18 @@ _PRICE_DERIVED_CLAIM_RE = tuple(
     for pattern, label in _PRICE_DERIVED_CLAIM_PATTERNS
 )
 
+# The detector below used to be advisory-only: it logged a fabricated
+# valuation claim but never stopped it reaching the PM, and because the
+# analysis is cached to disk for the life of the filing, one bad LLM call
+# meant the SAME invented number was re-served to the PM every run until a
+# human noticed the log line. This is what actually gets written in its
+# place once a claim is caught — the rest of the analysis is untouched.
+_UNSOURCED_VALUATION_DISCLOSURE = (
+    "[Valuation claim removed: this filing does not disclose a share price, "
+    "market cap, or multiple, so no price-derived valuation judgement can be "
+    "grounded. Treat this name's valuation as UNKNOWN, not neutral.]"
+)
+
 
 class EarningsAnalystAgent(BaseAgent):
     @property
@@ -286,24 +298,58 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
             )
             return None
 
-        self._flag_unsourced_valuation_claims(report, analysis, source)
+        matched = self._flag_unsourced_valuation_claims(report, analysis, source)
+        if matched:
+            # Redact in place — the rest of the analysis (sentiment,
+            # conviction, thesis, revenue/profitability figures) is sound and
+            # stays untouched; only the ungrounded sentence is replaced, not
+            # the whole analysis. This is what closes the loop the old
+            # log-only version left open (see docstring below).
+            analysis = analysis.model_copy(deep=True)
+            analysis.investment_implications.reasoning_chain.valuation_context = (
+                _UNSOURCED_VALUATION_DISCLOSURE
+            )
+            if source == "cache":
+                # The bad claim was written to disk before this fix existed
+                # (or before the prompt was corrected) and would otherwise be
+                # re-served, unfixed, on every future run for the life of the
+                # filing. Self-heal the cache file now so this fires once per
+                # filing, not once per run forever.
+                try:
+                    self._save_analysis(report.analysis_path, report, analysis.model_dump())
+                    logger.warning(
+                        "earnings: redacted and re-saved cached analysis for %s %s "
+                        "— cache no longer carries the fabricated valuation claim",
+                        report.symbol, report.form_type,
+                    )
+                except Exception:  # noqa: BLE001 — redaction in memory must
+                    # still take effect even if the disk re-write fails; the
+                    # next run will just try to self-heal again.
+                    logger.warning(
+                        "earnings: could not re-save redacted cache for %s %s "
+                        "— serving the redacted version this run only",
+                        report.symbol, report.form_type,
+                    )
         return analysis
 
     @staticmethod
     def _flag_unsourced_valuation_claims(
         report: EarningsReport, analysis: EarningsAnalysis, source: str
     ) -> list[str]:
-        """Log any price-derived valuation claim in `valuation_context`.
+        """Detect a price-derived valuation claim in `valuation_context`.
 
-        Advisory only — it never rejects the analysis. The claim is a sentence
-        inside an otherwise sound filing read, and this is a text heuristic; a
-        false positive must not cost the whole analysis, which is the only
-        fundamentals input PM and position_reviewer get for that name.
+        The claim is a sentence inside an otherwise sound filing read, and
+        this is a text heuristic; a false positive must not cost the whole
+        analysis, which is the only fundamentals input PM and
+        position_reviewer get for that name. So detection here never rejects
+        the analysis — the caller (`_validate_analysis`) redacts just the
+        offending field instead of discarding everything.
 
         Runs for `source="cache"` too: analyses are written to disk once and
         re-served for the life of the filing, so an invented multiple written
-        before the prompt was corrected keeps arriving at PM until someone can
-        see it. Returns the matched labels so tests and callers can assert on
+        before the prompt was corrected would otherwise keep arriving at PM
+        indefinitely — the caller re-saves the redacted version to close that
+        loop. Returns the matched labels so tests and callers can assert on
         them.
         """
         text = analysis.investment_implications.reasoning_chain.valuation_context or ""
