@@ -6125,8 +6125,15 @@ class TradingPipeline:
                 return f"order_{status}"
             if key in skips:
                 return skips[key]
+            # A verdict rejection/zeroing is only attributed to a symbol
+            # confirmed to have reached the constructor's own order list
+            # (`ordered`). Without this guard every ORIGINALLY-proposed
+            # symbol gets blamed for an AI Risk Manager veto — including
+            # ones the deterministic constructor had already dropped
+            # before the Risk Manager ever saw the plan. Mirrors
+            # `scripts/blocked_proposals_census.py::classify`.
             verdict = verdicts.get(did)
-            if isinstance(verdict, dict):
+            if isinstance(verdict, dict) and key in ordered:
                 if verdict.get("approved") is False:
                     cat = (verdict.get("reason_category") or "").strip()
                     return f"rm_rejected:{cat}" if cat else "rm_rejected"
