@@ -233,3 +233,33 @@ def test_claims_bearish_state_change_detects_phrasing():
     assert claims_bearish_state_change("a high-conviction bearish state change fired")
     assert claims_bearish_state_change("high conviction bearish reversal")
     assert not claims_bearish_state_change("bullish state change reversal")
+
+
+def test_a_denied_regime_flip_is_not_read_as_a_claim():
+    """Adversarial review, 2026-09-03: this exact sentence was matched as
+    CLAIMING a regime flip before the negation guard existed, which would
+    have produced a wrong 'contradiction' finding against reasoning that
+    never actually asserted one."""
+    reason = "No regime shift to risk-off has occurred; exiting purely on thesis_invalid_if."
+    assert not claims_regime_flip(reason)
+
+
+def test_a_denied_bearish_state_change_is_not_read_as_a_claim():
+    reason = "This is not a high-conviction bearish state change; unrelated exit."
+    assert not claims_bearish_state_change(reason)
+
+
+def test_holding_discipline_false_claim_does_not_fire_on_a_denied_claim():
+    """End-to-end: the same denied-regime-flip sentence, run through the
+    full check with real contradicting macro data, must NOT produce a
+    finding — the reasoning agrees with the data (both say no flip); only
+    an actual assertion contradicted by real data should ever be flagged."""
+    finding = holding_discipline_false_claim(
+        action="SELL",
+        reason="No regime shift to risk-off has occurred; exiting purely on thesis_invalid_if.",
+        symbol="AAPL",
+        days_held=2,
+        macro_regime_today="risk-on",
+        macro_status="ok",
+    )
+    assert finding is None
