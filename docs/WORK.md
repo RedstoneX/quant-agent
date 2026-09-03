@@ -914,13 +914,10 @@ the latch itself is the shared hazard, not any single route into it.
 
 **18. 70% OF WHAT THE MODEL READS IS EARNINGS PROSE — MEASURED 2026-09-02. Owner made the audit priority one; this is its first result.**
 
-**Numbered 18, ranked first in practice.** It was written as "0" to sit
-above item 1 without renumbering the other twenty, and that broke the
-board: `scripts/status_board.py` reads these numbers as the queue's ranks
-and `tests/test_status_board.py` requires the ranked list to start at 1.
-18 was the free slot in the existing sequence, so nothing else moved. The
-owner's instruction stands regardless of the number — this is the audit he
-made priority one, and items 19-21 are explicitly secondary to it.
+**Numbered 18, ranked first in practice.** 18 was the free slot in the
+existing sequence (the board reads these numbers as ranks and requires them
+to start at 1), so nothing else moved. This is the audit the owner made
+priority one; items 19-21 are explicitly secondary to it.
 
 **The finished prompt was rendered and measured for the first time.** Nobody
 had ever read it. It is **199,646 characters — roughly 50,000 tokens** — and
@@ -942,15 +939,12 @@ sitting after 140,000 characters of SEC filing summaries.** The record of
 what keeps getting blocked is 69 characters — empty, because the book was
 wiped the same day it shipped (see item 1).
 
-**This is a plausible mechanism for the familiarity bias, and it costs
-nothing to test.** The biggest, most-covered companies have the longest
-filings and the most earnings prose. A prompt that is 70% earnings text is
-therefore 70% dominated by exactly the famous names the model keeps picking.
-Three attempts to fix that behaviour with WORDS all measured as no-change —
-because the words were a rounding error next to the volume.
-
-**It also explains the bill.** ~50k tokens per call is why the
-portfolio_manager seat is 93% of LLM spend (see item 14).
+**Volume was the first suspected mechanism** — the most-covered companies
+have the longest filings, so a 70%-earnings prompt is dominated by the famous
+names. Three attempts to fix that with WORDS measured as no-change. The
+2026-09-03 trace below found a **stronger, deterministic** mechanism, so test
+that one first. It also explains the bill: ~50k tokens per call is why this
+seat is 93% of LLM spend (item 14).
 
 **ROOT CAUSE OF THE EMPTY EARNINGS REPORTS — FOUND IN THE LOGS 2026-09-02.**
 
@@ -978,37 +972,32 @@ mostly `[UNSOURCED]`.** Call it a ~30% failure rate.
 now load-bearing, which is why the failure is quiet — nothing errors, the
 report is simply empty and gets couriered to the PM anyway.
 
-**Sequencing, and it matters:** repairing this ALONE makes the prompt worse
-(see the transcription problem below) — more recovered text means longer
-forms. Fix the analyst's OUTPUT SHAPE first so it returns a conclusion, then
-fix this so the conclusion is drawn from real data. In that order.
+**Sequencing:** repairing this ALONE makes the prompt worse — more recovered
+text means longer forms. Fix the analyst's OUTPUT SHAPE first, then this.
 
 **Cheap check nobody has run:** the log line prints the recovered length
-every time. Alert when it is under a threshold instead of logging at INFO
-and moving on. A 965-character recovery from a 184k filing should be loud.
+every time. Alert under a threshold instead of logging at INFO. A
+965-character recovery from a 184k filing should be loud.
 
 **THE ANALYSTS DO NOT CONCLUDE — THEY TRANSCRIBE. Owner's correction, and it is the bigger failure.**
 
 I first reported this as a data-quality bug (filings truncated, fields
-empty). That is real but it is the SMALLER problem, and the owner caught
-what I missed.
+empty). That is real but SMALLER, and the owner caught what I missed.
 
 Each of the 67 earnings reports is a FORM, not a call: eight extraction
 fields — filing metrics, guidance, strategy, competitive positioning,
 strategic risks, operational risks, strategy consistency, data quality —
-followed by ONE line of actual judgement (`Analyst synthesis: neutral
-(low)`). ~1,400 characters to deliver a one-line conclusion.
+followed by ONE line of judgement (`Analyst synthesis: neutral (low)`).
+~1,400 characters to deliver a one-line conclusion.
 
-**So fixing the truncation makes the prompt WORSE, not better.** Populate
-those empty fields and every report gets longer, the prompt grows past 50k
-tokens, the cost rises, and the conclusion is buried deeper. Any fix that
-starts with "get better filing text" is pushing in the wrong direction.
+**So fixing the truncation makes the prompt WORSE.** Populate those empty
+fields and every report grows, cost rises, and the conclusion is buried
+deeper. Any fix starting with "get better filing text" pushes the wrong way.
 
-**The owner's model of the desk is the correct one and we are not built to
-it:** analysts research and hand over a CONCLUSION; the PM is the final gate
-that weighs conclusions and allocates. Today the PM receives raw extraction
-and is expected to do the analysis itself — the analyst's job — which is why
-its prompt is 200k characters and why it is 93% of the LLM bill.
+**The owner's model of the desk is correct and we are not built to it:**
+analysts hand over a CONCLUSION; the PM weighs conclusions and allocates.
+Today the PM receives raw extraction and does the analyst's job itself —
+which is why its prompt is 200k characters and 93% of the LLM bill.
 
 **THE "ANALYSTS CAN RUN CHEAPER MODELS" VERDICT IS NOW INVALID. Do not act on it.**
 
@@ -1019,40 +1008,71 @@ task and cheap models are adequate at it. **The job they SHOULD do is form
 a judgement, which is a different and harder task, and the verdict does not
 transfer to it.**
 
-Compounding it: some of that grading ran on filings that arrived truncated,
-so part of what was measured was how well a cheap model extracts from
-nothing.
+Compounding it: some of that grading ran on truncated filings, so part of
+what was measured was how well a cheap model extracts from nothing.
 
-Eight seats were moved to Google-direct on 2026-08-31 and now cost $0.00
-across 35 calls. **Leave them there for now** — the saving is real and the
-current task is genuinely easy. But **re-measure the seat before asking it
-to conclude rather than transcribe**, and do not cite the existing result as
-evidence it can.
+Eight seats moved to Google-direct on 2026-08-31 and now cost $0.00 across 35
+calls. **Leave them there** — the saving is real and the current task is
+easy. But **re-measure before asking a seat to conclude rather than
+transcribe**, and do not cite the existing result as evidence it can.
 
-**The full chain, so nobody re-derives it:** filings arrive incomplete →
-cheap models fill in a form → 67 forms are couriered to the PM → the PM does
-the actual analysis across 200k characters → which is why that one seat is
-93% of the LLM bill. Every layer was measured and signed off in isolation
-and none is wrong on its own terms.
+**The full chain:** filings arrive incomplete → cheap models fill in a form →
+67 forms are couriered to the PM → the PM does the actual analysis across
+200k characters → that one seat is 93% of the LLM bill. Every layer was
+signed off in isolation and none is wrong on its own terms.
 
 **The structural fix, ahead of (a)-(d) below:** the earnings seat must
 return a call and a short thesis — direction, conviction, two or three lines
 of why, and a pointer to the detail — not a completed template. The full
 extraction stays retrievable for audit; it must stop being couriered to the
-PM by default. Same question applies to every other specialist seat: **check
-whether the technical, macro and news seats also hand over transcription
-rather than conclusions.**
+PM by default. (The same question about the other seats is now answered
+below: only earnings transcribes.)
+
+**THE TRACE AND THE RULES-AS-CODE ARE DONE — 2026-09-03. Full detail:
+`docs/INCIDENT_HISTORY.md` ("item 18a/18b"). Reproduce with
+`python -m ops.model_policy.deterministic_selection`; pinned by
+`tests/test_deterministic_selection.py`. No LLM call in either.**
+
+**The rules do not determine an answer.** Written out as plain Python and run
+on run-64290730, the desk's six stated gates take 59 analysed names down to
+**12 eligible** — and stop. Combined max risk **13.5% against a 25% budget**,
+so all twelve fit at once and no cap forces a choice. **There is no ranking
+rule anywhere in the rulebook.** We have been blaming the model for a
+decision we never specified. Specify it; do not instruct harder.
+
+**Two mechanisms found, both deterministic, neither about the model:**
+  - **The sub-floor catalyst door is a famous-names-only door.** 7 of the 12
+    eligible names enter only by citing a dated news state-change row, and
+    those rows are written from the wires — NVDA, MSFT, TSM, COP, CRM, CVX.
+    **Our own rules ADMIT the famous-and-weak names at 0.5% risk**, then
+    `familiarity_bias` fails the run for taking them. The model is graded
+    against a rule its prompt never states.
+  - **3 of the 5 "qualified shorts" are refused by our own arithmetic.** GEV
+    (2.12), UNH (1.90), NEE (1.84) clear the floor and are dropped anyway:
+    §9.4 nets a bullish earnings stance off the bearish technical one → net
+    −1/0/0, no rung. The benchmark faults the model for passing over names it
+    is not allowed to take. NKE and FLNC survive, so the scenario works, but
+    its reasoning is wrong about three of its five names.
+
+**Only earnings transcribes** — the item-18 hypothesis, now answered.
+Technical (17,409 chars) and News (3,248) hand over real conclusions; Macro
+(5,799) is a 918-char call plus 4,881 chars of indicator recital; Smart Money
+contributed 93 chars — nothing — that day. Inside earnings the conclusion is
+15,706 of 140,107 chars (**11.2%**); the biggest field is `Data quality` at
+19,098 (13.6%) — the seat writes more about how bad its input was than about
+its verdict. Item 20 wants that field as a status; it is already there, 67
+times, as prose.
 
 **Next, in order, none of it needing a paid call:**
-  a. Cut or summarise the earnings section and re-render. How small does the
-     prompt get, and what does it cost per call then?
-  b. Re-run the selection benchmark against the trimmed prompt. If
-     `familiarity_bias` moves, the cause is volume, not the model. **This is
-     the first intervention with a real mechanism behind it.**
-  c. Move BUY eligibility and Proposal Conversion to the TOP. They are the
-     binding constraints and they are currently buried.
-  d. Then continue the trace: 22 separate inputs feed this one prompt
-     (see `_pm_selection_invoke` in `ops/model_policy/scenarios.py`).
+  a. **Write the missing ranking rule.** That is the actual gap. Twelve
+     eligible names, no tiebreak. Feeds the ratified weighted composite.
+  b. Narrow the sub-floor catalyst door, and put the `familiarity_bias` rule
+     into the PROMPT — it is graded but never stated.
+  c. Cut or summarise the earnings section; re-render and re-cost.
+  d. Move BUY eligibility and Proposal Conversion to the TOP. **Deliberately
+     NOT done here: a section reorder is aimed at model behaviour, so it
+     needs a paid `--replay-run` benchmark to verify, which this pass was not
+     authorised to spend.**
 
 **Confirmed for the owner:** there is no hidden channel. The model receives
 one assembled text and nothing else. The problem was never that we could not
@@ -1060,15 +1080,11 @@ see what it gets — it is that nobody had looked.
 
 ---
 
-**Original audit brief, still open below.**
+**Original audit brief — parts (a) trace and (b) rules-as-code are now DONE
+(2026-09-03, above). Its standing warnings still apply.**
 
-**This outranks item 1. Start here, before touching anything else.** The
-reward:risk work below is real and stays queued, but it is a fix to a gate
-whose INPUTS nobody has ever inspected. Do not tune a gate you have not
-traced.
-
-Owner's instruction, 2026-09-02: a complete audit of what is fed to the
-portfolio manager. **This is the top of the next session.**
+**This outranks item 1.** The reward:risk work below is real and stays
+queued, but it is a fix to a gate whose inputs nobody had inspected.
 
 **Why it matters more than it sounds.** Every intervention aimed at the
 model's BEHAVIOUR has measured as no-change: blinding the tickers (5/5
@@ -1076,33 +1092,12 @@ identical, quality to four decimals), the checkable-catalyst gate (still
 picks NVDA and MSFT, `rr_floor_discipline` PASSES every run), prompt
 rewrites. Five benchmark runs on the fixed code scored 0.85/0.85/0.85/0.60/
 0.85 and failed the SAME check every time — `familiarity_bias`: NVDA and
-MSFT taken while GEV, NEE and UNH were passed over.
+MSFT taken while GEV, NEE and UNH were passed over. **We now know why: our
+own rules admit NVDA and MSFT and refuse GEV/NEE/UNH.** The model was
+following the rulebook; the check was not.
 
-The model passes every other check. It is following instructions. So the
-question is no longer "why does it misbehave" — it is **"what are we
-actually handing it, and do our own rules determine an answer at all?"**
-
-**Two parts. Neither costs an LLM call.**
-
-  a. **Trace the pipeline end to end.** Raw data → each analyst → evidence
-     scoring → eligibility filter → prompt assembly → what the model
-     literally receives. Every stage can drop, reshape or re-rank
-     something, and NOBODY HAS WALKED IT. Produce the actual list of stages
-     and what each one changes. **Do not summarise from the code comments —
-     they have been wrong repeatedly. Render a real prompt from a real
-     fixture and read what is in it.**
-  b. **Write the selection rules as plain Python and run them on the same
-     fixture** (`ops/model_policy/fixtures/run_64290730_pm_input.json`,
-     the day already measured). Two possible outcomes, both valuable:
-       - The rules produce a clear pick → **the rules are complete, and the
-         model is not needed for this step.** Use the code.
-       - The rules do NOT determine an answer — names tie, nothing clears
-         the floor, "best" is undefined → **we have been blaming the model
-         for a choice we never specified.** The gap is where NVDA enters,
-         and the fix is to specify it, not to instruct harder.
-
-**The owner's framing, and it is the right one:** if the rules are complete,
-the model is not needed here at all.
+**Do not summarise from the code comments — they have been wrong
+repeatedly.** Render a real prompt from a real fixture and read it.
 
 **Do not repeat the discredited claim.** "The model already knows what it
 will choose before it reads anything" was asserted twice in this project and
@@ -1191,36 +1186,16 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02.**
+**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.**
 
-**Two requirements, both from the owner, both cheap.**
-
-**a. A FAILURE ALERT IS A SEPARATE TELEGRAM MESSAGE. Never appended to, or
-bundled inside, a normal run summary.** *"I don't want alerts in the same
-message as the normal runs... so it doesn't get lost in the run messages."*
-A skipped run, a degraded seat, a halted circuit — each gets its own
-message. Routine session output stays routine. The recipient is one person
-and the failure must not arrive as a paragraph inside a wall of normal text.
-
-**b. SEVERITY MUST NOT BE CARRIED BY COLOUR.** The current alerts open with
-🔴 (critical) and 🟠 (hold) — see `src/notifier.py`. **The owner is
-red/green colour blind**; red, orange and green circles are effectively
-indistinguishable, and today colour is doing all the work. This is recorded
-in `rex-colour-vision` and the alert format ignores it.
-
-Use instead:
-  - **Distinct SHAPES**, not coloured discs: 🛑 stop / ⚠️ warning / ℹ️ info.
-  - **The first word states severity in plain text** — `HALTED`, `SKIPPED`,
-    `DEGRADED` — so the message reads correctly even with no emoji at all.
-  - **Repetition marks the top level**: 🛑🛑🛑 reads as urgent at a glance
-    without requiring any colour judgement.
-  - **Say what to do, not only what broke.** "SKIPPED 10:00 run — earnings
-    coverage 31/67, retrying 10:30, no action needed" is a different message
-    from one that needs a manual reset, and they must not look alike.
-
-**Check `src/alert_watchdog.py` BEFORE building anything new** — it exists
-and has not been read. It may already cover the "nothing arrived" case that
-item 17 asks for. Do not build a second watchdog next to a working one.
+(a) failure-as-own-message shipped earlier (`maybe_alert_data_quality`).
+(b) colour-only severity fixed 2026-09-03 across `src/notifier.py`,
+`src/pipeline_stages.py`, `src/trader_feed.py`, `scripts/alert_heartbeat.py`,
+`scripts/run_if_et_window.sh` — 🛑/🛑🛑🛑/⚠️ shapes + leading plain-text
+severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
+🔴/🟠 (out of scope this pass — parallel work in progress there). Full
+writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
+colour".
 
 ---
 

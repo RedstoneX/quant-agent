@@ -22,6 +22,167 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — alerts stop relying on colour
+
+**In plain words:** the owner is red/green colour blind — red, orange and
+green circles are effectively indistinguishable to him. Every critical
+alert on this desk opened with a coloured circle (🔴 critical, 🟠 hold) and
+colour was doing all the work of telling him how bad something was. This is
+item 21(b) in `docs/WORK.md`, owner spec 2026-09-02.
+
+**What changed.** Every 🔴/🟠 alert opening in `src/notifier.py`,
+`src/pipeline_stages.py`, `src/trader_feed.py`, `scripts/alert_heartbeat.py`
+and `scripts/run_if_et_window.sh` now uses a shape instead of a coloured
+disc — 🛑 for stop/critical, ⚠️ for a degraded/hold state that needs no
+immediate action — and every one of those messages now leads with a plain
+English severity word (`FAILED`, `SUSPENDED`, `CRASHED`, `KILLED`,
+`INCOMPLETE`) so the message is still correct read with zero emoji
+rendering. One condition — a held position with ZERO stop-loss coverage,
+unbounded loss, the single most catastrophic state on this desk — is marked
+🛑🛑🛑 (repetition, not colour, marks the top severity tier); a partially
+covered stop is downgraded from the old 🔴 to ⚠️ since a stop IS still
+standing watch over most of the position.
+
+**What was deliberately left alone.** `src/cost_circuit.py` and
+`src/pipeline.py` still open alerts with 🔴/🟠 — both were being edited by
+other sessions in parallel and touching them risked a merge collision;
+someone still needs to apply the same shape/text-severity treatment there.
+`src/alert_watchdog.py`'s self-test failure/recovery messages and the
+generic per-mode status legends in `src/notifier.py`'s and
+`src/trader_feed.py`'s own `_status_emoji` helpers (used for every routine
+run summary, success included, not just alerts) were read but not touched:
+they already carry a plain-text `status:`/`Status:` line immediately below
+the coloured circle, so the colour is not the *only* signal there, but
+they are visually inconsistent with the rest of the desk now and a good
+candidate for the same shape treatment later.
+
+**Tests.** Updated `tests/test_notifier.py`, `tests/test_daily_report.py`,
+`tests/test_ops_audit_round2.py` and `tests/test_intraday_scan_crash_visibility.py`
+to assert the new shapes and leading severity words instead of the old
+colour + informal word order. Full suite run alongside; no regressions
+beyond the two pre-existing `tests/test_rehearsal_reproduces_cost_ceiling.py`
+failures (that suite reads live production state and is expected to fail
+inside a worktree).
+
+---
+
+### 2026-09-03 — item 18a/18b: the pipeline traced, and the desk's own rules run as code
+
+**In plain words:** we finally read the whole of what the model is handed,
+and then we wrote the desk's own buying rules out as plain arithmetic and ran
+them on the same day. The rules narrow 59 analysed names down to 12 that are
+allowed to be bought — and then they stop. Nothing in the rulebook says which
+of the 12 to take. **We have been blaming the model for a choice we never
+specified.** Worse, the rules explicitly permit NVDA and MSFT, the two names
+the benchmark punishes it for taking, while deterministically refusing three
+of the five best short candidates of the day.
+
+Reproduce either half with no LLM call:
+`python -m ops.model_policy.deterministic_selection`, and
+`tests/test_deterministic_selection.py` pins every number below.
+
+**(a) The trace, from the rendered prompt — not from code comments.**
+
+The assembled user message for run-64290730 is **199,139 characters**. Every
+section in item 18's earlier table reproduces to the character, so that
+measurement is confirmed rather than merely repeated. The single assembly
+point is `PortfolioManagerAgent.build_user_message`; there is no second
+channel.
+
+**Does each seat CONCLUDE or TRANSCRIBE?** Same test item 18 applied to
+earnings, applied to the rest:
+
+| seat | chars | share | shape | verdict |
+|---|---:|---:|---|---|
+| Earnings | 140,107 | 70.4% | 67 reports x 8 extraction fields + one `Analyst synthesis` line | **TRANSCRIBES** |
+| Technical | 17,409 | 8.7% | 59 lines: rating, conviction, R/R, entry/stop/target, `Invalid if`, one-line why | **CONCLUDES** |
+| Source Agreement | 11,902 | 6.0% | deterministic per-symbol net counts | machine output, not a seat |
+| Evidence Registry | 6,870 | 3.4% | deterministic provenance table | machine output, not a seat |
+| Macro | 5,799 | 2.9% | 918-char call + 4,881 chars of indicator recital | **HYBRID — 84% transcription** |
+| News | 3,248 | 1.6% | 881-char PM briefing + narrative/state-change/stock rows | **CONCLUDES** (briefing is a real call) |
+| BUY Eligibility | 853 | 0.4% | the list of what may be bought | — |
+| Smart Money | 93 | 0.05% | "No material source-backed finding available" | **ABSENT on this day** |
+
+So the transcribe-not-conclude problem is **not** universal, and the
+hypothesis in item 18 is now answered: technical and news hand over real
+conclusions, macro is a short call followed by six sub-sections of recital,
+smart money contributed nothing at all, and earnings is the whole of the
+problem. Within earnings the one-line conclusion is 15,706 of 140,107
+characters — **11.2%**. The largest single field is `Data quality`
+(19,098 chars, 13.6%), i.e. the seat spends more prose describing how bad its
+input was than delivering its verdict. Item 20 wants exactly that field
+extracted as a status; it is already there, as prose, 67 times.
+
+**(b) The rules as code. Six gates, replayed on run-64290730.**
+
+R1 current technical coverage · R2 rating actionable · R3 longs must be
+BUY-eligible · R4 computed R/R ≥ 1.5 or a catalyst resolving to a dated
+Active News State Change row naming the symbol (then capped at 0.5% risk) ·
+R5 net independent source score ≥ 1 (§9.4 refuses net ≤ 0) · R6 conviction
+sizing band under the 5% single-name cap.
+
+59 analysed → 12 eligible. Blocked: 21 on R2, 41 on R4, 14 on R5.
+
+| symbol | dir | R/R | net | max risk % | door in |
+|---|---|---:|---:|---:|---|
+| CHPX | long | 3.03 | 2 | 1.00 | R/R floor |
+| NKE | short | 2.28 | 1 | 2.00 | R/R floor |
+| FLNC | short | 1.84 | 1 | 2.00 | R/R floor |
+| XLE | long | 1.67 | 2 | 3.00 | R/R floor |
+| PFE | long | 1.50 | 1 | 2.00 | R/R floor |
+| PATH | long | 1.32 | 2 | 0.50 | catalyst |
+| NVDA | long | 1.03 | 3 | 0.50 | catalyst |
+| MSFT | long | 0.85 | 2 | 0.50 | catalyst |
+| TSM | long | 0.83 | 2 | 0.50 | catalyst |
+| COP | long | 0.76 | 3 | 0.50 | catalyst |
+| CRM | long | 0.48 | 2 | 0.50 | catalyst |
+| CVX | long | 0.39 | 2 | 0.50 | catalyst |
+
+**The rules do NOT determine an answer.** Their combined maximum risk is
+**13.5% against a 25% total-risk budget** — every eligible name fits at once,
+so no cap forces the desk to drop even one. There is no ranking rule
+anywhere: the rulebook gates and ceilings, it never orders. Twelve permitted
+names, no tiebreak, no "best". That gap is the whole of what the model is
+actually doing at this step, and it is unspecified.
+
+**Two consequences that were not visible before.**
+
+1. **The sub-floor catalyst door is a famous-names-only door.** Seven of the
+   twelve eligible names are sub-floor and enter solely by citing an Active
+   News State Change row. Those rows are written from the wires, and the
+   wires cover mega-caps — NVDA, MSFT, TSM, COP, CRM, CVX. So the rulebook
+   itself hands the model a list on which the famous-and-weak names are
+   **legally admissible**, at 0.5% risk. The benchmark's `familiarity_bias`
+   check then fails the run for taking them, while `rr_floor_discipline`
+   passes it for taking them correctly. The two are jointly satisfiable — a
+   book of CHPX/XLE/PFE/NKE/FLNC passes both — but **the model is being
+   graded against a rule the desk does not state anywhere in its prompt.**
+   This is a mechanism, not a model-behaviour explanation, and it is
+   deterministic.
+
+2. **Three of the five "qualified shorts" are refused by our own arithmetic.**
+   GEV (R/R 2.12), UNH (1.90) and NEE (1.84) clear the floor and are still
+   dropped: the §9.4 signed score nets a bullish earnings stance off the
+   bearish technical one, giving GEV −1 and UNH/NEE 0, and there is no rung
+   at or below zero. The `familiarity_bias` check's stated premise is that a
+   model choosing on evidence "lands on the unglamorous names" — naming GEV,
+   NEE and UNH. **A model that took them would be overriding a deterministic
+   refusal.** NKE and FLNC do survive, so `takes_a_qualified_short` is still
+   satisfiable; the scenario is not broken, but its reasoning is wrong about
+   three of its five names.
+
+**What was ruled out.** Not a model-behaviour finding: no LLM ran. Not a data
+bug: every number above comes from the frozen fixture through production
+code. Blinding already disproved the "it decides before reading" claim twice
+and nothing here revisits it.
+
+**What would catch this next time.** `tests/test_deterministic_selection.py`
+asserts the 12-name set, the three refused shorts, and the block census, so a
+rule or config edit that changes the shape of the day fails in CI without
+spending anything.
+
+---
+
 ### 2026-09-02/03 — funnel item 8 ("stop on the wrong side of entry") checked, not a code defect
 
 **In plain words:** the census found 2 of 68 proposals refused because the

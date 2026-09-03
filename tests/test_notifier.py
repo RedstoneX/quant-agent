@@ -1276,7 +1276,7 @@ def test_format_exception_path_includes_error_type_and_message():
     exc = ValueError("broker timeout after 3 retries")
     msg = format_session_result("morning", None, 17.0, error=exc)
     assert msg is not None
-    assert "🔴 morning FAILED" in msg
+    assert "🛑 FAILED: morning" in msg
     assert "ValueError" in msg
     assert "broker timeout" in msg
     assert "elapsed: 17.0s" in msg
@@ -1467,7 +1467,7 @@ def test_format_evening_missing_morning_session_is_red():
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
-    assert "🔴 MORNING SESSION INCOMPLETE TODAY: morning" in msg
+    assert "🛑 INCOMPLETE: MORNING SESSION TODAY — morning" in msg
     assert "midday" in msg  # soft warning for the non-morning miss
 
 
@@ -1500,7 +1500,7 @@ def test_format_morning_renders_stop_coverage_gap_banner():
         "stop_coverage_gaps": [{"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0}],
     }
     msg = format_session_result("morning", result, 5.0)
-    assert "🔴 STOP MIS-SIZED" in msg
+    assert "⚠️ STOP MIS-SIZED" in msg
     assert "NO STOP AT ALL" not in msg
     assert "NVDA" in msg
 
@@ -1514,7 +1514,7 @@ def test_format_evening_renders_stop_coverage_gap_banner():
         "stop_coverage_gaps": [{"symbol": "AAPL", "held_qty": 5.0, "covered_qty": 0.0}],
     }
     msg = format_session_result("evening", result, 5.0)
-    assert "🔴 NO STOP AT ALL" in msg
+    assert "🛑🛑🛑 NO STOP AT ALL" in msg
     assert "STOP MIS-SIZED" not in msg
     assert "AAPL" in msg
 

@@ -705,15 +705,17 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     lines = [f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
     if status == "paid_analysis_suspended":
         lines.append(
-            "🔴 Paid opportunity discovery is suspended by the cost circuit; "
-            "the deterministic intraday loss check completed normally."
+            "🛑 SUSPENDED: paid opportunity discovery is suspended by the "
+            "cost circuit; the deterministic intraday loss check completed "
+            "normally."
         )
         if nested.get("error"):
             lines.append(f"Trigger: {_clip(nested.get('error'), 900)}")
     elif status == "intraday_analysis_error":
         lines.append(
-            f"🔴 PM analysis failed ({nested.get('failure_status') or 'unknown'}); "
-            "this was not a deliberate no-trade decision."
+            f"🛑 FAILED: PM analysis failed "
+            f"({nested.get('failure_status') or 'unknown'}); this was not "
+            "a deliberate no-trade decision."
         )
         if nested.get("error"):
             lines.append(f"Error: {_clip(nested.get('error'), 900)}")
@@ -726,8 +728,9 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
         # nested path `paid_analysis_suspended` / `intraday_analysis_error`
         # already use, instead of silently reading as "Status: ok".
         lines.append(
-            f"🔴 Intraday opportunity scan crashed ({nested.get('error_type') or 'unknown'}); "
-            "the deterministic intraday loss check above completed normally."
+            f"🛑 CRASHED: intraday opportunity scan crashed "
+            f"({nested.get('error_type') or 'unknown'}); the deterministic "
+            "intraday loss check above completed normally."
         )
         if nested.get("error"):
             lines.append(f"Error: {_clip(nested.get('error'), 900)}")

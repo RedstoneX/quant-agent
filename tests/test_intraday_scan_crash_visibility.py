@@ -221,7 +221,7 @@ def test_scan_crash_reaches_operator_via_trader_feed(tmp_path, monkeypatch):
     msg = trader_feed.format_session_result("intra_check", outer, 5.0)
 
     assert msg is not None  # not silenced like a normal "ok" tick
-    assert "🔴" in msg
+    assert "🛑" in msg
     assert "crashed" in msg.lower()
     assert "RuntimeError" in msg
     assert "snapshot feed unavailable" in msg
@@ -405,7 +405,7 @@ def test_normal_scan_with_no_opportunities_stays_healthy(
     assert nested["status"] == "intraday_no_trades"
     msg = trader_feed.format_session_result("intra_check", result, 5.0)
     assert msg is not None  # the scan DID engage a real candidate this tick
-    assert "🔴" not in msg  # but it is not an error/alert banner
+    assert "🛑" not in msg  # but it is not an error/alert banner
 
 
 # --------------------------------------------------------- rehearsal rig

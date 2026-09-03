@@ -578,7 +578,7 @@ def test_morning_pm_parse_error_renders_loud_not_silent():
     }
     msg = format_session_result("morning", result, 45.0)
     assert msg is not None, "analysis_error must NEVER be silenced"
-    assert "🔴" in msg
+    assert "🛑" in msg
     assert "NOT a deliberate hold" in msg
     assert "PM decision failed (pm_parse_error)" in msg
     assert "PM returned non-JSON body" in msg
