@@ -65,16 +65,16 @@ settled. Restored:**
   recency and/or touch-count requirement. Risk judgement, owner's call, NOT an
   agent decision — no agent may pick a threshold here.
 
-- [ ] DECIDE BY 2026-09-17 — What is N in item 14(c), the per-session call-count
-  runaway-loop cap? Shipped on `feat/replace-budget-reservation` with
-  `max_calls_per_session: 60` as a **placeholder, not a measured number** — no
-  typical-calls-per-session figure exists anywhere in this repo or its docs.
-  This is exactly the kind of threshold no agent may pick unilaterally; 60 was
-  chosen only so the mechanism (ratified 2026-09-02) could ship without
-  blocking on a number. Before trusting it: pull a week of real
-  calls-per-session from production logs and set N above the honest ceiling,
-  not below it — too low silently kills a normal session the same way the
-  deleted reservation guard did.
+**RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
+instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
+real production data (worst COMPLETE session on record made 14 calls,
+almost all of it `tech_analyst` chunking the symbol universe, not the
+`portfolio_manager` — see `docs/INCIDENT_HISTORY.md`, "item 14"). Owner
+approved shipping this as a first number, not a final one. Once a few more
+days of live sessions exist, re-pull `llm_budget_sessions.logical_calls` and
+confirm 40 still sits comfortably above the real ceiling — raise it if a
+legitimate session ever gets close, do not lower it on a hunch. Not a
+blocking decision; the mechanism is live either way.
 
 **DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
 garbage out) must work before anything else.**

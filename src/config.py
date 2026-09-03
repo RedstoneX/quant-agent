@@ -1040,11 +1040,12 @@ class LLMCostCircuitConfig(BaseModel):
     #   (c) `max_calls_per_session` below -- a count-based runaway-loop
     #       backstop, independent of price.
     #
-    # Placeholder pending owner confirmation (2026-09-02): no existing
-    # measurement of typical provider calls per session was found in this
-    # codebase or docs/WORK.md, so 60 is a conservative round number, not a
-    # measured ceiling. Revisit once real session call-count data exists.
-    max_calls_per_session: int = Field(default=60, ge=1)
+    # Set 2026-09-03 from real production data: the worst COMPLETE session
+    # ever recorded made 14 calls, almost all of it tech_analyst chunking
+    # the symbol universe, not the portfolio_manager (always exactly 1 call
+    # per session). 40 is ~3x that measured ceiling -- a first number, not
+    # a final one; see the DECIDE BY line in docs/WORK.md.
+    max_calls_per_session: int = Field(default=40, ge=1)
     # Ceiling on provider attempts within ONE logical agent call, counting
     # the initial request. NOT an independent number: it must cover what
     # `BaseAgent.run()`'s retry loop can actually spend, or the circuit trips

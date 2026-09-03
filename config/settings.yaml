@@ -872,11 +872,16 @@ llm_cost_circuit:
   #   (c) max_calls_per_session below -- a count-based runaway-loop
   #       backstop, independent of price.
   #
-  # Placeholder pending owner confirmation (2026-09-02): no existing
-  # measurement of typical provider calls per session was found in this
-  # codebase or docs/WORK.md, so 60 is a conservative round number, not a
-  # measured ceiling.
-  max_calls_per_session: 60
+  # Set 2026-09-03 from real production data (llm_budget_sessions on the
+  # live desk, tracked since 2026-08-26): the worst COMPLETE, successful
+  # session ever recorded made 14 calls (a "morning" run; crashed/halted
+  # sessions in the same table show FEWER calls, not more, since they got
+  # cut off early). Almost all of that volume is tech_analyst chunking the
+  # ~101-symbol universe, not the portfolio_manager, which makes exactly
+  # one call every session without exception. 40 is ~3x that measured
+  # ceiling -- owner-ratified as a first number, not a final one; see the
+  # DECIDE BY line in docs/WORK.md to reconfirm after a few days live.
+  max_calls_per_session: 40
   # max_provider_attempts_per_call is deliberately NOT pinned here. It must
   # cover what the agent retry loop can actually spend (primary attempts plus
   # the single cross-provider failover), and that budget lives in code, not

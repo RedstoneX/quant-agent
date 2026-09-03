@@ -112,12 +112,19 @@ charges and latches on, so the day it darkens isn't the day it broke (read
 from code, never observed live). Cache hits record no cost, so an alert can
 print `cost: $?.??` and hide the real figure.
 
-**What was NOT decided by this work, and must not be read as decided:** the
-per-session call-count cap shipped with a placeholder of 60, because no
-measured figure for typical calls-per-session exists anywhere in this
-codebase or its docs. Per the desk's own rule, no agent picks a threshold like
-this unilaterally — it is recorded as an open decision in `docs/WORK.md`, not
-silently finalized.
+**The call-count number, set from real data, owner-approved 2026-09-03.**
+Shipped first with a 60 placeholder because no measured figure existed. Owner
+asked whether it could be pulled from logs before shipping instead of
+guessed. Queried the live desk's `llm_budget_sessions` table directly (real
+production data, not the benchmark): the worst COMPLETE, successful session
+ever recorded made 14 calls, and crashed/halted sessions in the same table
+show FEWER calls, not more — they got cut off early, so they don't hide a
+higher real ceiling. That volume is almost entirely `tech_analyst` chunking
+the ~101-symbol universe; the `portfolio_manager` makes exactly one call
+every session, no exceptions, so a call-count runaway would come from the
+cheap analyst layer, not the PM. Shipped at **40** — roughly 3x the measured
+ceiling — with an explicit reconfirm-after-a-few-days-live note in
+`docs/WORK.md` rather than treating 40 as final either.
 
 ---
 
