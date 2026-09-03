@@ -221,6 +221,44 @@ window before spending more time on this line.
 
 ---
 
+### 2026-09-03 — item 15 (price provenance), position-mark slice shipped
+
+**In plain words:** every price the desk uses was just a bare number, with
+nothing recording where it came from or how old it really was. Held
+positions now carry that record; live quotes and chart data don't yet.
+
+**What shipped:** a rescued, never-reviewed branch (`rescue/price-provenance`,
+uncommitted dev-account work from 2026-08-21) added a `PriceObservation`
+shape — value, price_kind, provider, feed, market_as_of, retrieved_at,
+freshness — and wired it onto held positions' `current_price` as
+`position_mark`. That slice applied cleanly against current main and is now
+live: `broker_reads.read_positions()` tags every position with a real
+`retrieved_at` (via a `_utc_now()` seam, mockable in tests) and correctly
+marks `market_as_of: None` / `freshness: "unknown"` for a broker mark, since
+Alpaca's position endpoint supplies no mark timestamp — never fabricated as
+fresher than it is. Two pre-existing tests needed the new field added to
+their expected shape; both fixed, not weakened.
+
+**What did NOT ship, and why:** the rescue branch also touched live quotes
+and historical price bars (a dedicated free-IEX-feed market-data client),
+but main had independently rewritten `read_price_bars()`/`get_prices()` to
+support multiple timeframes in the 11 days since the rescue's base commit —
+two different implementations of the same function, left as unresolved
+`.rej` files on the rescue branch. Reconciling them means picking which
+implementation wins, which changes how the desk fetches live/historical
+prices used elsewhere — a real architecture decision, not a mechanical
+merge, and out of scope for an unattended pass. This is also the half that
+items 5, 9 and 11 on the funnel-queue actually need (quote/bar freshness,
+not position-mark freshness), so it remains genuinely open.
+
+Two frontend components (`PositionsPanel.tsx`, `PriceChartPanel.tsx`) also
+still need manual reconciliation against main's independent UI rewrite —
+not attempted here. The TypeScript type additions for `PriceObservation`/
+`position_mark` were applied to `client.ts` so the API contract is typed
+correctly even though no component renders the new field yet.
+
+---
+
 ### 2026-09-02 — the full proposal-to-fill census: where every trade idea actually dies, counted, not guessed
 
 **In plain words:** the desk had a stale "23% of proposals become a fill"

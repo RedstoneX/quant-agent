@@ -470,6 +470,7 @@ def get_positions() -> PositionsResponse:
                 qty=p.get("qty"),
                 avg_entry=p.get("avg_entry"),
                 current_price=p.get("current_price"),
+                position_mark=p.get("position_mark"),
                 market_value=p.get("market_value"),
                 unrealized_pnl=p.get("unrealized_pnl"),
                 unrealized_intraday_pnl=p.get("unrealized_intraday_pnl"),
