@@ -3021,3 +3021,76 @@ Three genuinely different things were bundled under that one number:
    alone.
 
 See PR merging `fix/evening-analyst-audit`.
+
+### 2026-09-03 — a dead price feed and a genuinely quiet market used to look identical; now the desk can tell them apart
+
+**In plain words:** every trade needs a real chart level to set a stop
+against, so the code has always refused to trade a symbol when it can't
+find one. That refusal is correct. The problem was that "no level because
+the price feed died" and "no level because this stock's chart is genuinely
+flat right now" produced the exact same blank result, and nothing counted
+how often it happened across a run — so a morning where the data feed
+silently went dark would have shown up in every log and report as an
+ordinary quiet day. This closes that gap: the desk now counts, every run,
+what share of symbols came back with no usable price history or no
+structural level, and pages the owner directly — outside the routine
+end-of-session summary — when that share is too high to be a coincidence.
+
+This was built proactively, not in response to a live incident. It was
+investigated after 2026-08-25's zero-trade day (item 11 in
+`docs/WORK.md`) raised the question of whether a silent feed outage could
+produce a day like that; it could not have been THAT day specifically
+(`TechAnalysisResult.computed_levels`, the field this watchdog reads,
+did not exist yet in the code that ran that morning — the real cause was
+the unrelated R/R-geometry defect recorded elsewhere in this file), but
+the fix that shipped that same night made `computed_levels` load-bearing
+going forward, and this closes the resulting hole before it causes a
+second, real incident.
+
+**The mechanism.** `MorningResearchStage._run_tech` already fetches bars
+for the whole tech universe before anything else happens; it now also
+counts how many of those fetches came back empty (`ctx.tech_bars_coverage`
+— universe size, bars fetched, bars missing, and which symbols). Once the
+tech analyses for the run resolve, `_check_levels_coverage` computes a
+second figure: what share of the RESOLVED analyses carry an empty
+`computed_levels`. Both are persisted as one `levels_coverage`
+`specialist_evidence` row every run, whether or not anything looks wrong —
+observability here is not conditional on severity, because the one normal
+day nobody re-checks is exactly the day a silent regression needs a
+record.
+
+Two thresholds, both module constants in `src/pipeline_stages.py`, gate
+whether the owner is paged and require at least
+`LEVELS_COVERAGE_MIN_SAMPLE` (10) resolved symbols or fetch attempts
+before either can fire — a 1-in-3 empty result on a 3-symbol test run is
+noise, not a signal, and 10 is well below the real universe's 100+ names:
+
+- `LEVELS_BLIND_RUN_EMPTY_SHARE = 1.0` — every single symbol came back
+  empty. A live feed does not put every unrelated chart in one batch into
+  the identical null state at once; this can only be a property of the
+  feed, not of the market. Alerts 🔴 TECH DATA BLIND SPOT.
+- `LEVELS_DEGRADED_RUN_EMPTY_SHARE = 0.5` — a deliberately coarse line,
+  not a fitted percentile: only one clean baseline run exists to derive it
+  from (2026-09-02's morning run, 1 empty out of 64 resolved, 1.6%), and
+  n=1 cannot support a statistically fit threshold. 50% sits roughly 30x
+  that single observed baseline — far above anything an ordinary quiet
+  name (a thin IPO, a rangebound stock) should produce across a whole run
+  — while still catching a partial outage that the 1.0 rule alone would
+  miss, such as a feed serving short or stale history to most but not
+  literally all requests. Alerts 🟠 TECH DATA DEGRADED.
+
+The alert reuses the desk's existing out-of-band channel
+(`src/notifier.send_owner_alert`, the same path the "NO STOP AT ALL" /
+"STOP PARTIALLY COVERS" protective-stop alerts use) rather than a new one,
+and matches the standing alert-design rule from the 2026-09-02 data-quality
+work: its own Telegram message, never bundled into the routine session
+summary, severity carried in text rather than colour alone.
+
+The check runs unconditionally after the tech stage's try/except, whether
+tech resolved cleanly, partially, not at all, or crashed outright — a bars
+outage severe enough to crash the whole batch is exactly the case this
+exists to catch, not one to skip because the surrounding try/except already
+handled the crash. Like `_persist_evidence`, it never raises: a bug in the
+watchdog itself must never be able to stop a trading session.
+
+See PR merging `feat/finish-levels-coverage-watchdog`.

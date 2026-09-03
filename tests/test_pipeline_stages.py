@@ -1909,3 +1909,483 @@ def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_directi
     }]
     rendered = TradingPipeline._build_active_state_changes(fake_pipeline)
     assert rendered == "- [2026-08-30] Some older event → FOO(unknown)"
+
+
+# === Levels coverage — closing the "silent data failure looks like a quiet
+# day" hole (2026-09-02). See `_check_levels_coverage`'s own docstring in
+# src/pipeline_stages.py for why 2026-09-01 is NOT the day this reproduces
+# (computed_levels did not exist in the code that ran that morning) and what
+# actually caused that day's zero trades (the R/R-geometry defect, unrelated
+# to structure). These tests cover the new mechanism on its own terms: does
+# it record coverage every run, and does it alert on the cases it claims to
+# catch and stay quiet on the cases it doesn't. ===
+
+def _levels_analysis(symbol, levels):
+    """A minimal resolved TechAnalysisResult carrying a given computed_levels
+    — the only field these tests vary."""
+    from src.models import TechAnalysisResult
+    return TechAnalysisResult(
+        symbol=symbol, rating="neutral", conviction="low",
+        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+        support_levels=[], resistance_levels=[],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning_chain=_tech_rc(), reasoning="test",
+        computed_levels=levels,
+    )
+
+
+def _coverage_ctx(*, universe, bars_missing, run_id="run-test00000000"):
+    ctx = RunContext.start("morning")
+    ctx.run_id = run_id
+    ctx.tech_bars_coverage = {
+        "universe": universe,
+        "bars_fetched": universe - bars_missing,
+        "bars_missing": bars_missing,
+        "bars_missing_symbols": [],
+    }
+    return ctx
+
+
+def test_check_levels_coverage_persists_evidence_on_a_normal_run():
+    """The `levels_coverage` evidence row is written even when nothing is
+    wrong — observability cannot be conditional on severity, or the one
+    normal day nobody looks at twice is exactly the day with no record."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=12, bars_missing=0)
+    analyses = [_levels_analysis(f"S{i}", [100.0]) for i in range(11)] + [
+        _levels_analysis("EMPTY1", []),
+    ]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)
+
+    assert not alert.called
+    db.insert_specialist_evidence.assert_called_once()
+    kwargs = db.insert_specialist_evidence.call_args.kwargs
+    assert kwargs["run_id"] == ctx.run_id
+    assert kwargs["agent_name"] == "tech_analyst"
+    assert kwargs["kind"] == "levels_coverage"
+    assert kwargs["scope"] == "run"
+    assert kwargs["symbol"] is None
+    payload = json.loads(kwargs["evidence_json"])
+    assert payload["universe"] == 12
+    assert payload["bars_missing"] == 0
+    assert payload["resolved"] == 12
+    assert payload["levels_present"] == 11
+    assert payload["levels_empty"] == 1
+    assert payload["levels_empty_symbols"] == ["EMPTY1"]
+
+
+def test_check_levels_coverage_matches_the_only_real_baseline_measured():
+    """Regression pin for the one clean normal-run measurement that exists:
+    2026-09-02's morning run had 64 resolved analyses, 63 with a computed
+    level and 1 (MRVL) without — 1.6% empty. The threshold derivation in
+    LEVELS_DEGRADED_RUN_EMPTY_SHARE's comment is only honest if that shape
+    genuinely does not alert; pin it so a future change to the arithmetic
+    can't silently start paging the owner every morning."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=64, bars_missing=0)
+    analyses = [_levels_analysis(f"S{i}", [100.0]) for i in range(63)] + [
+        _levels_analysis("MRVL", []),
+    ]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)
+
+    assert not alert.called
+
+
+def test_check_levels_coverage_alerts_red_on_total_levels_blackout():
+    """Every resolved symbol comes back with zero structural levels — the
+    unambiguous case the task calls out by name. A live feed does not put
+    every chart in one batch into the identical empty state; this is a
+    provider failure, not 12 coincidentally structureless charts."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=12, bars_missing=0)
+    analyses = [_levels_analysis(f"S{i}", []) for i in range(12)]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)
+
+    alert.assert_called_once()
+    body = alert.call_args.args[0]
+    assert body.startswith("🔴 TECH DATA BLIND SPOT")
+    assert "structural level" in body
+    assert "12" in body
+
+
+def test_check_levels_coverage_alerts_red_on_total_bars_blackout():
+    """No symbol in the universe got bars back at all — tech_analyst never
+    even ran (symbols_data was empty), so `analyses` is []. This is the
+    sharper, earlier form of blindness: the pre-filter and tech_analyst
+    both look identical to 'nothing worth trading' from downstream."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=15, bars_missing=15)
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, [])
+
+    alert.assert_called_once()
+    body = alert.call_args.args[0]
+    assert body.startswith("🔴 TECH DATA BLIND SPOT")
+    assert "data feed" in body
+    assert "15" in body
+
+
+def test_check_levels_coverage_alerts_orange_at_the_degraded_boundary():
+    """Exactly half of resolved symbols come back empty: above the coarse
+    50% tripwire but not total. Must alert, and must NOT use the RED/total
+    header — the message should read as serious-but-partial, matching the
+    existing 🔴 NO STOP AT ALL / 🟠 STOP PARTIALLY COVERS severity split."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=10, bars_missing=0)
+    analyses = [_levels_analysis(f"E{i}", []) for i in range(5)] + [
+        _levels_analysis(f"F{i}", [100.0]) for i in range(5)
+    ]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)
+
+    alert.assert_called_once()
+    body = alert.call_args.args[0]
+    assert body.startswith("🟠 TECH DATA DEGRADED")
+    assert "5/10" in body
+
+
+def test_check_levels_coverage_no_alert_just_under_the_degraded_boundary():
+    """49% empty must NOT alert — pins the boundary from the other side so
+    `>=` vs `>` cannot silently flip without a test noticing."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=100, bars_missing=0)
+    analyses = [_levels_analysis(f"E{i}", []) for i in range(49)] + [
+        _levels_analysis(f"F{i}", [100.0]) for i in range(51)
+    ]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)
+
+    assert not alert.called
+
+
+def test_check_levels_coverage_small_universe_guarded_from_false_alarm():
+    """3 resolved symbols, all empty, is 100% — but 3 is noise, not a
+    universe. LEVELS_COVERAGE_MIN_SAMPLE must suppress it; without the
+    guard this is exactly the small-N case that would page the owner off
+    a 2-symbol rehearsal or test run."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=3, bars_missing=0)
+    analyses = [_levels_analysis(f"S{i}", []) for i in range(3)]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)
+
+    assert not alert.called
+    # Still recorded — the guard suppresses the ALERT, not the observability.
+    db.insert_specialist_evidence.assert_called_once()
+
+
+def test_check_levels_coverage_never_raises_when_bars_coverage_absent():
+    """If `_run_tech` crashed before ever setting ctx.tech_bars_coverage
+    (still its `{}` dataclass default), the bars axis must be skipped
+    quietly rather than raising — and the levels axis, which does not
+    depend on it, must still be evaluated correctly."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = RunContext.start("morning")
+    assert ctx.tech_bars_coverage == {}
+    analyses = [_levels_analysis(f"S{i}", []) for i in range(12)]
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, analyses)  # must not raise
+
+    alert.assert_called_once()
+    assert "structural level" in alert.call_args.args[0]
+    assert "bar fetch" not in alert.call_args.args[0]  # bars axis had nothing to say
+
+
+def test_check_levels_coverage_never_raises_on_malformed_coverage_dict():
+    """A defensive check, not a real production shape: if
+    ctx.tech_bars_coverage were ever malformed, this must degrade to
+    'nothing to report' rather than crashing MorningResearchStage.run —
+    matching _persist_evidence's own never-raises contract."""
+    from src.pipeline_stages import _check_levels_coverage
+
+    ctx = _coverage_ctx(universe=12, bars_missing=0)
+    ctx.tech_bars_coverage = {"universe": "not-a-number"}
+    db = MagicMock()
+    with patch("src.notifier.send_owner_alert") as alert:
+        _check_levels_coverage(db, ctx, [_levels_analysis("A", [100.0])])  # must not raise
+
+    assert not alert.called
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_alerts_owner_on_full_universe_levels_blackout(
+    mock_compute_indicators,
+):
+    """End-to-end through MorningResearchStage.run(): every symbol gets
+    bars, tech_analyst resolves all of them, and every one comes back with
+    an empty computed_levels — the shape a dead structural-levels
+    computation (or a feed silently serving unusable history to every
+    request) would produce. Confirms the wiring from `_run_tech` (setting
+    ctx.tech_bars_coverage) through to `_check_levels_coverage` actually
+    fires the owner alert in the real stage, not just in the unit test
+    calling it directly."""
+    mock_compute_indicators.return_value = MagicMock()
+
+    universe = [f"SYM{i}" for i in range(12)]
+    mock_config = MagicMock()
+    mock_config.trading.universe = universe
+    mock_config.trading.lookback_days = 30
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = [MagicMock()]
+
+    from src.models import TechAnalysisResult
+    analyses_map = {
+        sym: TechAnalysisResult(
+            symbol=sym, rating="neutral", conviction="low",
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[], resistance_levels=[],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=_tech_rc(), reasoning="test",
+            computed_levels=[],  # every symbol blind
+        )
+        for sym in universe
+    }
+    tech_agent = MagicMock()
+    tech_agent.analyze_batch.return_value = (
+        analyses_map,
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                   input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+    tech_store = MagicMock()
+    tech_store.load.return_value = {}
+    tech_store.compute_ages.return_value = {}
+
+    stage = MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=MagicMock(),
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=tech_store,
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=tech_agent,
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: True,
+        run_news_update_fn=lambda run_id, session: (None, None),
+        load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    with patch("src.notifier.send_owner_alert") as alert:
+        result_ctx = stage.run(ctx)
+
+    assert len(result_ctx.analyses) == 12
+    assert result_ctx.tech_bars_coverage["bars_missing"] == 0
+    alert.assert_called_once()
+    assert alert.call_args.args[0].startswith("🔴 TECH DATA BLIND SPOT")
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
+    mock_compute_indicators,
+):
+    """A couple of symbols missing bars out of a large universe is normal
+    (a delisting, a temporary halt) and must not page the owner — only a
+    majority-or-more failure should. Also confirms ctx.tech_bars_coverage
+    counts the drop instead of only logging it (2026-09-02 fix)."""
+    mock_compute_indicators.return_value = MagicMock()
+
+    universe = [f"SYM{i}" for i in range(12)]
+    missing = {"SYM0", "SYM1"}
+    mock_config = MagicMock()
+    mock_config.trading.universe = universe
+    mock_config.trading.lookback_days = 30
+
+    def _get_ohlcv(symbol, _lookback):
+        return [] if symbol in missing else [MagicMock()]
+
+    market = MagicMock()
+    market.get_ohlcv.side_effect = _get_ohlcv
+
+    from src.models import TechAnalysisResult
+    resolved_symbols = [s for s in universe if s not in missing]
+    analyses_map = {
+        sym: TechAnalysisResult(
+            symbol=sym, rating="neutral", conviction="low",
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[], resistance_levels=[],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=_tech_rc(), reasoning="test",
+            computed_levels=[100.0],  # every RESOLVED symbol has a level
+        )
+        for sym in resolved_symbols
+    }
+    tech_agent = MagicMock()
+    tech_agent.analyze_batch.return_value = (
+        analyses_map,
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                   input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+    tech_store = MagicMock()
+    tech_store.load.return_value = {}
+    tech_store.compute_ages.return_value = {}
+
+    stage = MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=MagicMock(),
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=tech_store,
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=tech_agent,
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: True,
+        run_news_update_fn=lambda run_id, session: (None, None),
+        load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    with patch("src.notifier.send_owner_alert") as alert:
+        result_ctx = stage.run(ctx)
+
+    assert result_ctx.tech_bars_coverage["bars_missing"] == 2
+    assert result_ctx.tech_bars_coverage["universe"] == 12
+    assert set(result_ctx.tech_bars_coverage["bars_missing_symbols"]) == missing
+    assert not alert.called
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_crashes(
+    mock_compute_indicators, tmp_path,
+):
+    """Bar fetch is the FIRST thing `_run_tech` does, before tech_analyst is
+    ever called — so if analyze_batch itself raises (LLM/provider crash,
+    not a bars problem), the coverage evidence row must still land with the
+    correct bars numbers. This is the scenario the placement of
+    `_check_levels_coverage` OUTSIDE the tech try/except in
+    MorningResearchStage.run exists for: a tech-stage failure severe enough
+    to crash the batch is exactly a case worth recording, not one to skip
+    because the surrounding try/except already caught something. Uses a
+    real on-disk DB (not a Mock) so the row is read back rather than
+    asserted against a mock's call args."""
+    import sqlite3
+
+    from src.storage.db import Database
+
+    mock_compute_indicators.return_value = MagicMock()
+
+    universe = [f"SYM{i}" for i in range(12)]
+    mock_config = MagicMock()
+    mock_config.trading.universe = universe
+    mock_config.trading.lookback_days = 30
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = [MagicMock()]  # bars fine for everyone
+
+    tech_agent = MagicMock()
+    tech_agent.analyze_batch.side_effect = RuntimeError("provider outage")
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+    tech_store = MagicMock()
+    tech_store.load.return_value = {}
+
+    db = Database(str(tmp_path / "test.db"))
+    db.initialize()
+    try:
+        stage = MorningResearchStage(
+            config=mock_config,
+            db=db,
+            market=market,
+            macro=MagicMock(),
+            news_provider=MagicMock(),
+            news_store=news_store,
+            macro_store=macro_store,
+            tech_store=tech_store,
+            earnings_provider=MagicMock(),
+            macro_analyst=macro_agent,
+            news_analyst=MagicMock(),
+            tech_analyst=tech_agent,
+            earnings_analyst=MagicMock(),
+            has_actionable_signal_fn=lambda *args, **kw: True,
+            run_news_update_fn=lambda run_id, session: (None, None),
+            load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+        )
+        ctx = RunContext.start("morning")
+        ctx.positions = []
+        with patch("src.notifier.send_owner_alert") as alert:
+            result_ctx = stage.run(ctx)
+
+        assert result_ctx.data_status["tech"] == "failed"
+        assert result_ctx.analyses == []
+        # Bars were fine — the crash was in analyze_batch, after bars-fetch
+        # already completed and recorded.
+        assert result_ctx.tech_bars_coverage["bars_missing"] == 0
+        assert result_ctx.tech_bars_coverage["universe"] == 12
+        # 12 resolved (0) is below LEVELS_COVERAGE_MIN_SAMPLE-vs-0 either
+        # way, so no owner alert fires from an empty analyses list — but
+        # the coverage row must still exist.
+        assert not alert.called
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT evidence_json FROM specialist_evidence "
+            "WHERE agent_name='tech_analyst' AND kind='levels_coverage'"
+        ).fetchone()
+        conn.close()
+        assert row is not None, "levels_coverage row must be written even when analyze_batch crashes"
+        payload = json.loads(row["evidence_json"])
+        assert payload["universe"] == 12
+        assert payload["bars_missing"] == 0
+        assert payload["resolved"] == 0
+    finally:
+        db.close()
