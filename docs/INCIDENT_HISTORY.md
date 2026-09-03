@@ -22,6 +22,50 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — checked "infeasible" against real data instead of accepting it: of 1,028 real recorded exit conditions, 1,022 turned out to be checkable
+
+**In plain words:** when a position is bought, the analyst writes a plain-English
+sentence for when the trade idea would be proven wrong — "closes below the
+50-day average", "loses the $142 level". Nothing has ever checked whether that
+sentence actually came true before a later SELL cites it; it has run on pure
+honour system since day one. Full parsing of arbitrary English was earlier
+ruled out as too unreliable to build. Rather than accept that guess, it was
+measured against every real one of these sentences this desk has ever
+recorded, and it was wrong: of 1,028 unique real conditions, 984 (96%) were a
+plain moving-average reference and 38 (4%) were a bare price level — both
+mechanically checkable against numbers this pipeline already computes. Only 6
+(0.6%) were genuinely unparseable (a Bollinger Band mention, and a handful of
+qualitative conditions like "guidance pulled" that no market data could ever
+adjudicate). No RSI-threshold condition was found at all, despite that being
+a plausible category on paper.
+
+**Where the numbers came from, so they can be checked again:** the 20 real
+executed trades whose recorded reasoning carried an `(invalid if: ...)` /
+`(thesis_invalid_if: ...)` marker, all from `trades.reasoning`; and the fuller,
+un-truncated `thesis_invalid_if` field recorded on 1,203 real tech-analyst
+candidates (1,028 of them distinct text) in `specialist_evidence`. Both
+sources agreed: the real writing is dominated by moving-average and
+price-level language, not the free-form or indicator-heavy language the
+"too hard to parse" assumption implicitly pictured.
+
+**What was built, and what deliberately was not:** a small checker
+(`check_thesis_invalid_if` in `src/risk/exit_guard.py`) that takes the
+condition text plus whatever current price / moving-average values the
+caller already has, and returns one of three answers — the condition is
+provably TRUE now, provably FALSE now, or "don't know" — never a guess. It
+refuses (never guesses) on a compound "this OR that" condition, an
+indicator threshold, a moving-average period the pipeline doesn't compute,
+or missing market data. It was deliberately NOT wired into any live
+decision yet: it needs a proper, un-truncated place to read
+`thesis_invalid_if` from on a real trade, which a parallel piece of work is
+adding; reading today's truncated, reasoning-embedded text here would defeat
+the point of building something more trustworthy than the honour system.
+Tested against the real recorded sentences above (14 tests, all passing);
+the test-breaking/restoring check that proves the tests actually exercise
+the logic is recorded in the same session's work, not repeated here.
+
+---
+
 ### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in
 
 **In plain words:** the desk's tiebreak among tied stock picks only ever
