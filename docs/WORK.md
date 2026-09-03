@@ -551,15 +551,10 @@ that X actually produces the symptom.
 
 ### Landed 2026-08-31 — moved to the incident history
 
-Six incident and deployment records from 2026-08-31 (the desk going dark at the
-open, the provider refusals, the phantom charges, the reward:risk gate, the
-Gemini routing move, and the deploy itself) now live in `docs/INCIDENT_HISTORY.md`, along with everything else
-finished that this file used to carry.
-
-They were moved rather than trimmed. WORK.md has a hard 100,000-byte cap, so
-finished incidents were being deleted to make room for new work — which meant
-the record of what went wrong disappeared exactly as it became history. The
-defect log is append-only and is never trimmed.
+Six 2026-08-31 incident/deployment records now live in
+`docs/INCIDENT_HISTORY.md` (append-only, never trimmed) instead of being
+deleted here to make room, which is how this file stays under its
+100,000-byte cap without losing the record of what went wrong.
 
 ### Landed 2026-09-03 — RM-modification safety guards, FIXED
 
@@ -1147,42 +1142,19 @@ severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
 writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
 colour".
 
-**22. A hard-coded 0.5% risk cap silently overrides the ratified 5% envelope — FIXED.**
+**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** `_qty_by_risk_budget` now reads `config.risk.max_position_risk_pct` (fallback 5.0, not the stale 0.5) instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. The independent-recheck itself was kept — it still recomputes risk from real stop/entry geometry — only the stale percentage was wrong. Full detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
 
-`_qty_by_risk_budget` (`pipeline_stages.py`) now reads
-`config.risk.max_position_risk_pct` the same defensive way
-`TradingPipeline.__init__` reads it for the constructor's own sizing
-(fallback to the ratified 5.0, not the stale 0.5), instead of the hardcoded
-`RISK_BUDGET_PCT = 0.5` module constant. The independent-recheck mechanism
-itself was kept — it recomputes risk from REAL executed stop/entry geometry
-rather than trusting the constructor's or PM's claimed ratio, which is a
-legitimate reason for it to exist — only the stale percentage was wrong.
-Full detail and the before/after sizing math: `docs/INCIDENT_HISTORY.md`,
-"the risk manager and order-construction audit".
+**23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.**
 
-**23. Risk Manager edits to a trade are trusted for shape, never for substance — DEFECT, live, observed cancelling real exits.**
+`_apply_risk_modifications` now rejects an edit that zeros an exit's
+allocation (silent cancel) or that would breach the R/R or noise-band
+floor. See `docs/INCIDENT_HISTORY.md`, "a risk-manager 'modification'
+could silently cancel an exit or ship a trade a fresh one would have been
+refused."
 
-`pipeline.py::_apply_risk_modifications` accepts any RM-proposed change to
-allocation/entry/stop/target that merely passes normal field validation —
-nothing checks the edit actually makes the trade safer, despite the
-function's own docstring asserting that is the RM's job. Observed live
-2026-08-24: RM set two SELL orders' `allocation_pct` to 0, which execution
-reads as "skip" — a real exit the Portfolio Manager wanted got silently
-cancelled, with only a prompt sentence ("never set to 0") as the guard.
-Also possible and unobserved: RM widens a stop past the 1.5 reward:risk
-floor or past the noise band, and neither floor re-runs afterward because
-both compare the modified decision against itself. Not yet fixed.
+**24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23: the post-RM re-check now carries `in_drawdown` through consistently.
 
-**24. The drawdown position cap can be skipped after a Risk Manager edit — DEFECT, real but conditional, never observed.**
-
-The risk-filter re-check that runs after an RM modification
-(`pipeline_stages.py`) omits the `in_drawdown` flag the pre-modification
-check has, so the drawdown-halving backstop is not re-applied to a
-modified decision. Requires the RM to INCREASE a size during a drawdown,
-which has never happened in the retained record. Recorded so it isn't
-rediscovered; not yet fixed.
-
-**25. "Don't sell a protected position without a named reason" is prompt-only at the Risk Manager, same shape as the PM's catalyst gap — DESIGN, not yet decided.**
+**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DESIGN, not yet decided.**
 
 `risk_manager.md` asks the RM to confirm a sell trigger was named and to
 cross-check it itself; no Python compares days-held against the sell or
@@ -1191,14 +1163,9 @@ substance unchecked" shape as item 18's catalyst-door finding, one seat
 over. Whether this should be made deterministic is an owner call, not
 decided here.
 
-**26. Risk Manager modification matching is case-sensitive — minor, fail-open, never observed.**
+**26. Risk Manager modification matching is case-sensitive — minor, fail-open, never observed.** `RiskModification.symbol` isn't normalised like `SymbolRejection` is; a mismatch ships the trade UNMODIFIED — opposite of the fail-closed norm elsewhere. Not yet fixed; low priority.
 
-`RiskModification.symbol` isn't normalised the way `SymbolRejection` is;
-an exact-string mismatch logs "no matching decision" and the trade ships
-UNMODIFIED — the opposite of the fail-closed treatment used elsewhere.
-Not yet fixed; low priority.
-
-**27. The risk budget can treat the held book as carrying less risk than it does when heat data is partially unavailable — DEFECT, real, conditional.**
+**27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.**
 
 `allocate_risk_budget` runs whenever EITHER heat or cluster data is
 available, but if heat specifically fails while clusters succeed, the
@@ -1223,6 +1190,36 @@ in the file error before running instead of testing anything. Confirmed
 against a clean `origin/main` checkout, independent of any in-flight PR.
 Needs the fixture's config dict updated to the post-item-14 shape
 (`max_calls_per_session`); not yet fixed.
+
+**29. Build the analyst scorecard — the real measurement Phase 13 is
+waiting on. Owner priority 2026-09-03, wanted TODAY.**
+
+Phase 13 shipped every analyst reporting in a comparable shape, combined at
+EQUAL weight — deliberately, because no measured record exists yet to
+justify weighting any seat higher or lower. This is that missing record: a
+real per-analyst track record from actual trade history, not example data.
+
+For every analyst, over its full real call history: how often it was
+right, typical win vs. typical loss size, running real dollar P&L at a
+fixed risk per call (no compounding, no recency trim), and how far below
+its own best it has fallen and for how long. Per closed trade: which
+analysts argued for it, which against, and the real outcome credited or
+charged to each — one that argued against a loser should gain from being
+right, same as one that argued for a winner.
+
+**Explicitly NOT this:** a live score that changes sizing on its own — that
+would let the scorecard grade itself on trades its own signal caused.
+Read-only, same posture as `level_quality.py`'s not-wired-in guard; wire in
+later only as a separate, owner-reviewed decision. No minimum-sample gate
+hiding a short history either — show the real count and let the reader
+judge.
+
+**Where the real numbers live:** trade outcomes/R-multiples already exist
+in the trades table; per-analyst attribution needs tracing which seats fed
+each decision (`AnalystVerdict`, Phase 13, is the first seat with a
+structured record of this). Build against real data as far back as it
+goes; be honest about which analysts have too little history to show
+anything yet under the new shape.
 
 ---
 
