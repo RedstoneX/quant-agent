@@ -433,6 +433,10 @@ def test_tech_analyst_records_the_analysis_it_drops(mock_cls):
 NON_LLM_MODELS = {
     "OHLCV", "TechnicalIndicators", "Position", "MissedOpportunitySnapshot",
     "AgentLog", "LLMOutputModel",
+    # Phase 13: derived in Python from a seat's already-validated report
+    # (`TechAnalysisResult.to_verdict`), never parsed from an LLM response.
+    # A null here is our own bug and should fail loudly.
+    "AnalystVerdict", "VerdictEvidence",
 }
 
 

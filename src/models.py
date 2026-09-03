@@ -512,6 +512,134 @@ class TechnicalIndicators(BaseModel):
     def normalize_symbol(cls, value: str) -> str:
         return _normalize_symbol(value)
 
+class VerdictEvidence(BaseModel):
+    """One checkable fact backing an `AnalystVerdict`.
+
+    Phase 13 (`docs/QAMC_REMEDIATION_SPEC.md` §13.2, item 3): evidence is
+    "specific, checkable facts backing the call (a number, a dated event, a
+    level) — not prose alone". So an item is a labelled NUMBER, a labelled
+    DATED event, or a labelled observation, and an item with none of those
+    is refused — a bare label is a heading, not evidence.
+
+    Not an `LLMOutputModel`: in this first increment every verdict is
+    DERIVED in Python from a seat's already-validated report (see
+    `TechAnalysisResult.to_verdict`), never parsed from an LLM response. A
+    null here would be our own bug and should fail loudly.
+    """
+    label: str = Field(min_length=1)          # e.g. "stop_loss", "trend", "risk_reward"
+    value: float | None = None                # a price, a level, a ratio
+    as_of: date | None = None                 # a dated event
+    text: str = ""                            # the observation, when it is not a number
+
+    @model_validator(mode="after")
+    def _require_something_checkable(self):
+        if self.value is None and self.as_of is None and not self.text.strip():
+            raise ValueError(
+                f"evidence {self.label!r} carries no value, no date and no "
+                "text — a label alone is not a checkable fact"
+            )
+        return self
+
+
+class AnalystVerdict(BaseModel):
+    """The one shape every specialist seat hands the Portfolio Manager.
+
+    Phase 13 (`docs/QAMC_REMEDIATION_SPEC.md` §13.2): the PM was comparing
+    several different essays and picking one. This is the checkable,
+    comparable judgement instead — the same four things from every seat:
+
+    1. **direction** — bullish / bearish / neutral, PLUS `magnitude`, how
+       far in that direction the seat leans on a 0..1 scale. The label
+       vocabulary is the one `stance_is_aligned` and the evidence registry
+       already speak (`StockNewsItem.sentiment`, `SmartMoneyFinding.stance`,
+       `MacroAnalysis.equity_outlook`), so a verdict can be netted against
+       the §9.4 score without a translation table.
+    2. **conviction** — how sure the seat is, on the desk's existing
+       `high` / `medium` / `low` scale, SEPARATE from what it thinks.
+    3. **evidence** — a list of `VerdictEvidence`, at least one for any
+       directional call. A neutral read may carry none.
+    4. **invalidation** — the stated condition under which the call is
+       wrong. Required non-empty for any directional call. A neutral verdict
+       is the ABSENCE of a call, so there is nothing to falsify and the field
+       may be blank; a neutral verdict with a non-zero magnitude is refused
+       as self-contradictory.
+
+    `seat` and `symbol` are identity, not judgement. `seat` uses the
+    evidence-registry key for the seat ("technical", "news", ...) so a
+    verdict and a registry stance about the same name agree on who said it.
+
+    `signed_magnitude` is the number a ranking or a netting rule reads:
+    +magnitude for bullish, -magnitude for bearish, 0 for neutral.
+
+    Not an `LLMOutputModel` — see `VerdictEvidence` for why.
+    """
+    seat: str = Field(min_length=1)
+    symbol: str
+    direction: Literal["bullish", "bearish", "neutral"]
+    magnitude: float = Field(ge=0.0, le=1.0)
+    conviction: Literal["high", "medium", "low"]
+    evidence: list[VerdictEvidence] = Field(default_factory=list)
+    invalidation: str = ""
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+    @field_validator("invalidation", mode="before")
+    @classmethod
+    def _strip_invalidation(cls, value):
+        return "" if value is None else str(value).strip()
+
+    @model_validator(mode="after")
+    def _a_call_must_be_falsifiable_and_backed(self):
+        if self.direction == "neutral":
+            if self.magnitude != 0.0:
+                raise ValueError(
+                    f"{self.symbol}: a neutral verdict cannot carry magnitude "
+                    f"{self.magnitude} — neutral means no lean"
+                )
+            return self
+        if not self.invalidation:
+            raise ValueError(
+                f"{self.symbol}: a {self.direction} verdict from {self.seat} "
+                "must state its invalidation condition — a call nobody can "
+                "prove wrong is not a call"
+            )
+        if not self.evidence:
+            raise ValueError(
+                f"{self.symbol}: a {self.direction} verdict from {self.seat} "
+                "must cite at least one piece of checkable evidence"
+            )
+        return self
+
+    @computed_field
+    @property
+    def signed_magnitude(self) -> float:
+        if self.direction == "bullish":
+            return self.magnitude
+        if self.direction == "bearish":
+            return -self.magnitude
+        return 0.0
+
+
+#: How a Technical rating maps onto `AnalystVerdict.magnitude`. The rating
+#: scale has exactly two directional rungs a side (buy / strong_buy), so this
+#: is an EQUAL-SPACING ordinal encoding of the desk's own scale — the same
+#: posture as `CONVICTION_SCORE` in `ops/model_policy/deterministic_selection`
+#: reading band tops — not a tuned weight. Nothing has been measured that
+#: would justify any other spacing (Phase 13 §13.3: start equal, adjust only
+#: on out-of-sample proof).
+RATING_MAGNITUDE: dict[str, float] = {
+    "strong_buy": 1.0, "buy": 0.5, "neutral": 0.0, "sell": 0.5, "strong_sell": 1.0,
+}
+
+RATING_DIRECTION: dict[str, str] = {
+    "strong_buy": "bullish", "buy": "bullish", "neutral": "neutral",
+    "sell": "bearish", "strong_sell": "bearish",
+}
+
+
 class TechReasoningChain(LLMOutputModel):
     """5-step CoT for a single symbol — forces the LLM to show its work per
     framework step. Every field has `min_length=1` so the LLM cannot skip a
@@ -659,6 +787,65 @@ class TechAnalysisResult(LLMOutputModel):
             is_short=is_short,
         )
         return None if ratio is None else round(ratio, 2)
+
+    def to_verdict(self) -> "AnalystVerdict":
+        """This read, restated in the shared Phase 13 verdict shape.
+
+        A RESTATEMENT, not a second opinion: every field is read off values
+        this result already carries and the analyst already validated. The
+        technical seat was measured (item 18, 2026-09-03) as the one seat
+        that already CONCLUDES — rating, conviction, R/R, levels, `Invalid
+        if`, one-line why — so this is a mapping, not new prompting.
+
+        direction / magnitude — `RATING_DIRECTION` / `RATING_MAGNITUDE`.
+        conviction            — verbatim.
+        evidence              — the numbers the desk can check against a
+                                chart (entry, stop, target, R/R, the levels
+                                the analyst selected) plus the five
+                                reasoning-chain observations, labelled.
+        invalidation          — `thesis_invalid_if` when the analyst stated
+                                one. When it did not (measured ~2% of
+                                actionable reads, see the field's own
+                                comment), the hard stop IS the analyst's own
+                                stated falsifier, so it is used, and the text
+                                says so — nothing is invented.
+        """
+        direction = RATING_DIRECTION[self.rating]
+        evidence: list[VerdictEvidence] = []
+        for label, value in (
+            ("entry_price", self.entry_price),
+            ("stop_loss", self.stop_loss),
+            ("reference_target", self.reference_target),
+            ("risk_reward", self.risk_reward),
+        ):
+            if value is not None:
+                evidence.append(VerdictEvidence(label=label, value=float(value)))
+        for level in self.support_levels:
+            evidence.append(VerdictEvidence(label="support_level", value=float(level)))
+        for level in self.resistance_levels:
+            evidence.append(VerdictEvidence(label="resistance_level", value=float(level)))
+        chain = self.reasoning_chain
+        for label in ("trend", "momentum", "volatility", "volume", "support_resistance"):
+            text = getattr(chain, label, "") or ""
+            if text.strip():
+                evidence.append(VerdictEvidence(label=label, text=text.strip()))
+
+        invalidation = (self.thesis_invalid_if or "").strip()
+        if not invalidation and direction != "neutral" and self.stop_loss is not None:
+            side = "below" if direction == "bullish" else "above"
+            invalidation = (
+                f"close {side} stop {self.stop_loss} (hard stop; the analyst "
+                "stated no separate soft invalidation)"
+            )
+        return AnalystVerdict(
+            seat="technical",
+            symbol=self.symbol,
+            direction=direction,
+            magnitude=RATING_MAGNITUDE[self.rating],
+            conviction=self.conviction,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
 
     @field_validator("symbol")
     @classmethod
