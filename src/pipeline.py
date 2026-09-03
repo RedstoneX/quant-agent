@@ -1817,7 +1817,9 @@ class TradingPipeline:
                 continue
 
             for idx, decision in enumerate(updated_decisions):
-                if decision is None or decision.symbol != mod.symbol:
+                if decision is None or (
+                    decision.symbol.strip().upper() != mod.symbol.strip().upper()
+                ):
                     continue
 
                 # Guard 1 — an exit's allocation must never be silently

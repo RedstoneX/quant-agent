@@ -1152,7 +1152,7 @@ colour".
 
 **25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DESIGN, not yet decided.** `risk_manager.md` asks the RM to confirm a sell trigger itself; no Python verifies it against real data. Same "citation exists, substance unchecked" shape as item 18's catalyst-door finding. Owner call, not decided here.
 
-**26. RM modification matching is case-sensitive — minor, fail-open, never observed.** Not fixed; low priority.
+**26. RM modification matching is case-sensitive — FIXED 2026-09-03.** See `docs/INCIDENT_HISTORY.md`.
 
 **27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.** If heat fails while cluster data succeeds, the 25%/cluster ceilings measure new requests only — the existing book's risk silently drops from the sum. Not yet fixed.
 

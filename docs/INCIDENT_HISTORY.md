@@ -3150,3 +3150,35 @@ handled the crash. Like `_persist_evidence`, it never raises: a bug in the
 watchdog itself must never be able to stop a trading session.
 
 See PR merging `feat/finish-levels-coverage-watchdog`.
+
+### 2026-09-03 — RM modification symbol matching was case-sensitive — FIXED
+
+**In plain words:** when the Risk Manager tightens an already-decided trade
+(e.g. widens a stop), the code has to find which decision that change
+belongs to by matching symbols. That match was case-sensitive. If the RM
+ever emitted a symbol in a different case than the Portfolio Manager's
+original decision (e.g. "aapl" vs "AAPL"), the match silently failed and
+the trade shipped completely UNMODIFIED — the opposite of this codebase's
+usual fail-closed posture for a mismatch like this. Never observed live;
+found in the same 2026-09-03 read that produced item 27 in `docs/WORK.md`
+(item 26 there).
+
+**The mechanism, and why the fix moved after a first pass.** The first
+pass fixed the obvious comparison — `TradingPipeline
+._apply_risk_modifications` in `src/pipeline.py`, which compared
+`decision.symbol` to `mod.symbol` directly — by normalizing both sides at
+that one comparison site. Checking for other readers of `mod.symbol`
+before calling this closed found a SECOND, independent case-sensitive
+comparison in `src/pipeline_stages.py` (`decision.symbol in
+modified_symbols`, which decides whether a symbol's funnel outcome reads
+"modified" or "approved") that the first pass would have left equally
+wrong. Rather than patch a second site (and risk a third going
+unnoticed), the fix moved to the model boundary: `RiskModification` now
+carries the same normalizing field validator `SymbolRejection` already
+has (`src/models.py`, `_normalize_symbol`, `strip().upper()`) — every
+current and future reader of `RiskModification.symbol` gets a normalized
+value automatically, the same "one definition" discipline already applied
+elsewhere in this codebase. Covered by
+`tests/test_bugfixes.py::test_risk_mod_matches_decision_symbol_case_insensitively`
+and `::test_risk_mod_symbol_normalized_at_the_model_boundary` (the second
+comparison site, proven directly).

@@ -1538,6 +1538,22 @@ class RiskModification(LLMOutputModel):
     new_value: float
     reason: str
 
+    @field_validator("symbol")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        # Same normalization as `SymbolRejection._normalize` — 2026-09-03,
+        # item 26. Without it, `_apply_risk_modifications` (src/pipeline.py)
+        # matched `mod.symbol` against `decision.symbol` case-sensitively,
+        # silently dropping a modification whose case differed (fixed at
+        # that one comparison site the same day) — but a second, independent
+        # comparison (`decision.symbol in modified_symbols`,
+        # src/pipeline_stages.py, deciding whether a symbol's funnel outcome
+        # reads "modified" or "approved") read the SAME unnormalized field
+        # and would have kept silently mismatching. Normalizing at the model
+        # boundary closes both call sites (and any future one) at once,
+        # rather than patching each comparison site individually.
+        return _normalize_symbol(v)
+
 
 def _normalize_rejected_symbols_field(values):
     """Coerce the container shapes an LLM emits for `rejected_symbols` into

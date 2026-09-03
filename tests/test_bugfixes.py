@@ -712,6 +712,59 @@ def test_pipeline_drops_only_the_decision_with_bad_mod_keeps_rest():
     assert rejected == []
 
 
+def test_risk_mod_matches_decision_symbol_case_insensitively():
+    """RM-proposed modifications must match on symbol the same way
+    `SymbolRejection` does elsewhere in this codebase: case-insensitively.
+    `RiskModification.symbol` now carries the same normalizing field
+    validator `SymbolRejection.symbol` does (2026-09-03), so an RM that
+    emits a different case than the PM's original decision (e.g. "aapl" vs
+    "AAPL") is normalized at construction, before it can ever reach a
+    comparison — a silent non-match here means the modification is dropped
+    and the trade ships UNMODIFIED, the opposite of this codebase's
+    fail-closed posture for exactly this kind of mismatch. See
+    `test_risk_mod_symbol_normalized_at_the_model_boundary` for why the fix
+    lives at the model, not just at this one comparison site."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    decision = TradeDecision(
+        action="BUY", symbol="AAPL", allocation_pct=10,
+        entry_price=200, stop_loss=190, take_profit=220, reasoning="test",
+    )
+    modifications = [
+        RiskModification(
+            symbol="aapl",  # different case than the decision's "AAPL"
+            field="allocation_pct",
+            original_value=10,
+            new_value=5,
+            reason="tighten",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([decision], modifications)
+
+    assert rejected == []
+    assert len(updated) == 1
+    assert updated[0].symbol == "AAPL"
+    assert updated[0].allocation_pct == 5
+
+
+def test_risk_mod_symbol_normalized_at_the_model_boundary():
+    """A SECOND, independent case-sensitive comparison of `mod.symbol`
+    exists in `pipeline_stages.py` (`decision.symbol in modified_symbols`,
+    which decides whether a symbol's funnel outcome reads "modified" or
+    "approved") — fixing only `_apply_risk_modifications`'s own comparison
+    would have left this one still silently wrong on a case mismatch.
+    Normalizing `RiskModification.symbol` at construction (matching
+    `SymbolRejection`'s own convention) closes both call sites, and any
+    future one, at once."""
+    mod = RiskModification(
+        symbol="aapl", field="allocation_pct",
+        original_value=10, new_value=5, reason="tighten",
+    )
+    modified_symbols = {mod.symbol for mod in [mod]}
+    assert "AAPL" in modified_symbols
+    assert mod.symbol == "AAPL"
+
+
 def test_risk_mod_cannot_silently_zero_a_sell_allocation():
     """2026-09-03 audit: an RM modification that zeros a SELL's
     allocation_pct must NOT be applied — that reads as "skip" at execution
