@@ -980,14 +980,17 @@ fails the run for taking them; and 3 of the 5 "qualified shorts" (GEV/UNH/NEE)
 are refused by §9.4's arithmetic, so the benchmark faults the model for
 passing over names it may not take.
 
-**A RANKING FUNCTION NOW EXISTS — 2026-09-03 — AND IS NOT WIRED IN.**
-`rank_eligible()` scores the 12 by the ratified **equal-weight** composite over
-the three per-candidate numbers `evaluate()` already computes. Order, highest
-first: **XLE, NVDA, COP, CHPX, PATH, NKE, MSFT, TSM, FLNC, CVX, PFE, CRM.**
-Pinned by `tests/test_deterministic_selection.py`; method in INCIDENT_HISTORY.
-**Audit artefact, not a decision** — called by nothing in `src/`. Wiring it in
-is a production-behaviour change needing the paid-benchmark verification rule
-AND the owner's review of that order. It must not gate a real trade yet.
+**THE RANKING RULE IS NOW IN PRODUCTION — Phase 13, first increment,
+2026-09-03. See INCIDENT_HISTORY "Phase 13 — the desk now says which of the
+twelve".** Every eligible name is shown to the PM in a stated order (equal
+weight over each seat's direction magnitude + conviction; Technical is the
+only seat on the shared verdict shape so far). Names a gate refuses are
+listed with the gate and never ordered. **Honest limit:** on the real day 9
+of 12 tie at 1.00 because Technical rated them all `medium`; ties break on
+symbol. The audit's earlier three-signal `rank_eligible()` (adds R/R and net
+evidence) fully separates them — whether those two join the production
+composite is the owner's call, not this pass's. Still to do: the other five
+seats onto the shape; per-seat weights only from measured record.
 
 **Only earnings transcribes** — the item-18 hypothesis, now answered.
 Technical (17,409 chars) and News (3,248) hand over real conclusions; Macro
@@ -999,8 +1002,8 @@ its verdict. Item 20 wants that field as a status; it is already there, 67
 times, as prose.
 
 **Next, in order, none of it needing a paid call:**
-  a. **Write the missing ranking rule.** That is the actual gap. Twelve
-     eligible names, no tiebreak. Feeds the ratified weighted composite.
+  a. ~~Write the missing ranking rule.~~ **DONE 2026-09-03 (Phase 13).**
+     Open: whether R/R and net evidence join the composite (owner).
   b. Narrow the sub-floor catalyst door, and put the `familiarity_bias` rule
      into the PROMPT — it is graded but never stated.
   c. Cut or summarise the earnings section; re-render and re-cost.

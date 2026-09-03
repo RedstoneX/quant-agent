@@ -90,6 +90,80 @@ fix work already dispatched for finding #1 and #2.
 
 ---
 
+### 2026-09-03 — Phase 13, first increment: the desk now says which of the twelve
+
+**In plain words:** on 2026-09-01 the desk's own rules let twelve stocks
+through and then went quiet — nothing said which of the twelve to prefer, so
+the model picked however it liked. Now every analyst report is being moved
+onto one fixed shape (which way, how strongly, how sure, what evidence, and
+what would prove it wrong), and the portfolio manager is handed the eligible
+names IN ORDER, with the arithmetic beside each one and the refused names
+listed with the rule that refused them. Only the technical analyst is on the
+new shape so far; the other five seats are next. No weighting was invented:
+every signal counts once, as the owner ratified, until a seat's own record
+shows it deserves more or less.
+
+**What shipped.**
+
+- `AnalystVerdict` (`src/models.py`): seat, symbol, direction
+  (bullish/bearish/neutral) + magnitude 0..1, conviction (high/medium/low),
+  structured evidence (labelled numbers, dated events, or observations — a
+  bare label is refused), and an invalidation condition. A directional call
+  with no invalidation or no evidence does not validate. A neutral verdict
+  is the absence of a call: it may be blank, but it may not lean.
+- `TechAnalysisResult.to_verdict()`: a restatement, not a second opinion.
+  Rating → direction and magnitude (`strong_* = 1.0`, `buy/sell = 0.5`,
+  equal spacing of the desk's own two-rung scale); conviction verbatim;
+  evidence = entry/stop/target/R/R, the selected levels, and the five
+  reasoning-chain steps; invalidation = `thesis_invalid_if`, or, on the ~2%
+  of reads where the model left it blank, the analyst's own hard stop —
+  the text says which.
+- `src/verdicts.py::rank_verdicts`: score = magnitude + conviction score
+  (low/medium/high → 0/0.5/1), weight 1.0 each, seats averaged at unit
+  weight, ties on symbol. No min-max across the set, so a name's score
+  does not move when a peer joins. Seats disagreeing on direction are not
+  ranked — that is §9.3's conflict to adjudicate, not a number to hide.
+- `PortfolioManagerAgent.candidate_eligibility` + `rank_candidates`: the
+  item-18b gates R2–R5, ported from the audit script into production and
+  cross-checked against it on the real fixture (12/12 identical —
+  `tests/test_analyst_verdict.py` pins that they cannot drift apart). R4's
+  catalyst clause is looser than the post-decision rule on purpose: before
+  the decision exists there is no citation to check, only whether one is
+  possible. Nothing after submission was touched — `_apply_subfloor_
+  catalyst_rule`, `validate_grounding`, the R/R arithmetic and the risk
+  budget are exactly as they were.
+- A new prompt section, `## Candidate Ranking`, after the Technical
+  reports. The floor it gates on is the one threaded into `decide()`, so
+  the PM is ranked on the rule it is held to.
+
+**What the real day looks like under it.** Run-64290730, Technical only:
+XLE first at 1.50 (`buy` + `high`), then COP, CVX, FLNC, MSFT, NKE,
+NVDA, PATH, PFE, TSM all tied at 1.00 (`buy`/`sell` + `medium`), then CHPX
+and CRM at 0.50 (`low`). **Nine of twelve tie.** With one seat and two
+ordinal signals the composite makes three tiers, and inside a tier the
+tiebreak is alphabetical — a stated rule, and a meaningless one. The audit's
+`rank_eligible()` separates all twelve because it also reads R/R and net
+independent evidence. Whether those two join the production composite is a
+design choice the owner has not made; this pass did not make it for him.
+
+**What was deliberately not done.** The other five seats (news, macro,
+earnings, smart money, evening) still hand up their old shapes. No per-seat
+reliability weight exists — there is no measured record to derive one from
+(`_CONVICTION_OUTCOME_MIN_N`). The ranking is shown, not enforced: it does
+not size, does not gate, and does not stop the PM taking a lower-ranked
+name — it asks the PM to say what the ranking does not see. Whether the
+model actually follows the order is a model-behaviour question and needs the
+paid `--replay-run` benchmark, which this pass was not authorised to spend.
+
+**What would catch a regression.** `tests/test_analyst_verdict.py`: the
+shape refuses incomplete verdicts; all 59 production reads on the fixture
+day map to valid verdicts; the production eligibility admits exactly the
+audit's twelve; the order is pinned; a refused name is never ranked even
+when it would have outscored every admitted one; an AST scan fails on any
+seat-keyed weight table in the ranking module.
+
+---
+
 ### 2026-09-03 — item 17(a)/(b): a database hiccup shouldn't need a human, and a failed alert shouldn't vanish
 
 **In plain words:** two related gaps closed. First, a brief database hiccup

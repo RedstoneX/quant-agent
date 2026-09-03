@@ -27,6 +27,7 @@ from src.risk.rules import (
     weight_pct_of,
 )
 from src.trading_calendar import et_today
+from src.verdicts import RankedCandidate, rank_verdicts
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,23 @@ class PortfolioManagerAgent(BaseAgent):
                 f"  Reasoning: {a.reasoning}"
             )
         analyses_text = "\n".join(_fmt_tech(a) for a in analyses)
+
+        # Phase 13 — the missing ordering step. Every gate above admits or
+        # refuses; none of them ranks. The verdicts of the seats that have
+        # been moved onto the shared shape (Technical only, so far) are
+        # scored at the ratified equal weight and the eligible names are
+        # shown IN ORDER, so "which of the twelve" is a stated rule rather
+        # than whatever the model defaults toward. Names a gate refuses
+        # are listed with the gate that refused them and are NOT ordered.
+        ranked, blocked = self.rank_candidates(
+            analyses=analyses,
+            evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
+            allowed_buy_symbols=set(allowed_buy_symbols),
+            active_state_changes=kwargs.get("active_state_changes") or "",
+            rr_floor=float(kwargs.get("rr_floor", REWARD_RISK_FLOOR)),
+        )
+        ranking_section = self._render_candidate_ranking(ranked, blocked)
 
         # L2 memory: each position line also gets entry context + Tech rating trajectory
         # so PM can anchor "when bought / for what reason / how signal has evolved".
@@ -1038,6 +1056,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 ## Technical Analysis Reports
 {analyses_text}
 
+{ranking_section}
+
 ## Canonical Current Evidence Registry (authoritative for provenance)
 {evidence_registry_text}
 
@@ -1071,6 +1091,162 @@ because the constructor computes this from the registry and cannot read your
 argument.
 
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
+
+    # ------------------------------------------------------------------
+    # Phase 13 — candidate eligibility + ranking over the shared verdict shape
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def candidate_eligibility(
+        cls, *,
+        analyses: list[TechAnalysisResult],
+        evidence_registry: dict[str, dict[str, str]],
+        stale_sources: dict[str, set[str]] | None = None,
+        allowed_buy_symbols: set[str] | None,
+        active_state_changes: str,
+        rr_floor: float = REWARD_RISK_FLOOR,
+        asof: date | None = None,
+    ) -> dict[str, list[str]]:
+        """Which analysed names the desk's own rules ADMIT, before the PM
+        decides — `{SYMBOL: [reasons it is blocked]}`, empty list = eligible.
+
+        These are the pre-decision halves of the gates this class and the
+        constructor already enforce after submission, restated so the prompt
+        can order the survivors (item 18b, `ops/model_policy/
+        deterministic_selection.py::evaluate`, now in production code):
+
+          R2  rating actionable (neutral is not a candidate)
+          R3  a long must be in the BUY-eligible set — the same set
+              `validate_grounding` refuses increases outside of
+          R4  computed R/R ≥ `rr_floor`, OR the symbol is named on a
+              current Active News State Change row. That second clause is
+              looser than `_apply_subfloor_catalyst_rule`, which needs the
+              PM to actually CITE the row's date: before the decision exists
+              there is no citation to check, only whether one is possible.
+          R5  net independent source score ≥ 1 for the proposed direction
+              (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
+              `agreement_ceiling_for_score` is 0.0 for any score ≤ 0
+              whatever the schedule, so no config is needed here)
+
+        R1 (current technical coverage) is implied: only symbols with an
+        analysis in `analyses` are considered at all. Nothing here removes or
+        weakens a gate — a name this admits can still be dropped after
+        submission by the stricter post-decision checks.
+        """
+        allowed = {
+            str(s).strip().upper() for s in (allowed_buy_symbols or set())
+            if str(s).strip()
+        }
+        by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
+        catalyst_symbols: set[str] = set()
+        for symbols in by_date.values():
+            catalyst_symbols.update(symbols)
+        stale = stale_sources or {}
+
+        verdicts: dict[str, list[str]] = {}
+        for analysis in analyses:
+            symbol = analysis.symbol.upper()
+            blocked: list[str] = []
+            if analysis.rating == "neutral":
+                blocked.append("R2 neutral rating")
+                verdicts[symbol] = blocked
+                continue
+            direction = "short" if analysis.rating in ("sell", "strong_sell") else "long"
+            if direction == "long" and symbol not in allowed:
+                blocked.append("R3 not BUY-eligible")
+            reward_risk = analysis.risk_reward
+            if reward_risk is None or reward_risk < rr_floor:
+                if symbol not in catalyst_symbols:
+                    shown = "n/a" if reward_risk is None else f"{reward_risk:.2f}"
+                    blocked.append(
+                        f"R4 R/R {shown} under the {rr_floor:.2f} floor and no "
+                        "current state-change row names it"
+                    )
+            sources = evidence_registry.get(symbol, {})
+            net = signed_source_score(
+                symbol, sources, direction, ignored_sources=stale.get(symbol),
+            ) if sources else 0
+            if net <= 0:
+                blocked.append(f"R5 net evidence {net:+d} if {direction} — no rung")
+            verdicts[symbol] = blocked
+        return verdicts
+
+    @classmethod
+    def rank_candidates(
+        cls, *,
+        analyses: list[TechAnalysisResult],
+        evidence_registry: dict[str, dict[str, str]],
+        stale_sources: dict[str, set[str]] | None = None,
+        allowed_buy_symbols: set[str] | None,
+        active_state_changes: str,
+        rr_floor: float = REWARD_RISK_FLOOR,
+        asof: date | None = None,
+    ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
+        """The eligible names in ranked order, plus the blocked names with
+        their reasons. Ordering is `src/verdicts.py::rank_verdicts` over the
+        seats' `AnalystVerdict`s — Technical's only, in this increment.
+        Blocked names are never ordered: they are reported, not ranked.
+        """
+        eligibility = cls.candidate_eligibility(
+            analyses=analyses,
+            evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
+            allowed_buy_symbols=allowed_buy_symbols,
+            active_state_changes=active_state_changes,
+            rr_floor=rr_floor,
+            asof=asof,
+        )
+        eligible_verdicts = [
+            a.to_verdict() for a in analyses
+            if not eligibility.get(a.symbol.upper(), ["no eligibility row"])
+        ]
+        ranked = rank_verdicts(eligible_verdicts)
+        blocked = {s: why for s, why in eligibility.items() if why}
+        return ranked, blocked
+
+    @staticmethod
+    def _render_candidate_ranking(
+        ranked: list[RankedCandidate], blocked: dict[str, list[str]],
+    ) -> str:
+        """The prompt section. Order first, arithmetic beside each row, then
+        the refused names with the gate that refused them."""
+        lines = ["## Candidate Ranking (deterministic — equal weight, Phase 13)"]
+        if not ranked and not blocked:
+            lines.append("(no Technical reads this session — nothing to rank)")
+            return "\n".join(lines)
+        lines += [
+            "The names below passed every rule that can be checked before you "
+            "decide (actionable rating; longs BUY-eligible; R/R at or above "
+            "the floor, or a current state-change row naming the symbol; net "
+            "independent evidence ≥ 1). They are ORDERED by a composite of "
+            "each reporting seat's direction magnitude and conviction, one "
+            "unit of weight each — no seat is weighted above another until "
+            "its own record earns it. This is the tiebreak among equally "
+            "eligible names: to take a lower-ranked name over a higher one, "
+            "say what the ranking does not see. It is not a size, and it "
+            "does not waive any rule below.",
+        ]
+        if ranked:
+            for i, c in enumerate(ranked, 1):
+                seats = ", ".join(c.seats)
+                convictions = "/".join(v.conviction for v in c.verdicts)
+                invalidation = "; ".join(
+                    f"{v.seat}: {v.invalidation}" for v in c.verdicts if v.invalidation
+                )
+                lines.append(
+                    f"{i}. {c.symbol} — {c.direction} | score {c.score:.2f} "
+                    f"(magnitude {c.components['magnitude']:.2f} + conviction "
+                    f"{c.components['conviction_score']:.2f}) | seats: {seats} "
+                    f"({convictions}) | invalid if — {invalidation}"
+                )
+        else:
+            lines.append("(no name passes every pre-decision rule today)")
+        if blocked:
+            lines.append("")
+            lines.append("Not ranked — refused by a rule, with the rule:")
+            for symbol in sorted(blocked):
+                lines.append(f"- {symbol}: {'; '.join(blocked[symbol])}")
+        return "\n".join(lines)
 
     @staticmethod
     def _semantic_failure(result, status: str, error: object):
@@ -1143,6 +1319,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             session_type=session_type,
             allowed_buy_symbols=allowed_buy_symbols or set(),
             transient_admitted_symbols=transient_admitted_symbols or set(),
+            # Phase 13: the candidate ranking shown in the prompt gates on
+            # the same floor `_apply_subfloor_catalyst_rule` enforces after
+            # submission, so the PM is ranked on the rule it is held to.
+            rr_floor=rr_floor,
         )
         parsed = result.parse_json()
         if parsed is None:
