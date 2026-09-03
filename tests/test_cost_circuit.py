@@ -1755,3 +1755,179 @@ def test_a_call_is_no_longer_preemptively_blocked_by_an_unspent_reservation(tmp_
     circuit.before_provider_attempt(reservation, model=reservation.model)
     circuit.complete_call(reservation, 0.02, actual_model=reservation.model)
     assert circuit.status()["trigger_code"] == "session_cost_limit"
+
+
+# === docs/WORK.md item 17(a): infra fault vs. real breach must not share an
+# outcome. "I cannot read the budget" (a transient I/O/DB-open failure)
+# retries with backoff before latching; "I am over budget" (a real, measured
+# breach) still latches immediately, exactly as before. ===
+
+class _FailingNotifier:
+    """A notifier whose `send` always fails -- simulates a dead Telegram
+    channel for item 17(b)'s durable-alert-retry tests below."""
+
+    def __init__(self):
+        self.attempts = 0
+
+    def send(self, message: str) -> bool:
+        self.attempts += 1
+        return False
+
+
+def test_transient_infra_fault_retries_with_backoff_and_does_not_latch(
+    tmp_path, monkeypatch,
+):
+    path = _db_path(tmp_path)
+    cfg = _config(
+        infra_fault_max_retries=2,
+        infra_fault_retry_backoff_base_s=0.01,
+        infra_fault_retry_backoff_max_s=0.01,
+        infra_fault_retry_backoff_jitter_s=0.0,
+    )
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, cfg, notifier)
+
+    real_connect = circuit._connect
+    calls = {"n": 0}
+
+    def flaky_connect():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_connect()
+
+    monkeypatch.setattr(circuit, "_connect", flaky_connect)
+    sleeps: list[float] = []
+    monkeypatch.setattr("src.cost_circuit.time.sleep", lambda s: sleeps.append(s))
+
+    state = circuit.activate_session("run-transient", "morning")
+
+    assert state["suspended"] is False
+    assert state.get("available", True) is not False
+    assert notifier.messages == []  # never escalated to the durable latch/alert
+    assert not Path(f"{path}.llm-circuit-unavailable").exists()
+    assert len(sleeps) == 1  # exactly one backoff sleep before the retry succeeded
+
+
+def test_persistent_infra_fault_exhausts_retries_then_latches_durably(
+    tmp_path, monkeypatch,
+):
+    path = _db_path(tmp_path)
+    cfg = _config(
+        infra_fault_max_retries=2,
+        infra_fault_retry_backoff_base_s=0.01,
+        infra_fault_retry_backoff_max_s=0.01,
+        infra_fault_retry_backoff_jitter_s=0.0,
+    )
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, cfg, notifier)
+
+    def always_broken():
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(circuit, "_connect", always_broken)
+    sleeps: list[float] = []
+    monkeypatch.setattr("src.cost_circuit.time.sleep", lambda s: sleeps.append(s))
+
+    state = circuit.activate_session("run-broken", "morning")
+
+    assert state["suspended"] is True
+    assert state["available"] is False
+    # infra_fault_max_retries=2 -> 3 total attempts, 2 backoff sleeps between them.
+    assert len(sleeps) == 2
+
+    marker = Path(f"{path}.llm-circuit-unavailable")
+    assert marker.exists()
+    payload = json.loads(marker.read_text())
+    assert "OperationalError" in payload["error"]
+    assert notifier.messages  # the operator WAS told, unlike a real breach's silence path
+
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("portfolio_manager")
+
+
+def test_real_spend_breach_still_latches_immediately_no_retry_no_file_latch(
+    tmp_path, monkeypatch,
+):
+    path = _db_path(tmp_path)
+    cfg = _config(
+        session_cost_limit_usd=0.01, daily_cost_limit_usd=1.0,
+        infra_fault_max_retries=5,
+    )
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, cfg, notifier)
+    circuit.activate_session("run-breach", "morning")
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("src.cost_circuit.time.sleep", lambda s: sleeps.append(s))
+
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, 0.02, actual_model=reservation.model)
+
+    assert circuit.status()["trigger_code"] == "session_cost_limit"
+    assert sleeps == []  # a real, measured breach is never retried
+    # A real breach latches via the in-DB `llm_circuit_state` row, not the
+    # cross-process file marker item 17(a) adds retry/backoff in front of.
+    assert not Path(f"{path}.llm-circuit-unavailable").exists()
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("portfolio_manager")
+
+
+# === docs/WORK.md item 17(b): a failed latch alert must be persisted and
+# retried, not silently dropped forever. ===
+
+def test_failed_latch_alert_is_persisted_and_retried_on_a_later_run(tmp_path):
+    path = _db_path(tmp_path)
+    cfg = _config()
+    marker = Path(f"{path}.llm-circuit-unavailable")
+
+    failing_notifier = _FailingNotifier()
+    first = LLMCostCircuitBreaker(path, cfg, failing_notifier)
+    first.mark_unavailable(
+        RuntimeError("simulated accounting I/O failure"),
+        run_id="run-a", mode="morning", agent_name="portfolio_manager",
+    )
+    assert failing_notifier.attempts == 1
+    payload = json.loads(marker.read_text())
+    assert payload["alert_delivered"] is False
+    assert payload["alert_attempts"] == 1
+
+    # A later process (a fresh breaker instance -- the same boundary as a
+    # systemd restart) re-reads the durable marker and retries the send.
+    ok_notifier = _Notifier()
+    second = LLMCostCircuitBreaker(path, cfg, ok_notifier)
+    second.activate_session("run-b", "midday")
+
+    assert ok_notifier.messages  # delivered this time
+    payload = json.loads(marker.read_text())
+    assert payload["alert_delivered"] is True
+    assert payload["alert_attempts"] == 2
+    assert second.status()["alert_delivered"] is True
+
+
+def test_alert_delivery_failures_accumulate_durably_instead_of_vanishing(tmp_path):
+    path = _db_path(tmp_path)
+    cfg = _config()
+    marker = Path(f"{path}.llm-circuit-unavailable")
+
+    first = LLMCostCircuitBreaker(path, cfg, _FailingNotifier())
+    first.mark_unavailable(
+        RuntimeError("simulated accounting I/O failure"),
+        run_id="run-a", mode="morning",
+    )
+    assert json.loads(marker.read_text())["alert_attempts"] == 1
+
+    for expected_attempts in (2, 3, 4):
+        later = LLMCostCircuitBreaker(path, cfg, _FailingNotifier())
+        later.activate_session(f"run-{expected_attempts}", "midday")
+        payload = json.loads(marker.read_text())
+        assert payload["alert_attempts"] == expected_attempts
+        assert payload["alert_delivered"] is False
+        # Visible on the status surface (Mission Control / session
+        # summaries read this), not only in the raw sidecar file.
+        assert later.status()["alert_attempts"] == expected_attempts
+        assert later.status()["alert_delivered"] is False

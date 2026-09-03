@@ -87,6 +87,15 @@ blocking decision; the mechanism is live either way.
   on a healthy desk. No agent may pick this number — see
   `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`).
 
+- [ ] DECIDE BY 2026-09-17 — Does the desk need a second, independent alert
+  channel beyond Telegram? Item 17(b), shipped 2026-09-03, made a failed
+  latch alert durable and retried, but Telegram remains the only channel —
+  if Telegram itself is down (revoked token, blocked bot, egress rule),
+  every alert on this desk is silent, including the retries. A second
+  channel is a new dependency and a real design tradeoff (which service,
+  what it costs, what credential it needs), not a threshold — owner call,
+  not an agent one.
+
 **DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
 garbage out) must work before anything else.**
 
@@ -802,15 +811,18 @@ stopped until a person happens to look. On an unattended desk that is a day
 
 **Three distinct defects, and they compound:**
 
-  a. **A transient infrastructure fault latches like a budget breach.**
-     "I cannot read the budget" and "I am over budget" are different events
-     and must not share an outcome. The first should retry with backoff and
-     only latch if it persists; the second should latch immediately. Today
-     both go straight to the durable latch on first occurrence.
-  b. **The alert about the latch can fail, and then nothing else happens.**
-     A notification failure is currently terminal and unrecorded. It must be
-     persisted and retried, and escalate to a second channel — an alert path
-     with no fallback is not an alert path.
+  a. **SHIPPED 2026-09-03 — `LLMCostCircuitBreaker._run_with_infra_retry`.**
+     "I cannot read the budget" (transient) and "I am over budget" (real,
+     measured) no longer share an outcome: the transient path now retries
+     with backoff before latching; a real breach still latches immediately,
+     unchanged. Full detail: `docs/INCIDENT_HISTORY.md` ("item 17(a)/(b)").
+  b. **SHIPPED 2026-09-03.** A failed latch alert is now persisted (in the
+     same durable file the latch itself lives in) and retried on any later
+     boundary/process, instead of vanishing after one failed send. A real
+     second notification channel (beyond Telegram) was NOT built — that is
+     a new dependency/design tradeoff, not a retry-count choice. **DECIDE
+     BY 2026-09-17 — does the desk need a second, independent alert channel
+     beyond Telegram, and if so which one?**
   c. **SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
      `scripts/silence_heartbeat.py`.** Alerts on "no completed session in N
      scheduled windows", desk-wide, reusing the proven Telegram path. Full
@@ -818,10 +830,8 @@ stopped until a person happens to look. On an unattended desk that is a day
      threshold (6) is a placeholder, not ratified** — see the DECIDE BY
      line above.
 
-**Remaining, in dependency order:** (a), which stops the latch firing for
-reasons that do not deserve it. Then (b). (c) led because an alert on a
-known failure can itself fail, as it did here — a silence alarm cannot be
-defeated by the thing it watches going quiet.
+All three parts of item 17 are now shipped; the remaining open point is the
+second-channel decision under (b) above.
 
 Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
 a stale price list. That path was fixed 2026-09-02; **this one was not** —

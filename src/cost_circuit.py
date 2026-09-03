@@ -50,6 +50,7 @@ import logging
 import json
 import os
 import fcntl
+import random
 import sqlite3
 import threading
 import time
@@ -59,12 +60,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, time as dt_time, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 from zoneinfo import ZoneInfo
 
 from src.cost_table import PRICING
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _ET = ZoneInfo("America/New_York")
 
@@ -532,6 +535,134 @@ def _legacy_mode(run_id: str) -> str:
     return "morning"
 
 
+@contextmanager
+def _file_lock(lock_path: Path | None):
+    """Serialize concurrent writers to one filesystem sidecar.
+
+    Shared by `LLMCostCircuitBreaker`'s own emergency-latch writer/reset and
+    `UnavailableLLMCostCircuit`'s alert-outcome bookkeeping below -- the same
+    lock file, so a latch write/reset can never race an alert-outcome update.
+    """
+
+    if lock_path is None:
+        yield
+        return
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int]:
+    """Best-effort read of (alert_delivered, alert_attempts) from the latch.
+
+    Never raises: an unreadable/missing/corrupt marker reads as "not yet
+    delivered, zero attempts" rather than blocking anything.
+    """
+
+    if latch_path is None or not latch_path.exists():
+        return False, 0
+    try:
+        payload = json.loads(latch_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False, 0
+    if not isinstance(payload, dict):
+        return False, 0
+    delivered = payload.get("alert_delivered") is True
+    try:
+        attempts = int(payload.get("alert_attempts") or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    return delivered, max(0, attempts)
+
+
+def _record_alert_attempt(
+    latch_path: Path | None,
+    lock_path: Path | None,
+    *,
+    delivered: bool,
+    now: datetime | None = None,
+) -> int:
+    """Durably fold one alert-send outcome into the emergency latch file.
+
+    docs/WORK.md item 17(b): a Telegram send failure for the "paid analysis
+    suspended" alert used to be tracked only in the in-process sentinel
+    (`UnavailableLLMCostCircuit._alert_delivered`) -- if the process exited
+    (or was never touched again) before a retry succeeded, the failure was
+    both terminal and invisible: no record survived to let a later run
+    retry it or to let anything else notice. This writes the outcome into
+    the SAME durable JSON marker `mark_unavailable` already writes for the
+    latch itself (the one filesystem fact guaranteed to exist and to be
+    independent of whatever database fault caused the latch in the first
+    place), under the shared `_file_lock`, so:
+      * a later process re-reading this file (`_read_alert_outcome`) knows
+        immediately whether the operator was ever actually told, and keeps
+        retrying until `alert_delivered` is true;
+      * `alert_attempts` is a durable, cross-restart count exposed through
+        `UnavailableLLMCostCircuit._state()` / `status()` -- a visible
+        surface (Mission Control / session summaries already read
+        `status()`) that keeps climbing for as long as delivery keeps
+        failing, rather than the failure being silently dropped after one
+        in-memory attempt.
+
+    Never raises and never invents a marker: if the latch file does not
+    exist yet (e.g. this is running against a ":memory:" breaker with no
+    filesystem sidecar), this is a no-op -- there is nothing durable to
+    update, matching how `mark_unavailable` itself degrades for that case.
+    Returns the resulting attempt count on success, or -1 if the update
+    could not be made durable (caller logs that distinctly).
+    """
+
+    if latch_path is None:
+        return -1
+    with _file_lock(lock_path):
+        try:
+            if not latch_path.exists():
+                return -1
+            payload = json.loads(latch_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return -1
+            attempts = int(payload.get("alert_attempts") or 0) + 1
+            payload["alert_attempts"] = attempts
+            # Once delivered, stays delivered -- a later failed retry of a
+            # SECOND, unrelated alert attempt (there should not be one, but
+            # never regress a true fact back to false).
+            payload["alert_delivered"] = bool(payload.get("alert_delivered")) or bool(
+                delivered
+            )
+            payload["last_alert_attempt_at"] = (
+                now or datetime.now(timezone.utc)
+            ).isoformat()
+            tmp = latch_path.with_name(
+                f".{latch_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+            )
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, latch_path)
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return attempts
+        except Exception:
+            logger.exception(
+                "Could not durably record cost-circuit alert-delivery outcome "
+                "at %s", latch_path,
+            )
+            return -1
+
+
 class UnavailableLLMCostCircuit:
     """Fail-closed sentinel when persistent breaker infrastructure is broken.
 
@@ -552,6 +683,8 @@ class UnavailableLLMCostCircuit:
         session_cost_usd: float | None = None,
         daily_cost_usd: float | None = None,
         costs_exact: bool = False,
+        emergency_latch_path: Path | None = None,
+        emergency_lock_path: Path | None = None,
     ):
         self.error = error
         if notifier is None:
@@ -566,12 +699,25 @@ class UnavailableLLMCostCircuit:
         self.session_cost_usd = session_cost_usd
         self.daily_cost_usd = daily_cost_usd
         self.costs_exact = costs_exact
+        # item 17(b): the filesystem marker `mark_unavailable` already wrote
+        # for THIS incident -- the one durable fact this sentinel can lean
+        # on to remember whether the operator has actually been told, across
+        # both same-process retries and a fresh process after a restart.
+        # None (e.g. a ":memory:" breaker with no filesystem sidecar, or one
+        # of the defensive fallback sentinels pipeline.py builds without a
+        # breaker instance) degrades to the old in-memory-only behaviour.
+        self._emergency_latch_path = emergency_latch_path
+        self._emergency_lock_path = emergency_lock_path
         self._context_value: ContextVar[tuple[str, str]] = ContextVar(
             f"qamc_unavailable_cost_session_{id(self)}",
             default=(run_id, mode),
         )
         self._alert_lock = threading.Lock()
-        self._alert_delivered = False
+        durably_delivered, durable_attempts = _read_alert_outcome(
+            self._emergency_latch_path
+        )
+        self._alert_delivered = durably_delivered
+        self._alert_attempts = durable_attempts
         self._last_alert_attempt = 0.0
 
     def _trigger(self) -> str:
@@ -601,6 +747,12 @@ class UnavailableLLMCostCircuit:
             ),
             "session_cost_usd": self.session_cost_usd or 0.0,
             "daily_cost_usd": self.daily_cost_usd or 0.0,
+            # item 17(b): visible, durable proof of whether the operator has
+            # actually been told about this latch -- read by anything that
+            # consumes `status()` (Mission Control, session summaries), not
+            # just this process's own logs.
+            "alert_delivered": self._alert_delivered,
+            "alert_attempts": self._alert_attempts,
         }
 
     def _alert(self) -> None:
@@ -657,15 +809,43 @@ class UnavailableLLMCostCircuit:
             "restart any long-lived worker that observed this emergency latch."
         )
         logger.critical("\n%s", message)
+        sent = False
         try:
             sent = bool(self.notifier.send(message))
-            if sent:
-                with self._alert_lock:
-                    self._alert_delivered = True
-            else:
-                logger.critical("cost-circuit unavailable alert was not delivered to Telegram")
         except Exception:
             logger.exception("cost-circuit unavailable Telegram alert failed")
+        # item 17(b): fold this outcome into the SAME durable marker the
+        # latch itself lives in, so it survives this process exiting before
+        # a retry succeeds -- see `_record_alert_attempt`'s docstring.
+        durable_attempts = _record_alert_attempt(
+            self._emergency_latch_path, self._emergency_lock_path, delivered=sent,
+        )
+        with self._alert_lock:
+            if sent:
+                self._alert_delivered = True
+            if durable_attempts >= 0:
+                self._alert_attempts = durable_attempts
+            else:
+                self._alert_attempts += 1
+        if sent:
+            return
+        if durable_attempts < 0:
+            logger.critical(
+                "cost-circuit unavailable alert was not delivered to Telegram, "
+                "AND the durable delivery-outcome record could not be updated "
+                "-- this failure is tracked only in this process's memory "
+                "(attempt %d) until a future call succeeds in writing it",
+                self._alert_attempts,
+            )
+        else:
+            logger.critical(
+                "cost-circuit unavailable alert was not delivered to Telegram "
+                "(durable attempt %d recorded at %s); will keep retrying every "
+                "~120s in this process, and again from scratch on any future "
+                "process/session that touches this circuit, until it succeeds "
+                "or an operator intervenes",
+                durable_attempts, self._emergency_latch_path,
+            )
 
     def activate_session(self, run_id: str, mode: str) -> dict[str, Any]:
         self._context_value.set((run_id, mode))
@@ -755,9 +935,11 @@ class LLMCostCircuitBreaker:
             )
             return
         try:
-            self._initialize()
+            self._run_with_infra_retry(
+                self._initialize, agent_name="circuit_startup",
+            )
         except Exception as exc:
-            self.mark_unavailable(exc)
+            self.mark_unavailable(exc, agent_name="circuit_startup")
 
     @property
     def enabled(self) -> bool:
@@ -918,6 +1100,8 @@ class LLMCostCircuitBreaker:
                         payload.get("daily_cost_usd")
                     ),
                     costs_exact=payload.get("costs_exact") is True,
+                    emergency_latch_path=self._emergency_latch_path,
+                    emergency_lock_path=self._emergency_lock_path,
                 )
 
     @staticmethod
@@ -940,24 +1124,10 @@ class LLMCostCircuitBreaker:
             return None
         return parsed if parsed >= 0 and parsed < float("inf") else None
 
-    @contextmanager
     def _emergency_file_lock(self):
         """Serialize infrastructure-latch writers with operator reset."""
 
-        path = self._emergency_lock_path
-        if path is None:
-            yield
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
+        return _file_lock(self._emergency_lock_path)
 
     def _write_emergency_latch(
         self,
@@ -994,6 +1164,14 @@ class LLMCostCircuitBreaker:
                     "session_cost_usd": session_cost_usd,
                     "daily_cost_usd": daily_cost_usd,
                     "costs_exact": costs_exact,
+                    # item 17(b): durable alert-delivery bookkeeping, folded
+                    # in place by `_record_alert_attempt` as
+                    # `UnavailableLLMCostCircuit._alert()` runs. Starts
+                    # undelivered/zero -- nothing has attempted to notify
+                    # the operator about THIS incident yet.
+                    "alert_delivered": False,
+                    "alert_attempts": 0,
+                    "last_alert_attempt_at": None,
                 },
                 sort_keys=True,
             ) + "\n"
@@ -1029,6 +1207,105 @@ class LLMCostCircuitBreaker:
                     tmp.unlink(missing_ok=True)
                 except OSError:
                     logger.warning("Could not remove temporary cost-circuit latch %s", tmp)
+
+    def _infra_retry_backoff_s(self, attempt: int) -> float:
+        """Exponential backoff with jitter for one retried infra operation.
+
+        Same shape as `MacroDataProvider._next_backoff` (src/data/macro.py):
+        doubles from `infra_fault_retry_backoff_base_s`, capped at
+        `infra_fault_retry_backoff_max_s`, plus uniform jitter up to
+        `infra_fault_retry_backoff_jitter_s` so concurrent processes hitting
+        the same transient fault don't retry in lockstep.
+        """
+
+        base = max(
+            0.0, float(getattr(self.config, "infra_fault_retry_backoff_base_s", 2.0))
+        )
+        cap = max(
+            base, float(getattr(self.config, "infra_fault_retry_backoff_max_s", 8.0))
+        )
+        jitter = max(
+            0.0, float(getattr(self.config, "infra_fault_retry_backoff_jitter_s", 1.0))
+        )
+        delay = min(base * (2 ** attempt), cap)
+        return delay + (random.uniform(0, jitter) if jitter > 0 else 0.0)
+
+    def _run_with_infra_retry(
+        self,
+        operation: Callable[[], _T],
+        *,
+        agent_name: str,
+        run_id: str | None = None,
+        mode: str | None = None,
+    ) -> _T:
+        """Retry a transient cost-circuit infrastructure fault with backoff.
+
+        docs/WORK.md item 17(a): distinguishes "I cannot read the budget"
+        (a transient I/O or DB-open failure raised by `operation` -- worth
+        retrying) from two things it must NOT be confused with:
+
+          * "I am over budget" -- a real, measured breach, which never
+            raises here at all: `_trip_locked` records it directly in the
+            `llm_circuit_state` row and returns normally. Its signal
+            (`PaidAnalysisSuspended` / `OptionalPaidAnalysisRetrySkipped`,
+            when it surfaces through `operation`, e.g. from `begin_call`)
+            is control flow, not an infrastructure fault -- it passes
+            straight through, unretried and unlatched-by-this-method,
+            exactly as before.
+          * "the ledger IS open and readable, and it is provably wrong" --
+            `_validate_accounting_invariants` / `_reconcile_quota_holds_
+            locked` raise a plain `RuntimeError` for a detected accounting
+            corruption (mismatched settled totals, an inexact day that
+            cannot re-arm a hold). That is a deterministic finding, not a
+            flake: retrying it produces the exact same answer every time,
+            and `scripts/cost_circuit.py` deliberately catches this raw
+            exception at several commands to behave differently (`reset`
+            tolerates it, `status`/`check` propagate it). Retrying and then
+            converting it into the generic sentinel state would both waste
+            time on a fault backoff can never fix and break that existing
+            distinction. So only `sqlite3.Error` / `OSError` -- the actual
+            "cannot open/read the database" shape -- are treated as the
+            transient fault this method retries; every other exception
+            (including these invariant `RuntimeError`s) passes straight
+            through unretried, exactly as before this method existed.
+
+        Only after `infra_fault_max_retries` extra attempts have ALL failed
+        does this escalate to the durable file latch via `mark_unavailable`,
+        then re-raise the last error so existing callers' own fail-closed
+        handling (which every call site already had) is unchanged -- it
+        just now only fires once persistence is confirmed, not on the
+        first blip.
+        """
+
+        max_retries = max(0, int(getattr(self.config, "infra_fault_max_retries", 2)))
+        last_exc: BaseException | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return operation()
+            except (PaidAnalysisSuspended, OptionalPaidAnalysisRetrySkipped):
+                raise
+            except (sqlite3.Error, OSError) as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    backoff = self._infra_retry_backoff_s(attempt)
+                    logger.warning(
+                        "Cost-circuit infrastructure fault in %s (attempt "
+                        "%d/%d): %s -- retrying in %.1fs",
+                        agent_name, attempt + 1, max_retries + 1, exc, backoff,
+                    )
+                    if backoff > 0:
+                        time.sleep(backoff)
+                    continue
+                logger.critical(
+                    "Cost-circuit infrastructure fault in %s persisted past "
+                    "%d attempt(s); latching paid analysis closed: %s",
+                    agent_name, max_retries + 1, exc, exc_info=True,
+                )
+        assert last_exc is not None  # loop always returns or sets this
+        self.mark_unavailable(
+            last_exc, run_id=run_id, mode=mode, agent_name=agent_name,
+        )
+        raise last_exc
 
     def mark_unavailable(
         self,
@@ -1119,6 +1396,8 @@ class LLMCostCircuitBreaker:
                     session_cost_usd=session_cost,
                     daily_cost_usd=daily_cost,
                     costs_exact=costs_exact,
+                    emergency_latch_path=self._emergency_latch_path,
+                    emergency_lock_path=self._emergency_lock_path,
                 )
             sentinel = self._unavailable_sentinel
         return sentinel.activate_session(
@@ -1252,16 +1531,33 @@ class LLMCostCircuitBreaker:
         if not self.enabled:
             return {"suspended": False, "enabled": False}
         day, _, _ = _et_day_and_utc_bounds()
-        with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            self._seed_today(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO llm_budget_sessions(run_id, day, mode) "
-                "VALUES (?, ?, ?)",
-                (run_id, day, mode),
+
+        def _activate() -> None:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                self._seed_today(conn)
+                conn.execute(
+                    "INSERT OR IGNORE INTO llm_budget_sessions(run_id, day, mode) "
+                    "VALUES (?, ?, ?)",
+                    (run_id, day, mode),
+                )
+                self._reconcile_quota_holds_locked(conn, current_day=day)
+                conn.commit()
+
+        try:
+            self._run_with_infra_retry(
+                _activate, agent_name="circuit_activation", run_id=run_id, mode=mode,
             )
-            self._reconcile_quota_holds_locked(conn, current_day=day)
-            conn.commit()
+        except Exception:
+            # `_run_with_infra_retry` already latched durably after
+            # exhausting retries. Fall through to the sentinel path below
+            # (deterministic/broker safety work must still proceed) instead
+            # of raising out of session activation.
+            with self._infrastructure_lock:
+                sentinel = self._unavailable_sentinel
+            if sentinel is not None:
+                return sentinel.activate_session(run_id, mode)
+            raise
         self._notify_if_needed()
         # Existing overspend must latch immediately, but never raises here:
         # callers still need to run deterministic/broker safety functions.
@@ -1996,23 +2292,39 @@ class LLMCostCircuitBreaker:
             return sentinel.enforce_current_limits(agent_name)
         run_id, mode = self._context()
         day, _, _ = _et_day_and_utc_bounds()
-        with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            self._seed_today(conn)
-            self._reconcile_quota_holds_locked(conn, current_day=day)
-            daily, session = self._totals(conn, day, run_id)
-            row = conn.execute(
-                "SELECT provider_attempts, status FROM llm_budget_sessions WHERE run_id=?",
-                (run_id,),
-            ).fetchone()
-            attempts = int(row["provider_attempts"] if row else 0)
-            attempts_exact = not (row and row["status"] == "legacy")
-            self._enforce_settled_limits_locked(
-                conn, day=day, run_id=run_id, mode=mode,
-                agent_name=agent_name, attempts=attempts,
-                attempts_exact=attempts_exact, daily=daily, session=session,
+
+        def _enforce() -> None:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                self._seed_today(conn)
+                self._reconcile_quota_holds_locked(conn, current_day=day)
+                daily, session = self._totals(conn, day, run_id)
+                row = conn.execute(
+                    "SELECT provider_attempts, status FROM llm_budget_sessions WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()
+                attempts = int(row["provider_attempts"] if row else 0)
+                attempts_exact = not (row and row["status"] == "legacy")
+                self._enforce_settled_limits_locked(
+                    conn, day=day, run_id=run_id, mode=mode,
+                    agent_name=agent_name, attempts=attempts,
+                    attempts_exact=attempts_exact, daily=daily, session=session,
+                )
+                conn.commit()
+
+        try:
+            self._run_with_infra_retry(
+                _enforce, agent_name=agent_name, run_id=run_id, mode=mode,
             )
-            conn.commit()
+        except Exception:
+            # Latched durably already by `_run_with_infra_retry`. This
+            # method's contract is "never raises" -- defer to the sentinel
+            # it just installed rather than propagate.
+            with self._infrastructure_lock:
+                sentinel = self._unavailable_sentinel
+            if sentinel is not None:
+                return sentinel.enforce_current_limits(agent_name)
+            raise
         self._notify_if_needed()
         return self.status()
 
