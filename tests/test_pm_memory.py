@@ -1288,3 +1288,94 @@ def test_db_get_recent_insights_returns_newest_first(tmp_path):
                      lessons="L16", suggested_actions="[]", risk_rating="low")
     rows = db.get_recent_insights(limit=7)
     assert [r["date"] for r in rows] == ["2026-04-17", "2026-04-16", "2026-04-15"]
+
+
+# === thesis_invalid_if: dedicated field survives DB + position_history
+# (2026-09-03) ===
+#
+# Companion to the builder-level tests in test_portfolio_constructor.py.
+# Those prove the field is set correctly on TradeDecision; these prove it
+# then survives (a) a round trip through the `trades` table and (b)
+# `TradingPipeline._build_position_history`'s read-back — the two places a
+# restart or a later pipeline run would otherwise have to recover it from
+# scratch, at which point only the truncated `reasoning` text remains.
+
+_LONG_CONDITION_FOR_DB = (
+    "Invalid if the stock closes below its rising 50-day moving average "
+    "on a weekly closing basis for two consecutive weeks, or if the next "
+    "earnings report shows gross margin compression greater than 300 "
+    "basis points year-over-year, or if a director sells more than 2% of "
+    "their disclosed stake outside a pre-scheduled 10b5-1 plan."
+)
+assert len(_LONG_CONDITION_FOR_DB) > 280  # blows past the old truncation point
+
+
+def test_db_insert_trade_round_trips_thesis_invalid_if(tmp_path):
+    """A trades-table column, not just an in-memory field: the condition
+    must still be there after `Database` re-reads its own row."""
+    from src.storage.db import Database
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        "NVDA", "BUY", 10, 200.0, "AI capex supercycle", "r-1",
+        thesis_invalid_if=_LONG_CONDITION_FOR_DB,
+    )
+    last = db.get_symbol_last_buy("NVDA")
+    assert last is not None
+    assert last["thesis_invalid_if"] == _LONG_CONDITION_FOR_DB
+
+
+def test_db_insert_trade_thesis_invalid_if_defaults_to_none(tmp_path):
+    """Every legacy call site that never passes it gets NULL, not a
+    fabricated value — same discipline as the conviction-ledger columns."""
+    from src.storage.db import Database
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("AAPL", "BUY", 5, 180.0, "legacy caller", "r-1")
+    last = db.get_symbol_last_buy("AAPL")
+    assert last is not None
+    assert last["thesis_invalid_if"] is None
+
+
+def _pipeline_for_position_history():
+    from unittest.mock import MagicMock
+    from src.pipeline import TradingPipeline
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = MagicMock()
+    pipeline.tech_store = MagicMock()
+    pipeline.tech_store.get_history.return_value = []
+    return pipeline
+
+
+def test_build_position_history_carries_full_thesis_invalid_if():
+    """The real gap this whole change closes: `entry_reasoning` truncates
+    to 280 chars, but `thesis_invalid_if` in the same history block must
+    not — it comes from the dedicated `trades.thesis_invalid_if` column,
+    not by slicing `reasoning`."""
+    pipeline = _pipeline_for_position_history()
+    pipeline.db.get_symbol_last_buy.return_value = {
+        "timestamp": "2026-08-20 09:31:00",
+        "price": 200.0,
+        "reasoning": "AI capex supercycle " * 20,  # long enough to truncate
+        "thesis_invalid_if": _LONG_CONDITION_FOR_DB,
+    }
+    history = pipeline._build_position_history([_pos("NVDA")])
+    assert "NVDA" in history
+    entry = history["NVDA"]
+    assert len(entry["entry_reasoning"]) <= 280
+    assert entry["thesis_invalid_if"] == _LONG_CONDITION_FOR_DB
+
+
+def test_build_position_history_thesis_invalid_if_none_for_legacy_row():
+    """A pre-migration `trades` row (or any BUY that stated no condition)
+    must not fabricate a value — None, matching the DB column's own
+    default."""
+    pipeline = _pipeline_for_position_history()
+    pipeline.db.get_symbol_last_buy.return_value = {
+        "timestamp": "2026-08-20 09:31:00",
+        "price": 200.0,
+        "reasoning": "legacy row, no thesis_invalid_if column at write time",
+        # No "thesis_invalid_if" key at all — mirrors a real legacy dict.
+    }
+    history = pipeline._build_position_history([_pos("NVDA")])
+    assert history["NVDA"]["thesis_invalid_if"] is None

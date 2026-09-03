@@ -4680,6 +4680,9 @@ class ExecutionStage:
                     requested_risk_pct=getattr(decision, "requested_risk_pct", None),
                     allocated_risk_pct=getattr(decision, "allocated_risk_pct", None),
                     decision_model=ctx.decision_model,
+                    # Same entry-only pinning as the conviction ledger above
+                    # — see TradeDecision.thesis_invalid_if in models.py.
+                    thesis_invalid_if=getattr(decision, "thesis_invalid_if", None),
                 )
 
                 try:

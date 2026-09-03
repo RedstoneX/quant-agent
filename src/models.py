@@ -991,6 +991,27 @@ class TradeDecision(LLMOutputModel):
     # bars. Recomputing level-backing there instead would have created
     # exactly the second data path §12.1 was careful not to build.
     stop_rule: str | None = None
+    # --- Thesis invalidation, as a real field (2026-09-03) ----------------
+    # Mirrors the conviction-ledger fields above: pinned at ENTRY (BUY/
+    # SHORT) only, default None so every pre-existing construction site
+    # (HOLD/_build_sell/_build_cover, tests, replay.py, ops/model_policy/
+    # scenarios.py) is unaffected.
+    #
+    # `TargetPosition.thesis_invalid_if` (the analyst's own falsifier
+    # condition, see that field's docstring) was previously carried
+    # downstream ONLY as text appended to `reasoning` — e.g. "(invalid if:
+    # ...)" — and `reasoning` gets truncated to 500 chars in the
+    # constructor and again to 280 chars by `TradingPipeline.
+    # _build_position_history`. A long condition could silently lose the
+    # one piece of information a later holding-discipline check needs to
+    # verify an exit. This field carries the same string untruncated
+    # (aside from the 2000-char cap below, which exists only to bound a
+    # misbehaving LLM's output, not to truncate a normal thesis) so it
+    # survives regardless of what happens to `reasoning`.
+    #
+    # The embedded-in-reasoning text is NOT removed — some existing code
+    # may still parse it out of `reasoning` — this field is additive.
+    thesis_invalid_if: str | None = Field(default=None, max_length=2000)
 
     @computed_field
     @property

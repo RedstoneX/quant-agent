@@ -1133,16 +1133,7 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.**
-
-(a) failure-as-own-message shipped earlier (`maybe_alert_data_quality`).
-(b) colour-only severity fixed 2026-09-03 across `src/notifier.py`,
-`src/pipeline_stages.py`, `src/trader_feed.py`, `scripts/alert_heartbeat.py`,
-`scripts/run_if_et_window.sh` — 🛑/🛑🛑🛑/⚠️ shapes + leading plain-text
-severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
-🔴/🟠 (out of scope this pass — parallel work in progress there). Full
-writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
-colour".
+**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** Failure-as-own-message shipped earlier (`maybe_alert_data_quality`); colour-only severity fixed 2026-09-03 across notifier/pipeline_stages/trader_feed/alert scripts (🛑/🛑🛑🛑/⚠️ + leading plain-text word). `cost_circuit.py`/`pipeline.py` still carry 🔴/🟠 — parallel work in progress. Detail: `docs/INCIDENT_HISTORY.md`, "2026-09-03 — alerts stop relying on colour".
 
 **22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
 
@@ -1150,7 +1141,7 @@ colour".
 
 **24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23.
 
-**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DESIGN, not yet decided.** `risk_manager.md` asks the RM to confirm a sell trigger itself; no Python verifies it against real data. Same "citation exists, substance unchecked" shape as item 18's catalyst-door finding. Owner call, not decided here.
+**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DESIGN, not yet decided.** `risk_manager.md` asks the RM to confirm a sell trigger itself; no Python verifies it against real data. Same "citation exists, substance unchecked" shape as item 18's catalyst-door finding. Owner call, not decided here. Precondition fixed 2026-09-03: it used to reach `TradeDecision` only as text two truncations (500/280 chars) could cut off. Now a dedicated, untruncated field + `trades` column — see `docs/INCIDENT_HISTORY.md`. Checking it against real price data is separate, in progress elsewhere.
 
 **26. RM modification matching is case-sensitive — FIXED 2026-09-03.** See `docs/INCIDENT_HISTORY.md`.
 
@@ -1173,23 +1164,7 @@ against a clean `origin/main` checkout, independent of any in-flight PR.
 Needs the fixture's config dict updated to the post-item-14 shape
 (`max_calls_per_session`); not yet fixed.
 
-**29. The analyst scorecard was already built and is already live — item
-withdrawn 2026-09-03, corrected after being written up as new work in
-error.**
-
-The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5,
-shipped 2026-08-31, `src/api/routes_scorecard.py`, live at
-`GET /analysts/scorecard`) already covers everything this item asked for:
-per-analyst win rate, win/loss size, running real dollar P&L at a fixed
-risk per call, drawdown-from-own-peak, per-trade credit attribution
-(who argued for/against, credited or charged symmetrically for shorts and
-longs), read-only with no sizing feed, and no minimum-sample gate — real
-counts shown however few. Confirmed live and wired into the real pipeline
-(`pipeline_stages.py::_record_seat_stances`,
-`pipeline.py`'s `resolve_conviction_ledger`), not dead code. It currently
-reports zero resolved calls, which is the ledger correctly reporting an
-honestly thin history (started 2026-08-31, trading timers paused most of
-today), not a defect.
+**29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5, shipped 2026-08-31, `src/api/routes_scorecard.py`, live at `GET /analysts/scorecard`) already covers everything this item asked for — per-analyst win rate, win/loss size, running P&L at fixed risk/call, drawdown-from-own-peak, per-trade credit attribution, read-only, no sample-size gate. Wired into the real pipeline, not dead code. Reports zero resolved calls today — an honestly thin history (started 2026-08-31, timers paused most of today), not a defect.
 
 **30. The sizing path still owes the same amendment the ranking path just
 got — deliberately NOT done yet, owner should decide scope first.**
@@ -1654,4 +1629,6 @@ the failure mode this invites.
 Do not interrupt natural validation for these unless current evidence shows they materially distort decision quality, truthfulness, or operator understanding.
 
 `get_latest_price` is **not** on this list solely because its request omits `feed`; that concern has been reconciled. Reopen only on concrete production evidence.
+
+- invalid_if: 9/3 log.
 
