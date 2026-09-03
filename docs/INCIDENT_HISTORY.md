@@ -3150,3 +3150,27 @@ handled the crash. Like `_persist_evidence`, it never raises: a bug in the
 watchdog itself must never be able to stop a trading session.
 
 See PR merging `feat/finish-levels-coverage-watchdog`.
+
+### 2026-09-03 — RM modification symbol matching was case-sensitive — FIXED
+
+**In plain words:** when the Risk Manager tightens an already-decided trade
+(e.g. widens a stop), the code has to find which decision that change
+belongs to by matching symbols. That match was case-sensitive. If the RM
+ever emitted a symbol in a different case than the Portfolio Manager's
+original decision (e.g. "aapl" vs "AAPL"), the match silently failed and
+the trade shipped completely UNMODIFIED — the opposite of this codebase's
+usual fail-closed posture for a mismatch like this. Never observed live;
+found in the same 2026-09-03 read that produced item 27 in `docs/WORK.md`
+(item 26 there).
+
+**The mechanism.** `TradingPipeline._apply_risk_modifications` in
+`src/pipeline.py` compared `decision.symbol` to `mod.symbol` directly.
+`SymbolRejection` (the RM's per-symbol refusal mechanism, `src/models.py`)
+already normalizes its `symbol` field on construction via
+`_normalize_symbol` (`strip().upper()`); `RiskModification` carries no such
+field validator, so its `symbol` reaches this comparison exactly as the RM
+wrote it. Fixed by normalizing both sides of the comparison with the same
+`.strip().upper()` idiom already used throughout `src/pipeline_stages.py`
+for this exact kind of symbol matching, rather than inventing a new
+convention. Covered by
+`tests/test_bugfixes.py::test_risk_mod_matches_decision_symbol_case_insensitively`.
