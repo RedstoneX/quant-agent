@@ -146,6 +146,84 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
     return rows
 
 
+# --------------------------------------------------------------------------
+# The missing RANKING step, at the ratified equal weight. NOT WIRED IN.
+# --------------------------------------------------------------------------
+# The owner-ratified architecture decision is a weighted composite score
+# across signals, **starting equal-weight**. This implements exactly that and
+# nothing more: no tuned weights, no new thresholds, no signal that `evaluate`
+# does not already compute for every candidate.
+#
+# Which of `evaluate`'s per-candidate numbers are admissible as SCORE inputs:
+#
+#   rr                     YES  primitive, continuous
+#   net_sources            YES  primitive, integer
+#   conviction             YES  ordinal, and the file ALREADY carries the
+#                               desk's own numeric encoding of it in
+#                               CONVICTION_BANDS (low/medium/high -> 1/2/3
+#                               risk-percent band tops). Not a new number.
+#   aligned, opposed       NO   net_sources IS aligned - opposed; scoring all
+#                               three counts the same evidence three times.
+#   agreement_ceiling_pct  NO   a pure function of net_sources (§9.4 lookup);
+#                               including it double-weights evidence.
+#   max_risk_pct           NO   a function of conviction, the ceiling and the
+#                               sub-floor cap — it re-imports the R/R gate the
+#                               ranking is supposed to be independent of.
+#   subfloor_catalyst,     NO   booleans that restate gate outcomes, not
+#   held, eligible               strength-of-candidate signals.
+#
+# So three independent signals, min-max normalised across the eligible set so
+# they share a 0..1 scale, summed at weight 1.0 each. A signal that is
+# constant across the set contributes 0 to every candidate (no spurious
+# spread), which is the only defensible degenerate case.
+RANKING_SIGNALS = ("rr", "net_sources", "conviction_score")
+
+# The desk's own conviction encoding, read off CONVICTION_BANDS rather than
+# chosen here, so a config change to the bands moves this with it.
+CONVICTION_SCORE = {name: band[1] for name, band in CONVICTION_BANDS.items()}
+
+
+def _min_max(values: list[float]) -> list[float]:
+    """0..1 across the set; an all-equal signal contributes nothing."""
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        return [0.0 for _ in values]
+    return [(v - lo) / (hi - lo) for v in values]
+
+
+def rank_eligible(rows: list[dict]) -> list[dict]:
+    """Equal-weight composite score over the eligible candidates.
+
+    Pure and deterministic. Returns the eligible rows highest score first,
+    each with its normalised components and `composite_score`. Ties break on
+    symbol so the order is stable. **This is not called by any production
+    code path** — see the module docstring and docs/WORK.md item 18.
+    """
+    eligible = [r for r in rows if r["eligible"]]
+    if not eligible:
+        return []
+
+    raw = {
+        "rr": [float(r["rr"] or 0.0) for r in eligible],
+        "net_sources": [float(r["net_sources"]) for r in eligible],
+        "conviction_score": [
+            float(CONVICTION_SCORE.get(r["conviction"], 0.0)) for r in eligible
+        ],
+    }
+    normalised = {name: _min_max(values) for name, values in raw.items()}
+
+    scored = []
+    for i, row in enumerate(eligible):
+        components = {name: round(normalised[name][i], 4) for name in RANKING_SIGNALS}
+        scored.append({
+            **row,
+            "score_components": components,
+            "composite_score": round(sum(components.values()), 4),
+        })
+    scored.sort(key=lambda r: (-r["composite_score"], r["symbol"]))
+    return scored
+
+
 def summarise(rows: list[dict]) -> dict:
     eligible = [r for r in rows if r["eligible"]]
     return {
@@ -180,6 +258,15 @@ def _main() -> None:  # pragma: no cover - operator entry point
         print(f"{r['symbol']:<7}{r['direction']:<6}{r['rating']:<12}"
               f"{r['conviction']:<8}{(r['rr'] or 0):6.2f}{r['net_sources']:>5}"
               f"{r['agreement_ceiling_pct']:>7.1f}{r['max_risk_pct']:>10.2f}  {door}")
+
+    ranked = rank_eligible(rows)
+    print("\nEQUAL-WEIGHT COMPOSITE RANKING (not wired into production):")
+    print(f"{'#':<4}{'sym':<7}{'score':>7}   " + "  ".join(
+        f"{name:>16}" for name in RANKING_SIGNALS))
+    for i, r in enumerate(ranked, 1):
+        parts = "  ".join(f"{r['score_components'][n]:>16.4f}" for n in RANKING_SIGNALS)
+        print(f"{i:<4}{r['symbol']:<7}{r['composite_score']:>7.4f}   {parts}")
+    print("order: " + ", ".join(r["symbol"] for r in ranked))
 
 
 if __name__ == "__main__":  # pragma: no cover
