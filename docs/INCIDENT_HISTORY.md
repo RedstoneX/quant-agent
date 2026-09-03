@@ -22,7 +22,26 @@ what would catch it next time.
 
 ---
 
-### 2026-09-03 — a leftover test broke the moment another fix shipped
+### 2026-09-03 — the analyst scorecard got written up as missing work; it already existed
+
+**In plain words:** the owner asked for a per-analyst track record — how
+often each analyst is right, who argued for or against a trade, real
+dollar P&L per seat. That was logged as new work to build today. It had
+already been built and shipped four days earlier, under a different name
+("the conviction ledger"), and was already running live in production.
+Nobody checked before writing it up.
+
+**Detail:** the search for this went looking for anything using Phase
+13's `AnalystVerdict` shape (2026-09-03, same day) and found nothing,
+because the real implementation predates Phase 13 and was built directly
+against the trades/evidence tables instead — `docs/QAMC_REMEDIATION_SPEC.md`
+§9.5, `src/api/routes_scorecard.py`, live at `GET /analysts/scorecard`,
+merged 2026-08-31. It covers win rate, win/loss size, running P&L at fixed
+risk, drawdown from peak, and per-trade credit attribution — everything
+the new write-up asked for — already read-only and already ungated on
+sample size. Caught before any duplicate was built, while gathering
+context to hand a build off to another session; that context-gathering
+step is what should have run first. `docs/WORK.md` item 29 corrected.
 
 **In plain words:** a test file that checks the desk's cost-runaway
 protection was still written against two settings that got deleted the day

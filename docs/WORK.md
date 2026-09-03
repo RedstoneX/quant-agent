@@ -1191,26 +1191,23 @@ against a clean `origin/main` checkout, independent of any in-flight PR.
 Needs the fixture's config dict updated to the post-item-14 shape
 (`max_calls_per_session`); not yet fixed.
 
-**29. Build the analyst scorecard — the real measurement Phase 13 is
-waiting on. Owner priority 2026-09-03, wanted TODAY.**
+**29. The analyst scorecard was already built and is already live — item
+withdrawn 2026-09-03, corrected after being written up as new work in
+error.**
 
-Phase 13 shipped every analyst reporting in a comparable shape, combined at
-EQUAL weight — deliberately, because no measured record exists yet to
-justify weighting any seat higher or lower. This is that missing record: a
-real per-analyst track record from actual trade history, not example data.
-
-For every analyst, over its full real call history: how often it was
-right, typical win vs. typical loss size, running real dollar P&L at a
-fixed risk per call (no compounding, no recency trim), and how far below
-its own best it has fallen and for how long. Per closed trade: which
-analysts argued for it, which against, and the real outcome credited or
-charged to each — one that argued against a loser should gain from being
-right, same as one that argued for a winner.
-
-**Explicitly NOT this:** a live score that changes sizing on its own — that
-would let the scorecard grade itself on trades its own signal caused.
-Read-only, same posture as `level_quality.py`'s not-wired-in guard; wire in
-later only as a separate, owner-reviewed decision. No minimum-sample gate
+The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5,
+shipped 2026-08-31, `src/api/routes_scorecard.py`, live at
+`GET /analysts/scorecard`) already covers everything this item asked for:
+per-analyst win rate, win/loss size, running real dollar P&L at a fixed
+risk per call, drawdown-from-own-peak, per-trade credit attribution
+(who argued for/against, credited or charged symmetrically for shorts and
+longs), read-only with no sizing feed, and no minimum-sample gate — real
+counts shown however few. Confirmed live and wired into the real pipeline
+(`pipeline_stages.py::_record_seat_stances`,
+`pipeline.py`'s `resolve_conviction_ledger`), not dead code. It currently
+reports zero resolved calls, which is the ledger correctly reporting an
+honestly thin history (started 2026-08-31, trading timers paused most of
+today), not a defect.
 hiding a short history either — show the real count and let the reader
 judge.
 
