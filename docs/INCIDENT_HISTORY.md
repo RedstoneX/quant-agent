@@ -414,6 +414,76 @@ pins the order and the scores, so the table cannot rot silently.
 
 ---
 
+### 2026-09-03 — item 10 (repeat-proposal memory) re-measured: too early to tell, and the fix cannot close this alone
+
+**In plain words:** the desk got a fix on 2026-09-02 so it can now SEE which
+names it keeps asking for and never gets. This re-measures whether that
+actually stopped the re-asking. Short answer: there is not enough real
+trading since the fix landed to tell yet, and even with more data the fix as
+built cannot close this by itself — it was built, on purpose, to show the
+problem, not to stop it.
+
+**What `wt/stuck-loops` actually shipped.** The real feature is
+`feat/blocked-trade-memory` (`630da15`/`f3165bd`, merged 2026-09-02 03:39
+UTC) — `_build_blocked_proposals` in `src/pipeline.py`, rendered as the
+portfolio manager's `## Proposal Conversion` prompt section: an aggregate
+conversion rate plus up to 5 repeat-offender names (3+ proposals, zero
+fills, rolling 21 days). The later `680da41` (18:30 UTC same day) did no new
+feature work — it independently verified the above and hardened two
+untested branches in the same function. Read verbatim from the code's own
+docstring: **"Diagnostic only. Nothing here gates, filters or caps
+anything... Whether a repeat block should ever restrict a name is a
+separate, unmade decision."** The desk can now see it is burning slots on a
+name; nothing stops it from asking for that name again anyway.
+
+**Re-measured against the live production DB (`/home/qamc/quant-agent/data/quant_agent.db`,
+copied read-only).** A `scripts/desk_reset.py` run — a real, intentional
+tool, not a bug — flattened the book at 2026-09-02 18:18:59Z for an
+unrelated reason (the reward:risk geometry defect; see the proposal-to-fill
+census entry above) a few hours after the memory fix landed. It wipes
+`trades`, `positions`, `intraday_evaluations`, and every decision-shaped row
+in `specialist_evidence` (`target`, `proposed_order`, `verdict`,
+`execution_skip` — the exact rows `_build_blocked_proposals` reads), while
+keeping raw analyst observations. Consequence: as of this snapshot, those
+four row kinds have exactly ONE row between them in the whole table,
+timestamped 2026-09-02 18:31:29 — a single proposal (ORCL), which was
+allocated, passed the risk manager, and filled the same minute.
+
+Between the fix landing (03:39 UTC) and the reset (18:19 UTC) — the one
+window where the fix was live against un-wiped history — the portfolio
+manager ran 12 times and produced **zero** targets at all (proposals need a
+positive size; none of those 12 runs wrote one). One run (19:00 UTC, after
+the reset) analyzed NVDA — a pre-fix repeat offender — but did not propose
+it. None of the other pre-fix repeat offenders (JPM, VLO, PATH) were even in
+that day's candidate universe.
+
+**Honest verdict: PARTIALLY CLOSED, and not fully closeable by this fix
+alone.**
+- The memory gap named in item 10 ("the desk has no memory of having
+  already been refused") is fixed — `_build_blocked_proposals` gives the PM
+  exactly that memory, independently mutation-tested (see `680da41`).
+- Whether that memory actually changes what the PM proposes is UNTESTED,
+  not confirmed. Zero repeat-offender re-proposals happened since the fix,
+  but the entire post-fix, pre-reset window produced zero proposals of any
+  kind, and the post-reset window is nine hours old with one proposal in
+  it. That is not evidence the desk stopped re-litigating burned names —
+  it is an absence of any names being proposed at all to litigate.
+- Even with more days of data, the fix cannot close item 10 on its own: it
+  is diagnostic by explicit design. Actually stopping slots from being
+  burned on a repeat name would mean gating or capping a proposal based on
+  its prior-refusal count — a new risk/quality threshold (how many refusals
+  before a block, and for how long), which is an owner decision, not one
+  to make unilaterally in this pass.
+
+**Recommendation, not a decision:** re-run this measurement after several
+full trading days have accumulated post-reset (the 21-day lookback needs
+that much history to say anything about a 3+ repeat pattern), and treat
+"should a repeat block ever restrict a name" as its own open decision for
+the owner — it is already flagged as such in `docs/AGENT_ROLE_AUDIT.md`
+§1.6.
+
+---
+
 ### 2026-09-02/03 — funnel item 8 ("stop on the wrong side of entry") checked, not a code defect
 
 **In plain words:** the census found 2 of 68 proposals refused because the
