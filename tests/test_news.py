@@ -814,3 +814,111 @@ news:
 
     assert cfg.news.max_prompt_items == 12
     assert cfg.news.max_prompt_items != NewsConfig().max_prompt_items
+
+
+# ---------------------------------------------------------------------------
+# Parse-failure evidence capture (2026-09-02): a structural validation
+# failure (all four required top-level fields missing) previously left only
+# the pydantic error log line — the raw LLM text that caused it was never
+# saved anywhere, so the shape of the failure (truncation? extra JSON layer?
+# wrong schema entirely?) couldn't be diagnosed after the fact. These tests
+# assert the raw text AND the parsed-but-invalid dict land in
+# data/parse_failures/, retrievable by timestamp, and that a capture-side
+# failure never masks or replaces the original error path.
+# ---------------------------------------------------------------------------
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_validation_failure_persists_raw_and_parsed(mock_cls, tmp_path, monkeypatch):
+    """A well-formed-JSON-but-wrong-shape response (the actual 2026-09-02
+    failure mode: all four required top-level fields missing) must still
+    return (None, result) exactly as before, AND must leave a durable,
+    inspectable record of the raw text plus the parsed-but-invalid dict."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    failure_dir = tmp_path / "parse_failures"
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", failure_dir)
+
+    # Well-formed JSON, wrong shape entirely — none of the four required
+    # NewsIntelligenceReport fields are present.
+    bad_shape = {"unexpected_key": "some totally different schema", "count": 3}
+    response_text = json.dumps(bad_shape)
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_text)]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 20
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, agent_result = agent.analyze(news_text="Some headlines", session="morning")
+
+    # Original behavior is completely unchanged.
+    assert report is None
+    assert agent_result is not None
+    assert agent_result.raw_text == response_text
+
+    # A capture file was written.
+    assert failure_dir.exists()
+    files = list(failure_dir.glob("news_analyst_morning_*.json"))
+    assert len(files) == 1
+
+    payload = json.loads(files[0].read_text())
+    assert payload["raw_text"] == response_text
+    assert payload["parsed"] == bad_shape
+    assert payload["session"] == "morning"
+    assert "timestamp" in payload and payload["timestamp"]
+    assert "error" in payload and payload["error"]
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_non_json_failure_persists_raw_text_only(mock_cls, tmp_path, monkeypatch):
+    """A non-JSON response (JSON decoding itself fails) must still capture
+    the raw text, with `parsed` recorded as None to distinguish it from a
+    well-formed-but-wrong-shape failure."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    failure_dir = tmp_path / "parse_failures"
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", failure_dir)
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text="I need more context...")]
+    mock_response.usage.input_tokens = 100
+    mock_response.usage.output_tokens = 10
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, agent_result = agent.analyze(news_text="Some headlines", session="evening")
+
+    assert report is None
+    files = list(failure_dir.glob("news_analyst_evening_*.json"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text())
+    assert payload["raw_text"] == "I need more context..."
+    assert payload["parsed"] is None
+
+
+def test_persist_parse_failure_disk_error_only_warns_never_raises(tmp_path, monkeypatch, caplog):
+    """The capture helper must be defensive: a disk-write failure logs a
+    warning and returns quietly — it must never raise, and must never be
+    able to swallow or replace the caller's original error handling."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    # Point the capture dir at a path that cannot be created (a file, not a
+    # directory, sits where mkdir would need to create a directory).
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory")
+    bad_dir = blocker / "parse_failures"
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", bad_dir)
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        news_analyst_mod._persist_parse_failure(
+            agent_name="news_analyst", session="morning",
+            raw_text="whatever the model said", parsed=None, error="boom",
+        )
+
+    assert any("parse-failure" in rec.message for rec in caplog.records)
