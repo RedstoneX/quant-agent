@@ -527,3 +527,51 @@ def test_uncapped_buy_has_no_provenance_note():
 
     assert len(decisions) == 1
     assert "[constructor:" not in decisions[0].reasoning
+
+
+def test_dropped_target_reason_is_captured_not_silently_lost():
+    """Funnel-queue item 2 (2026-09-03) reproduction: a target the
+    constructor drops before ever building an order used to leave NOTHING
+    recoverable outside the log — `blocked_proposals_census.py` counted 19
+    of these across 2026-08-18..09-02 as `no_order_built`, its largest
+    unexplained bucket, and the module docstring on that script says the
+    constructor's own reason "is only ever logger.info/logger.warning
+    text — never persisted to a table."
+
+    Same fixture as `test_construct_orders_rejects_buy_when_no_structural_stop_supplied`
+    (no analysis at all → no structural stop → the BUY is dropped). The
+    fix under test is `PortfolioConstructor.last_drop_reasons`: the real
+    log line the constructor already emits for the drop, captured onto the
+    instance so a caller (`pipeline_stages.DecisionStage`) can persist a
+    terminal per-symbol evidence row instead of nothing. This test is
+    scoped to the constructor's own contract — the DecisionStage
+    integration (the actual DB write) is exercised by the pipeline-level
+    fixtures, not re-derived here.
+    """
+    constructor = PortfolioConstructor()
+    targets = [TargetPosition(symbol="NVDA", target_weight_pct=5.0,
+                              conviction="medium", thesis="no TA")]
+
+    decisions = constructor.construct_orders(
+        targets=targets, positions=[], analyses=[],  # NO analysis
+        total_value=100_000, price_map={"NVDA": 100.0},
+    )
+
+    assert decisions == []
+    # The old failure mode: nothing whatsoever survives the call. The fix:
+    # the dropped symbol's real reason is on the instance afterward.
+    assert "NVDA" in constructor.last_drop_reasons
+    reason = constructor.last_drop_reasons["NVDA"]
+    assert "NVDA" in reason
+    assert "rejected" in reason
+
+    # A second call must not leak the first call's reasons onto a run that
+    # dropped nothing — each call's capture is fresh, not cumulative.
+    clean_analysis = _analysis("XLF", entry=100.0, stop=99.0, target=110.0)
+    clean_target = TargetPosition(symbol="XLF", target_weight_pct=5.0,
+                                   conviction="medium", thesis="clean")
+    constructor.construct_orders(
+        targets=[clean_target], positions=[], analyses=[clean_analysis],
+        total_value=10_000.0, price_map={"XLF": 100.0},
+    )
+    assert constructor.last_drop_reasons == {}
