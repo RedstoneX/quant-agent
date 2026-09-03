@@ -76,16 +76,12 @@ confirm 40 still sits comfortably above the real ceiling — raise it if a
 legitimate session ever gets close, do not lower it on a hunch. Not a
 blocking decision; the mechanism is live either way.
 
-- [ ] DECIDE BY 2026-09-17 — How many consecutive scheduled windows of
-  silence before the desk-wide silence watchdog (item 17c, shipped
-  2026-09-03) alerts? Shipped with a placeholder of **6** (one full
-  scheduled trading day — earnings_preprocess/morning/intra_check/midday/
-  close/evening) because no measured or agreed figure exists. Same shape as
-  item 14's `max_calls_per_session` placeholder: a shorter run of misses has
-  mundane causes (one self-gated skip, a timer landing outside its window);
-  a full day of zero completed sessions across every mode has not happened
-  on a healthy desk. No agent may pick this number — see
-  `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`).
+**RATIFIED 2026-09-03 — the silence-watchdog threshold (item 17c).** Owner
+rejected the 6-window (one full day) placeholder as too slow: every silent
+hour is open positions going unwatched, real opportunity cost, not an
+abstract risk. Set to **2** (roughly one hour of total desk-wide silence)
+instead — see `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`)
+for the reasoning on why 2 is still a strong signal despite being short.
 
 - [ ] DECIDE BY 2026-09-17 — Does the desk need a second, independent alert
   channel beyond Telegram? Item 17(b), shipped 2026-09-03, made a failed

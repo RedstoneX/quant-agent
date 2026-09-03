@@ -127,7 +127,7 @@ def test_one_quiet_mode_does_not_trigger_while_others_still_run(db, state_path):
 def test_a_full_day_of_silence_crosses_the_default_threshold(db, state_path):
     """Nothing recorded since last Friday evening; by Monday evening all six
     of Monday's scheduled windows have elapsed with zero completed sessions.
-    That is exactly `DEFAULT_SILENT_WINDOW_THRESHOLD` (6) missed windows."""
+    That is well past `DEFAULT_SILENT_WINDOW_THRESHOLD` (2) missed windows."""
     friday = _MONDAY - timedelta(days=3)
     last_seen = _et(friday, 21, 0).astimezone(timezone.utc)
     _seed(db, source="evening", when=last_seen)

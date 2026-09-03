@@ -75,20 +75,20 @@ A NEW session recorded (baseline advances) clears it, so a second, later
 silence episode alerts again. This mirrors `alert_heartbeat.py`'s
 `consecutive_failures` reset-on-success shape.
 
-THE THRESHOLD IS A PLACEHOLDER, NOT A DECIDED NUMBER
--------------------------------------------------------
-`DEFAULT_SILENT_WINDOW_THRESHOLD = 6` — one full scheduled trading day
-(`earnings_preprocess`, `morning`, `intra_check`, `midday`, `close`,
-`evening` — the six entries in `src.trading_calendar.SESSION_WINDOWS`), the
-smallest unit that reads as "unambiguous", chosen because a shorter run of
-misses has mundane, non-outage explanations (a single self-gated skip, a
-timer landing just outside a window, one delayed tick) while a FULL day of
-zero completed sessions across every mode has never happened on a healthy
-desk. Per this repo's rule that no agent picks a risk/quality threshold
-unilaterally, this number is NOT ratified — see the `DECIDE BY` line this
-change adds to `docs/WORK.md`. It is fully parameterised (constructor /
-CLI argument) so changing it later is a one-line, no-code-review-needed
-edit, not a redesign.
+THE THRESHOLD — OWNER-RATIFIED 2026-09-03
+--------------------------------------------
+`DEFAULT_SILENT_WINDOW_THRESHOLD = 2` — roughly one hour of total desk-wide
+silence. Originally shipped as a placeholder of 6 (one full scheduled
+trading day); the owner rejected that as too slow given that every silent
+hour is an hour of open positions going unwatched, with real opportunity
+cost. Since this check is desk-wide (every one of the six modes has to be
+silent at once, not just one), even 2 consecutive elapsed windows is
+already a strong signal — a single mode going quiet is normal and common,
+but the whole desk going quiet across two independent scheduled slots in a
+row is not something a healthy desk does. Ratified 2026-09-03; the `DECIDE
+BY` line this shipped with has been removed accordingly. Still fully
+parameterised (constructor / CLI argument) so it can be revisited without a
+redesign if real operation shows it needs adjusting either way.
 """
 from __future__ import annotations
 
@@ -122,9 +122,9 @@ TABLE = "alert_channel_checks"
 #: docstring. Order matches `config/settings.yaml`'s `schedule:` block.
 KNOWN_MODES: tuple[str, ...] = tuple(SESSION_WINDOWS.keys())
 
-#: PLACEHOLDER — NOT OWNER-RATIFIED. See module docstring and the
-#: `DECIDE BY` line in `docs/WORK.md`.
-DEFAULT_SILENT_WINDOW_THRESHOLD = 6
+#: OWNER-RATIFIED 2026-09-03 — roughly one hour of total desk-wide silence.
+#: See module docstring for the reasoning.
+DEFAULT_SILENT_WINDOW_THRESHOLD = 2
 
 #: How long after a window's nominal end a session is still allowed to land
 #: before the window counts as fully elapsed. The production timers
